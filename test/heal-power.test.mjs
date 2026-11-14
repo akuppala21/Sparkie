@@ -15,9 +15,11 @@ const DFLASH = ['--context-length', '1000000', '--speculative-algorithm', 'DFLAS
 const brainRun = { key: JSON.stringify([MODEL, 'sglang', 'lmsysorg/sglang:v0.5.23', 1, DFLASH, {}]), model: MODEL, repo: 'RadixArk/Qwen3.8-27B-NVFP4',
   title: 'Qwen 3.8 27B', engine: 'sglang', image: 'lmsysorg/sglang:v0.5.23', args: DFLASH, env: {},
   sparks: 1, nodes: ['spark2'], firstAt: '2026-11-08T00:00:00Z', lastAt: '2026-11-08T00:00:00Z', runs: 1, best: { decodeTokS: 30, ttftMs: 100 }, brain: true };
+// (the parts get a minute to connect whatever SLOW is: with other test files running beside this one on a fast machine,
+// 20 s was once too short and the bring-back's start failed; nothing here tests that limit)
 useFleet({ watchMs: 3600000, statusMs: 3000,
   env: { SPARK_CONSOLE_HEAL_MS: '2000', SPARK_CONSOLE_HEAL_SETTLE_MS: '3000', SPARK_CONSOLE_HEAL_OFFLINE_MS: '1000', SPARK_CONSOLE_HEAL_MIN_RUN_MS: '60000',
-    SPARK_CONSOLE_CONNECT_MS: String(20000 * SLOW) },
+    SPARK_CONSOLE_CONNECT_MS: String(20000 * Math.max(SLOW, 3)) },
   prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [brainRun] }), { mode: 0o600 }),
 }, async () => { keys.look = await createKey('heal-power'); keys.act = await createActKey('heal-power-act'); });
 
@@ -70,7 +72,9 @@ test('powered off and on: it comes back as "came back on", once the Sparks have 
   assert.ok(Date.parse(ev.at) - on >= 3000, `brought back ${Date.parse(ev.at) - on} ms after they came back, before they settled`);
   const op = await waitFor(async () => (await call(keys.look.token, 'recent_operations', { limit: 20 })).value.operations
     .find(o => o.type === 'deploy-cluster' && o.actor === 'Self-healing' && o.startedAt > since), { timeout: 60000 * SLOW, what: 'Self-healing starting it again' });
-  assert.equal((await finished(op.id)).status, 'completed');
+  // (on a miss, the operation itself says why)
+  const done = await finished(op.id);
+  assert.equal(done.status, 'completed', JSON.stringify(done).slice(0, 1500));
   assert.deepEqual(partsOf().map(p => p.state), ['running', 'running']);
 });
 

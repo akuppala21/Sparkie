@@ -19,7 +19,7 @@ MODE=${2:-once}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${SPARK_TEST_OUT:-$HERE/../spark-test-runs}
 IMAGE=${SPARK_TEST_IMAGE:-node:26-bookworm}
-SLOW=${SPARK_TEST_SLOW:-1}
+SLOW=${SPARK_TEST_SLOW:-2}   # (1 ran four files side by side with one timing miss in 996; 2 doubles the waits' limits, not the run)
 CONC=${SPARK_TEST_CONCURRENCY:-4}
 case "$SLOW$CONC" in *[!0-9]*) echo "SPARK_TEST_SLOW and SPARK_TEST_CONCURRENCY are whole numbers." >&2; exit 2 ;; esac
 mkdir -p "$OUT"
