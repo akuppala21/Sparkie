@@ -1,69 +1,109 @@
 # Working on Spark Console
 
-For whoever changes this code: Sparkie (the owner's local brain), an agent engine, or a person. Start here.
+Spark Console is one Node service on Spark 2 that runs the owner's NVIDIA DGX Sparks: models, apps and jobs on the
+other Sparks, and Sparkie, the local brain the owner talks to. This page is the front door for whoever changes it
+(Sparkie, an agent or a person): read it, then the one card your task needs, then what that card names.
 
-## Read in this order
+The contract (`docs/contract.md`) says what must be true; the rules (`docs/rules/`) say how; code that falls short is
+recorded (a "Today:" line in its rule), never fixed by quietly editing either.
 
-1. **This page.** The layout, how to work, and the rules that are never broken.
-2. **`docs/architecture.md`.** How it is built today, checked against the code:
-   - the diagram;
-   - the path of one sentence from chat to a running model;
-   - who holds each fact;
-   - rules R1–R40 that every change must keep;
-   - where new things go;
-   - the checklist to tick before any install.
-3. **`docs/code-map.md`.** Every part, action, state file, timer and function, written from the code. Use it to find where something lives.
-4. **`docs/contract.md`.** What the product must do and why. Search it; don't read it all.
-5. **`docs/analysis-2026-11-11/`** and **`docs/reviews-2026-11-11.md`.** What the reviews found and the plan that came out of them.
+## Never break
 
-The contract says what the product must do. The architecture map says how it is built now. When they disagree, say so
-in your change (and fix the one that is wrong); never quietly change either.
+- Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
+- Keep every rule in `docs/rules/` (one line each in `docs/rules.md`). Where a rule says "Today:" the code falls short
+  of it; don't add to those gaps.
+- Nothing starts a model or workload on Spark 2 (the brain's Spark). Never touch SSH, Tailscale, firewall or user
+  settings (contract 8.3).
+- Don't delete the owner's data. Stopping something isn't deleting.
+- Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
+- Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `service/src/NN-name.mjs` | The service, in parts. **Edit these, never `service/server.mjs`.** |
-| `service/server.mjs` | Generated: the parts joined in name order. Rebuild it with `node tools/build-server.mjs` after any change to a part. The tests and the installer refuse a `server.mjs` that doesn't match its parts. |
+| `service/server.mjs` | Generated: the parts joined in name order. |
 | `service/config.json` | The Sparks, images, and the brain's setups (`main.presets`). |
-| `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Recipe reading, passkeys (WebAuthn), and the worker run on each Spark. |
+| `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Recipe reading, passkeys (WebAuthn), the worker on each Spark. |
 | `public/` | The page: plain JavaScript, no build step. |
 | `test/` | The suite (`*.test.mjs`) and the stand-in fleet (`test/mock/`, `test/start-mock.mjs`). See `test/README.md`. |
-| `deploy/` | Install scripts (`host-on-portal.sh`; on Spark 2 itself, `host-on-portal.sh local`). `go-back.sh` and `RECOVERY.txt`: every install copies them to `~/.local/share/spark-console/` on Spark 2, the by-hand way back when the console doesn't answer. |
-| `tools/` | `build-server.mjs`, `code-map.mjs`, `console.mjs`, `spark.mjs`, `brain-load.mjs`, and catalog builders. |
-| `docs/` | The contract, the architecture map, the code map, and the analysis record. |
+| `deploy/` | Install scripts (`host-on-portal.sh`), and `go-back.sh` and `RECOVERY.txt`, the by-hand way back. |
+| `tools/` | `make.mjs` (the one command), `console.mjs` (the owner's terminal), `spark.mjs` (agents), builders. |
+| `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
+| `docs/rules/`, `docs/rules.md` | One rule per file (Rule, Why, Today, Where, Checked by), and their index (generated). |
+| `docs/how/` | One card per kind of work. |
+| `docs/state.md`, `docs/glossary.md` | Who holds each fact; the words this project uses. |
+| `docs/code-map.md` | Generated: every part, action, state file, timer and function. |
+| `docs/contract.md` | What the product must do and why. Search it. |
+| `docs/history/` | Dated records: old plans, reviews, analyses. Never edited. |
 
-On Spark 2 the same tree is at `~/spark-console-src` (every install copies it there).
+State lives on Spark 2 in `~/.local/state/spark-console` (state files), `~/.local/share/spark-console` (snapshots,
+the way back), `~/.config/spark-console/secrets.json` (keys) and `~/spark-console-src` (the source).
 
 ## How to work
 
-1. Find it first: `docs/code-map.md` for where, `docs/architecture.md` section 6 for where a new thing of that kind goes.
-   Then read the code before changing it.
-2. Make the change in `service/src/…`, then run `node tools/build-server.mjs` and `node tools/code-map.mjs`.
-3. Every fix gets a test that fails without it. Put it in the `test/*.test.mjs` file closest to the feature.
-4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs`. On a slow machine,
-   add `SPARK_TEST_SLOW=3`. Tests bind local ports and start a stand-in fleet of bash scripts; they never touch the
-   real Sparks.
-5. A new tool (an `action({...})` an agent can call) also goes in the tool lists in `test/lib.mjs` (`TOOLS` or
-   `CHANGE_TOOLS`), which the door tests compare exactly, and in the tool counts in `test/change.test.mjs`.
-6. If the change alters how parts connect, who holds a fact, or a rule, update `docs/architecture.md` in the same
-   change.
-7. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if all of it passes, marks the build's
-   workflows as tested in `service/workflows.lock.json`. The installer refuses a lock that isn't for this exact code.
-   Install with a line saying what changed: `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh`. It goes
-   on the update record that `sparkie_setup` shows (no secrets in it).
-8. After installing, check the change the way the owner would use it: through Sparkie's chat or
-   `POST /console/api/actions/<name>`. Passing tests are not the same as working on the real Sparks. The installer checks
-   the new build by itself (40 seconds as one process, the ways in, one chat turn) and puts the previous files back on
-   any miss (R30); put `SKIP_CHAT_CHECK=1` in front of the command to update while Sparkie's model is down.
+1. Find it first: the task table below gives one card; `docs/code-map.md` says where each part, action and function
+   lives. Read the code before changing it.
+2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs`, the code map
+   and the rules index, then checks the documents against the code. `node tools/make.mjs --check` changes nothing.
+3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
+4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
+   `SPARK_TEST_SLOW=3` on a slow machine). They start a stand-in fleet and never touch the real Sparks.
+5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if all of it passes, marks the
+   build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
+   `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
+6. After installing, check the change the way the owner would use it: through Sparkie's chat or
+   `POST /console/api/actions/<name>`. Passing tests are not the same as working on the real Sparks. The installer
+   puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates while Sparkie's model is down.
 
-## Rules that matter
+## I want to …
 
-- Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
-- Keep rules R1–R40 in `docs/architecture.md`. Where the map says "Today:" the code falls short of a rule; don't add to
-  those gaps.
-- Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
-- Nothing starts a model or workload on Spark 2 (the brain's Spark). Never touch SSH, Tailscale, firewall or user
-  settings (contract 8.3).
-- Don't delete the owner's data. Stopping something isn't deleting.
-- Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
+| I want to … | Card |
+|---|---|
+| add an action (a tool Sparkie and agents call) | `docs/how/add-an-action.md` |
+| add a workflow (a tested, versioned change) | `docs/how/add-a-workflow.md` |
+| add a recipe source | `docs/how/add-a-recipe-source.md` |
+| add a known start failure and its fix | `docs/how/add-a-known-failure.md` |
+| add a read-only check on the Sparks | `docs/how/add-a-read-only-check.md` |
+| add a saved workflow (no code) | `docs/how/add-a-saved-workflow.md` |
+| run a new kind of workload (an app, a job) | `docs/how/add-a-kind-of-workload.md` |
+| add a new way in (a new caller) | `docs/how/add-a-way-in.md` |
+| open something through the app door | `docs/how/change-the-app-door.md` |
+| add a page route | `docs/how/add-a-page-route.md` |
+| add a state file | `docs/how/add-a-state-file.md` |
+| add an event type or a job type | `docs/how/add-an-event-or-job-type.md` |
+| add a worker.py action | `docs/how/add-a-worker-action.md` |
+| fetch something from outside the Sparks | `docs/how/add-an-outbound-connection.md` |
+| add a messaging channel | `docs/how/add-a-messaging-channel.md` |
+| change what a member may do | `docs/how/add-a-member-permission.md` |
+| add an engine | `docs/how/add-an-engine.md` |
+| find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
+| find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
+| find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+
+## Before you say done
+
+1. Parts edited, not `server.mjs`; the part's name fits R28; `node tools/make.mjs --check` passes.
+2. A test that fails without the change; no existing test weakened.
+3. A new action is in `test/lib.mjs` and in the door and fuzz argument tables; a new change is in `ACTION_KIND`, with
+   its target traced in `sparkieCheck`.
+4. Anything new that changes a Spark goes through `runAction`, a claim, a job and `run`. Don't copy the paths that
+   skip them today (R11).
+5. Nothing starts on Spark 2; the 8 GB rule holds; no SSH, Tailscale, firewall, user or access change.
+6. A new route sits below its checks and is tested every way R4 lists; a passkey-gated one is in `mayNeedPasskey`,
+   `needsPasskey`, `describeChange` and `bodyLimit`.
+7. A new caller's `via` is handled at every comparison (`docs/how/add-a-way-in.md`); `ctx.trusted` never comes from a
+   request.
+8. A new state file uses `writePrivate` and `readKept`, holds no secret, and has its row in `docs/state.md`; anything
+   new kept in memory may be lost at a restart; no owner setting lives in `config.json`.
+9. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
+10. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect
+    "needs validation" after install.
+11. A new shipped file is in `UI_FILES`, `SERVICE_FILES` or `RECOVERY_FILES`; a new code file is in all three build-id
+    lists (`buildOf` in `01-setup.mjs`, `API_BUILD` in `deploy/host-on-portal.sh`, and `test/fleet.test.mjs`
+    (“answers with the build”)). A change to what the installer reads (R30) keeps `test/install.test.mjs` passing.
+12. `node test/lock.mjs` passed on this exact tree, and again after any `worker.py` edit; after install, `/health`
+    shows no workflow `untested`.
+13. The documents change in the same change: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
+    rule's file in `docs/rules/` (its Today, Where and Checked by), a card in `docs/how/`.

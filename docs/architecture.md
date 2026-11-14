@@ -1,13 +1,14 @@
 # How Spark Console is built
 
 Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers: a part with its function names, or a test file with part of
+which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
 `docs/rules/` (index: `docs/rules.md`), where "Today:" marks where existing code does not keep its rule; where new
 things go, one card per kind of work, in `docs/how/`; who holds each fact, in `docs/state.md`; the checklist, in
 `AGENTS.md` ("Before you say done").
+
 ## 1. In one paragraph
 
 Spark Console is one Node process with no dependencies, a systemd user unit on Spark 2. It manages every Spark in its
