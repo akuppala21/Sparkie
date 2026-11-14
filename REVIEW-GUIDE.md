@@ -305,7 +305,14 @@ These were found and judged not to break real use under the strict bar. Suggesti
   scripts that act like Docker, `nvidia-smi` and SSH on each Spark. It never touches the real Sparks.
 - **The full gate.** `node test/lock.mjs` runs every test file strictly and writes `service/workflows.lock.json` only if
   all of them pass. The installer refuses a lock that doesn't match this exact code.
-  - Result for this folder: **GATE_RESULT**.
+  - Result for this folder: **all 996 tests passed** on 2026-11-13, in a container on Spark 3 (Linux, no network, no
+    access to Docker), four test files at a time, in 12 minutes. Build `0be65f7314ab` is marked as tested, with
+    `start_model` `0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups`
+    `f807e08bdd5d` and `restart_model` `bb7ffe5e4224`. `tools/test-on-spark.sh` is how that run is made.
+  - The runs before it found things worth knowing. On the Mac, one file at a time, a low battery made healthy tests
+    fail (macOS slows the processor). The first Linux runs found two faults that never show on a Mac: the stand-in
+    fleet read the real machine's memory, and `awk` on Linux rounded large numbers (the same script runs on the real
+    Sparks, so their memory figures were off by up to about a megabyte). Both are fixed.
 - **Reviews.** Each group had a Fable 5.2 review at extra-high effort, and every finding was either fixed with a test or
   put on the later list above.
 - **Test fixes on the last day.** None loosened a check. (The three code fixes found that day are in section 4.)
