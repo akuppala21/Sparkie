@@ -81,6 +81,14 @@ rest of `config.json`.
   is ignored unless it handles it), so the drill kills its own container by id and marks that one exit as a crash. It
   proves the watcher, self-healing and restart_model on the real Spark, not how one engine dies.
 
+## Event and job types (section 6 row "An event type or a job type")
+
+No new event type: `crashed` carries `drill: true` for the drill's kill (`describeEvent` says so). One new job type,
+`self-test`: in `OP_WORDS` (14-chats.mjs), `TELL_OPS` (20-tell.mjs) and the page's `SVC_LABEL`. Left out of
+`CHANGES_MODELS`, `startingNow` and the by-type busy checks on purpose: it holds no claim and changes no model itself;
+its steps are the jobs that do, and they are in those lists already. `postResult` and `wait_operation` carry its
+`report` lines.
+
 ## Tool counts
 
 Change tools 15 → 16; a key that can act sees 43 (was 42). A look-only key still sees 27.
