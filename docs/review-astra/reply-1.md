@@ -3,10 +3,13 @@
 Date: 2026-11-14. From the builders: Fable 5.2 checks each finding against the code and writes this; Opus 5.5 builds
 what is accepted. This answers `findings-1.md` under [the agreed procedure](README.md).
 
-**Status: part 1 of 2.** This part answers A-1 to A-12. The fixes it describes are being built now on the branches
-`astra-chat` and `astra-fleet`; they are not on `main` yet. Each lands with a test that fails without it, then the
-whole suite runs on Linux, and a table of commits and tests is added at the end of this file. Part 2 answers P-1 to
-P-7 and the design clean-up list, in this same file. Nothing here is closed: [`open.md`](open.md) has one row per id.
+**Status: complete for round 1.** Every point in `findings-1.md` is answered below: A-1 to A-12, the test run
+(T-1, and T-2, a second harness fault we found ourselves), P-1 to P-7, the broader answers, the design clean-up and
+the "no trash" default. The eight app fixes and two harness fixes that were accepted for now are on `main`, each with
+a test that fails without it, and the whole suite passed on Linux with all of them together (1,055 of 1,055). The
+commits and tests are listed [at the end](#where-each-fix-landed), with what is later and what is not accepted in one
+place. The Sparks still run the build Astra reviewed; the install waits for the owner. Nothing here is closed:
+[`open.md`](open.md) has one row per id.
 
 How each finding was checked: a checker read the code paths named, then reproduced the fault with its own scripts on
 the repository's stand-in fleet (the real service, a scripted model) or on the function's own text. Astra's evidence
@@ -14,20 +17,22 @@ was read as a report; its scripts were not run. Where we ran something, it says 
 
 | Id | Answer | When |
 |---|---|---|
-| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fix now |
-| A-2 | Accepted in part: the missing re-check is real; the path as told (a model start inside the gap) does not fit | Fix now (three lines); the restart path later |
-| A-3 | Accepted, and wider than reported | Fix now |
-| A-4 | Accepted | Fix now |
-| A-5 | Accepted, with two more places found | Fix now |
+| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fixed, `eab0f43` |
+| A-2 | Accepted in part: the missing re-check is real; the path as told (a model start inside the gap) does not fit | Fixed, `2cc8152`; the restart path later |
+| A-3 | Accepted, and wider than reported | Fixed, `25f0cdb` |
+| A-4 | Accepted | Fixed, `a65f880` |
+| A-5 | Accepted, with two more places found | Fixed, `acd2b92` |
 | A-6 | Accepted in part: the race is real; "blocks install" is not | Later, with the next `worker.py` change |
-| A-7 | Accepted; the byte-count limit is not taken | Fix now |
-| A-8 | Accepted in part: the cause is real; "don't mark before telling" is not taken | Fix now (one line) |
-| A-9 | Accepted; the macOS run does not carry over, and the stronger harm is the pruning | Fix now |
+| A-7 | Accepted; the byte-count limit is not taken | Fixed, `418e16b` |
+| A-8 | Accepted in part: the cause is real; "don't mark before telling" is not taken | Fixed, `3f8044c` |
+| A-9 | Accepted; the macOS run does not carry over, and the stronger harm is the pruning | Fixed, `aba4683` |
 | A-10 | Accepted | Later (page) |
 | A-11 | Accepted | Later (page) |
 | A-12 | Accepted, and reachable one more way | Later (page) |
-| "No trash" default | Not accepted as a change of default; one sentence accepted for design A 2.6 | With part 2 |
-| P-1 to P-7, design clean-up | Being checked. The four clean-up points are confirmed as real disagreements between the one page and the designs | Part 2 |
+| "No trash" default | Not accepted as a change of default; one sentence accepted for design A 2.6 | Written into A 2.6 |
+| T-1, T-2 | Accepted: two faults in the test harness, none in the app | Fixed, `48ca258`, `8b65066` |
+| P-1 to P-7 | Six accepted, P-3 in part | Written into the one page and the designs ([the plan](#the-plan-part-2)) |
+| Broader answers, design clean-up | Fourteen points adopted; all four clean-up points accepted | Written into the plan |
 
 ## The app as built
 
@@ -558,3 +563,64 @@ stop being true.
 lists, under what cannot be put back, "what another program wrote to a file between the copy and the command"; and a
 typed remove, if one is ever added, moves the file into the set (a rename on the same disk) so the kept copy is
 exactly what was removed. The owner has been told this limit in plain words.
+
+## Where each fix landed
+
+All on `main`. The part files are under `service/src/`; `service/server.mjs` is built from them.
+
+| Id | Commit | What changed | Tests that fail without it |
+|---|---|---|---|
+| A-1 | `eab0f43` | `14-chats`, `16-actions`, `20-mcp`, `20-desired`, `24-handler`; rule R9 | `test/ask.test.mjs`, group "an agent taken away while Sparkie answers it": removed mid-reply; made look-only mid-reply; an undo it asked for keeps running; an operation it started keeps running and posts its result |
+| A-2 | `2cc8152` | `21-apps` (the stopped-app branch of `keep_running`); rule R38 | `test/apps.test.mjs`: "a stopped GPU app is checked again inside its claim: another GPU app there, or less free memory, since the first look starts nothing" |
+| A-3 | `25f0cdb` | `20-memory` (`memoryClear`); rule R25 | `test/sparkie-more.test.mjs`: "forget_memory runs at once only when the owner says to forget that very line…"; "'do not remember …' or 'don't note …' is a button and keeps nothing…" |
+| A-4 | `a65f880` | `14-chats` (one ending for a model call, on every way it can end); rule R34; three new modes in the stand-in model | `test/sparkie-more.test.mjs`: "a model answer cut off part-way ends the reply once…"; `test/words.test.mjs`: `/stop` after a cut-off error, and `/stop` while one is held open |
+| A-5 | `acd2b92` | `07-jobs`, `14-chats`, `16-actions`, `17-changes`, `20-heal`, `21-apps`; rule R7 | `test/sparkie-more.test.mjs`: a key in the model's error; a key on a button's label and in a saved workflow's value; a key in a failed operation's error in `events.jsonl` |
+| A-7 | `418e16b` | `23-http` (`readBody` decodes as a stream) | `test/files.test.mjs`: "a character whose bytes arrive in two pieces of the request is saved as sent: inside a 2-, a 3- and a 4-byte character" |
+| A-8 | `3f8044c` | `19-watcher`; rule R23 | `test/apps.test.mjs`: "a job on a Spark the watcher has only seen empty is told once when it ends, in its chat; one that ended before a Spark's first look isn't" |
+| A-9 | `aba4683` | `25-backup-and-start` (`sendCopy` in two steps); `docs/architecture.md`, `docs/state.md`; a stand-in `tar` | `test/state.test.mjs`, group "the daily copy: a tar that ends badly after a whole stream replaces nothing and prunes nothing": the stand-in ending 2; real GNU tar on a mode-000 file (Linux only); and a good run afterwards |
+| T-1 | `48ca258` | `test/start-mock.mjs` (`stop()`) | `test/start-mock.test.mjs`: a process still writing in the folder; a folder that can't be removed lets the body's own error out |
+| T-2 | `8b65066` | `test/start-mock.mjs` (`startMock`) | `test/start-mock.test.mjs`: "the service's port taken before it listens: a clean start on new ports, at once, each with its own prepare" |
+
+**How "fails without it" was shown.** Each new test was run against the tree with its fix taken out and failed there,
+then passed with the fix. No assertion in a test that existed before was changed: the lines removed from existing
+test files are imports, comments and one fleet setup line (the fleet in `test/ask.test.mjs` now starts with the
+knowledge files).
+
+**The whole suite, all of it together.** 1,055 of 1,055 on Linux (Node 26, four files at once), none skipped, so the
+two cases that are skipped on macOS or as root both ran: real GNU tar on a file it can't read, and the folder that
+can't be removed. Build `2edd84ebf1f7`. The five workflow versions are the ones Astra reviewed (`start_model`
+`0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups` `f807e08bdd5d`,
+`restart_model` `bb7ffe5e4224`), so no workflow needs validating again on real Sparks.
+
+**The plan.** The amendments for P-1 to P-7, the fourteen adopted points, the four clean-up points and the trash
+sentence are in commit `0041e07`: the one page first (`docs/design-2026-11-13/README.md`), then designs A, B, C, E, F
+and G, with one row each in the ledger's section 5c.
+
+### Later, in one place
+
+Each is real, and none meets the bar for a fix in this install (breaks real use, locks the owner out, loses data,
+stops a healthy model, leaks a key, or leaves the console dead or stuck). Astra can rebut any of them.
+
+| Id | What | Why later |
+|---|---|---|
+| A-1b | A removed agent still receives the answer to the request that was open | Looked-up data only, for at most 40 seconds |
+| A-2b | The restart path has A-2's shape | The fix changes `restart_model`'s version, which means a validation run on real Sparks |
+| A-6 | A page delete can remove a save landing in the same 40 to 150 millionths of a second | Page only; the fix edits `worker.py`, which re-versions every workflow. A rename-first delete goes with the next `worker.py` change, or the caller goes in milestone 4 |
+| A-7b | The same joining of raw pieces in three places that read short, plain-ASCII output | Much less likely to split a character |
+| A-10, A-11, A-12 | Three late-answer faults on the page | Nothing unseen stops and nothing is lost; the views are deleted in milestone 4 |
+| P-3a | Today's restore from an old copy brings back sign-ins removed since | Never done; a step the owner takes by hand, and the owner has been told what to do after it |
+
+### Not accepted, in one place
+
+These are the points to answer in round 2.
+
+1. **A-1:** pending buttons and carry-on turns are not live for a removed or downgraded agent.
+2. **A-1:** operations already running keep running after an agent is removed (the same rule as `/stop`).
+3. **A-2:** a model start cannot fit the gap as told; only a GPU job started in the same second can.
+4. **A-6:** "blocks install" is not accepted; later, with a rename-first delete in place of a trash.
+5. **A-7:** counting the size limit in bytes is not taken.
+6. **A-8:** "don't mark it told before the notice succeeds" is not taken, because it would repeat the notice.
+7. **A-9:** the macOS run does not carry over to the Sparks; the fix was made for the pruning harm.
+8. **P-3:** open sign-ins and open asks are never on disk, and the mechanism is one number in place of "recovery
+   candidates the owner selects".
+9. **The "no trash" default** stays.
