@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.
 
-The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10937 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10941 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -269,7 +269,7 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 
 "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the owner names: no GPU, a memory cap, named volumes only, its port opened on 127.0.0.1 and the Spark's tailnet address only, labelled spark.app=1 (never spark.console=1, so no model start ever counts it as one of its own). Self-healing brings a kept app …
 
-- **Lines:** 544
+- **Lines:** 548
 - **Actions:** `keep_running`
 - **Functions:** `appSecretName`, `imageRepo`, `appModelImage`, `appAnswers`, `appStates`, `appLook`, `appDiffers`, `commandWords`, `appCommand`, `devBox`, `appRoom`, `jobDir`, `appRunCommand`, `gpuAlone`, `jobFolder`, `jobEnded`, `appUp`, `appDone`, `appPutBack`, `appNamed`, `appNow`, `healApp`
 

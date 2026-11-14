@@ -453,6 +453,10 @@ action({
       runJob(job, async j => {
         j.checkPause = () => { cancelCheck(j); pausedCheck(ctx); };
         let answers;
+        // (what runs there now, again, inside the claim: another GPU app, job or model, or less free memory, may have come
+        // since the look before it. Before the try: a refusal here started nothing, so there's nothing to put back.)
+        if (look.gpu) gpuAlone((await inventory(null)).sparks.find(s => s.id === spark) || sp, await appLook(node, container, sp.tsip), at);
+        await appRoom(node, gb, container);
         try {
           pausedCheck(ctx);
           step(j, `Starting ${container} on ${at}`);

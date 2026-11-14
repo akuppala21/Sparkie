@@ -759,6 +759,51 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
     assert.equal((await operations()).length, ops, 'nothing started');
   });
 
+  // The checks before the claim are made again inside it, just before docker start (A-2): another GPU thing that came,
+  // or memory that went, between the first look and the claim is never started beside.
+  test('a stopped GPU app is checked again inside its claim: another GPU app there, or less free memory, since the first look starts nothing', { timeout: 300000 * SLOW }, async () => {
+    // (gpu-box, the GPU app of the first case here, is stopped and off the list; with the model on Spark 3 stopped, the
+    // checks before the claim pass)
+    assert.equal(stateOf('spark3', 'gpu-box'), 'exited');
+    assert.equal(await listed('spark3', 'gpu-box'), undefined);
+    setState('spark3', MODEL3, 'exited', 'Exited (0) just now');
+    const meminfo = readFileSync(m('spark3', 'meminfo'), 'utf8');
+    const other = () => {
+      appendFileSync(m('spark3', 'containers'), 'gpu-other|running|Up 1 second|app||||||\n');
+      writeFileSync(m('spark3', 'run-gpu-other'), ['-d', '--name', 'gpu-other', '--label', 'spark.app=1', '--label', 'spark.gpu=1', '--gpus', 'all', '--memory', '8g', 'nvcr.io/nvidia/pytorch:25.01-py3', ''].join('\n'));
+    };
+    const noOther = () => {
+      const f = m('spark3', 'containers');
+      writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter(l => !l.startsWith('gpu-other|')).join('\n'));
+      rmSync(m('spark3', 'run-gpu-other'), { force: true });
+    };
+    // (every docker inspect on Spark 3 takes 2 s more: when keep_running answers, its claim is taken and the job's own
+    // look at gpu-box is still to come, so the change lands between the two)
+    writeFileSync(m('spark3', 'slow-inspect'), '2');
+    try {
+      for (const [what, change, re] of [
+        ['another GPU app', other, /^Spark 3 runs gpu-other now\. A GPU app or job has a Spark’s GPU to itself\./],
+        ['less free memory', () => writeFileSync(m('spark3', 'meminfo'), meminfo.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${20 * 1024 * 1024} kB`)),
+          /^Spark 3 doesn’t have room for gpu-box now: it may use up to 24 GB, and 12 GB is free beyond the 8 GB kept for the system\./]]) {
+        const r = await keep({ spark: 'spark3', container: 'gpu-box' });
+        assert.equal(r.json?.outcome, 'started', `${what}: ${r.text}`);
+        change();
+        const w = await finished(r.json.operation);
+        assert.equal(w.status, 'failed', `${what}: ${JSON.stringify(w)}`);
+        assert.match(w.error, re, what);
+        assert.equal(stateOf('spark3', 'gpu-box'), 'exited', `${what}: gpu-box wasn’t started`);
+        assert.ok(!w.recentLog.some(l => /It didn’t come up/.test(String(l.text ?? l))), `${what}: nothing to put back: ${JSON.stringify(w.recentLog)}`);
+        noOther();
+        writeFileSync(m('spark3', 'meminfo'), meminfo);
+      }
+    } finally {
+      rmSync(m('spark3', 'slow-inspect'), { force: true });
+      noOther();
+      writeFileSync(m('spark3', 'meminfo'), meminfo);
+      setState('spark3', MODEL3, 'running', 'Up 1 second');
+    }
+  });
+
   test('a job run again that ends before the watcher’s next look is told with its own end, not the run before’s', { timeout: 180000 * SLOW }, async () => {
     const r = await keep({ spark: 'spark4', container: 'rerun-job', image: 'python:3.12-slim', once: true, command: ['python3', '/in/rerun.py'] });
     assert.equal(r.json?.outcome, 'started', r.text);
