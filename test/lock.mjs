@@ -7,8 +7,10 @@
 //
 // The lock also names what was tested and where, when that is known: `tree` (git's hash of the files tested, the lock
 // itself left out) and `commit` (only when those files are exactly the commit's), `run` (the GitHub run, on GitHub),
-// and `brainReads`, the sha256 of what Sparkie's brain is sent (its system prompt and every tool's name, description
-// and inputs), so a later build can say whether what the brain reads has changed. Without git (a copy with no .git
+// and `brainReads`, the sha256 of what Sparkie's brain is sent (its system prompt and the tools one turn offers, how it
+// is asked, and everything the other rounds can add: every action's name, description, inputs and group, the cap, the
+// groups' words and the lines that follow tools, the brain's setup: R46), so a later build can say whether what the
+// brain reads has changed. Without git (a copy with no .git
 // folder) tree and commit are left out; off GitHub, run is. After the suite it prints the seconds each test file took.
 //
 // test/lock.test.mjs imports lockFor and the rest; importing this file runs nothing.
@@ -53,7 +55,9 @@ export function runOf(env = process.env) {
 }
 
 // What the brain is sent at the start of the owner's chat turn, as the stand-in model received it (mock/model.mjs
-// keeps the latest in brain-sent.json): the system prompt and every tool as sent.
+// keeps the latest in brain-sent.json): the system prompt, the tools that turn offers and how it was asked (sampling,
+// limit, thinking). With it, what other rounds can be sent (R46): GET /actions, every action with its group and the
+// brain's catalog (the cap, the groups and their words, the lines that follow tools, the setup's sampling and limits).
 export async function brainSent(fleet) {
   const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
   let last = '';
@@ -64,12 +68,16 @@ export async function brainSent(fleet) {
     last = await (await fetch(`${fleet.base}/chats/${id}/messages`, { method: 'POST', headers, body: JSON.stringify({ text: words }) })).text();
     let sent = null;
     try { sent = JSON.parse(readFileSync(join(fleet.dir, 'brain-sent.json'), 'utf8')); } catch {}
-    if (sent?.words === words && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) return { system: sent.system, tools: sent.tools };
+    if (sent?.words === words && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) {
+      const catalog = await (await fetch(`${fleet.base}/actions`)).json();
+      if (!Array.isArray(catalog?.actions) || !catalog.brain) throw new Error('GET /actions didn’t give the actions and the brain’s catalog, so what the brain reads couldn’t be marked.');
+      return { system: sent.system, tools: sent.tools, params: sent.params ?? null, catalog };
+    }
     await new Promise(r => setTimeout(r, 2000));
   }
   throw new Error(`The stand-in brain wasn’t sent a chat turn, so what it reads couldn’t be marked: ${last.slice(-500)}`);
 }
-export const brainReadsOf = ({ system, tools }) => createHash('sha256').update(JSON.stringify({ system, tools })).digest('hex');
+export const brainReadsOf = ({ system, tools, params = null, catalog = null }) => createHash('sha256').update(JSON.stringify({ system, tools, params, catalog })).digest('hex');
 
 // The lock for the build the stand-in fleet runs. `git` is what gitFields gave before the suite ran.
 export async function lockFor(fleet, { git = gitFields(), env = process.env } = {}) {

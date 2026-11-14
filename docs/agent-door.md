@@ -190,4 +190,5 @@ record, so when you ask Sparkie about the fleet it knows what's running and what
 
 - MCP over HTTP (Streamable HTTP, JSON responses, stateless): `initialize`, `tools/list`, `tools/call`, `ping`.
 - Keys: `~/.local/state/spark-console/agents.json` on Spark 2 (fingerprints, names, last use).
-- The action list: `ACTIONS` in `service/server.mjs`; `GET /console/api/actions` lists it (owner).
+- The action list: `ACTIONS` in `service/server.mjs`; `GET /console/api/actions` lists it (owner), each action with
+  its group (R46). Sparkie is offered a few groups a round; an agent sees every action, and is told to call `guide` first.

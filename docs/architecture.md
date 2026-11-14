@@ -91,7 +91,7 @@ flowchart TD
   V1 -->|"model sparkie or the brain's served name: the agents route's model"| BRAIN
   V1 -->|"a running model's name: its own server, HTTP over the tailnet"| FLEET
   V1 -->|"a model that isn't running: startOnCall, via gateway, nothing may stop"| RUN
-  CHAT -->|"prompt, fleet notes, memory. Text and tool calls back"| BRAIN
+  CHAT -->|"prompt, fleet notes, memory, the core tools and the request's groups (R46). Text and tool calls back"| BRAIN
   CHAT -->|"each tool call, via sparkie, with the intent and the asker's words in ctx"| RUN
   RUN -->|"finds the action"| REG
   RUN -->|"untested: refused. Not validated: a validation run, or a question"| WF

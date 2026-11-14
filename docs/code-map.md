@@ -3,11 +3,11 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.
 
-The service is 38 parts in `service/src/`, joined in name order into `service/server.mjs` (11505 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 39 parts in `service/src/`, joined in name order into `service/server.mjs` (11657 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
-26 lookups and 16 changes. The same list is what Sparkie, the agent door (`/mcp`) and `POST /console/api/actions/<name>` offer.
+27 lookups and 16 changes. The same list is what Sparkie, the agent door (`/mcp`) and `POST /console/api/actions/<name>` offer.
 
 | Action | Kind | What it is | Part |
 |---|---|---|---|
@@ -50,6 +50,7 @@ The service is 38 parts in `service/src/`, joined in name order into `service/se
 | `remember` | change | Remember | `20-memory.mjs` |
 | `forget_memory` | change | Forget | `20-memory.mjs` |
 | `keep_running` | change | Keep an app running | `21-apps.mjs` |
+| `guide` | read | Guide to the tools | `21-guide.mjs` |
 | `self_test` | change | Test the Sparks (the self-test) | `21-selftest.mjs` |
 | `search_web` | read | Search the web | `21-web.mjs` |
 | `read_page` | read | Read a web page | `21-web.mjs` |
@@ -164,7 +165,7 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
-- **Lines:** 507
+- **Lines:** 541
 - **State files it names:** `chats.json`
 - **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `runChoice`, `postResult`, `multiStep`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `chatReply`
 
@@ -179,7 +180,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 
 Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the page's buttons move onto the same list, with the same checks. Each action says: kind 'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify, put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions. scope which agent keys may use it: 'fleet:read' today; …
 
-- **Lines:** 1123
+- **Lines:** 1138
 - **Actions:** `fleet_status`, `running_models`, `models_on_disk`, `find_recipes`, `recipe_detail`, `search_huggingface`, `where_it_fits`, `deploy_plan`, `cluster_plan`, `linked_sparks`, `spark_detail`, `recent_operations`, `operation_log`, `container_logs`, `spark_diagnostics`, `service_logs`, `files`, `sparkie_setup`, `workloads`, `fleet_events`
 - **Functions:** `action`, `gbOf`, `gbOfGiB`, `sparkIdOf`, `sparkList`, `sparkOf`, `checkValue`, `checkInput`, `liveSchema`, `normQuotes`, `sparkNames`, `tokensOf`, `changeIntent`, `pageOnlyLabel`, `pickContainer`, `tracesToRequest`, `planOf`, `modelCandidates`, `namesModel`, `sparkieCheck`, `tripBreaker`, `firmModel`, `requestLine`, `runAction`, `recent`, `recentInventory`, `recentWorkloads`, `recentMain`, `onDiskAs`, `libraryModel`, `didYouMean`, `mustLibraryModel`, `planSteps`, `fitView`, `pairView`, `flagsKey`, `sameFlags`, `runningDetail`, `darkNow`, `mainArg`, `pasteCard`, `wordStart`, `estimateFit`, `filePattern`, `sizeWords`, `filePath`, `sharedFolder`, `abilities`
 
@@ -232,7 +233,7 @@ Fixing things by itself is what matters most to the owner (2026-11-11). On top o
 
 Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address, <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Access → Agents), so you can see what each one did and remove one without touching the others. A key only works together with its owner's Tailscale identity, and never from the Sparks themselves (requestGate). Only the key's hash is kept. Read-only for now; the key's scopes decide which actions it's offered once more kinds exist.
 
-- **Lines:** 300
+- **Lines:** 301
 - **State files it names:** `agents.json`, `audit.jsonl`
 - **Functions:** `keyHash`, `agentKeys`, `consoleOrigin`, `mcpUrl`, `agentView`, `keyViewer`, `agentFor`, `agentInstructions`, `askSparkie`, `audit`, `mcpDoor`, `hidePrivateKeys`, `keyName`, `randomish`, `hideKeys`, `maskSecrets`, `secretName`, `maskDeep`
 
@@ -289,6 +290,14 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 - **Lines:** 114
 - **Functions:** `editorPath`, `editorTarget`, `editorRequestHeaders`, `editorResponseHeaders`, `editorAllowed`, `editorHttp`, `editorUpgrade`
 
+### `21-guide.mjs`: the guide: the brain's tool groups, and the lookup that finds the rest
+
+Each round Sparkie's brain is offered the core (every action whose group is core) and the groups this request opened, at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens reading. A call to an action that wasn't offered runs through runAction like any other call, and opens its group; so does guide {tools: "<group>"}. With more groups than fit, the oldest one opened by words closes. The groups last for the request and …
+
+- **Lines:** 100
+- **Actions:** `guide`
+- **Functions:** `groupActions`, `toolCap`, `groupsUnder`, `requestGroups`, `openGroup`, `wordGroups`, `stateGroups`, `offeredNames`, `brainCatalog`
+
 ### `21-selftest.mjs`: the self-test: the fleet proved on its real hardware (design D 2.9)
 
 "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no model, model server or GPU app runs there, and nothing is changing there) and has a small chat model on disk (testModels): Model start_model there, stopping nothing (noStops); it answers its test prompt, and is timed. Healing the drill: that model's …
@@ -341,7 +350,7 @@ From the internet (Tailscale Funnel) a request carries no Tailscale identity, so
 
 Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model, container, job, chat, person, hostname or address.
 
-- **Lines:** 706
+- **Lines:** 708
 - **Functions:** `publicFleet`, `publicValue`, `clientAddress`, `requestGate`, `handler`
 
 ### `25-backup-and-start.mjs`: a daily copy of the console's state on another Spark
