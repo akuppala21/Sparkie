@@ -215,6 +215,36 @@ test('a reply that fails after its stop started still carries on', { timeout: 24
   await settled(chat);
 });
 
+// A-4 (review with Astra, 2026-11-14): an error answer from Sparkie's model cut off part-way (its headers, then the
+// connection closed before the body it promised) ends the reply like any error, once: the chat is free, the owner's
+// places are given back, and the next message is answered. A 200 stream cut off part-way does the same, as before.
+// (The model's own count, modelInUse, shows only in how a model search picks its words; on the stand-in fleet that is
+// always "words", since the stand-in model streams every answer and the search reaches Hugging Face, so /health's
+// replying and a fifth chat stand for it.)
+test('a model answer cut off part-way ends the reply once: the chat is free, the owner\'s places come back, and the next message is answered', { timeout: 240000 * SLOW }, async t => {
+  script([]);
+  t.after(() => rmSync(join(T.fleet.dir, 'model-fail'), { force: true }));
+  const cutOff = async (mode, text) => {
+    writeFileSync(join(T.fleet.dir, 'model-fail'), mode);
+    const chat = await newChat(), res = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text } });
+    assert.equal(res.status, 200, res.text);
+    const events = sseEvents(res.text);
+    assert.equal(events.filter(e => e.type === 'error').length, 1, res.text);
+    assert.ok(!events.some(e => e.type === 'done'), res.text);
+    assert.deepEqual((await chatMessages(chat)).map(m => [m.role, Boolean(m.error)]), [['user', false], ['assistant', true]]);
+    assert.equal((await api(`/chats/${chat}`)).json.replying, false);
+    assert.equal((await api('/health')).json.replying, 0);
+    return chat;
+  };
+  // (four in a row: each one stayed "still answering" for good before, and four took every place the owner has)
+  const chats = [];
+  for (let i = 0; i < 4; i++) chats.push(await cutOff('cut-off', `hello number ${i}`));
+  assert.ok((await say(chats[0], 'hello again')).text, 'the same chat answers');
+  assert.ok((await say(await newChat(), 'hello from a fifth chat')).text, 'a fifth chat answers');
+  const half = await cutOff('cut-off-200', 'a stream cut off');
+  assert.ok((await say(half, 'hello again')).text, 'the chat answers after a cut-off stream');
+});
+
 test('a typed yes to Sparkie\'s question keeps the request going', { timeout: 300000 * SLOW }, async () => {
   const words = `stop ${RADIX} on spark 4, then tell me how it went`;
   // (the carry-on turn restarts it, which the words didn't ask for: a button)

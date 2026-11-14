@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync, mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, MEMBER, agentSettings, auditLines, newChat, say, chatMessages, waitFor, sleep, SLOW, REPO, SERVICE_FILE } from './lib.mjs';
+import { T, useFleet, api, call, createKey, MEMBER, agentSettings, auditLines, newChat, say, sseEvents, chatMessages, waitFor, sleep, SLOW, REPO, SERVICE_FILE } from './lib.mjs';
 
 const keys = {};
 // The install snapshots /undo update looks at: a temporary folder, never this machine's own (under ALL_LOCAL,
@@ -279,6 +279,41 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
     assert.deepEqual(stopped.map(m => m.error), ['Stopped at your word.']);
     assert.ok((await say(chat, 'hello again')).text, 'the chat answers again');
     assert.match((await say(chat, '/stop')).text, /^\/stop\nSparkie isn’t answering in this chat/);
+  });
+
+  // A-4 (review with Astra, 2026-11-14): an error answer from Sparkie's model cut off part-way (test/mock/model.mjs,
+  // model-fail). Before, the chat stayed "still answering" for good, and /stop said "Stopped." but freed nothing.
+  const failNext = mode => writeFileSync(join(T.fleet.dir, 'model-fail'), mode);
+  const sendNoWait = (chat, text) => api(`/chats/${chat}/messages`, { method: 'POST', body: { text } }).catch(e => ({ text: String(e) }));
+  test('/stop after a model error cut off part-way: there is nothing to stop, and the chat answers again', { timeout: 120000 * SLOW }, async t => {
+    await answering();
+    t.after(() => rmSync(join(T.fleet.dir, 'model-fail'), { force: true }));
+    failNext('cut-off');
+    const chat = await newChat(), words = 'this answer is cut off part-way';
+    const sent = sendNoWait(chat, words);
+    await waitFor(() => requests().some(l => JSON.parse(l).words === words), { what: 'the turn reaching the model' });
+    await sleep(1000);
+    assert.match((await say(chat, '/stop')).text, /^\/stop\nSparkie isn’t answering in this chat/);
+    assert.equal((await api(`/chats/${chat}`)).json.replying, false);
+    assert.equal((await api('/health')).json.replying, 0);
+    const first = await sent;
+    assert.equal(sseEvents(first.text).filter(e => e.type === 'error').length, 1, first.text);
+    assert.ok((await say(chat, 'hello again')).text, 'the chat answers again');
+  });
+
+  test('/stop while a model error is held open part-way: the chat is free at once', { timeout: 120000 * SLOW }, async t => {
+    await answering();
+    t.after(() => rmSync(join(T.fleet.dir, 'model-fail'), { force: true }));
+    failNext('held-open');
+    const chat = await newChat(), words = 'this answer is held open part-way';
+    const sent = sendNoWait(chat, words);
+    await waitFor(() => requests().some(l => JSON.parse(l).words === words), { what: 'the turn reaching the model' });
+    await sleep(1000);
+    assert.match((await say(chat, '/stop')).text, /^\/stop\nStopped\. /);
+    await waitFor(async () => (await api(`/chats/${chat}`)).json.replying === false, { timeout: 5000 * SLOW, every: 100, what: 'the chat free' });
+    const errors = sseEvents((await sent).text).filter(e => e.type === 'error');
+    assert.deepEqual(errors.map(e => e.error), ['Stopped at your word.']);
+    assert.ok((await say(chat, 'hello again')).text, 'the chat answers again');
   });
 
   test('the page knows the same words as the service', () => {
