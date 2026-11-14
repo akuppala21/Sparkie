@@ -61,6 +61,7 @@ function systemPrompt(context, tools = false, agent = null, channel = null) {
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
       ACTIONS.has('search_web') ? 'If you don’t know the image, port, command or memory something needs, look it up first (search_web, then read_page), and pass the exact settings you found.' : 'If you don’t know the image, port, command or memory something needs, ask the owner.',
+      'To shut a Spark down or turn it on, call power_off or power_on with the Sparks the owner named (never for a model: that’s stop_model or start_model); power_settings sets how many idle minutes before Spark Console powers a Spark off by itself (0 turns that off). Spark 2 runs Spark Console and you, and is never powered off from here.',
       'A change the owner asked for runs straight away. When what they meant isn’t clear, it comes back as a question with buttons: ask it in one short line and stop. When a change is refused, say why in plain words. Never say something started unless a tool said so.',
       'Operations take minutes. Spark Console posts each one’s result in this conversation when it finishes, so don’t wait for them.',
       'When asked what you can do, call sparkie_setup with about "abilities" and answer from what it lists, in plain words.',
@@ -134,12 +135,15 @@ async function runChoice(viewer, conv, id, by) {
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
-const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting' };
+const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting',
+  'power-off': 'Powering off', 'power-on': 'Turning on' };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
   if (!conv) return;
   const where = (job.nodes || [job.node]).filter(Boolean).map(id => sparkName(nodeById(id) || { id })).join(' + ');
-  const what = `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`.replace(/\s+/g, ' ').trim();
+  // (turning a Spark on or off names the Spark, and the model a start turned it on for, 21-power.mjs)
+  const what = (/^power-/.test(job.type) ? `${OP_WORDS[job.type]} ${where}${job.model ? ` for ${job.model}` : ''}`
+    : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
     : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
@@ -156,7 +160,8 @@ function postResult(job) {
 // is", "download … and start it"): one asking for two kinds of change, or with a next step. A one-step request ends
 // with its operation's result, as before (no extra turn on the brain).
 const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|it\s+is)|when\s+(?:it'?s|that'?s)\s+(?:done|up|running|finished)|and\s+(?:then\s+)?(?:start|run|test|benchmark|measure|tell|let\s+me\s+know|report|check|wire|set\s+up|switch))\b/i;
-const multiStep = text => NEXT_STEP.test(normQuotes(text)) || changeIntent(text).asked.length > 1;
+// ("shut down Spark 4" is one request: its words also read as a stop, 21-power.mjs)
+const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
 const chatBusy = id => replying.has(id) || [...jobs.values()].some(j => j.status === 'running' && j.conv === id);

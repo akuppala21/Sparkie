@@ -99,6 +99,10 @@ const tokensOf = text => new Set(sparkNames(normQuotes(text)).split(/[^a-z0-9.]+
 const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
 // "Do not …" and "didn't …" are statements, not questions.
 const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
+// Turning a Spark itself off or on: the phrase names the Spark(s) it switches, and powerSparksSaid reads them from it.
+const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*`;
+const POWER_OFF_WORDS = new RegExp(String.raw`\b(?:shut|turn|power|switch)\s+(?:down|off)\s+${SPARKS_NAMED}|\b(?:shut|turn|power|switch)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*\s+(?:down|off)\b`, 'gi');
+const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:on|up)\s+${SPARKS_NAMED}|\b(?:turn|power|switch|boot)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*\s+(?:on|up)\b|\bwake\s+(?:up\s+)?${SPARKS_NAMED}`, 'gi');
 // What asks for a change (base forms: "start gemma", "bring it up") …
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
@@ -117,6 +121,13 @@ const CHANGE_WORDS = [
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
   ['file', /\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css))\b/gi],
+  // Powering a Spark itself off or on (21-power.mjs): only with a Spark as what is switched, by name ("shut down Spark
+  // 4", "turn Sparks 3 and 4 off", "turn on Spark 3", "boot Spark 3 up"). "Stop gemma on Spark 4 and shut it down" is a
+  // stop, never a power-off: "it" or "them" could be the model.
+  ['poweroff', POWER_OFF_WORDS],
+  ['poweron', POWER_ON_WORDS],
+  // The idle power-off's time: "set the idle shutdown to 45 minutes", "change auto power off to an hour".
+  ['powerset', /\b(?:set|change|make|switch|lower|raise)\b[^.?!;\n]{0,60}?\b(?:idle|auto(?:matic)?(?:ally)?|shut\s*down|shutdown|power[\s-]*off)\b/gi],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
 ];
@@ -171,7 +182,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
   find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'] };
+  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -207,7 +218,7 @@ function tracesToRequest(name, input, saidText, request = saidText) {
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
 // of the request ("said"), the live system ("live", a container or Spark that exists), or Spark Console's own choice
 // when the request left it open ("chosen", like the Spark with room). Shown as "how this was checked" (7.9).
-const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted']);
+const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops']);
 function planOf(wf, st, rawInput, ctx) {
   const input = rawInput.choice ? pendingChoices.get(rawInput.choice)?.args || {} : rawInput;
   const saidText = String(ctx.said || ctx.request || ''), said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText)));
@@ -310,6 +321,16 @@ async function sparkieCheck(name, input, ctx) {
     const path = String(out.path || '').toLowerCase().replace(/\/$/, '');
     return { clear: asked && (now.length ? now.includes(out.spark) : said.has(out.spark)) && /\.[a-z0-9]+$/.test(path) && wordsOf(saidText).has(path), input: out };
   }
+  // Powering Sparks off or on (21-power.mjs): every Spark it would switch is one the owner's words name (never one
+  // Sparkie picked), and the words ask for that very switch ("turn on Spark 3" never powers anything off). The idle
+  // time: the words are about the idle power-off and give that time, or say to turn it off for 0.
+  if (name === 'power_off' || name === 'power_on') {
+    // (the Sparks named in the very phrase that switches them: "shut down Spark 3 and stop gemma on Spark 4" powers off
+    // Spark 3 only)
+    const ids = [out.spark, ...(out.sparks || [])].filter(Boolean), inPhrase = powerSparksSaid(name === 'power_off' ? POWER_OFF_WORDS : POWER_ON_WORDS, saidText);
+    return { clear: asked && ids.length > 0 && ids.every(id => inPhrase.has(id)), input: out };
+  }
+  if (name === 'power_settings') return { clear: asked && powerSettingsClear(out, saidText), input: out };
   // A workflow's steps are Sparkie's own writing. They are saved at once only when this turn read nothing from outside,
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
@@ -318,6 +339,12 @@ async function sparkieCheck(name, input, ctx) {
     return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
+}
+// The Spark ids named inside the phrases a power word matched.
+function powerSparksSaid(re, text) {
+  const ids = new Set();
+  for (const m of normQuotes(text).matchAll(new RegExp(re.source, 'gi'))) for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) ids.add(t);
+  return ids;
 }
 // ctx says who's asking (via: 'sparkie' | 'agent' | …, actor: a name, request: their words, canChange).
 // Agents (Sparkie, outside agents, auto-restart) pause themselves after many changes in an hour or three failed
@@ -516,21 +543,24 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner',
-  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. An offline Spark has its last reading before it went dark. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
+  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose (idle, or asked) has state "off" and offOnPurpose (when, why, its parked models, how to turn it on): that is not a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
     const s = await statusFor(viewer, false);
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
-        ...darkNow(n.id) } : {
-        id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null,
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: n.poweredOff, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+        : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
+        ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
+        id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
         uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: n.runningContainers || [], issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
+      wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,
+      power: powerView(),
     };
   },
 });
@@ -1091,10 +1121,10 @@ action({
   },
 });
 
-const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
+const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'spark-powered-off', 'spark-powered-on', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
 action({
   name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner',
-  description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, model servers learned as recipes, and Spark Console’s own operations with their result.',
+  description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, Sparks Spark Console powered off or on (on purpose: why, and what it parked), model servers learned as recipes, and Spark Console’s own operations with their result.',
   input: { type: 'object', properties: {
     since: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+Z?)?$', description: 'An ISO time; only events after it.' },
     spark: sparkArg,

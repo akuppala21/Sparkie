@@ -20,7 +20,8 @@
 # are ~/.mock/ports'. With ~/.mock/app-port-taken, an app's run fails on its port, leaving the container "created".
 # An app's image is the first word after the run's options, and the words after it are its command (Cmd); its labels
 # spark.gpu, spark.job and spark.chat and its --gpus come from its run too (A13). `docker ps --format 'run…'` gives the
-# spark.gpu label as a fourth column, and `--filter label=spark.gpu=1` keeps only those.
+# spark.gpu label as a fourth column, and `--filter label=spark.gpu=1` keeps only those. `docker ps --format 'power…'` gives
+# the labels the power-off look reads (protect, console, app, job, role).
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
 cmd=$1; shift
@@ -92,6 +93,8 @@ case "$cmd" in
   ps)
     all=0; filter=""; fmt=""
     while [ $# -gt 0 ]; do case "$1" in -a) all=1;; --filter) filter=$2; shift;; --format) fmt=$2; shift;; esac; shift; done
+    # ~/.mock/power-looks (a number): that many more power-off looks answer, then docker ps fails for them.
+    case "$fmt" in power*) if [ -f "$M/power-looks" ]; then n=$(cat "$M/power-looks"); [ "${n:-0}" -le 0 ] && exit 1; echo $((n - 1)) > "$M/power-looks"; fi ;; esac
     while IFS='|' read -r name state status ours model protect role cluster rank; do
       [ -z "$name" ] && continue
       [ $all = 0 ] && [ "$state" != running ] && continue
@@ -102,6 +105,9 @@ case "$cmd" in
         run*) p=""; [ "$protect" = 1 ] && p=true; o=""; [ "$ours" = 1 ] && o=1; g=""; runLabel "$M/run-$name" spark.gpu=1 && g=1; printf 'run\t%s\t%s\t%s\t%s\n' "$name" "$p" "$o" "$g" ;;
         gpuapp*) printf 'gpuapp\t%s\n' "$name" ;;
         ctr*) printf 'ctr\t%s\t%s\n' "$name" "$state" ;;
+        # The power-off look (21-power.mjs): protect, spark.console, spark.app, spark.job and spark.role labels.
+        power*) p=""; [ "$protect" = 1 ] && p=true; c=""; [ "$ours" = 1 ] && c=1; a=""; [ "$ours" = app ] && a=1; j=""; runLabel "$M/run-$name" spark.job=1 && j=1
+          printf 'power\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$p" "$c" "$a" "$j" "$role" ;;
         '{{.ID}}|'*) printf '%s|%s|%s\n' "$(idOf "$name")" "$name" "$state" ;;
         '{{.ID}}'*) printf '%s\t%s\tc%s\t%s\n' "$name" "$name" "$ours" "$status" ;;
       esac

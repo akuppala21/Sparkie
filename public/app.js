@@ -211,6 +211,15 @@ const fmt = {
       : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
   },
 };
+// A Spark's smart plug (deploy/plugs.sh), when it has one: has is a current wall reading; words says what the plug
+// shows for a Spark that isn't answering (its plug off, shut down, or powered but not answering).
+const wallState = n => {
+  const w = n?.wall, live = Boolean(w?.answering) && !isStale();
+  const words = !live ? null : w.on === false ? 'Its smart plug is off, so it has no power.'
+    : num(w.watts) && w.watts < 15 ? `Shut down: its plug is on and it draws ${fmt.watts(w.watts)}.`
+    : num(w.watts) ? `Powered on (${fmt.watts(w.watts)} at the wall) but Spark Console can’t reach it over Tailscale.` : null;
+  return { has: live && num(w.watts), words };
+};
 
 function initials(name) {
   return String(name || '?').split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(s => s[0].toUpperCase()).join('') || '?';
@@ -1352,7 +1361,9 @@ PAGES.fleet = function fleetPage(view) {
     sMem.foot.textContent = total ? `${Math.round((used / total) * 100)}% in use across ${plural(up.length, 'Spark')}` : '—';
     glide(sPower.value, state.status ? sum(up, 'gpuPowerWatts') : null, 1);
     sPower.unit.textContent = 'W';
-    sPower.foot.textContent = state.status ? `across ${plural(up.length, 'Spark')}` : '—';
+    const walls = list.filter(x => wallState(x).has).map(x => x.wall);
+    sPower.foot.textContent = !state.status ? '—' : walls.length
+      ? `At the wall: ${fmt.watts(walls.reduce((a, w) => a + w.watts, 0))} (${plural(walls.length, 'plug')})` : `across ${plural(up.length, 'Spark')}`;
   });
 
   // Cards follow the Spark list: new Sparks get a card, removed ones drop out, without a reload.
@@ -1405,7 +1416,8 @@ function sparkCard(id) {
     const n = node(id);
     if (!n) return;
     const cond = condition(n), up = isUp(n), work = workloads(n), portalHost = portalHostId() === n.id;
-    const key = [up, up ? cond === 'degraded' : cond, work.join('\n'), portalHost, cond === 'degraded' ? issueText(n) : ''].join('|');
+    const wall = wallState(n), off = !up && n.poweredOff?.words ? n.poweredOff.words : null;
+    const key = [up, up ? cond === 'degraded' : cond, work.join('\n'), portalHost, cond === 'degraded' ? issueText(n) : '', up ? wall.has : wall.words, off].join('|');
     if (key !== bodyKey) {
       bodyKey = key;
       const pillEl = condPill(cond);
@@ -1420,10 +1432,12 @@ function sparkCard(id) {
         set(body, head, h('div', { class: 'sc-offline' },
           icon(cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
           cond === 'offline' ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
-          h('span', {}, cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.' : 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
+          h('span', {}, cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.'
+            // (powered off by Spark Console on purpose: its own words, when, why and what was parked)
+            : off || wall.words || 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
         refs = { pill: pillEl };
       } else {
-        const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric('Power', 'W'), [temp, tempBox] = metric('Temp', '°F');
+        const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric(wall.has ? 'Wall power' : 'GPU power', 'W'), [temp, tempBox] = metric('Temp', '°F');
         const memUsed = h('span'), memTotal = h('span'), barFill = h('span'), graph = h('div', { class: 'sc-spark' }), span = h('span');
         set(body, head,
           cond === 'degraded' ? h('div', { class: 'sc-issue' }, icon('alert'), h('span', {}, issueText(n))) : null,
@@ -1473,7 +1487,7 @@ function sparkCard(id) {
     refs.barFill.style.width = `${(share * 100).toFixed(1)}%`;
     refs.barFill.parentElement.classList.toggle('bad', share > 0.95);
     glide(refs.gpu, n.gpuUtilization, 0);
-    glide(refs.power, n.gpuPowerWatts, 1);
+    glide(refs.power, wallState(n).has ? n.wall.watts : n.gpuPowerWatts, 1);
     glide(refs.temp, toF(n.temperature), 0);
     set(refs.graph, sparkline(series(id, 'gpu'), { max: 100, label: `${n.name} GPU use, ${windowLabel(id)}` }));
     refs.span.textContent = windowLabel(id);
@@ -2389,6 +2403,9 @@ const SVC_LABEL = {
   'main-switch': j => `Switch ${ASSISTANT} to ${j.model}`,
   dig: j => `Find setups for ${j.model}`,
   'add-list': j => `Add ${j.model} from Hugging Face`,
+  // Turning a Spark off or on (the smart plugs, contract 9.22); a start that needed one turned on says which model.
+  'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
+  'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 
@@ -3638,6 +3655,7 @@ function nodeLine(n, host = portalHostId()) {
     `memory ${fmt.gib(used)} of ${fmt.gib(n.memoryTotalGiB)} GB used`,
     fmt.temp(n.temperature),
     `${fmt.watts(n.gpuPowerWatts)} GPU`,
+    wallState(n).has ? `${fmt.watts(n.wall.watts)} at the wall` : null,
     `disk ${fmt.disk(n.diskFreeGiB)} free`,
     n.runningContainers?.length ? `containers: ${n.runningContainers.join(', ')}` : 'no containers running',
     num(net.highSpeedLinksConfigured) ? `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} direct cables up` : null,
@@ -3659,7 +3677,7 @@ function fleetSnapshot() {
   return [
     `${SNAPSHOT_MARK}, ${new Date().toLocaleString()}]`,
     ...lines,
-    `Fleet: ${up.length} of ${list.length} online; ${fmt.gib(used)} of ${fmt.gib(total)} GB unified memory in use; ${sum(up, 'gpuPowerWatts').toFixed(1)} W GPU power${control ? `; control network ${control}` : ''}.`,
+    `Fleet: ${up.length} of ${list.length} online; ${fmt.gib(used)} of ${fmt.gib(total)} GB unified memory in use; ${sum(up, 'gpuPowerWatts').toFixed(1)} W GPU power${(w => (w.length ? `; ${w.reduce((a, x) => a + x.wall.watts, 0).toFixed(0)} W at the wall from ${plural(w.length, 'plug')}` : ''))(list.filter(x => wallState(x).has))}${control ? `; control network ${control}` : ''}.`,
     `Sparks with a direct link to each other: ${linked.length ? linked.join('; ') : 'none known'}.`,
     main?.configured ? `${ASSISTANT}'s own model: ${main.title} on ${nodeName(main.node)} (${main.healthy ? 'ready' : main.state || 'unknown'}).` : null,
   ].filter(Boolean).join('\n');

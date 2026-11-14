@@ -9,7 +9,7 @@ For whoever changes this code: Sparkie (the owner's local brain), an agent engin
    - the diagram;
    - the path of one sentence from chat to a running model;
    - who holds each fact;
-   - rules R1–R40 that every change must keep;
+   - rules R1–R41 that every change must keep;
    - where new things go;
    - the checklist to tick before any install.
 3. **`docs/code-map.md`.** Every part, action, state file, timer and function, written from the code. Use it to find where something lives.
@@ -60,7 +60,7 @@ On Spark 2 the same tree is at `~/spark-console-src` (every install copies it th
 ## Rules that matter
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
-- Keep rules R1–R40 in `docs/architecture.md`. Where the map says "Today:" the code falls short of a rule; don't add to
+- Keep rules R1–R41 in `docs/architecture.md`. Where the map says "Today:" the code falls short of a rule; don't add to
   those gaps.
 - Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
 - Nothing starts a model or workload on Spark 2 (the brain's Spark). Never touch SSH, Tailscale, firewall or user

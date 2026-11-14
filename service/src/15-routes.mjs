@@ -76,10 +76,13 @@ const SPARKIE_ID = 'sparkie';
 const IN_USE_MS = 30 * 60000;
 const inUse = new Map();   // "spark/container" → { at, by }
 const usedRecently = key => { const u = inUse.get(key); return u && Date.now() - u.at < IN_USE_MS ? u : null; };
+// When a call at this address last reached a model on each Spark (both Sparks of a model across two): the idle
+// power-off (21-power.mjs) never powers off a Spark called within its idle time. In memory only.
+const sparkCalls = new Map();   // spark → time
 async function runningModels(viewer = null) {
   const inv = await recentInventory(), lib = new Map(inv.library.map(m => [m.name, m]));
   return inv.sparks.filter(sp => sp.online && (!viewer || viewer.role === 'owner' || canUse(viewer, sp.id))).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && !d.rank && d.role !== 'main' && d.endpoint)
-    .map(d => { const m = lib.get(d.model); return { spark: sp.id, container: d.container, endpoint: d.endpoint, names: [d.model, m?.repo, m?.stores?.[sp.id] === 'hf' ? m.repo : d.model].filter(Boolean) }; }));
+    .map(d => { const m = lib.get(d.model); return { spark: sp.id, sparks: d.cluster ? d.cluster.split('+') : [sp.id], container: d.container, endpoint: d.endpoint, names: [d.model, m?.repo, m?.stores?.[sp.id] === 'hf' ? m.repo : d.model].filter(Boolean) }; }));
 }
 async function proxyModel(req, res, path, body, url, served) {
   const u = new URL(url), payload = JSON.stringify({ ...body, model: served });
@@ -111,20 +114,35 @@ async function startOnCall(viewer, name) {
   if (failed && Date.now() - failed < 5 * 60000) throw new HttpError(409, `${name} failed to start a few minutes ago; it isn’t tried again on a call for a while. Ask Sparkie, or start it from Spark Console.`);
   callStarts.recent = callStarts.recent.filter(t => Date.now() - t < 10 * 60000);
   if (callStarts.recent.length >= 3) throw new HttpError(429, 'Three models were started by calls in the last 10 minutes; ask Sparkie, or start this one from Spark Console.');
-  const inv = await recentInventory();
-  let found;
-  try { found = await resolveModelName(String(name).slice(0, 200), inv); } catch { throw new HttpError(404, `No model called “${String(name).slice(0, 80)}” at this address, and none by that name to start. Use "${SPARKIE_ID}", or a name from GET /v1/models.`); }
-  const m = found.lib;
-  if (!m) throw new HttpError(409, `${String(name).slice(0, 80)} isn’t running, and it isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
-  const stoppedAt = Math.max(0, ...[...consoleStopped].filter(([k]) => k.endsWith(`/${containerName(m.name)}`)).map(([, t]) => t));
-  if (Date.now() - stoppedAt < IN_USE_MS) throw new HttpError(409, `${m.repo || m.name} was stopped on purpose ${Math.max(1, Math.round((Date.now() - stoppedAt) / 60000))} min ago, so a call doesn’t start it again. Ask Sparkie, or start it from Spark Console.`);
-  const listed = desired().running.some(x => x.model === m.name || x.container === containerName(m.name));
-  if (!inRecipes(m) && !listed) throw new HttpError(409, `${m.repo || m.name} isn’t running, and only models in your recipes (or on your list of what should run) start on a call.`);
+  // A model parked when Spark Console powered its Spark off (21-power.mjs) comes back on its next call: its Spark is
+  // turned on first if it's off (its files are there, so it isn't looked for on the Sparks that are on).
+  const parked = parkedFor(String(name).slice(0, 200));
+  let m = null, asleep = false;
+  if (!parked) {
+    const inv = await recentInventory();
+    let found;
+    try { found = await resolveModelName(String(name).slice(0, 200), inv); } catch { throw new HttpError(404, `No model called “${String(name).slice(0, 80)}” at this address, and none by that name to start. Use "${SPARKIE_ID}", or a name from GET /v1/models.`); }
+    m = found.lib;
+    // (a Recipes model on no Spark that is on, while Spark Console has one powered off: its files may be there, so the
+    // start turns that Spark on first; it still never downloads, start_model refuses a call that would)
+    // (only a Spark whose record lists it, or one with no list, is looked at: one known not to hold it never wakes for a call)
+    asleep = !m && Boolean(found.recipe?.id) && offFor(Object.keys(powerState().off).filter(id => nodeById(id)), wakeNames(String(name).slice(0, 200), found), true).length > 0;
+    if (!m && !asleep) throw new HttpError(409, `${String(name).slice(0, 80)} isn’t running, and it isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
+  }
+  if (m) {
+    const stoppedAt = Math.max(0, ...[...consoleStopped].filter(([k]) => k.endsWith(`/${containerName(m.name)}`)).map(([, t]) => t));
+    if (Date.now() - stoppedAt < IN_USE_MS) throw new HttpError(409, `${m.repo || m.name} was stopped on purpose ${Math.max(1, Math.round((Date.now() - stoppedAt) / 60000))} min ago, so a call doesn’t start it again. Ask Sparkie, or start it from Spark Console.`);
+    const listed = desired().running.some(x => x.model === m.name || x.container === containerName(m.name));
+    if (!inRecipes(m) && !listed) throw new HttpError(409, `${m.repo || m.name} isn’t running, and only models in your recipes (or on your list of what should run) start on a call.`);
+  }
+  // (a parked model starts where it ran: across the same two Sparks is that workflow, checked before anything is turned on)
+  const args = parked ? { model: parked.model, ...(parked.sparks ? { sparks: parked.sparks } : { spark: parked.spark }) } : { model: m ? m.name : String(name).slice(0, 200) };
   let out;
   try {
-    out = await runAction('start_model', viewer, { model: m.name }, { via: 'gateway', actor: 'A call to the model address', request: '', said: '', canChange: true, noStops: true });
+    out = await runAction('start_model', viewer, args, { via: 'gateway', actor: 'A call to the model address', request: '', said: '', canChange: true, noStops: true });
   } catch (e) {
-    callStarts.failedAt.set(key, Date.now());
+    // (refused for who is asking, or agents' changes being paused, isn't a start that failed: the next call may go)
+    if (e.status !== 403) callStarts.failedAt.set(key, Date.now());
     if (e.status === 404) throw new HttpError(404, `No model called “${String(name).slice(0, 80)}” at this address, and none by that name to start. Use "${SPARKIE_ID}", or a name from GET /v1/models.`);
     throw new HttpError(409, `${String(name).slice(0, 80)} isn’t running, and it can’t be started on its own: ${e.message}`);
   }
@@ -165,6 +183,7 @@ async function sparkieApi(req, res, path, viewer = null) {
     const hit = (await runningModels(viewer).catch(() => [])).find(r => r.names.some(n => String(n).toLowerCase() === String(body.model).toLowerCase()));
     if (hit) {
       inUse.set(`${hit.spark}/${hit.container}`, { at: Date.now(), by: viewer?.agentName || viewer?.login || 'an app' });
+      for (const id of hit.sparks) sparkCalls.set(id, Date.now());
       return proxyModel(req, res, path, body, hit.endpoint.replace(/\/v1$/, ''), hit.names[hit.names.length - 1]);
     }
     // An agent's key from the internet (4.10) starts a model on a call only if it may change things; a program on one

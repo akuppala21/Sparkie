@@ -34,7 +34,10 @@ function fleetEvent(e) {
   } catch {}
 }
 const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model || ''} ${e.status}${e.error ? ` (${e.error})` : ''}`
-  : e.type.startsWith('spark-') ? `${e.spark} went ${e.type.slice(6)}${e.last ? ` (last reading ${e.last.ageSeconds} s before: ${readingWords(e.last)})` : ''}`
+  // (powered off or on by Spark Console on purpose, 21-power.mjs: not a fault)
+  : e.type === 'spark-powered-off' ? `${e.spark} was powered off by Spark Console on purpose (${e.why || 'asked'})${e.parked?.length ? `; parked ${e.parked.join(', ')}` : ''}`
+  : e.type === 'spark-powered-on' ? `${e.spark} was turned on again (${e.why || 'asked'})`
+  : e.type.startsWith('spark-') ? `${e.spark} went ${e.type.slice(6)}${e.poweredOff ? ` (powered off by Spark Console on purpose: ${e.poweredOff})` : ''}${e.last ? ` (last reading ${e.last.ageSeconds} s before: ${readingWords(e.last)})` : ''}`
     : e.type === 'learned' ? `learned ${e.model} from ${e.container} on ${e.spark}${e.recipe ? ' (saved as a recipe)' : ''}`
       : e.type === 'healing' ? (e.why ? `bringing back ${e.container} on ${e.spark}: ${e.why}` : `restarting ${e.container} on ${e.spark} after it crashed`)
         : e.type === 'heal-skipped' ? `didn’t restart ${e.container} on ${e.spark}: ${e.why}`
@@ -54,14 +57,14 @@ const reading = (v, div, max) => { const n = Number(v) / div; return v !== '' &&
 const FRESH_READING_MS = 3 * 60000;
 // The last readings, if under three minutes old (a console restart or Spark 2 being down leaves none near the time).
 function lastReading(s) {
-  const fresh = x => (x?.at && Date.now() - Date.parse(x.at) < FRESH_READING_MS ? x : null), g = fresh(s?.gpu), r = fresh(s?.readings);
+  const fresh = x => (x?.at && Date.now() - Date.parse(x.at) < FRESH_READING_MS ? x : null), g = fresh(s?.gpu), r = fresh(s?.readings), w = fresh(s?.wall);
   if (!g && !r) return null;
   const newest = Math.max(Date.parse(g?.at || 0) || 0, Date.parse(r?.at || 0) || 0);
   return { ageSeconds: Math.round((Date.now() - newest) / 1000), gpuBusyPercent: g?.busy ?? null, gpuWatts: g?.watts ?? null, gpuC: g?.tempC ?? null,
-    hottestC: r?.hottestC ?? null, nvmeC: r?.nvmeC ?? null, fanRpm: r?.fanRpm ?? null };
+    hottestC: r?.hottestC ?? null, nvmeC: r?.nvmeC ?? null, fanRpm: r?.fanRpm ?? null, ...(w ? { wallWatts: w.watts } : {}) };
 }
 const readingWords = l => (l ? [l.gpuBusyPercent != null ? `GPU ${l.gpuBusyPercent}% busy` : null, l.gpuWatts != null ? `${l.gpuWatts} W` : null,
-  l.hottestC != null ? `hottest sensor ${l.hottestC} °C` : null].filter(Boolean).join(', ') : '');
+  l.hottestC != null ? `hottest sensor ${l.hottestC} °C` : null, l.wallWatts != null ? `${l.wallWatts} W at the wall` : null].filter(Boolean).join(', ') : '');
 
 // The times a Spark went dark (offline at least as long as self-healing counts as a power cycle), newest first, with one
 // finding picked by code and worded "consistent with": never a verdict, and never "not heat" because the last reading
@@ -74,7 +77,9 @@ function darkPeriods(spark, max = 5) {
     if (on && darkMs < HEAL_OFFLINE_MS) return;
     const last = o.last || null, up = on && Number.isFinite(on.upSeconds) ? on.upSeconds : null, restarted = up === null ? null : up * 1000 <= darkMs + 60000;
     const loaded = last && ((last.gpuBusyPercent ?? 0) >= 50 || (last.gpuWatts ?? 0) >= 60);
-    const finding = !on ? 'still dark'
+    // (Spark Console powered it off itself, 21-power.mjs: on purpose, never a fault)
+    const finding = o.poweredOff ? `powered off on purpose by Spark Console (${o.poweredOff}), not a fault${on ? '; turned on again' : ''}`
+      : !on ? 'still dark'
       : restarted === null ? 'came back; Spark Console can’t tell whether it restarted'
         : !restarted ? 'stopped answering without restarting (consistent with the network, sleep, or being too busy to answer)'
           : !last ? 'restarted; there was no reading near the time it went dark'
@@ -236,13 +241,20 @@ function noteSparkStates(nodes) {
     if (online) {
       s.lastSeenAt = now;
       s.gpu = { at: now, busy: reading(n.gpuUtilization, 1, 100), watts: reading(n.gpuPowerWatts, 1, 2000), tempC: reading(n.temperature, 1, 150), upSeconds: reading(n.uptimeSeconds, 1, 1e9) };
+      // The whole Spark at the wall, from its smart plug (12-plugs.mjs), so a Spark that goes dark keeps that too.
+      if (n.wall?.answering && typeof n.wall.watts === 'number') s.wall = { at: now, watts: n.wall.watts };
     }
     // Going dark keeps the last readings (under three minutes old); coming back says how long it has been up.
     const flipped = s.online !== undefined && s.online !== online;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s) });
+    // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
+    const off = !online && flipped ? powerState().off[n.id] : null;
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
+    // (a Spark back on is a chance for the daily copy, if today's is still due: with idle Sparks powered off, one may be
+    // on only now and then)
+    if (flipped && online) try { backupIfDue(); } catch {}
   }
 }
 function saveKnowledge() {
@@ -276,7 +288,9 @@ function fleetNotes(viewer) {
   const running = Object.values(knowledge.workloads).filter(w => w.running);
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
-    const ws = running.filter(w => w.spark === n.id);
+    const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
+    if (off) return `${sparkName(n)}: ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;

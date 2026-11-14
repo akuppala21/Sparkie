@@ -36,7 +36,7 @@ key per agent.
    - the diagram;
    - one sentence followed from chat to a running model;
    - who holds each fact;
-   - rules R1–R40;
+   - rules R1–R41;
    - where new things go;
    - the checklist before an install;
    - known traps.
@@ -264,12 +264,6 @@ These were found and judged not to break real use under the strict bar. Suggesti
   For it to act wrongly, the look must show a two-Spark model's parts down while its start was ending, and a start only
   ends after the model answers. So the window is very narrow. The fix is the same as for `desiredNow`: a Spark where an
   operation ended after the look began waits for the next pass.
-- After a power-on, self-healing can still count an older power-on until the status check (every 30 seconds) sees the
-  Spark back. If that older power-on is under 6 hours old and wasn't acted on for this model, the model comes back
-  without the 2-minute settle wait. Docker must already be answering there, so the start usually works; a failed one
-  uses one of the two tries in 6 hours. The older code had the same path once the watcher had looked. The fix is one
-  line in `healReason`: wait while the status check still has the Spark as off (`sparkOff`). It goes in with the
-  smart-plug work, which turns Sparks off and on often and will have its own full test run.
 - Left from the review of the two-healers fix (section 4, item 3):
   - When the newer model leaves the list (stopped, forgotten or undone), the older one may start by itself within one
     healing pass, because it still has its two tries. During an undo it can take the Spark between the undo's stop and

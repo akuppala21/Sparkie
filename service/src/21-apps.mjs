@@ -316,6 +316,9 @@ action({
     if (input.port !== undefined && input.port.split(':').map(Number).some(n => n < 1 || n > 65535)) throw new HttpError(400, 'A port is a number from 1 to 65535, like "3000:8080".');
     const node = sparkOf(viewer, spark), at = sparkName(node);
     mustUse(viewer, [spark]);
+    // A Spark Spark Console powered off (21-power.mjs) is turned on first, in the same operation; a stop of an app there
+    // only takes it off the list (below: its Spark is off).
+    if (verb !== 'stop' && !ctx.poweredOn) { const first = powerThenKeep(viewer, ctx, input); if (first) return first; }
     const inv = await inventory(null), sp = inv.sparks.find(s => s.id === spark);
     const entry = desired().running.find(x => x.app && keyOf(x) === key), next = id => `wait_operation {"id":"${id}"}`;
     if (!sp?.online) {

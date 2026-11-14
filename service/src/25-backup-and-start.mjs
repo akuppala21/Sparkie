@@ -24,6 +24,8 @@ function sendCopy(target, name) {
     const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1 and is removed, never moved into place.
+    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
+    sparkCalls.set(target.id, Date.now());
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; } && mv ${part} ${dir}/${name}; s=$?; rm -f ${part}; [ $s = 0 ] && ls -1t ${dir}/state-*.tgz | tail -n +15 | xargs -r rm -f; exit $s` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -63,6 +65,8 @@ async function backupState() {
   } finally { backingUp = false; }
 }
 // Due until one has worked today: ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS: how often it checks).
+// (also when a Spark comes back on, 19-watcher.mjs: with Sparks powered off when idle, an hourly try could keep missing
+// the times one is on)
 function backupIfDue() {
   if (!BACKUP_ON || String(lastBackup?.good?.at).slice(0, 10) === dayOf(Date.now())) return;
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));

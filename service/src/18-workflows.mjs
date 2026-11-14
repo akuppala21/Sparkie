@@ -144,7 +144,7 @@ async function rehearse(name, inputs) {
 const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
-const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file']);
+const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file', 'power_settings']);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
   if (Array.isArray(v)) return v.map(x => fillIn(x, inputs));
@@ -170,7 +170,7 @@ const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map(
   return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}`;
 }).join('; ');
 // A saved step can't carry the answer to a question; that's given when it's asked.
-const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', '__validate'];
+const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
 
 // Each step against the Sparks now, from one look, changing nothing (round two, item 3). It refuses only on facts that
 // make the real step fail the same way: arguments its action refuses, a named Spark that's off, a container that isn't
@@ -179,16 +179,19 @@ const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'co
 // input not given yet). It never says a step will work, never asks Hugging Face, and calls no step's code.
 // What a stop, restart or start step must name (their schemas allow a choice instead, which a saved step can't carry).
 const missingTarget = (action, args) => ((action === 'stop_model' || action === 'restart_model') && !(args.spark && args.container) ? 'Missing argument: it needs spark and container.'
-  : action === 'start_model' && !args.model ? 'Missing argument: it needs model.' : null);
+  : action === 'start_model' && !args.model ? 'Missing argument: it needs model.'
+    : (action === 'power_off' || action === 'power_on') && !args.spark && !args.sparks ? 'Missing argument: it needs spark or sparks.' : null);
 // Tests only (SPARK_CONSOLE_ALL_LOCAL): a file in the state folder makes the check fail, to prove a run still goes ahead.
 const checkFailsForTest = () => ALL_LOCAL && existsSync(`${STATE_DIR}/.test-check-fails`);
 // Reads answered from Spark Console's own record, which work while the Spark they name is off.
 const OWN_RECORD_READS = new Set(['fleet_events', 'workloads', 'spark_diagnostics']);
-// The steps that change what runs on a Spark; a later step on that Spark is "checked when reached".
-const TOUCHES_SPARKS = new Set(['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'test_changes', 'undo_update']);
+// The steps that change what runs on a Spark; a later step on that Spark is "checked when reached". Turning a Spark on
+// or off (21-power.mjs) works whether it answers now or not, so a Spark that is off doesn't stop those steps.
+const TOUCHES_SPARKS = new Set(['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'test_changes', 'undo_update', 'power_off', 'power_on']);
+const POWER_STEPS = new Set(['power_off', 'power_on']);
 async function checkSteps(w, inputs, inv) {
   if (checkFailsForTest()) throw new Error('the check failed (test)');
-  const changed = new Set(), lines = [];
+  const changed = new Set(), lines = [], turnedOn = new Set();
   const sparkOn = id => inv.sparks.find(x => x.id === id);
   for (const [i, st] of w.steps.entries()) {
     const a = ACTIONS.get(st.action);
@@ -197,6 +200,7 @@ async function checkSteps(w, inputs, inv) {
     const line = r => {
       lines.push({ step: i + 1, action: st.action, ...r });
       if (TOUCHES_SPARKS.has(st.action) && !['nothing to do', 'cannot run'].includes(r.result)) (ids.length ? ids : ['*']).forEach(id => changed.add(id));
+      if (st.action === 'power_on' && r.result !== 'cannot run') ids.forEach(id => turnedOn.add(id));
     };
     if (!a) { line({ result: 'cannot run', why: `there’s no action called ${String(st.action).slice(0, 60)}` }); continue; }
     if (placeholders(st.args).some(k => !(k in inputs))) { line({ result: 'checked when reached', why: 'it needs the workflow’s inputs' }); continue; }
@@ -207,7 +211,8 @@ async function checkSteps(w, inputs, inv) {
     const missing = missingTarget(st.action, args);
     if (missing) { line({ result: 'cannot run', why: missing }); continue; }
     // Only looks at Spark Console's own record work with a Spark off; every other step there needs it on.
-    const off = !OWN_RECORD_READS.has(st.action) && ids.find(id => !sparkOn(id)?.online);
+    // (a Spark an earlier step turns on is checked when reached, below)
+    const off = !OWN_RECORD_READS.has(st.action) && !POWER_STEPS.has(st.action) && ids.find(id => !sparkOn(id)?.online && !turnedOn.has(id));
     if (off) { line({ result: 'cannot run', why: `${sparkName(nodeById(off) || { id: off })} is off or not answering` }); continue; }
     if (changed.has('*') || ids.some(id => changed.has(id))) { line({ result: 'checked when reached', why: 'an earlier step changes things there first' }); continue; }
     if ((st.action === 'stop_model' || st.action === 'restart_model') && args.container) {
@@ -363,6 +368,8 @@ async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
   if (node.id === MAIN?.node) return;
+  // (its Spark powered off by Spark Console, or the model parked for that: off on purpose, 21-power.mjs)
+  if (consoleOff(node.id) || desired().running.some(x => x.parked && keyOf(x) === `${node.id}/${w.name}`)) return;
   const key = `${node.id}/${w.name}`;
   const stoppedAt = consoleStopped.get(key) || 0;
   if (Date.now() - stoppedAt < 15 * 60000 && !(w.startedAt && Date.parse(w.startedAt) > stoppedAt)) return;
