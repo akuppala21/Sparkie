@@ -3,7 +3,7 @@
 Written by `node tools/make.mjs` from `docs/rules/`; don’t edit it by hand. One line per rule: the start of its
 Rule paragraph. Its file has the rest: why, where the code falls short today, where it lives, and what checks it.
 
-- [R1](rules/R01.md): No new workload starts on the brain’s Spark, named or not.
+- [R1](rules/R01.md): No new workload starts on the hub (the brain’s Spark and the console’s own), named or not.
 - [R2](rules/R02.md): 8 GB stays free on every Spark; unreadable memory refuses the start.
 - [R3](rules/R03.md): No action changes SSH, Tailscale, firewall, users or access; port 8443 keeps exactly three routes; port 10000 has one route, `/` to the app door's socket, set only by the owner's …
 - [R4](rules/R04.md): A route sits below the handler checks it needs (401 at line 96, cross-site 102-108, `passkeyGate` 127).

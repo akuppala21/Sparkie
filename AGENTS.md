@@ -47,10 +47,10 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 1. Find it first: the task table below gives one card. Read the code before changing it; `docs/code-map.md` says
    where each part, action and function lives.
 2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs`, the code map
-   and the rules index, then checks the documents against the code. `node tools/make.mjs --check` changes nothing.
+   and the rules index, and checks the documents. `node tools/make.mjs --check` changes nothing.
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
 4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
-   `SPARK_TEST_SLOW=3` on a slow machine). They start a stand-in fleet and never touch the real Sparks.
+   `SPARK_TEST_SLOW=3` on a slow machine). They never touch the real Sparks.
 5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if it all passes, marks the
    build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
    `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
@@ -58,9 +58,8 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
    `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
    The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
 
-Any computer with git, Node, Python 3 and bash works. A pull request runs the whole suite on GitHub
-(`.github/workflows/full-run.yml`); a pass on `main` leaves the tag `tested/<first 12 hex of the tree>`: the commit
-plus the lock the installer asks for. No SSH, lock or fleet key needed.
+From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`), and a pass
+on `main` leaves a `tested/` tag holding the commit and the lock the installer asks for. No SSH or fleet key needed.
 
 ## I want to …
 
@@ -83,6 +82,7 @@ plus the lock the installer asks for. No SSH, lock or fleet key needed.
 | add a messaging channel | `docs/how/add-a-messaging-channel.md` |
 | change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
+| add a self-test check | `docs/how/add-a-hardware-check.md` |
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
@@ -107,9 +107,10 @@ No card fits? Search `docs/rules.md`.
 9. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
 10. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect
     "needs validation" after install.
-11. A new shipped file is in `UI_FILES`, `SERVICE_FILES` or `RECOVERY_FILES`; a new code file is in all three build-id
-    lists (`buildOf` in `01-setup.mjs`, `API_BUILD` in `deploy/host-on-portal.sh`, and `test/fleet.test.mjs`
-    (“answers with the build”)). A change to what the installer reads (R30) keeps `test/install.test.mjs` passing.
+11. A new shipped file is in `UI_FILES`, `SERVICE_FILES` or `RECOVERY_FILES`; a new code file is in all four build-id
+    lists (`buildOf` in `01-setup.mjs`, `API_BUILD` in `deploy/host-on-portal.sh`, `full-run.yml`'s `mark` job,
+    `test/fleet.test.mjs` (“answers with the build”)). A change to what the installer reads (R30) keeps
+    `test/install.test.mjs` passing.
 12. `node test/lock.mjs` passed on this exact tree, and again after any `worker.py` edit; after install, `/health`
     shows no workflow `untested`.
 13. The documents change in the same change: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
