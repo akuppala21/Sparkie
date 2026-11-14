@@ -1,4 +1,7 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
+// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler)
+// Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
 // isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console,

@@ -1,4 +1,7 @@
 /* ───────── telling the owner on Telegram ───────── */
+// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13,
 // docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on
 // with a request made there, and Spark Console's own fixed lines (pairing, /status, "restarted while answering"). Never

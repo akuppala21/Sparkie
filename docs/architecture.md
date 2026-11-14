@@ -1,7 +1,7 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
+Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+`docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in

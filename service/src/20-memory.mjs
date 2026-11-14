@@ -1,4 +1,7 @@
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
+// Area: record        Rules: R20, R25, R26        Tests: sparkie-more.test.mjs
+// Owns: memory.json (writers: remember, forget_memory)
+// Timers: none        Wakes: none
 // What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I
 // meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). A few
 // dozen short lines in memory.json, put at the end of Sparkie's system prompt (so the prompt cache stays warm until it

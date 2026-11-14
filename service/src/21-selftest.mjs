@@ -1,4 +1,9 @@
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
+// Area: features
+// Rules: R1, R11, R13, R19, R20, R22, R30, R38
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs
+// Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
+// Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
 // "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in
 // config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no
