@@ -27,6 +27,10 @@ const POWER_POLL_MS = Number(process.env.SPARK_CONSOLE_POWER_POLL_MS || 5000);
 const POWER_OFF_WAIT_MS = Number(process.env.SPARK_CONSOLE_POWER_OFF_WAIT_MS || 240000);
 const POWER_ON_WAIT_MS = Number(process.env.SPARK_CONSOLE_POWER_ON_WAIT_MS || 300000);
 const POWER_CYCLE_MS = Number(process.env.SPARK_CONSOLE_POWER_CYCLE_MS || 10000);
+// The hold before a plug is switched off under a Spark that doesn't answer and was never read at 15 W or more in the same
+// operation (power_on's off-and-on, power_off of a Spark that doesn't answer): silent, its plug answering and under
+// 15 W at every poll for this long (holdLow).
+const POWER_HOLD_MS = Number(process.env.SPARK_CONSOLE_POWER_HOLD_MS || 60000);
 // A shut-down Spark with its plug on draws a few watts; an idle one 55–65 W.
 const SHUT_DOWN_WATTS = 15;
 const IDLE_GPU_PERCENT = 5, IDLE_LOAD = 2;
@@ -171,6 +175,30 @@ async function sudoReady(node) {
 // connection may drop as it goes down: that counts as accepted.
 const SHUTDOWN = `sudo -n /usr/bin/systemctl stop nvidia-persistenced >/dev/null 2>&1
 sudo -n /usr/bin/systemctl poweroff 2>&1; printf 'poweroff\\t%s\\n' "$?"`;
+// The one place the shutdown is sent (R41). Its first line refuses the hub, whatever called it: the brain's Spark and
+// Spark Console's own ('local': spawnOn runs that Spark's script on Spark 2 itself) are never shut down from here.
+function shutDownSpark(node) {
+  if (!node || brainSparks().includes(node.id) || node.host === 'local') throw new Error(`${sparkName(node || { id: 'that Spark' })} runs Spark Console and Sparkie, so it is never shut down from here.`);
+  return run(node, SHUTDOWN, { timeout: 60000 });
+}
+// The hold (R41): the controller answers with the values it has cached from the plug's reports, and nothing says how old
+// they are. Before a plug is switched off under a Spark that doesn't answer, with no reading of 15 W or more from it in
+// the same operation, the Spark stays silent and its plug answering and under 15 W at every poll for POWER_HOLD_MS.
+// null: held. 'answers': the Spark answered. 'off': its plug reads off. Otherwise, in words, what broke the hold.
+async function holdLow(j, id) {
+  const node = nodeById(id), name = sparkName(node);
+  step(j, `${name} isn’t answering and its plug reads under ${SHUT_DOWN_WATTS} W: watching it for ${minutesWords(POWER_HOLD_MS)} before its plug is switched`);
+  for (const until = Date.now() + POWER_HOLD_MS; ;) {
+    if (await answersNow(node)) return 'answers';
+    const w = await freshWall(id).catch(e => ({ answering: false, problem: e.message }));
+    if (!w.answering) return `${name}’s plug stopped answering the plug controller (${w.problem || 'no reading'})`;
+    if (w.on === false) return 'off';
+    if (w.on !== true || !(typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS)) return `${name}’s plug now shows ${w.watts ?? '?'} W`;
+    if (Date.now() >= until) return null;
+    cancelCheck(j);
+    await sleep(POWER_POLL_MS);
+  }
+}
 
 // Before a Spark that answers is shut down, its plug must be proven: answering the controller, on, and drawing what a
 // running Spark draws (15 W or more). Otherwise it could be shut down with no way to turn it on again from here (the
@@ -233,7 +261,7 @@ const pairWords = (plan, ids) => plan.models.filter(m => m.sparks.some(id => !id
 
 action({
   name: 'power_off', title: 'Power off a Spark', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
-  description: 'Use when the owner asks to shut down, power off or turn off a Spark (“shut down Spark 4”, “turn off Sparks 3 and 4”), not a model. Spark Console stops its own models and kept apps there first and parks them (they come back when the Spark is turned on, or when a parked model is called), shuts the Spark down cleanly, waits until it stops answering and its plug draws under 15 W, then switches its smart plug off. A model across two Sparks stops on both; the other Spark stays on. Refused for Spark 2 (it runs Spark Console and Sparkie), for a Spark without a switchable plug, and while anything runs there that Spark Console didn’t start or that is protected (it names them). Pass the Sparks the owner named. It may ask first; answer with {"choice": id}. Returns an operation id at once; follow it with wait_operation (about 2 minutes).',
+  description: 'Use when the owner asks to shut down, power off or turn off a Spark (“shut down Spark 4”, “turn off Sparks 3 and 4”), not a model. Spark Console stops its own models and kept apps there first and parks them (they come back when the Spark is turned on, or when a parked model is called), shuts the Spark down cleanly, waits until it stops answering and its plug draws under 15 W, then switches its smart plug off. A model across two Sparks stops on both; the other Spark stays on. Refused for Spark 2 (it runs Spark Console and Sparkie), for a Spark without a switchable plug, and while anything runs there that Spark Console didn’t start or that is protected (it names them). Pass the Sparks the owner named. It may ask first; answer with {"choice": id}. From an agent it always waits for the owner’s yes in Spark Console: tell the owner, and don’t answer it yourself. Returns an operation id at once; follow it with wait_operation (about 2 minutes).',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'The Spark to power off, as the owner named it.' },
     sparks: { ...sparksArg, maxItems: 3, description: 'Two or more Sparks to power off together, like ["spark3","spark4"].' },
@@ -276,13 +304,14 @@ action({
         { label: `Yes, stop ${names} and power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, confirmRouted: true, ...(args.confirmStops ? { confirmStops: true } : {}) } } },
         { label: 'No, leave it on', call: null }], 'question', { ownerOnly: true });
     }
-    // The owner's own request is the yes for what stops (as "stop X" is); an agent is asked first.
+    // The owner's own request is the yes for what stops (as "stop X" is). An agent's power-off always waits for the owner
+    // (power is asked first, design-2026-11-13): the owner's button in Spark Console, which the agent can't press itself.
     const agent = ctx.via === 'agent' || Boolean(ctx.agent) || Boolean(viewer.agentKey);
-    if (agent && stops.length && !args.confirmStops) {
+    if (agent) {
       const names = stops.map(x => x.split('/').pop()).join(', ');
-      return question(viewer, ctx, `Powering off ${sparksWords(ids)} stops ${names} (parked: ${stops.length > 1 ? 'they come' : 'it comes'} back when the Spark is turned on). ${pairWords(plan, ids)} Go ahead?`.replace(/\s+/g, ' '), [
-        { label: `Yes, stop ${names} and power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, confirmStops: true, ...(args.confirmRouted ? { confirmRouted: true } : {}) } } },
-        { label: 'No, leave it on', call: null }]);
+      return question(viewer, ctx, `Power off ${sparksWords(ids)}?${stops.length ? ` It stops ${names} first (parked: ${stops.length > 1 ? 'they come' : 'it comes'} back when the Spark is turned on). ${pairWords(plan, ids)}` : ''}`.replace(/\s+/g, ' ').trim(), [
+        { label: `Yes, ${stops.length ? `stop ${names} and ` : ''}power off ${sparksWords(ids)}`, call: { action: 'power_off', args: { ...base, ...(args.confirmRouted ? { confirmRouted: true } : {}) } } },
+        { label: 'No, leave it on', call: null }], 'question', { ownerOnly: true });
     }
     const why = ctx.powerWhy === 'idle' ? 'idle' : 'asked';
     const job = claimed([...ids, ...plan.partners], `powering off ${sparksWords(ids)}`, () => newJob('power-off', { node: ids[0], ...(ids.length > 1 ? { nodes: ids } : {}),
@@ -360,14 +389,22 @@ async function powerOffJob(j, ids, ctx, why) {
   // The shutdown. From here it is off on purpose: healing and the needs-me line leave it alone.
   const at = new Date().toISOString(), by = ctx.actor || 'the owner', entries = desired().running.filter(x => parked.includes(keyOf(x)));
   // (the model names on its disk go on the record, so a call for one of them knows which Spark to turn on)
-  for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, problem: null,
-    ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}) });
+  // (a record that can't be written: nothing is shut down, what was parked is put back, and the records written go)
+  try {
+    for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, problem: null,
+      ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}) });
+  } catch (e) {
+    for (const id of up) try { offRecord(id, null); } catch {}
+    await unpark(j, stopped, pairHeads);
+    throw new Error(`Its models were stopped, but the record of what was powered off couldn’t be saved (${e.message}), so nothing was shut down and what was parked was put back.`);
+  }
   for (const id of up) wokeFor.delete(id);
   const refused = [];
   await Promise.all(up.map(async id => {
     const node = nodeById(id);
     step(j, `Shutting down ${sparkName(node)} cleanly`);
-    const r = await run(node, SHUTDOWN, { timeout: 60000 });
+    let r;
+    try { r = await shutDownSpark(node); } catch (e) { refused.push({ id, words: e.message }); return; }
     const [code] = fields(r.out, 'poweroff')[0] || [];
     if (code === '0' || (r.code === 255 && !code) || /timed out/.test(r.err)) return;
     refused.push({ id, words: /password is required|not allowed|sudoers|a terminal is required/i.test(r.out + r.err) ? setupWords(node) : `${sparkName(node)} didn’t shut down: ${String(r.out || r.err).trim().split('\n')[0].slice(0, 200)}` });
@@ -393,6 +430,8 @@ async function waitAndCut(j, id, wentDown, rec) {
   let gone = false, w = null;
   for (const until = Date.now() + POWER_OFF_WAIT_MS; ;) {
     gone = !(await answersNow(node));
+    // (one that didn't answer when this began and answers now is on: nothing to wait for, and never cut)
+    if (!gone && !wentDown) throw new Error(`${name} answers again, so its power was not cut.`);
     w = gone ? await freshWall(id).catch(e => ({ answering: false, problem: e.message })) : null;
     if (gone && w.answering && (w.on === false || (typeof w.watts === 'number' && w.watts < SHUT_DOWN_WATTS))) break;
     if (Date.now() > until) break;
@@ -406,7 +445,13 @@ async function waitAndCut(j, id, wentDown, rec) {
     if (wentDown) offRecord(id, { problem: gone ? `${why} Turn it on with its power button.` : why });
     throw new Error(why);
   }
-  if (w.on === false) note(j, `${name}’s plug is off already`);
+  // (a Spark that didn't answer when this began was never read at 15 W or more here, so one low reading proves nothing: the
+  // hold first)
+  const held = !wentDown && w.on !== false ? await holdLow(j, id) : null;
+  if (held && held !== 'off') {
+    throw new Error(held === 'answers' ? `${name} answered while its plug was being watched, so its power was not cut.` : `${held}, so its power was not cut.`);
+  }
+  if (w.on === false || held === 'off') note(j, `${name}’s plug is off already`);
   else {
     // (one more look right before the switch: a Spark that answers is never cut)
     if (await answersNow(node)) {
@@ -437,16 +482,16 @@ async function powerOnOne(j, id, noSwitch = false) {
   if (w.on !== true && w.on !== false) throw new Error(`${name}’s plug doesn’t say whether it is on, so nothing was switched.`);
   cancelCheck(j);
   if (w.on === true) {
-    // (one more look a poll later, as before a power-off's cut: a Spark booting from its own button is never cut)
-    await sleep(POWER_POLL_MS);
-    const again = await freshWall(id);
-    if (await answersNow(node)) { note(j, `${name} is on and answering`); return; }
-    if (!again.answering || again.on !== true || !(typeof again.watts === 'number' && again.watts < SHUT_DOWN_WATTS)) {
-      throw new Error(`${name}’s plug now shows ${again.watts ?? '?'} W${again.on === false ? ' and is off' : ''}, so it may be starting by itself. Nothing was switched; ask again in a few minutes if it doesn’t answer.`);
+    // (the hold, as before any cut of a Spark that doesn't answer: a Spark booting from its own button, behind a reading
+    // the controller hasn't caught up with, is never cut)
+    const held = await holdLow(j, id);
+    if (held === 'answers') { note(j, `${name} is on and answering`); return; }
+    if (held && held !== 'off') throw new Error(`${held}, so it may be starting by itself. Nothing was switched; ask again in a few minutes if it doesn’t answer.`);
+    if (held !== 'off') {
+      step(j, `${name} is shut down with its plug on: switching its plug off, then on again`);
+      await switchPlug(id, false);
+      await sleep(POWER_CYCLE_MS);
     }
-    step(j, `${name} is shut down with its plug on: switching its plug off, then on again`);
-    await switchPlug(id, false);
-    await sleep(POWER_CYCLE_MS);
   }
   await switchPlug(id, true);
   step(j, `Turning on ${name} (about 2 minutes)…`);
@@ -458,7 +503,14 @@ async function powerOnOne(j, id, noSwitch = false) {
   note(j, `${name} answers again`);
 }
 async function powerOnSparks(j, ids, why, noSwitch = false) {
-  await Promise.all(ids.map(id => powerOnOne(j, id, noSwitch)));
+  const tried = await Promise.allSettled(ids.map(id => powerOnOne(j, id, noSwitch)));
+  const bad = tried.map((r, i) => [ids[i], r]).filter(([, r]) => r.status === 'rejected');
+  if (bad.length) {
+    // (a Spark Spark Console powered off that didn't come back goes on the needs-you list, whoever asked: a call that
+    // started it tells nobody, and it needs its button or a look, R41)
+    if (!noSwitch) for (const [id, r] of bad) if (powerState().off[id]) try { offRecord(id, { problem: `Turning it on didn’t work: ${String(r.reason?.message || r.reason).split('\n')[0].slice(0, 300)}` }); } catch {}
+    throw bad[0][1].reason;
+  }
   // Docker there settles before anything starts (healing waits for the same).
   step(j, `Waiting for Docker on ${sparksWords(ids)}`);
   for (const until = Date.now() + 120000; ;) {
@@ -645,11 +697,17 @@ function powerSettingsClear(input, saidText) {
 
 action({
   name: 'power_settings', title: 'Idle power-off setting', kind: 'change', scope: 'fleet:act', who: 'owner',
-  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, no call to its models at the model address and no open editor, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. fleet_status shows the setting (power).',
+  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, no call to its models at the model address and no open editor, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
   input: { type: 'object', properties: {
     idleMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: 'Minutes a Spark must be idle before it is powered off; 0 turns the idle power-off off.' },
   }, required: ['idleMinutes'], additionalProperties: false },
   run: async ({ idleMinutes }, viewer, ctx) => {
+    // (an agent's setting waits for the owner's button in Spark Console, as its power-off does)
+    if (ctx.via === 'agent' || Boolean(ctx.agent) || Boolean(viewer.agentKey)) {
+      const label = idleMinutes ? `Yes, power off idle Sparks after ${idleMinutes} minute${idleMinutes === 1 ? '' : 's'}` : 'Yes, stop powering off idle Sparks';
+      return question(viewer, ctx, `${idleMinutes ? `Power off idle Sparks after ${idleMinutes} minute${idleMinutes === 1 ? '' : 's'}` : 'Stop powering off idle Sparks'}? (Now: ${powerState().idleMinutes ? `after ${powerState().idleMinutes} minutes` : 'off'}.)`,
+        [{ label, call: { action: 'power_settings', args: { idleMinutes } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+    }
     const before = powerState().idleMinutes;
     savePower(s => Object.assign(s, { idleMinutes, changedAt: new Date().toISOString(), changedBy: ctx.actor || viewer.login || null }));
     idleSince.clear();
@@ -677,7 +735,7 @@ const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, editorUse.get(id)?.at 
 // power-off asks without recent use (it counts the idle minutes itself, from lastUseOn); anyone else gets recent use
 // too (within the idle minutes, or 30 when the idle power-off is off). A model on the should-run list is not a reason:
 // the power part parks idle ones (the owner's choice, 2026-11-13). An asked power_off refuses on a keep-awake.
-function sparkNeeded(id, { recentUse = true } = {}) {
+function sparkNeeded(id, { recentUse = true, unseen = true } = {}) {
   const node = nodeById(id);
   if (!node) return ['there is no such Spark'];
   const why = [];
@@ -696,6 +754,8 @@ function sparkNeeded(id, { recentUse = true } = {}) {
   // can't see, so a Spark running one isn't idle; power_off when asked still parks apps)
   const other = Object.values(knowledge.workloads).find(w => w.spark === id && w.running && (w.protected || w.labels?.['spark.role'] === 'main' || w.labels?.['spark.console'] !== '1'));
   if (other) why.push(`${other.name} runs there`);
+  // (from the idle loop's last rounds: the model there gives no /metrics counter, so its use can't be seen)
+  if (unseen && servesHere(id) && Date.now() - (serveUnseen.get(id) || 0) <= 3 * POWER_TICK_MS) why.push('its model’s use can’t be measured (its server gives no /metrics counter)');
   if (fresh) {
     if (typeof n.gpuUtilization !== 'number' || n.gpuUtilization >= IDLE_GPU_PERCENT) why.push('its GPU is busy');
     const load = n.load1Minute ?? n.load;
@@ -707,25 +767,73 @@ function sparkNeeded(id, { recentUse = true } = {}) {
   }
   return why;
 }
-const busyReason = id => sparkNeeded(id, { recentUse: false })[0] || null;
+const busyReason = id => sparkNeeded(id, { recentUse: false, unseen: false })[0] || null;
 // Direct use of a model, which the console doesn't see (an app on its published port, a script on Spark 2): the model
-// server's own counters at /metrics, where the engine has them (vLLM: requests finished and running; SGLang with
-// --enable-metrics; llama.cpp with --metrics). A count that went up since the last round, or a request running, is use.
-// Where nothing answers /metrics, nothing changes.
+// server's own counters at /metrics (vLLM always; SGLang with --enable-metrics and llama.cpp with --metrics, which
+// Spark Console adds to what it starts: metricsFlags). A count that went up since the last round, or a request running, is
+// use. A Spark where one of Spark Console's models answers (on its own, or the first part of one across two) and its
+// /metrics gives no counter is never idle: its use can't be seen (TensorRT-LLM, a model started before the flags, an
+// engine's /metrics that doesn't answer).
 const serveCount = new Map();   // spark → the last count read
+const serveUnseen = new Map();  // spark → when a round last found its model's use couldn't be measured
 const SERVE_LOOK = `ip=$(tailscale ip -4 2>/dev/null | head -1); m=
 for h in 127.0.0.1 $ip; do m=$(curl -s -m 3 "http://$h:${CONFIG.servePort}/metrics" 2>/dev/null) && [ -n "$m" ] && break; done
 printf '%s\\n' "$m" | awk '/^#/ { next } { n = $1; sub(/[{].*/, "", n); v = $NF + 0 }
-  n ~ /^(vllm:request_success_total|sglang:num_requests_total|llamacpp:tokens_predicted_total)$/ { c += v; f = 1 }
+  n ~ /^(vllm:request_success_total|sglang:num_requests_total|llamacpp:tokens_predicted_total|llamacpp:prompt_tokens_total)$/ { c += v; f = 1 }
   n ~ /^(vllm:num_requests_running|sglang:num_running_reqs|llamacpp:requests_processing)$/ { r += v; f = 1 }
   END { if (f) printf "serve\\t%d\\t%d\\n", c, r }'`;
+// { used, measured }: measured is false when /metrics gave no counter.
 async function serveUsed(id) {
   const r = await run(nodeById(id), SERVE_LOOK, { timeout: 20000 });
   const [row] = fields(r.out, 'serve');
-  if (r.code !== 0 || !row) { serveCount.delete(id); return false; }
+  if (r.code !== 0 || !row) { serveCount.delete(id); return { used: false, measured: false }; }
   const count = Number(row[0]) || 0, running = Number(row[1]) || 0, before = serveCount.get(id);
   serveCount.set(id, count);
-  return running > 0 || (before !== undefined && count > before);
+  return { used: running > 0 || (before !== undefined && count > before), measured: true };
+}
+// Whether one of Spark Console's models answers on this Spark (on its own, or the first part of one across two), by what
+// the watcher saw: the Sparks whose /metrics must give a counter before they can count as idle.
+const servesHere = id => Object.values(knowledge.workloads).some(w => w.spark === id && w.running && w.labels?.['spark.console'] === '1'
+  && !w.labels?.['spark.app'] && w.labels?.['spark.role'] !== 'main' && String(w.labels?.['spark.rank'] ?? '0') === '0');
+// An entry still marked parked whose Sparks are all on and answering, none of them powered off on purpose and no power
+// operation running on them, is unparked: it then shows as held, with its notice, and self-healing and Bring back apply
+// as for anything else. (A restart while a woken Spark's model loaded, or between two bring-backs, left one parked for
+// good on a Spark that was on, with nobody told.)
+// The first time the idle power-off can act on a fleet (the setting on, a Spark it may switch, what wakes a parked model
+// active), the owner is told once, in their newest chat in Spark Console (a new one if they have none) and on Telegram
+// when it is paired: the minutes and the words that change it (the owner's choice, 2026-11-13; said, 2026-11-14).
+// power.json keeps when (activeSaidAt), written first, so it is never said twice.
+function sayIdleActive(st, can) {
+  const n = st.idleMinutes, text = `The idle power-off is on now: ${sparksWords(can)} ${can.length > 1 ? 'are' : 'is'} powered off after ${n} idle minute${n === 1 ? '' : 's'}, with ${can.length > 1 ? 'their' : 'its'} models parked; a call or a start turns ${can.length > 1 ? 'them' : 'it'} on again. Spark 2 never. To change the time, say “power off idle Sparks after an hour”; to turn it off, say “stop auto shutdown”.`;
+  try { savePower(x => { x.activeSaidAt = new Date().toISOString(); }); } catch (e) { console.error(`The idle power-off note: ${e.message}`); return; }
+  fleetEvent({ type: 'notice', text });
+  try {
+    const owner = accessList().owner, at = new Date().toISOString();
+    let conv = chatData().conversations.filter(c => c.login === owner && !c.agent && c.channel !== 'telegram' && c.messages.length < LIMITS.messages)
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+    if (!conv && owner) {
+      conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: owner, title: 'Spark Console', spark: null, createdAt: at, updatedAt: at, messages: [] };
+      chatData().conversations.push(conv);
+    }
+    if (conv) { conv.messages.push({ role: 'assistant', content: text, createdAt: at, notice: true }); conv.updatedAt = at; saveChats(); }
+  } catch (e) { console.error(`The idle power-off note in the owner’s chat: ${e.message}`); }
+  tell('system', text).catch(() => {});
+}
+const powerOpOn = ids =>[...jobs.values()].some(j => j.status === 'running' && ['power-off', 'power-on'].includes(j.type) && (j.nodes || [j.node]).some(id => ids.includes(id)));
+async function unparkStranded() {
+  for (const x of desired().running.filter(y => y.parked)) {
+    const ids = x.sparks || [x.spark];
+    if (!ids.every(id => nodeById(id)) || ids.some(consoleOff) || powerOpOn(ids)) continue;
+    if (!ids.every(id => statusCache?.value.nodes.find(n => n.id === id)?.state === 'online')) continue;
+    if (!(await Promise.all(ids.map(id => answersNow(nodeById(id))))).every(Boolean)) continue;
+    // (looked at again after the looks: a power operation or record that began meanwhile keeps it parked)
+    if (ids.some(consoleOff) || powerOpOn(ids)) continue;
+    let done = [];
+    try { done = parkDesired([keyOf(x)], false); } catch (e) { console.error(`Unparking ${x.container}: ${e.message}`); continue; }
+    if (!done.length) continue;
+    fleetEvent({ type: 'notice', spark: x.spark, container: x.container,
+      text: `${x.container} was still marked parked, though ${sparksWords(ids)} ${ids.length > 1 ? 'are' : 'is'} on, so the mark was taken off: it is held now, and self-healing or Bring back starts it again.` });
+  }
 }
 async function powerTick() {
   if (powerTicking) return;
@@ -756,17 +864,24 @@ async function powerTick() {
       await runAction('power_on', healOwner(), { spark: id }, { actor: 'Spark Console', via: 'watcher', canChange: true, trusted: true, powerWhy: 'outside', request: `${sparkWord(id)} is on again` })
         .catch(e => console.error(`Bringing back what was parked on ${id}: ${e.message}`));
     }
-    const validating = [...jobs.values()].some(j => j.status === 'running' && (j.type === 'validate-workflows' || j.validating));
+    await unparkStranded().catch(e => console.error(`Unparking what was left parked: ${e.message}`));
+    const validating =[...jobs.values()].some(j => j.status === 'running' && (j.type === 'validate-workflows' || j.validating));
     // Nothing is parked unless what wakes it can run: a call or a start goes through these workflows, and one that isn't
     // validated yet (after an install, say) would leave a parked model unable to come back on its call.
     const wakeable = !wakeWaiting().length;
     if (!st.idleMinutes || s.halted || validating || !wakeable) { idleSince.clear(); return; }
     const now = Date.now(), idleMs = st.idleMinutes * IDLE_MINUTE_MS;
-    const candidates = NODES.map(x => x.id).filter(id => !brainSparks().includes(id) && switchablePlug(id) && !st.off[id]);
+    const can = NODES.map(x => x.id).filter(id => !brainSparks().includes(id) && switchablePlug(id));
+    if (!st.activeSaidAt && can.length) sayIdleActive(st, can);
+    const candidates = can.filter(id => !st.off[id]);
     for (const id of candidates) {
       if (busyReason(id)) { idleSince.delete(id); serveCount.delete(id); continue; }
+      const seen = await serveUsed(id).catch(() => ({ used: false, measured: false }));
       // (its model server counted requests since the last round: use, as a call through Spark Console is)
-      if (await serveUsed(id).catch(() => false)) sparkCalls.set(id, Date.now());
+      if (seen.used) sparkCalls.set(id, Date.now());
+      // (a model of Spark Console's answers there and its use can't be measured: never idle)
+      if (!seen.measured && servesHere(id)) { serveUnseen.set(id, Date.now()); idleSince.delete(id); continue; }
+      serveUnseen.delete(id);
       if (!idleSince.has(id)) idleSince.set(id, now);
     }
     // Sparks that go together: those a model across two runs on (from what the watcher saw).

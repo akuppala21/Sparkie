@@ -139,7 +139,7 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 | An update that goes back unless the real door answers | Yes, checked by code through the real address; the owner need not open the page |
 | The journal | Never copied off Spark 2, never erased, with "hide this value everywhere" for a secret |
 | The owner's real requests as test cases | Later, after two full eval runs |
-| Stopping an idle model so its Spark can power off | Never by itself; the smart-plug work decides with the owner |
+| Stopping an idle model so its Spark can power off | Decided with the owner (2026-11-13: “Park them”): yes, after 30 idle minutes by default (Sparks 1, 3 and 4 with a switchable plug, never Spark 2), only once the workflows that bring a parked model back are active, and said once in the owner's chat and on Telegram the first time it can act; “stop auto shutdown” turns it off. An agent's power-off or idle setting waits for the owner's yes |
 | A new Spark holding copies of chats and sign-in files | Only after the owner says so |
 | A line stated on Telegram kept in memory | Yes for `remember`; `erase` stays on the page |
 | GitHub Pro for branch protection | No |

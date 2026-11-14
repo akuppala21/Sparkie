@@ -66,6 +66,12 @@ for t in ts: t.join()
 for k, v in sorted(res.items()): print('cable', k, v)
 `;
 
+// Ports free on this machine now, all different (each held until all are taken): the stand-in fleet's cable check.
+function freeLocalPorts(n) {
+  const held = [];
+  const one = () => new Promise((resolve, reject) => { const s = createNetServer(); s.on('error', reject); s.listen(0, '127.0.0.1', () => { held.push(s); resolve(s.address().port); }); });
+  return (async () => { try { const out = []; for (let i = 0; i < n; i++) out.push(await one()); return out; } finally { await Promise.all(held.map(s => new Promise(r => s.close(() => r())))); } })();
+}
 // Whether the two Sparks can open connections to each other over their cable, checked before anything stops. The
 // cable test only pings, and pings get through a firewall that refuses connections; each part's first step is the
 // second Spark connecting to the first on CLUSTER_PORT, then connections both ways on ports the engines pick (2026-11-10:
@@ -74,10 +80,12 @@ for k, v in sorted(res.items()): print('cable', k, v)
 async function cableCheck(job, nodeIds, net, freesPort = false) {
   const [head, worker] = nodeIds.map(id => nodeById(id)), [hn, wn] = [head, worker].map(sparkName);
   const high = () => 40000 + Math.floor(Math.random() * 20000);
-  const headHigh = high(), workerHigh = headHigh === 59999 ? 40000 : headHigh + 1;
-  // The stand-in fleet's cables aren't on this machine: its Sparks meet on 127.0.0.1 (each test fleet on ports of its
-  // own), and one with a ~/.mock/firewall listens on nothing, as if it refused every connection.
-  const meet = ALL_LOCAL ? high() : CLUSTER_PORT, secs = ALL_LOCAL ? 3 : 15;
+  // The stand-in fleet's cables aren't on this machine: its Sparks meet on 127.0.0.1, on ports this machine hands out
+  // (never one another test fleet's sockets hold), for the seconds the tests give it (SPARK_CONSOLE_CABLE_SECS, longer
+  // on a slow machine), and one with a ~/.mock/firewall listens on nothing, as if it refused every connection.
+  const local = ALL_LOCAL ? await freeLocalPorts(3) : null;
+  const headHigh = local ? local[1] : high(), workerHigh = local ? local[2] : headHigh === 59999 ? 40000 : headHigh + 1;
+  const meet = local ? local[0] : CLUSTER_PORT, secs = ALL_LOCAL ? Number(process.env.SPARK_CONSOLE_CABLE_SECS) || 3 : 15;
   const at = ip => (ALL_LOCAL ? '127.0.0.1' : ip), walled = n => ALL_LOCAL && existsSync(`${process.env.MOCK_ROOT}/${n.id}/.mock/firewall`);
   const side = (node, lip, lports, cip, cports) => run(node, `python3 - ${[at(lip), (walled(node) ? [] : lports).join(','), at(cip), cports.join(','), secs].map(String).map(q).join(' ')} <<'PY'\n${CABLE_CHECK_PY}\nPY`, { timeout: (secs + 25) * 1000 });
   step(job, `Checking that ${hn} and ${wn} can connect to each other over the cable`);
@@ -313,7 +321,7 @@ function clusterRunCommand(model, { rank, nodes, net, store, tsip, extra = [], f
   if (sglang) {
     // SGLang: every part runs launch_server with the same model and flags; part 0 answers on its Tailscale address.
     const serve = ['--tp', '2', '--nnodes', '2', '--node-rank', String(rank), '--dist-init-addr', `${net.headIp}:${CLUSTER_PORT}`,
-      '--host', rank === 0 ? tsip : '127.0.0.1', '--port', '8000', '--served-model-name', served, ...args];
+      '--host', rank === 0 ? tsip : '127.0.0.1', '--port', '8000', '--served-model-name', served, ...(rank === 0 ? metricsFlags('sglang', args) : []), ...args];
     return prelude + [...parts, ...vol, ...['--entrypoint', 'python3', imageOf(model), '-m', 'sglang.launch_server', '--model-path'].map(q), path, ...serve.map(q)].join(' ');
   }
   const serve = ['--tensor-parallel-size', '2', '--nnodes', '2', '--node-rank', String(rank), '--master-addr', net.headIp, '--master-port', String(CLUSTER_PORT),

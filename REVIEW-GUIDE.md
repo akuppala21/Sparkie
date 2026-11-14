@@ -277,6 +277,42 @@ These were found and judged not to break real use under the strict bar. Suggesti
   - When the newer model is down for good, the older one waits until the owner forgets the newer one or starts the
     older one by hand.
 
+**Power (smart plugs), from the 2026-11-14 review of the power work (its "Later" list; 1 and 13 were fixed)**
+- With the plug controller down while a Spark is off, nothing can be woken, and no needs-me line says so.
+- A shutdown slower than 4 minutes ends as "the plug may not be on Spark N" (wrong words, a needs-me line) and isn't
+  looked at again; the next power-on clears it.
+- `sudo` not set up on a Spark with a plug: every idle try is refused before anything stops, said only in the service
+  log, while `fleet_status` says idle Sparks are powered off.
+- After a refused or failed shutdown, `nvidia-persistenced` stays stopped until the next boot.
+- Idle time is counted on the wall clock; a clock step forward on Spark 2 can make a few minutes count as the whole time.
+- A person at the Spark's own screen and keyboard isn't seen (`who` counts only remote `pts` lines).
+- `restart_model` and `stop_model` on a Spark Spark Console powered off say "isn't one of Spark Console's models"; a
+  parked model can't be taken off the list from chat while its Spark is off (the page's Forget works).
+- `power.wake` runs as via `wake`, which counts as an agent (12 an hour; three failed wakes pause agents), and waits for
+  everything parked there to come back before the caller's own work.
+- `keepAwake` is checked in `power_off`'s action but not again inside its operation.
+- A cancel after the shutdown was sent is ignored; a stop then waits its 2 minutes; an operation failing for another
+  reason then says "what it had changed was put back".
+- When no Spark is named and nothing fits, a start turns on every Spark Spark Console powered off, and everything parked
+  there comes back after it.
+- The idle-setting words also match "Set up Qwen with automatic tool choice", so that request counts as two kinds of
+  change and gets a carry-on turn.
+- With every compute Spark asleep for a day, the daily copy posts its "no copy" notice each day.
+- A crash within 30 minutes of any power-on isn't restarted by itself ("was offline in the last half hour").
+- Plug readings need Node 22 or newer (the built-in WebSocket); the installer accepts 18.
+- The suite runs a path whose real form is `sudo systemctl poweroff`; only the stand-in `sudo` being first on the path
+  keeps it from the test machine.
+- The controller runs with debug logging; whether a 15-minute pairing code lands in its log is unknown.
+- No test yet for: an asked power-off parking a kept app and `power_on` bringing it back; `keep_running` waking a Spark;
+  a power step in a saved workflow; the question when a parked model answers Sparkie; a cancel between the stops and
+  the shutdown; two Sparks where one refuses; the low-watts branch of `plugUnproven`; the last look before the cut;
+  `power.wake`, `keepAwake`, `doneWith`.
+- `fleet_status` and the brain's prompt grow for every fleet, plugs or not.
+- `stop_model` cancels a power operation on its Sparks, but its version doesn't move: the fingerprint hashes
+  `String(CHANGES_MODELS)`, which is `[object Set]` whatever is in it.
+- TensorRT-LLM gives no `/metrics` counter the idle power-off reads, so a Spark running one of its models never sleeps by
+  itself (its Prometheus counters need `return_perf_metrics` and another path).
+
 **Start and any workload**
 - The A13 spec's "left out" list in `19-any-workload-spec.json`:
   - no `run_job` tool;
@@ -303,6 +339,14 @@ These were found and judged not to break real use under the strict bar. Suggesti
     access to Docker), four test files at a time, in 12 minutes. Build `0be65f7314ab` is marked as tested, with
     `start_model` `0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups`
     `f807e08bdd5d` and `restart_model` `bb7ffe5e4224`. `tools/test-on-spark.sh` is how that run is made.
+  - The smart-plug work (branch `m6-power`) changes two of those versions, on purpose. `start_model` becomes
+    `996e003946c5` and `start_model_across` `a92a8c038305` (before the merge with `main`, which may move them again):
+    `startModel` turns on a Spark Spark Console powered off and starts a parked model where it ran, `startingNow`
+    counts a power-on under way as the start, the starts add each engine's `/metrics` flag (`metricsFlags`), the
+    stand-in cable check takes its ports from the system, and the power helpers a start runs are now in its code list
+    (`powerFirst`, `parkedFor`, `wakeNames`, `offFor`, `freeLocalPorts`). `stop_model`, `find_setups` and
+    `restart_model` keep theirs. After the install both need a passing run on the Sparks: one `start_model` on one
+    Spark, and one `start_model_across` on Sparks 3 and 4. Until then the idle power-off waits.
   - The runs before it found things worth knowing. On the Mac, one file at a time, a low battery made healthy tests
     fail (macOS slows the processor). The first Linux runs found two faults that never show on a Mac: the stand-in
     fleet read the real machine's memory, and `awk` on Linux rounded large numbers (the same script runs on the real

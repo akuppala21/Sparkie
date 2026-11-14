@@ -28,7 +28,7 @@ function plugMap() {
 // The plugs Spark Console may ever ask to switch: none on the brain's Spark or its own, none read-only.
 const switchablePlug = spark => {
   const v = readJson(PLUGS_FILE)?.[spark];
-  return Boolean(v && !v.readOnly && !brainSparks().includes(spark) && Number.isInteger(Number(v.node)));
+  return Boolean(v && !v.readOnly && !brainSparks().includes(spark) && nodeById(spark)?.host !== 'local' && Number.isInteger(Number(v.node)));
 };
 
 // One question to the controller (its WebSocket API: the server's own description first, then one answer per
@@ -126,7 +126,9 @@ const wallWords = w => (!w || !w.answering ? null
   : w.watts !== null && w.watts < 15 ? `Its plug is on but it draws only ${w.watts} W, so it is shut down.`
   : w.watts !== null ? `Its plug shows ${w.watts} W, so it is powered on but not answering.` : null);
 
-// A Spark's plug read now (a fresh get_nodes, never the 15-second cache): what power_off and power_on decide on.
+// A Spark's plug as the controller has it now: a get_nodes asked now (never this part's 15-second cache), which gives the
+// values the controller has cached from the plug's own reports, with nothing saying how old they are. What power_off and
+// power_on decide on; where one reading could cut a Spark that is up, they hold on it first (holdLow, 21-power.mjs).
 async function freshWall(spark) {
   const v = readJson(PLUGS_FILE)?.[spark], node = Number(v?.node);
   if (!Number.isInteger(node) || node < 1) throw new Error(`${sparkName(nodeById(spark) || { id: spark })} has no paired plug.`);
@@ -143,7 +145,8 @@ async function freshWall(spark) {
 const PLUG_CONFIRM_MS = Number(process.env.SPARK_CONSOLE_PLUG_CONFIRM_MS || 10000);
 async function switchPlug(spark, on) {
   const name = sparkName(nodeById(spark) || { id: spark });
-  if (brainSparks().includes(spark) || !switchablePlug(spark)) throw new Error(`${name}’s plug can’t be switched from Spark Console.`);
+  // (first, whatever called it: never the hub's plug, the brain's Spark or Spark Console's own, R41)
+  if (brainSparks().includes(spark) || nodeById(spark)?.host === 'local' || !switchablePlug(spark)) throw new Error(`${name}’s plug can’t be switched from Spark Console.`);
   const node = Number(readJson(PLUGS_FILE)[spark].node);
   const n = (await plugNodes()).find(x => Number(x?.node_id) === node);
   if (!n) throw new Error(`The plug controller doesn’t know ${name}’s plug any more: pair it again with deploy/plugs.sh.`);

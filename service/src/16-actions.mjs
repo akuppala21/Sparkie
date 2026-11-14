@@ -100,9 +100,10 @@ const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:
 // "Do not …" and "didn't …" are statements, not questions.
 const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
 // Turning a Spark itself off or on: the phrase names the Spark(s) it switches, and powerSparksSaid reads them from it.
-const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*`;
-const POWER_OFF_WORDS = new RegExp(String.raw`\b(?:shut|turn|power|switch)\s+(?:down|off)\s+${SPARKS_NAMED}|\b(?:shut|turn|power|switch)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*\s+(?:down|off)\b`, 'gi');
-const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:on|up)\s+${SPARKS_NAMED}|\b(?:turn|power|switch|boot)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b|and\b|or\b|&|\+|,))*\s+(?:on|up)\b|\bwake\s+(?:up\s+)?${SPARKS_NAMED}`, 'gi');
+// (a Spark followed by 's is whose, not what is switched: "turn off Spark 3's model" names no Spark to power off)
+const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*`;
+const POWER_OFF_WORDS = new RegExp(String.raw`\b(?:shut|turn|power|switch)\s+(?:down|off)\s+${SPARKS_NAMED}|\b(?:shut|turn|power|switch)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*\s+(?:down|off)\b`, 'gi');
+const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:on|up)\s+${SPARKS_NAMED}|\b(?:turn|power|switch|boot)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*\s+(?:on|up)\b|\bwake\s+(?:up\s+)?${SPARKS_NAMED}`, 'gi');
 // What asks for a change (base forms: "start gemma", "bring it up") …
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
@@ -639,7 +640,7 @@ async function runningDetail(name, inv, running) {
   // The recorded run with exactly these settings (same model, engine, image, number of Sparks, flags and environment),
   // the one that says the most first, then the newest.
   const v = !eng || !x.modelId ? null : verifiedList().filter(e => e.model === x.modelId && e.engine === engine && e.image === w.image && e.sparks === sparks.length
-    && (!e.file || flags.some(a => a.includes(e.file))) && envIn(e) && sameFlags(flags, [...eng.tail('x'), ...(e.args || [])]))
+    && (!e.file || flags.some(a => a.includes(e.file))) && envIn(e) && [[], metricsFlags(engine, e.args || [])].some(mf => sameFlags(flags, [...eng.tail('x'), ...mf, ...(e.args || [])])))
     .sort((a, b) => Object.keys(b.env || {}).length - Object.keys(a.env || {}).length || String(b.lastAt).localeCompare(String(a.lastAt)))[0] || null;
   return {
     ...x, startedBySparkConsole: Boolean(w.byConsole), sparks, image: w.image, engine, command: w.command,

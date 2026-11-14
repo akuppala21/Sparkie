@@ -5,7 +5,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
-import { isIP, BlockList } from 'node:net';
+import { isIP, BlockList, createServer as createNetServer } from 'node:net';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, writeFileSync, appendFileSync, renameSync, mkdirSync, statSync, unlinkSync, chmodSync, readdirSync, openSync, fsyncSync, closeSync, copyFileSync } from 'node:fs';

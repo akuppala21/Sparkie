@@ -6,7 +6,9 @@
 // attach({ offlineFile, sparks: { node: spark }, bootMs }) ties nodes to the stand-in fleet's Sparks: a plug's watts follow
 // its Spark (on and answering: about 58 W; shut down, in the offline file: 2.5 W; plug off: 0), switching a plug off
 // takes its Spark down (into the offline file) and switching it on boots it bootMs later (out of the file), unless
-// setNoBoot(node). setStuck(node): its watts never drop (the plug isn't on that Spark). commands lists what was sent.
+// setNoBoot(node). setStuck(node): its watts never drop (the plug isn't on that Spark). setWatts(node, milliwatts): a
+// reading that stays at that value whatever its Spark does (one the controller hasn't caught up with); null ends it.
+// commands lists what was sent.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -41,7 +43,7 @@ function frames(buf) {
 
 export async function startPlugs(nodes = []) {
   let current = nodes, fleet = null, names = 'lower';
-  const asked = [], commands = [], stuck = new Set(), noBoot = new Set(), boots = new Map();
+  const asked = [], commands = [], stuck = new Set(), noBoot = new Set(), boots = new Map(), fixed = new Map();
   const offline = () => { try { return readFileSync(fleet.offlineFile, 'utf8').split(/[\s,]+/).filter(Boolean); } catch { return []; } };
   const setOffline = (spark, off) => {
     const now = offline().filter(x => x !== spark);
@@ -53,7 +55,7 @@ export async function startPlugs(nodes = []) {
     const spark = fleet?.sparks[n.node_id];
     if (!spark) return n;
     const on = n.attributes?.[onOffKey(n)] === true;
-    const mw = !on ? 0 : stuck.has(n.node_id) || !offline().includes(spark) ? 58000 : 2500;
+    const mw = !on ? 0 : fixed.has(n.node_id) ? fixed.get(n.node_id) : stuck.has(n.node_id) || !offline().includes(spark) ? 58000 : 2500;
     return { ...n, attributes: { ...n.attributes, '1/144/8': mw, '1/144/5': Math.round(mw / 120) } };
   };
   function command(args) {
@@ -104,6 +106,7 @@ export async function startPlugs(nodes = []) {
     setNames: v => { names = v; },
     setStuck: (node, on = true) => { if (on) stuck.add(node); else stuck.delete(node); },
     setNoBoot: (node, on = true) => { if (on) noBoot.add(node); else noBoot.delete(node); },
+    setWatts: (node, mw) => { if (mw === null || mw === undefined) fixed.delete(node); else fixed.set(node, mw); },
     node: id => current.find(x => x.node_id === id),
     close: () => new Promise(resolve => { for (const t of boots.values()) clearTimeout(t); server.closeAllConnections?.(); server.close(() => resolve()); }),
   };

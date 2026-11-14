@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together, and the rules every change must keep, are in `docs/architecture.md`. What to read first is in `AGENTS.md`.
 
-The service is 39 parts in `service/src/`, joined in name order into `service/server.mjs` (12178 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 39 parts in `service/src/`, joined in name order into `service/server.mjs` (12311 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -97,8 +97,8 @@ One long-running reader per Spark, only while someone has the page open; stopped
 
 ### `05-library.mjs`: model library and deployments
 
-- **Lines:** 397
-- **Functions:** `ggufOnDisk`, `describe`, `inventory`, `containerName`, `engineOf`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
+- **Lines:** 402
+- **Functions:** `ggufOnDisk`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
 
 ### `06-links.mjs`: multi-Spark readiness (read-only)
 
@@ -118,8 +118,8 @@ Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the Conne
 
 NVIDIA's two-Spark method (build.nvidia.com/spark/vllm-cluster, advanced): native vLLM multi-node, one tensor-parallel rank per Spark, talking over the direct cable. The first Spark is the head and serves the API on its Tailscale address, port 8000, like a single-Spark deploy; the second runs headless. This service starts each part over its own SSH.
 
-- **Lines:** 479
-- **Functions:** `clusterName`, `workerName`, `clusterNet`, `cableCheck`, `spanOf`, `connectLines`, `sockLines`, `stuckAt`, `stuckIn`, `engineCheck`, `clusterPlan`, `clusterEnv`, `clusterRunCommand`, `clusterDeploy`, `asideBack`, `clusterParts`
+- **Lines:** 487
+- **Functions:** `clusterName`, `workerName`, `clusterNet`, `freeLocalPorts`, `cableCheck`, `spanOf`, `connectLines`, `sockLines`, `stuckAt`, `stuckIn`, `engineCheck`, `clusterPlan`, `clusterEnv`, `clusterRunCommand`, `clusterDeploy`, `asideBack`, `clusterParts`
 
 ### `09-verified.mjs`: verified deployments
 
@@ -149,7 +149,7 @@ For one Recipes model, every published way of running its versions on DGX Spark:
 
 deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-console-plugs) on Spark 2, with its WebSocket on 127.0.0.1:5580 only, and writes which plug (a controller node) is on which Spark to plugs.json. This part reads every 15 seconds: whether each plug is on and what the whole Spark draws at the wall (watts, volts, amps). switchPlug is the one place in the service that switches a plug (21-power.mjs calls it, R41): only a plug switchablePlug allows, and it checks the plug really switched. The plug that powers Spark Console itself is read only when deploy/plugs.sh proved it …
 
-- **Lines:** 172
+- **Lines:** 175
 - **State files it names:** `plugs.json`
 - **Runs on a timer:** `refreshPlugs`
 - **Functions:** `plugMap`, `switchablePlug`, `plugAsk`, `plugNodes`, `plugAttr`, `plugNumber`, `wallOf`, `refreshPlugs`, `wallFor`, `wallView`, `wallWords`, `freshWall`, `switchPlug`
@@ -190,7 +190,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 
 Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the page's buttons move onto the same list, with the same checks. Each action says: kind 'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify, put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions. scope which agent keys may use it: 'fleet:read' today; …
 
-- **Lines:** 1139
+- **Lines:** 1140
 - **Actions:** `fleet_status`, `running_models`, `models_on_disk`, `find_recipes`, `recipe_detail`, `search_huggingface`, `where_it_fits`, `deploy_plan`, `cluster_plan`, `linked_sparks`, `spark_detail`, `recent_operations`, `operation_log`, `container_logs`, `spark_diagnostics`, `service_logs`, `files`, `sparkie_setup`, `workloads`, `fleet_events`
 - **Functions:** `action`, `gbOf`, `gbOfGiB`, `sparkIdOf`, `sparkList`, `sparkOf`, `checkValue`, `checkInput`, `liveSchema`, `normQuotes`, `sparkNames`, `tokensOf`, `changeIntent`, `pageOnlyLabel`, `pickContainer`, `tracesToRequest`, `planOf`, `modelCandidates`, `namesModel`, `sparkieCheck`, `powerSparksSaid`, `tripBreaker`, `firmModel`, `requestLine`, `runAction`, `recent`, `recentInventory`, `recentWorkloads`, `recentMain`, `onDiskAs`, `libraryModel`, `didYouMean`, `mustLibraryModel`, `planSteps`, `fitView`, `pairView`, `flagsKey`, `sameFlags`, `runningDetail`, `darkNow`, `mainArg`, `pasteCard`, `wordStart`, `estimateFit`, `filePattern`, `sizeWords`, `filePath`, `sharedFolder`, `abilities`
 
@@ -207,7 +207,7 @@ Sparkie, your agents (with "can change things" on their key) and the spark comma
 
 Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a workflow and fill in its inputs; they never make up the steps. A workflow's version is a fingerprint of its code (the functions it runs, its action, its known problems, and the worker that runs on the Sparks), so any change to that code is a new version. A version runs only once it's validated twice: - tested: the whole test suite passed with this exact build …
 
-- **Lines:** 577
+- **Lines:** 578
 - **Actions:** `workflows`, `save_workflow`, `run_workflow`, `forget_workflow`, `wait_operation`, `test_changes`, `undo_update`
 - **State files it names:** `validations.json`, `saved-workflows.json`, `.test-check-fails`, `heal-tries.json`, `updates.json`, `update-note.json`
 - **Functions:** `WORKER_SOURCE`, `START_CODE`, `workflowById`, `workflowFor`, `workflowVersion`, `WORKFLOW_LOCK`, `validations`, `workflowStatus`, `recordWorkflowRun`, `offMessage`, `unvalidatedMessage`, `pageWorkflow`, `rehearse`, `savedWorkflows`, `workflowSlug`, `fillIn`, `placeholders`, `savedView`, `findSaved`, `writeSaved`, `stepArgs`, `stepWords`, `missingTarget`, `checkFailsForTest`, `checkSteps`, `saveHealTries`, `maybeHeal`, `validateChanged`, `lastSnapshot`, `updatesFrom`, `noteUpdate`, `lastUpdates`, `startTestChanges`, `undoUpdate`
@@ -304,11 +304,11 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 
 The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idle, or when I tell chat, an agent or the API"; idle models are parked. A Spark with a plug Spark Console may switch (switchablePlug, 12-plugs.mjs) is powered off cleanly and on again: - power_off: refused for Spark 2 (brainSparks) always, for a Spark without a switchable plug, and while anything runs there that Spark Console didn't start or keeps protected (hand-started benchmarks, spark.protect=true, a job that hasn't ended): those are never stopped by this. Spark Console's own models and kept apps there are …
 
-- **Lines:** 880
+- **Lines:** 995
 - **Actions:** `power_off`, `power_on`, `power_settings`
 - **State files it names:** `power.json`
 - **Runs on a timer:** `powerTick`
-- **Functions:** `powerState`, `savePower`, `offRecord`, `consoleOff`, `poweredOffNow`, `sparkWord`, `sparksWords`, `minutesWords`, `atWords`, `parkedWhy`, `parkedFor`, `offHolds`, `wakeNames`, `offFor`, `powerMark`, `wakeWaiting`, `powerView`, `answersNow`, `powerLook`, `inUseWords`, `setupWords`, `sudoReady`, `plugUnproven`, `idleInUse`, `powerTargets`, `powerPlan`, `pairWords`, `unpark`, `powerOffJob`, `waitAndCut`, `powerOnOne`, `powerOnSparks`, `bringBackParked`, `powerFirst`, `powerThenStart`, `powerThenKeep`, `powerThen`, `minutesSaid`, `powerSettingsClear`, `lastJobOn`, `lastUseOn`, `sparkNeeded`, `busyReason`, `serveUsed`, `powerTick`, `keepAwake`, `doneWith`, `sparkPowerState`, `wakeSpark`, `wallWattsNow`, `wallWhNow`
+- **Functions:** `powerState`, `savePower`, `offRecord`, `consoleOff`, `poweredOffNow`, `sparkWord`, `sparksWords`, `minutesWords`, `atWords`, `parkedWhy`, `parkedFor`, `offHolds`, `wakeNames`, `offFor`, `powerMark`, `wakeWaiting`, `powerView`, `answersNow`, `powerLook`, `inUseWords`, `setupWords`, `sudoReady`, `shutDownSpark`, `holdLow`, `plugUnproven`, `idleInUse`, `powerTargets`, `powerPlan`, `pairWords`, `unpark`, `powerOffJob`, `waitAndCut`, `powerOnOne`, `powerOnSparks`, `bringBackParked`, `powerFirst`, `powerThenStart`, `powerThenKeep`, `powerThen`, `minutesSaid`, `powerSettingsClear`, `lastJobOn`, `lastUseOn`, `sparkNeeded`, `busyReason`, `serveUsed`, `servesHere`, `sayIdleActive`, `powerOpOn`, `unparkStranded`, `powerTick`, `keepAwake`, `doneWith`, `sparkPowerState`, `wakeSpark`, `wallWattsNow`, `wallWhNow`
 
 ### `21-telegram.mjs`: Telegram: the owner talks to Sparkie from any phone or laptop
 

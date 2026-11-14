@@ -758,7 +758,8 @@ More checking agents are added only where the eval (10.1) shows they catch real 
   Nothing that should be running (6.13) is powered down, except that *(the owner, 2026-11-13)* idle models are parked:
   Spark Console stops them, keeps them on the list marked parked (never healed, never "missing"), and they come back
   when their Spark is turned on or when they are called. Turning Sparks off or on, or setting the idle time, works
-  from chat, an agent or the API (power_off, power_on, power_settings); nothing that Spark Console didn't start, or that
+  from chat, an agent or the API (power_off, power_on, power_settings; *(2026-11-14)* an agent's power-off or idle
+  setting waits for the owner's yes in Spark Console, its power-on doesn't); nothing that Spark Console didn't start, or that
   is protected, is ever stopped for it, and a Spark that still answers is never cut.
 - 9.23 *(v3)* **The ready library: about 20 models, ready to go.** The models the owner uses are kept ready to start on
   Sparks 1, 3 and 4, alone or across several (Spark 2 is the brain's). Ready means:

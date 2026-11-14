@@ -15,7 +15,8 @@ const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('
 const START_CODE = () => [startModel, notBrainsSpark, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
-  recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull];
+  recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -28,7 +29,7 @@ const WORKFLOWS = [
     inputs: { model: 'As for start_model.', sparks: 'The two Sparks, like ["spark3","spark4"], when the owner named them; they must be linked (linked_sparks).' },
     changes: 'As for start_model, on both Sparks; one address answers for both.',
     takes: 'Several minutes; downloads to both Sparks add their time.',
-    failures: START_FAILURES, code: () => [...START_CODE(), clusterDeploy, clusterPlan, clusterRunCommand, clusterNet, cableCheck, CABLE_CHECK_PY, asideBack, clusterParts, connectLines, spanOf, LOADING_RE, DUMP_PY, sockLines, stuckAt, stuckIn, clusterEnv, CLUSTER_PINNED_ENV, engineCheck, ENGINE_CHECK_PY, ENGINE_CHECK_NAME] },
+    failures: START_FAILURES, code: () => [...START_CODE(), clusterDeploy, clusterPlan, clusterRunCommand, clusterNet, cableCheck, freeLocalPorts, CABLE_CHECK_PY, asideBack, clusterParts, connectLines, spanOf, LOADING_RE, DUMP_PY, sockLines, stuckAt, stuckIn, clusterEnv, CLUSTER_PINNED_ENV, engineCheck, ENGINE_CHECK_PY, ENGINE_CHECK_NAME] },
   { id: 'stop_model', action: 'stop_model', title: 'Stop a model',
     when: 'The owner wants one of Spark Console’s models stopped (both parts of one that spans Sparks).',
     inputs: { spark: 'The Spark it runs on.', container: 'Its container, from running_models.' },
