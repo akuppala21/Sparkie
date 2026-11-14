@@ -1,0 +1,11 @@
+[
+  {"id": "standin-org/Tiny-1B", "downloads": 500, "gated": false, "pipeline_tag": "text-generation", "tags": ["transformers", "safetensors"], "lastModified": "2026-10-01T00:00:00.000Z", "config": {},
+   "siblings": [{"rfilename": "config.json", "size": 700}, {"rfilename": "model.safetensors", "size": 2200000000}]},
+  {"id": "standin-org/Tiny-1B-FP8", "downloads": 300, "gated": "manual", "pipeline_tag": "text-generation", "tags": ["transformers", "safetensors", "fp8"], "lastModified": "2026-10-02T00:00:00.000Z",
+   "config": {"quantization_config": {"quant_method": "fp8"}}, "cardData": {"base_model": "standin-org/Tiny-1B"},
+   "siblings": [{"rfilename": "config.json", "size": 700}, {"rfilename": "model.safetensors", "size": 1200000000}]},
+  {"id": "standin-org/Tiny-1B-MLX", "downloads": 900, "gated": false, "pipeline_tag": "text-generation", "tags": ["mlx"], "config": {},
+   "siblings": [{"rfilename": "model.safetensors", "size": 1100000000}]},
+  {"id": "standin-org/Huge-900B", "downloads": 50, "gated": false, "pipeline_tag": "text-generation", "tags": ["safetensors"], "config": {},
+   "siblings": [{"rfilename": "model.safetensors", "size": 900000000000}]}
+]

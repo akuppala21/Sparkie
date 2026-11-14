@@ -89,8 +89,8 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 | `brain.test.mjs` | Sparkie's own model when a change goes wrong. Switching: a setup that can't start is refused before anything stops; a failed switch says whether the old model came back, and leaves no half-started container when it didn't. The brain keeper (R19): a brain Spark Console left down itself (a brain start that fails after its container is removed) comes back with the same setup once self-healing is on (a `healing` event, a `main-start` operation by Self-healing, the mark gone from `main.json`); a second try that would have to stop a container refuses and stops nothing, then one notice and never a third; the owner's Stop clears the mark, and so does the brain answering again; nothing is started then. |
 | `faults.test.mjs` | Spark Console's own errors on the record (H3), caused inside the service by `mock/fault.mjs`: a route that throws answers 500 and is counted in `sparkie_setup`'s `console.faults` (the route without ids, how often, the top frame, secrets hidden); a refusal isn't; an agent's tool and `ask_sparkie` that fail unexpectedly are; a promise nobody caught is; an uncaught error writes `last-crash.json` (0600, masked) before the service exits 1, and the next start shows it as `lastCrash` with the watchdog's last five restarts. |
 
-`search_huggingface` calls go to Hugging Face's public API when this machine is online (a few searches, read-only);
-offline, they answer with no results and the tests still pass.
+Hugging Face is never reached: `start-mock.mjs` sets `SPARK_CONSOLE_HF_FIXTURE` to `mock/hf-fixture.json`, a few made-up
+repos that searches and repo look-ups answer from (only with `SPARK_CONSOLE_ALL_LOCAL=1`; a repo not in it is not found).
 
 ## How it's put together
 

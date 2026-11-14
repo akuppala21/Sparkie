@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together, and the rules every change must keep, are in `docs/architecture.md`. What to read first is in `AGENTS.md`.
 
-The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10937 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10957 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -130,9 +130,9 @@ Every deploy that comes up healthy is recorded with exactly how it ran (model, i
 
 Recipes: service/catalog.json (built by tools/build-catalog.py from the research): models → versions → setups, plus models the owner added (~/.local/state/spark-console/added-models.json) and the setups the finder dug up for any model (found-setups.json, one entry per model, replaced each time it looks again).
 
-- **Lines:** 220
+- **Lines:** 240
 - **State files it names:** `added-models.json`, `found-setups.json`
-- **Functions:** `addedModels`, `foundSetups`, `recipeCatalog`, `modelKey`, `hfJson`, `quantOf`, `round1`, `needOf`, `fitSparks`, `variantFields`, `hfFixture`, `versionOf`, `inBatches`, `searchTerms`, `rememberSearch`, `searchModels`, `addModel`, `parseRepoList`, `addList`
+- **Functions:** `addedModels`, `foundSetups`, `recipeCatalog`, `modelKey`, `hfFixtureAnswer`, `hfJson`, `quantOf`, `round1`, `needOf`, `fitSparks`, `variantFields`, `hfFixture`, `versionOf`, `inBatches`, `searchTerms`, `rememberSearch`, `searchModels`, `addModel`, `parseRepoList`, `addList`
 
 ### `11-setups.mjs`: finding setups
 
