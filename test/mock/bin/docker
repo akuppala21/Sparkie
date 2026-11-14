@@ -312,7 +312,8 @@ case "$cmd" in
     case "$*" in *'"spark.protect"'*) [ "$(echo "$line" | cut -d'|' -f6)" = 1 ] && echo true || echo '<no value>'; exit 0 ;; esac
     case "$*" in
       *'{{.Id}}'*) idOf "$name" ;;
-      *'{{.State.ExitCode}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
+      # (exactly waitJobEnd's format: the brain's status check reads ExitCode too, with StartedAt, below)
+      *'{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
       *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;;
       *) echo "$st" ;;
     esac ;;
