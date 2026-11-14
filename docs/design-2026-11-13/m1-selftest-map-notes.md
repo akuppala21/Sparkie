@@ -24,25 +24,38 @@ an action run through `runAction` (start_model, stop_model, keep_running) with i
 (`stepRun`, 18-workflows.mjs, shared by both). Two direct `run` calls are in it: the healing drill's
 `docker kill --signal KILL <id>` (under a claim on that Spark, released at once; the id is the 64-hex id of the
 container the test itself started), and fixed reads (`docker inspect`, `docker logs --tail 20` of the job, parsed for
-numbers only). Neither may be copied for anything that starts or deletes.
+numbers only). Neither may be copied for anything that starts or deletes. It touches only what it started: its model by
+the full id of the container its own start made (a name says nothing about whose a container is), its web page and job by
+their own names. Its model's stop asks as the page when nothing of anyone else's is under way on that Spark, and as a
+workflow step (via `workflow`, actor `Self-test`) when something is, so `stop_model` cancels only the self-test's own
+steps (an owner's download-then-start there is never cancelled); `stop_model` itself is unchanged. Its stops always
+carry `stop_model`'s validation pass when that waits for its first run, the clean-up's too.
 
 ## R13 (add to the row)
 
-`self-test` jobs take no claim (their steps do), like `workflow-run`. One self-test runs at a time.
+`self-test` jobs take no claim (their steps do), like `workflow-run`. One self-test runs at a time. It picks only a
+Spark nothing is changing on: no claim, and no running operation that names it (a download-then-start holds no claim
+while it downloads); GPU apps there are read with a fresh `docker ps`, never the watcher's record.
 
 ## R19 (add to the row)
 
 The self-test's healing drill (`healDrills`, 18-workflows.mjs): the one container it killed, by `<spark>/<id>`, counts
 as a crash in the watcher (exit 137 is otherwise someone's stop; its `crashed` event carries `drill: true`), and
 `maybeHeal` doesn't apply the 10-minute rule to it. Every other rule holds (the owner's switch, two restarts an hour,
-offline in the last half hour, out of memory, the workflow's state). The heal's restart is restart_model's run, so it
+offline in the last half hour, out of memory, the workflow's state), and the drill asks them before it kills
+(`healTriesThisHour`, `lastOnOff`, shared with `maybeHeal`, plus the owner's switch and pause and the restart workflow's
+state): when healing wouldn't act, nothing is killed and the line is "Healing: not tried", with why and when to ask
+again; "not tried" never fails the run. The heal's restart is restart_model's run, so it
 validates that workflow when it waits for its first run. A drill that doesn't come back marks the container stopped on
 purpose (`consoleStopped`), so no late restart brings it back after the test.
 
 ## R22 (add to `desired.json`'s writers' note)
 
-`desiredAfter` skips a job marked `selfTest` (the self-test's own model start, marked in `launch` from `ctx.selfTest`):
-that model never joins the list. Its heal restart and its stop go through the list as any restart and stop do.
+`desiredAfter` skips a job marked `selfTest`: the self-test's own model start and stop (marked by the self-test through
+`stepRun`'s `started` hook, so no function in a workflow's `code()` carries the flag) and the drill's restart (marked in
+`maybeHeal` by the drill's id). That model never joins the list. The self-test never picks a model whose container is on
+the list for that Spark, so it never takes an owner's entry off. Its web page joins the list while it runs, as any app
+kept running does, and its stop takes it off.
 
 ## R25 (add to the row)
 
