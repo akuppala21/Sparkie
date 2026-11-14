@@ -6,14 +6,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after } from 'node:test';
-import { T, useFleet, api, call, createKey, createActKey, auditLines, chatMessages, waitFor, CLI, ASK, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, deleteKey, auditLines, chatMessages, waitFor, sleep, CLI, ASK, SLOW } from './lib.mjs';
 
 const keys = {};
-useFleet({ watchMs: 60000 }, async () => {
+// (knowledge: Sparkie traces a container an agent names through the watcher's record, so its stop runs at once)
+useFleet({ watchMs: 60000, knowledge: true }, async () => {
   keys.look = await createKey('ask-look');
   keys.act = await createActKey('ask-act');
   keys.other = await createActKey('ask-other');
@@ -164,6 +165,79 @@ describe('ask_sparkie', { concurrency: 1 }, () => {
       assert.equal((await api(`/agents/${k.id}`, { method: 'PUT', body: { act: false } })).status, 200);
       const t = await answer(k, { conversation: v.conversation, choice: v.choices[0].id });
       assert.match(t.reply, /Couldn’t do “Stop sc-nothing-here on Spark 4”: This agent can look but not change things/);
+    });
+  });
+
+  // A-1 (review with Astra, 2026-11-14): the owner removes an agent, or makes it look-only, while Sparkie is still
+  // answering it. A change later in that reply is refused; what already runs keeps running and posts its result (R9).
+  describe('an agent taken away while Sparkie answers it', { concurrency: 1 }, () => {
+    const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT = 'sc-gpt-oss-20b';
+    const requests = () => { try { return readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8'); } catch { return ''; } };
+    const running = () => waitFor(() => stateOf('spark4', RADIX) === 'running', { timeout: 60000, what: `${RADIX} running` });
+    // The agent asks for a stop it may make; the stand-in model holds its first answer while the owner takes the key away.
+    async function takenAway(prefix, takeAway) {
+      await running();
+      const k = await createActKey(prefix);
+      const words = `Stop ${RADIX} on spark 4; take ${Math.round(3 * SLOW) + 3} seconds.`;
+      const asked = ask(k, { message: words });
+      await waitFor(() => requests().includes(words), { every: 50, what: 'the request at the model' });
+      assert.equal((await takeAway(k)).status, 200);
+      const r = await asked;
+      assert.equal(r.isError, false, r.text);
+      assert.match(r.value.reply, /stop_model said: \[error\] This agent was removed \(or may only look now\), so nothing was changed\./);
+      const conv = r.value.conversation, m = (await chatMessages(conv)).find(x => x.role === 'assistant' && !x.notice);
+      assert.deepEqual(m.tools.map(t => [t.name, t.ok]), [['stop_model', false]]);
+      assert.ok(!auditLines().some(l => l.action === 'stop_model' && l.chat === conv && l.ok), 'no stop on the record');
+      await sleep(2000);
+      assert.equal(stateOf('spark4', RADIX), 'running');
+    }
+    test('an agent removed while Sparkie is answering it: the change in that reply is refused and nothing stops', { timeout: 90000 * SLOW },
+      () => takenAway('ask-gone', k => deleteKey(k.id)));
+    test('an agent made look-only while Sparkie is answering it: the change in that reply is refused and nothing stops', { timeout: 90000 * SLOW },
+      () => takenAway('ask-down', k => api(`/agents/${k.id}`, { method: 'PUT', body: { act: false } })));
+
+    test('an undo it asked for keeps running after the agent is removed: what it stopped runs again', { timeout: 300000 * SLOW }, async t => {
+      const job = async op => waitFor(async () => { const j = (await api(`/jobs/${op}`)).json; return j?.status !== 'running' && j; }, { timeout: 180000, what: `operation ${op}` });
+      // The testorg model runs on Spark 3 (the owner's own restart; a test above stopped it).
+      if (stateOf('spark3', TESTORG) !== 'running') {
+        const r = await api('/actions/restart_model', { method: 'POST', body: { spark: 'spark3', container: TESTORG } });
+        assert.equal((await job(r.json?.operation)).status, 'completed', r.text);
+      }
+      const k = await createActKey('ask-undo');
+      // Its start stops the testorg model for the port: that is this conversation's change, and "undo that" reverses it
+      // in two steps, the stop of what it started, then the start of what it stopped.
+      const v = await answer(k, { message: 'start gpt-oss-20b on spark 3' });
+      assert.match(v.reply, /start_model said: \{"outcome":"started"/, v.reply);
+      assert.match((await until(k, v.conversation, /Done: | failed: /, 180000)).reply, /Done: /);
+      assert.deepEqual([stateOf('spark3', GPT), stateOf('spark3', TESTORG)], ['running', 'exited']);
+      writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: '^undo that', calls: [{ name: 'undo_last_change', arguments: {} }] }]));
+      writeFileSync(mock('spark3', 'slow-stop'), String(Math.round(3 * SLOW) + 3));
+      t.after(() => { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); rmSync(mock('spark3', 'slow-stop'), { force: true }); });
+      const u = await answer(k, { conversation: v.conversation, message: 'undo that' });
+      assert.match(u.reply, /undo_last_change said: \{"outcome":"started"/, u.reply);
+      // (removed while the undo's first step is still going)
+      assert.equal(stateOf('spark3', GPT), 'running');
+      assert.equal((await deleteKey(k.id)).status, 200);
+      const done = await waitFor(async () => (await chatMessages(v.conversation)).find(m => m.notice && /^(?:Done: undoing|Undoing)/.test(m.content)), { timeout: 180000, what: 'the undo’s result' });
+      assert.match(done.content, /^Done: undoing the last change finished/, done.content);
+      assert.deepEqual([stateOf('spark3', GPT), stateOf('spark3', TESTORG)], ['exited', 'running']);
+    });
+
+    // (last: it leaves RADIX stopped)
+    test('an operation it started keeps running after the agent is removed, and its result is posted in the conversation', { timeout: 90000 * SLOW }, async t => {
+      await running();
+      writeFileSync(mock('spark4', 'slow-stop'), String(Math.round(3 * SLOW) + 3));
+      t.after(() => rmSync(mock('spark4', 'slow-stop'), { force: true }));
+      const k = await createActKey('ask-op');
+      const v = await answer(k, { message: `Stop ${RADIX} on spark 4` });
+      assert.match(v.reply, /stop_model said: \{"outcome":"started"/, v.reply);
+      const op = auditLines().findLast(l => l.action === 'stop_model' && l.chat === v.conversation && l.ok)?.operation;
+      assert.match(op || '', /^[0-9a-f]{12}$/);
+      assert.equal((await api(`/jobs/${op}`)).json.status, 'running');
+      assert.equal((await deleteKey(k.id)).status, 200);
+      const done = await waitFor(async () => (await chatMessages(v.conversation)).find(m => m.notice && m.operation === op), { timeout: 60000, what: 'the stop’s result in the conversation' });
+      assert.deepEqual([done.status, /^Done: stopping /.test(done.content)], ['completed', true], done.content);
+      assert.equal(stateOf('spark4', RADIX), 'exited');
     });
   });
 

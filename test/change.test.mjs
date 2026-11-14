@@ -98,11 +98,11 @@ function assertQuestion(v, { min = 2 } = {}) {
 
 /* ───────── who may change things ───────── */
 describe('who may change things', () => {
-  test('a new key only looks: 27 tools (the 26 that read, and ask_sparkie), and the change tools aren\'t there to call', async () => {
+  test(`a new key only looks: ${DOOR_READ.length} tools (every action that reads, and ask_sparkie), and the change tools aren't there to call`, async () => {
     assert.deepEqual(keys.look.created.scopes, ['fleet:read']);
     const r = await rpc(keys.look.token, 'tools/list');
     const names = r.json.result.tools.map(t => t.name);
-    assert.equal(names.length, 27);
+    assert.equal(names.length, DOOR_READ.length);
     assert.deepEqual(names.sort(), [...DOOR_READ].sort());
     const ask = r.json.result.tools.find(t => t.name === ASK);
     assert.equal(ask.annotations.readOnlyHint, false);
@@ -114,10 +114,10 @@ describe('who may change things', () => {
     }
     assert.deepEqual(await operations(), []);
   });
-  test('a key the owner lets act sees all 45 (ask_sparkie too); the change tools say they change things', async () => {
+  test(`a key the owner lets act sees all ${DOOR_ACT.length} (ask_sparkie too); the change tools say they change things`, async () => {
     assert.deepEqual(keys.act.scopes, ['fleet:read', 'fleet:act']);
     const tools = (await rpc(keys.act.token, 'tools/list')).json.result.tools;
-    assert.equal(tools.length, 45);
+    assert.equal(tools.length, DOOR_ACT.length);
     assert.deepEqual(tools.map(t => t.name).sort(), [...DOOR_ACT].sort());
     assert.equal(tools.find(t => t.name === ASK).annotations.destructiveHint, true, 'through Sparkie it can change things now');
     for (const t of tools) {
@@ -139,7 +139,7 @@ describe('who may change things', () => {
       const off = await api(`/agents/${k.id}`, { method: 'PUT', body: { act: false } });
       assert.equal(off.status, 200, off.text);
       assert.deepEqual(off.json.scopes, ['fleet:read']);
-      assert.equal((await rpc(k.token, 'tools/list')).json.result.tools.length, 27);
+      assert.equal((await rpc(k.token, 'tools/list')).json.result.tools.length, DOOR_READ.length);
       assert.equal((await rpc(k.token, 'tools/call', { name: 'stop_model', arguments: { spark: 'spark3', container: 'x' } })).json?.error?.code, -32602);
     } finally { await deleteKey(k.id); }
   });

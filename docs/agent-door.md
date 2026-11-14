@@ -13,10 +13,10 @@ Two ways in, through the same door:
   things up with its own tools, and starts, stops or restarts models if the agent may change things. This is "my agent
   talks to the Sparks' agent".
 - **Call actions directly**: everything the console can do is one list of named **actions** with typed inputs. The page,
-  Sparkie and outside agents use the same list under the same checks. 20 actions look things up; 3 change things
-  (start, stop and restart models), for agents you allow (below).
+  Sparkie and outside agents use the same list under the same checks. Some look things up; the others change
+  things (starting, stopping and restarting models among them), for agents you allow (below).
 
-Commands on the Sparks come later (see [sparkie-actions.md](sparkie-actions.md)).
+Commands on the Sparks come later (see [history/sparkie-actions.md](history/sparkie-actions.md)).
 
 ## Talking with Sparkie
 
@@ -108,9 +108,9 @@ Errors start with a code (`[not_found]`, `[invalid]`, `[unreachable, retry later
 | `restart_model` | Starts one of Spark Console's stopped or crashed models again |
 | `keep_running` | Keeps an app that isn't a model (Open WebUI, a database) running: one already on a Spark joins the list of what should be running and comes back after a crash or a power cycle; `do` restart or stop; with `image` and `port`, starts a new one (a memory cap, named volumes, opened on your tailnet only); `gpu` gives it the Spark's GPU (with `memoryGB`; only where no model or other GPU app runs), `command` the words it runs, and `once` makes a job that runs to its end, needs no port, writes into `jobs/<name>` in the shared folder and is told in the chat when it ends. From an agent (or Telegram), a new image, keeping, restarting or stopping a container Spark Console didn't start, running a job again, or starting a stopped app that uses the GPU is a question only the owner answers. Up means it keeps running; a link is given when it answers web requests (a database is up without one). A name that's there with another image, port, volumes or settings is refused (`[conflict]`, saying what differs); a port Docker doesn't publish for it, or above 65535, is refused; a stopped one starts only within its own memory limit (or a `memoryGB` you give when it has none); a stop while its Spark is off takes it off the list (`forgotten`). Never on Spark 2, never a model (by its image, Spark Console's model label or what the watcher saw), never by the start of a container's id |
 | `save_file` | Saves one new text file (at most 64 KB) in a Spark's shared folder; never replaces a file that's there, never makes a folder, never writes a hidden file or text holding a key shape (a known token format, a private key, `SECRET_KEY=<random>`, a password in an address: plain notes and code are fine). The name has no invisible or direction-changing characters |
-| `power_off` | Shuts a Spark down and switches its smart plug off (`spark`, or `sparks` together): Spark Console's models and kept apps there stop first and are parked (they come back when it's turned on, or when a parked model is called); a model across two Sparks stops on both. Refused for Spark 2, a Spark without a switchable plug, and while anything runs there that Spark Console didn't start or that is protected (named). You are asked first when models would stop (answer with `{"choice": id}`). The plug is cut only once the Spark stops answering and draws under 15 W |
-| `power_on` | Turns a Spark on with its plug (off and on again when it's shut down with the plug on) and brings back what was parked there; never switches one that draws power but doesn't answer. Starting a model on a Spark Spark Console powered off (or calling a parked model) turns it on by itself |
-| `power_settings` | How many idle minutes before Spark Console powers a Spark off by itself (`idleMinutes`, default 30; 0 turns it off). `fleet_status` shows it as `power` |
+| `power_off` | Shuts a Spark down and cuts its plug, parking Spark Console’s models first; never Spark 2. Waits for the owner (R41) |
+| `power_on` | Turns a Spark on and brings back what was parked there |
+| `power_settings` | Idle minutes before a Spark is powered off (`idleMinutes`, 0 is never). Waits for the owner |
 | `wait_operation` | Follows an operation (reads only) |
 
 **Who can:** Sparkie, in your chats and in conversations with agents you allowed. Your agents, once you turn on **Can

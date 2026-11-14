@@ -14,8 +14,8 @@ address: `https://akspark2.tailab9aa9.ts.net:8443`. It can be reached on the own
 behind a passkey sign-in.
 
 The owner uses it in only two ways: by talking to **Sparkie** and through the **APIs**. Sparkie is the console's chat
-brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The page is just chat, sign-in and
-status.
+brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The owner uses chat and the APIs.
+The page still shows Home, Models, Files and Access from earlier builds, and they still work.
 
 Sparkie and the APIs run anything the owner asks for on Spark 3, Spark 4, or any Spark added later:
 
@@ -42,11 +42,11 @@ key per agent.
    - known traps.
 3. **`docs/code-map.md`.** Every part, action, state file, timer and function, generated from the code.
 4. **`docs/contract.md`.** What the product must do and why. It is long, so search it rather than reading it all.
-5. **`docs/analysis-2026-11-11/`.** The record of the analyses and reviews that drove this build. Start with:
+5. **`docs/history/analysis-2026-11-11/`.** The record of the analyses and reviews that drove this build. Start with:
    - `README.md` (the owner's decisions);
    - `14-trimmed-plan.md` (what was chosen to build);
    - `17-build-specs.json` and `19-any-workload-spec.json` (the exact specs).
-6. **`docs/reviews-2026-11-11.md`.** The earlier reviews and their "next, in order" list.
+6. **`docs/history/reviews-2026-11-11.md`.** The earlier reviews and their "next, in order" list.
 7. **`test/README.md`.** What each test file covers, and how the stand-in fleet works.
 
 Other docs:
@@ -57,7 +57,7 @@ Other docs:
 | `docs/agent-door.md` | MCP for the owner's agents |
 | `docs/recipes.md` | How setups are found for a model |
 | `docs/multi-spark.md` | One model across two Sparks |
-| `docs/sparkie-actions.md` | What Sparkie may do on its own |
+| `docs/history/sparkie-actions.md` | What Sparkie may do on its own |
 
 ## 3. Where the code is
 
@@ -76,7 +76,7 @@ Other docs:
 
 ## 4. What changed in this build-out (2026-11-12 and 13)
 
-The items came from the trimmed plan (`docs/analysis-2026-11-11/14-trimmed-plan.md`), and the IDs match it. Each group
+The items came from the trimmed plan (`docs/history/analysis-2026-11-11/14-trimmed-plan.md`), and the IDs match it. Each group
 went through the same steps:
 
 1. Built by Opus 5.5 at extra-high effort, in its own copy of the tree.
@@ -312,6 +312,8 @@ These were found and judged not to break real use under the strict bar. Suggesti
   `String(CHANGES_MODELS)`, which is `[object Set]` whatever is in it.
 - TensorRT-LLM gives no `/metrics` counter the idle power-off reads, so a Spark running one of its models never sleeps by
   itself (its Prometheus counters need `return_perf_metrics` and another path).
+- The controller's direct attribute read (matterjs-server's `read_attribute`) wasn't checked against a real plug; the
+  one-minute hold (`POWER_HOLD_MS`) on its cached values stands in for a fresh reading.
 
 **Start and any workload**
 - The A13 spec's "left out" list in `19-any-workload-spec.json`:
@@ -409,6 +411,12 @@ bash spark-console/deploy/open-apps-to-internet.sh
 ```
 
 To close the app door again, add `--undo`.
+
+**Installed on 2026-11-13, 23:52 Pacific.** Build `0be65f7314ab`: health, the ways in (sign-in, the agent door, the
+model address) and a chat turn passed, the build was kept, and the watchdog is on. "Find setups" passed its check on
+the real Sparks. The other four workflows wait for their first real run: a model was running across Spark 3 and 4, and
+the test does not stop it. Node on Spark 2 is still code-server's own (v24). Spark 1 is not reachable without a
+password, as expected.
 
 After the install, with Spark 3 or Spark 4 powered on, run these checks through Sparkie's chat:
 

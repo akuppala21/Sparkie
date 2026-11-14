@@ -1330,7 +1330,7 @@ Faster loading comes with them: vLLM `--safetensors-load-strategy eager`, llama.
   the brain keeps its own (`~/.cache/spark-console/kernels`). CuTe DSL's cache (`CUTE_DSL_CACHE_DIR`) and b12x's
   `~/.cache/b12x` (NVIDIA's FP4 MoE kernels for GLM) are kept the same way (review, 2026-11-11).
 - *(v3.1)* **Self-healing, more of it** (2026-11-11, the owner: "most importantly self healing and being able to fix
-  things by itself"; reviewed, `docs/reviews-2026-11-11.md`). Every minute, from the list of what should be running
+  things by itself"; reviewed, `docs/history/reviews-2026-11-11.md`). Every minute, from the list of what should be running
   (`20-heal.mjs`), with automatic restarts on:
   - a model across two Sparks that lost a part: what's left stops, and it starts again across the same Sparks (put
     back as it was if that start is refused);

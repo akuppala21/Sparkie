@@ -1,0 +1,27 @@
+{
+  "case": "recognized-memory-refusal-is-overridden-by-statement-fallback",
+  "scope": "Exact checkout functions; isolated in-memory persistence. No model, HTTP or Spark operation.",
+  "sourceSha256": {
+    "service/src/11-setups.mjs": "23d15725368be77fe1a373e4a6b2feac31b5e3ab4ae6771b8803769e6b6316f7",
+    "service/src/16-actions.mjs": "8921a3dcc8dfe27157f66bfa77d4b1b662cb3375ec41ef699d5b58792ae8e4ce",
+    "service/src/20-memory.mjs": "0a4cdbde39df5fd10ab46e4ecd7e9697042ef62be09de867c83fc664c24abfa7"
+  },
+  "request": "Do not remember that Spark 4 is on Wi-Fi only",
+  "proposed": "Spark 4 is on Wi-Fi only",
+  "intent": {
+    "asked": [],
+    "negated": [
+      "remember"
+    ],
+    "mixed": [],
+    "keepOnly": false
+  },
+  "gateClear": true,
+  "outcome": "remembered",
+  "savedEntries": [
+    {
+      "text": "Spark 4 is on Wi-Fi only",
+      "by": "owner"
+    }
+  ]
+}

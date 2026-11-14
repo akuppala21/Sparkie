@@ -1,10 +1,13 @@
 /* ───────── a daily copy of the console's state on another Spark ───────── */
 // People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
 // Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
-// one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part, is read
-// back whole (gzip -t) and only then moved into place, so a copy cut short never replaces a good one. backup.json keeps
-// the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today (UTC): it
-// is tried ten minutes after a start, then every hour. With no good copy today or yesterday, one notice a day says so.
+// one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is
+// read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and
+// remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't
+// finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes one. backup.json
+// keeps the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today
+// (UTC): it is tried ten minutes after a start, then every hour. With no good copy today or yesterday, one notice a day
+// says so.
 // To restore: stop the service, then untar one into ~/.local/state/spark-console (docs/sharing.md).
 const BACKUP_FILE = `${STATE_DIR}/backup.json`;
 const BACKUP_ON = !ALL_LOCAL || Boolean(process.env.SPARK_CONSOLE_BACKUP_MS);
@@ -17,24 +20,30 @@ function backupTargets() {
   const first = CONFIG.backupTo || 'spark3', brain = brainSparks();
   return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n)).sort((a, b) => (b.id === first) - (a.id === first));
 }
-// One tar stream from this Spark to a file on another. True only when tar, the far side and the read-back all worked.
+// One tar stream from this Spark to a file on another, in two steps: the stream is kept there as <name>.part and read
+// back; then, once both ends are known, it is moved into place or removed. True only when tar, the far side, the
+// read-back and the move all worked.
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
     const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
-    // tar pads its output with zeros); a copy cut short answers 1 and is removed, never moved into place.
+    // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
+    // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first.)
     // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
     sparkCalls.set(target.id, Date.now());
-    const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; } && mv ${part} ${dir}/${name}; s=$?; rm -f ${part}; [ $s = 0 ] && ls -1t ${dir}/state-*.tgz | tail -n +15 | xargs -r rm -f; exit $s` });
+    const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && rm -f ${dir}/state-*.tgz.part && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
     const finish = () => {
       if (done || tarCode === null || farCode === null) return;
       done = true;
       clearTimeout(timer);
-      // GNU tar answers 1 when a file changed while it read it (a chat being saved): the copy is still good.
-      resolve(farCode === 0 && tarCode <= 1);
+      // GNU tar answers 1 when a file changed while it read it (a chat being saved): the copy is still good. 2 (a file
+      // it couldn't read, or it was stopped) leaves this copy out, so the one there and the older ones stay as they are.
+      const good = farCode === 0 && tarCode <= 1;
+      run(target, good ? `mv ${part} ${dir}/${name}; s=$?; [ $s = 0 ] && ls -1t ${dir}/state-*.tgz | tail -n +15 | xargs -r rm -f; exit $s` : `rm -f ${part}`, { timeout: 60000 })
+        .then(r => resolve(good && r.code === 0), () => resolve(false));
     };
     src.on('close', c => { tarCode ??= c ?? 2; finish(); });
     src.on('error', () => { tarCode ??= 2; finish(); });

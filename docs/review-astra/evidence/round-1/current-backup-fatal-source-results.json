@@ -1,0 +1,13 @@
+{
+  "case": "fatal-source-tar-error-still-replaces-good-backup",
+  "sourceErrorModel": "Real BSD tar permission failure mapped from exit 1 to fatal exit 2 (GNU semantics)",
+  "sendCopyAccepted": false,
+  "tarExitStatus": 2,
+  "tarStderr": "tar: Can't open `chats.json': Permission denied\ntar: Error exit delayed from previous errors.\n",
+  "previousBackupOverwritten": true,
+  "archiveIsValid": true,
+  "archiveEntries": [
+    "./"
+  ],
+  "missingChats": true
+}

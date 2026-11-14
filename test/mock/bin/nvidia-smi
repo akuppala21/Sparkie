@@ -13,6 +13,11 @@ idOf() {
   printf -v c '%012x' "$h"
   printf '%s%s\n' "${hex:0:52}" "$c"
 }
+# ~/.mock/gpu-broken: the GPU's driver doesn't answer, as nvidia-smi says it then (exit 9), whatever it's asked.
+if [ -f "$HOME/.mock/gpu-broken" ]; then
+  echo "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver. Make sure that the latest NVIDIA driver is installed and running."
+  exit 9
+fi
 case "$*" in
   *-lms*)
     base=$(( $(printf '%s' "$HOME" | cksum | cut -d' ' -f1) % 50 ))

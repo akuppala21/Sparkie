@@ -7,6 +7,7 @@
 // a password in an address), and `files` hides those same shapes, not plain words. A read never makes the shared folder.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, rpc, createKey, createActKey, agentSettings, auditLines, newChat, say, choose, SLOW } from './lib.mjs';
@@ -124,6 +125,32 @@ describe('files in a Spark’s shared folder', { concurrency: 1 }, () => {
     assert.equal(named.args.spark, 'spark3');
     assert.equal(named.args.sizeBytes, 6);
     assert.match(named.args.sha256, /^[a-f0-9]{64}$/);
+  });
+
+  // A request body is read as one stream (A-7): a character whose bytes arrive in two pieces is saved as sent, never as
+  // replacement marks with a 200.
+  test('a character whose bytes arrive in two pieces of the request is saved as sent: inside a 2-, a 3- and a 4-byte character', { timeout: 120000 * SLOW }, async () => {
+    for (const ch of ['é', '€', '😀']) {
+      for (let k = 1; k < Buffer.byteLength(ch); k++) {
+        const path = `split-${Buffer.byteLength(ch)}-${k}.md`, text = `Price: ${ch}10 — café ’\n`;
+        const body = Buffer.from(JSON.stringify({ spark: 'spark3', path, text }));
+        const cut = body.indexOf(Buffer.from(ch)) + k;
+        // (two writes with a pause between, so the service reads them as two pieces)
+        const r = await new Promise((resolve, reject) => {
+          const req = http.request(`${T.base}/actions/save_file`, { method: 'POST', agent: false,
+            headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: T.origin, 'content-length': body.length } }, res => {
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+          });
+          req.on('error', reject);
+          req.write(body.subarray(0, cut));
+          setTimeout(() => req.end(body.subarray(cut)), 300);
+        });
+        assert.equal(r.status, 200, r.text);
+        assert.equal(readFileSync(shared(path), 'utf8'), text, `${ch} cut after its byte ${k}`);
+      }
+    }
   });
 
   test('a file that’s there is never replaced', { timeout: 60000 * SLOW }, async () => {

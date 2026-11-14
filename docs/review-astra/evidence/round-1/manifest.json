@@ -1,0 +1,305 @@
+{
+  "reviewed_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "original_directory": "/tmp/spark-early-review-20261113",
+  "scope": "Current source review only. Supplemental /stop evidence supports the existing truncated-upstream-response finding. No legacy portal evidence or private live responses included. Backup source-failure evidence adds one durability scenario; the fatal-exit2 variant models GNU semantics using a real BSD tar failure, not a Linux run. Explicit memory-negation supplement supports existing A3; exact source VM only, no real model/HTTP/fleet behavior claimed.",
+  "hash_algorithm": "SHA-256",
+  "interpretation": "Original hashes were computed from the collected files before portability edits. Result artifacts are unchanged. Script edits are limited to locating inputs and helper modules, stdout result routing, and labels reflecting the current worker target. Backup scripts additionally guard exact parity of their copied sendCopy function against the selected source before running; only instrumentation is normalized.",
+  "files": [
+    {
+      "original_filename": "current-stopped-gpu-claim-check.mjs",
+      "packaged_filename": "current-stopped-gpu-claim-check.mjs",
+      "kind": "script",
+      "original_sha256": "ced663a6d44b079f5f2a12dc0270dce43e41c1228260a83dc3013248454afc6d",
+      "packaged_sha256": "1cdbbd1a66524d484ee31b1b0a1a8c8149c72edc838f557a3a707c5f991576dc",
+      "byte_identical": false,
+      "edits": [
+        "Repository path inferred relative to this file; SPARK_REVIEW_ROOT or existing positional root overrides it."
+      ]
+    },
+    {
+      "original_filename": "current-stopped-gpu-claim-evidence.json",
+      "packaged_filename": "current-stopped-gpu-claim-evidence.json",
+      "kind": "archived_result",
+      "original_sha256": "6bab8af01948f59fbfd01b4eb5ba759c221e2403ad75ccb1919a395545ec5634",
+      "packaged_sha256": "6bab8af01948f59fbfd01b4eb5ba759c221e2403ad75ccb1919a395545ec5634",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-first-job-end-check.mjs",
+      "packaged_filename": "current-first-job-end-check.mjs",
+      "kind": "script",
+      "original_sha256": "934eb683828cc1214552f8ed1a9985f06267a4939fcd517c229655574af42cfa",
+      "packaged_sha256": "8a0087a55b1dd98d111951c603ac7776812a3712360704a61923199833d988d0",
+      "byte_identical": false,
+      "edits": [
+        "Repository path inferred relative to this file; SPARK_REVIEW_ROOT or existing positional root overrides it."
+      ]
+    },
+    {
+      "original_filename": "current-first-job-end-evidence.json",
+      "packaged_filename": "current-first-job-end-evidence.json",
+      "kind": "archived_result",
+      "original_sha256": "18b01024a5383129e66f626608b761b1c5c9c05a5dbc0e638c546e10f7df777c",
+      "packaged_sha256": "18b01024a5383129e66f626608b761b1c5c9c05a5dbc0e638c546e10f7df777c",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "worker-delete-race-repro.py",
+      "packaged_filename": "current-worker-delete-race-repro.py",
+      "kind": "script",
+      "original_sha256": "fa6ab9571ba68d2d5bb63708399f516fd6dbeb8ea49144e68daaa3901ff9ddf7",
+      "packaged_sha256": "2b410e7cd295d4e18e33de203c9a6495e816389ad5b1d1db01436a623a7ffb5d",
+      "byte_identical": false,
+      "edits": [
+        "Packaged under current-worker-delete-race-repro.py; current worker default resolves from this file or SPARK_REVIEW_ROOT; existing --portal-root override retained.",
+        "Updated legacy-only default description and assertion label to current-source scope; interleaving, inputs, checks, and assertions unchanged."
+      ]
+    },
+    {
+      "original_filename": "current-worker-delete-race-evidence.json",
+      "packaged_filename": "current-worker-delete-race-evidence.json",
+      "kind": "archived_result",
+      "original_sha256": "e5ad91ff8c69b1ea3ab18206b52bc2e128932e05068e344cf124cba9a1e8c7cd",
+      "packaged_sha256": "e5ad91ff8c69b1ea3ab18206b52bc2e128932e05068e344cf124cba9a1e8c7cd",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-agent-revocation-repro.mjs",
+      "packaged_filename": "current-agent-revocation-repro.mjs",
+      "kind": "script",
+      "original_sha256": "6c5ec94efc2fdcf70efdc902e71915fd4b2bac35a4490ab71fcd369bb4443904",
+      "packaged_sha256": "b8fc22e36304a429daf31062457a94c0255f513935af35caa4be113b6868d9e0",
+      "byte_identical": false,
+      "edits": [
+        "Absolute helper imports resolved relative to this file, with SPARK_REVIEW_ROOT override; imports changed to await import for dynamic paths."
+      ]
+    },
+    {
+      "original_filename": "current-agent-revocation-results.txt",
+      "packaged_filename": "current-agent-revocation-results.txt",
+      "kind": "archived_result",
+      "original_sha256": "e30c72897b79d91226ef240f14ed86a6aa8bd93a1e0f6dadbb78ebb6c37105d9",
+      "packaged_sha256": "e30c72897b79d91226ef240f14ed86a6aa8bd93a1e0f6dadbb78ebb6c37105d9",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-body-unicode-repro.mjs",
+      "packaged_filename": "current-body-unicode-repro.mjs",
+      "kind": "script",
+      "original_sha256": "e2893b9ca1cd8b39c94a5c11c1c631e5a5e255ced6868e551e281f5b8e92f31f",
+      "packaged_sha256": "71bf4c9bf3636b27b6556fd98d976c2bb6863c090d05ab791bf155dd34555812",
+      "byte_identical": false,
+      "edits": [
+        "Repository path inferred relative to this file, with SPARK_REVIEW_ROOT override."
+      ]
+    },
+    {
+      "original_filename": "current-body-unicode-results.txt",
+      "packaged_filename": "current-body-unicode-results.txt",
+      "kind": "archived_result",
+      "original_sha256": "019be3b25707187e1a634ea235a2055161430c252a5b840eb9822a420667a96b",
+      "packaged_sha256": "019be3b25707187e1a634ea235a2055161430c252a5b840eb9822a420667a96b",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-body-unicode-http-repro.mjs",
+      "packaged_filename": "current-body-unicode-http-repro.mjs",
+      "kind": "script",
+      "original_sha256": "e2dc5529e515cb9104f336dada8d1f1d8ebeb6d6df771e125fb02cae20489577",
+      "packaged_sha256": "4f0b80799486c88d8c1693f8b0bda1ccb2c7831d29381f205883202a02f79aa0",
+      "byte_identical": false,
+      "edits": [
+        "Absolute helper imports resolved relative to this file, with SPARK_REVIEW_ROOT override; imports changed to await import for dynamic paths."
+      ]
+    },
+    {
+      "original_filename": "current-body-unicode-http-results.txt",
+      "packaged_filename": "current-body-unicode-http-results.txt",
+      "kind": "archived_result",
+      "original_sha256": "9716676248937f99f6681dae59d1217326b46e5fe80ce464428625f4f014583f",
+      "packaged_sha256": "9716676248937f99f6681dae59d1217326b46e5fe80ce464428625f4f014583f",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-chat-repros.mjs",
+      "packaged_filename": "current-chat-repros.mjs",
+      "kind": "script",
+      "original_sha256": "a83aca72319b482cab4f2e383bea90a88924102dc3d345440006004f834f4068",
+      "packaged_sha256": "c5cfcbb2d4d7d5274184d4b8009fb32edf90f67ca0f8a60246fe7da95fc2c0a8",
+      "byte_identical": false,
+      "edits": [
+        "Absolute helper imports resolved relative to this file, with SPARK_REVIEW_ROOT override; imports changed to await import for dynamic paths.",
+        "Removed original hardcoded result-file write; unchanged console output is now the sole result destination, so reruns cannot overwrite the archive."
+      ]
+    },
+    {
+      "original_filename": "current-chat-repros.json",
+      "packaged_filename": "current-chat-repros.json",
+      "kind": "archived_result",
+      "original_sha256": "e1230393ef5d05aa8bb5d11c3140850d31b86f82a6cb55acc4b4fd8c233c4645",
+      "packaged_sha256": "e1230393ef5d05aa8bb5d11c3140850d31b86f82a6cb55acc4b4fd8c233c4645",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-chat-repros.log",
+      "packaged_filename": "current-chat-repros.log",
+      "kind": "archived_result",
+      "original_sha256": "e1230393ef5d05aa8bb5d11c3140850d31b86f82a6cb55acc4b4fd8c233c4645",
+      "packaged_sha256": "e1230393ef5d05aa8bb5d11c3140850d31b86f82a6cb55acc4b4fd8c233c4645",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-frontend-race-repros.cjs",
+      "packaged_filename": "current-frontend-race-repros.cjs",
+      "kind": "script",
+      "original_sha256": "268d1449e8abf3a9df669348085a72bfd05668dcae771884683fa08fa0b5fe51",
+      "packaged_sha256": "6c22ce3815b7f772472db65d39b786d0a1e295655eee1c340a4ebefe11680d21",
+      "byte_identical": false,
+      "edits": [
+        "Repository path inferred relative to this file, with SPARK_REVIEW_ROOT override.",
+        "Playwright loads from PLAYWRIGHT_MODULE, normal module resolution, or documented installed Codex runtime fallback under the current user home."
+      ]
+    },
+    {
+      "original_filename": "current-frontend-race-repros.log",
+      "packaged_filename": "current-frontend-race-repros.log",
+      "kind": "archived_result",
+      "original_sha256": "4cf5859be3ccae7b9c11a8d1b90e032327dc374240c5c4231b32bf0d8ec6a9f5",
+      "packaged_sha256": "4cf5859be3ccae7b9c11a8d1b90e032327dc374240c5c4231b32bf0d8ec6a9f5",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-truncated-stop-repro.mjs",
+      "packaged_filename": "current-truncated-stop-repro.mjs",
+      "kind": "script",
+      "original_sha256": "19a1a77ba2ea3abd27589c3558b31a6f706bf892c961975a065ce854e1adc049",
+      "packaged_sha256": "5c653edfbfbcd94f44f2288f18d4efa21c5c5076ff3d059b564365d360bd6022",
+      "byte_identical": false,
+      "edits": [
+        "Absolute helper imports resolved relative to this file, with SPARK_REVIEW_ROOT override; imports changed to await import for dynamic paths.",
+        "Removed original hardcoded result-file write; unchanged console output is now the sole result destination, so reruns cannot overwrite the archive."
+      ]
+    },
+    {
+      "original_filename": "current-truncated-stop-results.json",
+      "packaged_filename": "current-truncated-stop-results.json",
+      "kind": "archived_result",
+      "original_sha256": "8a95e5979db90a23058f2e2d7670f6b81303f3770112327a028350a4ff16584b",
+      "packaged_sha256": "8a95e5979db90a23058f2e2d7670f6b81303f3770112327a028350a4ff16584b",
+      "byte_identical": true,
+      "edits": [
+        "Original result copied byte for byte; any recorded local source paths, fixture IDs, and timestamps are provenance, not active paths."
+      ]
+    },
+    {
+      "original_filename": "current-backup-source-failure-repro.mjs",
+      "packaged_filename": "current-backup-source-failure-repro.mjs",
+      "kind": "script",
+      "original_sha256": "851c17126977606911506087e1975c62dfb05f138dbd4d306a0d17c73977d4bd",
+      "packaged_sha256": "2da9047d7dfcc63664ef51317c6c85924365227e02d37a1f549a220eedf8f245",
+      "byte_identical": false,
+      "edits": [
+        "Added portable source location (SPARK_REVIEW_ROOT override) and an exact sendCopy parity guard before temporary files are created. The guard normalizes only rawSpawn aliasing and stderr/exit-status observation.",
+        "Original interleaving, copied sendCopy logic, fixture contents, and result output unchanged. The fatal-source script deliberately maps a real BSD tar error to exit2; it is not an actual GNU tar run."
+      ]
+    },
+    {
+      "original_filename": "current-backup-source-failure-results.json",
+      "packaged_filename": "current-backup-source-failure-results.json",
+      "kind": "archived_result",
+      "original_sha256": "5a41acdfbaa3a7167c2461250add76175b0c990e85742cfb7474deda6ab2225c",
+      "packaged_sha256": "5a41acdfbaa3a7167c2461250add76175b0c990e85742cfb7474deda6ab2225c",
+      "byte_identical": true,
+      "edits": [
+        "Original isolated-run result copied byte for byte; no live data."
+      ]
+    },
+    {
+      "original_filename": "current-backup-fatal-source-repro.mjs",
+      "packaged_filename": "current-backup-fatal-source-repro.mjs",
+      "kind": "script",
+      "original_sha256": "bc0fb6aaac55f304fae7b6e462c6b626936d7821e5ce901fb3a0a78a194cbd3c",
+      "packaged_sha256": "530991499db6f9afe1e929dc23cc82aa1220252460448ea8a3cd8c16a2e9aba8",
+      "byte_identical": false,
+      "edits": [
+        "Added portable source location (SPARK_REVIEW_ROOT override) and an exact sendCopy parity guard before temporary files are created. The guard normalizes only rawSpawn aliasing and stderr/exit-status observation.",
+        "Original interleaving, copied sendCopy logic, fixture contents, and result output unchanged. The fatal-source script deliberately maps a real BSD tar error to exit2; it is not an actual GNU tar run."
+      ]
+    },
+    {
+      "original_filename": "current-backup-fatal-source-results.json",
+      "packaged_filename": "current-backup-fatal-source-results.json",
+      "kind": "archived_result",
+      "original_sha256": "e27ca56b317d6b704762111eb2b13c090fcaa2d4b84493768265ba392eb048f4",
+      "packaged_sha256": "e27ca56b317d6b704762111eb2b13c090fcaa2d4b84493768265ba392eb048f4",
+      "byte_identical": true,
+      "edits": [
+        "Original isolated-run result copied byte for byte; no live data."
+      ]
+    },
+    {
+      "original_filename": "current-memory-negation-gate-repro.mjs",
+      "packaged_filename": "current-memory-negation-gate-repro.mjs",
+      "kind": "script",
+      "original_sha256": "b8ea474b68732cbcdc3df1d545e9a7eabc78f08ef9368737becc9deb2b9cc215",
+      "packaged_sha256": "b8ea474b68732cbcdc3df1d545e9a7eabc78f08ef9368737becc9deb2b9cc215",
+      "byte_identical": true,
+      "edits": [
+        "Copied byte for byte. Script already resolves SPARK_REVIEW_ROOT or its packaged repository root and extracts exact source functions; state persistence is in memory only."
+      ]
+    },
+    {
+      "original_filename": "current-memory-negation-gate-results.json",
+      "packaged_filename": "current-memory-negation-gate-results.json",
+      "kind": "archived_result",
+      "original_sha256": "a407591e3019caf9fa9ddc94eaaa0bc6f1ee0c58c6e2a5697c25c4f7db2f8fe2",
+      "packaged_sha256": "a407591e3019caf9fa9ddc94eaaa0bc6f1ee0c58c6e2a5697c25c4f7db2f8fe2",
+      "byte_identical": true,
+      "edits": [
+        "Original isolated VM result copied byte for byte; no live data."
+      ]
+    }
+  ],
+  "reviewed_source_sha256": {
+    "public/app.js": "5a642781bcb8e199f207fbcfdacbbd921d5cd29f42927624d7f7e5350567db81",
+    "service/server.mjs": "b3b4936f51cc3c5f6b9b698077dbddb62e03ee3c46defeb1747f15f878c2e11e",
+    "service/worker.py": "fa09bbf92a2230879cce445b101a366a35bbec314d9e4f17e72557f4770c9280",
+    "service/src/07-jobs.mjs": "a7d3433899bb81e9979fd20ceba9d9ce2632d986ac32ea572be113344be303b4",
+    "service/src/19-watcher.mjs": "2f0a4045f9a279bef8c94b1abca76cb05fb8acf0c21e82b96bac31362b2f4de4",
+    "service/src/21-apps.mjs": "5a10a79e894bbc324aa6e15b1979ae1c5604b8bdef87597e12067f87597c8739",
+    "service/src/23-http.mjs": "a370e50fc6b449d42ac9925fc10137eb9d813482655cb0a4865c26387590a04b",
+    "test/start-mock.mjs": "44efc10fef90e874d6e738e004f17467dfd54efde9d1f7b64462c8c82f560694",
+    "test/lib.mjs": "49c346737838c201d0474f8840df23c2e5f90023d0eb89d918373e697c63496c",
+    "service/src/25-backup-and-start.mjs": "a0ec4cc9d272880cf5f56ec59bed228fb378ecb02c5debdc2daef1c6d5d3f351",
+    "service/src/11-setups.mjs": "23d15725368be77fe1a373e4a6b2feac31b5e3ab4ae6771b8803769e6b6316f7",
+    "service/src/16-actions.mjs": "8921a3dcc8dfe27157f66bfa77d4b1b662cb3375ec41ef699d5b58792ae8e4ce",
+    "service/src/20-memory.mjs": "0a4cdbde39df5fd10ab46e4ecd7e9697042ef62be09de867c83fc664c24abfa7"
+  }
+}

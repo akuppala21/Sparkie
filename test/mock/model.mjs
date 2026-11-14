@@ -11,15 +11,20 @@
 //   "answerWhen" (a file name) makes the answer after its tools' results wait until $MOCK_DIR/<that file> is there (it is
 //   then removed; 5 minutes at most). $MOCK_DIR/model-fail holding "after-tools"
 //   makes the next request carrying tool results answer 500 (the file is then removed): a reply that fails after its
-//   tools ran.
+//   tools ran. The other one-time failures are for the next request of any kind: "cut-off" answers 503 and closes the
+//   connection before the body its Content-Length promised (an engine dying mid-answer); "cut-off-200" starts a 200
+//   stream and closes it part-way; "held-open" answers 503 and part of its body, then holds the connection open until
+//   Spark Console hangs up (5 minutes at most); "answer-500" on the first line answers a whole 500 whose body is the
+//   rest of the file.
 // - A benchmark-style server that's always up, on $MOCK_BENCH_PORT.
 // - The port Spark Console's own deploys serve on ($MOCK_SERVE_PORT): the service measures a new deploy's speed there.
 //   Whether a deploy is up is the stand-in curl's call (per Spark); this one always answers, quickly.
 // Every request to Sparkie's model is logged to $MOCK_DIR/model-requests.jsonl: the tools offered, the system prompt, the
 // last user message (whole, record included), which round it is, the tool results it was sent, and how it was asked
-// (temperature, top_p, top_k, max_tokens, thinking).
+// (temperature, top_p, top_k, max_tokens, thinking). The first round of each turn with tools also leaves exactly what
+// the brain was sent, the system prompt and every tool in full, in $MOCK_DIR/brain-sent.json (test/lock.mjs hashes it).
 import http from 'node:http';
-import { readFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, appendFileSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 
 const MAIN_PORT = Number(process.env.MOCK_MODEL_PORT), BENCH_PORT = Number(process.env.MOCK_BENCH_PORT), SERVE_PORT = Number(process.env.MOCK_SERVE_PORT);
 if (!process.env.MOCK_ROOT || !MAIN_PORT || !BENCH_PORT) process.exit(0);
@@ -92,6 +97,24 @@ async function mainReply(b, port, res, log = true) {
       params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, top_k: b.top_k ?? null, max_tokens: b.max_tokens ?? null,
         thinking: b.chat_template_kwargs?.enable_thinking ?? null } };
     try { appendFileSync(`${DIR}/model-requests.jsonl`, `${JSON.stringify(entry)}\n`); } catch {}
+    if (tools.length && round === 0) {
+      try {
+        writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools }));
+        renameSync(`${DIR}/brain-sent.json.tmp`, `${DIR}/brain-sent.json`);
+      } catch {}
+    }
+  }
+  // The one-time failures for the next request (above), once.
+  const fail = DIR && log && existsSync(`${DIR}/model-fail`) ? readFileSync(`${DIR}/model-fail`, 'utf8') : '', mode = fail.split('\n')[0].trim();
+  if (['cut-off', 'cut-off-200', 'held-open', 'answer-500'].includes(mode)) {
+    rmSync(`${DIR}/model-fail`, { force: true });
+    if (mode === 'answer-500') { res.writeHead(500, { 'content-type': 'application/json' }); return res.end(fail.slice(fail.indexOf('\n') + 1)); }
+    if (mode === 'cut-off-200') { stream(res).send({ content: 'Half an ans' }); setTimeout(() => res.destroy(), 50); return; }
+    res.writeHead(503, { 'content-type': 'application/json', 'content-length': '10000' });
+    res.write('{"error":{"message":"shutting down');
+    const end = setTimeout(() => res.destroy(), mode === 'cut-off' ? 50 : 300000);
+    res.on('close', () => clearTimeout(end));
+    return;
   }
   const wait = /\btake (\d+) seconds\b/i.exec(words);
   if (wait && last.role === 'user') await sleep(Number(wait[1]) * 1000);

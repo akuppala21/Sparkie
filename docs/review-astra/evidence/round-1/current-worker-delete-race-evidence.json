@@ -1,0 +1,15 @@
+{
+  "scope": "current source at 03866c09cf3edc0529ae8316c9356f44edb87dfd; isolated temporary files only",
+  "source": "/Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/worker.py",
+  "source_sha256": "fa09bbf92a2230879cce445b101a366a35bbec314d9e4f17e72557f4770c9280",
+  "repro": "concurrent in-place editor write during portal delete",
+  "concurrent_edit_written": true,
+  "worker_result": {
+    "deleted": true,
+    "path": "note.txt",
+    "kind": "file"
+  },
+  "file_still_exists": false,
+  "bug_reproduced": true,
+  "external_commands_executed": 0
+}

@@ -1,5 +1,7 @@
 # The next phase of Spark Console, in one page
 
+Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-1 to P-7; items 4, 7, 8, 9, 11, 12 and 13; clean-up 1, 3 and 4; trash.
+
 Agreed with the owner on 2026-11-13. Seven designs and two reviews sit beside this page; where they differ from it,
 this page wins (it was written last, after the reviews and after owner decisions 18 to 22). Nothing here is built yet.
 
@@ -28,7 +30,8 @@ this page wins (it was written last, after the reviews and after owner decisions
 | 11, 12 | Every change fits the map and has a test that fails without it. Opus builds, Fable reviews |
 
 Not about permission, so unchanged: text Sparkie read is data, never an order; nothing is done to get round a network
-filter; a key is never shown back; every command and result is recorded; one word stops everything.
+filter; a key is never shown back; every change is recorded before it runs and its result after, every look when it ends; one word stops
+everything.
 
 ## 3. The shape after the cut
 
@@ -38,8 +41,9 @@ goal needs; this page follows it, adjusted for decisions 20 to 22 and the safety
 - **New actions (8):** `run`, `write_file`, `recall`, `self_test`, `install_update` (with `check_update`),
   `compare_models`, `change_sparks`, `brain_across` (last). Existing ones widen: `remember`, `forget_memory`, `memory`,
   `save_workflow`, `undo_last_change`, `sparkie_setup`.
-- **New state (5):** the journal (a folder), `lessons.json`, `brain-profiles.json`, `sparks.json`, the repo copy.
-  `memory.json` gains `past`; `agent-settings.json` holds the always list; the secrets file holds named keys.
+- **New state (6):** the journal (a folder), `lessons.json`, `brain-profiles.json`, `sparks.json`, the repo copy,
+  `memory-past.json` (retired memory lines, in their own file so an older build can never drop them).
+  `agent-settings.json` holds the always list; the secrets file holds named keys.
 - **Tools sent to the brain each round:** 24 at most (12 core, two groups of six), against 41 today.
 - **No:** microservices, an outside coding engine, sub-agents or helpers, embeddings, a graph, a database as the
   store of truth, a news feed, a coverage map, stored summaries, any new timer but the heartbeat.
@@ -61,21 +65,35 @@ Spark or `"box"`. Code, never the brain, sorts every command:
   `sudo` for everything, so other scripts on the Spark do not become silent root). Nothing is stored. The helper also
   gives three walls: *look* (the whole disk read-only, no network, keys hidden: so any command may be a look), *run*
   (an ordinary command with the Docker and Tailscale sockets, the secrets and the sign-in files hidden) and *net*.
+  Until that command has run on a Spark, `run` and `write_file` do not work there: Sparkie uses today's typed
+  actions and gives the owner the command.
 - **The net: confirm, or it goes back.** Armed for every root command and every command on Spark 2. Copy first; a
   timer in the Spark's own systemd, armed before the change, that survives a restart; apply; make it live; test the
-  ways in from outside the Spark. No difference and a fresh connection works: disarmed at once, nobody asked. A
-  lock-out change on a compute Spark that passes is kept by code. On the hub, and for any sign-in change, only a fresh
-  visit through the changed way in keeps it; a Telegram "keep it" does not count there. `/putback` on Telegram
-  always restores the last set, by code, with no brain.
+  ways in from outside the Spark. The timer is set to the command's own time limit plus ten minutes, so it never
+  fires under a command that is still running. A command inside the net may run 10 minutes on Spark 2 or in the
+  lock-out class, 30 minutes otherwise. One guard is open on a Spark at a time. A put-back first stops the command,
+  then restores only what differs. A "keep it" after a put-back is answered "already put back". No difference and a
+  fresh connection works: disarmed at once, nobody asked. A lock-out change on a compute Spark that passes is kept by
+  code. On the hub, and for any sign-in change, only a fresh visit through the changed way in keeps it; a Telegram
+  "keep it" does not count there. A sign-in change needs a fresh sign-in with a passkey that existed before, not a
+  standing session; a route change needs a new connection through that route; the link carries the guard's id and
+  counts only once the change is live. `/putback` on Telegram always restores the last set, by code, with no brain.
 - **Put-back.** A file is copied before it is changed; `undo_last_change` restores it. A change that cannot be put
   back says so on its button.
+- **Written down first.** Before a command or file write changes a Spark, code adds one line to the journal and
+  syncs it to disk: what, where, as whom, who allowed it, and where its copies are. The result is a second line with
+  the same id. If the first line cannot be written, the change does not run and the owner is told why; stop, pause
+  and put-back never wait on it. After a restart, a start with no end is reported as cut off, its copies can still
+  be restored, and it is never run again.
 - **Telegram as the place to say yes.** A risky ask is answered only by its button, never a typed "ok". From
   Telegram: 3 risky approvals an hour and 10 a day. `/lock` turns Telegram approvals off; only the page turns them
   on. Every approval is echoed on the page. Changing who may approve (passkeys, recovery codes, Telegram's pairing)
   is confirmed on the page. A four-digit code once a day for the dangerous presses exists as a switch, off by default.
 - **Dangerous asks are hard to tap by reflex** (root, lock-out, installing its own code, a final delete, the brain):
   their own message, led by facts code built ("ROOT on Spark 2", "You did not ask for this", which parts came from a
-  page or a log), and two digits to type. Ordinary work gets none of this.
+  page or a log), and two digits to type. Ordinary work gets none of this. What the ask shows is what runs: a
+  script's text and an installer from an address are read once, when the ask is built, and the press runs those same
+  bytes or nothing.
 - **Keys, given once.** Code takes a key out of the owner's message before the brain, the chat file or the journal
   sees it, keeps it by name in the secrets file, deletes the Telegram message, and injects it by name when used.
 
@@ -83,9 +101,13 @@ Spark or `"box"`. Code, never the brain, sorts every command:
 
 - The journal is the raw record of everything said, called, run and seen. It is never rewritten.
 - What Sparkie believes is the owner's own words: dated, sourced lines about named things, with no ceiling. A newer
-  line retires an older one; history is kept; "forget" retires, "erase" is a separate button.
-- Code picks what a turn sees in well under a millisecond: exact names first, then rare shared words, then newest.
-  No model call, no file read.
+  line retires an older one; history is kept; "forget" retires, "erase" is a separate button. A line is
+  forgotten with no button only when the owner plainly asks to forget that line; a question about it, "don't forget"
+  or a quoted "forget" never does.
+- Code picks what a turn sees with no model call and no file read: exact names first, then rare shared words, then
+  newest. On synthetic lines on a Mac the pick took 0.05 ms; the time on Spark 2, and of a whole turn, is read from
+  each turn's record once built. Word-first look-up is a bet that a fleet's exact names make it enough; the twenty
+  questions and a held-out set of rewordings decide.
 - Everything else is one `recall` away: a count line, a few ranked pieces with their sources, and "next".
 - A long output enters the turn as a digest cut by code, with the full text one call away. This does the job
   helpers were proposed for.
@@ -99,11 +121,11 @@ designs' own (A1 is step 1 of `a-workspace.md`, and so on).
 
 | # | Milestone | Steps | Afterwards |
 |---|---|---|---|
-| 1 | **Ground** | Tonight's build installed. The suite passing on Linux; full runs on a compute Spark (`tools/test-on-spark.sh`, about 12 minutes) and on GitHub (C1 to C3: one job, the mark pushed by a job that runs no repo code). F1 to F6 and a 15-row glossary; tool groups with the cap (F10), measured at 41 and at 24. D1. D2 with a healing drill. The "what the brain reads" mark on the install button | "Run the self-test." |
-| 2 | **Commander** | B1 (the journal). The root helper and its one-time command. `run` as a look on any Spark; then changes with the copy first, the go-ahead and "always allow"; the net; Telegram approvals with the caps and `/lock`; keys given once. `NEVER_CHANGES` in the prompt and the old refusal tests are replaced by tests of the net | "Find out why the job on Spark 4 died, clean up what it left, and always allow that." |
-| 3 | **Memory** | G1 to G7 on B's journal; B2 to B4 as cut (lessons hold failures; a setup that failed twice is passed over) | "What do you know about starting GLM across two Sparks, and what went wrong last time?" |
-| 4 | **No laptop, lighter hub** | C4, C5 (pull install; the installed build judges the new one; it goes back unless the real door answers). E1 heartbeat. E2 copy when a Spark is awake, and the rebuild steps. E10 clearing Spark 2. Ways-in health on the needs-you list | "Is there a newer tested build? Install it." (from the phone) |
-| 5 | **On its own, with any brain** | B9. One brain check with two outcomes (checked, or every change a button until the eval passes). Tasks: today's carry-on made durable, with hours and turns. The report with counts. The box as `on: "box"`. The coding trial with Sparkie as a contestant; C8 (Sparkie changing its own code) only if it passes | "On your own tonight: download X to Spark 3, start it, run my script, stop everything, and report." |
+| 1 | **Ground** | Tonight's build installed. The suite passing on Linux; full runs on a compute Spark (`tools/test-on-spark.sh`, about 12 minutes) and on GitHub (C1 to C3: one job, the mark pushed by a job that runs no repo code). F1 to F6 and a 15-row glossary; tool groups with the cap (F10), measured at 41 and at 24. D1. D2 with a healing drill. The "what the brain reads" mark on the install button: one hash, written in the lock, of the system prompt as sent, every tool's text and inputs, the groups, and the brain setup's sampling and limits. Every eval result is stored with that hash and the version of its case set | "Run the self-test." |
+| 2 | **Commander** | B1 (the journal). The root helper and its one-time command; the helper proves its walls on each Spark before first use and in the self-test. `run` as a look on any Spark; then changes with the copy first, the go-ahead and "always allow"; the net; Telegram approvals with the caps and `/lock`; keys given once. `NEVER_CHANGES` in the prompt and the old refusal tests are replaced by tests of the net | "Find out why the job on Spark 4 died, clean up what it left, and always allow that." |
+| 3 | **Memory** | G1 to G7 on B's journal; B2 to B4 as cut (lessons hold failures; a setup that failed twice is passed over, and tried again when its image, its Sparks or its start code changed or the owner says so) | "What do you know about starting GLM across two Sparks, and what went wrong last time?" |
+| 4 | **No laptop, lighter hub** | C4, C5 (pull install; the installed build judges the new one; it goes back unless the real door answers). E1 heartbeat. E2 copy when a Spark is awake, and the rebuild steps (putting state back never lets a device or key in by itself). E10 clearing Spark 2. D12, the delete already agreed (members and sharing, the browser editor, the file browser with its routes and the worker's delete, rename and new-folder calls); the page's Models view goes with it, so the page is chat, sign-in and status. Ways-in health on the needs-you list | "Is there a newer tested build? Install it." (from the phone) |
+| 5 | **On its own, with any brain** | B9. One brain check with two outcomes: checked, only while the eval on record ran on this exact model, engine, image and flags, on what this build's brain reads, and on today's case set; otherwise every change a button until it passes. Tasks: today's carry-on made durable, with hours and turns. The report with counts. The box as `on: "box"`. The coding trial with Sparkie as a contestant; C8 (Sparkie changing its own code) only if it passes | "On your own tonight: download X to Spark 3, start it, run my script, stop everything, and report." |
 | 6 | **Workloads and power** | The smart-plug work merged. D4, D5 (asleep, wake for work). Saved workflows that place, wait and clean up; the brain first; `compare_models`. D3 when Spark 1 arrives | "Run my workload on whatever is best, keep the winner, and let the Sparks sleep after." |
 | after | **A brain across Sparks** (decision 19) | Three gates: the two-Spark start's first real run; then the brain across 2+3 or 2+4 with the code that exists; then three, after NVIDIA's three-Spark test passes by hand | |
 
@@ -123,7 +145,10 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 10. A proposed change with a link in it is refused; a box is read back entry by entry and never run (13, 14).
 11. On GitHub, jobs that run repo code cannot write; the mark is pushed by one that runs none (15).
 12. For Sparkie's own proposals only new tests, generated files and status rows are free; everything else is asked
-    after an independent review (16).
+    after an independent review (16). A generated file must equal what the installed build's own generator makes
+    from the proposal's sources, else the proposal is refused. The install button for such a change carries the one
+    tree that was tested and reviewed, lists every difference from the build installed now, and is void if `main`
+    moves.
 13. Every rail is a check inside `runAction`, not a tool left off the list (17).
 
 ## 8. Defaults taken where the designs asked (decision 16)
@@ -133,15 +158,17 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 | A code for dangerous presses on Telegram | Off. A tap, with two digits shown on the ask. A once-a-day code is a switch |
 | A kept key going to a new image or host | Asked once per new place, then remembered |
 | Keys after a dead Spark 2 disk | Given again; no copy elsewhere |
+| Sign-ins after state is put back from a copy | Every device signs in again. Passkeys, agent keys, people and "always" entries that came back do not work from the internet until the owner has looked at the list once, on the sign-in page, on the tailnet. A task found running is parked |
 | Waking one compute Spark to knock on the hub's door after a hub lock-out change | Yes, for a few minutes |
-| A trash for deletes | No. The copy first covers small files; a final delete is asked |
+| A trash for deletes | No. The copy first covers small files; a final delete is asked. A save that another program makes to a file between Sparkie's copy and its delete is in neither place |
 | Sparkie changing GitHub's workflow files | Asked, as a dangerous change |
 | An update that goes back unless the real door answers | Yes, checked by code through the real address; the owner need not open the page |
 | The journal | Never copied off Spark 2, never erased, with "hide this value everywhere" for a secret |
+| A command's output kept in the journal | Whole, up to 16 MB a command; past that the command is stopped and the record says so |
 | The owner's real requests as test cases | Later, after two full eval runs |
 | Stopping an idle model so its Spark can power off | Decided with the owner (2026-11-13: “Park them”): yes, after 30 idle minutes by default (Sparks 1, 3 and 4 with a switchable plug, never Spark 2), only once the workflows that bring a parked model back are active, and said once in the owner's chat and on Telegram the first time it can act; “stop auto shutdown” turns it off. An agent's power-off or idle setting waits for the owner's yes |
 | A new Spark holding copies of chats and sign-in files | Only after the owner says so |
-| A line stated on Telegram kept in memory | Yes for `remember`; `erase` stays on the page |
+| A line stated on Telegram kept in memory | Yes for `remember` and for forgetting, marked as said on Telegram; `erase` stays on the page |
 | GitHub Pro for branch protection | No |
 | The brain resting when idle | Only if a by-hand measurement shows 10 W saved; a pause is tried before a stop |
 | The contract | Made flat with one status table, rules reworded in place, old text to `docs/history/` |
@@ -157,12 +184,18 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 6. A key pasted in Telegram has been seen by Telegram. Kept keys sit in one file on Spark 2.
 7. Telegram's servers see every command the owner is asked to approve.
 8. An approved update runs as the owner on Spark 2.
-9. A brain across three Sparks leaves none free, and a failed try can mean up to 45 minutes without Sparkie.
+9. A brain across three Sparks leaves none free, and a failed try can leave you without Sparkie for 45 minutes plus
+   the saved brain's own start. That is the planned limit, not a measured one.
 
 ## 10. How it is built and checked
 
 - Opus 5.5 builds each step; Fable 5.2 reviews it; every step has a test that fails without it.
 - A full run on a compute Spark before every install (about 12 minutes), and on GitHub on every push.
+- Before an install that changes what the brain reads (the hash differs from the installed build's), the brain eval
+  runs on the build about to go in and its result is stored for that build. If it has not run (for example no
+  compute Spark is on to run it), the install button says so, and after that install Sparkie asks before every
+  change until the eval has passed (from milestone 5, when the brain check is built). An install that leaves the
+  hash unchanged needs no new eval.
 - After every install, the self-test on real hardware.
 - The contract and the map change in the same step as the code; a checker fails when they drift.
 
@@ -171,3 +204,5 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 `owner-decisions.md` (the 22 decisions in the owner's words), `ledger.md` (how the designs join), `a-workspace.md`,
 `b-learning.md`, `c-github-selfchange.md`, `d-fleet-workloads.md`, `e-unattended.md`, `f-structure.md`,
 `g-memory.md`, `critic-simplicity.md`, `critic-safety.md`.
+
+**Rule numbers (2026-11-13, late).** The smart-plug work already uses R41 for its plug and power rule. The next phase's new rules therefore take R42 (Sparkie's reach), R43 (learning), R44 (documents and parts) and R45 (memory), one higher than the designs say.

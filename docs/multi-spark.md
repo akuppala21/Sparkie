@@ -130,7 +130,7 @@ so the API is reachable the same way single-Spark deploys are and isn't exposed 
 
 ### Recipe format
 
-Each recipe in `service/recipes.json` (and in a model folder's `spark.json`) gets an optional `cluster` block. Single-Spark
+Each recipe in `service/catalog.json` (and in a model folder's `spark.json`) gets an optional `cluster` block. Single-Spark
 recipes stay as they are.
 
 ```json

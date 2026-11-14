@@ -1,0 +1,30 @@
+// Exercises the exact current readBody function without starting the service.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {EventEmitter} from 'node:events';
+import {fileURLToPath} from 'node:url';
+import {resolve,join} from 'node:path';
+const reviewRoot=resolve(process.env.SPARK_REVIEW_ROOT || fileURLToPath(new URL('../../../../',import.meta.url)));
+const file=join(reviewRoot,'service/src/23-http.mjs');
+const source=readFileSync(file,'utf8');
+const start=source.indexOf('function readBody('), end=source.indexOf('/* ───────── faults:',start);
+assert(start>=0&&end>start);
+class HttpError extends Error {constructor(status,message){super(message);this.status=status;}}
+const readBody=new Function('HttpError',source.slice(start,end)+'\nreturn readBody;')(HttpError);
+const original={spark:'spark4',path:'prices.txt',text:'Price: €10 — café 😀'};
+const wire=Buffer.from(JSON.stringify(original));
+const split=wire.indexOf(Buffer.from('€'))+1;
+const req=new EventEmitter();
+const result=readBody(req);
+req.emit('data',wire.subarray(0,split));
+req.emit('data',wire.subarray(split));
+req.emit('end');
+const parsed=await result;
+console.log('Exact code under test:',file,'readBody');
+console.log('Input shape: POST /console/api/actions/save_file.');
+console.log('Submitted file text:',JSON.stringify(original.text));
+console.log('Parsed file text:   ',JSON.stringify(parsed.text));
+console.log('Buffer boundary: after the first of three UTF-8 bytes of the euro sign.');
+assert.notEqual(parsed.text,original.text);
+assert.equal(parsed.text,'Price: ���10 — café 😀');
+console.log('CONFIRMED: valid UTF-8 JSON silently changes file content at a network chunk boundary.');

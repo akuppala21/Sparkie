@@ -120,6 +120,8 @@ const CHANGE_WORDS = [
   ['save', /\b(save|make|turn|create|add|remember)\b[^.?!;\n]{0,80}?\bworkflows?\b/gi],
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
+  // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
+  ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
   ['file', /\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css))\b/gi],
   // Powering a Spark itself off or on (21-power.mjs): only with a Spark as what is switched, by name ("shut down Spark
@@ -183,7 +185,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
   find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
+  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -313,6 +315,12 @@ async function sparkieCheck(name, input, ctx) {
     const wanted = want.some(k => intent.asked.includes(k)) && !want.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
     return { clear: wanted && appNamed(out, saidText), input: out };
   }
+  // The self-test: what it runs is fixed by code, so the owner's words asking for it are enough (R25). A Spark stays
+  // only when the owner named it; otherwise the test picks a free one.
+  if (name === 'self_test') {
+    if (out.spark && !said.has(out.spark)) delete out.spark;
+    return { clear: asked, input: out };
+  }
   if (name === 'save_file') {
     // Whole names, not pieces of words: the path is one of the owner's words as written (quotes and a closing . , ! ?
     // aside) and ends like a file name (notes.md), so "a file" names nothing. The Spark is this message's; the message
@@ -381,6 +389,12 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.kind === 'read') return a.run(input, viewer, ctx);
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
+  }
+  // An agent's key as it is now, not as it was when its reply began (A-1, 2026-11-14: an agent removed while Sparkie was
+  // answering it still stopped a model). agentKeys() throws when agents.json can't be read, so this fails closed.
+  if (ctx.agentId) {
+    const key = agentKeys().find(k => k.id === ctx.agentId);
+    if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
@@ -477,7 +491,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: String(e.message).slice(0, 200) });
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
     throw e;
   }
 }

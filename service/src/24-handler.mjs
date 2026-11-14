@@ -286,6 +286,10 @@ const handler = async (req, res) => {
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
       }
+      // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
+      // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
+      // owner cancels one in Activity. A reply of Sparkie's to it that is still under way changes nothing more: runAction
+      // reads the key again before each change (ctx.agentId, R9).
       if (req.method === 'DELETE' && AGENT_ID.test(agentId)) {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);

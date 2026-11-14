@@ -1,0 +1,38 @@
+# Add a saved workflow
+
+No code: a saved workflow is the owner's ordered action calls on named Sparks, kept in `saved-workflows.json`. From
+the map's "Where new things go", row "A saved workflow".
+
+## Touch
+
+- Nothing in code: the owner's `save_workflow` writes `saved-workflows.json` from existing actions
+  (`18-workflows.mjs`).
+- `checkSteps` looks at every step before step 1 (R35).
+- Steps run via `workflow`: uncounted by the breaker, each its own validation run.
+- A stack (several apps that work together) is one of these: `keep_running` steps, one per piece with all its
+  settings, and a second workflow that stops them (A13).
+
+## Also update
+
+- `NOT_A_STEP` (`18-workflows.mjs`) when a new action must not be a step.
+- From Sparkie's chat it is saved at once only under R25's step check; otherwise the owner presses a button that lists
+  the steps (F20).
+
+## Never
+
+- Let a routine save routines or write memory.
+- Run steps as trusted.
+
+## Rules
+
+- R35: a saved workflow is checked before step 1.
+- R25: Sparkie's `save_workflow` runs at once only when every step traces to the owner's words.
+- R26: outside text never reaches a saved workflow without a button that lists its steps.
+
+## Tests
+
+- `steps.test.mjs`; `change.test.mjs` (“saved workflows”); `sparkie-more.test.mjs` (“save_workflow from chat”).
+
+## Copy from
+
+- The steps in `change.test.mjs` (“saved from steps of existing actions”).

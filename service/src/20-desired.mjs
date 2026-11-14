@@ -18,6 +18,9 @@ const keyOf = x => `${x.spark}/${x.container}`;
 // isn't on it.
 function desiredAfter(job) {
   if (job.status !== 'completed') return;
+  // The self-test's own model (21-selftest.mjs) isn't the owner's wish: its start, the drill's restart and its stop
+  // (marked by the self-test and by maybeHeal) leave the list as it is.
+  if (job.selfTest) return;
   const started = [...new Set([...(job.ranHere || []), ...(job.type === 'restart' && job.node && job.container ? [`${job.node}/${job.container}`] : [])])]
     .filter(x => !/-part2$/.test(x) && !brainSparks().includes(x.split('/')[0]));
   const stopped = [...new Set(job.stoppedHere || [])].filter(x => !started.includes(x) && !/-part2$/.test(x));
@@ -239,7 +242,8 @@ action({
     const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
-    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}` };
+    // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
+    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
     runJob(job, async j => {
       const problems = [];

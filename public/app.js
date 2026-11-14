@@ -2406,6 +2406,7 @@ const SVC_LABEL = {
   // Turning a Spark off or on (the smart plugs, contract 9.22); a start that needed one turned on says which model.
   'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
   'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
+  'self-test': j => `Self-test on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 

@@ -1,10 +1,12 @@
 # E. Running unattended, with any brain (decisions 13 to 15)
 
+Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-3, P-4; clean-up 2 and 4.
+
 Design only: no code was changed, nothing was run, no Spark was reached. "Verified" means I read that line in the tree on 2026-11-13. "Inference" means I reasoned it and it must be proven when built. Web figures were read the same day.
 
 **What I need from the other designers (one line each)**
 - Workspace: a command run can be a done check (`command_passes {spark, id}` gives an exit code), its output passes `maskSecrets`, and it does not use code-server on Spark 2.
-- Learning: the journal takes a `task` id; `lessonsFor(taskId)` gives titles; journal files are `STATE_DIR/journal/<day>.jsonl`, masked before they are written; the eval calls `recordBrainEval(profileKey, {passRate, wrongChanges})`.
+- Learning: the journal takes a `task` id; `lessonsFor(taskId)` gives titles; journal files are B's own, outside the state folder and never copied (ledger row 9), masked before they are written; the eval calls `recordBrainEval(profileKey, {reads, set, passRate, wrongChanges})`.
 - GitHub and self-change: an install calls `POST /main/wake` and waits before its chat check; the bootstrap installs a Node that is not code-server's; the repo carries `deploy/REBUILD.txt`.
 - Fleet and smart plugs: `wakeSpark(id, why)`; a Spark is not shut down while `tasksUsing(id)` is true; `plugWatts(id)` gives `{watts, at}` or null; `copyStateTo(id)` is called before a Spark is powered off; a workload action makes its model choices in code.
 
@@ -111,7 +113,7 @@ Two ways to rest, tried in this order:
 | Context | The server's own figure, then one recall test at up to 100,000 tokens |
 | `enable_thinking` on and off | The server takes the field; whether reasoning text comes back |
 
-**The profile** (`brain-profiles.json`, one writer; keyed by a hash of model, engine, image and flags, never by name): `{ key, at, tools: "none"|"single"|"parallel", toolErrors, json: "schema"|"prompt"|"none", asks, ignoresData, contextTokens, contextProven, firstWordsMs, tokS, slots, thinkingField, reasons, eval: null|{passRate, wrongChanges, at}, grade }`.
+**The profile** (`brain-profiles.json`, one writer; keyed by a hash of model, engine, image and flags, never by name): `{ key, at, tools: "none"|"single"|"parallel", toolErrors, json: "schema"|"prompt"|"none", asks, ignoresData, contextTokens, contextProven, firstWordsMs, tokS, slots, thinkingField, reasons, evals: {"<reads>": {set, passRate, wrongChanges, at}} (the newest five), grade }`. `<reads>` is the hash, written in the lock, of what the brain reads (the one page, milestone 1): the system prompt as sent for the stand-in fleet with a fixed memory, every tool's name, text and inputs, the groups and the cap, and the brain setup's sampling, thinking and limits. Documents are not in it. The grade is checked (`full` below) only when a result exists for this build's hash, its `set` is the current one and `wrongChanges` is 0.
 
 **Grade and rails** (`railsOf(profile, preset)`; the rules in code, R1 to R40, never move):
 
@@ -125,7 +127,7 @@ Two ways to rest, tried in this order:
 | History, result cut, `max_tokens` | scaled from `contextTokens` (today's 40,000 and 12,000 characters are the ceiling) | half of that | history only |
 | `enable_thinking`, sampling | sent only when the server takes them; the values stay in the preset | same | same |
 
-A weaker brain gets more asking and fewer changes; a stronger one gets the preset's limits back. The learning designer's eval is the only thing that lifts `careful` to `full`. The brain in use at install is seeded `full` (it is the owner's tested choice, contract 3.2). A chat routed to another model gets a profile too.
+A weaker brain gets more asking and fewer changes; a stronger one gets the preset's limits back. The learning designer's eval is the only thing that lifts `careful` to `full`. The brain in use at install is checked for the build it was evaluated on (it is the owner's tested choice, contract 3.2). Before an install that changes what the brain reads (the hash differs from the installed build's), the brain eval runs on the build about to go in and its result is stored for that build. If it has not run (for example no compute Spark is on to run it), the install button says so, and after that install Sparkie asks before every change until the eval has passed. An install that leaves the hash unchanged needs no new eval, and going back a build keeps that build's own result. A chat routed to another model gets a profile too.
 
 **Everything that assumes today's model or engine** (verified):
 - `14-chats.mjs:325-327` default sampling, 0.3 with tools, and `chat_template_kwargs.enable_thinking` on every call; `:329` 6 and 4; `:232` no settings at all for a routed model.
@@ -150,17 +152,19 @@ New part `20-beat.mjs`. Every 5 minutes the console sends one `GET` to a fixed h
 UptimeRobot's free 50 monitors pull from outside, so they need the public address, and its page did not show heartbeat monitors on Free. Not a fit.
 
 ### 2.5 Rebuilding the hub
-**Default: copy when another Spark is awake anyway.** `backupState` no longer runs by the clock. It runs when a Spark comes online (the `spark-online` event), when `copyStateTo(id)` is called just before the console powers a Spark off, and once an hour only while a Spark is on and the state changed since the last good copy (a hash of file names, sizes and times). The tar stays as it is; journal segments go by name, only those the far side lacks. The needs line changes from "none today or yesterday" to "the newest copy is over 7 days old and things changed since".
+**Default: copy when another Spark is awake anyway.** `backupState` no longer runs by the clock. It runs when a Spark comes online (the `spark-online` event), when `copyStateTo(id)` is called just before the console powers a Spark off, and once an hour only while a Spark is on and the state changed since the last good copy (a hash of file names, sizes and times). The tar stays as it is, but for `sessions.json`, which is left out of every copy and of `restore.sh --with-state`. The journal is never copied (the one page, section 8). The needs line changes from "none today or yesterday" to "the newest copy is over 7 days old and things changed since".
 
-**What it risks:** with the others off for a week, a dead Spark 2 disk loses up to that week of chats, memory lines, journal and lessons. Secrets are never copied (by design), so the Telegram token, recovery codes, app keys, the heartbeat address and the plug pairings are typed again. The brain's weights and compile caches live only on Spark 2 and are downloaded again (hours).
+**What it risks:** with the others off for a week, a dead Spark 2 disk loses up to that week of chats, memory lines and lessons, and the whole journal. Anything the owner removed after the newest copy comes back with it; the hold in step 3 is what makes that safe. Secrets are never copied (by design), so the Telegram token, recovery codes, app keys, the heartbeat address and the plug pairings are typed again. The brain's weights and compile caches live only on Spark 2 and are downloaded again (hours).
 
 **Rebuild steps** (shipped as `deploy/REBUILD.txt`, so GitHub shows them on a phone):
 1. Owner, by hand: DGX OS on the new disk, the same user, Docker working, Tailscale joined under the same machine name (the address and the passkeys depend on it), `sudo loginctl enable-linger`, and Spark 2's new SSH key added on the other Sparks.
-2. Code: the GitHub designer's one-line pull install (Node, the service, the units, the watchdog). The owner runs the Tailscale route scripts once.
-3. State: power on Spark 3 (then 4) and find the newest `~/.local/share/spark-console/backups/state-<day>.tgz` there. With the service stopped, untar it into `~/.local/state/spark-console`, then start the service. Passkeys, access, chats, memory, journal, proven setups and the brain's choice are back.
+2. Code: the GitHub designer's one-line pull install (Node, the service, the units, the watchdog).
+3. State: power on Spark 3 (then 4) and find the newest `~/.local/share/spark-console/backups/state-<day>.tgz` there. With the service stopped, untar it into `~/.local/state/spark-console`, then start the service. The owner then runs the Tailscale route scripts once. Access, chats, memory, lessons, proven setups and the brain's choice are back. The journal is not: it is never copied, so `recall` starts empty, and a line's "you said" source may point at a record that is gone. Signed-in devices are not: `sessions.json` is never in a copy. Passkeys, agent keys, people and "always" entries are back but held: code sees that the state is older than the secrets file's `authSerial`, or that there is none, and lets none of them in from the internet until the owner, on the tailnet, looks at the list of what came back (on the sign-in page, which the page keeps after the delete in step 10), removes what they had removed and presses "Keep these". A task found running is parked.
 4. Secrets, on the passkey page: Telegram and its pairing, new recovery codes, app keys, the heartbeat address. `plugs.sh pair` for each plug.
 5. Brain: download its model and draft model to Spark 2, pull its image, type `/restart sparkie`.
 6. Check: `/status`, one chat turn, the heartbeat turns green. Workflows show "needs validation" until one live run.
+
+**How code knows state was put back.** One number, `authSerial`, is kept in the state folder and in the secrets file, which is never copied. It goes up by one at every removal: a sign-out by the owner, a passkey, an agent key, a person, an "always" entry. At start, a state number lower than the secrets file's, or a state with an owner and no number in the secrets file (a new disk), means the state was put back, also when the owner untarred it by hand. On the tailnet Tailscale still says who the owner is, so nobody is locked out while the hold lasts.
 
 ### 2.6 Clearing Spark 2
 From `docs/retire-portal.md`, the D12 note and the code. What is live on Spark 2 today is not verified (no SSH), so the first step is a look.
@@ -220,15 +224,15 @@ Must change:
 | # | Step | Files | Test that fails without it |
 |---|---|---|---|
 | 1 | Heartbeat | new `20-beat.mjs`; `24-handler.mjs`, `22-passkey.mjs`, `20-needs.mjs`, `25-backup-and-start.mjs` | new `beat.test.mjs`: a stand-in receives a bodiless GET each interval once an address is saved, none before, none from a second copy |
-| 2 | Copy when a Spark is awake; the rebuild page | `25-backup-and-start.mjs`, `20-needs.mjs`, `docs/sharing.md`, new `deploy/REBUILD.txt` | `state.test.mjs`: a Spark coming online with changed state gets a copy; unchanged state sends none; no needs line before day 7 |
+| 2 | Copy when a Spark is awake; the rebuild page | `25-backup-and-start.mjs`, `20-needs.mjs`, `docs/sharing.md`, new `deploy/REBUILD.txt` | `state.test.mjs`: a Spark coming online with changed state gets a copy; unchanged state sends none; no needs line before day 7. State put back from a copy taken before a session, a passkey, an agent key and an "always" entry were removed: the old cookie gets 401, the removed passkey and the key are refused from the internet, the "always" command asks, the owner on the tailnet sees the four, and after "Keep these" the remaining passkey signs in from the internet. State put back with nothing removed since: no hold. No secrets file (a new disk): hold |
 | 3 | Keys | `03-secrets.mjs`, `20-mcp.mjs`, `21-apps.mjs`, `11-setups.mjs`, `24-handler.mjs`, `22-passkey.mjs`, `16-actions.mjs`, page | new `app-keys.test.mjs`: the value reaches the stand-in container's env and is in no chat, audit, event, tool result or job log, even when the container prints it |
 | 4 | Brain check and profile (shown, not yet used) | new `14-brain-check.mjs`; `13-main-model.mjs`, `16-actions.mjs` (`sparkie_setup`) | `brain.test.mjs`: three stand-in brains (good, bad arguments, no tools) grade full, careful, answers-only |
-| 5 | Rails from the profile | `14-chats.mjs`, `15-routes.mjs`, `16-actions.mjs` | `sparkie-more.test.mjs`: with the careful stand-in a clear start is a button and a second change is refused; with full, today's tests pass unchanged |
+| 5 | Rails from the profile | `14-chats.mjs`, `15-routes.mjs`, `16-actions.mjs` | `sparkie-more.test.mjs`: with the careful stand-in a clear start is a button and a second change is refused; with full, today's tests pass unchanged. `brain.test.mjs`: a documents-only change keeps the hash and the grade; a changed tool text, a changed line of the system prompt and a changed sampling value each give a new hash, and a clear change is then a button, also when the call was not offered; a passing result stored for the new hash makes it run at once again; going back to a build whose hash has a result is checked with no new run; a result for another case set does not count |
 | 6 | Tasks: record, actions, loop | new `20-tasks.mjs`; `14-chats.mjs`, `16-actions.mjs`, `07-jobs.mjs`, `20-needs.mjs`, `test/lib.mjs` | new `tasks.test.mjs`: a task survives a restart in the middle of an operation and finishes; it stops at its turn budget; a question parks it and shows in needs; `/stop` ends it |
 | 7 | Report and costs | `20-tasks.mjs`, `20-tell.mjs`, `12-status.mjs`, the page's card | `tasks.test.mjs`: the report's counts and watt-hours equal the stand-in's; no log line is in it |
 | 8 | Measure the brain's rest | new `tools/brain-power.mjs` only | its dry run on the stand-in prints the table; then the owner runs it on Spark 2 |
 | 9 | Brain rest (only if step 8 clears the bar) | `13-main-model.mjs`, `20-heal.mjs`, `14-chats.mjs`, `15-routes.mjs`, `20-words.mjs`, `24-handler.mjs`, `deploy/host-on-portal.sh`, page | `brain.test.mjs`: idle rests it; the keeper leaves it; a message wakes it and is answered; the owner's Stop is never woken; a failed wake ends as left-down. `install.test.mjs`: the check wakes it |
-| 10 | Clear Spark 2 | new `deploy/clear-spark2.sh`; remove `21-editor.mjs` and its branches; `deploy/host-on-portal.sh` | `install.test.mjs`: the installer refuses a Node under `code-server-*`; the editor's tests go with the feature (the owner's D12) |
+| 10 | Clear Spark 2 | new `deploy/clear-spark2.sh`; remove `21-editor.mjs` and its branches; `deploy/host-on-portal.sh` | `install.test.mjs`: the installer refuses a Node under `code-server-*`; the editor's tests go with the feature (the owner's D12). The rest of D12 lands in the same milestone (the one page, milestone 4): members and sharing, the file browser with its routes and the worker's delete, rename and new-folder calls, and the page's Models view; each feature's tests go with it |
 
 Each new action also goes in `TOOLS` or `CHANGE_TOOLS` and in the door and fuzz tables; each step updates the map.
 
@@ -261,5 +265,5 @@ Open questions (my default in bold):
 - An encrypted copy on GitHub or a cloud drive: private state stays on the Sparks.
 - A Telegram line for a finished task that was started on the page (R32 unchanged; the needs line covers what waits).
 - Key rotation, expiry, or per-app scopes beyond the name. Tuning sampling per brain: it stays in the preset.
-- Deleting members, sharing and the old brain setups (the rest of D12): code slimming, not Spark 2 load.
+- Deleting the old brain setups (2.6 keeps them). The rest of D12 is no longer left out: it lands in milestone 4 (step 10).
 - The network card's idle draw (18 to 20 W with the cable link up): a firmware matter, worth one look by the owner, not console work.

@@ -1,5 +1,7 @@
 # B. Learn from everything, and a brain that can be swapped
 
+Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-2; item 11; clean-up 1.
+
 Design only; no code was changed. Covers gap 5 and decisions 8, 9, 13 to 16. "Verified" means read in the code on 2026-11-13.
 
 ## 1. What exists today
@@ -31,8 +33,8 @@ One service, no new process, no database, no schedule. A **journal** (everything
 A new store, because nothing kept today holds outputs. The old stores stay (healing and the gates read them).
 
 - **Home:** `~/.local/share/spark-console/journal/` on Spark 2 (0700; files 0600), outside the state folder, which is tarred whole every day and into every install snapshot (`25-backup-and-start.mjs:24`). Never in the repo.
-- **Files:** two per month. `journal-2026-11.jsonl`: one short line per record, 1,500 bytes at most. `journal-2026-11.out`: the long text (a log, an output, a tool result), 64 KB per record at most, start and end kept.
-- **One writer:** `journal(kind, fields, body)` in a new part `20-journal.mjs`. It masks first (`maskDeep`, `maskSecrets`, before the cut, as `audit` does), appends, returns the id, never throws.
+- **Files:** two per month. `journal-2026-11.jsonl`: one short line per record, 1,500 bytes at most. `journal-2026-11.out`: the long text (a log, an output, a tool result). A record's long text is kept whole. It is written to the `.out` file in pieces as it arrives and never held whole in memory. Each piece is masked before it is written, with an overlap so a key that falls across two pieces is still caught. Past 16 MB (a default) reading stops, the command is ended, and the record says so. The digest's size is a separate number.
+- **One writer:** `journal(kind, fields, body)` in a new part `20-journal.mjs`. It masks first (`maskDeep`, `maskSecrets`, before the cut, as `audit` does), appends and returns the id. It never throws for a look, a result or an event. For the start line of a change it syncs the file and returns nothing on failure, and the caller then runs nothing. At start-up a start line with no end is marked cut off once: one notice in the chat that asked and one needs-you line.
 - **A record:** `{id:"j_<12 hex>", at, k, chat, turn, op, via, actor, brain, act, args, ok, outcome, err, ms, sub:[…], o:[offset,length]}`. `sub` holds the names it is about (model, engine, Spark, container, failure id), for search.
 
 | `k` | Written at (existing code) | Holds |
@@ -47,7 +49,7 @@ A new store, because nothing kept today holds outputs. The old stores stay (heal
 | `turn`, `pass` | `sparkieTurn` finish; the learn pass | Brain, tool rounds, tool errors, tokens; what a pass read and wrote |
 
 - **Not recorded:** the sensing loops (fixed read-only scripts, over 95% of the volume; what they notice already becomes events) and apps' own calls to `/v1` (their content is the app's).
-- **Size:** about 400 records on a busy day: some 60 MB of short lines and under 1 GB of long text a year. **Default: nothing is deleted.** Past 20 GB it becomes one line on the needs-you list. No copy off Spark 2 at first.
+- **Size:** about 400 records on a busy day: some 60 MB of short lines a year. The long text grows with the outputs, now kept whole; its size is read from the folder once built. **Default: nothing is deleted.** Past 20 GB it becomes one line on the needs-you list. No copy off Spark 2 at first.
 
 ### 2.2 Lessons
 
@@ -82,7 +84,7 @@ A lesson is a typed record in `lessons.json` (state folder, `writePrivate` and `
 
 ### 2.4 Look-up: code first, a tool second
 
-- **Before a change runs (code, any brain, any way in).** `lessonsFor(action, input)` matches the exact subject. A proven fix whose `when` matches becomes the first attempt's settings in `startWithFixes`. A setup that failed twice the same way with no success is passed over by `bestHow` when another exists; if it is the only one, healing skips it and Sparkie or an agent gets a question. The owner's own explicit request still runs. The result carries the cards.
+- **Before a change runs (code, any brain, any way in).** `lessonsFor(action, input)` matches the exact subject. A proven fix whose `when` matches becomes the first attempt's settings in `startWithFixes`. A setup that failed twice the same way with no success is passed over by `bestHow` when another exists; if it is the only one, healing skips it and Sparkie or an agent gets a question. The owner's own explicit request still runs. A passed-over setup is tried again when its image, its Sparks or its start code changed, or when the owner says so; the result always says that a setup was passed over. The result carries the cards.
 - **At the start of a turn (code).** `cardsFor(words)` matches the owner's words to lesson subjects (the gates' `tokensOf`) and adds up to 6 cards (900 characters) to the record block beside the fleet notes, never the system prompt. Notes are not added: one line says how many there are, and `lessons` returns them.
 - **On a failure (code).** The result notice gets one fixed line: "Seen before: 2 times; a context of 32,768 fixed it" or "First time seen here", so the carry-on turn starts from it.
 - **`recall`** for "have we tried this?", "what happened on Tuesday?", "why did it fail?".
@@ -178,9 +180,9 @@ A saved workflow can move the same way later (its Spark names become inputs; the
 
 Each ships alone. A new action also goes in `test/lib.mjs`, the counts in `test/change.test.mjs`, and the door and fuzz tables.
 
-1. **Journal and `recall`.** New `20-journal.mjs`; one call each in `07-jobs`, `16-actions`, `14-chats`, `17-changes`, `19-watcher`; `01-setup` (folder switch, `readSync`). Test (`journal.test.mjs`): after a failed start and a console restart, `recall` returns that operation's log (today: "expired"); a key in the arguments is `[hidden]` in the file; after `recall`, `remember` needs a button.
+1. **Journal and `recall`.** New `20-journal.mjs`; one call each in `07-jobs`, `16-actions`, `14-chats`, `17-changes`, `19-watcher`; `01-setup` (folder switch, `readSync`). Test (`journal.test.mjs`): after a failed start and a console restart, `recall` returns that operation's log (today: "expired"); a key in the arguments is `[hidden]` in the file; after `recall`, `remember` needs a button. With the append made to fail as a full disk does, a changing `run` answers "couldn't write the record, nothing was changed" and nothing runs, while a look, `/stop`, `/putback` and `stop_model` still work. A console killed between a start line and its end leaves, after the restart, one "cut off" notice and no second run. A look writes one line and syncs nothing. A 3,000-line output is in the `.out` file whole; a key that falls across two pieces is `[hidden]`; past 16 MB reading stops and the record says so.
 2. **Typed lessons, `lessons`, `forget_lesson`.** New `20-lessons.mjs`; `07-jobs`; `17-changes` (failure and fix on the job); `16-actions`; `18-workflows` (`NOT_A_STEP`). Test (`lessons.test.mjs`): a start that fails on a rejected flag, then works, leaves one proven lesson; again adds to its count; a crafted name with spaces is stored as null; from Telegram, forgetting is a page button.
-3. **Lessons applied at start.** `17-changes` (`startWithFixes`, `bestHow`), `18-workflows` (`START_CODE`), `20-heal`. Test (`workflows.test.mjs`): the second start runs `docker run` once, not twice; a learned fix that fails drops to `seen` and the plain path runs; with more free memory than recorded, the context lesson is not applied.
+3. **Lessons applied at start.** `17-changes` (`startWithFixes`, `bestHow`), `18-workflows` (`START_CODE`), `20-heal`. Test (`workflows.test.mjs`): the second start runs `docker run` once, not twice; a learned fix that fails drops to `seen` and the plain path runs; with more free memory than recorded, the context lesson is not applied; a setup passed over for failing twice is tried again after its image, its Sparks or its start code changed, and when the owner asks for it, and the result says it was passed over.
 4. **Cards in the chat.** `14-chats` (`sparkieTurn`, `postResult`), `20-lessons`. Test (`sparkie-more.test.mjs`): the request the stand-in brain receives has the card in the labelled record block, not the system message; never more than 6; `remember` still saves with no button after cards alone.
 5. **The learn pass, code part.** `20-lessons` (`learnPass`, bookmark), `07-jobs` and `14-chats` (arm the one-shot). Test: setup A fails, setup B answers, and after the pass one lesson says so; a new message ends a pass and the bookmark stays; a second pass with nothing new writes nothing.
 6. **`learn` and the pass's brain part.** `20-lessons`, `16-actions` (`sparkieCheck`). Test: failed evidence is refused; an agent gets a button; the pass's call to the stand-in brain carries no tools; an answer with an address or a name not in the digest is dropped.

@@ -1,0 +1,83 @@
+▶ the update record
+  ✖ a state folder with no update record gets a first record, and no notice (9.966208ms)
+  ✖ a new build: one record (what it replaced, the snapshot, the note with a key hidden), one notice, 20 kept, five shown (4.415041ms)
+  ✖ the build held in the newest snapshot runs again: recorded as going back, without the other build's note (1165.455ms)
+  ✖ a go-back past a newer snapshot marked same (the second go-back in a row): still recorded as going back (43.234417ms)
+  ✖ a restart on the same build adds nothing (4.815583ms)
+  ✔ source: the installer hands the note over as update-note.json (1.74875ms)
+✖ the update record (1230.535167ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 1
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1817.001292
+
+✖ failing tests:
+
+test at test/updates.test.mjs:53:3
+✖ a state folder with no update record gets a first record, and no notice (9.966208ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:2223:21)
+      at listenInCluster (node:net:2357:12)
+      at node:net:2581:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }
+
+test at test/updates.test.mjs:62:3
+✖ a new build: one record (what it replaced, the snapshot, the note with a key hidden), one notice, 20 kept, five shown (4.415041ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:2223:21)
+      at listenInCluster (node:net:2357:12)
+      at node:net:2581:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }
+
+test at test/updates.test.mjs:84:3
+✖ the build held in the newest snapshot runs again: recorded as going back, without the other build's note (1165.455ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:2223:21)
+      at listenInCluster (node:net:2357:12)
+      at node:net:2581:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }
+
+test at test/updates.test.mjs:92:3
+✖ a go-back past a newer snapshot marked same (the second go-back in a row): still recorded as going back (43.234417ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:2223:21)
+      at listenInCluster (node:net:2357:12)
+      at node:net:2581:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }
+
+test at test/updates.test.mjs:113:3
+✖ a restart on the same build adds nothing (4.815583ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:2223:21)
+      at listenInCluster (node:net:2357:12)
+      at node:net:2581:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }

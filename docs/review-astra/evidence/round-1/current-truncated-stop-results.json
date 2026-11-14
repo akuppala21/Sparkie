@@ -1,0 +1,9 @@
+{
+  "case": "stop-does-not-release-truncated-model-response",
+  "replyingBeforeStop": true,
+  "stopStatus": 200,
+  "stopClaimedStopped": true,
+  "replyingAfterStop": true,
+  "retryStatus": 409,
+  "retryError": "Sparkie is still answering in this conversation."
+}

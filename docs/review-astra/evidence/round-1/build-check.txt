@@ -1,0 +1,5 @@
+Command: node tools/build-server.mjs --check
+Source commit: 03866c09cf3edc0529ae8316c9356f44edb87dfd
+Exit code: 0
+Captured stdout:
+service/server.mjs matches its parts.

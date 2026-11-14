@@ -1,0 +1,4 @@
+HTTP response: 200 {"outcome":"saved","spark":"spark4","file":"prices.txt","sizeBytes":33,"note":"Saved prices.txt in the shared folder on Spark 4 (33 bytes)."}
+Submitted: "Price: €10 — café 😀"
+Actual file: "Price: ���10 — café 😀"
+CONFIRMED end to end: service returned saved and real worker persisted corrupted text.

@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "source": "/Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/src/19-watcher.mjs",
+  "sourceSha256": "2f0a4045f9a279bef8c94b1abca76cb05fb8acf0c21e82b96bac31362b2f4de4",
+  "testType": "real watcher functions with stand-in command output; no external commands executed",
+  "successfulEmptyLookMarksSawContainers": false,
+  "jobEndMarkedTold": true,
+  "completionCallbacks": [],
+  "emittedEvents": [],
+  "bugReproduced": true
+}
