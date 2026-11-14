@@ -171,3 +171,5 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 `owner-decisions.md` (the 22 decisions in the owner's words), `ledger.md` (how the designs join), `a-workspace.md`,
 `b-learning.md`, `c-github-selfchange.md`, `d-fleet-workloads.md`, `e-unattended.md`, `f-structure.md`,
 `g-memory.md`, `critic-simplicity.md`, `critic-safety.md`.
+
+**Rule numbers (2026-11-13, late).** The smart-plug work already uses R41 for its plug and power rule. The next phase's new rules therefore take R42 (Sparkie's reach), R43 (learning), R44 (documents and parts) and R45 (memory), one higher than the designs say.

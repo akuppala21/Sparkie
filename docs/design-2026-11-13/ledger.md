@@ -148,3 +148,5 @@ What makes a coding agent effective, and where each piece sits in the designs.
   path, anything that could lock the owner out, anything that wakes or stops something by itself.
 - Simplicity critic: about 60 build steps across six designs. What is the smallest set that delivers the owner's
   goal? What can a 27B model actually drive? Which state files, actions and rules could be one instead of two?
+
+**Rule numbers (2026-11-13, late).** The smart-plug work already uses R41 for its plug and power rule. The next phase's new rules therefore take R42 (Sparkie's reach), R43 (learning), R44 (documents and parts) and R45 (memory), one higher than the designs say.
