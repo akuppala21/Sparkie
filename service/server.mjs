@@ -6071,7 +6071,7 @@ async function maybeHeal(node, w) {
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
-  } catch (e) { skip(e.message); }
+  } catch (e) { skip(maskSecrets(String(e.message))); }
 }
 
 
@@ -6927,7 +6927,7 @@ async function bringBack(x, why, parts, power = false) {
     }
     skippedOnce.set(key, 'failed');
     fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
-    audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: String(e.message).slice(0, 300) });
+    audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: maskSecrets(String(e.message).slice(0, 500)).slice(0, 300) });
   }
 }
 
