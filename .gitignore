@@ -6,3 +6,5 @@ node_modules/
 *.zip
 __pycache__/
 test-results/
+# Written by node test/lock.mjs for the build it tested; on GitHub only the tested/<tree> tags carry it
+service/workflows.lock.json

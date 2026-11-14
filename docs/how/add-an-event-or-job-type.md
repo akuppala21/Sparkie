@@ -11,8 +11,10 @@ map's "Where new things go", row "An event type or a job type".
 
 - `EVENT_TYPES` (`16-actions.mjs`).
 - `describeEvent` (`19-watcher.mjs`); the last 10 events go to Sparkie with every owner message (`fleetNotes`).
-- The page's `SVC_LABEL` (`public/app.js`); `OP_WORDS` (`14-chats.mjs`); `CHANGES_MODELS` (`20-desired.mjs`);
-  `startingNow` (`17-changes.mjs`).
+- The page's `SVC_LABEL` (`public/app.js`); `OP_WORDS` (`14-chats.mjs`); `TELL_OPS` (`20-tell.mjs`); `CHANGES_MODELS`
+  (`20-desired.mjs`); `startingNow` (`17-changes.mjs`). A job type that holds no claim and changes no model itself,
+  only through steps that are jobs of their own (`self-test`, `workflow-run`), stays out of `CHANGES_MODELS`,
+  `startingNow` and the busy checks below.
 - The by-type busy checks: `handler` in `24-handler.mjs` (`/deploy`, `/deploy/cluster`) and `checkSparkAction` in
   `12-status.mjs`.
 

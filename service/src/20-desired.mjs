@@ -18,6 +18,9 @@ const keyOf = x => `${x.spark}/${x.container}`;
 // isn't on it.
 function desiredAfter(job) {
   if (job.status !== 'completed') return;
+  // The self-test's own model (21-selftest.mjs) isn't the owner's wish: its start, the drill's restart and its stop
+  // (marked by the self-test and by maybeHeal) leave the list as it is.
+  if (job.selfTest) return;
   const started = [...new Set([...(job.ranHere || []), ...(job.type === 'restart' && job.node && job.container ? [`${job.node}/${job.container}`] : [])])]
     .filter(x => !/-part2$/.test(x) && !brainSparks().includes(x.split('/')[0]));
   const stopped = [...new Set(job.stoppedHere || [])].filter(x => !started.includes(x) && !/-part2$/.test(x));
@@ -116,8 +119,10 @@ async function watchHeld() {
     if (!existsSync(DESIRED_FILE)) {
       const inv = await recentInventory().catch(() => null);
       if (!inv) return;
-      // (Not the brain's Spark: Sparkie's model looks after itself there, and nothing else starts there.)
-      const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank)
+      // (Not the brain's Spark: Sparkie's model looks after itself there, and nothing else starts there. Not the
+      // self-test's own model, R22: it would be the owner's from then on. A note that can't be read: next time.)
+      const test = selfTestModels(lookBegan.get(inv) ?? Date.now());
+      const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank && !test.has(`${sp.id}/${d.container}`))
         .map(d => ({ spark: sp.id, container: d.container, model: d.model, ...(d.cluster ? { sparks: d.cluster.split('+') } : {}), since: new Date().toISOString(), by: 'already running' })));
       writePrivate(DESIRED_FILE, { revision: 1, running, revisions: [{ revision: 1, at: new Date().toISOString(), by: 'Spark Console', chat: null, operation: null, added: running.map(keyOf), removed: [], before: [], seeded: true }] });
     }

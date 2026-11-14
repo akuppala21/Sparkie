@@ -53,7 +53,7 @@ flowchart TD
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
   STATE["State files in ~/.local/state/spark-console"]
   BACKUP["Daily copy on another Spark (25-backup-and-start)"]
-  INSTALL["test/lock.mjs, then deploy/host-on-portal.sh"]
+  INSTALL["test/lock.mjs (here, on a compute Spark or in GitHub's suite job), then deploy/host-on-portal.sh"]
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
 
@@ -99,22 +99,22 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
-  JOBS -->|"saved-workflow steps, undo steps, Test-the-changes steps"| RUN
+  JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
   KNOW -->|"best setup for a start"| RUN
   KNOW -->|"memory lines, in the system prompt"| CHAT
   SENSE -->|"fleet notes; a job's end (keep_running once), once, in the chat that started it (jobEnded, A13)"| CHAT
-  JOBS -->|"docker commands"| SSH
+  JOBS -->|"docker commands; the self-test's kill of its own container, by id, and fixed reads"| SSH
   JOBS -->|"test prompt and speed test: HTTP to port 8000, no SSH; an app's link: one GET /"| FLEET
   SENSE -->|"read-only probes"| SSH
   SSH -->|"scripts"| FLEET
-  SENSE -->|"watcher calls maybeHeal on a crash. healPass reads offline and online events"| HEAL
+  SENSE -->|"watcher calls maybeHeal on a crash (the self-test drill's kill is one). healPass reads offline and online events"| HEAL
   HEAL -->|"bring back, via watcher (models: restart_model or start_model; apps: keep_running)"| RUN
   HEAL -->|"crash restart: restartChecked, direct. Brain keeper: a main-start job"| JOBS
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
-  JOBS -->|"desired list, validation, chat notice, event"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+  JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
@@ -135,8 +135,9 @@ printed and counted in memory, an uncaught error writes `last-crash.json` just b
 `funnelOn`, `/health`'s `internet`, stays null, "not known", until an answer names the main address (the same answer
 sets `doorOn`, whether port 10000 goes to the app door, R40): right after a boot tailscaled answers with nothing
 loaded. `checkRoute` also runs on the stand-in fleet, where `test/mock/bin/tailscale` answers it); `watchHeld` (60 s);
-the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start; the
-daily copy’s clock (`backupIfDue`: 10 minutes after start, then hourly, until a copy has worked that UTC day); the
+the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start, and
+`selfTestRecover` (5 s after start: stops what a cut-off self-test started); the daily copy’s clock (`backupIfDue`: 10
+minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started in the local port's listen callback beside the Telegram loop: reads
 the open-problems list and sends at most one fixed line, R32); the open-problems list (`openProblems`, 20-needs, built
 on each ask, never stored); the update record at start (`noteUpdate`, called in the local port's listen callback: when
@@ -196,17 +197,12 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 
 ## 4. Known traps
 
-- **The tree is not locked now.** The lock names build `aca03d1af018`; the code is newer (`running_models {detail}`,
-  `files`, `save_file` and `keep_running` were added after it, 2026-11-11, and the fixes from their review,
-  2026-11-12; then the installs group, F4, H1 and S5, and `internet` not known until Tailscale answers, 2026-11-12;
-  then web lookup, `search_web` and `read_page`, and the chat group (F2, F3, F7, F8, F13, F25, H2, H3, A1),
-  2026-11-12; then the fleet group (F6, F16, F12, S1, S2, F17, H4, A2, H5), 2026-11-12; no workflow version changed
-  until the start group (A9, F9, F10, F11, F18, A3, A5, F20 and A13, any workload), 2026-11-13: `start_model`,
-  `start_model_across`, `find_setups` and `restart_model` have new versions, `stop_model` doesn’t), so the installer
-  refuses it until `node test/lock.mjs` passes again, and after the install those four need a validation run (one live
-  start, check and stop on Spark 3 or 4 covers the starts and the restart; one `find_setups` covers that one). Any
-  edit to a part changes the build. Editing `worker.py` changes every workflow version without changing the build
-  (R29).
+- **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
+  whole passing run, or a checkout of a `tested/` tag holds one, and the installer refuses a build without it. Any edit
+  to a part changes the build; a `worker.py` edit changes every workflow version but not the build. After an install
+  `/health` names the workflows whose version waits for a validation run (the hub guard, 2026-11-14, changed
+  `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the
+  restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.
@@ -261,6 +257,9 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
   The door refuses an app’s own page switching it, and code-server, Jupyter and other dev boxes are shells in a
   container on the tailnet either way; open through the door only apps you trust. Door tickets live in memory: after a
   restart or an install, open the app again from Spark Console.
+- **The self-test’s crash is a kill.** No engine crashes on demand from outside (a signal to a container’s first process
+  is ignored unless it handles it), so the drill kills its own container by id and marks that one exit as a crash (R19).
+  It proves the watcher, self-healing and `restart_model` on the real Spark, not how one engine dies.
 - **Smaller ones.** `link.gone` is set only by the owner’s `/stop` (R34); closing the page still does not stop a reply
   (`chatReply` sets `link.detached`, on purpose, which nothing reads); a route that answers 500 is printed and counted
   (`recordFault`); other statuses are not; model `sparkie` at `/v1` is the bare model, with no tools, prompt or

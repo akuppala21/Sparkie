@@ -65,6 +65,7 @@ const NOT_PATHS = {
   'tools/list': 'an MCP method', 'tools/call': 'an MCP method',
   'deploy/short-address.sh': 'retired 2026-11-11; the contract names it as gone',
   'deploy/web-page.sh': 'retired 2026-11-11; the contract names it as gone',
+  'service/workflows.lock.json': 'written by node test/lock.mjs; not kept in git',
 };
 
 const RULE_HEADINGS = ['Rule', 'Why', 'Today', 'Where', 'Checked by'];
