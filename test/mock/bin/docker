@@ -21,6 +21,13 @@
 # An app's image is the first word after the run's options, and the words after it are its command (Cmd); its labels
 # spark.gpu, spark.job and spark.chat and its --gpus come from its run too (A13). `docker ps --format 'run…'` gives the
 # spark.gpu label as a fourth column, and `--filter label=spark.gpu=1` keeps only those.
+# `docker kill` (a name, or the start of an id) ends a running container at once with exit 137, and logs the reference it
+# was given in ~/.mock/killed. `docker inspect -f '{{.Id}}'` gives a container's id; `-f '{{.State.Status}}
+# {{.State.ExitCode}} {{.State.OOMKilled}}'` its state, exit code and false. Two switches a test turns on (the
+# self-test's): with ~/.mock/jobs-run, a job (an app run with spark.job=1) really runs its command here, when it is run or
+# started, at once and to its end, in its /out folder (the source of its -v …:/out), with these stand-ins on PATH: what it
+# prints is its log, and it ends with the command's exit code (otherwise a job stays running). With ~/.mock/stamp-starts,
+# a run or start writes ~/.mock/started-<name> with the time, so a container's StartedAt is when it really started.
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
 cmd=$1; shift
@@ -62,6 +69,20 @@ runLabel() { grep -qx -- "$2" "$1" 2>/dev/null; }
 runList() { local prev= out= a; while IFS= read -r a; do [ "$prev" = "$2" ] && out="$out${out:+,}\"$(printf '%s' "$a" | sed 's/[\\"]/\\&/g')\""; prev=$a; done < "$1"; printf '[%s]' "$out"; }
 # Replace one container's line.
 setLine() { { grep -v "^$1|" "$M/containers" || true; echo "$2"; } > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; }
+# With ~/.mock/stamp-starts: when this container (re)started.
+stamp() { [ -f "$M/stamp-starts" ] && date -u +%Y-%m-%dT%H:%M:%SZ > "$M/started-$1"; true; }
+# With ~/.mock/jobs-run: runs job $1's command (the words after its image) in its /out folder; prints its exit code.
+runJobNow() {
+  local a want= prev= img= dir= cmd=() code
+  while IFS= read -r a; do
+    if [ -n "$img" ]; then cmd+=("$a"); continue; fi
+    if [ -n "$want" ]; then [ "$prev" = -v ] && case "$a" in *:/out) dir=${a%:/out} ;; esac; want=; continue; fi
+    case "$a" in --name|--label|--restart|--memory|--log-opt|-p|-v|-e|-w|--gpus|--shm-size) want=1; prev=$a ;; -*) ;; *) img=$a ;; esac
+  done < "$M/run-$1"
+  if [ -n "$dir" ] && [ -d "$dir" ] && [ ${#cmd[@]} -gt 0 ]; then (cd "$dir" && "${cmd[@]}") > "$M/logs-$1" 2>&1; code=$?; else code=125; fi
+  echo "$code"
+}
+runsJob() { [ -f "$M/jobs-run" ] && runLabel "$M/run-$1" spark.job=1; }
 # A running model container of Spark Console's that holds the serve port, other than $1.
 portHolder() {
   while IFS='|' read -r n st _ ours _ _ role _ rank; do
@@ -114,6 +135,12 @@ case "$cmd" in
     code=$(cat "$M/stop-code-$name" 2>/dev/null || echo 0)
     sed "s/^$name|running|[^|]*|/$name|exited|Exited ($code) just now|/" "$M/containers" > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name"
     freeGpu "$name"; echo "$name" ;;
+  kill)
+    ref=$(last "$@"); printf '%s\n' "$ref" >> "$M/killed"
+    name=$(resolve "$ref") || { echo "Error response from daemon: No such container: $ref" >&2; exit 1; }
+    [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || { echo "Error response from daemon: Cannot kill container: $ref: container $(idOf "$name") is not running" >&2; exit 1; }
+    sed "s/^$name|running|[^|]*|/$name|exited|Exited (137) just now|/" "$M/containers" > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name"
+    freeGpu "$name"; echo "$ref" ;;
   start)
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
@@ -127,7 +154,8 @@ case "$cmd" in
       if crashes "$model"; then setLine "$name" "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank"
       # ~/.mock/start-exits-<name> (an exit code): it ends at once with that code, as a short job does between two looks.
       elif [ -f "$M/start-exits-$name" ]; then setLine "$name" "$name|exited|Exited ($(cat "$M/start-exits-$name")) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank"
-      else setLine "$name" "$name|running|Up 1 second|$ours|$model|$protect|$role|$cluster|$rank"; date +%s > "$M/up-$name"; fi
+      elif runsJob "$name"; then stamp "$name"; code=$(runJobNow "$name"); setLine "$name" "$name|exited|Exited ($code) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank"
+      else setLine "$name" "$name|running|Up 1 second|$ours|$model|$protect|$role|$cluster|$rank"; date +%s > "$M/up-$name"; stamp "$name"; fi
       echo "$name"
     done ;;
   rename)
@@ -201,7 +229,9 @@ case "$cmd" in
       if grep -qx 'NCCL_IB_DISABLE=0' "$M/last-run-args"; then printf '[2026-11-10 21:00:05 TP%s] Init parallel begin.\n' "${rank:-0}" > "$M/logs-$name"; : > "$M/stuck-$name"
       else rm -f "$M/logs-$name" "$M/stuck-$name"; fi
     fi
-    if crashes "$model"; then echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    stamp "$name"
+    if [ "$ours" = app ] && runsJob "$name"; then code=$(runJobNow "$name"); echo "$name|exited|Exited ($code) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    elif crashes "$model"; then echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
     elif [ -n "$hfout" ]; then
       printf 'Traceback (most recent call last):\nValueError: model.safetensors.index.json references shard file(s) missing from /hf/snapshots\n' > "$M/logs-$name"
       echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
@@ -280,7 +310,12 @@ case "$cmd" in
     st=$(echo "$line" | cut -d'|' -f2)
     # The protect label, as docker inspect -f '{{index .Config.Labels "spark.protect"}}' gives it.
     case "$*" in *'"spark.protect"'*) [ "$(echo "$line" | cut -d'|' -f6)" = 1 ] && echo true || echo '<no value>'; exit 0 ;; esac
-    case "$*" in *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;; *) echo "$st" ;; esac ;;
+    case "$*" in
+      *'{{.Id}}'*) idOf "$name" ;;
+      *'{{.State.ExitCode}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
+      *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;;
+      *) echo "$st" ;;
+    esac ;;
   # Python's stack dump (PYTHONFAULTHANDLER, then SIGABRT), as a part stuck setting up NCCL prints it.
   exec)
     name=""; for a in "$@"; do case "$a" in -*) ;; *) name=$a; break ;; esac; done

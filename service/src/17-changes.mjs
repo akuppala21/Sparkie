@@ -30,8 +30,10 @@ function setAgentSettings(change) {
 }
 // (Self-healing goes on through the automatic pause for a looping agent, as in runAction; only the owner's own pause
 // stops it. Without this its job failed at its first line and used up a try: audit, 2026-11-11.)
-// Why nothing may stop: the owner said so, or it is self-healing bringing something back (it never stops anything else).
-const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back' : 'and the owner said not to stop anything');
+// Why nothing may stop: the owner said so, it is self-healing bringing something back (it never stops anything else), or
+// it is the self-test (21-selftest.mjs).
+const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
+  : ctx?.selfTest ? 'and the self-test never stops anything' : 'and the owner said not to stop anything');
 const pausedCheck = ctx => {
   const s = agentSettings();
   if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
@@ -109,6 +111,8 @@ function changeLabel(name, input) {
     if (input.once) return `Run ${c}${where} once from the image ${maskSecrets(input.image)}${how}${port}${rest}; its files go to jobs/${c} in the shared folder${open}`;
     return `Start ${c}${where} from the image ${maskSecrets(input.image)}${how}${port}${rest}, and keep it running${open}`;
   }
+  // (the self-test: what it runs is fixed by code; the button says where, and that it stops nothing)
+  if (name === 'self_test') return `Run the self-test${where || ' on a compute Spark that is free'}: a small model with the healing drill, a web page and a job with the GPU, stopping nothing`;
   // (a button shows all it would do: never cut, keys masked)
   if (name === 'save_file') return `Save ${String(input.path || 'a file')} in the shared folder${where} (${sizeWords(Buffer.byteLength(String(input.text ?? '')))})`;
   return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}`;
@@ -357,7 +361,9 @@ function launch(viewer, ctx, m, placed, how) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
     model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
-    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
+    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [],
+    // (the self-test's own start: not one the owner wants kept running, so it never joins the list, desiredAfter)
+    ...(ctx.selfTest ? { selfTest: true } : {}) }));
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
   return job;
 }

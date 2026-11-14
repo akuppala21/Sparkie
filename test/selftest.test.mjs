@@ -1,0 +1,198 @@
+// The self-test (self_test, 21-selftest.mjs; design D 2.9): on one compute Spark that is on and free, a small model
+// (started, stopping nothing), the healing drill (its container killed by id, self-healing brings it back), a stop, a
+// small web page whose link answers, and a job with the GPU that also calls the model address from inside its
+// container; one line per check, in order, with its seconds. Nothing is left running, nothing starts on the hub, and
+// nothing that ran before is stopped.
+//
+// The stand-in fleet: Spark 3 is made free (its model of Spark Console's is stopped; a benchmark started outside Spark
+// Console keeps running there, using no GPU), so it is the one picked (Spark 4 runs a model, Spark 1 is off, Spark 2 is
+// the hub). On Spark 3 a job really runs its command (~/.mock/jobs-run: sh, the stand-in nvidia-smi, and python3 calling
+// this service's /v1/models), and starts are stamped with their time (~/.mock/stamp-starts), so the drill's model has
+// run for seconds, not days: self-healing would pass over it but for the drill's mark. The web page is a server this
+// test runs on the port the self-test opens.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import http from 'node:http';
+import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
+
+const page = await new Promise(res => { const s = http.createServer((req, r) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end('<p>self-test</p>'); }); s.listen(0, '127.0.0.1', () => res(s)); });
+const WEB_PORT = page.address().port;
+after(() => page.close());
+
+const keys = {};
+const mockFile = (spark, file) => join(T.fleet.root, spark, '.mock', file);
+useFleet({ watchMs: 2000, statusMs: 3000,
+  env: { SPARK_CONSOLE_SELFTEST_PORT: String(WEB_PORT), SPARK_CONSOLE_JOB_WAIT_MS: '500', SPARK_CONSOLE_APP_ANSWER_MS: '20000', SPARK_CONSOLE_SELFTEST_HEAL_MS: '60000',
+    SPARK_CONSOLE_DIG_FIXTURE: join(dirname(fileURLToPath(import.meta.url)), 'mock', 'dig-fixture.json') },
+  prepare: ({ root }) => {
+    const list = join(root, 'spark3', '.mock', 'containers');
+    writeFileSync(list, readFileSync(list, 'utf8').replace(/^(sc-testorg--Qwen3\.8-27B-abliterated-GGUF)\|running\|[^|]*\|/m, '$1|exited|Exited (0) 2 hours ago|'));
+    for (const f of ['jobs-run', 'stamp-starts']) writeFileSync(join(root, 'spark3', '.mock', f), '');
+  } }, async () => {
+  keys.act = await createActKey('selftest');
+  keys.look = await createKey('selftest-look');
+  // The watcher's first look (15 s after the start) has to have seen Spark 3, as on a fleet that has been up a while.
+  await waitFor(async () => (await call(keys.look.token, 'workloads', { spark: 'spark3' })).value?.count > 0, { timeout: 60000, what: 'the watcher\'s first look' });
+});
+
+// name → state, from the stand-in docker's list.
+const states = spark => Object.fromEntries(readFileSync(mockFile(spark, 'containers'), 'utf8').split('\n').filter(Boolean).map(l => l.split('|')).map(([n, s]) => [n, s]));
+const running = spark => Object.entries(states(spark)).filter(([, s]) => s === 'running').map(([n]) => n).sort();
+const desiredRunning = () => JSON.parse(readFileSync(join(T.fleet.stateDir, 'desired.json'), 'utf8')).running.map(x => `${x.spark}/${x.container}`).sort();
+const operations = async () => (await call(keys.look.token, 'recent_operations', { limit: 50 })).value.operations;
+async function finished(id, timeout = 300000) {
+  for (const until = Date.now() + timeout * SLOW; ;) {
+    const j = (await api(`/jobs/${id}`)).json;
+    if (j.status !== 'running') return j;
+    assert.ok(Date.now() < until, `operation ${id} still running: ${j.step}`);
+    await sleep(1000);
+  }
+}
+const ORDER = ['Model', 'Healing', 'Stop', 'App', 'Job', 'Model address from a container', 'Left behind'];
+const idOf = s => { // the stand-in docker's container id for a name
+  let h = 5381n, hex = '';
+  for (let i = 0; i < Math.min(26, s.length); i++) hex += s.charCodeAt(i).toString(16).padStart(2, '0');
+  for (let i = 0; i < s.length; i++) h = (h * 33n + BigInt(s.charCodeAt(i))) % 281474976710597n;
+  return (hex + '0'.repeat(52)).slice(0, 52) + h.toString(16).padStart(12, '0');
+};
+
+const first = {};
+test('asked in the owner\'s words, it runs at once: the lines come in order, each with its seconds, and nothing is left running or on the hub', { timeout: 600000 * SLOW }, async () => {
+  first.before = { spark2: running('spark2'), spark3: running('spark3'), spark4: running('spark4') };
+  first.hub = readFileSync(mockFile('spark2', 'containers'), 'utf8');
+  first.desired = existsSync(join(T.fleet.stateDir, 'desired.json')) ? desiredRunning() : [];
+  first.since = new Date().toISOString();
+  writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: 'run the self-test', calls: [{ name: 'self_test', arguments: {} }] }]));
+  let chat, r;
+  try { chat = await newChat(); r = await say(chat, 'run the self-test'); } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+  assert.deepEqual(r.tools.map(t => [t.name, t.ok, t.change]), [['self_test', true, true]]);
+  assert.match(r.text, /"outcome":"started"/, r.text);
+  const id = /"operation":"([0-9a-f]{12})"/.exec(r.text)[1];
+  const j = await finished(id);
+  first.job = j;
+  assert.equal(j.type, 'self-test');
+  assert.equal(j.status, 'completed', `${j.error}\n${(j.report || j.log).join('\n')}`);
+  assert.equal(j.node, 'spark3', 'the free compute Spark');
+  assert.deepEqual(j.report.map(l => l.split(':')[0]), ORDER, j.report.join('\n'));
+  for (const l of j.report.slice(0, 6)) assert.match(l, /^[A-Za-z ]+: worked in \d+ s\. \S/, l);
+  assert.match(j.report[0], /answered its test prompt/);
+  assert.match(j.report[3], /A small web page answered at its link/);
+  assert.match(j.report[4], /nvidia-smi worked; its output is in jobs\/spark-selftest-job-[0-9a-f]{8} in the shared folder on Spark 3/);
+  assert.match(j.report[5], /got the model list from http:\/\/127\.0\.0\.1:\d+\/console\/api\/v1\/models from inside its container/);
+  assert.match(j.report[6], /^Left behind: nothing running\. sc-\S+ is stopped on Spark 3, as after any stop\. spark-selftest-web-[0-9a-f]{8} and spark-selftest-job-[0-9a-f]{8} are stopped there and used again next time\.$/, j.report[6]);
+  // The job's files are in its own folder in Spark 3's shared folder.
+  const job = /jobs\/(spark-selftest-job-[0-9a-f]{8})/.exec(j.report[4])[1];
+  const out = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs', job);
+  assert.equal(JSON.parse(readFileSync(join(out, 'models.json'), 'utf8')).object, 'list');
+  assert.ok(existsSync(join(out, 'gpu.txt')));
+  // Its result is posted in the chat, with the lines.
+  const posted = await waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.operation === id), { timeout: 30000, what: 'the posted result' });
+  assert.match(posted.content, /^Done: the self-test with \S+ on Spark 3 finished\.\nModel: worked in \d+ s\./, posted.content);
+  assert.ok(posted.content.includes(j.report[6]), posted.content);
+  // Nothing of it runs now; nothing new on the hub; the list of what should be running is as it was.
+  assert.deepEqual(running('spark3'), first.before.spark3);
+  assert.equal(readFileSync(mockFile('spark2', 'containers'), 'utf8'), first.hub, 'Spark 2 untouched');
+  assert.deepEqual(desiredRunning(), first.desired);
+  // Every step ran on Spark 3, none on the hub.
+  const steps = (await operations()).filter(o => o.actor === 'Self-test' || o.id === id);
+  assert.ok(steps.length >= 6, JSON.stringify(steps));
+  assert.ok(steps.every(o => o.spark === 'spark3'), JSON.stringify(steps.map(o => [o.type, o.spark])));
+});
+
+test('the healing drill kills only the container this run started, by its id, and self-healing brings it back', async () => {
+  assert.ok(first.job, 'the first run ran');
+  const model = /\b(sc-\S+) is stopped on Spark 3/.exec(first.job.report[6])[1];
+  // One kill, on Spark 3 only, by the full id of the model's container.
+  assert.deepEqual(readFileSync(mockFile('spark3', 'killed'), 'utf8').trim().split('\n'), [idOf(model)]);
+  for (const sp of ['spark1', 'spark2', 'spark4', 'spark5']) assert.ok(!existsSync(mockFile(sp, 'killed')), `nothing killed on ${sp}`);
+  // The watcher called it a crash, as the drill's, and self-healing restarted it.
+  const ev = eventLines().filter(e => e.at >= first.since && e.container === model);
+  const crash = ev.find(e => e.type === 'crashed');
+  assert.ok(crash, JSON.stringify(ev));
+  assert.deepEqual([crash.spark, crash.drill, crash.exitCode], ['spark3', true, 137]);
+  const healing = ev.find(e => e.type === 'healing');
+  assert.ok(healing?.operation, JSON.stringify(ev));
+  const restart = (await api(`/jobs/${healing.operation}`)).json;
+  assert.deepEqual([restart.type, restart.status, restart.actor], ['restart', 'completed', 'Self-healing']);
+  assert.match(first.job.report[1], /^Healing: worked in \d+ s\. sc-\S+ was stopped hard on purpose \(only the container this test started\), and self-healing started it again; it answers again\.$/);
+});
+
+test('a model that was already running is still running after, on every Spark, and none of them was stopped', async () => {
+  assert.ok(first.job, 'the first run ran');
+  // (sc-gpt-oss-20b and Sparkie's on the hub; a benchmark on Spark 3 itself; a model on Spark 4)
+  assert.ok(first.before.spark2.includes('sc-gpt-oss-20b') && first.before.spark3.includes('qwen-recipe-chisel') && first.before.spark4.includes('sc-RadixArk--Qwen3.8-27B-NVFP4'), JSON.stringify(first.before));
+  assert.deepEqual({ spark2: running('spark2'), spark3: running('spark3'), spark4: running('spark4') }, first.before);
+  const stopped = eventLines().filter(e => e.at >= first.since && ['stopped', 'crashed'].includes(e.type) && first.before[e.spark]?.includes(e.container));
+  assert.deepEqual(stopped, []);
+});
+
+test('with the stand-in GPU broken, the job line fails and the others still report; its stopped containers are used again', { timeout: 600000 * SLOW }, async () => {
+  writeFileSync(mockFile('spark3', 'gpu-broken'), '');
+  try {
+    const before = running('spark3');
+    const r = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.outcome, 'started', r.text);
+    const j = await finished(r.json.operation);
+    assert.equal(j.status, 'failed', JSON.stringify(j));
+    assert.equal(j.error, 'The self-test found a problem: job.');
+    assert.deepEqual(j.report.map(l => l.split(':')[0]), ORDER, j.report.join('\n'));
+    assert.match(j.report[4], /^Job: failed in \d+ s\. nvidia-smi didn’t work inside the job \(exit 9\); what it said is in jobs\/spark-selftest-job-[0-9a-f]{8}\/gpu\.txt in the shared folder on Spark 3\.$/, j.report[4]);
+    for (const i of [0, 1, 2, 3, 5]) assert.match(j.report[i], /: worked in \d+ s\. /, j.report[i]);
+    assert.match(j.report[6], /^Left behind: nothing running\./);
+    // The web page's and job's containers from the first run were started again, not made anew.
+    const web = /(spark-selftest-web-[0-9a-f]{8})/.exec(first.job.report[6])[1], job = /(spark-selftest-job-[0-9a-f]{8})/.exec(first.job.report[6])[1];
+    assert.deepEqual(Object.keys(states('spark3')).filter(n => /^spark-selftest-/.test(n)).sort(), [job, web].sort());
+    assert.deepEqual(running('spark3'), before);
+  } finally { rmSync(mockFile('spark3', 'gpu-broken'), { force: true }); }
+});
+
+test('a drill self-healing passes over (two restarts this hour already) says why, and leaves the model stopped and off the list', { timeout: 600000 * SLOW }, async () => {
+  const before = { spark3: running('spark3'), desired: desiredRunning() }, since = new Date().toISOString();
+  const r = await api('/actions/self_test', { method: 'POST', body: {} });
+  assert.equal(r.status, 200, r.text);
+  const j = await finished(r.json.operation);
+  assert.equal(j.status, 'failed', JSON.stringify(j));
+  assert.equal(j.error, 'The self-test found a problem: healing.');
+  assert.match(j.report[1], /^Healing: failed in \d+ s\. Self-healing didn’t start it again: it crashed again after two restarts this hour\.$/, j.report[1]);
+  assert.match(j.report[2], /^Stop: not tried\. sc-\S+ wasn’t running after the drill, so there was nothing to stop\.$/, j.report[2]);
+  for (const i of [3, 4, 5]) assert.match(j.report[i], /: worked in \d+ s\. /, j.report[i]);
+  assert.match(j.report[6], /^Left behind: nothing running\. sc-\S+ is stopped on Spark 3/);
+  // The model this test started was never the owner's wish: nothing is held on the list for it, and no late restart
+  // brings it back.
+  assert.deepEqual(desiredRunning(), before.desired);
+  await sleep(6000);
+  assert.deepEqual(running('spark3'), before.spark3);
+  assert.ok(!eventLines().some(e => e.at >= since && e.type === 'healing'), 'no restart');
+});
+
+test('an agent\'s call is the owner\'s question, and nothing starts', async () => {
+  const before = (await operations()).length;
+  const r = await call(keys.act.token, 'self_test', {});
+  assert.equal(r.isError, false, r.text);
+  assert.equal(r.value.outcome, 'question', r.text);
+  assert.match(r.value.question, /^Run the self-test on a compute Spark that is free: .*stopping nothing\? Running the self-test is the owner’s call\.$/);
+  assert.match(r.value.note, /^Only the owner can answer this one/);
+  assert.ok(r.value.choices.every(c => c.choice === null), JSON.stringify(r.value.choices));
+  // Naming the hub is refused outright.
+  const hub = await call(keys.act.token, 'self_test', { spark: 'spark2' });
+  assert.equal(hub.isError, true, hub.text);
+  assert.match(hub.text, /Spark 2 is Sparkie’s \(the brain’s\), so no other workload starts there/);
+  assert.equal((await operations()).length, before, 'nothing started');
+});
+
+test('with every compute Spark off, it says so, wakes nothing and starts nothing', { timeout: 120000 * SLOW }, async () => {
+  const before = (await operations()).length;
+  const offline = readFileSync(T.fleet.offlineFile, 'utf8');
+  writeFileSync(T.fleet.offlineFile, 'spark1 spark3 spark4\n');
+  try {
+    await sleep(4000);   // (the stand-in's offline list is read again after 3 s)
+    const r = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'No compute Spark is on: Spark 1, Spark 3 and Spark 4 are off or not answering, so the self-test didn’t run and nothing was started. It wakes nothing: turn one on, then ask again.');
+    assert.equal((await operations()).length, before, 'nothing started');
+  } finally { writeFileSync(T.fleet.offlineFile, offline); }
+});

@@ -18,6 +18,10 @@ const keyOf = x => `${x.spark}/${x.container}`;
 // isn't on it.
 function desiredAfter(job) {
   if (job.status !== 'completed') return;
+  // The self-test's own model start (21-selftest.mjs) isn't the owner's wish: it never joins the list, so a drill that
+  // leaves it down leaves nothing held. (If self-healing brings it back, that restart joins it, and the test's stop
+  // takes it off again.)
+  if (job.selfTest) return;
   const started = [...new Set([...(job.ranHere || []), ...(job.type === 'restart' && job.node && job.container ? [`${job.node}/${job.container}`] : [])])]
     .filter(x => !/-part2$/.test(x) && !brainSparks().includes(x.split('/')[0]));
   const stopped = [...new Set(job.stoppedHere || [])].filter(x => !started.includes(x) && !/-part2$/.test(x));

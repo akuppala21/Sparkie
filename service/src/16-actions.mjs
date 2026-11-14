@@ -115,6 +115,8 @@ const CHANGE_WORDS = [
   ['save', /\b(save|make|turn|create|add|remember)\b[^.?!;\n]{0,80}?\bworkflows?\b/gi],
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
+  // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
+  ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
   ['file', /\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css))\b/gi],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
@@ -171,7 +173,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
   find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'] };
+  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'] };
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -300,6 +302,12 @@ async function sparkieCheck(name, input, ctx) {
     const want = { keep: ['keep', 'start'], restart: ['restart'], stop: ['stop'] }[out.do || 'keep'];
     const wanted = want.some(k => intent.asked.includes(k)) && !want.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
     return { clear: wanted && appNamed(out, saidText), input: out };
+  }
+  // The self-test: what it runs is fixed by code, so the owner's words asking for it are enough (R25). A Spark stays
+  // only when the owner named it; otherwise the test picks a free one.
+  if (name === 'self_test') {
+    if (out.spark && !said.has(out.spark)) delete out.spark;
+    return { clear: asked, input: out };
   }
   if (name === 'save_file') {
     // Whole names, not pieces of words: the path is one of the owner's words as written (quotes and a closing . , ! ?

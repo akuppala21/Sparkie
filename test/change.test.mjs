@@ -114,10 +114,10 @@ describe('who may change things', () => {
     }
     assert.deepEqual(await operations(), []);
   });
-  test('a key the owner lets act sees all 42 (ask_sparkie too); the change tools say they change things', async () => {
+  test('a key the owner lets act sees all 43 (ask_sparkie too); the change tools say they change things', async () => {
     assert.deepEqual(keys.act.scopes, ['fleet:read', 'fleet:act']);
     const tools = (await rpc(keys.act.token, 'tools/list')).json.result.tools;
-    assert.equal(tools.length, 42);
+    assert.equal(tools.length, 43);
     assert.deepEqual(tools.map(t => t.name).sort(), [...DOOR_ACT].sort());
     assert.equal(tools.find(t => t.name === ASK).annotations.destructiveHint, true, 'through Sparkie it can change things now');
     for (const t of tools) {

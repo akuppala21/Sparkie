@@ -175,6 +175,31 @@ function jobEnded(node, w) {
   saveChats();
   if (conv.channel === 'telegram') tell('result', text).catch(() => {});
 }
+// Waiting for a job's end (keep_running with once, A13; the self-test's job): one fixed `docker inspect` of exactly that
+// container through `run` every JOB_WAIT_MS (10 s), first at once, until it isn't running or `limitMs` has passed. It
+// returns how it ended: { state, exitCode, oomKilled, seconds } (state "exited" or "dead"; "created" is a container that
+// never ran). It changes nothing: a job still running at the limit is an error that says so (stillRunning), and the
+// caller decides whether to stop it. Gone from Docker is an error; so is a minute in which Docker there didn't answer.
+// With `job`, cancelling that operation ends the wait.
+const JOB_WAIT_MS = Number(process.env.SPARK_CONSOLE_JOB_WAIT_MS || 10000);
+async function waitJobEnd(node, container, { limitMs = 30 * 60000, job = null } = {}) {
+  const began = Date.now(), at = sparkName(node);
+  for (let unanswered = 0; ;) {
+    if (job) cancelCheck(job);
+    const r = await run(node, `docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+    const [state, code, oom] = r.code === 0 ? r.out.trim().split(/\s+/) : [];
+    if (state === 'missing') throw new Error(`${container} is gone from ${at}, so how it ended isn’t known.`);
+    if (['exited', 'dead', 'created'].includes(state)) {
+      return { state, exitCode: /^\d{1,3}$/.test(code || '') ? Number(code) : null, oomKilled: oom === 'true', seconds: Math.round((Date.now() - began) / 1000) };
+    }
+    unanswered = state ? 0 : unanswered + 1;
+    if (unanswered * JOB_WAIT_MS >= 60000 && unanswered >= 3) throw new Error(`${at} didn’t answer for a minute while ${container} was being waited on, so how it ended isn’t known.`);
+    if (Date.now() - began >= limitMs) {
+      throw Object.assign(new Error(`${container} was still running on ${at} after ${Math.round(limitMs / 60000)} minutes.`), { stillRunning: true });
+    }
+    await sleep(Math.max(0, Math.min(JOB_WAIT_MS, limitMs - (Date.now() - began))));
+  }
+}
 // Up means its container is running and stays running: five looks in a row, 3 s apart. Its port only decides whether it
 // answers there (any HTTP reply), so whether a link is given: it is waited on to answer until APP_ANSWER_MS, and a
 // database or another service that isn't a web page is up all the same. Nothing is stopped for not answering. Returns
