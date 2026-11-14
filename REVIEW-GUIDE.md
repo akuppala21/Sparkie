@@ -42,11 +42,11 @@ key per agent.
    - known traps.
 3. **`docs/code-map.md`.** Every part, action, state file, timer and function, generated from the code.
 4. **`docs/contract.md`.** What the product must do and why. It is long, so search it rather than reading it all.
-5. **`docs/analysis-2026-11-11/`.** The record of the analyses and reviews that drove this build. Start with:
+5. **`docs/history/analysis-2026-11-11/`.** The record of the analyses and reviews that drove this build. Start with:
    - `README.md` (the owner's decisions);
    - `14-trimmed-plan.md` (what was chosen to build);
    - `17-build-specs.json` and `19-any-workload-spec.json` (the exact specs).
-6. **`docs/reviews-2026-11-11.md`.** The earlier reviews and their "next, in order" list.
+6. **`docs/history/reviews-2026-11-11.md`.** The earlier reviews and their "next, in order" list.
 7. **`test/README.md`.** What each test file covers, and how the stand-in fleet works.
 
 Other docs:
@@ -57,7 +57,7 @@ Other docs:
 | `docs/agent-door.md` | MCP for the owner's agents |
 | `docs/recipes.md` | How setups are found for a model |
 | `docs/multi-spark.md` | One model across two Sparks |
-| `docs/sparkie-actions.md` | What Sparkie may do on its own |
+| `docs/history/sparkie-actions.md` | What Sparkie may do on its own |
 
 ## 3. Where the code is
 
@@ -76,7 +76,7 @@ Other docs:
 
 ## 4. What changed in this build-out (2026-11-12 and 13)
 
-The items came from the trimmed plan (`docs/analysis-2026-11-11/14-trimmed-plan.md`), and the IDs match it. Each group
+The items came from the trimmed plan (`docs/history/analysis-2026-11-11/14-trimmed-plan.md`), and the IDs match it. Each group
 went through the same steps:
 
 1. Built by Opus 5.5 at extra-high effort, in its own copy of the tree.

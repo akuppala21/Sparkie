@@ -13,10 +13,10 @@ Two ways in, through the same door:
   things up with its own tools, and starts, stops or restarts models if the agent may change things. This is "my agent
   talks to the Sparks' agent".
 - **Call actions directly**: everything the console can do is one list of named **actions** with typed inputs. The page,
-  Sparkie and outside agents use the same list under the same checks. 20 actions look things up; 3 change things
-  (start, stop and restart models), for agents you allow (below).
+  Sparkie and outside agents use the same list under the same checks. Some look things up; the others change
+  things (starting, stopping and restarting models among them), for agents you allow (below).
 
-Commands on the Sparks come later (see [sparkie-actions.md](sparkie-actions.md)).
+Commands on the Sparks come later (see [history/sparkie-actions.md](history/sparkie-actions.md)).
 
 ## Talking with Sparkie
 

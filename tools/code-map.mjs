@@ -1,6 +1,6 @@
 // docs/code-map.md is written from the code, so it can't go out of date: every part of the service with what it is for,
 // the actions it defines, the state files it owns, its timers and its functions. It is how an agent (or Sparkie) finds
-// where something lives before changing it. docs/architecture.md says how the parts fit and the rules to keep.
+// where something lives before changing it. docs/architecture.md says how the parts fit; docs/rules/ holds the rules.
 //
 //   node tools/code-map.mjs           writes docs/code-map.md
 //   node tools/code-map.mjs --check   exits 1 if docs/code-map.md isn't what the code makes (test/build.test.mjs runs this)
@@ -37,7 +37,7 @@ export function codeMap() {
     '# Code map',
     '',
     'Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).',
-    'How the parts fit together, and the rules every change must keep, are in `docs/architecture.md`. What to read first is in `AGENTS.md`.',
+    'How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.',
     '',
     `The service is ${parts.length} parts in \`service/src/\`, joined in name order into \`service/server.mjs\` (${parts.reduce((n, p) => n + p.lines, 0)} lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.`,
     '',

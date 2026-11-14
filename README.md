@@ -104,7 +104,7 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
 - **Agents (the agent door):** your own agents (Claude Code, Cursor, the `spark` command) use the console's actions
   through one MCP address, each with its own key from Access → Agents; they can talk with Sparkie (`ask_sparkie`,
   `spark ask`) or call actions directly, and change things only if you allow it. See
-  [docs/agent-door.md](docs/agent-door.md); the plan for Sparkie acting on its own is [docs/sparkie-actions.md](docs/sparkie-actions.md).
+  [docs/agent-door.md](docs/agent-door.md); the plan for Sparkie acting on its own is [docs/history/sparkie-actions.md](docs/history/sparkie-actions.md).
 - **Sparkie for agents:** one OpenAI-compatible address that stays the same whichever model is behind it:
   `https://akspark2.tailab9aa9.ts.net:8443/console/api/v1`, model `sparkie`, any API key.
   - **Model names:** `sparkie` goes to whatever the Agents choice on Models is. The dedicated model's own name (today
