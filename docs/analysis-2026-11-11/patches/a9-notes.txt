@@ -1,0 +1,216 @@
+=== id
+A9
+=== ownerSays
+[
+ "Start nvidia/<new model> with its best setup.",
+ "Find setups for nvidia/<new model>. (today this is refused with \"isn't in Recipes\"; now it adds the model and looks)",
+ "What setups do you have for <new model> now?",
+ "Start <new model> again. (one click: the run that worked, with the setup it used)"
+]
+=== spec
+Spec written by Fable 5.2 from a read-only pass; build with Opus 5.5. No new action, no new public argument (the existing approval argument `confirmOutside` is reused and stays out of every schema, R12). Function names are the anchors; line numbers are today's. Edit parts only, keep the curly apostrophes (’) in owner text, never open service/server.mjs.
+
+WHAT IT DOES
+(a) A Hugging Face repo started by its full name joins Recipes (added-models.json, through the existing `addModel`) once its download worked; the same job then looks its setups up (`refreshSetups` with wait, which calls `startDig`) and starts with `bestHow`. (b) `find_setups` adds such a repo instead of its 404. (c) The look gains a fifth source, read last: the model's own card on Hugging Face (code blocks only), using the unused `dig.codeBlocks`/`findServe`/`fromText`.
+
+1. service/dig.mjs, after `fromText` (~line 406). New pure export:
+```js
+// A model's own card (its README.md on Hugging Face): the engine commands in its code blocks that serve this very repo.
+// Only code blocks are read, never the card's words. At most 6 a card; a command of over 60 words, or with a word
+// over 300 characters, is skipped.
+export function fromCard(text, repo) {
+  const out = [], seen = new Set(), own = String(repo || '').toLowerCase();
+  if (!own) return out;
+  for (const block of codeBlocks(String(text || '').slice(0, 400000))) {
+    const hit = findServe(block);
+    if (!hit || String(hit.model || '').split(':')[0].toLowerCase() !== own) continue;
+    if (hit.args.length > 60 || hit.args.some(a => String(a).length > 300)) continue;
+    const key = JSON.stringify([hit.engine, hit.image || null, hit.args]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...fromText(hit, { url: `https://huggingface.co/${repo}`, author: String(repo).split('/')[0], date: null, kind: 'model-card', credibility: 'medium', notes: 'From the model’s own card on Hugging Face' }), repo });
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+```
+(credibility must be 'medium': `recipeCatalog` hides 'low'. `SOURCE_RANK` already has 'model-card': 5, so it sorts last; it carries no speed, so `bestHow` puts any measured setup first.)
+
+2. service/src/10-recipes.mjs, above `versionOf` (line 86):
+```js
+// The stand-in fleet can't reach Hugging Face. An entry {"hf": {…what /api/models/<repo> answers…}, "card": "<README.md>"}
+// in its dig fixture (SPARK_CONSOLE_DIG_FIXTURE, 11-setups.mjs) stands in for one repo; any other repo is read as before.
+function hfFixture(repo) {
+  if (!DIG_FIXTURE || DIG_FIXTURE === 'none') return null;
+  try { return JSON.parse(readFileSync(DIG_FIXTURE, 'utf8')).find(x => sameRepo(x?.hf?.id, repo)) || null; } catch { return null; }
+}
+```
+First line of `versionOf` becomes `const info = hfFixture(repo)?.hf || await hfJson(…same path…, 20000);`. Nothing else in this part changes; `addModel` is reused as it is.
+
+3. service/src/11-setups.mjs.
+After `vllmRecipeSetups` (line 90):
+```js
+// The model's own card on Hugging Face, for each of its own versions (never a base model's). A card that can't be read
+// without signing in (a gated model) counts as no card. The stand-in fleet reads it from its dig fixture, never the web.
+async function cardText(repo) {
+  if (DIG_FIXTURE) return hfFixture(repo)?.card || null;
+  return webGet(`https://huggingface.co/${repo}/raw/main/README.md`).catch(e => { if (e.status === 401 || e.status === 403) return null; throw e; });
+}
+async function cardSetups(repos) {
+  const out = [];
+  for (const repo of repos.slice(0, 8)) out.push(...dig.fromCard(await cardText(repo), repo));
+  return out;
+}
+```
+In `digModel` (sources, lines 151-156): `const card = ['the model’s card on Hugging Face', async () => (await cardSetups(repos)).filter(ours)];` and append `card` as the last entry of BOTH lists (the fixture list and the four web sources). Use `repos` (the model's own versions), not `all`. Nothing else in `digModel` changes: every card setup goes through the same `pinImage`, `dig.vetSetup`, the "needs N Sparks" check and the dedup, and is used only through `resolveHow`.
+`refreshSetups` note (line 223): `(NVIDIA’s recipe files, vLLM’s, Spark Arena, eugr’s, its model card)`. Fix the two comments that list sources (lines 2-6, 208-212).
+
+4. service/src/17-changes.mjs.
+4a. Above `startModel`:
+```js
+// The asker's own words name this Hugging Face repo in full: the owner's message to Sparkie, the owner's own
+// POST /actions call, or the label of a button they pressed. An agent's direct call carries no words, so it is asked.
+const namedInFull = (ctx, repo) => Boolean(repo) && String(ctx.said || ctx.request || '').toLowerCase().includes(String(repo).toLowerCase());
+```
+4b. `startModel`: delete the local `const namedInFull = …` (line 467) and test `!namedInFull(ctx, found.repo)` instead. Question text (line 469) becomes: `${found.repo} isn’t in your recipes. Download it from Hugging Face, add it to your recipes and start it with the best setup found for it (no code of its own)?` Buttons unchanged. Keep line 466 (two Sparks refused for an outside repo) and `pickVersion(…, found.outsideRecipes, …)`: the first start stays on one Spark.
+In the job: right after `if (!m) throw …library doesn’t show it yet…` (line 490) add
+```js
+    // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
+    // doesn't answer, it starts as before.
+    if (found.outsideRecipes) {
+      try { note(j, `Added ${(await addModel(viewer, { repos: [v.repo] })).title} to Recipes`); }
+      catch (e) { note(j, `Couldn’t add ${v.repo} to Recipes (${String(e.message).slice(0, 160)}), so no setups were looked up for it`); }
+    }
+```
+and replace lines 502-504 with
+```js
+    await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
+    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
+    note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
+    const release = claimSparks(placed.nodes, `starting ${v.repo}`);
+    try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
+```
+Result (line 506): add `...(found.outsideRecipes ? { note: 'It isn’t in your recipes yet: after the download it is added, and its setups are looked up before it starts.' } : {})`.
+Description (line 512): after "…and checks it answers." insert ` A Hugging Face repo that isn’t in Recipes is added to them after its download, and its setups (its model card’s too) are looked up before it starts. For one already on disk, find_setups adds it.` The on-disk path (lines 425-461) is not touched.
+4c. `find_setups` run body, from the destructuring down:
+```js
+    const { model, confirmOutside = false } = input.choice ? redeemChoice(viewer, ctx, 'find_setups', input.choice) : input;
+    if (!model) throw new HttpError(400, 'Missing argument: model.');
+    const found = await resolveModelName(model, await inventory(null));
+    if (found.choices) return question(…unchanged…);
+    let id = found.recipe?.id || (found.lib ? recipeIdOf(found.lib.repo || found.lib.name) : null), added = false;
+    // A Hugging Face repo that isn't in Recipes joins them first (A9): at once when the asker named it in full, else after a yes.
+    const repo = found.repo || found.lib?.repo || null;
+    if (!id && repo && REPO_RE.test(repo)) {
+      if (!confirmOutside && !namedInFull(ctx, repo)) {
+        return question(viewer, ctx, `${repo} isn’t in your recipes. Add it and look up its setups?`, [
+          { label: `Yes, add ${repo} and look up its setups`, call: { action: 'find_setups', args: { model: repo, confirmOutside: true } } }, { label: 'No', call: null }]);
+      }
+      id = (await addModel(viewer, { repos: [repo] })).id;   // its own plain errors pass through (not on Hugging Face, no weights)
+      added = true;
+    }
+    const recipe = id ? recipeCatalog().models.find(m => m.id === id) : null;
+    if (!recipe) throw …the existing 404, unchanged…;
+    const job = …unchanged…;
+    return { outcome: 'started', operation: job.id, model: recipe.title, ...(added ? { addedToRecipes: true } : {}), next: …unchanged… };
+```
+Schema unchanged (`model`, `choice`). Description: source list becomes "…Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face…", plus one sentence: `A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).`
+
+5. service/src/18-workflows.mjs. `START_CODE` (line 15): append `addModel, versionOf, hfFixture, namedInFull`. `find_setups` `code()` (line 45): append `cardSetups, cardText, addModel, versionOf, hfFixture, namedInFull`. Update the `changes` text of `find_setups` (add the model card and "a repo that isn’t in Recipes yet is added first") and of `start_model` ("a repo from outside Recipes joins them after its download").
+
+6. `node tools/build-server.mjs`, `node tools/code-map.mjs`. Tests (see test). Docs (see docs). Last: `node test/lock.mjs` (on the owner's laptop `SPARK_TEST_SLOW=3`); never hand-edit the lock.
+
+GUARDS THAT MUST HOLD
+- Who can cause a join: only the existing gate. The asker's words name `org/name` in full, or the yes on the question (kept server-side, once, 15 minutes). A look-only key cannot (changes are refused before the action runs).
+- Join only after the download worked (start), or after the repo is re-read on Hugging Face by code (`addModel`). Never from a search result.
+- A failed join never fails a start. Nothing new starts, stops, claims or runs on a Spark; nothing on Spark 2; no SSH, Tailscale, firewall or access change.
+- Card text is data: only code-block commands for that very repo are parsed; no card words reach the brain; flags, env and image pass `dig.vetSetup` at save and `resolveHow` at use (R27); a setup that lets the model run its own code is still never picked by `bestHow` and still refused by `start_model`.
+- One fixed host (huggingface.co), no token, host never chosen by text that was read.
+- added-models.json keeps one writer (`addModel`), found-setups.json one (`digModel`); no await between read and write (R20, R22).
+- No page change, no new state file, no new event or job type, tool counts 24/37 unchanged.
+=== test
+Stand-in needs: nothing in test/mock/bin or test/mock/worker.py. Only two new entries at the end of test/mock/dig-fixture.json (entries with `hf` have no top-level `repo`, so the existing setup filter skips them):
+1. {"hf": {"id": "testorg/Nova-2B", "gated": false, "downloads": 7, "pipeline_tag": "text-generation", "config": {}, "siblings": [{"rfilename": "config.json", "size": 700}, {"rfilename": "model.safetensors", "size": 1000000000}]}, "card": "# Nova 2B\n\nWords outside a block are never read: vllm serve testorg/Nova-2B --trust-remote-code\n\n```bash\nvllm serve testorg/Nova-2B --max-model-len 32768 --max-num-seqs 4\n```\n\n```bash\nvllm serve someoneelse/Other-7B --max-num-seqs 64\n```\n"}
+2. {"hf": {"id": "Qwen/Qwen3-32B", "gated": false, "downloads": 9, "pipeline_tag": "text-generation", "config": {}, "siblings": [{"rfilename": "config.json", "size": 700}, {"rfilename": "model.safetensors", "size": 64000000000}]}, "card": "```bash\npython3 -m sglang.launch_server --model-path Qwen/Qwen3-32B --context-length 32768\n```\n"}
+Card commands in the fixture must name no image (an image tag would make `pinImage` reach a registry). Qwen/Qwen3-32B is already on disk in the stand-in fleet and is not in catalog.json; testorg/Nova-2B is in neither.
+
+A. New file test/dig.test.mjs (pure, imports ../service/dig.mjs; the first test that does). Rules for vetSetup: engines {vllm:{pairs:true}, sglang:{pairs:true}, 'llama.cpp':{}}, sources ['vllm/vllm-openai','lmsysorg/sglang','ghcr.io/ggml-org/llama.cpp'], defaultImage → a digest-pinned name. Cases:
+- a fenced `vllm serve org/Name --max-model-len 32768 --max-num-seqs 4` gives one setup; through vetSetup it is deployable, source.kind 'model-card', source.url https://huggingface.co/org/Name, repo 'org/Name', args exactly those four words, notes the fixed line.
+- the same command in prose (no fence) gives nothing; a fenced command for another repo gives nothing; `fromCard(null, repo)` is [].
+- a fenced command with `--chat-template ./x.jinja` is returned but vetSetup marks it not deployable with why matching /uses --chat-template/.
+- `llama-server -hf org/Name:Q4_K_M -c 8192` gives engine 'llama.cpp', repo 'org/Name', file 'Q4_K_M'.
+- `--tensor-parallel-size 8`: vetSetup returns null.
+- seven different commands give six; a command with a 301-character word is skipped.
+Fails today: `dig.fromCard` does not exist.
+
+B. test/change.test.mjs, in describe "Recipes knows each model's best setup" (that fleet already sets SPARK_CONSOLE_DIG_FIXTURE), after the three existing tests:
+B1 "a model started by its full name joins Recipes, starts with the setup from its model card, and is one click after" (timeout 300000*SLOW):
+- before: GET /recipes has no model 'nova-2b'.
+- `ok('start_model', {model:'testorg/Nova-2B'}, keys.act.token)` is a question (assertQuestion) matching /isn’t in your recipes\. Download it from Hugging Face, add it to your recipes/; nothing started.
+- take its first choice: outcome 'started', type 'start-model', sparks without spark2, `note` matches /added/; `finished()` says completed.
+- GET /jobs/<id> log has /Added Nova-2B to Recipes/, /Looking for Nova-2B’s best setups/, /Starting it with recipe setup [0-9a-f]{10}/.
+- `.mock/last-run-args` on that Spark has the lines `--max-num-seqs` and `4`, and no `--trust-remote-code`.
+- GET /recipes: model 'nova-2b' has added:true and exactly one found setup with source.kind 'model-card', deployable, source.url https://huggingface.co/testorg/Nova-2B (the other repo's command and the prose are not there); state file added-models.json lists it; `recipe_detail {id:'nova-2b'}` through the look key shows source 'model-card'.
+- stop it (`stop_model`, container sc-testorg--Nova-2B), then `start_model {model:'testorg/Nova-2B', spark:<same>}`: no question, outcome 'started', `setup` equals that setup's id; wait for completed; stop it again.
+Fails today: versionOf has no stand-in, the question has the old words, the start runs the engine's defaults, the model never joins.
+B2 "find_setups adds a model that isn't in Recipes instead of refusing" (timeout 120000*SLOW):
+- `call(keys.act.token,'find_setups',{model:'Qwen/Qwen3-32B'})` is a question /Qwen\/Qwen3-32B isn’t in your recipes\. Add it and look up its setups\?/ (today: [not_found] "isn’t in Recipes, so there’s nothing to look up"); GET /recipes still has no 'qwen3-32b'.
+- the owner's own call `api('/actions/find_setups',{method:'POST',body:{model:'Qwen/Qwen3-32B'}})`: 200, outcome 'started', addedToRecipes true (named in full, no question); poll GET /jobs/<operation> until it ends, completed.
+- `recipe_detail {id:'qwen3-32b'}`: one setup, engine 'sglang', source 'model-card', deployable, args include `--context-length`.
+- then the agent takes its earlier choice `{choice}`: outcome 'started' with no addedToRecipes (already in), and wait for it.
+Also run: build.test, workflows.test, validate.test, steps.test, door.test, fuzz.test, sparkie.test (descriptions and versions changed; tool lists and counts must not).
+Command: `SPARK_TEST_STRICT=1 node --test test/dig.test.mjs test/change.test.mjs` (add SPARK_TEST_SLOW=3 on a slow machine), then the full `node test/lock.mjs`.
+=== files
+[
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/dig.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/10-recipes.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/11-setups.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/server.mjs (generated by tools/build-server.mjs, never by hand)",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/test/dig.test.mjs (new)",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/test/change.test.mjs",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/test/mock/dig-fixture.json",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/test/README.md",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/docs/architecture.md",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/docs/contract.md",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/docs/code-map.md (generated by tools/code-map.mjs)",
+ "/Users/akuppala/Documents/26aiRAG/spark-console/service/workflows.lock.json (written only by node test/lock.mjs)"
+]
+=== size
+M
+=== cut
+[
+ "A new tool (add_recipe) or any new public argument: the join needs neither; confirmOutside is reused as a kept approval argument.",
+ "Joining on the on-disk start path. That path must answer at once and has already picked its setup, so a join there could not change the start. A model already on disk joins through find_setups; start_model's description says so.",
+ "Waiting for the look before an on-disk start, and changing bestHow's order (a run that worked here still beats a newly found setup; the owner names a setup to switch).",
+ "The owner's pasted command as a setup (second half of finding serving-add-2).",
+ "Base-model cards, card prose, speeds read from cards, and the forum source. Only the model's own repos, only code blocks.",
+ "addModel filling released and categories, and the find_recipes tie-break (finding fresh-3).",
+ "find_setups clearing its caches (serving-sticky-7) and the read-as-empty protection (serving-heal-4): separate fixes to the same function, not needed for A9.",
+ "A second test switch for Hugging Face: SPARK_CONSOLE_DIG_FIXTURE carries the stand-in repo and card.",
+ "An owner-only gate by `via`: it would add one more place where the via lists can disagree; the existing named-in-full or yes gate is kept.",
+ "Page changes, a setup field on the job, changes to the chat result line, a nicer button label for find_setups.",
+ "Round one's Workload and Files designs (05-all-in-one): nothing in them applies to this item."
+]
+=== docs
+docs/architecture.md, same change:
+- Section 2 diagram: KNOW to WEB label becomes "research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)". JOBS to KNOW label adds "a repo downloaded by its full name joins Recipes".
+- Section 3 step 7: add "A repo from outside Recipes joins them (`addModel`) once its download worked; the job then waits for the look (`refreshSetups`) and `bestHow` picks, as for any recipe."
+- Section 4, Recipes row, Written by: "`addModel` (the page's add routes; `startModel`'s download job and `find_setups`, for a Hugging Face repo the asker named in full or said yes to)".
+- R27: add "A model's own card on Hugging Face is a source (`cardText`, `cardSetups`, `dig.fromCard`): only commands in its code blocks that serve that very repo, kind `model-card`, read last, no speed, never a base model's card." Where: 11-setups.mjs, dig.mjs. Check: test/dig.test.mjs, change.test.mjs.
+- R30: after `DIG_FIXTURE` note that an entry `{hf, card}` in it also stands in for Hugging Face (`versionOf`, the card read) for that repo.
+- Section 6, "A recipe source" row: replace "the fixture replaces every source with already-parsed setups, and no test imports dig.mjs" with "test/dig.test.mjs imports dig.mjs; a `{hf, card}` fixture entry goes through `dig.fromCard`, the others are already-parsed setups". Never column: add "read a card's words; take a card's command for another repo".
+- Section 8, new trap: "Being in Recipes is no longer only the catalog and the owner's page. A repo started or looked up by its full name joins. From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is looked up daily. A model already on disk joins only through `find_setups`."
+docs/contract.md: one dated bullet under "Recipes knows each model's best setup by itself": a model started or looked up by its full Hugging Face name joins Recipes by itself, and the model's own card is a fifth source, read last. Say in the change that this widens the earlier "only setups that hold up" line to the maker's own command.
+test/README.md: a row for dig.test.mjs; add B1 and B2 to the change.test.mjs row; one line that the dig fixture also stands in for Hugging Face for the repos it lists.
+docs/code-map.md: regenerate with `node tools/code-map.mjs`. AGENTS.md: no change (still R1 to R36, no new tool).
+=== risk
+1. Joining Recipes widens what that model may do later, with no further question: run across two Sparks (those parts run with more privileges for the cable), start on an app's call at /v1, and a daily look. The gate is the existing one, so an agent the owner lets change things can cause a join by taking the yes, as it can already cause the download.
+2. A model card is written by whoever uploaded the model. Its command becomes one-click after the same checks as every other source (flag and env lists, an approved image pinned by digest or Spark Console's own, never the model's own code by itself). A poor but allowed command can still become the only "best" setup for a new model; a failed start then goes through the known fixes and put-back. Owner decision already implied by keeping A9: the maker's card is trusted, ranked last.
+3. start_model, start_model_across and find_setups all get new versions (startModel, digModel, both actions' text change). After install each needs a new lock and one validation run on the real Sparks; until then an agent's plain call gets the validation question.
+4. The first start of a new model waits a little longer before it claims its Spark: one more Hugging Face read (up to 20 s) and the look (existing bound, 150 s; on a cold cache it may not finish, and the start then uses the engine's defaults while the setups land for next time).
+5. Gated models: the card cannot be read without signing in, so it counts as no card (no token is ever sent).
+6. A saved-workflow step `find_setups` on a repo outside Recipes now stops with "needs an answer first" instead of a 404; either way the step fails.
+7. The dig fixture now holds two kinds of entry; a fixture card that names an image tag would make the test reach a registry.
+8. Not checked by running: I read the code only. The full download-then-start path has no completing test today (the existing one is paused midway), so B1 may surface stand-in gaps the builder has to fix in the test, not in the rails.

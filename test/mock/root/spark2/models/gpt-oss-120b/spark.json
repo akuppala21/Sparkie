@@ -1,0 +1,1 @@
+{"title":"gpt-oss 120B","engine":"vllm","args":[],"memoryGiB":80,"source":"huggingface:openai/gpt-oss-120b"}

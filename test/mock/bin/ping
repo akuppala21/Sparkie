@@ -1,0 +1,13 @@
+#!/bin/bash
+# Stand-in ping over the fake direct cables: answers if some test Spark has the address on an "up" port, and
+# only lets a large packet through if both ends' MTUs are big enough.
+size=56 iface="" ip="${@: -1}"
+while [ $# -gt 1 ]; do case "$1" in -s) size=$2; shift ;; -I) iface=$2; shift ;; esac; shift; done
+mine=$(cat "$SPARK_SYSFS/class/net/$iface/mtu" 2>/dev/null || echo 1500)
+for f in "$MOCK_ROOT"/*/sys/class/net/*/mock_ipv4; do
+  [ "$(cut -d/ -f1 "$f")" = "$ip" ] || continue
+  d=$(dirname "$f"); [ "$(cat $d/operstate)" = up ] || continue
+  [ $((size + 28)) -le "$mine" ] && [ $((size + 28)) -le "$(cat $d/mtu)" ] && exit 0
+  exit 1
+done
+exit 1

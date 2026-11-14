@@ -1,0 +1,290 @@
+#!/bin/bash
+# Stand-in docker. State: ~/.mock/containers lines "name|state|status|ours|model|protect|role|cluster|rank", ~/.mock/images,
+# ~/.mock/ports ("name|hostport", or "name|hostport|host address" for one published elsewhere than 127.0.0.1). An app Spark
+# Console started (label spark.app=1) has ours "app"; `docker ps --format 'ctr…'` lists every container's name and state. A container's id comes from its name (idOf). ~/.mock/up-<name> holds when it last
+# started (the stand-in curl answers for it 4 seconds later).
+# Like real docker: Spark Console's own model containers (label spark.console=1, not Sparkie's, not a second part) all
+# publish the same serve port, so one can't start while another runs on that Spark ("port is already allocated");
+# models named *gemma* exit with code 1 as soon as they start; `docker stop` exits them with code 0 (or the one in
+# ~/.mock/stop-code-<name>, for an engine that exits badly on SIGTERM) and frees the GPU memory ~/.mock/gpu says they
+# used (in ~/.mock/meminfo); starting one doesn't take any. `docker logs` shows ~/.mock/logs-<name> when there is one.
+# `docker inspect` says a container started at ~/.mock/started-<name> (an ISO time) if there is one, else 2026-11-04T01:00:00Z.
+# `docker inspect <id or name>` with no format prints the full JSON; its Cmd is ~/.mock/cmd-<name> (a JSON list a test
+# writes: the command a container really ran with) when there is one, else a fixed one with a FAKE --api-key.
+# A Spark that freezes: with ~/.mock/stall (seconds), every docker command hangs that long and then fails, holding no
+# output open (so a command the service gives up on ends there and then, as it would over SSH).
+# Like Docker, a container is found by its name, else by the start of its id (hex, matching one container only), and
+# `docker port` answers only while it runs; `docker inspect` keeps its ports for a stopped one. An app's `docker run`
+# (spark.app=1) is kept in ~/.mock/run-<name>, so inspect gives its image, settings, named volumes, ports and memory cap;
+# for other containers ~/.mock/image-<name> and ~/.mock/memory-<name> (bytes) set the image and the cap, and the ports
+# are ~/.mock/ports'. With ~/.mock/app-port-taken, an app's run fails on its port, leaving the container "created".
+# An app's image is the first word after the run's options, and the words after it are its command (Cmd); its labels
+# spark.gpu, spark.job and spark.chat and its --gpus come from its run too (A13). `docker ps --format 'run…'` gives the
+# spark.gpu label as a fourth column, and `--filter label=spark.gpu=1` keeps only those.
+M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
+if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
+cmd=$1; shift
+# ~/.mock/slow-<command> (seconds): that command takes a while, like a real restart or stop of a big model.
+[ -f "$M/slow-$cmd" ] && sleep "$(cat "$M/slow-$cmd")"
+last() { eval echo "\${$#}"; }
+# A container's id: 64 hex characters made from its name (its first 26 characters, then a hash of all of it), in bash
+# itself: the watcher asks for every container's id every few seconds.
+idOf() {
+  local s=$1 i c h=5381 hex=
+  for ((i = 0; i < ${#s} && i < 26; i++)); do printf -v c '%02x' "'${s:i:1}"; hex+=$c; done
+  for ((i = 0; i < ${#s}; i++)); do printf -v c '%d' "'${s:i:1}"; h=$(( (h * 33 + c) % 281474976710597 )); done
+  hex+=0000000000000000000000000000000000000000000000000000
+  printf -v c '%012x' "$h"
+  printf '%s%s\n' "${hex:0:52}" "$c"
+}
+lineOf() { grep "^$1|" "$M/containers"; }
+# The container a reference means: its name, else the one container whose id starts with it (hex only).
+resolve() {
+  lineOf "$1" >/dev/null && { echo "$1"; return 0; }
+  case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+  local n found= hits=0
+  while IFS='|' read -r n _; do [ -n "$n" ] || continue; case "$(idOf "$n")" in "$1"*) hits=$((hits + 1)); found=$n ;; esac; done < "$M/containers"
+  [ "$hits" = 1 ] && echo "$found"
+}
+# An app's run: its image (the first word after the options) on one line, then the words after it as a JSON list.
+runSplit() {
+  local a want= img= cmd= sep=
+  while IFS= read -r a; do
+    if [ -n "$img" ]; then cmd="$cmd$sep\"$(printf '%s' "$a" | sed 's/[\\"]/\\&/g')\""; sep=,; continue; fi
+    if [ -n "$want" ]; then want=; continue; fi
+    case "$a" in --name|--label|--restart|--memory|--log-opt|-p|-v|-e|-w|--gpus|--shm-size) want=1 ;; -*) ;; *) img=$a ;; esac
+  done < "$1"
+  printf '%s\n[%s]\n' "$img" "$cmd"
+}
+# One of an app's run labels (spark.gpu=1 …), when its run has it.
+runLabel() { grep -qx -- "$2" "$1" 2>/dev/null; }
+# A JSON string list of one kind of an app's run arguments (-e, -v or -p values).
+runList() { local prev= out= a; while IFS= read -r a; do [ "$prev" = "$2" ] && out="$out${out:+,}\"$(printf '%s' "$a" | sed 's/[\\"]/\\&/g')\""; prev=$a; done < "$1"; printf '[%s]' "$out"; }
+# Replace one container's line.
+setLine() { { grep -v "^$1|" "$M/containers" || true; echo "$2"; } > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; }
+# A running model container of Spark Console's that holds the serve port, other than $1.
+portHolder() {
+  while IFS='|' read -r n st _ ours _ _ role _ rank; do
+    [ "$n" != "$1" ] && [ "$st" = running ] && [ "$ours" = 1 ] && [ "$role" != main ] && [ "${rank:-0}" = 0 ] && { echo "$n"; return 0; }
+  done < "$M/containers"
+  return 1
+}
+# A stopped container's GPU users (~/.mock/gpu lines naming it) go away and their memory becomes available again.
+freeGpu() {
+  [ -f "$M/gpu" ] || return 0
+  mib=$(awk -F, -v n="$1" '{c=$4; gsub(/ /, "", c); if (c == n) s += $2} END {print s + 0}' "$M/gpu")
+  [ "$mib" = 0 ] && return 0
+  awk -F, -v n="$1" '{c=$4; gsub(/ /, "", c); if (c != n) print}' "$M/gpu" > "$M/g.tmp"; mv "$M/g.tmp" "$M/gpu"
+  [ -f "$M/meminfo" ] && awk -v add=$((mib * 1024)) '/^MemAvailable:/ {printf "MemAvailable:   %d kB\n", $2 + add; next} {print}' "$M/meminfo" > "$M/m.tmp" && mv "$M/m.tmp" "$M/meminfo"
+  return 0
+}
+usesPort() { [ "$1" = 1 ] && [ "$2" != main ] && [ "${3:-0}" = 0 ]; }   # ours role rank
+crashes() { case "$1" in *gemma*) return 0 ;; esac; return 1; }        # model
+# With ~/.mock/reject-flag (a flag), a model started with that flag exits at once, the engine saying it doesn't know it.
+# With ~/.mock/oom-ctx (a number of tokens), a model started without a context cap at or below it runs out of memory
+# while loading, as a real engine does with a too-long context (the known fix caps it).
+oomsAt() {
+  [ -f "$M/oom-ctx" ] || return 1
+  local ctx; ctx=$(awk 'p {print; p=0} /^--max-model-len$|^--context-length$/ {p=1}' "$M/last-run-args" | tail -1)
+  [ -z "$ctx" ] || [ "$ctx" -gt "$(cat "$M/oom-ctx")" ]
+}
+case "$cmd" in
+  ps)
+    all=0; filter=""; fmt=""
+    while [ $# -gt 0 ]; do case "$1" in -a) all=1;; --filter) filter=$2; shift;; --format) fmt=$2; shift;; esac; shift; done
+    while IFS='|' read -r name state status ours model protect role cluster rank; do
+      [ -z "$name" ] && continue
+      [ $all = 0 ] && [ "$state" != running ] && continue
+      [ "$filter" = "label=spark.console=1" ] && [ "$ours" != 1 ] && continue
+      [ "$filter" = "label=spark.gpu=1" ] && ! runLabel "$M/run-$name" spark.gpu=1 && continue
+      case "$fmt" in
+        deploy*) printf 'deploy\t%s\t%s\t%s\t%s\tr%s\tk%s\tn%s\n' "$name" "$state" "$status" "$model" "$role" "$cluster" "$rank" ;;
+        run*) p=""; [ "$protect" = 1 ] && p=true; o=""; [ "$ours" = 1 ] && o=1; g=""; runLabel "$M/run-$name" spark.gpu=1 && g=1; printf 'run\t%s\t%s\t%s\t%s\n' "$name" "$p" "$o" "$g" ;;
+        gpuapp*) printf 'gpuapp\t%s\n' "$name" ;;
+        ctr*) printf 'ctr\t%s\t%s\n' "$name" "$state" ;;
+        '{{.ID}}|'*) printf '%s|%s|%s\n' "$(idOf "$name")" "$name" "$state" ;;
+        '{{.ID}}'*) printf '%s\t%s\tc%s\t%s\n' "$name" "$name" "$ours" "$status" ;;
+      esac
+    done < "$M/containers" ;;
+  image) shift; grep -qxF "$1" "$M/images" ;;
+  # docker images --format '{{.Repository}} {{.ID}}': each image this Spark has, by repository and a short id.
+  images) while IFS= read -r l; do [ -n "$l" ] || continue; r=${l%%@*}; case "$r" in */*:*) r=${r%:*} ;; esac; printf '%s %s\n' "$r" "$(printf '%s' "$l" | cksum | cut -c1-12)"; done < "$M/images" 2>/dev/null ;;
+  stop)
+    name=$(resolve "$(last "$@")") || { echo "Error response from daemon: No such container: $(last "$@")" >&2; exit 1; }
+    code=$(cat "$M/stop-code-$name" 2>/dev/null || echo 0)
+    sed "s/^$name|running|[^|]*|/$name|exited|Exited ($code) just now|/" "$M/containers" > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name"
+    freeGpu "$name"; echo "$name" ;;
+  start)
+    for name in "$@"; do
+      case "$name" in -*) continue ;; esac
+      ref=$name; name=$(resolve "$ref") && line=$(lineOf "$name") || { echo "Error response from daemon: No such container: $ref" >&2; exit 1; }
+      IFS='|' read -r n state status ours model protect role cluster rank <<< "$line"
+      [ "$state" = running ] && { echo "$name"; continue; }
+      if usesPort "$ours" "$role" "$rank" && holder=$(portHolder "$name"); then
+        echo "Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1:8000 failed: port is already allocated (used by $holder)" >&2
+        echo "Error: failed to start containers: $name" >&2; exit 1
+      fi
+      if crashes "$model"; then setLine "$name" "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank"
+      # ~/.mock/start-exits-<name> (an exit code): it ends at once with that code, as a short job does between two looks.
+      elif [ -f "$M/start-exits-$name" ]; then setLine "$name" "$name|exited|Exited ($(cat "$M/start-exits-$name")) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank"
+      else setLine "$name" "$name|running|Up 1 second|$ours|$model|$protect|$role|$cluster|$rank"; date +%s > "$M/up-$name"; fi
+      echo "$name"
+    done ;;
+  rename)
+    line=$(lineOf "$1") || { echo "Error response from daemon: No such container: $1" >&2; exit 1; }
+    lineOf "$2" >/dev/null && { echo "Error response from daemon: Error when allocating new name: Conflict. The container name \"/$2\" is already in use" >&2; exit 1; }
+    setLine "$1" "$2|${line#*|}"; [ -f "$M/up-$1" ] && mv "$M/up-$1" "$M/up-$2"; true ;;
+  # Like docker restart: stopped and started again (clears a hung brain, ~/.mock/brain-hung).
+  restart)
+    name=$(resolve "$(last "$@")") && line=$(lineOf "$name") || { echo "Error: No such container: $(last "$@")" >&2; exit 1; }
+    setLine "$name" "$(echo "$line" | awk -F'|' -v OFS='|' '{$2="running"; $3="Up 1 second"; print}')"
+    rm -f "$M/brain-hung"; date +%s > "$M/up-$name"; echo "$name" ;;
+  rm)
+    for name in "$@"; do
+      case "$name" in -*) continue ;; esac
+      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name"
+    done ;;
+  run)
+    printf '%s\n' "$@" > "$M/last-run-args"
+    # A download with the Hugging Face library inside an engine image (a Spark without the hf command): the stand-in
+    # hf does the work, into the cache mounted at /hf/hub, and the container is gone afterwards (--rm).
+    case "$*" in *snapshot_download*)
+      hub=""; repo=""; prev=""; after=""
+      for a in "$@"; do
+        [ "$after" = code ] && { repo=$a; after=done; }
+        [ "$prev" = -c ] && after=code
+        [ "$prev" = -v ] && case "$a" in *:/hf/hub) hub=${a%:/hf/hub} ;; esac
+        prev=$a
+      done
+      HF_HUB_CACHE="$hub" "$(dirname "$0")/hf" download "$repo"; exit $? ;;
+    esac
+    name=""; model=""; protect=""; role=""; cluster=""; rank=""; ours=""
+    while [ $# -gt 0 ]; do case "$1" in --name) name=$2; shift;; --label) case "$2" in spark.console=1) ours=1;; spark.app=1) ours=app;; spark.model=*) model=${2#spark.model=};; spark.protect=true) protect=1;; spark.role=*) role=${2#spark.role=};; spark.cluster=*) cluster=${2#spark.cluster=};; spark.rank=*) rank=${2#spark.rank=};; esac; shift;; esac; shift; done
+    # Like docker: a --mount whose source isn't there refuses to start. Like SGLang and vLLM (Spark 3, 2026-11-08): a
+    # cache entry mounted at /hf whose snapshot files link outside that folder has weight files missing in the container.
+    hfout=""; prev=""
+    while IFS= read -r a; do
+      if [ "$prev" = --mount ]; then s=${a#*src=}; s=${s%%,*}; [ -e "$s" ] || { echo "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: $s" >&2; exit 125; }; fi
+      if [ "$prev" = -v ]; then case "$a" in *:/hf:ro) s=${a%:/hf:ro}; r=$(readlink -f "$s")
+        for f in "$s"/snapshots/*/*; do { [ -e "$f" ] || [ -L "$f" ]; } || continue; case "$(readlink -f "$f")" in "$r"/*) ;; *) hfout=1;; esac; done ;; esac; fi
+      prev=$a
+    done < "$M/last-run-args"
+    lineOf "$name" >/dev/null && { echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2; exit 125; }
+    [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
+    if [ "$ours" = app ] && [ -f "$M/app-port-taken" ]; then
+      echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+      echo "docker: Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1 failed: port is already allocated." >&2; exit 125
+    fi
+    if usesPort "$ours" "$role" "$rank" && holder=$(portHolder "$name"); then
+      echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+      echo "docker: Error response from daemon: driver failed programming external connectivity on endpoint $name: Bind for 127.0.0.1:8000 failed: port is already allocated (used by $holder)." >&2; exit 125
+    fi
+    # The engine check before a two-Spark start (a short Gloo + NCCL test in the model's image) prints its results: with
+    # ~/.mock/gloo-fail its Gloo step fails as Gloo says it; with ~/.mock/roce-hang its NCCL step never finishes over RoCE.
+    if [ "$name" = spark-console-engine-check ]; then
+      # ~/.mock/engine-check-broken: Docker can't start the check at all (it says why on stderr).
+      [ -f "$M/engine-check-broken" ] && { echo 'docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]].' >&2; exit 125; }
+      rm -f "$M/check-exit-$name"
+      if [ -f "$M/gloo-fail" ]; then printf 'engine start 2.11.0\nengine gloo failed Gloo connectFullMesh failed with [../third_party/gloo/gloo/transport/tcp/pair.cc:144] Connect timeout [10.100.186.3]:45213\n' > "$M/logs-$name"
+      # ~/.mock/nccl-sum-dies: NCCL's setup finishes on both Sparks, then the test's sum ends without an answer (exit 139).
+      elif [ -f "$M/nccl-sum-dies" ]; then
+        printf 'engine start 2.11.0\nengine gloo ok\nspark:1:1 [0] NCCL INFO ncclCommInitRankConfig comm 0xbe8b rank 0 nranks 2 - Init COMPLETE\n' > "$M/logs-$name"
+        echo 'exited 139 false' > "$M/check-exit-$name"
+      elif [ -f "$M/roce-hang" ] && grep -qx 'NCCL_IB_DISABLE=0' "$M/last-run-args"; then printf 'engine start 2.11.0\nengine gloo ok\nakspark:1:1 [0] NCCL INFO NET/IB : Using [0]rocep1s0f1:1/RoCE [RO]; OOB enp1s0f1np1:10.100.186.2<0>\n' > "$M/logs-$name"; echo 'running 0 false' > "$M/check-exit-$name"
+      # Success, with its result line inside one of NCCL's (C's buffer split NCCL's line around it, as on 2026-11-11).
+      else { printf 'engine start 2.11.0\nengine gloo ok\n'; for i in $(seq 150); do printf 'spark:1:1 [0] NCCL INFO Channel %02d/02 : 0[0] -> 1[0] [send] via NET/IB/0\n' "$i"; done; printf 'spark:1:1 [0] NCCL INFO Init COMPLETE\nspark:1:1 [0] NCCL INFO Init timengine nccl ok\nings - ncclCommInitRankConfig: rank 0 nranks 2 total 1.23\n'; } > "$M/logs-$name"; fi
+      echo "$name|exited|Exited (0) 1 second ago||||||" >> "$M/containers"; date +%s > "$M/up-$name"; echo "c0ffee$RANDOM"; exit 0
+    fi
+    # With ~/.mock/roce-hang, a part of a two-Spark start sits at SGLang's first step when NCCL uses RoCE (as on Spark 3 +
+    # 4, 2026-11-10), and loads normally over plain sockets (NCCL_IB_DISABLE=1). The stand-in curl ignores a stuck one.
+    if [ "$ours" = 1 ] && [ -n "$cluster" ] && [ -f "$M/roce-hang" ]; then
+      if grep -qx 'NCCL_IB_DISABLE=0' "$M/last-run-args"; then printf '[2026-11-10 21:00:05 TP%s] Init parallel begin.\n' "${rank:-0}" > "$M/logs-$name"; : > "$M/stuck-$name"
+      else rm -f "$M/logs-$name" "$M/stuck-$name"; fi
+    fi
+    if crashes "$model"; then echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    elif [ -n "$hfout" ]; then
+      printf 'Traceback (most recent call last):\nValueError: model.safetensors.index.json references shard file(s) missing from /hf/snapshots\n' > "$M/logs-$name"
+      echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    # Like SGLang: DFlash (or another draft-model speculation) without --speculative-draft-model-path refuses to start.
+    elif grep -qx -- '--speculative-algorithm' "$M/last-run-args" && ! grep -qx -- 'NGRAM' "$M/last-run-args" && ! grep -q -- '--speculative-draft-model-path' "$M/last-run-args"; then
+      printf 'Traceback (most recent call last):\n  File "/sgl-workspace/sglang/python/sglang/srt/arg_groups/speculative_hook.py", line 325, in _handle_dflash\nValueError: DFLASH speculative decoding requires setting --speculative-draft-model-path.\n' > "$M/logs-$name"
+      echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    elif [ "$ours" = 1 ] && [ -f "$M/reject-flag" ] && grep -qx -- "$(cat "$M/reject-flag")" "$M/last-run-args"; then
+      printf 'usage: vllm serve [-h] [options]\nvllm serve: error: unrecognized arguments: %s\n' "$(cat "$M/reject-flag")" > "$M/logs-$name"
+      echo "$name|exited|Exited (2) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    elif [ "$ours" = 1 ] && oomsAt; then
+      printf 'INFO: loading weights\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB\n' > "$M/logs-$name"
+      echo "$name|exited|Exited (1) 1 second ago|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    else
+      grep -qE 'OutOfMemoryError|unrecognized arguments' "$M/logs-$name" 2>/dev/null && rm -f "$M/logs-$name"
+      echo "$name|running|Up 1 second|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
+    fi
+    date +%s > "$M/up-$name"; echo "c0ffee$RANDOM" ;;
+  port) name=$(resolve "$1") || exit 1; [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || exit 0
+    grep "^$name|" "$M/ports" 2>/dev/null | awk -F'|' '{print "8000/tcp -> " ($3 == "" ? "127.0.0.1" : $3) ":" $2}' ;;
+  inspect)
+    # docker inspect <64-hex id, or name> with no format: the full JSON (what the watcher and running_models {detail} read).
+    if [ $# = 1 ]; then
+      want=$(resolve "$1") || want=
+      while IFS='|' read -r name state status ours model protect role cluster rank; do
+        [ -z "$name" ] && continue
+        id=$(idOf "$name"); [ "$id" = "$1" ] || [ "$name" = "$want" ] || continue
+        img=vllm/vllm-openai:v0.20.0; case "$name" in qwen-recipe-*) img=lmsysorg/sglang:latest;; *webui*|*web-app*) img=ghcr.io/open-webui/open-webui:main;; redis*) img=redis:7;; esac
+        [ -s "$M/image-$name" ] && img=$(cat "$M/image-$name")
+        # Ports, settings, volumes and memory cap: an app's from its run; else ~/.mock/ports and ~/.mock/memory-<name>.
+        appcmd=""; env='["HF_TOKEN=hf_secretsecretsecretsecret12","PATH=/usr/bin"]'; binds=null; dev='[{"Count":-1}]'; mem=$(cat "$M/memory-$name" 2>/dev/null || echo 0)
+        pb=$(grep "^$name|" "$M/ports" 2>/dev/null | awk -F'|' '{printf "%s{\"HostIp\":\"%s\",\"HostPort\":\"%s\"}", (n++ ? "," : ""), ($3 == "" ? "127.0.0.1" : $3), $2}')
+        pb="{${pb:+\"8000/tcp\":[$pb]}}"
+        if [ -f "$M/run-$name" ]; then
+          img=$(runSplit "$M/run-$name" | head -1); env=$(runList "$M/run-$name" -e); binds=$(runList "$M/run-$name" -v); dev=null
+          grep -qx -- --gpus "$M/run-$name" && dev='[{"Count":-1}]'
+          appcmd=$(runSplit "$M/run-$name" | tail -1); [ "$appcmd" = '[]' ] && appcmd=""
+          mem=$(awk 'p {print $0 + 0; exit} $0 == "--memory" {p=1}' "$M/run-$name"); mem=$((mem * 1073741824))
+          pb=$(awk 'p {split($0, x, ":"); if (!(x[3] in b)) o[++k] = x[3]; b[x[3]] = b[x[3]] (b[x[3]] == "" ? "" : ",") "{\"HostIp\":\"" x[1] "\",\"HostPort\":\"" x[2] "\"}"; p = 0; next}
+            $0 == "-p" {p = 1} END {for (i = 1; i <= k; i++) printf "%s\"%s/tcp\":[%s]", (i > 1 ? "," : ""), o[i], b[o[i]]}' "$M/run-$name")
+          pb="{$pb}"
+        fi
+        # The exit code is the one in the status ("Exited (137) …"); a stopped container without one exited with 1.
+        # "OOM" in the status means the kernel killed it for memory.
+        code=0; [ "$state" = running ] || code=$(printf '%s' "$status" | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); [ -n "$code" ] || code=1
+        oom=false; case "$status" in *OOM*) oom=true ;; esac
+        lab=""
+        if [ "$ours" = 1 ]; then
+          lab="\"spark.console\":\"1\",\"spark.model\":\"$model\""
+          [ -n "$role" ] && lab="$lab,\"spark.role\":\"$role\""; [ -n "$cluster" ] && lab="$lab,\"spark.cluster\":\"$cluster\""; [ -n "$rank" ] && lab="$lab,\"spark.rank\":\"$rank\""
+        fi
+        [ "$ours" = app ] && lab="\"spark.app\":\"1\"" && for l in spark.gpu=1 spark.job=1; do runLabel "$M/run-$name" "$l" && lab="$lab,\"${l%%=*}\":\"1\""; done
+        [ "$ours" = app ] && c=$(grep -x 'spark\.chat=sc_[0-9a-f]*' "$M/run-$name" 2>/dev/null | head -1) && [ -n "$c" ] && lab="$lab,\"spark.chat\":\"${c#spark.chat=}\""
+        [ "$protect" = 1 ] && lab="${lab:+$lab,}\"spark.protect\":\"true\""
+        started=$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)
+        cmdj=$(cat "$M/cmd-$name" 2>/dev/null); [ -n "$cmdj" ] || cmdj=$appcmd; [ -n "$cmdj" ] || cmdj=$(printf '["vllm","serve","%s","--port","8000","--max-model-len","32768","--api-key","sk-abcdefghijklmnopqrstuvwxyz123"]' "${model:-$name}")
+        printf '[{"Id":"%s","Name":"/%s","Image":"sha256:abc","Created":"2026-11-04T00:00:00Z","Config":{"Image":"%s","Entrypoint":null,"Cmd":%s,"Env":%s,"Labels":{%s}},"HostConfig":{"NetworkMode":"host","PortBindings":%s,"Binds":%s,"Memory":%s,"DeviceRequests":%s,"RestartPolicy":{"Name":"no"}},"State":{"Status":"%s","ExitCode":%s,"OOMKilled":%s,"StartedAt":"%s","FinishedAt":"0001-01-01T00:00:00Z"},"Mounts":[{"Source":"/home/u/.cache/huggingface","Destination":"/root/.cache/huggingface","RW":true}]}]\n' "$id" "$name" "$img" "$cmdj" "$env" "$lab" "$pb" "$binds" "$mem" "$dev" "$state" "$code" "$oom" "$started"
+        exit 0
+      done < "$M/containers"
+      echo '[]'; exit 1
+    fi
+    name=$(last "$@")
+    case "$*" in *NetworkMode*) echo bridge; exit 0 ;; esac
+    # How the engine check ended: ~/.mock/check-exit-<name> when it ended badly, else a clean exit.
+    # (Only the engine check's own container: the brain's status check reads ExitCode too.)
+    [ "$name" = spark-console-engine-check ] && case "$*" in *'{{.State.ExitCode}}'*) cat "$M/check-exit-$name" 2>/dev/null || echo 'exited 0 false'; exit 0 ;; esac
+    # A name and its state, as docker inspect -f '{{.Name}}|{{.State.Status}}' gives them.
+    case "$*" in *'{{.Name}}|{{.State.Status}}'*) n=$(resolve "$name") || { echo "Error: No such object: $name" >&2; exit 1; }; echo "/$n|$(lineOf "$n" | cut -d'|' -f2)"; exit 0 ;; esac
+    # The GPU check's cgroup lookup: an id (the stand-in nvidia-smi's may come as "<file>:<id>") → "/name".
+    case "$*" in *'{{.Name}}'*)
+      id=${name##*:}
+      while IFS='|' read -r n _; do [ -n "$n" ] && [ "$(idOf "$n")" = "$id" ] && { echo "/$n"; exit 0; }; done < "$M/containers"
+      echo "Error: No such object: $id" >&2; exit 1 ;;
+    esac
+    ref=$name; name=$(resolve "$ref") && line=$(lineOf "$name") || { echo "Error: No such object: $ref" >&2; exit 1; }
+    st=$(echo "$line" | cut -d'|' -f2)
+    # The protect label, as docker inspect -f '{{index .Config.Labels "spark.protect"}}' gives it.
+    case "$*" in *'"spark.protect"'*) [ "$(echo "$line" | cut -d'|' -f6)" = 1 ] && echo true || echo '<no value>'; exit 0 ;; esac
+    case "$*" in *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;; *) echo "$st" ;; esac ;;
+  # Python's stack dump (PYTHONFAULTHANDLER, then SIGABRT), as a part stuck setting up NCCL prints it.
+  exec)
+    name=""; for a in "$@"; do case "$a" in -*) ;; *) name=$a; break ;; esac; done
+    case "$*" in *SIGABRT*) printf 'sock 10.100.186.3:51544 10.100.186.2:41877 trying to connect\nsock 127.0.0.1:5557 127.0.0.1:40112 connected\nenv GLOO_SOCKET_IFNAME=enp1s0f1np1\n'; printf 'Fatal Python error: Aborted\n\nCurrent thread 0x0000f00d (most recent call first):\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/device_communicators/pynccl.py", line 112 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/distributed/parallel_state.py", line 291 in __init__\n  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 742 in init_torch_distributed\n  File "/usr/lib/python3.12/threading.py", line 359 in wait\n' >> "$M/logs-$name" ;; esac ;;
+  logs) name=$(last "$@"); if [ -f "$M/logs-$name" ]; then cat "$M/logs-$name"; else echo "INFO: loading safetensors shards ... $(( RANDOM % 100 ))%"; fi ;;
+  pull) echo "$1: Pulling from library"; sleep 2; echo "Status: Downloaded newer image for $1"; echo "$1" >> "$M/images" ;;
+esac

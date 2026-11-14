@@ -1,0 +1,9 @@
+qwen-recipe-chisel|running|Up 17 minutes|0||
+nemotron-workshop-inference|exited|Exited (1) 17 minutes ago|0||
+sc-Qwen--Qwen3-32B|exited|Exited (0) just now|1|Qwen--Qwen3-32B|
+sc-gpt-oss-120b-part2|exited|Exited (0) just now|1|gpt-oss-120b|||spark2+spark3|1
+sc-gemma-3-12b-it-part2|exited|Up 1 second|1|gemma-3-12b-it|||spark2+spark3|1
+sc-gpt-oss-20b|exited|Exited (0) just now|1|gpt-oss-20b||||
+sc-gpt-oss-20b-part2|exited|Exited (0) just now|1|gpt-oss-20b|||spark2+spark3|1
+sc-NVIDIA-Nemotron-Nano-9B-v2-part2|exited|Exited (0) just now|1|NVIDIA-Nemotron-Nano-9B-v2|||spark2+spark3|1
+sc-testorg--Qwen3.8-27B-abliterated-GGUF|running|Up 1 second|1|testorg--Qwen3.8-27B-abliterated-GGUF||||

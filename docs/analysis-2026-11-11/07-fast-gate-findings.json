@@ -1,0 +1,448 @@
+[
+ {
+  "angle": "minutes",
+  "summary": "Where the minutes go (read from the three logs and the code; nothing was run).\n\n1. Not fleet start-up. Starting a file's stand-in fleet costs about 0.3 s on the quiet run and at most 3 s on the loaded ones: under 1% of any run. Sharing one fleet between files would save almost nothing.\n\n2. Operations on the stand-in fleet. 66 tests of 10 s or more are 88% of quiet test time; four files (workflows, across, validate, change) are 57%. Each of those tests is a handful of starts, stops and restarts, and an operation is mostly fleet scans: one scan starts about 430 processes and takes 4.1 s quiet, 11 s loaded. A start does 4 scans and a stop 2, and roughly 100 of those scans repeat one made a moment earlier.\n\n3. Split. Judged by how each test slows under load (scan-only tests x2.9, fixed-wait tests x1.0), quiet test time is about 54% scanning and 46% fixed waits; loaded it is about 77% / 23%. The fixed waits are: a 5 s sleep before every load check (about 64 loads), two 60 s stalls in across (the stall limit is multiplied by SLOW), 40-62 s timeouts in state and ask, 15-20 s start-of-service timers, and 16 s sleeps.\n\n4. Loaded versus quiet. The same 632 tests take x2.0; on top of that, 27 newer tests in four files add 648 s of test time in gate25.\n\nCuts. None weakens a test except cut 9, which is marked. The big ones are fewer scans per operation (1), fewer processes per scan (2, 5), a 1 s load poll on the stand-in (3), across's stall limit not multiplied by SLOW (4) and longest files first (6). The scan savings overlap, so the list does not add up; together I project roughly 650 s (give or take 100) for today's suite at 2 at once on a quiet Mac, against about 1210 s now. That is a projection, not a measurement.\n\nWhat the service-side cuts cost. Cuts 1, 3 and 8 edit functions that are in workflow fingerprints (deploy, stopContainer, clusterDeploy, clusterParts, restartJob, downloadVersion). Start, start-across, stop and restart then get new versions and need their validation run on the real Sparks, so they belong in one build. Every service edit also needs tools/build-server.mjs and tools/code-map.mjs, which build.test checks.\n\nSpark 2 (projection, not measured). Without the security software a scan should cost a fraction, so fixed waits dominate there: SLOW=1, cuts 3, 4 and 7, and longest-first at 8 at once bring the gate down to about its longest file. Two things matter there that don't on the Mac: every command to offline spark1 sleeps 1 s (service/src/02-ssh.mjs:7), which becomes the floor of a scan; and tests that lean on operations being slow will race (see flaky).\n\nLimits of this analysis. I could not time a process start on this Mac (the command was not permitted), so cuts 2 and 5 assume scan time follows process count; time one scan before and after. The logs carry no file names or hook times: tests were mapped to files by name and order, and a two-slot schedule built from that reproduces the three walls within 4-17 s.\n\nQuick check while developing (never the gate): door, cli, passkey, internet, fuzz, api, agent-setup, build and fleet are about 166 s of test time quiet, about a minute and a half at 2 at once.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/07-jobs.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/05-library.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/08-cluster.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/lock.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/across.test.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/mock/bin/docker",
+  "numbers": [
+   "RUNS. gate18 (quiet): 639 tests, 19 files, wall 1066 s; test time summed per file 2034 s; a 2-slot schedule of those files gives 1056 s, so everything outside tests (process start, fleet start and stop, lock's own fleet) is about 10 s.",
+   "gate24 (loaded): 658 tests, 23 files, wall 2419 s; per-file sum 4647 s; simulated 2402 s. gate25 (loaded): 659 tests, 23 files, wall 2442 s; per-file sum 4750 s; simulated 2438 s.",
+   "The same 632 tests in all three runs: 2355 s quiet, 4737 s and 4776 s loaded (x2.01, x2.03). 27 tests added since gate18 (api, heal-more, intent, sparkie-more) are 648 s of test time in gate25.",
+   "Quiet distribution: 66 tests of 10 s or more = 2094 s of 2383 s (88%); 65 tests of 1-10 s = 266 s; 508 tests under 1 s = 23 s. Top 10 = 817 s, top 40 = 1768 s (74%).",
+   "PER FILE, seconds of test time, gate18 / gate24 / gate25: workflows 304 / 674 / 625; across 329 / 607 / 615; validate 271 / 591 / 564; change 259 / 546 / 555; desired 196 / 396 / 409; heal-more - / 311 / 355.",
+   "gateway 96 / 196 / 230; pause 94 / 187 / 207; heal 97 / 150 / 177; intent - / 156 / 168; ask 101 / 158 / 164; sparkie 65 / 121 / 131; fuzz 36 / 104 / 128; state 65 / 103 / 102.",
+   "door 20 / 65 / 65; sparkie-more - / 52 / 59; cli 20 / 64 / 56; internet 20 / 44 / 50; fleet 46 / 68 / 48; api - / 18 / 18; agent-setup 5 / 14 / 16; passkey 10 / 22 / 8; build 0.1 / 0 / 0.6.",
+   "workflows + across + validate + change = 1164 s of 2034 s quiet (57%), 2360 s of 4750 s in gate25 (50%).",
+   "FLEET START-UP. Node counts useFleet's before hook inside a file's first top-level entry. Where that entry is a suite of sequential tests, start-up plus key setup = entry minus its tests.",
+   "Start-up, gate18: agent-setup 0.30 s, change 0.31, cli 0.32, desired 0.33, fleet 0.33, internet 0.28, passkey 0.27, workflows 0.29, pause 0.67, ask 0.97. gate24: 0.28-2.98 s. gate25: 0.28-3.25 s.",
+   "So start-up is about 0.3 s per file quiet and at most 3 s loaded: under 10 s of 2034 s quiet (0.4%), about 40 s of 4750 s loaded (0.8%). The rest of every file is tests.",
+   "Looks like start-up but is not: door's first entry 9.7 / 22.0 / 20.1 s and fuzz's gap 9.0 / 19.5 / 22.3 s are the setup's first four tool calls, the first of which is a full fleet scan.",
+   "Waits tied to service start that tests sit through: the watcher's first look at 15 s (fleet 'workloads lists the containers' 10.0 s), the cable test at 20 s (state sleeps to 22 s), two status looks before spark1 counts as offline (fleet /health 9.0 s).",
+   "SCAN COST. One fleet scan = 4.0-4.2 s quiet, 10.7-12.1 s loaded, from tests that do exactly one: change 'unreadable settings file' 4.0 / 11.7 / 12.1 s; change 'deploy_plan' 4.2 / 10.7 / 11.6 s.",
+   "A stop from the page = 2 scans: workflows 'a stop is done' 8.8 / 29.8 / 23.2 s. One start with one stop = 4 scans + a 5 s load poll + checks: workflows 'once validated, agents can run it' 27.3 / 62.2 / 60.2 s.",
+   "A scan starts about 430 processes (counted from INVENTORY_SCRIPT against the stand-in fleet's 12 model folders, 10 cache entries and 6 outside containers; not measured). A single small command to one Spark takes 42-55 ms quiet (door: container_logs 45 ms, spark_diagnostics 42 ms).",
+   "Reads through the agent door are cheap because they reuse a scan for 15 s: door's 36 valid-argument calls take 6.8 s quiet in all.",
+   "FIXED WAITS VERSUS SCANNING, per file, quiet, assuming scan work slows x2.9 under load and fixed waits x1.0: all files 942 s fixed (46%) and 1092 s scanning (54%) of 2034 s; loaded about 23% / 77%.",
+   "Fixed share by file (quiet): fleet 86%, ask 69%, state 69%, heal 64%, across 55% (181 s), desired 44%, pause 42%, change 41% (106 s), workflows 40% (122 s), validate 40% (110 s), gateway 35%; fuzz, door, cli about 0%.",
+   "LOAD SENSITIVITY, quiet / gate24 / gate25. Not sensitive (x1.0): state 'two in a row' 62.2 / 63.4 / 62.5; ask 'over 40 s' 45.6 / 45.8 / 45.6; state 'timed-out worker calls' 40.0 / 40.1 / 40.0; ask 'slots' 13.0 / 13.1 / 13.3; change downloads 9.1 / 9.2 / 9.1 and 5.0 / 5.0 / 5.0.",
+   "Most sensitive: gateway '409 says why' 6.3 / 14.1 / 29.1 (x3.4); change 'the owner's call: a question' 12.2 / 38.9 / 42.3 (x3.3); change 'a stop_model choice' 9.3 / 26.8 / 32.2 (x3.2); workflows 'a stop is done' 8.8 / 29.8 / 23.2 (x3.0); change 'names it can't use' 14.4 / 42.2 / 42.6 (x3.0).",
+   "Whole files that are all scanning: fuzz x3.2, door x3.2, cli x3.0. The long operation tests sit at x2.0-2.4. across 'parts that never connect' is the least sensitive long test (x1.5) because about 138 s of it is two 60 s stalls.",
+   "SPARK_TEST_SLOW=3 adds real waiting, not only limits: across's stall limit is 20 s x SLOW (two stalls: about 138 s instead of about 50 s) and ask's hold is 3 x SLOW + 3 s (12 s instead of 6 s).",
+   "SCHEDULE. Node sorts files by name. Today's suite at quiet speeds (2330 s of test time): 2 at once 1210 s by name, 1166 s longest-first; 4 at once 737 / 585 s; 8 at once 491 / 329 s (329 s is the across file).",
+   "THE 40 SLOWEST TESTS, gate25 order, quiet / gate24 / gate25 seconds, then what each waits for.",
+   "1 across 'parts that never connect' 186.4 / 277.3 / 283.5: two stalled attempts, each waiting out SPARK_CONSOLE_CONNECT_MS = 20 s x SLOW (60 s) plus a 3 s dump sleep; the rest is scans and checks.",
+   "2 validate 'only restart changed' 130.8 / 292.4 / 274.2: five operations in a row (start, stop, restart, stop, put-back restart), about 14 scans and three 5 s load polls.",
+   "3 validate 'one tap validates start, stop and restart' 85.5 / 165.7 / 188.8: the same five operations.",
+   "4 change 'spark3: start, stop, restart' 65.4 / 152.5 / 149.6: three operations plus five duplicate or refused calls, each a scan; two 5 s load polls.",
+   "5 change 'spark4: room only by stopping' 61.3 / 149.9 / 147.9: a question, two starts (one loads, one fails on memory after its stops), a failing restart: about 12 scans.",
+   "6 pause 'after 3 changes in an hour' 59.3 / 122.4 / 128.2: five operations (stop, restart, stop, restart, stop) and five chat turns.",
+   "7 workflows 'when the fixes run out (3 attempts)' 64.2 / 154.4 / 125.3: three start attempts, each 2 scans and a 5 s poll, then the put-back.",
+   "8 desired 'undo that' 51.1 / 110.6 / 122.9: a start that stops one model, then the undo (a stop and a restart) and its notice in the chat.",
+   "9 heal-more '(the owner starts a model across Spark 3 and 4)' - / 104.5 / 117.9: fleet start, then one two-Spark start: 3 scans, cable check, engine check, 5 s poll.",
+   "10 change 'start_model across a full pair' 47.3 / 114.8 / 105.8: a two-Spark start, a refusal, then a stop of both parts.",
+   "11 across 'parts that only hang over RoCE' 50.8 / 113.0 / 104.4: two attempts (engine check fails, then plain sockets), a 5 s poll, the speed test.",
+   "12 gateway 'a model that isn't running starts when it's called' 48.4 / 84.9 / 96.1: a fixed 16 s sleep to outlast the 15 s scan cache, then one start.",
+   "13 heal-more 'powers Spark 3 and 4 off and on' - / 74.8 / 95.4: offline and online seen by 3 s status looks, a 3 s settle, a heal pass every 2 s that reads a scan cached for 15 s, then a two-Spark start.",
+   "14 workflows 'a setting the engine rejects' 45.0 / 109.4 / 90.8: two start attempts.",
+   "15 intent 'switch spark 4 to' - / 79.4 / 88.6: a stop, then a start, each through a chat turn.",
+   "16 desired 'the owner's stop where a start is loading' 40.3 / 85.3 / 86.8: a start held loading; the cancel is noticed at the next 5 s poll; put-back; then the stop.",
+   "17 workflows 'out of memory with a long context' 46.3 / 97.0 / 86.8: two start attempts.",
+   "18 heal 'a crash of each kind at once' 45.0 / 80.7 / 86.5: includes the file's setup (fleet start, a stop and a restart, about 20 s), then 3 s watcher looks and one heal restart.",
+   "19 heal-more 'a part crashes' - / 75.3 / 84.9: the watcher sees the part, a heal pass on a scan cached for 15 s, a stop of the other part, a two-Spark start.",
+   "20 across 'across Spark 3 and Spark 4 ... starts with it' 38.2 / 77.6 / 80.0: fleet start, then one two-Spark start.",
+   "21 gateway 'a start that would stop a model in use asks first' 28.4 / 69.7 / 77.0: a question (one scan), then one start.",
+   "22 ask 'a start whose plan stops ...; a failed result is posted' 31.5 / 69.1 / 74.8: a start that crashes at its first 5 s poll, the put-back, then 1 s polling of the conversation.",
+   "23 workflows 'loads but can't answer' 33.4 / 66.8 / 73.9: one start, the 4 s answer test, the put-back.",
+   "24 across 'a Spark that refuses connections' 27.5 / 73.8 / 73.9: a stop of both parts, then a start that fails at the 3 s cable check.",
+   "25 desired 'cancelling' 32.7 / 72.8 / 73.6: a start held loading, cancelled at the next 5 s poll, put-back.",
+   "26 workflows 'the owner's first run is the validation run' 35.6 / 68.9 / 73.2: a plan, a refused first try, one start.",
+   "27 desired 'a start that finished is on it' 33.8 / 68.2 / 66.0: one start.",
+   "28 across 'engines that can't connect (Gloo)' 22.6 / 55.7 / 64.3: scans, the cable check, an engine check that fails, the put-back.",
+   "29 state 'two in a row count a Spark as offline' 62.2 / 63.4 / 62.5: sleeps until 22 s after service start, then 20-45 s command timeouts against a 40 s stall.",
+   "30 workflows 'once validated, agents can run it' 27.3 / 62.2 / 60.2: one start (4 scans and a 5 s poll).",
+   "31 state 'new operations get 503 while a running one finishes' 24.1 / 50.7 / 55.6: a stop, then a restart held loading.",
+   "32 sparkie-more 'Sparkie carries on' - / 49.4 / 53.8: a stop, then a restart.",
+   "33 pause 'after three of their operations fail in a row' 22.6 / 44.8 / 52.2: three restarts that fail at docker start, one scan each.",
+   "34 intent 'start ... on 4' - / 48.8 / 51.8: one start through a chat turn.",
+   "35 sparkie 'the container has to be the one the words point to' 30.6 / 49.9 / 51.0: a run of chat turns whose tool calls each scan the fleet.",
+   "36 validate 'a model whose only proven setup is the brain's' 25.5 / 65.7 / 50.9: one start.",
+   "37 desired 'one that stops outside Spark Console is held' 33.3 / 51.2 / 48.3: the held check every 1.5 s, then a restart.",
+   "38 validate 'a cached copy whose weight files link outside' 28.1 / 65.5 / 47.9: one start.",
+   "39 heal 'spark3: one Spark Console stopped itself' 13.3 / 27.5 / 47.1: a watcher look, then a stop (2 scans).",
+   "40 ask 'an answer that takes over 40 s' 45.6 / 45.8 / 45.6: the stand-in model sleeps 45 s and the service waits its fixed 40 s."
+  ],
+  "cuts": [
+   {
+    "title": "Scan the fleet once per operation step, not two or three times",
+    "where": "service/src/07-jobs.mjs:130",
+    "what": "deploy() scans the fleet in plan() (line 123), again at 130 only to look the model up, and again in stopContainer (185) for each stop; clusterDeploy does the same (08-cluster.mjs:325, 333); a stop scans in its action (17-changes.mjs:529, 24-handler.mjs:464) and again in its job. Pass the first scan along. About 100 scans go: 4.1 s each quiet, 11 s loaded.",
+    "savesSeconds": 170,
+    "risk": "Edits deploy, stopContainer and clusterDeploy, which are in the workflow fingerprints: start, start-across and stop get new versions and each needs its validation run on the real Sparks after the install. A stop would trust a scan a few seconds old to find a two-Spark model's other part. The count of 100 comes from reading the tests, not from a measurement. On a loaded machine the saving is nearer 470 s.",
+    "weakensATest": false
+   },
+   {
+    "title": "Fewer processes per fleet scan in the scan script",
+    "where": "service/src/05-library.mjs:6",
+    "what": "INVENTORY_SCRIPT starts about 14 processes per model folder and 15 per cache entry: basename, cat|base64|tr, du|cut, and ls|head|base64|tr even when there are no GGUF files. Bash built-ins and skipping the empty pipelines roughly halve that, about 430 to 290 processes per scan. On this Mac each process start is what costs; a scan takes 4.1 s quiet.",
+    "savesSeconds": 110,
+    "risk": "Assumes scan time follows the number of processes started; that is inferred from the logs, not measured, so time one scan before and after. This is the production script that runs on the real Sparks over SSH: its output has to stay exactly the same. It is not in any workflow fingerprint. Overlaps with cut 1: together they save less than the two numbers added.",
+    "weakensATest": false
+   },
+   {
+    "title": "Load poll of 5 s configurable; stand-in models load in 1 s",
+    "where": "service/src/07-jobs.mjs:158",
+    "what": "Every start and restart sleeps 5 s before its first look (also 08-cluster.mjs:426, 17-changes.mjs:592, 13-main-model.mjs:209), and the stand-in answers after 4 s (test/mock/bin/curl:13 and :21, test/mock/model.mjs:28). A poll knob honoured only with ALL_LOCAL (1 s) and a 1 s stand-in load save about 3.5 s on each of about 64 loads.",
+    "savesSeconds": 90,
+    "risk": "Edits the text of deploy, clusterParts and restartJob once, so start, start-across and restart get new versions to validate on the Sparks; in the same build as cut 1 that is one round of validation, not two. Tests that lean on a load taking 5 s have to hold it with .mock/serve-down instead (change.test.mjs:426-437). The count of 64 loads is from reading the tests.",
+    "weakensATest": false
+   },
+   {
+    "title": "across.test stall limit fixed and short, not 20 s x SLOW",
+    "where": "test/across.test.mjs:22",
+    "what": "SPARK_CONSOLE_CONNECT_MS is 20000 x SLOW here, so at SLOW=3 the never-connect test waits out two 60 s stalls: about 138 s of its 186 s. Healthy starts finish at the first 5 s look and never reach this limit, so a fixed 6000 gives the same stall, the same message and the same second try in about 30 s.",
+    "savesSeconds": 64,
+    "risk": "Low. No assertion changes: stopped early, the words 'within N seconds', the second try over plain sockets and the put-back are all still checked. The file drops from 329 s to about 215 s (114 s of test time), which also lowers the floor when more files run at once. heal-more.test.mjs:21 sets the same value but nothing stalls there.",
+    "weakensATest": false
+   },
+   {
+    "title": "Stand-in docker without mkdir, touch and grep|cut|sed on every call",
+    "where": "test/mock/bin/docker:13",
+    "what": "Every stand-in docker call first runs mkdir and touch (line 13), and docker port runs grep|cut|sed (line 179). A scan makes about 17 docker calls; operations, GPU checks and the watcher make many more. Bash tests and a read loop do the same with no extra process: about 50 fewer process starts per scan (12%).",
+    "savesSeconds": 45,
+    "risk": "Low: stand-in only, and its output must stay the same. The saving assumes time follows process starts (not measured). Overlaps with cuts 1 and 2.",
+    "weakensATest": false
+   },
+   {
+    "title": "Run the longest files first",
+    "where": "test/lock.mjs:25",
+    "what": "node --test sorts files by name, so validate (271 s) and workflows (304 s) start last. Give node:test's run() an ordered file list, longest first (or a small pool in lock.mjs): 1210 to 1166 s at 2 at once, 737 to 585 s at 4, 491 to 329 s at 8. It can also print each file's wall time.",
+    "savesSeconds": 44,
+    "risk": "Low: same files, same tests, same strict mode. lock.mjs then has to pass SPARK_TEST_STRICT and pick the reporter itself, and the order needs a refresh when files change size. On the Mac more than 2 at once slows every file, so the gain at 4 to 8 at once is for Spark 2.",
+    "weakensATest": false
+   },
+   {
+    "title": "wait_operation and waitJob wake when the operation moves, not on a 1 s poll",
+    "where": "service/src/18-workflows.mjs:228",
+    "what": "wait_operation checks once a second, so each of about 130 operations is reported about half a second late; waitJob (20-desired.mjs:113), used by the one-tap validation and the gateway, polls the same way. Resolve both from step() and from the job's end instead of sleeping.",
+    "savesSeconds": 25,
+    "risk": "Low. Neither is in a workflow fingerprint. Leave cancelJobsAndWait (20-desired.mjs:110) as it is: that one is in stop's fingerprint.",
+    "weakensATest": false
+   },
+   {
+    "title": "Downloads on the stand-in: no 4 s tail wait, shorter steps, a hold file instead of sleep 16",
+    "where": "service/src/11-setups.mjs:380",
+    "what": "After a download ends, the job still waits out its progress watcher's sleep(4000); let that sleep end with the download. The stand-in hf takes 4 x 1 s (test/mock/bin/hf:20) and 16 s for hf-slow (hf:6), and change.test.mjs:625 sleeps 3 s: use 0.2 s steps, hold hf-slow on a file the test removes, and wait for the job's Downloading step.",
+    "savesSeconds": 19,
+    "risk": "Line 380 is inside downloadVersion, which is in the start workflows' fingerprint, so that part belongs in the same build as cuts 1 and 3. The stand-in and test parts alone save about 14 s with no service change.",
+    "weakensATest": false
+   },
+   {
+    "title": "ask_sparkie's 40 s wait configurable on the stand-in",
+    "where": "service/src/20-mcp.mjs:101",
+    "what": "ask_sparkie waits a fixed 40 s before answering 'thinking' (also line 103); ask.test.mjs:45-57 makes the stand-in take 45 s to cross it. A wait knob honoured only with ALL_LOCAL (4 s) and an 8 s answer exercise the same path: the file drops from 101 s to about 65 s.",
+    "savesSeconds": 16,
+    "risk": "Weakens the test slightly: today it proves the real 40 s wait works end to end with spark ask's own time limits; with a knob only the mechanism is proven. Marked so it can be dropped.",
+    "weakensATest": true
+   },
+   {
+    "title": "First cable test delay configurable; state.test waits for it instead of sleeping to 22 s",
+    "where": "service/src/06-links.mjs:97",
+    "what": "The service tests the cables a fixed 20 s after it starts (setTimeout ending at line 97); state.test.mjs:227 sleeps until 22 s so that test can't count as an answer from the frozen Spark. A first-test knob (1 s for that fleet) and waiting until GET /fabric shows a check newer than startedAt take about 20 s off a 62 s test.",
+    "savesSeconds": 7,
+    "risk": "Low; not in a workflow fingerprint. The file only gets about 15 s shorter (its other chain takes 49 s), and nothing on a loaded machine, where that chain takes 101 s. Worth doing mainly because the sleep is a wall-clock assumption.",
+    "weakensATest": false
+   },
+   {
+    "title": "Watcher's first look and status interval shorter for fleet.test's fleet",
+    "where": "service/src/19-watcher.mjs:178",
+    "what": "The watcher first looks a fixed 15 s after the service starts; fleet.test's 'workloads lists the containers' waits about 10 s for it, and its /health test waits 9 s for two 5 s status looks to count spark1 offline. A first-look knob (1 s) and statusMs 1000 for this file's fleet take about 15 s off a 46 s file.",
+    "savesSeconds": 6,
+    "risk": "Low. Set it only for fleet.test's fleet: heal.test's setup is written for a watcher that starts 15 s in. A 1 s status interval starts more processes in the background while the file runs.",
+    "weakensATest": false
+   },
+   {
+    "title": "gateway.test: the 15 s scan cache configurable instead of a 16 s sleep",
+    "where": "test/gateway.test.mjs:59",
+    "what": "The test sleeps 16 s to outlast recentInventory's fixed 15 s (service/src/16-actions.mjs:391). Read that 15 s from a knob honoured only with ALL_LOCAL (2 s for this file's fleet) and poll GET /v1/models until the stopped model is gone: about 13 s less waiting.",
+    "savesSeconds": 5,
+    "risk": "Low. A shorter cache means a few more scans in this file (about 4 s each on the Mac), so the net is small there and larger on Spark 2. Keep 15 s for door and fuzz, whose reads depend on it; the heal pass reads the same cache.",
+    "weakensATest": false
+   }
+  ],
+  "flaky": [
+   "test/sparkie.test.mjs:363-378 (busy 409, five at once 429, a member's 429): answers that 'take 1 seconds' sent 400, 150 and 300 ms apart have to overlap. Instead hold the stand-in model's answer on a release file, wait until model-requests.jsonl shows the held requests, assert, then release.",
+   "test/ask.test.mjs:173-179 (agents answer in slots of their own): two fixed 500 ms sleeps before expecting 'busy', and a hold of 3 x SLOW + 3 s that the later checks must fit inside. Instead wait for the held request to appear in model-requests.jsonl, and hold the answer on a release file rather than for N seconds.",
+   "test/change.test.mjs:426-437 ('already-starting' and 'already changing on Spark 3'): pass only because the start is still running, which today is the 5 s load poll plus slow scans. On a fast machine (Spark 2) the start can finish first. Instead write spark3's .mock/serve-down before the start, make the checks, then remove it.",
+   "test/change.test.mjs:625 (a stop leaves the download running): sleeps 3 s and assumes the download has begun, with the stand-in's sleep 16 as the window. Instead wait until the job's step says Downloading, and hold the stand-in hf on a file the test removes after the stop.",
+   "test/state.test.mjs:227 (two timed-out commands mark a Spark offline): sleeps until 22 s after service start, assuming the service's own cable test at 20 s is over; under load it can still be running and its answer resets the miss count. Instead wait until GET /fabric shows checkedAt later than startedAt.",
+   "test/state.test.mjs:143 (SIGTERM): sleeps 300 ms and assumes the service has taken the signal; if it has not, the next stop_model call starts a real stop. Instead poll /health until it reports that it is stopping (add that field if it is missing) before sending the call.",
+   "test/pause.test.mjs:49 (paused after three failures): sleeps 300 ms, then expects halted. Instead waitFor the settings to show halted and autoPaused.",
+   "test/gateway.test.mjs:59: a 16 s sleep to outlast a 15 s cache. Instead poll GET /v1/models until the stopped model is no longer listed.",
+   "test/internet.test.mjs:147 (signing out ends the live stream): sleeps 500 ms and assumes the /metrics stream is open. Instead wait for that request's response (status 200) before deleting the session.",
+   "test/heal.test.mjs:128: allows 3 s x SLOW for spark3's heal on the argument that it was recorded during the previous test. Instead wait for the healing event with the same 60 s limit the other heal waits use.",
+   "Every agent-door call that plans before answering (start_model, stop_model, restart_model in change, workflows, desired, gateway, pause, heal): the door answers [still_running] after a fixed 50 s (service/src/20-mcp.mjs:213) that SLOW does not stretch. With a scan at 11-20 s under load, two or three scans cross it; only across.test.mjs:32 handles that. Fewer scans (cuts 1, 2) is the fix; failing that, follow the operation through recent_operations as across does."
+  ]
+ },
+ {
+  "angle": "waits",
+  "summary": "Fixed waits cost about 690 of the 2034 test-seconds in the quiet run (gate18.log), and about 530 of them can go without touching an assertion. At two files at once that is roughly 265 s off the 1066 s gate, to about 800 s.\n\nNothing was run: the counts come from reading the tests and the three logs, so treat each saving as an estimate. The firmest are the first two cuts; the stream-delay one (cut 6) is the softest.\n\n- **Where the waits are:** about half is the literal 5 s the service sleeps before its first look at a starting model (about 50 times), and the across test sitting through a 60 s connect limit twice. The rest is downloads, the 45 s `ask_sparkie` answer, one-second operation polls and a few fixed sleeps in tests.\n- **Machine speed:** the savings are in absolute seconds. An earlier, faster run (gate9.log: 569 s wall, 1047 test-seconds) carried nearly the same waits, so on Spark 2 they would be more than half the run. On the Mac the remainder is the cost of starting processes, which is outside this angle.\n- **What `SPARK_TEST_SLOW=3` lengthens:** only two waits that are actually sat through: the connect limit in `test/across.test.mjs:22` and the answer holds in `test/ask.test.mjs:173`.\n- **Flaky installs:** the agent door's literal 50 s answer limit (`service/src/20-mcp.mjs:213`) is not scaled for a slow machine. In gate6.log five failure lines are `start_model took over 50 seconds`.\n- **Tests that must change with the cuts:** cuts 1, 3 and 5 remove time that a few tests lean on as \"still loading\" or \"still downloading\". Those tests need a hold file in the same change; each is named in the cut's risk.\n\nNo cut weakens a test. The frozen-Spark waits in `test/state.test.mjs` (20\u201345 s command timeouts) are left alone: scaling them down risks false timeouts on the loaded Mac.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/07-jobs.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/08-cluster.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/11-setups.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/start-mock.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/mock/bin/curl\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/mock/bin/hf\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/across.test.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/change.test.mjs",
+  "numbers": [
+   "gate18.log (quiet): 639 tests, 1066 s wall; top-level test durations sum to 2034 s, so both slots were about 95% busy.",
+   "gate25.log (loaded): 659 tests, 2442 s wall, 4750 test-seconds. gate9.log (an earlier, faster run): 569 s wall, 1047 test-seconds.",
+   "Test-seconds per file in gate18: across 329, workflows 304, validate 271, change 260, desired 196, ask 101, heal 97, gateway 96, pause 94, sparkie 65, state 65, fleet 46, fuzz 36, internet 20, door 20, cli 20, passkey 10, agent-setup 5.",
+   "Literal 5 s before the first look at a starting model: service/src/07-jobs.mjs:158, 08-cluster.mjs:426, 17-changes.mjs:592, 13-main-model.mjs:209 (the last is never reached by the suite). About 50 hits counted from the tests: workflows 12, validate 8, change 4, desired 4, heal 4, heal-more 3, pause 3, sparkie 3, across 2, gateway 2, intent 2, ask 1, sparkie-more 1, state 1.",
+   "Stand-in load time of 4 s: test/mock/bin/curl:13 and :21, test/mock/model.mjs:28. It hides behind the 5 s sleep today and would become the limit if only the service were changed.",
+   "A restart alone takes 11.2 s in gate18 (pause.test 'once the owner resumes them'); 5 s of it is the sleep.",
+   "'parts that never connect' (across.test): 186 s in gate18, 145 s in gate9, 284 s in gate25. 120 s of each is two 60 s connect limits (test/across.test.mjs:22, 20000 x SLOW), plus two literal `sleep 3` (08-cluster.mjs:457).",
+   "Downloads (all in change.test): a download that fails at once still takes 5.0 s, which is the progress watcher's sleep(4000) at 11-setups.mjs:380. Successful ones take 9.1 and 10.4 s (hf's 4 x sleep 1 at test/mock/bin/hf:20, then the same tail). The hf-slow test takes 25.8 s (hf:6 sleeps 16, change.test.mjs:625 sleeps 3).",
+   "`docker pull` stand-in sleeps 2 s (test/mock/bin/docker:224): about 5 to 8 pulls per run, since the default SGLang image is on no stand-in Spark and sglang:v0.5.23 is not on Spark 4.",
+   "One-second polls in the service: wait_operation (18-workflows.mjs:228) and waitJob (20-desired.mjs:113); cancel waits 500 ms (20-desired.mjs:110). About 80 followed operations, half a second late each on average.",
+   "ask.test 'talking, and a slow answer': 45.6 s, set by the door's literal sleep(40000) at 20-mcp.mjs:101 and :103 and the 45 s answer at ask.test.mjs:47.",
+   "gateway.test.mjs:59 sleeps 16 s for the 15 s kept look (16-actions.mjs:391); that test takes 48.4 s.",
+   "state.test frozen-Spark tests: 62.2 s and 40.0 s side by side. They start with a sleep until 22 s after service start (state.test.mjs:227) because the first cable test runs at a literal 20 s (06-links.mjs:93-97); the rest is command timeouts of 20 to 45 s, which I would not shorten on the Mac.",
+   "Start-up timers that are literals: watcher's first look 15 s (19-watcher.mjs:178), first status 3 s (12-status.mjs:118), first cable test 20 s (06-links.mjs:97), adopting running models 60 s (09-verified.mjs:140, no test waits for it). fleet.test waits 10.0 s for the watcher's first look.",
+   "Offline stand-in Spark: `sleep 1` per command (02-ssh.mjs:7) with a 3 s mark (test/start-mock.mjs:155), so at most one look in each 4 s pays it. Spark 1 is offline in every fleet.",
+   "One deploy_plan call (one look plus the plan): 4.2 s in gate18, 20.9 s in the run in progress (gate27.log). On the Mac a look costs more than the offline second, so that second mostly hides there.",
+   "Stand-in model pacing: 5 ms per word (model.mjs:109), 10 ms per word (:115), 10 ms per tool call (:96); roughly 140 chat turns in the suite (estimate).",
+   "Already configurable and already short in the stand-in fleet: STATUS_MS, WATCH_MS, OFFLINE_TTL_MS, NODES_TTL_MS, CONNECT_MS, ANSWER_TEST_MS (4000), CONTINUE_MS, HEAL_MS, HEAL_SETTLE_MS, HEAL_OFFLINE_MS, BRAIN_HUNG_MS, BRAIN_LOADING_MS, HEAL_MIN_RUN_MS, DESIRED_MS, FABRIC_MS, BACKUP_MS, BACKUP_FIRST_MS, DIG_EVERY_MS, FIX_WINDOW_MS.",
+   "Those timing variables are read without the ALL_LOCAL guard (for example 12-status.mjs:6, 19-watcher.mjs:9, 08-cluster.mjs:105, 20-heal.mjs:13-21); only DEV_LOGIN, SERVE_PORT, DIG_FIXTURE, WORKFLOW_LOCK, ASSUME_VALIDATED and CHECK_LOCK are guarded.",
+   "Waits lengthened by SPARK_TEST_SLOW and actually sat through: the connect limit (2 x 40 s extra at SLOW=3) and ask.test.mjs:173 holds (12 s instead of 6 s). Everything else SLOW touches is a time limit that costs nothing when the test passes.",
+   "The door's 50 s answer limit (20-mcp.mjs:213; page buttons 14-chats.mjs:101 and :306) is not scaled: gate6.log has 5 failure lines reading 'took over 50 seconds', gate22.log 19.",
+   "Small test-side waits: waitFor polls every 500 ms (test/lib.mjs:189); setClock sleeps 400 ms (pause.test.mjs:22, passkey.test.mjs:129, internet.test.mjs:29); each fleet stop adds about 0.3 s (test/start-mock.mjs:45)."
+  ],
+  "cuts": [
+   {
+    "title": "Shorter model-loading poll on the stand-in fleet",
+    "where": "service/src/07-jobs.mjs:158",
+    "what": "The 'is it up yet' loops sleep a literal 5 s before their first look (also 08-cluster.mjs:426, 17-changes.mjs:592, 13-main-model.mjs:209). Read one interval from a new stand-in-only variable, set 1 s in start-mock, and make the stand-in's 4 s load time 1 s (test/mock/bin/curl:13 and :21, model.mjs:28). About 50 starts, restarts and crash checks pay it, 4 s each.",
+    "savesSeconds": 100,
+    "risk": "Medium. Three tests lean on that 5 s as 'still loading': change.test.mjs:427-437, sparkie.test.mjs:229-235 and heal.test.mjs:128. Hold the first two with serve-down (as desired.test.mjs:74 does) and give the third the normal wait, in the same change, or they race.",
+    "weakensATest": false
+   },
+   {
+    "title": "Fixed short connect limit in across.test",
+    "where": "test/across.test.mjs:22",
+    "what": "SPARK_CONSOLE_CONNECT_MS is 20000 x SLOW (60 s on the Mac) and 'parts never connect' sits through it twice: 120 of its 186 s. A start that succeeds can't hit the limit on the stand-ins (their default docker log already says 'loading safetensors'), so use a fixed 8000. Also skip the literal `sleep 3` before reading logs on the stand-in fleet (08-cluster.mjs:457, paid twice).",
+    "savesSeconds": 53,
+    "risk": "Low. Same code path and assertions; the error then reads 'within 8 seconds', which the test's pattern accepts. heal-more.test.mjs:21 sets the same value but never waits it out.",
+    "weakensATest": false
+   },
+   {
+    "title": "Downloads and pulls: end the progress wait, shorten stand-in sleeps",
+    "where": "service/src/11-setups.mjs:380",
+    "what": "A download's progress watcher sleeps 4 s and the job waits for it after the download has ended (one that fails at once takes 5.0 s). End that wait when the download ends. In the stand-ins: hf's 4 x `sleep 1` (hf:20) and docker pull's `sleep 2` (docker:224) become 0.2 s, and hf-slow's 16 s (hf:6) becomes a hold file the test removes.",
+    "savesSeconds": 33,
+    "risk": "Medium. change.test.mjs:562-570 (pause during a download) and :617-635 (stop during a download) depend on the download lasting. Both must use the hold file: set before the download, removed after their step.",
+    "weakensATest": false
+   },
+   {
+    "title": "Operations wake whoever waits for them",
+    "where": "service/src/18-workflows.mjs:228",
+    "what": "wait_operation and waitJob (20-desired.mjs:113) poll once a second, and a cancel waits in 500 ms steps (:110), so each finished operation is noticed about half a second late. Resolve the wait when the job's step or status changes (step() and runJob in 07-jobs.mjs). About 80 operations are followed this way in the suite.",
+    "savesSeconds": 20,
+    "risk": "Low. A small product change; agents only hear sooner.",
+    "weakensATest": false
+   },
+   {
+    "title": "ask_sparkie's 40 s wait configurable, with a held stand-in answer",
+    "where": "service/src/20-mcp.mjs:101",
+    "what": "The door waits a literal 40 s for Sparkie (also :103), so ask.test.mjs:47 asks for a 45 s answer: 45 of that file's 101 s. Read the limit from a stand-in-only variable (4 s in ask.test's fleet) and let the stand-in model hold an answer until a file appears, released once the CLI has printed 'still answering'.",
+    "savesSeconds": 18,
+    "risk": "Medium. ask.test.mjs:171-187 holds answers for 3 x SLOW + 3 s in the same fleet; those must stay shorter than the limit or use the same hold file.",
+    "weakensATest": false
+   },
+   {
+    "title": "Stand-in model streams without per-word delays",
+    "where": "test/mock/model.mjs:109",
+    "what": "Replies stream at 5 ms (line 109) or 10 ms (115) per word, plus 10 ms per tool call (96): 0.1 to 0.35 s a turn over roughly 140 chat turns (sparkie, ask, cli, intent, pause). Make the delay 0 unless a test asks for one.",
+    "savesSeconds": 12,
+    "risk": "Low to medium. The saving is estimated from counting turns, not read from a log. Tests that need an answer in flight already say 'take N seconds'.",
+    "weakensATest": false
+   },
+   {
+    "title": "Frozen-Spark test: no 22 s wait for the first cable test",
+    "where": "test/state.test.mjs:227",
+    "what": "The test sleeps until 22 s after its service started because the first cable test runs at a literal 20 s (06-links.mjs:93-97). Make that first delay configurable and switch it off for this fleet (state.test.mjs:220). The file drops from 64 s to the 49 s of the main-service group that runs beside it.",
+    "savesSeconds": 7,
+    "risk": "Low. It also removes a race: a cable test still running at 22 s on a slow machine counts as an answer from the frozen Spark.",
+    "weakensATest": false
+   },
+   {
+    "title": "gateway.test: wait for the listing instead of 16 s",
+    "where": "test/gateway.test.mjs:59",
+    "what": "It sleeps 16 s because the console keeps its last look for a literal 15 s (16-actions.mjs:391). Make that time configurable for the stand-in fleet (1 s in this file's fleet only) and wait until GET /v1/models no longer lists the model as running.",
+    "savesSeconds": 7,
+    "risk": "Low. Only this file's fleet looks more often, for a handful of calls.",
+    "weakensATest": false
+   },
+   {
+    "title": "Early first watcher look for fleet.test",
+    "where": "service/src/19-watcher.mjs:178",
+    "what": "The watcher's first look is a literal 15 s after start (first status: 3 s, 12-status.mjs:118). fleet.test waits 10 s for it, then about 5 s more for Spark 1 to count as offline. Add a first-look variable and set 1 s for fleet.test's fleet only.",
+    "savesSeconds": 7,
+    "risk": "Low if only fleet.test uses it. heal.test.mjs:72-78 relies on the watcher not having looked during the first 15 s, so the default must stay.",
+    "weakensATest": false
+   },
+   {
+    "title": "No full second for an offline stand-in Spark",
+    "where": "service/src/02-ssh.mjs:7",
+    "what": "A stand-in Spark that is offline answers after `sleep 1`. Spark 1 always is, and its offline mark lasts 3 s, so about one look in every 4 s pays it. On the Mac a look at the other three takes longer, so it mostly hides; on Spark 2 it would be the floor of those looks. Use 0.1 s.",
+    "savesSeconds": 4,
+    "risk": "Low. No test measures that second. The figure is for the Mac; expect clearly more on Spark 2, where looks are fast.",
+    "weakensATest": false
+   },
+   {
+    "title": "Answer test gives up after 1.5 s on the stand-ins",
+    "where": "test/start-mock.mjs:162",
+    "what": "SPARK_CONSOLE_ANSWER_TEST_MS is 4000, and a stand-in model that can't answer is retried once after sleeping out the rest (09-verified.mjs:51). Two tests wait it out (workflows.test.mjs:145 and :239). 1500 is enough: a model that does answer answers on the first try, whatever the limit.",
+    "savesSeconds": 3,
+    "risk": "Low.",
+    "weakensATest": false
+   }
+  ],
+  "flaky": [
+   "test/sparkie.test.mjs:362-378 (busy 409, the owner's 4 answers 429, a member's 1): relies on 'take 1 seconds' answers overlapping requests sent 400, 150 and 300 ms apart. Hold the stand-in model on a file, wait until /health's `replying` (24-handler.mjs:55) shows the expected count, send the extra message, then release.",
+   "test/ask.test.mjs:171-187 (agents answer in slots): fixed 500 ms sleeps and answers held 3 x SLOW + 3 s. Use the same hold file; before each refused call wait for that conversation's `replying: true` in GET /chats (as ask.test.mjs:50 already does), then release and ask 'now?'.",
+   "test/state.test.mjs:142-148 (SIGTERM): sleeps 300 ms and expects the next change to be refused. If the signal is handled later, the stop_model goes through and stops a model. Add a `stopping` field to /health and wait for it.",
+   "test/state.test.mjs:227: sleeps to 22 s after start so the 20 s cable test (06-links.mjs:93) is over. On a slow machine it may still be running and counts as an answer from the frozen Spark. Switch the first cable test off for that fleet, or wait for /fabric's checkedAt to move past the seeded links.json.",
+   "test/state.test.mjs:234-236 and :249 ('answered at once'): measured as under 3000 ms and a 5000 ms request limit, neither scaled by SLOW. Check the condition itself: have the stand-in docker and worker log each call, and assert none reached that Spark between the two looks.",
+   "test/change.test.mjs:562-570 (a pause stops the operation at its next step): relies on the stand-in download (hf's 4 x sleep 1 plus the service's 4 s progress tick) outlasting two API calls; otherwise the model gets started and 'nothing was started for it' fails. Hold the download on a file, pause, then release.",
+   "test/change.test.mjs:617-635 (a stop leaves the download running): sleeps 3 s, then stops, inside hf-slow's 16 s window. Under load the download ends first and the test passes without testing anything. Hold the download, wait for its step to read 'Downloading', stop and wait for the stop to complete, assert the download is still running, then release.",
+   "test/change.test.mjs:427-437 ('already-starting' twice, 'already changing on Spark 3') and test/sparkie.test.mjs:229-235 ('the result came after the button'): both need the start or restart to still be loading, which today is the service's 5 s sleep. Write serve-down on that Spark first and remove it after those assertions (as desired.test.mjs:74 and state.test.mjs:139 do).",
+   "test/heal.test.mjs:128: waits only 3 s x SLOW for the second heal's event, assuming it was recorded during the previous test. Use the same wait as waitEvents (60 s x SLOW); the assertion stays as it is.",
+   "test/pause.test.mjs:22, test/passkey.test.mjs:129, test/internet.test.mjs:29 (setClock): writes the offset and sleeps 400 ms, trusting the service's 100 ms file poll (test/mock/clock.mjs:11). Have clock.mjs write the offset it applied to a second file and wait for that to match.",
+   "test/internet.test.mjs:147-151: sleeps 500 ms so the /metrics stream is open before the session is deleted, then allows an unscaled 5 s for it to close. Wait for the stream's 200 response before deleting, and for the close with waitFor's SLOW-scaled limit.",
+   "Many tests through the agent door: the door's literal 50 s answer limit (service/src/20-mcp.mjs:213; page buttons 14-chats.mjs:101 and :306). Under load a start_model that needs three looks exceeds it; gate6.log has 5 such failure lines, in workflows.test and validate.test. Only across.test.mjs:32-37 copes. Make the limit configurable for the stand-in fleet and have start-mock set 50 s x SLOW.",
+   "test/gateway.test.mjs:59 and test/ask.test.mjs:47: not flaky, but fixed 16 s and 45 s sleeps against service constants; cuts 8 and 5 turn them into waits for the condition."
+  ]
+ },
+ {
+  "angle": "harness",
+  "summary": "The harness itself is not where the gate's time goes, so harness cuts are worth about 150 s of a 1066 s run (14%). Nothing was run for this: every figure comes from the gate logs and the code, and every saving is an estimate.\n\n- **Fleet cost:** a whole fleet from start to stop takes 0.65 s on a quiet laptop and 4.2 s on a loaded one. The suite starts 27 of them. Time outside tests is 4\u20138% of the run.\n- **Where the time goes:** on the laptop it is process starts. One library scan of the stand-in fleet is about 450 of them, and the same tests took 1047 s of file time in gate9, 2034 s in gate18 and 4750 s in gate25. gate18 was not a quiet-machine floor; gate9 ran the suite in 569 s.\n- **SPARK_TEST_SLOW=3:** it lengthens three real waits, about 86 s of file time; everything else is limits. It does not reach the service's own 50 s and 20\u201345 s limits, which is where the loaded-laptop failures came from.\n- **Concurrency:** `--test-concurrency` counts files. Tests inside a file run one after another unless a describe asks otherwise. Files share only ports and CPU, so the laptop's limit is process starts, not collisions.\n- **Sharing a fleet:** door, cli and fuzz could share one (same options, read-only), saving about 7 s of file time. I would not do it. Every other file changes containers, the pause switch, memory, the desired list, the clock or the passkey, or needs its own environment.\n- **Spark 2:** the gate cannot pass there today. Stand-in Sparks would read the real `/proc/meminfo`, and the real releases folder breaks two tests. Once fixed, with collision-proof ports, I estimate about 5 minutes at 4 files at once and about 3 minutes at 8\u201312 with SLOW=1; this is not measured.\n- **Quick check:** nine light files cover 78% of the tests in 1\u20131.5 minutes on a quiet laptop.\n\nI could not list running processes (permission denied), so the check for leftover fleets rests on folder timestamps: ten stale folders, none active.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/start-mock.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/lock.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/mock/bin/docker\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/05-library.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/across.test.mjs",
+  "numbers": [
+   "Suite: 23 test files, 659 tests in gate25. Fleets per gate: 27 = 22 useFleet files + state.test.mjs:174 and :220 + workflows.test.mjs:131 + internet.test.mjs:292 + lock.mjs:35 (build.test.mjs starts none).",
+   "One fleet, start to stop (startMock, /health, two requests, stop; the test at workflows.test.mjs:128): 0.65 s (gate10), 0.78 s (gate9), 1.44 s (gate18), 4.18 s (gate25). At least 0.4 s of that is the stop (start-mock.mjs:45 waits 300 ms, :180 polls every 100 ms).",
+   "Fleet copy: 138 files, 159 folders, 17 links, 432 KB, plus 22 sparse files (99.5 MB apparent, nothing written) and 21 empty folders. Not a cost.",
+   "door.test.mjs's before hook (fleet start plus four lookups, :74-87), reported as its first test's time: 3.3 s (gate9), 9.7 s (gate18), 20.1 s (gate25).",
+   "Time outside tests (2 x wall minus the sum of top-level test times): 91 s (gate9), 98 s (gate18), 135 s (gate25), 192 s (gate24): 4-8% of slot time. Effective parallelism at concurrency 2: 1.83-1.94.",
+   "Same suite at concurrency 2: 1047 s file time / 569 s wall (gate9, 627 tests); 2034 s / 1066 s (gate18, 639 tests); 4750 s / 2442 s (gate25, 659 tests, four files more).",
+   "Files that scale with the machine (gate9 / gate18 / gate25): door 8.5 / 20 / 64.5 s; change 78 / 259 / 555 s; fuzz 13 / 36 / 128 s. Files that do not: state 63 / 65 / 102 s; fleet 31 / 46 / 48 s.",
+   "The '/health ... sparksOnline 3' test (fleet.test.mjs:40) took 9.00, 9.00 and 9.41 s in gate9, gate18, gate25: 3 s first status look (12-status.mjs:115) + 5 s interval + 1 s offline stand-in (02-ssh.mjs:7).",
+   "One library scan of the stand-in fleet is about 450 process starts (my static count of 05-library.mjs:2-55 against test/mock/root: 12 model folders, 10 cache entries, 6 foreign containers). About 70 of them are the stand-in commands' own bash, mkdir and touch.",
+   "Background per fleet at the default watchMs 3000 / statusMs 5000 (door, cli, fuzz, internet, passkey): about 20 process starts a second (14 per watcher look, a full scan every 30 s through 19-watcher.mjs:174 and 16-actions.mjs:391, 8 per status look). At watchMs 60000: about 3 a second.",
+   "SPARK_TEST_SLOW=3 lengthens three real waits: across.test.mjs:22 (connect wait 20 -> 60 s, waited out twice by the test at :149: +80 s; that test took 145 s in gate9, 186 s in gate18), heal-more.test.mjs:21 (same variable, never waited out), ask.test.mjs:173 (hold 6 -> 12 s; that test is 13.0 s in every log). Everything else it touches is a limit.",
+   "SLOW does not reach the service's limits: gate6 failed with '[still_running] start_model took over 50 seconds' four times (20-mcp.mjs:213) and 'spark4 isn't reachable' once (two timed-out commands, 02-ssh.mjs:27-33).",
+   "Concurrency above 2 on this laptop: gate8 ran at an effective 3.66 files and took 5479 s wall, 20073 s file time; gate9 straight after at 2 took 569 s. One data point, and the machine's state may have changed between them.",
+   "A failing run with tripled limits: gate22 took 18377 s with 56 failures; several tests report about 16,000 s each, so the laptop slept during the run.",
+   "gateway.test.mjs:59 sleeps 16 s to outlast the 15 s scan cache (16-actions.mjs:391); state.test.mjs:227 sleeps until 22 s after start (cable test at 20 s, 06-links.mjs:93); fleet.test.mjs:63 waits for the watcher's first look at 15 s (19-watcher.mjs:178).",
+   "Tests per second of file time in gate9: door 329 tests in 8.5 s; passkey 83 in 6.4 s; fuzz 38 in 13.4 s; cli 20 in 9.2 s; internet 19 in 8.8 s; sparkie 19 in 26.5 s. Slowest: across 6 in 200 s; validate 6 in 123 s; workflows 13 in 151 s.",
+   "Spark 2 estimate (not measured): about 1100 s of file time at SLOW=1; the longest files are across (about 120 s once the connect wait is 20 s), workflows (at most 150 s) and validate (at most 125 s). That gives about 5 min at 4 files at once and about 3 min at 8-12.",
+   "Leftover fleet folders in the laptop's temp folder: 10 stale ones (5, 7, 10 and 11 November), none being written to; the two active ones belong to the gate now running."
+  ],
+  "cuts": [
+   {
+    "title": "Stop scaling the two-Spark connect wait with SPARK_TEST_SLOW",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/across.test.mjs:22",
+    "what": "SPARK_CONSOLE_CONNECT_MS is 20000 x SLOW, and the test at :149 waits it out twice: 120 s at SLOW=3. Set a fixed 8000 here and at heal-more.test.mjs:21. A slow machine cannot trip it early: the stop needs both parts' logs to answer with no loading line (08-cluster.mjs:452-455), and stand-in parts that connect always print one.",
+    "savesSeconds": 50,
+    "risk": "None found. The 'stopped early' check (200 s x SLOW) and the message check stay as they are. On the real Sparks the wait stays 10 minutes.",
+    "weakensATest": false
+   },
+   {
+    "title": "Run the stand-in commands without a new process each time",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/mock/bin/docker:13",
+    "what": "Each stand-in docker call starts bash, mkdir and touch, and the laptop's security software checks every one. Use builtins at docker:13, and set BASH_ENV (start-mock.mjs:145) to a file defining docker, curl, tailscale, df, ss and nvidia-smi as functions that source the same stub files in a subshell. By my count that removes about 70 of 450 process starts per library scan, 9 of 14 per watcher look.",
+    "savesSeconds": 45,
+    "risk": "An estimate with a wide range (20-100 s); time door.test.mjs and change.test.mjs alone before and after. Sourced stubs see the caller's shell variables, and docker:120 uses $0. The stub code is the same, but only a full gate proves the behaviour is.",
+    "weakensATest": false
+   },
+   {
+    "title": "wait_operation returns when the operation changes, not at the next whole second",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:228",
+    "what": "wait_operation looks once a second, so every awaited operation is reported up to 1 s late (0.5 s on average); the tests await roughly a hundred. Wake it when the job's status or step changes. The once-a-second loops in change.test.mjs (:587, :613, :629, :647, :695) can then poll every 200 ms.",
+    "savesSeconds": 18,
+    "risk": "A small service change that also gives agents on the real Sparks their answer sooner. No test asserts the delay.",
+    "weakensATest": false
+   },
+   {
+    "title": "Make the service's three start-up delays settable for the stand-in fleet",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/06-links.mjs:93",
+    "what": "Three delays are fixed: first cable test 20 s (06-links.mjs:93), watcher's first look 15 s (19-watcher.mjs:178), first status look 3 s (12-status.mjs:115). state.test.mjs:227 sleeps until 22 s after start to get past the cable test; fleet.test.mjs:63 waits for the first look. With variables honoured only under ALL_LOCAL, state's fleet turns the cable test off and fleet's looks after 1 s.",
+    "savesSeconds": 15,
+    "risk": "heal.test.mjs:76 relies on the watcher not having looked yet, so the defaults must stay and files opt in one by one.",
+    "weakensATest": false
+   },
+   {
+    "title": "No watcher in files that never look at it",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/cli.test.mjs:14",
+    "what": "cli, fuzz (fuzz.test.mjs:87), internet (:20) and passkey (:23) take the default watchMs 3000: a container look every 3 s and a full library scan every 30 s, about 20 process starts a second beside the tests. Pass watchMs: 60000, as 14 other files do. door.test.mjs:74 too, if its 'watchedEvery 3 seconds' expectation (:332) follows the setting.",
+    "savesSeconds": 10,
+    "risk": "For door the expected text would change with the setting (same strictness); leave door alone if that is unwanted. The saving grows under load: these files took 306 s in gate25.",
+    "weakensATest": false
+   },
+   {
+    "title": "Stop a finished fleet at once",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/start-mock.mjs:40",
+    "what": "stop() sends SIGTERM; the service gives running operations 60 s, the guard kills after 4 s (:44), waits 300 ms more (:45), and stop() polls every 100 ms (:180). The folder is deleted next, so nothing needs a clean exit: kill the group at once and resolve on exit. 27 fleets, 0.4 s each, up to 4 s when an operation is still running.",
+    "savesSeconds": 6,
+    "risk": "state.test.mjs:142 sends its own SIGTERM straight to the service and is unaffected. Keep killing the whole group so no stand-in command outlives its fleet.",
+    "weakensATest": false
+   },
+   {
+    "title": "Hold the stand-in model until released, instead of 'take N seconds'",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/ask.test.mjs:173",
+    "what": "'agents answer in slots' holds two answers for 3 x SLOW + 3 s (12 s today) and sleeps 500 ms twice, hoping both are still answering. Add a stand-in model rule that answers when a file appears (model.mjs, beside 'take N seconds'); wait for /health replying = 2, check the third is busy, release. Same for sparkie.test.mjs:362-378.",
+    "savesSeconds": 5,
+    "risk": "A new stand-in knob only; the assertions do not change. It removes two timing races.",
+    "weakensATest": false
+   },
+   {
+    "title": "Shorten the offline stand-in Spark's one-second answer",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/02-ssh.mjs:7",
+    "what": "Under ALL_LOCAL an offline Spark answers after `sleep 1`, and is remembered as offline for only 3 s (start-mock.mjs:155), so most looks at every Spark wait a second for spark1. The laptop hides it while scans take seconds; a fast machine does not. Make the delay a variable (0.1 s for the stand-in fleet).",
+    "savesSeconds": 5,
+    "risk": "Small on the laptop, larger on Spark 2 where it sits under every look. No test asserts the second; the 'sparksOnline 3' tests get about 2 s shorter.",
+    "weakensATest": false
+   },
+   {
+    "title": "Spark 2: stand-in memory and home must not be the real machine's",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/05-library.mjs:52",
+    "what": "On Linux /proc/meminfo is readable, so :52 and :335 give every stand-in Spark the real machine's memory, and 13-main-model.mjs:105 never reads the stand-in file: change.test.mjs:292-314 and every start counting on 22/64/46 GiB fail. 18-workflows.mjs:361 reads the real ~/.local/share/spark-console/releases; validate.test.mjs:134 and internet.test.mjs:288 expect none. Under ALL_LOCAL read only ~/.mock/meminfo; start-mock.mjs:145 sets HOME to the fleet folder.",
+    "savesSeconds": 0,
+    "risk": "A blocker, not a saving: without it the gate cannot pass on Spark 2. The change at 13-main-model.mjs:105 alters what the laptop sees (unknown becomes 22 GiB on spark2), so it needs one full gate to confirm.",
+    "weakensATest": false
+   },
+   {
+    "title": "Spark 2: collision-proof ports, then 8-12 files at once with SLOW=1",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/start-mock.mjs:69",
+    "what": "Files share only ports and CPU. freePorts frees each port before the service binds it (:69-78); model.mjs:151 has no listen-error handler, so on a clash another fleet's stand-in model answers; cable checks listen on random 40000-59999 (08-cluster.mjs:76-80), inside Linux's ephemeral range. Give each fleet a reserved block and retry on 'in use'; then lock.mjs:25 can run 8-12 files at once on Linux, with SLOW=1.",
+    "savesSeconds": 0,
+    "risk": "Nothing changes at concurrency 2 on the laptop. Not measured on Spark 2: my estimate is about 5 min at 4 files and about 3 min at 8-12, with the longest file as the floor. At 12 files the Node processes take about 3 GB beside the brain.",
+    "weakensATest": false
+   },
+   {
+    "title": "Quick check for development (the full gate stays the gate)",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/lock.mjs:25",
+    "what": "A script beside lock.mjs that never writes the lock: build, door, passkey, internet, cli, api, agent-setup, fuzz, sparkie at concurrency 3. That is 516 of 659 tests (78%) in 77 s of file time on a quiet laptop (gate9), 181 s in gate18. A second, optional step adds the heavy files for the parts changed since the lock (17-changes: change, desired; 08-cluster: across, heal-more; 18-workflows: workflows, validate).",
+    "savesSeconds": 0,
+    "risk": "It skips the long change, heal and two-Spark files, so it can pass where the gate fails. lock.mjs could run these nine first and stop on a failure: the same tests, but a failing gate then costs minutes instead of 18-40.",
+    "weakensATest": false
+   }
+  ],
+  "flaky": [
+   "Service limits that SPARK_TEST_SLOW cannot reach: the 50 s action wait (20-mcp.mjs:213, 14-chats.mjs:101 and :306) and command timeouts of 20-45 s (e.g. 05-library.mjs:82 and :335). gate6 failed on them at validate.test.mjs:86 and :105 and workflows.test.mjs:111, :145 and :163. Fix: one scale variable honoured only under ALL_LOCAL, set from SLOW in start-mock.mjs:145; state.test.mjs:220's fleet keeps 1 because its 40 s freeze is sized to the real timeouts.",
+   "state.test.mjs:227 sleeps until 22 s after the service started so the 20 s cable test is over before the Spark freezes; a cable test slower than 2 s answers for spark2 and resets the miss count. Fix: let that fleet switch the cable test off (settable first delay at 06-links.mjs:93) and drop the sleep.",
+   "state.test.mjs:143 sleeps 300 ms after SIGTERM, then expects a new operation to be refused; a service that has not yet run its handler accepts it. Fix: /health reports `stopping` once it is draining (24-handler.mjs:54), and the test waits for that.",
+   "state.test.mjs:81-88 with :23: the state copy repeats every 60 s, so when the test is reached more than a minute after start the second copy's .part file is in the folder. gate26 failed exactly so ('no .part left behind'). Fix: SPARK_CONSOLE_BACKUP_MS=86400000 for that fleet (only the first copy is checked).",
+   "ask.test.mjs:171-187 holds two answers for a fixed time and sleeps 500 ms twice, expecting both to be still answering. Fix: a stand-in model rule that answers when a file appears; wait for /health replying = 2, assert, then release.",
+   "sparkie.test.mjs:362-378 uses 'take 1 seconds' answers with 400, 150 and 300 ms sleeps, not scaled by SLOW, to hit 409 and 429. Fix: the same hold-until-released rule, waiting on /health replying before each assertion.",
+   "heal.test.mjs:186 writes 'started 20 s ago' against a 60 s minimum run; if seeing it run and then seeing the crash takes over 40 s, it is healed instead of skipped. Fix: a stand-in docker knob that reports the start as N seconds before the inspect, or write the start time just before crash().",
+   "internet.test.mjs:147 sleeps 500 ms for the live stream to be open before deleting the session; a slower stream opens after the delete and gets 401. Fix: wait for the stream's 200 response headers.",
+   "setClock (passkey.test.mjs:129, internet.test.mjs:29, pause.test.mjs:22) writes the offset and sleeps 400 ms while clock.mjs re-reads on a 100 ms timer. Fix: clock.mjs checks the file's modification time inside Date.now(); the 11 sleeps go.",
+   "pause.test.mjs:49 sleeps 300 ms and then expects agents to be paused. Fix: waitFor the settings to show halted, then assert the rest.",
+   "change.test.mjs:625 sleeps 3 s so the download has begun before the stop. Fix: wait until the job's step or log shows the download running.",
+   "sparkie.test.mjs:87 expects two tool results in call order; gate19 got them in finish order and failed (a race, not a clock). Fix: script the two calls as two rounds so the order is fixed.",
+   "state.test.mjs:236 and :249 and door.test.mjs:301 assert 'answered at once' as an absolute 3 s or 5 s, not multiplied by SLOW. The reply text already proves the answer came from the offline memo. Scaling these with SLOW changes a threshold, so it is the owner's call.",
+   "start-mock.mjs:122 gives the service 30 s to answer /health, not multiplied by SLOW (lib.mjs:24 does not pass it). No log shows it failing, but it is the one harness limit SLOW misses.",
+   "gate22: the laptop slept mid-run (tests report about 16,000 s each, 56 failures). On macOS lock.mjs can hold the machine awake for the run with `caffeinate -i -w <pid>` and warn when on battery. Neither applies on Spark 2."
+  ]
+ }
+]

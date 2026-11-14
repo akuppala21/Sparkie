@@ -1,0 +1,82 @@
+{
+  "pairs": [
+    {
+      "a": "spark2",
+      "b": "spark3",
+      "fastLink": "full",
+      "pings": [
+        {
+          "peer": "spark3",
+          "iface": "enP2p1s0f1np1",
+          "ip": "192.168.178.13",
+          "result": "full",
+          "net": "192.168.178.0/24"
+        },
+        {
+          "peer": "spark3",
+          "iface": "enp1s0f1np1",
+          "ip": "192.168.177.13",
+          "result": "full",
+          "net": "192.168.177.0/24"
+        },
+        {
+          "peer": "spark2",
+          "iface": "enP2p1s0f1np1",
+          "ip": "192.168.178.12",
+          "result": "full",
+          "net": "192.168.178.0/24"
+        },
+        {
+          "peer": "spark2",
+          "iface": "enp1s0f1np1",
+          "ip": "192.168.177.12",
+          "result": "full",
+          "net": "192.168.177.0/24"
+        }
+      ]
+    },
+    {
+      "a": "spark2",
+      "b": "spark4",
+      "fastLink": "partial",
+      "pings": [
+        {
+          "peer": "spark4",
+          "iface": "enp1s0f0np0",
+          "ip": "192.168.180.14",
+          "result": "small",
+          "net": "192.168.180.0/24"
+        },
+        {
+          "peer": "spark2",
+          "iface": "enP2p1s0f1np1",
+          "ip": "192.168.180.12",
+          "result": "small",
+          "net": "192.168.180.0/24"
+        }
+      ]
+    },
+    {
+      "a": "spark3",
+      "b": "spark4",
+      "fastLink": "full",
+      "pings": [
+        {
+          "peer": "spark4",
+          "iface": "enP2p1s0f0np0",
+          "ip": "192.168.179.14",
+          "result": "full",
+          "net": "192.168.179.0/24"
+        },
+        {
+          "peer": "spark3",
+          "iface": "enp1s0f1np1",
+          "ip": "192.168.179.13",
+          "result": "full",
+          "net": "192.168.179.0/24"
+        }
+      ]
+    }
+  ],
+  "checkedAt": "2026-11-05T02:20:00.348Z"
+}

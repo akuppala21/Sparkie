@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>KV cache dtype &amp; quantization &#8212; vLLM</title>
+<style>body { color: red; } .STYLE-TEXT {}</style>
+<script>var SCRIPT_TEXT = "never shown"; if (a < b && c > d) {}</script></head>
+<body>
+<nav><a href="/">Home</a> <a href="/menu">MENU-TEXT</a></nav>
+<!-- COMMENT-TEXT <p>hidden</p> -->
+<main>
+<h1>KV cache dtype</h1>
+<p>Set <code>--kv-cache-dtype fp8</code> to store the KV cache in 8 bits. It halves the cache&#x27;s memory, so more requests fit.</p>
+<ul><li>fp8 works on Blackwell and Hopper.</li><li>auto keeps the model&rsquo;s own type.</li></ul>
+<pre>vllm serve my-model --kv-cache-dtype fp8</pre>
+<p>If you see <em>ValueError: unsupported kv cache dtype</em>, update vLLM.</p>
+</main>
+<footer>FOOTER-TEXT</footer>
+</body></html>

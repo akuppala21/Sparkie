@@ -1,0 +1,15 @@
+[
+ {"repo": "nvidia/GLM-5.3-Flash-FP4-Local", "quant": "FP4-Local", "engine": "vllm",
+  "image": "eugr/spark-vllm-b12x:nightly-20261015@sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595",
+  "sparks": 2, "parallel": "TP=2", "args": ["--kv-cache-dtype", "fp8", "--quantization", "modelopt_mixed", "--max-model-len", "500000", "--gpu-memory-utilization", "0.87"],
+  "env": {"CUTE_DSL_ARCH": "sm_121a"}, "perf": {"decodeTokS": 33.9, "concurrency": 1},
+  "source": {"url": "https://github.com/NVIDIA/local-ai-inference-recipes/blob/main/models/z-ai/glm-5.3-flash/dgx-spark-2gpu/linux/vllm/fp4-local/recipe.yaml", "author": "NVIDIA", "date": "2026-10-15", "kind": "nvidia"},
+  "credibility": "high", "notes": "stand-in for NVIDIA's recipe file"},
+ {"repo": "PaddlePaddle/PaddleOCR-VL-1.6", "engine": "vllm",
+  "image": "vllm/vllm-openai@sha256:3f7dd5b777d34d1724456ce71f87385dca288c3bb23029ab27dee358f5d2b971",
+  "sparks": 1, "args": ["--max-model-len", "16384", "--gpu-memory-utilization", "0.3"], "env": {}, "perf": {"decodeTokS": 140},
+  "source": {"url": "https://github.com/NVIDIA/local-ai-inference-recipes/blob/main/models/paddlepaddle/paddleocr-vl-1.6/dgx-spark/linux/vllm/bf16/recipe.yaml", "author": "NVIDIA", "date": "2026-10-15", "kind": "nvidia"},
+  "credibility": "high", "notes": "stand-in for NVIDIA's recipe file"},
+ {"hf":{"id":"testorg/Nova-2B","gated":false,"downloads":7,"pipeline_tag":"text-generation","config":{},"siblings":[{"rfilename":"config.json","size":700},{"rfilename":"model.safetensors","size":1000000000}]},"card":"# Nova 2B\n\nWords outside a block are never read: vllm serve testorg/Nova-2B --trust-remote-code\n\n```bash\nvllm serve testorg/Nova-2B --max-model-len 32768 --max-num-seqs 4\n```\n\n```bash\nvllm serve someoneelse/Other-7B --max-num-seqs 64\n```\n"},
+ {"hf":{"id":"Qwen/Qwen3-32B","gated":false,"downloads":9,"pipeline_tag":"text-generation","config":{},"siblings":[{"rfilename":"config.json","size":700},{"rfilename":"model.safetensors","size":64000000000}]},"card":"```bash\npython3 -m sglang.launch_server --model-path Qwen/Qwen3-32B --context-length 32768\n```\n"}
+]

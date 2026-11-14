@@ -1,0 +1,5 @@
+#!/bin/bash
+# The test fleet never reaches a real machine: with SPARK_CONSOLE_ALL_LOCAL=1 every Spark runs locally. If anything
+# still asks for ssh, it fails here instead of connecting.
+echo "scp: the Spark Console test fleet never connects anywhere (asked: $*)" >&2
+exit 255

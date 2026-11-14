@@ -1,0 +1,490 @@
+--- a/service/dig.mjs
++++ b/service/dig.mjs
+@@ -403,6 +403,24 @@
+     sparks: sparks || sparksOf(hit.args), args: hit.args, env: hit.env, source: { url, author, date, kind }, credibility,
+     perf: decodeTokS ? { decodeTokS, concurrency: 1, quote } : {}, notes,
+   };
++}
++// A model's own card (its README.md on Hugging Face): the engine commands in its code blocks that serve this very repo.
++// Only code blocks are read, never the card's words. At most 6 a card; a command of over 60 words, or with a word
++// over 300 characters, is skipped.
++export function fromCard(text, repo) {
++  const out = [], seen = new Set(), own = String(repo || '').toLowerCase();
++  if (!own) return out;
++  for (const block of codeBlocks(String(text || '').slice(0, 400000))) {
++    const hit = findServe(block);
++    if (!hit || String(hit.model || '').split(':')[0].toLowerCase() !== own) continue;
++    if (hit.args.length > 60 || hit.args.some(a => String(a).length > 300)) continue;
++    const key = JSON.stringify([hit.engine, hit.image || null, hit.args]);
++    if (seen.has(key)) continue;
++    seen.add(key);
++    out.push({ ...fromText(hit, { url: `https://huggingface.co/${repo}`, author: String(repo).split('/')[0], date: null, kind: 'model-card', credibility: 'medium', notes: 'From the model’s own card on Hugging Face' }), repo });
++    if (out.length >= 6) break;
++  }
++  return out;
+ }
+ 
+ /* ───────── GGUF files ───────── */
+--- a/service/src/10-recipes.mjs
++++ b/service/src/10-recipes.mjs
+@@ -83,8 +83,14 @@
+ // One version of a repository, read from Hugging Face: what it weighs on disk, whether its license must be accepted,
+ // and its quantization. A GGUF repository holds many quantizations; it's offered as one version whose file you pick,
+ // defaulting to the best that fits one Spark (llama.cpp runs on one). Repos with neither safetensors nor GGUF: null.
++// The stand-in fleet can't reach Hugging Face. An entry {"hf": {…what /api/models/<repo> answers…}, "card": "<README.md>"}
++// in its dig fixture (SPARK_CONSOLE_DIG_FIXTURE, 11-setups.mjs) stands in for one repo; any other repo is read as before.
++function hfFixture(repo) {
++  if (!DIG_FIXTURE || DIG_FIXTURE === 'none') return null;
++  try { return JSON.parse(readFileSync(DIG_FIXTURE, 'utf8')).find(x => sameRepo(x?.hf?.id, repo)) || null; } catch { return null; }
++}
+ async function versionOf(repo) {
+-  const info = await hfJson(`/api/models/${repo}?blobs=true&expand[]=gated&expand[]=config&expand[]=downloads&expand[]=lastModified&expand[]=pipeline_tag&expand[]=tags&expand[]=siblings&expand[]=cardData`, 20000);
++  const info = hfFixture(repo)?.hf || await hfJson(`/api/models/${repo}?blobs=true&expand[]=gated&expand[]=config&expand[]=downloads&expand[]=lastModified&expand[]=pipeline_tag&expand[]=tags&expand[]=siblings&expand[]=cardData`, 20000);
+   const id = info.id || repo, siblings = info.siblings || [];
+   const common = { repo: id, gated: Boolean(info.gated), downloads: info.downloads || 0, updated: info.lastModified || null, kind: info.pipeline_tag || null,
+     base: [].concat(info.cardData?.base_model || []).filter(b => REPO_RE.test(String(b))).slice(0, 3) };
+--- a/service/src/11-setups.mjs
++++ b/service/src/11-setups.mjs
+@@ -1,9 +1,9 @@
+ /* ───────── finding setups ───────── */
+ // For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai,
+-// Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model cards. The commands are read out of
+-// those by the service itself (dig.mjs), never written by a model. Sparkie only reads forum posts to say which speed
+-// belongs to which command, quoting the post, and the quote is checked against it. Each setup then goes through the same
+-// checks as the catalog's; its image is pinned to the exact build published now.
++// Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only).
++// The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads
++// forum posts to say which speed belongs to which command, quoting the post, and the quote is checked against it. Each
++// setup then goes through the same checks as the catalog's; its image is pinned to the exact build published now.
+ const webCache = new Map();
+ async function webGet(url, { ttl = 6 * 3600000, json = false, timeout = 20000 } = {}) {
+   const hit = webCache.get(url);
+@@ -88,6 +88,17 @@
+   });
+   return out.filter(Boolean);
+ }
++// The model's own card on Hugging Face, for each of its own versions (never a base model's). A card that can't be read
++// without signing in (a gated model) counts as no card. The stand-in fleet reads it from its dig fixture, never the web.
++async function cardText(repo) {
++  if (DIG_FIXTURE) return hfFixture(repo)?.card || null;
++  return webGet(`https://huggingface.co/${repo}/raw/main/README.md`).catch(e => { if (e.status === 401 || e.status === 403) return null; throw e; });
++}
++async function cardSetups(repos) {
++  const out = [];
++  for (const repo of repos.slice(0, 8)) out.push(...dig.fromCard(await cardText(repo), repo));
++  return out;
++}
+ const squash = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+ // A container image named by tag is pinned to the exact build the tag points at now (its digest), and checked for an
+ // ARM64 build. Docker Hub, GitHub's and NVIDIA's registries answer anonymous reads.
+@@ -132,7 +143,9 @@
+   // It starts from the model's own versions (the catalog's and the owner's), never from what an earlier search added.
+   const before = foundSetups()[m.id]?.variants || [];
+   const own = m.variants.filter(v => !before.some(x => sameRepo(x.repo, v.repo)) || addedModels().some(a => a.variants.some(x => sameRepo(x.repo, v.repo))));
+-  const repos = [...new Set(own.map(v => v.repo).filter(r => REPO_RE.test(String(r))))].slice(0, 12);
++  // (versions the owner added come first: a repo that joined a big family, A9, is read even past its first twelve)
++  const mine = v => addedModels().some(a => a.variants.some(x => sameRepo(x.repo, v.repo)));
++  const repos = [...new Set([...own.filter(mine), ...own].map(v => v.repo).filter(r => REPO_RE.test(String(r))))].slice(0, 12);
+   step(job, `Reading ${m.title} on Hugging Face`);
+   // A version quantized from another repo is the same model, so setups for that repo count too. A fine-tune (abliterated,
+   // merged, adapted) is not: its base model's setups belong to the base.
+@@ -148,11 +161,14 @@
+   const all = [...new Set([...repos, ...bases])];
+   const keys = new Set(all.map(modelKey)), lower = new Set(all.map(r => r.toLowerCase()));
+   const ours = r => r?.about || (Boolean(r?.repo) && !SKIP_REPO.test(r.repo) && (lower.has(String(r.repo).toLowerCase()) || keys.has(modelKey(r.repo))));
+-  const sources = DIG_FIXTURE ? [['NVIDIA’s DGX Spark recipes', async () => (DIG_FIXTURE === 'none' ? [] : JSON.parse(readFileSync(DIG_FIXTURE, 'utf8')).filter(ours))]] : [
++  // (last: the model's own card, for its own versions only)
++  const card = ['the model’s card on Hugging Face', async () => (await cardSetups(repos)).filter(ours)];
++  const sources = DIG_FIXTURE ? [['NVIDIA’s DGX Spark recipes', async () => (DIG_FIXTURE === 'none' ? [] : JSON.parse(readFileSync(DIG_FIXTURE, 'utf8')).filter(ours))], card] : [
+     ['NVIDIA’s DGX Spark recipes', async () => (await nvidiaIndex()).filter(ours)],
+     ['vLLM recipes', async () => (await vllmRecipeSetups(all)).filter(ours)],
+     ['Spark Arena', async () => (await arenaIndex()).filter(ours)],
+     ['eugr’s spark-vllm-docker', async () => (await eugrIndex()).filter(ours)],
++    card,
+   ];
+   const raws = [], report = [];
+   for (const [name, fn] of sources) {
+@@ -209,7 +225,8 @@
+ // and be able to start it, researched ahead of time): after a download, before a start picks the setup for a model it
+ // just downloaded, and every day for the models in Recipes (on disk first); each only when the last look is over a
+ // week old. A look reads NVIDIA's recipe files,
+-// vLLM's recipes, Spark Arena and eugr's spark-vllm-docker, and keeps the setups with their commands (found-setups.json).
++// vLLM's recipes, Spark Arena, eugr's spark-vllm-docker and the model's own card, and keeps the setups with their
++// commands (found-setups.json).
+ const SETUPS_FRESH_MS = 7 * 24 * 3600000;
+ const AUTO_DIG = !ALL_LOCAL || (Boolean(DIG_FIXTURE) && DIG_FIXTURE !== 'none');
+ const LOOKER = { login: 'Spark Console', role: 'owner' };
+@@ -220,7 +237,7 @@
+   if (!id || !setupsStale(id)) return null;
+   const title = recipeCatalog().models.find(m => m.id === id)?.title || repo;
+   const d = [...jobs.values()].find(j => j.status === 'running' && j.type === 'dig' && j.modelId === id) || startDig(viewer || LOOKER, id, title);
+-  if (job) note(job, `Looking for ${title}’s best setups (NVIDIA’s recipe files, vLLM’s, Spark Arena, eugr’s)`);
++  if (job) note(job, `Looking for ${title}’s best setups (NVIDIA’s recipe files, vLLM’s, Spark Arena, eugr’s, its model card)`);
+   if (wait && d) await waitJob(d.id, 150000);
+   return d;
+ }
+--- a/service/src/17-changes.mjs
++++ b/service/src/17-changes.mjs
+@@ -420,6 +420,9 @@
+   }
+   return { workflow: 'start_model_across', workflowVersion: st.version };
+ }
++// The asker's own words name this Hugging Face repo in full: the owner's message to Sparkie, the owner's own
++// POST /actions call, or the label of a button they pressed. An agent's direct call carries no words, so it is asked.
++const namedInFull = (ctx, repo) => Boolean(repo) && String(ctx.said || ctx.request || '').toLowerCase().includes(String(repo).toLowerCase());
+ async function startModel(args, viewer, ctx) {
+   const { model, spark, sparks, setup, allowStop = [], confirmOutside = false } = args;
+   if (spark && sparks) throw new HttpError(400, 'Give spark or sparks, not both.');
+@@ -472,9 +475,8 @@
+   const fetching = startingNow([found.repo, ...(found.recipe?.variants || []).map(x => x.repo)], spark ? [spark] : sparks);
+   if (fetching) return alreadyStarting(fetching, fetching.model);
+   if (sparks && found.outsideRecipes) throw new HttpError(409, `${found.repo} isn’t in Recipes, and only models from Recipes run across two Sparks.`);
+-  const namedInFull = String(ctx.said || ctx.request || '').toLowerCase().includes(String(found.repo).toLowerCase());
+-  if (found.outsideRecipes && !confirmOutside && !namedInFull) {
+-    return question(viewer, ctx, `${found.repo} isn’t in your recipes. Download it from Hugging Face and run it with the engine’s defaults (no code of its own)?`, [
++  if (found.outsideRecipes && !confirmOutside && !namedInFull(ctx, found.repo)) {
++    return question(viewer, ctx, `${found.repo} isn’t in your recipes. Download it from Hugging Face, add it to your recipes and start it with the best setup found for it (no code of its own)?`, [
+       { label: `Yes, download and start ${found.repo}`, call: { action: 'start_model', args: { model: found.repo, confirmOutside: true, ...(spark ? { spark } : {}) } } },
+       { label: 'No', call: null },
+     ]);
+@@ -496,6 +498,12 @@
+     pausedCheck(ctx);
+     const fresh = await inventory(null), m = libraryModel(fresh, v.repo);
+     if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Start it from Models in a minute.`);
++    // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
++    // doesn't answer, it starts as before.
++    if (found.outsideRecipes) {
++      try { note(j, `Added ${(await addModel(viewer, { repos: [v.repo] })).title} to Recipes`); }
++      catch (e) { note(j, `Couldn’t add ${v.repo} to Recipes (${String(e.message).slice(0, 160)}), so no setups were looked up for it`); }
++    }
+     const unsafe = agentSafeSetup(m);
+     if (unsafe) throw new Error(`Downloaded ${v.repo}, but ${unsafe}.`);
+     const placed = await placeModel(m, fresh, viewer, pick.two ? { sparks: pick.nodes } : { spark: target.id });
+@@ -507,17 +515,20 @@
+       throw new Error(`Downloaded ${v.repo}. Starting it on ${placed.nodes.join(' + ')} would stop ${placed.stop.map(st => st.split('/').pop()).join(', ')}, ${noStopWords(ctx)}, so it wasn’t started.`);
+     }
+     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
+-    if (!found.outsideRecipes) await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
++    await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
++    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
++    note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
+     const release = claimSparks(placed.nodes, `starting ${v.repo}`);
+-    try { await deployPlaced(j, viewer, ctx, m, placed, found.outsideRecipes ? null : bestHow(m, placed.two ? 2 : 1, viewer, fresh.library)); } finally { release(); }
++    try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
+   });
+   return { outcome: 'started', operation: job.id, ...(acrossPick || {}), model: v.repo, quantization: v.quant || null, downloadGB: v.sizeGB, sparks: pick.nodes,
++    ...(found.outsideRecipes ? { note: 'It isn’t in your recipes yet: after the download it is added, and its setups are looked up before it starts.' } : {}),
+     next: `wait_operation {"id":"${job.id}"} to follow it; downloading ${v.sizeGB} GB and loading can take a while.` };
+ }
+ const choiceArg = { type: 'string', pattern: '^[a-f0-9]{10}$', description: 'The id of the choice the owner picked, from a question this action asked. Send it alone.' };
+ action({
+   name: 'start_model', title: 'Start a model', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
+-  description: 'Use when the owner asks to start, run or deploy a model. Pass the model as the owner named it (library name, Hugging Face repo, recipe id, or their words like "qwen coder"); it finds it, downloads it first if needed, picks the Spark (or two linked Sparks) with room, starts it with the best known setup, and checks it answers. Give spark or sparks only if the owner said where. It may come back with a question for the owner instead; answer it with {"choice": id}. It returns an operation id at once; follow it with wait_operation.',
++  description: 'Use when the owner asks to start, run or deploy a model. Pass the model as the owner named it (library name, Hugging Face repo, recipe id, or their words like "qwen coder"); it finds it, downloads it first if needed, picks the Spark (or two linked Sparks) with room, starts it with the best known setup, and checks it answers. A Hugging Face repo that isn’t in Recipes is added to them after its download, and its setups (its model card’s too) are looked up before it starts. For one already on disk, find_setups adds it. Give spark or sparks only if the owner said where. It may come back with a question for the owner instead; answer it with {"choice": id}. It returns an operation id at once; follow it with wait_operation.',
+   input: { type: 'object', properties: {
+     model: { ...modelArg, pattern: '^[A-Za-z0-9][A-Za-z0-9._/:+ -]{0,199}$', description: 'The model, as the owner named it.' },
+     spark: { ...sparkArg, description: 'Only if the owner said which Spark.' },
+@@ -657,19 +668,29 @@
+ // reads only maintained sources, and Recipes lists only setups that hold up (recipeCatalog).
+ action({
+   name: 'find_setups', title: 'Find setups for a model', kind: 'change', scope: 'fleet:act', who: 'owner',
+-  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry and eugr’s spark-vllm-docker, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also does this by itself every day, so usually recipe_detail already has them.',
++  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also does this by itself every day, so usually recipe_detail already has them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
+   input: { type: 'object', properties: { model: modelArg, choice: choiceArg }, additionalProperties: false },
+   run: async (input, viewer, ctx) => {
+     if (input.choice && Object.keys(input).length > 1) throw new HttpError(400, 'Send the choice alone: {"choice": id}.');
+-    const { model } = input.choice ? redeemChoice(viewer, ctx, 'find_setups', input.choice) : input;
++    const { model, confirmOutside = false } = input.choice ? redeemChoice(viewer, ctx, 'find_setups', input.choice) : input;
+     if (!model) throw new HttpError(400, 'Missing argument: model.');
+     const found = await resolveModelName(model, await inventory(null));
+     if (found.choices) return question(viewer, ctx, `“${model}” could be several models. Which one?`, found.choices.map(c => ({ label: c.label, call: { action: 'find_setups', args: { model: c.model } } })));
+-    const id = found.recipe?.id || (found.lib ? recipeIdOf(found.lib.repo || found.lib.name) : null);
++    let id = found.recipe?.id || (found.lib ? recipeIdOf(found.lib.repo || found.lib.name) : null), added = false;
++    // A Hugging Face repo that isn't in Recipes joins them first (A9): at once when the asker named it in full, else after a yes.
++    const repo = found.repo || found.lib?.repo || null;
++    if (!id && repo && REPO_RE.test(repo)) {
++      if (!confirmOutside && !namedInFull(ctx, repo)) {
++        return question(viewer, ctx, `${repo} isn’t in your recipes. Add it and look up its setups?`, [
++          { label: `Yes, add ${repo} and look up its setups`, call: { action: 'find_setups', args: { model: repo, confirmOutside: true } } }, { label: 'No', call: null }]);
++      }
++      id = (await addModel(viewer, { repos: [repo] })).id;   // its own plain errors pass through (not on Hugging Face, no weights)
++      added = true;
++    }
+     const recipe = id ? recipeCatalog().models.find(m => m.id === id) : null;
+     if (!recipe) throw new HttpError(404, `${found.repo || found.lib?.repo || model} isn’t in Recipes, so there’s nothing to look up for it yet.`);
+     const job = [...jobs.values()].find(j => j.status === 'running' && j.type === 'dig' && j.modelId === recipe.id) || startDig(viewer, recipe.id, recipe.title);
+-    return { outcome: 'started', operation: job.id, model: recipe.title, next: `wait_operation {"id":"${job.id}"}, then recipe_detail {"id":"${recipe.id}"} for what it found` };
++    return { outcome: 'started', operation: job.id, model: recipe.title, ...(added ? { addedToRecipes: true } : {}), next: `wait_operation {"id":"${job.id}"}, then recipe_detail {"id":"${recipe.id}"} for what it found` };
+   },
+ });
+ 
+--- a/service/src/18-workflows.mjs
++++ b/service/src/18-workflows.mjs
+@@ -15,12 +15,12 @@
+ const START_CODE = () => [startModel, notBrainsSpark, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
+   startingNow, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
+   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
+-  recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache];
++  recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull];
+ const WORKFLOWS = [
+   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
+     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
+     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words ("qwen coder").', spark: 'Only when the owner named the Spark; otherwise Spark Console picks the one with room.' },
+-    changes: 'Downloads it if needed, may stop another model on that Spark to make room (and says which), starts the engine, checks it answers a test prompt, measures its speed and saves the setup as a recipe.',
++    changes: 'Downloads it if needed (a repo from outside Recipes joins them after its download), may stop another model on that Spark to make room (and says which), starts the engine, checks it answers a test prompt, measures its speed and saves the setup as a recipe.',
+     takes: 'A few minutes from disk; downloading adds about a minute per 10 GB.',
+     failures: START_FAILURES, code: () => [...START_CODE(), deploy, plan, dockerRunCommand] },
+   { id: 'start_model_across', action: 'start_model', title: 'Start one model across two Sparks',
+@@ -39,10 +39,11 @@
+   { id: 'find_setups', action: 'find_setups', title: 'Find setups for a model',
+     when: 'The owner wants a model’s setups (configs, speeds) looked up now, or they were never looked up or are over a week old. Not to start anything: start_model picks the best setup it knows by itself.',
+     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
+-    changes: 'Nothing on the Sparks. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena and eugr’s spark-vllm-docker, and keeps the setups it finds (each with its command, image and measured speed) in Recipes.',
++    changes: 'Nothing on the Sparks. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps the setups it finds (each with its command, image and measured speed) in Recipes. A repo that isn’t in Recipes yet is added first.',
+     takes: 'Under a minute.',
+     failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next daily look tries it again.' }],
+-    code: () => [digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage] },
++    code: () => [digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage,
++      cardSetups, cardText, addModel, versionOf, hfFixture, namedInFull] },
+   { id: 'restart_model', action: 'restart_model', title: 'Restart a model as it was',
+     when: 'One of Spark Console’s models on one Spark stopped or crashed, and the owner wants it back exactly as it was.',
+     inputs: { spark: 'The Spark it’s on.', container: 'Its container, from running_models or workloads.' },
+--- a/test/dig.test.mjs
++++ b/test/dig.test.mjs
+@@ -0,0 +1,54 @@
++// A model's own card on Hugging Face as a recipe source (A9, R27): dig.fromCard reads only the commands in a card's code
++// blocks that serve that very repo, never its words, and each one still goes through dig.vetSetup like any other source.
++// Pure: no fleet, no web.
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import * as dig from '../service/dig.mjs';
++
++const PINNED = 'vllm/vllm-openai@sha256:' + 'a'.repeat(64);
++const rules = { engines: { vllm: { pairs: true }, sglang: { pairs: true }, 'llama.cpp': {} }, sources: ['vllm/vllm-openai', 'lmsysorg/sglang', 'ghcr.io/ggml-org/llama.cpp'],
++  defaultImage: e => ({ vllm: PINNED, sglang: `lmsysorg/sglang@sha256:${'b'.repeat(64)}`, 'llama.cpp': `ghcr.io/ggml-org/llama.cpp@sha256:${'c'.repeat(64)}` })[e] || null };
++const fence = cmd => `\`\`\`bash\n${cmd}\n\`\`\`\n`;
++
++test('a fenced command for the repo itself is one setup: kind model-card, its own page, only its flags', () => {
++  const [s, ...more] = dig.fromCard(`# Name\n\n${fence('vllm serve org/Name --max-model-len 32768 --max-num-seqs 4')}`, 'org/Name');
++  assert.equal(more.length, 0);
++  assert.equal(s.repo, 'org/Name');
++  assert.equal(s.source.kind, 'model-card');
++  assert.equal(s.source.url, 'https://huggingface.co/org/Name');
++  assert.equal(s.notes, 'From the model’s own card on Hugging Face');
++  const v = dig.vetSetup(s, rules);
++  assert.equal(v.deployable, true, v.why);
++  assert.equal(v.source.kind, 'model-card');
++  assert.equal(v.source.url, 'https://huggingface.co/org/Name');
++  assert.equal(v.repo, 'org/Name');
++  assert.deepEqual(v.args, ['--max-model-len', '32768', '--max-num-seqs', '4']);
++});
++
++test('words outside a block, a block for another repo, and no card at all give nothing', () => {
++  assert.deepEqual(dig.fromCard('Run it with: vllm serve org/Name --max-model-len 32768', 'org/Name'), []);
++  assert.deepEqual(dig.fromCard(fence('vllm serve someone/Other --max-num-seqs 64'), 'org/Name'), []);
++  assert.deepEqual(dig.fromCard(null, 'org/Name'), []);
++  assert.deepEqual(dig.fromCard(fence('vllm serve org/Name'), ''), []);
++});
++
++test('the same checks as any setup: a chat template file isn’t one-click; eight GPUs isn’t a Spark setup', () => {
++  const [t] = dig.fromCard(fence('vllm serve org/Name --chat-template ./x.jinja'), 'org/Name');
++  assert.ok(t, 'returned');
++  const v = dig.vetSetup(t, rules);
++  assert.equal(v.deployable, false);
++  assert.match(v.why, /uses --chat-template/);
++  const [big] = dig.fromCard(fence('vllm serve org/Name --tensor-parallel-size 8'), 'org/Name');
++  assert.equal(dig.vetSetup(big, rules), null);
++});
++
++test('llama.cpp: the repo and its file', () => {
++  const [s] = dig.fromCard(fence('llama-server -hf org/Name:Q4_K_M -c 8192'), 'org/Name');
++  assert.deepEqual({ engine: s.engine, repo: s.repo, file: s.file }, { engine: 'llama.cpp', repo: 'org/Name', file: 'Q4_K_M' });
++});
++
++test('at most six a card; a command with a word over 300 characters is skipped', () => {
++  const seven = [1, 2, 3, 4, 5, 6, 7].map(n => fence(`vllm serve org/Name --max-num-seqs ${n}`)).join('\n');
++  assert.equal(dig.fromCard(seven, 'org/Name').length, 6);
++  assert.deepEqual(dig.fromCard(fence(`vllm serve org/Name --served-model-name ${'x'.repeat(301)}`), 'org/Name'), []);
++});
+--- a/test/change.test.mjs
++++ b/test/change.test.mjs
+@@ -705,7 +705,69 @@
+     }
+     assert.match(found.source.url, /NVIDIA\/local-ai-inference-recipes/);
+     assert.ok(found.args.includes('--max-model-len'), JSON.stringify(found));
++  });
++  // A9: a Hugging Face repo started or looked up by its full name joins Recipes; its own card is a source (read last,
++  // code blocks for that very repo only). The dig fixture stands in for Hugging Face for testorg/Nova-2B and Qwen/Qwen3-32B.
++  test('a model started by its full name joins Recipes, starts with the setup from its model card, and is one click after', { timeout: 300000 * SLOW }, async () => {
++    assert.ok(!(await recipeModel('nova-2b')), 'not in Recipes yet');
++    const q = await ok('start_model', { model: 'testorg/Nova-2B' }, keys.act.token);
++    assertQuestion(q);
++    assert.match(q.question, /isn’t in your recipes\. Download it from Hugging Face, add it to your recipes/);
++    assert.ok(!(await operations()).some(o => o.model === 'testorg/Nova-2B'), 'nothing started');
++    const x = await ok('start_model', { choice: q.choices[0].choice }, keys.act.token);
++    assert.equal(x.outcome, 'started', JSON.stringify(x));
++    assert.ok(!x.sparks.includes('spark2'), JSON.stringify(x));
++    assert.match(x.note, /added/);
++    const w = await finished(x.operation, keys.look.token, { timeout: 240000 });
++    assert.equal(w.status, 'completed', JSON.stringify(w));
++    const log = (await api(`/jobs/${x.operation}`)).json.log.join('\n');
++    assert.match(log, /Added Nova-2B to Recipes/, log);
++    assert.match(log, /Looking for Nova-2B’s best setups/, log);
++    assert.match(log, /Starting it with recipe setup [0-9a-f]{10}/, log);
++    const spark = x.sparks[0], args = readFileSync(mock(spark, 'last-run-args'), 'utf8').split('\n');
++    assert.ok(args.includes('--max-num-seqs') && args.includes('4'), args.join(' '));
++    assert.ok(!args.includes('--trust-remote-code'), 'the card’s words are never read');
++    const nova = await recipeModel('nova-2b');
++    assert.equal(nova?.added, true, JSON.stringify(nova));
++    const found = nova.setups.filter(s => s.found);
++    assert.equal(found.length, 1, JSON.stringify(found));
++    assert.deepEqual({ kind: found[0].source.kind, url: found[0].source.url, deployable: found[0].deployable }, { kind: 'model-card', url: 'https://huggingface.co/testorg/Nova-2B', deployable: true });
++    assert.ok(JSON.parse(readFileSync(join(T.fleet.stateDir, 'added-models.json'), 'utf8')).models.some(m => m.id === 'nova-2b'));
++    assert.match((await call(keys.look.token, 'recipe_detail', { id: 'nova-2b' })).text, /"source":"model-card"/);
++    // Stopped, then started again by name: no question, and the setup it used.
++    const s = await ok('stop_model', { spark, container: 'sc-testorg--Nova-2B' }, keys.act.token);
++    assert.equal((await finished(s.operation)).status, 'completed');
++    const again = await ok('start_model', { model: 'testorg/Nova-2B', spark }, keys.act.token);
++    assert.equal(again.outcome, 'started', JSON.stringify(again));
++    assert.equal(again.setup, found[0].id);
++    assert.equal((await finished(again.operation, keys.look.token, { timeout: 240000 })).status, 'completed');
++    const s2 = await ok('stop_model', { spark, container: 'sc-testorg--Nova-2B' }, keys.act.token);
++    assert.equal((await finished(s2.operation)).status, 'completed');
+   });
++  test('find_setups adds a model that isn’t in Recipes instead of refusing', { timeout: 120000 * SLOW }, async () => {
++    const q = await call(keys.act.token, 'find_setups', { model: 'Qwen/Qwen3-32B' });
++    assert.equal(q.isError, false, q.text);
++    assert.match(q.value.question || '', /Qwen\/Qwen3-32B isn’t in your recipes\. Add it and look up its setups\?/, q.text);
++    assert.ok(!(await api('/recipes')).json.models.some(m => m.variants?.some(v => v.repo === 'Qwen/Qwen3-32B')), 'not added by the question');
++    // The owner's own call names it in full: no question.
++    const r = await api('/actions/find_setups', { method: 'POST', body: { model: 'Qwen/Qwen3-32B' } });
++    assert.equal(r.status, 200, r.text);
++    assert.deepEqual({ outcome: r.json.outcome, added: r.json.addedToRecipes }, { outcome: 'started', added: true });
++    for (const until = Date.now() + 90000 * SLOW; (await api(`/jobs/${r.json.operation}`)).json.status === 'running'; await new Promise(res => setTimeout(res, 500))) assert.ok(Date.now() < until);
++    assert.equal((await api(`/jobs/${r.json.operation}`)).json.status, 'completed');
++    const id = /recipe_detail \{"id":"([^"]+)"\}/.exec(r.json.next)?.[1];
++    const d = await call(keys.look.token, 'recipe_detail', { id, all: true });
++    assert.equal(d.isError, false, d.text);
++    const card = d.value.setups.filter(s => s.source === 'model-card');
++    assert.equal(card.length, 1, JSON.stringify(d.value.setups));
++    assert.deepEqual({ engine: card[0].engine, deployable: card[0].deployable }, { engine: 'sglang', deployable: true });
++    assert.ok(card[0].args.includes('--context-length'), JSON.stringify(card[0]));
++    // The agent's earlier choice still works: it's in Recipes now, so it only looks.
++    const again = await call(keys.act.token, 'find_setups', { choice: q.value.choices[0].choice });
++    assert.equal(again.value?.outcome, 'started', again.text);
++    assert.ok(!('addedToRecipes' in again.value));
++    assert.equal((await finished(again.value.operation)).status, 'completed');
++  });
+ });
+ 
+ describe('saved workflows', () => {
+--- a/test/mock/dig-fixture.json
++++ b/test/mock/dig-fixture.json
+@@ -9,5 +9,7 @@
+   "image": "vllm/vllm-openai@sha256:3f7dd5b777d34d1724456ce71f87385dca288c3bb23029ab27dee358f5d2b971",
+   "sparks": 1, "args": ["--max-model-len", "16384", "--gpu-memory-utilization", "0.3"], "env": {}, "perf": {"decodeTokS": 140},
+   "source": {"url": "https://github.com/NVIDIA/local-ai-inference-recipes/blob/main/models/paddlepaddle/paddleocr-vl-1.6/dgx-spark/linux/vllm/bf16/recipe.yaml", "author": "NVIDIA", "date": "2026-10-15", "kind": "nvidia"},
+-  "credibility": "high", "notes": "stand-in for NVIDIA's recipe file"}
++  "credibility": "high", "notes": "stand-in for NVIDIA's recipe file"},
++ {"hf":{"id":"testorg/Nova-2B","gated":false,"downloads":7,"pipeline_tag":"text-generation","config":{},"siblings":[{"rfilename":"config.json","size":700},{"rfilename":"model.safetensors","size":1000000000}]},"card":"# Nova 2B\n\nWords outside a block are never read: vllm serve testorg/Nova-2B --trust-remote-code\n\n```bash\nvllm serve testorg/Nova-2B --max-model-len 32768 --max-num-seqs 4\n```\n\n```bash\nvllm serve someoneelse/Other-7B --max-num-seqs 64\n```\n"},
++ {"hf":{"id":"Qwen/Qwen3-32B","gated":false,"downloads":9,"pipeline_tag":"text-generation","config":{},"siblings":[{"rfilename":"config.json","size":700},{"rfilename":"model.safetensors","size":64000000000}]},"card":"```bash\npython3 -m sglang.launch_server --model-path Qwen/Qwen3-32B --context-length 32768\n```\n"}
+ ]
+--- a/test/README.md
++++ b/test/README.md
+@@ -49,13 +49,14 @@
+ | File | What |
+ |---|---|
+ | `door.test.mjs` | The agent door (MCP): handshake and JSON-RPC envelope errors; the 22 tools a new key sees (the 21 read actions and `ask_sparkie`), with valid arguments; per-tool invalid arguments (unknown, missing, wrong type, pattern, range, enum, length, nonexistent), each refused with its code (`[invalid]`, `[not_found]`, …); Spark names as people say them (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); secret masking; auth (keys, Content-Type, Origin, member/stranger identities, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions` (24 actions: 21 read, 3 change; `ask_sparkie` isn't one); rate limits (120 a minute, 3 tools at once, 6 web searches a minute). |
+-| `change.test.mjs` | The 3 change actions through the door. Who: a new key looks only (22 tools), `PUT /agents/<id> {act}` gives 25; the owner's switches: paused refuses every change but not reads, an unreadable settings file counts as paused. Names: already running by any name; a name matching several models → a question whose choices are ids only, used once, alone, by whoever was asked; unknown, draft, remote-code and unsafe `spark.json` models refused. Rails: a pair whose cable isn't "full", 8 GB kept free / not enough / unknown memory, Spark 2 only when named, room only by stopping a container Spark Console didn't start → a question only the owner answers (an agent's "yes" is refused); a model that answers Sparkie's chats or apps → the same. Deploys that complete (three Sparks at once): start → asking again while it starts gives the same operation (`already-starting`, no second job) → `wait_operation` → `running_models`; stop; restart (room checked first); a restart while another holds the port fails cleanly; put-back when the new model crashes, and when memory measured after the stops is short; a two-Spark start, a one-Spark start that would stop a part (refused), stopping both parts. What stop/restart won't touch. A model not on disk: downloaded (never onto Spark 2), and a pause stops the operation at its next step. `audit.jsonl` lines. |
++| `change.test.mjs` | The 3 change actions through the door. Who: a new key looks only (22 tools), `PUT /agents/<id> {act}` gives 25; the owner's switches: paused refuses every change but not reads, an unreadable settings file counts as paused. Names: already running by any name; a name matching several models → a question whose choices are ids only, used once, alone, by whoever was asked; unknown, draft, remote-code and unsafe `spark.json` models refused. Rails: a pair whose cable isn't "full", 8 GB kept free / not enough / unknown memory, Spark 2 only when named, room only by stopping a container Spark Console didn't start → a question only the owner answers (an agent's "yes" is refused); a model that answers Sparkie's chats or apps → the same. Deploys that complete (three Sparks at once): start → asking again while it starts gives the same operation (`already-starting`, no second job) → `wait_operation` → `running_models`; stop; restart (room checked first); a restart while another holds the port fails cleanly; put-back when the new model crashes, and when memory measured after the stops is short; a two-Spark start, a one-Spark start that would stop a part (refused), stopping both parts. What stop/restart won't touch. A model not on disk: downloaded (never onto Spark 2), and a pause stops the operation at its next step. A Hugging Face repo started or looked up by its full name joins Recipes and its own card's setup is used (the dig fixture stands in for Hugging Face for the repos it lists with `hf` and `card`). `audit.jsonl` lines. |
+ | `pause.test.mjs` | Agents pausing themselves (`SPARK_CONSOLE_AGENT_CHANGES_PER_HOUR=3` here): three failed agent operations in a row; 3 changes in an hour (an agent's and Sparkie's count; an `already`, and the owner's button press, don't); then a change is refused (403), settings show `halted` and `autoPaused`, a notice is in `events.jsonl` and an audit line `pause-agents`; Sparkie is paused too, the owner's buttons still run; resuming. The service's clock moves an hour between the cases. |
+ | `heal.test.mjs` | Self-healing (`SPARK_CONSOLE_HEAL_MIN_RUN_MS` = 1 minute here): a console model that crashes is restarted (a `healing` event, an operation as the owner, an audit line), at most twice an hour, counted in `heal-tries.json` (tries from before the service started count; then `heal-skipped`); left alone: killed for memory, a log saying out of memory, exit 255, ran less than the minimum, a Spark that went offline or came back in the last 30 minutes, a two-Spark part, Spark 2, a container Spark Console didn't start, one the console stopped itself, self-healing off, agents paused. |
+ | `sparkie.test.mjs` | Sparkie in the owner's chats: the stream starts with `started`; `tool` events, results in the answer, `tools` on the saved message; every action is offered (a tool that doesn't exist → `[error] No tool called …`); a static system prompt, the fleet record in the last user message; members' chats offer none. Requests run at once (a polite "can you …" too), also after reading a log; questions, "if …", "whether to …", "could you tell me …", "don't …", "…, actually don't", "keep … running", a model or container the words don't point to (a tie too), "everything on spark N" said in another message and more than 4 changes become a question with a button (`needs-ok`, labels only, no ids for the model; a model passing an id gets 403). A Spark the owner didn't name is dropped (Spark Console picks one). A start that stops one of Spark Console's models runs and says what it stopped. Buttons: `POST /chats/<id>/choose` (checks; runs as the owner, a notice with the outcome, the operation's result posted later); a whole-message "yes" presses the one open button without the model (also after an operation's result came in), "yes but …" doesn't; questions from actions are buttons; follow-up questions come back as buttons; "no" puts them away; another chat's button can't be pressed. Busy (409), more than 4 at once (429), a member's 1 (429) are plain HTTP errors. |
+ | `ask.test.mjs` | `ask_sparkie`: a conversation tagged with the agent (owner's list shows `agent`, messages carry `from`), the answer's shape, continuing and fetching it, audit lines; a look-only key's change requests turned down in the reply; another agent's conversation → 404; argument checks; choices for a change that wasn't clearly asked for, taken with `{conversation, choice}` (not by another agent; a key made look-only since gets the refusal); a start that stops something asks first; an operation's result (completed or failed) posted into the conversation; one answer at a time per agent, two agents at once, never the owner's slots; a 45 s answer: `thinking`, and `spark ask` keeps waiting. |
+ | `workflows.test.mjs` | Workflows (docs/contract.md, sections 6 and 15), with nothing counted as validated here: the list (versions, when to use each, known problems; also through the door and `/health`); an agent's plain call doesn't run an unvalidated workflow, it's offered the validation run as a choice instead (v3.1); the owner's first run from a button (428, then `X-Spark-Validate`) validates it and has to answer a test prompt; then agents can; starting across two Sparks is validated on its own; a version not in the lock is off everywhere; a model that loads but doesn't answer fails and what it stopped runs again; out of memory → the context is capped and it's tried again, and that setup is recorded; 3 failed attempts → put back, with what was tried; a rejected setting is dropped by name and the result says so; a stop is checked; from the owner's chat the first restart asks once (a button, not a typed "yes"), one that doesn't answer is stopped again, and the next validates it. |
+ | `agent-setup.test.mjs` | The brain's agent setup (contract 3.8): `aphex-agent` in `config.json` has thinking on, native 262K context (no YaRN), the model card's sampling, 32K outputs and 4 at once; with it chosen, every request carries those (with tools too), and a message may take more than 6 tool rounds. The aphex setups are unchanged. |
++| `dig.test.mjs` | A model's own card as a recipe source (A9): `dig.fromCard` reads only code-block commands for that very repo (never the card's words, never another repo's), at most six, skipping huge ones; each still goes through `dig.vetSetup` (a chat template file isn't one-click, eight GPUs isn't a Spark setup); llama.cpp's repo and file. Pure: no fleet. |
+ | `build.test.mjs` | `service/server.mjs` is exactly `service/src/*.mjs` joined (`tools/build-server.mjs`). |
+ | `gateway.test.mjs` | One address for every model (`/v1`): running models listed and answered by name wherever they run; a call marks a model in use for 30 minutes, so a start that would stop it asks first (naming who used it); a model that isn't running starts when called if nothing has to stop (503 with Retry-After, then it answers); one that would need a stop gets 409. |
+ | `desired.test.mjs` | What should be running: a finished start is on the list; one stopped outside Spark Console becomes held (a notice), Bring back starts it again, Forget takes it off; the owner's cancel puts back what a start stopped; the owner's stop on a Spark with a start loading cancels the start first; "undo that" in a chat reverses that chat's last change. |
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -89,11 +89,11 @@
+   HEAL -->|"bring back, via watcher (models: restart_model or start_model; apps: keep_running)"| RUN
+   HEAL -->|"crash restart: restartChecked, direct"| JOBS
+   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
+-  JOBS -->|"a start that answered"| KNOW
++  JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
+   JOBS -->|"desired list, validation, chat notice, event"| STATE
+   SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+   KNOW -->|"verified, found setups, memory"| STATE
+-  KNOW -->|"research jobs, the daily timer and search_huggingface read"| WEB
++  KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
+   STATE -->|"access, sessions, agent keys, passkeys"| GATE
+   STATE -->|"pause, validations"| RUN
+   STATE -->|"desired list, heal tries"| HEAL
+@@ -112,7 +112,7 @@
+ 4. **Tool call.** The brain asks for `start_model`; `runOne` passes it straight to `runAction` as via `sparkie`, with the intent and the words in ctx (`14-chats.mjs:224-228`, `:306`).
+ 5. **runAction** (`16-actions.mjs:286`): owner, input schema, (a read would return here), may change, pause, intent gate (`sparkieCheck`, `:251`; unclear becomes a button), workflow `start_model` (untested is refused; tested but not yet validated runs as its validation run, `:330`), hourly breaker.
+ 6. **Rails.** `startModel` (`17-changes.mjs:404`): `notBrainsSpark`, `mustUse`, a fresh `inventory`, `resolveModelName`, the already-starting and already-running returns, `agentSafeSetup`, `placeModel` then `plan` then `railsFor` (`:133`, `:96`), the "in use in the last 30 minutes" question, `bestHow` (`:164`), the refusal of setups that run the model’s own code.
+-7. **Job.** For a model on disk, `launch` (`17-changes.mjs:306`) claims Spark 3 and starts a `deploy` job; `runAction` tags it with chat and workflow and writes the audit line (`16-actions.mjs:358-369`). For a model not on disk, a `start-model` job is created with no claim, downloads first, and claims the Spark only then (`17-changes.mjs:471`, `:492`).
++7. **Job.** For a model on disk, `launch` (`17-changes.mjs:306`) claims Spark 3 and starts a `deploy` job; `runAction` tags it with chat and workflow and writes the audit line (`16-actions.mjs:358-369`). For a model not on disk, a `start-model` job is created with no claim, downloads first, and claims the Spark only then (`17-changes.mjs:471`, `:492`). A repo from outside Recipes joins them (`addModel`) once its download worked; the job then waits for the look (`refreshSetups`) and `bestHow` picks, as for any recipe.
+ 8. **Deploy.** `startWithFixes` runs `deploy` (`07-jobs.mjs:122`): plan again, stop, copy, pull, measure memory, then `dockerRunCommand` (`05-library.mjs:355`) through `run` and `spawnOn` (`02-ssh.mjs:35`, `:5`).
+ 9. **Done check.** Once `/v1/models` is up (a curl on the Spark, through `run`), the service itself calls `http://<Spark 3 tailnet ip>:8000` for the test prompt (`answers`, `09-verified.mjs:54`) and a speed test, then `recordVerified` saves the run (`:91`). A failure gets a known fix and a retry (3 attempts, 30 minutes), or `putBack` (`17-changes.mjs:314`).
+ 10. **After.** The `finally` in `runJob` (`07-jobs.mjs:68-78`) releases the claim, empties the read cache, records the workflow run (which validates the version), updates `desired.json`, posts the result in the chat (and may schedule a carry-on turn) and writes the event.
+@@ -134,7 +134,7 @@
+ | Which build is tested | `service/workflows.lock.json` | `test/lock.mjs` only | `workflowStatus`, once at start | yes |
+ | Which version is validated | `validations.json` | `recordWorkflowRun` only | `workflowStatus` | yes |
+ | Proven runs | `verified.json` | `recordVerified` only | `bestHow`, `resolveHow`, page; `runningDetail` (names the setup only when a recorded run has exactly a running container’s model, engine, image, Spark count and flags) | yes |
+-| Recipes | `catalog.json` + `added-models.json` + `found-setups.json` | catalog builder; `addModel`; `digModel` | `recipeCatalog`, read fresh each call | yes |
++| Recipes | `catalog.json` + `added-models.json` + `found-setups.json` | catalog builder; `addModel` (the page’s add routes; `startModel`’s download job and `find_setups`, for a Hugging Face repo the asker named in full or said yes to); `digModel` | `recipeCatalog`, read fresh each call | yes |
+ | Saved workflows | `saved-workflows.json` | `save_workflow`, `forget_workflow`, `run_workflow` (last run, only for the steps it ran) | `workflows`, `run_workflow` | yes |
+ | A Spark’s last readings | `knowledge.sparks[id].gpu` (status check) and `.readings` (watcher); copied into `spark-offline` as `last` | `noteSparkStates`, `watchSpark` | `fleet_status`, `spark_diagnostics` (`darkPeriods`), Sparkie’s fleet notes | with the knowledge file; used only when under 3 minutes old |
+ | Files in a Spark’s shared folder | `~/.local/share/spark-portal/workspaces/shared` on each Spark (outside the state folder and the daily copy) | the page’s files route (`sparkFiles`); `save_file` (new files only) | the page; `files` | yes |
+@@ -198,7 +198,7 @@
+ |---|---|---|---|
+ | **R25.** A change from Sparkie runs at once only when the asker’s own words (this message, plus the previous user message for the target) ask for that kind of change and name its target; else a button. Intent never comes from notices or tool results. Today the target check covers only arguments called `model`, `container`, `spark` and `sparks`: for `cancel_operation`, `save_workflow`, `forget_workflow`, `test_changes` and `undo_update` the kind word alone is enough (`run_workflow` has its own check, R35; `save_file` has its own, R37; `keep_running` has `appNamed`, R38). A change missing from `ACTION_KIND` is always a button. | Text Sparkie read must not cause changes. | 16-actions.mjs:159-160, :180-192, :251-263, :302-317; 14-chats.mjs:220-226 | test: sparkie.test.mjs:101-179 |
+ | **R26.** Outside text reaches the brain labelled as data: not as an ordinary user message (program messages carry `notice: true`), not in the system prompt, not into memory without a button. `running_models {detail}` carries a container’s own command: it is labelled `textFromSparks`, and a turn that called it counts as having read outside text (`readOutside`), though plain `running_models` stays an inside read. Today: the system prompt carries memory lines (agents’ too) and, in chats without tools, the page’s snapshot; the carry-on message is stored as role user with `auto: true` and later goes to the brain unlabelled; an agent that may change things calls `remember` over `/mcp` with no gate and no button; after reading outside text a line still needs no button when 60% of its words are the owner’s. | The brain acts on what it reads. | 14-chats.mjs:53-54, :143, :183, :190 (and the `readOutside` line in `sparkieTurn`); 20-memory.mjs:16-22, :49, :75-88; 20-mcp.mjs:212 | test: sparkie-more.test.mjs:38-59; detail.test.mjs |
+-| **R27.** Setup commands are read by code, vetted by `dig.vetSetup`, and checked again by `resolveHow` at use. Today that covers Recipes setups and verified runs; a model’s own `spark.json` is checked only on the Sparkie and agent path (`agentSafeSetup`): page Deploy with no setup named runs it as written, and the brain switch puts its args and image into the brain’s docker run. | One click runs them as written. | 11-setups.mjs:177, :283-316; 17-changes.mjs:114-129, :420; 24-handler.mjs:425-429, :545-553; 13-main-model.mjs:229-247 | test: change.test.mjs:263 |
++| **R27.** Setup commands are read by code, vetted by `dig.vetSetup`, and checked again by `resolveHow` at use. Today that covers Recipes setups and verified runs; a model’s own `spark.json` is checked only on the Sparkie and agent path (`agentSafeSetup`): page Deploy with no setup named runs it as written, and the brain switch puts its args and image into the brain’s docker run. A model’s own card on Hugging Face is a source (`cardText`, `cardSetups`, `dig.fromCard`): only commands in its code blocks that serve that very repo, kind `model-card`, read last, no speed, never a base model’s card. | One click runs them as written. | 11-setups.mjs:177, :283-316; 17-changes.mjs:114-129, :420; 24-handler.mjs:425-429, :545-553; 13-main-model.mjs:229-247; 11-setups.mjs (`cardText`, `cardSetups`); dig.mjs (`fromCard`) | test: change.test.mjs:263; dig.test.mjs; change.test.mjs (“Recipes knows each model’s best setup”) |
+ 
+ ### Shipping
+ 
+@@ -206,7 +206,7 @@
+ |---|---|---|---|
+ | **R28.** Edit parts, never `server.mjs`; rebuild. A part’s name matches `^\d{2}-[a-z0-9-]+\.mjs$` (a capital or underscore is silently left out of the build; the installer compares against a shell glob, so a name that sorts differently makes it refuse); imports only in part 01; top-level code uses earlier parts only; no npm packages. | Parts are concatenated as written. | tools/build-server.mjs:15; deploy/host-on-portal.sh:24; 01-setup.mjs:5-12 | test: build.test.mjs:10 |
+ | **R29.** `node test/lock.mjs` passes on the exact tree before installing; every action is in `TOOLS` or `CHANGE_TOOLS`. The installer compares only the lock’s build id (`server.mjs`, `dig.mjs`, `passkey.mjs`), so a `worker.py`-only edit installs with every workflow untested (off) and crash restarts off. | An unlocked build has every workflow off. | deploy/host-on-portal.sh:48, :54-57; 01-setup.mjs:17-21; 18-workflows.mjs:14, :66, :81; test/lib.mjs:40-44 | test: door.test.mjs:130 |
+-| **R30.** `/health` answers before every gate: on the socket and the local port with `ok`, `build`, `jobsRunning`, `replying`, `workflows`; through Funnel only `{ok:true}`. Installer, `restore.sh` and watchdog match the exact text `"ok":true`. Shipped files are in the installer lists. `DEV_LOGIN`, `SERVE_PORT`, `DIG_FIXTURE`, `WORKFLOW_LOCK`, `ASSUME_VALIDATED`, `RELEASES`, `TELEGRAM_API`, `SECRETS_FILE` and `TELEGRAM_LIMITS` need `SPARK_CONSOLE_ALL_LOCAL=1`; `SPARK_CONSOLE_WORKER` (the code run on every Spark), `STATE_DIR`, `SOCKET`, `AGENT_CHANGES_PER_HOUR` and every `*_MS` switch work without it. | Installer, rollback and watchdog parse it. | 24-handler.mjs:53-58; 12-status.mjs:5; 01-setup.mjs:46-50, :89; deploy/host-on-portal.sh:20-22, :150, :202-213, :255 | test: fleet.test.mjs:23-55 |
++| **R30.** `/health` answers before every gate: on the socket and the local port with `ok`, `build`, `jobsRunning`, `replying`, `workflows`; through Funnel only `{ok:true}`. Installer, `restore.sh` and watchdog match the exact text `"ok":true`. Shipped files are in the installer lists. `DEV_LOGIN`, `SERVE_PORT`, `DIG_FIXTURE` (an entry `{hf, card}` in it also stands in for Hugging Face, `versionOf` and the card read, for that repo), `WORKFLOW_LOCK`, `ASSUME_VALIDATED`, `RELEASES`, `TELEGRAM_API`, `SECRETS_FILE` and `TELEGRAM_LIMITS` need `SPARK_CONSOLE_ALL_LOCAL=1`; `SPARK_CONSOLE_WORKER` (the code run on every Spark), `STATE_DIR`, `SOCKET`, `AGENT_CHANGES_PER_HOUR` and every `*_MS` switch work without it. | Installer, rollback and watchdog parse it. | 24-handler.mjs:53-58; 12-status.mjs:5; 01-setup.mjs:46-50, :89; deploy/host-on-portal.sh:20-22, :150, :202-213, :255 | test: fleet.test.mjs:23-55 |
+ | **R31.** From the internet (security audit, 2026-11-11): a new agent key is refused through Funnel until the owner turns on “Works from anywhere” (`internet: true`, with the passkey; keys made before have no field and keep working); the editors open only within 12 hours (`EDITOR_PASSKEY_MS`) of this device using the passkey (signing in or confirming); code-server’s `/proxy/` and `/absproxy/` are never passed on; `undo_update` runs as asked only for the owner on their tailnet (page, API, or Sparkie in the owner’s own chat) or from an owner-only button pressed on the page (`ctx.ownerConfirmed`); anyone else (an agent, directly or through `ask_sparkie`, a signed-in device, Telegram, a workflow step, or a plain button pressed by any of those) gets that owner-only button, and `POST /rollback` from a signed-in device needs the passkey; sign-in, code and poll limits are per address only (no shared cap anyone can fill), polling a real code is never counted; at most 3 waiting codes per address (an IPv6 /64 is one), and at 300 the oldest code of the address with the most waiting makes room; every socket gets an `error` listener before anything else, and an uncaught network error (`ECONNRESET`, `EPIPE`) never ends the process; secret masking uses bounded patterns (private keys are found by searching forward, and one cut off before its END is hidden to the end), the audit masks 200 characters past its 1,000-character cut, and the agent door reads at most 256 KB. | A stolen cookie or leaked key, a reset connection or a flood must not become the owner, end the console or lock the owner out. | 20-mcp.mjs (`keyViewer`, `maskSecrets`); 21-editor.mjs (`editorTarget`, `editorUpgrade`); 22-sessions.mjs (`limited`, `editorPasskeyFresh`, `markPasskey`); 22-passkey.mjs (`passkeyGate`); 14-chats.mjs (`runChoice`); 18-workflows.mjs (`undo_update`); 25-backup-and-start.mjs | test: internet.test.mjs, “security fixes” |
+ | **R32.** Telegram (2026-11-11): the console polls Telegram from Spark 2 and never opens a route for it; only one loop polls, started after the local port is bound, and a 409 backs off. An update counts only from the paired private chat and user id; everyone else gets silence (no reply, chat, brain call or write per update). The words go through `sparkieTurn` with `ctx.channel`, so R25 holds; a press or typed yes from Telegram runs as via `telegram`, never `page`, and never sets `ownerConfirmed`. Any guard that treats a session as “not on the tailnet” treats a channel the same. Actions in `PAGE_ONLY` (`undo_update`, memory, saved workflows, and any later action that changes Sparkie’s code, skills, settings, secrets or connectors, or installs) never run from a channel: they become an owner-only button, pressed on the page with the passkey. No action may change access, keys, passkeys or devices. `tell()` is the only sender and sends only a reply, the result or carry-on of work started in that chat, or a fixed line: plain text, previews off, masked; results from fixed templates with no error, log, address or secret; the pairing code only in the answer to the passkey-confirmed `PUT` or `POST` that made it, never a plain read; at most 20 sends a minute and 6 results an hour; 20 owner messages a minute in, one turn at a time. The bot token and the chat binding live only in `~/.config/spark-console/secrets.json` (0600), outside the state folder, are typed only on the passkey page, and appear in no result, log, event or audit line. `SPARK_CONSOLE_TELEGRAM_API`, `SPARK_CONSOLE_SECRETS_FILE` and `SPARK_CONSOLE_TELEGRAM_LIMITS` need `SPARK_CONSOLE_ALL_LOCAL=1`. Telegram can always be removed without the passkey and is never needed to sign in. | A stolen Telegram session or SIM swap must not become the owner on the page, undo a fix, plant memory or lock the owner out; nothing leaves the house that the owner did not ask for. | 21-telegram.mjs (`tgCall`, `tgLoop`, `tgUpdate`, `tgTryPair`, `telegramRoute`); 20-tell.mjs (`tell`, `tellResult`, `tellCarry`); 03-secrets.mjs; 16-actions.mjs (`PAGE_ONLY`, `runAction`); 18-workflows.mjs (`undo_update`); 14-chats.mjs (`sparkieTurn`, `runChoice`, `postResult`, `continueTask`); 22-passkey.mjs | test: telegram.test.mjs |
+ | **R33.** Ways in that need no other device (the owner, 2026-11-11): three, any one enough. Tailscale on the device; the owner’s passkey; one of 10 recovery codes. Recovery codes are made only with the passkey (`POST /auth/recovery`, and never from an internet session while no passkey exists), are shown once, are kept only as hashes in the secrets file (never the state folder, so no backup or rollback revives a used one), work once each, and are limited per address only (10 tries in 10 minutes). Each use is on the audit and a notice says how many are left. A browser signed in with a recovery code, or let in with a code the owner approved with the passkey, may add its own passkey once within `NEW_DEVICE_PASSKEY_MS` (15 minutes) without another passkey to confirm it (`newDevicePasskeyOpen` in `passkeyGate`); every passkey added from an internet session is a notice. Nothing else is loosened: every other gated change still needs a passkey. | Being on only a phone or only a laptop, or on a browser that bypasses Tailscale, must never lock the owner out; a used recovery code must never work again. | 22-sessions.mjs (`recoveryCode`, `makeRecoveryCodes`, `useRecoveryCode`, `newDevicePasskeyOpen`, `/auth/signin/recovery`); 22-passkey.mjs (`passkeyGate`, `needsPasskey`); 24-handler.mjs (`/auth/recovery`, `/auth/passkey/register`) | test: internet.test.mjs, “recovery codes, and a fresh device’s own passkey” |
+@@ -222,7 +222,7 @@
+ |---|---|---|---|
+ | An action | `action({...})` at top level in a part numbered 16 or later (`16-actions.mjs:12`). Only kind `read` is special: every other kind is a change (`confirm` is not implemented). Scope is `fleet:read` or `fleet:act` (keys hold nothing else). `who: member` is unreachable (tools go to the owner only) | `TOOLS` or `CHANGE_TOOLS` (`test/lib.mjs:40-44`) and the counts 25 and 40 (`test/change.test.mjs:105,120,142`); for a change, `ACTION_KIND` and `CHANGE_WORDS` (`16-actions.mjs:159`, `:103`), `changeLabel` (`17-changes.mjs:69`), and its own target check in `sparkieCheck` for any argument not called model, container, spark or sparks; `INSIDE_READS` (`14-chats.mjs:62`) for a read of the console’s own numbers; `PLAN_SKIP` (`16-actions.mjs:196`) for an approval argument; the valid-argument tables in `door.test.mjs:348` and `fuzz.test.mjs:40` (door tests want string, integer, boolean or array properties and the Spark enum on any "spark" property) | a second route doing the same change; approval arguments in the schema; long work that does not return `{outcome:'started', operation}` at once |
+ | A workflow | a `WORKFLOWS` entry whose `code()` lists every function it runs (`18-workflows.mjs:19`); `workflowFor` (`:57`) | `validateChanged` (`:286`); id lists in `test/workflows.test.mjs:55` and `test/validate.test.mjs:51,81`; the ids hard-coded in `maybeHeal` (`18-workflows.mjs:256`), `bringBack` (`20-heal.mjs:79`), the bring-back route (`24-handler.mjs:490`) and the page (`public/app.js:1511`); a page button goes through `pageWorkflow`; a lock run (a new id is untested until then), then a validation run | hand-edit the lock or `validations.json` |
+-| A recipe source | a pure parser in `service/dig.mjs` (part of the build id); a fetcher, `sources` and `SOURCE_RANK` (`11-setups.mjs:124-156`) | the `code()` of `find_setups` (`18-workflows.mjs:45`); the source names in its description and workflow text (`17-changes.mjs:641`; `18-workflows.mjs:42`); `pinImage`’s registries (`11-setups.mjs:104-106`); a direct test of the parser (the fixture replaces every source with already-parsed setups, and no test imports `dig.mjs`) | let a model write a command; skip `dig.vetSetup`; fetch in tests; source kind `forum` (`bestHow` skips it) |
++| A recipe source | a pure parser in `service/dig.mjs` (part of the build id); a fetcher, `sources` and `SOURCE_RANK` (`11-setups.mjs:124-156`) | the `code()` of `find_setups` (`18-workflows.mjs:45`); the source names in its description and workflow text (`17-changes.mjs:641`; `18-workflows.mjs:42`); `pinImage`’s registries (`11-setups.mjs:104-106`); a direct test of the parser (test/dig.test.mjs imports dig.mjs; a `{hf, card}` fixture entry goes through `dig.fromCard`, the others are already-parsed setups) | let a model write a command; skip `dig.vetSetup`; fetch in tests; source kind `forum` (`bestHow` skips it); read a card’s words; take a card’s command for another repo |
+ | A known failure and fix | `START_FAILURES` (`17-changes.mjs:194`); first match wins | where fixes apply (`withoutRejected`, `fixFlags`, `clusterEnv`); a test in `workflows.test.mjs`; both start workflows change version | drop a flag the console sets; pass 3 attempts or 30 minutes |
+ | A read-only check | a probe script run with `run`, parsed with `fields` (pattern `05-library.mjs:142`), shared through `recent`; a loop copies `19-watcher.mjs:166-178` | a stub in `test/mock/bin`; the interval switch in `test/start-mock.mjs` | open your own ssh; change anything on a Spark |
+ | A saved workflow | no code: the owner’s `save_workflow` writes `saved-workflows.json` from existing actions (`18-workflows.mjs`). `checkSteps` looks at every step before step 1 (R35). Steps run via `workflow`: uncounted by the breaker, each its own validation run | `NOT_A_STEP` (`:132`) when a new action must not be a step | let a routine save routines or write memory; run steps as trusted |
+@@ -270,6 +270,7 @@
+ - **Found by reading, not run:** `pausedCheck` (`17-changes.mjs:31`) has no self-healing exception, so under an automatic pause a heal job fails at once; a read error on `memory.json` (permissions, too many open files) throws at `14-chats.mjs:230`, after `replying.add` (`:196`) and before the `try` (`:287`), leaving that chat "still answering".
+ - **Memory is looser than the contract.** An agent that may change things can replace or forget the owner’s lines; through `ask_sparkie` its statement is stored as the owner’s (`20-memory.mjs:49`).
+ - **The contract describes more than exists:** no approval links, Keeper, restart backoff or Memory page (the secret store is one file, for Telegram only so far); hand-started servers are never saved as recipes. `AGENTS.md` says the contract wins, so check fit against this map.
++- **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full name joins. From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is looked up daily. A model already on disk joins only through `find_setups`.
+ - **Smaller ones.** `link.gone` is never set (`chatReply` sets `link.detached`, on purpose), so closing the page does not stop a reply; model `sparkie` at `/v1` is the bare model, with no tools, prompt or memory; `/health` says little through Funnel.
+ 
+ ### Critical Files for Implementation
+--- a/docs/contract.md
++++ b/docs/contract.md
+@@ -1259,6 +1259,9 @@
+     model on disk. Starts pick from what's known: a run that worked here, then the brain's proven run made ordinary,
+     then Recipes' one-click setups by credibility and measured speed.
+   - The stand-in fleet reads `test/mock/dig-fixture.json` instead of the web (`SPARK_CONSOLE_DIG_FIXTURE`).
++  - *(2026-11-12)* A model started or looked up by its full Hugging Face name joins Recipes by itself (after its download, or
++    at once for find_setups), and the model's own card is a fifth source, read last (only the commands in its code blocks
++    that serve that very repo). This widens "only setups that hold up" to the maker's own command, still vetted like any other.
+   - All 16 entries were looked up on the real Sparks the same day: each has its NVIDIA recipe with the full command.
+   - Recipes lists only setups that hold up (the owner: confirmed ones people talk about, not one-offs with numbers
+     nobody else reports): low-credibility setups aren't listed or picked.

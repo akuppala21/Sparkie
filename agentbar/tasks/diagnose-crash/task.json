@@ -1,0 +1,6 @@
+{
+  "id": "diagnose-crash",
+  "title": "Find out from the logs why a model crashed, and fix its setup",
+  "contract": "10.4: find out from the logs why a model crashed, and fix it",
+  "minutes": 15
+}

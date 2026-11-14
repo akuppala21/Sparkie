@@ -1,0 +1,8 @@
+# This computer's own assistant settings
+.claude/
+# Never part of the app
+node_modules/
+.DS_Store
+*.zip
+__pycache__/
+test-results/

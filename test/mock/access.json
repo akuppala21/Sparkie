@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "ownerLogin": "owner@test",
+  "userName": "Test Owner",
+  "members": [
+    {
+      "id": "0123456789abcdef",
+      "login": "member@test",
+      "permissions": { "nodeIds": ["spark2", "spark3"], "chat": true, "files": "read", "sharedFiles": "none", "concurrentChats": 1, "deploy": false },
+      "addedAt": null
+    }
+  ],
+  "nodes": [
+    { "id": "spark1", "name": "Spark 1", "configured": true, "tailnetIp": "100.64.0.1", "sshHost": "test-spark1" },
+    { "id": "spark2", "name": "Spark 2", "configured": true, "tailnetIp": "100.64.0.2", "local": true },
+    { "id": "spark3", "name": "Spark 3", "configured": true, "tailnetIp": "100.64.0.3", "sshHost": "tester@100.64.0.3" },
+    { "id": "spark4", "name": "Spark 4", "configured": true, "tailnetIp": "100.64.0.4", "sshHost": "test-spark4" }
+  ],
+  "sshUser": "tester",
+  "publicHost": "console.test.ts.net:8443"
+}

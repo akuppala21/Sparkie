@@ -1,0 +1,22 @@
+#!/bin/bash
+# Stand-in curl on a test Spark. Sparkie's model goes to the real curl, at the stand-in model's port (MOCK_MODEL_PORT).
+case "$*" in *127.0.0.1:${MOCK_MODEL_PORT:-none}/*) exec /usr/bin/curl "$@" ;; esac
+url="${@: -1}"; port=$(printf '%s' "$url" | sed -nE 's#^http://127\.0\.0\.1:([0-9]+)/v1/models$#\1#p')
+# The port Spark Console's models serve on (MOCK_SERVE_PORT, the service's SPARK_CONSOLE_SERVE_PORT): it answers on this
+# Spark once one of Spark Console's model containers here (not Sparkie's, not a second part) has run for 4 seconds.
+# ~/.mock/serve-down holds every model there in "loading" (a test lets it answer by removing the file).
+if [ -n "$port" ] && [ "$port" = "${MOCK_SERVE_PORT:-none}" ]; then
+  [ -f "$HOME/.mock/serve-down" ] && exit 7
+  while IFS='|' read -r name state status ours model protect role cluster rank; do
+    [ "$state" = running ] && [ "$ours" = 1 ] && [ "$role" != main ] && [ "${rank:-0}" = 0 ] || continue
+    [ -f "$HOME/.mock/stuck-$name" ] && continue
+    f="$HOME/.mock/up-$name"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -ge 4 ] || continue
+    printf '{"object":"list","data":[{"id":"%s","object":"model"}]}' "$model"; exit 0
+  done < "$HOME/.mock/containers"
+  exit 7
+fi
+# A model server started outside the console answers /v1/models from ~/.mock/serve-<port>.
+[ -n "$port" ] && [ -f "$HOME/.mock/serve-$port" ] && { cat "$HOME/.mock/serve-$port"; exit 0; }
+# Anything else (a two-Spark model's head on its Tailscale address): up 4 seconds after any `docker run` here.
+for f in "$HOME"/.mock/up-*; do [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -ge 4 ] && exit 0; done
+exit 7

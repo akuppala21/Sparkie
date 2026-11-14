@@ -1,0 +1,5 @@
+qwen-recipe-aphex3k|running|Up 1 minute|0||
+sc-NVIDIA-Nemotron-Nano-9B-v2|exited|Exited (0) just now|1|NVIDIA-Nemotron-Nano-9B-v2|
+sc-Qwen--Qwen3-32B|exited|Exited (0) just now|1|Qwen--Qwen3-32B|
+sc-Qwen3-30B-A3B-Instruct-2507|exited|Exited (0) just now|1|Qwen3-30B-A3B-Instruct-2507||||
+sc-RadixArk--Qwen3.8-27B-NVFP4|running|Up 1 second|1|RadixArk--Qwen3.8-27B-NVFP4||||

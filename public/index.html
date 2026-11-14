@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0b0c0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sparks">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Spark Console</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="styles.css">
+<script src="theme.js"></script>
+<script src="qr.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<div id="app" class="booting">
+  <div class="boot">
+    <img class="logo-on-dark" src="nvidia-logo-white.svg" alt="NVIDIA" width="120" height="22">
+    <img class="logo-on-light" src="nvidia-logo-black.svg" alt="NVIDIA" width="120" height="22">
+    <span class="spinner" aria-hidden="true"></span>
+    <p>Connecting to your Sparks…</p>
+  </div>
+</div>
+</body>
+</html>

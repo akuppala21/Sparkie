@@ -1,0 +1,6 @@
+{
+  "id": "fix-model-list",
+  "title": "Fix a bug in Spark Console (the model list drops every model on the Sparks)",
+  "contract": "10.4: fix a bug in Spark Console",
+  "minutes": 30
+}

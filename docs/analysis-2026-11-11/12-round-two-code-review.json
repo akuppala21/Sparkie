@@ -1,0 +1,486 @@
+[
+ {
+  "item": "owner-words",
+  "summary": "Owner-words (safetynet-1) is close to its smaller spec: exact whole-message match, owner's own non-agent chat only, no action or tool, single notice, same restartBrain() and command for healing and /help, Docker StartedAt for the 10-minute floor, a stopped brain is never started, and /pause clears autoPaused with a truthful reply. I read the code and tests only; nothing was run.\n\nEight defects, none a lock-out:\n- Two at severity 3. The restart holds no claim on Spark 2, so Stop, Start or Switch of the brain can race it. The page's Send lock is shared across chats, so with a hung brain the word cannot be typed in a new chat for up to five minutes without a reload.\n- Four at severity 2. A '/' near miss with Sparkie down gets a generic error, not /help. /status reads healthy while a rerouted chat is dead. Four refusal guards have no test and one test comment claims a case it does not test. The by-hand resume line names the brain's Spark, not the console's.\n- Two at severity 1. A wording slip (\"1 minutes ago\") and the missing R19 note.\n\nSimplifications that keep the guard's intent: no claim-plus-rate-limit in favour of the shared flag and StartedAt floor (intent kept except for the claim, F1); the snapshot date dropped from /status along with /undo update; Telegram /status reusing statusText (masked, fixed template, no log or error text).",
+  "guardsKept": [
+   "1 Match only in the handler's chat branch, owner, non-agent chat, whole message, 40 chars max: kept (24-handler.mjs:628, 20-words.mjs:9-12). No URL or prefill sends a draft; the Cmd-K 'Ask Sparkie' auto-send is an explicit owner action and predates this.",
+   "2 Not an action; can only look, pause, or restart the existing container: kept. A stopped or missing container is refused, and there is no docker run or rm.",
+   "3 Restart only when running and started over 10 minutes ago by Docker's StartedAt: kept, with fail-closed on an unparseable time (wording defect F6).",
+   "4 Same restartBrain() with rendezvous removal, one in-flight flag that watchBrain checks, refused during brain start/stop/switch, audit line and fleet event: kept. 'Holds the claim on Spark 2 and releases it in a finally': missing, and not an acceptable simplification (F1).",
+   "5 Chat routed elsewhere: /restart says it would not help and changes nothing: kept. /status names the model but not that it is not answering: simplified, not ok (F4).",
+   "6 /status never waits on another Spark, 8 s cap, 'its server responds' wording, operations, pause state, internet state: kept. Snapshot date dropped along with /undo update: simplified, ok.",
+   "7 /pause sets halted true and autoPaused false, needs no passkey, truthful reply, both ways to resume, resuming never a word: kept. The by-hand line names the brain's Spark, not the console's (F7), and the auto-pause case is untested (F5).",
+   "8 Fixed templates, maskSecrets, stored as a notice, no model call: kept. The restart's error text goes only to the audit, masked, not into chat or the event.",
+   "9 Sparkie down and a '/' near miss gets /help: missing (F3). With Sparkie up it goes to Sparkie: kept.",
+   "10 No SSH, Tailscale, firewall, users, access, port, state file, secret or download: kept.",
+   "11 Architecture Today note under R11 and R19, plus the contract 8.13 note: R11 and 8.13 kept, R19 missing (F8).",
+   "12 Required tests: partly kept. Present: hung brain, near misses, member, agent conversation, ask_sparkie, loading and stopped refusals. Missing: refusal during a brain job, refusal while healing is mid-restart, stopped-brain /status, can-change key (F5).",
+   "13 Touch-only list: simplified, ok. 21-telegram.mjs also changed (tgStatusText now returns statusText()); 14-chats.mjs is untouched as required.",
+   "Extra, page: Send enabled for owner '/' drafts when Sparkie is down and the banner says 'Type /help': kept, but defeated in the hung-brain case by the tab-wide sending flag (F2)."
+  ],
+  "findings": [
+   {
+    "id": "F1",
+    "title": "/restart sparkie holds no claim on Spark 2, so brain Stop/Start/Switch and deploys can race the restart",
+    "where": "service/src/20-heal.mjs:134-137 (restartBrain); service/src/20-words.mjs:48-61; service/src/24-handler.mjs:577-583, 586-593 (/main/use, /main/start, /main/stop check only mainBusy())",
+    "fails": "Sequence: the brain is hung, the owner types /restart sparkie (brainRestarting is true for up to 180 s), then presses Stop or Switch on Models. mainBusy() is false because the restart is not a job, and claimed([MAIN.node]) succeeds because nothing claimed Spark 2. `docker stop` then runs against an in-flight `docker restart`: the stop job reports success and the restart starts the container again, so the brain runs after a 'stopped' job. With Switch, the restart races the removal and run of the new container. In reverse, the word is not refused while a deploy or stop holds Spark 2 (busySparks), so the brain reloads tens of GB in the middle of that operation's memory measurement. Guard 4 asked for the claim held and released in a finally; only the in-flight flag was built. watchBrain has the same gap (R11/R19 'Today'), but the word makes it owner-triggered at exactly the moment the owner is also clicking around Models.",
+    "severity": 3,
+    "fix": "In restartBrain(), take `const release = claimSparks([MAIN.node], 'restarting Sparkie’s model')` before run() and release it in the finally. In restartWord and watchBrain, return early (busyWords / silently, before healMark) when `busySparks.has(MAIN.node)`, so the 409 is never thrown after the owner was told 'Restarting'.",
+    "test": "words.test.mjs: make the stand-in `docker restart` slow, say '/restart sparkie', then POST /main/stop and expect 409 'Something is already changing on Spark 2'. Also: while a deploy job holds spark2, '/restart sparkie' answers 'Nothing was changed' and no restart_sparkie audit line appears. Both pass wrongly today (202, and a restart)."
+   },
+   {
+    "id": "F2",
+    "title": "Page: Send is locked in every chat while one reply is stuck, so the word cannot be typed in the hung-brain case",
+    "where": "public/app.js:233 (state.chat.sending is one flag for all chats), :3725 (syncSend), :4028/:4065 (sendConsole), :4073 (send returns if c.sending)",
+    "fails": "Sequence: the brain is hung but /v1/models still returns 200 (the case /restart sparkie exists for). The owner sends a normal message; the stream stalls and c.sending stays true until the 300 s upstream timeout (service/src/14-chats.mjs:269). The owner clicks New and types /restart sparkie: Send is disabled and Enter is ignored, because c.sending is global to the tab. The server would answer (answerOwnerWord does not look at `replying`), but the page never sends it. The only way through is reloading the page, which nothing tells the owner.",
+    "severity": 3,
+    "fix": "Let an owner's '/' draft through while another chat's reply is pending: record which conversation is sending (c.sendingConv) and make syncSend/send block only when `c.sending && (c.sendingConv === c.conv?.id || !slashDraft())`. For that case post the word with its own small fetch, not the shared sendConsole state.",
+    "test": "Page check (browser or DOM test; I did not confirm a page test harness exists): with a stream held open in chat A, open New chat and type '/status'; Send must be enabled and the notice must appear. It is disabled today."
+   },
+   {
+    "id": "F3",
+    "title": "Guard 9 missed: with Sparkie down, a '/' near miss gets a generic error, not the /help text",
+    "where": "service/src/24-handler.mjs:628-630; public/app.js:3724-3725 (Send enabled for any '/' draft when down)",
+    "fails": "Input: the brain is stopped and the owner types '/restart' or '/status please' (the page deliberately enables Send for any draft starting with '/'). ownerWord returns null, so the text goes to chatReply -> sparkieTurn, which saves it as a user turn and then fails on the model call (connection refused, or the 409 'No model…'). The owner sees an error toast or failed reply and no list of words. The spec says a non-exact '/' message with Sparkie down gets /help.",
+    "severity": 2,
+    "fix": "In the chat-message branch: `if (owner && !conv.agent && !word && text.trim().startsWith('/') && text.trim().length <= 40)`, look at the cached brain state (recentMain(), or chatTarget() not reachable) and, when it is not healthy, `return answerOwnerWord(res, conv, '/help', …)`. With Sparkie up, behaviour is unchanged.",
+    "test": "words.test.mjs: setBrain('exited'), wait past the 5 s cache, say '/restart'. Expect text starting '/help\\nThese work even when Sparkie can’t answer' and no new model-requests line. Today this is an error."
+   },
+   {
+    "id": "F4",
+    "title": "/status reads healthy while chat is dead when Sparkie's chat is routed to another model",
+    "where": "service/src/20-words.mjs:21-28",
+    "fails": "Setup: ROUTES.chat is an endpoint on Spark 3 and the owner powers Spark 3 off. /status answers 'Sparkie: running, and its server responds.' followed by 'Sparkie’s chat runs on X right now, not on its own model.' It never says X is not answering; the owner has to infer that from the 'Sparks online' line. Guard 5 asked for 'which model and that it is not answering'. The /restart refusal for this case (line 45) is correct.",
+    "severity": 2,
+    "fix": "When chat.kind === 'endpoint', add a state from cached knowledge only (no wait): `knownOffline(nodeById(chat.node)) ? ' Its Spark is off, so chat can’t answer.' : ''`. Put that line first, before the 'Sparkie:' line, so the headline is not a healthy one.",
+    "test": "words.test.mjs: set the chat route to a running model on spark3, mark spark3 offline, say '/status' and expect /chat runs on .* Its Spark is off/. Then say '/restart sparkie' and expect 'wouldn’t help. Nothing was changed.' with no audit line. The endpoint branch has no test at all today."
+   },
+   {
+    "id": "F5",
+    "title": "Tests pass with the restart guards removed; one test comment claims a case it does not test",
+    "where": "test/words.test.mjs:57-74 (esp. :70-73), whole file",
+    "fails": "The spec's required tests 'refused during a brain job' and 'refused while healing is mid-restart' are absent. Deleting both mainBusy() checks or both brainRestarting checks in 20-words.mjs:48-57 leaves every test green. Also untested: /pause while an automatic pause is on (autoPaused must become false and the reply must be 'Paused.', not 'Already paused.'), and ask_sparkie '/pause' from a can-change key (the test uses a look key). Lines 70-73: the comment says 'With Sparkie's model stopped, /status still answers', but setBrain('running') runs first and the assertion is /Sparkie: running/, so the stopped-brain /status is never exercised. That same assertion can read a 5-second-old 'exited' from recentMain's cache and flake.",
+    "severity": 2,
+    "fix": "Add four cases: (a) POST /main/stop, then '/restart sparkie' while the job runs -> 'being started, stopped or switched'; (b) slow stand-in restart, a second '/restart sparkie' -> 'already restarting', exactly one audit line; (c) set autoPaused:true, halted:true, then '/pause' -> 'Paused.' and autoPaused false; (d) '/status' while setBrain('exited') -> 'Sparkie: stopped.', before setting it back to running.",
+    "test": "These are the tests; (a) and (b) fail if the mainBusy or brainRestarting checks are removed, (c) fails if `autoPaused: false` is dropped from pauseWord."
+   },
+   {
+    "id": "F6",
+    "title": "Loading refusal says '1 minutes ago', and claims a start time when Docker gave none",
+    "where": "service/src/20-words.mjs:54-55",
+    "fails": "For upMs under 30 s, Math.max(1, round) prints 1 but the plural test uses the unclamped round (0), giving 'started 1 minutes ago'. If StartedAt is empty or unparseable, `Date.parse(...) || Date.now()` makes upMs 0, and the owner is told the model 'started 1 minutes ago and may still be loading', which is untrue. Refusing is the right fail-closed result; the words are wrong.",
+    "severity": 1,
+    "fix": "Compute `const mins = Math.max(1, Math.round(upMs / 60000))` once and use it for both the number and the plural. When StartedAt does not parse, answer 'Couldn’t tell when Sparkie’s model started. Nothing was changed.'",
+    "test": "words.test.mjs: write started-sparkie-main as now minus 10 s -> /started 1 minute ago/. Write 'garbage' -> /Couldn’t tell when/."
+   },
+   {
+    "id": "F7",
+    "title": "By-hand resume line names the brain's Spark, not the console's, and disappears from /help when no brain is set up",
+    "where": "service/src/20-words.mjs:40, :75-76",
+    "fails": "The settings file lives in STATE_DIR on the console's host, but the reply says 'by hand on ${sparkName(mainNode())}', the brain's node. They are the same Spark today (spark2 in config.json). After a switch to a brain setup on another Spark, the owner is sent to a machine where the file does not exist, and this is the only passkey-free way to resume. Also helpWord prints both by-hand lines only `if (MAIN)`, so with no brain configured /help omits the resume line although /pause still works.",
+    "severity": 2,
+    "fix": "Name the console's own node (the node whose host is 'local', falling back to the configured hub) for the settings-file line in both places, and move the 'resume agents’ changes' line outside the `if (MAIN)`.",
+    "test": "words.test.mjs: with a brain setup whose node is spark3, '/pause' and '/help' still say 'by hand on Spark 2: set \"halted\": false'."
+   },
+   {
+    "id": "F8",
+    "title": "R19 'Today' note not updated for the second caller of restartBrain",
+    "where": "docs/architecture.md:183 (R19); compare :175 (R11, updated)",
+    "fails": "Guard 11 asked for the note under both R11 and R19. R19 still says only watchBrain's restart goes through run with no claim, and its bound 'two brain restarts in six hours' reads as covering all brain restarts. The owner's word is not counted against that bound and is limited only by the 10-minute StartedAt floor. A later builder reading R19 gets a wrong picture.",
+    "severity": 1,
+    "fix": "Add to R19's Today sentence: the owner's '/restart sparkie' (R34) calls the same restartBrain(), is not counted in the two-in-six-hours bound, and is limited by Docker's StartedAt (10 minutes). If F1 is fixed, change 'no claim' accordingly.",
+    "test": "Review only (documentation)."
+   }
+  ],
+  "verdicts": [
+   {
+    "id": "F1",
+    "ruling": "real",
+    "why": "Confirmed. restartBrain() (service/src/20-heal.mjs:134-137) only sets brainRestarting and calls run(); it never calls claimSparks. brainRestarting is read only in 20-heal.mjs and 20-words.mjs, so /main/stop, /main/start and /main/use (24-handler.mjs:577-593) check mainBusy() plus claimed([MAIN.node]) and both pass during a restart. stopMain's `docker stop --time 60` (13-main-model.mjs:272) can then run against an in-flight `docker restart --time 30`, and a deploy onto Spark 2 is not blocked either. In reverse, restartWord (20-words.mjs:48-57) never looks at busySparks, so the word restarts the brain while a deploy or stop holds Spark 2. Guard 4 says the word 'holds the claim on Spark 2 and releases it in a finally'; dropping the claim is not a simplification that keeps the guard's intent, because the in-flight flag only protects restart against restart. Severity 3 is fair (owner-triggered, at the moment the owner is also using Models; result is a 'stopped' job with the brain running, or a switch racing a restart).",
+    "fix": "In restartBrain(): after the brainRestarting check, `if (busySparks.has(MAIN.node)) return null;` then `const release = claimSparks([MAIN.node], 'restarting Sparkie’s model')` and call release() in the existing finally. In restartWord, add `|| busySparks.has(MAIN.node)` to both mainBusy() checks (20-words.mjs:48 and :56) so the refusal comes before 'Restarting' is said; in watchBrain add the same test to the line-145 condition, before healMark. Test (words.test.mjs): slow stand-in `docker restart`, say '/restart sparkie', POST /main/stop expects 409 'Something is already changing on Spark 2'; and with a deploy job holding spark2, '/restart sparkie' answers 'Nothing was changed' with no restart_sparkie audit line."
+   },
+   {
+    "id": "F2",
+    "ruling": "real",
+    "why": "Confirmed. state.chat.sending is one flag for the tab (public/app.js:233). sendConsole sets it at :4028 and clears it only in the finally at :4065, after streamChat returns; streamChat (:2470-2492) has no AbortController and no page-side timeout. syncSend (:3725) disables Send whenever c.sending, regardless of slashDraft(), and send() returns at :4073. The upstream model call has a 300 s idle timeout (service/src/14-chats.mjs:269, :304), so after one stalled message the owner cannot send /status or /restart sparkie from any chat in that tab for up to five minutes per model step. The server side would answer (the chat-message branch at 24-handler.mjs:628-629 runs before chatReply's `replying` check at 14-chats.mjs:182). This is exactly the 'running but stuck' case the word exists for; only a reload or a second tab gets through, and nothing says so. Severity 3.",
+    "fix": "Smallest: in syncSend use `sendBtn.disabled = (c.sending && !slashDraft()) || (!sparkieModel().up && !slashDraft())`, and in send(), when c.sending and the text is one of the four words (same trim/lowercase/underscore rule), post it with its own streamChat call to the current chat (or a new one) and append the returned notice, without touching c.sending or the streaming reply. Test: page/DOM check with a stream held open in chat A; type '/status' and expect Send enabled and the notice shown. No page test harness was found in test/, so this may need a manual check listed in the change."
+   },
+   {
+    "id": "F3",
+    "ruling": "real",
+    "why": "Confirmed missed guard. Guard 9: 'With Sparkie down, an owner message starting with / that is not an exact word gets the /help text'. 24-handler.mjs:628-630 only handles an exact ownerWord; anything else goes to chatReply. The page deliberately enables Send for any '/' draft when Sparkie is down (app.js:3724-3725), so '/restart' or '/status please' is saved as a user turn and fails on the model call with an error toast. Nothing in app.js maps near misses to /help client-side (only the banner text at :3810 'Type /help for what still works', which softens it). Severity 2: nothing is changed wrongly, but the owner in an outage gets an error instead of the list.",
+    "fix": "In the chat-message branch after the word check: if `owner && !conv.agent && text.trim().startsWith('/') && text.trim().length <= 40`, read the brain state without waiting long (recentMain() raced against a short sleep, or chatTarget() missing) and when it is not running and healthy, `return await answerOwnerWord(res, conv, '/help', via)`. With Sparkie up, unchanged. Test (words.test.mjs): setBrain('exited'), wait past the 5 s cache, say '/restart'; expect text starting '/help\\nThese work even when Sparkie can’t answer' and no new model-requests line."
+   },
+   {
+    "id": "F4",
+    "ruling": "real",
+    "why": "Confirmed, low severity. statusText (20-words.mjs:21-28) prints the brain's own state as the headline, then 'Sparkie’s chat runs on X right now, not on its own model.' with no state for X. routeTarget for an endpoint (13-main-model.mjs:39-41) carries route.node, and knownOffline is already used on line 25, so the cached knowledge is available at no cost. With the chat routed to a model on a powered-off Spark, /status leads with 'Sparkie: running, and its server responds.' while chat is dead. Guard 5 asked for 'which model and that it is not answering'; only the first half was built. A live probe of the other Spark would break guard 6 (never wait on another Spark), so the cached form is the right size. The /restart refusal at :45 is correct. The endpoint branch has no test. Severity 2.",
+    "fix": "On the endpoint line add, from cache only: `${chat.node && nodeById(chat.node) && knownOffline(nodeById(chat.node)) ? ' Its Spark isn’t reachable, so chat can’t answer.' : ''}`, and put that line before the 'Sparkie:' line. Test: route chat to a running model on spark3, mark spark3 offline, '/status' matches /chat runs on .* Its Spark isn’t reachable/; then '/restart sparkie' answers 'wouldn’t help. Nothing was changed.' with no restart_sparkie audit line."
+   },
+   {
+    "id": "F5",
+    "ruling": "real",
+    "why": "Confirmed by reading test/words.test.mjs in full. No test starts a main-start/stop/switch job before the word, and none sends a second word while a restart is in flight, so removing the mainBusy() or brainRestarting checks at 20-words.mjs:48-49 and :56-57 leaves all six tests green; guard 12 lists both as required. /pause is only tested from the un-paused state (:79) and from an owner pause (:85), so dropping `autoPaused: false` at :36 still passes (:83 only asserts not-true from a state where it was never true). ask_sparkie uses a look key (:13, :104), not a can-change key as the guard says. Lines 70-73: setBrain('running') runs before the /status, and the assertion is /Sparkie: running/, so the 'model stopped' /status the comment claims is never exercised (guard 12: 'brain hung and brain stopped'). The flake claim is weaker: restartWord calls mainStatus() directly, not recentMain(), so the 5 s cache is unlikely to hold 'exited' unless another caller filled it; treat that part as possible, not shown. Severity 2.",
+    "fix": "Add to words.test.mjs: (a) POST /main/stop then '/restart sparkie' while the job runs, expect 'being started, stopped or switched' and no audit line; (b) slow stand-in restart, second '/restart sparkie' expects 'already restarting' and exactly one restart_sparkie line; (c) set halted:true, autoPaused:true, then '/pause' expects 'Paused.' and autoPaused false; (d) move the /status at :72 before setBrain('running') (after a 5.5 s wait) and expect 'Sparkie: stopped.'; (e) create the ask_sparkie key with change rights. (a) and (b) fail when the respective checks are removed; (c) fails without `autoPaused: false`."
+   },
+   {
+    "id": "F6",
+    "ruling": "minor",
+    "why": "True but cosmetic. 20-words.mjs:55: for upMs under 30 s the number is clamped to 1 while the plural test uses the unclamped round (0), giving '1 minutes ago'. And `Date.parse(m.startedAt) || Date.now()` at :54 turns an unparseable StartedAt into upMs 0 and the same sentence, which is untrue wording but still the fail-closed refusal with 'Nothing was changed'. Docker always reports StartedAt for a running container (state is checked at :52 first), so the second case is close to unreachable. Severity 1.",
+    "fix": "`const mins = Math.max(1, Math.round(upMs / 60000));` and use it for both the number and the plural. Optional: when Date.parse fails, answer 'Couldn’t tell when Sparkie’s model started. Nothing was changed.' Test: started-sparkie-main = now minus 10 s expects /started 1 minute ago/."
+   },
+   {
+    "id": "F7",
+    "ruling": "minor",
+    "why": "True as written but latent. SETTINGS_FILE is `${STATE_DIR}/agent-settings.json` (17-changes.mjs:15), on the console's host, while pauseWord (:40) and helpWord (:75-76) name sparkName(mainNode()), the brain's Spark. Today both are Spark 2 and the fleet rules keep the brain on the hub, so the owner is not misdirected now; it becomes wrong only if a brain setup moves to another Spark. The second half is also true: helpWord adds both by-hand lines only `if (MAIN)`, so with no brain configured /help omits the resume line, though the /pause reply itself still gives it (with the 'spark2' fallback). Severity 1-2; worth fixing because the file is the only passkey-free way to resume.",
+    "fix": "For the settings-file line use the console's own node (`NODES.find(n => n.host === 'local')`, falling back to the current expression) in both :40 and :76, and push the 'resume agents’ changes' line outside the `if (MAIN)`. Test: with MAIN on spark3 in the fixture, '/pause' and '/help' still say 'on Spark 2: set \"halted\": false'."
+   },
+   {
+    "id": "F8",
+    "ruling": "minor",
+    "why": "Confirmed, documentation only. docs/architecture.md:175 (R11) has the new sentence about the owner's word; :183 (R19) still names only watchBrain's restart and bringBack, and its 'two brain restarts in six hours' reads as covering every brain restart. restartWord does not call healCount/healMark, so the word is outside that bound and limited only by the 10-minute StartedAt floor (R34 at :213 does state that limit). Guard 11 asked for the note under both rules. No behaviour is wrong; a later reader of R19 alone gets an incomplete picture. Severity 1.",
+    "fix": "Add to R19's Today sentence: the owner's '/restart sparkie' (R34) calls the same restartBrain(), is not counted in the two-in-six-hours bound, and is limited by Docker's StartedAt (10 minutes). If F1 is fixed, change 'no claim' to say restartBrain now holds the claim on the brain's Spark. Review only."
+   }
+  ]
+ },
+ {
+  "item": "dark-readings",
+  "summary": "Read-only review of dark-readings (power-2). The build matches the smaller version closely: sysfs-only readings printed before the docker look, numbers or null, no new event type, no health argument, verdicts or limits table, no tuning advice, worker.py and workflow code lists untouched (none of the edited functions are in any `code()` list in service/src/18-workflows.mjs:25-53). The readings script is safe under `bash -s` with files missing, and the restart test (`upSeconds*1000 <= darkMs + 60000`) holds because detection lag is at most about 36 s (ConnectTimeout=6, 30 s status).\n\nI found four real defects, none of which can lock the owner out or change anything on a Spark; all are about truthfulness to the owner.\n\n1. A console restart while a Spark is dark writes a second spark-offline with no reading, and both `darkPeriods` and fleet_status pick that later one. The real time and the last reading are lost, in exactly the \"went dark overnight, asked in the morning after an install\" case.\n2. A last reading with no GPU numbers (nvidia-smi failed, which worker.py reports as null) is called \"idle ... not counted as a fault\".\n3. fleet_status gives an offline Spark `lastReadingBeforeDark.ageSeconds` with no time it went dark, so \"20 seconds\" reads as now. It can also show a reading from an older, finished dark period.\n4. Two guards have no test: the 90-second floor and the three-minute freshness cut. The suite passes with either line deleted.\n\nI ran nothing; the findings are from reading the code and the stand-ins.",
+  "guardsKept": [
+   "1. Readings first, script ends exit 0, parsed before exit-code check: kept, simplified ok. No literal `exit 0` was added, but the readings never change how the script ends (it ends on the docker pipeline as before), and `watchSpark` parses `read` before `r.code !== 0` (19-watcher.mjs:126-128). The missing-files test exists (dark.test.mjs:57-63).",
+   "2. Every reading a range-checked number or null, no device text: kept. `reading()` at 19-watcher.mjs:53; the zone is digit-checked in the shell, NVMe and fan in JS.",
+   "3. spark-offline carries a reading only when under three minutes old: kept in code (`lastReading`, FRESH_READING_MS), untested (dark-4). 'No reading near the time' is said only in the restarted finding; the event and fleet_status just carry null. Defeated in practice by the duplicate offline event after a console restart (dark-1).",
+   "4. No finding from a temperature limit; shows number, age and gap to nvidia-smi: kept, simplified ok. Findings key on restart and GPU busy or watts only; gpuC and hottestC are shown side by side rather than as a computed gap. Online Sparks in fleet_status show hottestC without its age (up to 3 minutes old), which is minor. 'Never rule heat out' is kept, except the no-GPU-numbers case is called idle (dark-2).",
+   "5. 'Did not restart' wording: kept (19-watcher.mjs:79).",
+   "6. Restart from idle = consistent with switched off by hand, not a fault: kept (19-watcher.mjs:82). Marking console-made shutdowns: not applicable yet, since the console has no power-off action.",
+   "7. Real window, at most five: kept (`since: events[0]?.at`, `slice(0, max)`).",
+   "8. fleet_status with {} runs no command, no new argument, no new tool; description says which temperature is which; one code-built sentence per Spark: partly kept. Schema unchanged and description is clear. The per-Spark sentence is missing from fleet_status (`readingWords` is used only in `describeEvent`); not ok for the offline entry, where the bare ageSeconds misleads (dark-3).",
+   "9. No new event type, no extra events, under 90 s ignored as in cameBack: kept in code (same HEAL_OFFLINE_MS), untested (dark-4).",
+   "10. worker.py unchanged, no workflow code() function edited: kept as far as readable. None of the touched functions appear in 18-workflows.mjs:25-53; only test/mock/worker.py gained status.json. I could not byte-compare service/worker.py (no git here).",
+   "11-15. Probe, kernel log, shutdown records, busctl guards: not built, as the smaller version says. Nothing to check.",
+   "16. No tuning command in any advice line: kept. No advice text was added.",
+   "17. Hostile-text acceptance test restated: not applicable. No outside text is added by this item; fleet_status stays in INSIDE_READS with numbers only."
+  ],
+  "findings": [
+   {
+    "id": "dark-1",
+    "title": "Console restart while a Spark is dark replaces the real dark time and its last reading with an empty one",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs:87 (darkPeriods: `if (e.type === 'spark-offline') off = e`), :204-214 (noteSparkStates), :232 (only save of knowledge.json); /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:470",
+    "fails": "`knowledge.sparks[id].online` is saved only when the watcher sees a container change (19-watcher.mjs:232), so knowledge.json usually still says online:true after a Spark goes dark. Sequence: Spark 4 goes dark at 02:13 under load (spark-offline written with `last`). The console restarts at 08:00 (an install, a crash, a reboot of Spark 2). The first status round sees stale online:true against unreachable and writes a second spark-offline with `last: null`, because the stored gpu and readings are over three minutes old. Spark 4 returns at 08:41. `darkPeriods` keeps the later offline event, so spark_diagnostics says it went dark at 08:00, dark 41 minutes, 'restarted; there was no reading near the time it went dark'. While it is still dark, fleet_status `events.findLast(...)?.last` gives `lastReadingBeforeDark: null`. The evidence the feature exists for is on disk and is hidden.",
+    "severity": 4,
+    "fix": "In `darkPeriods` keep the first offline of a run: `if (e.type === 'spark-offline') off ||= e;`. In fleet_status take the reading from `darkPeriods(n.id).periods[0]` when its finding is 'still dark' rather than `findLast`. Optionally call `saveKnowledge()` when `noteSparkStates` flips `online`, so the duplicate event is not written at all (that also stops the duplicate from pausing crash restarts).",
+    "test": "In test/dark.test.mjs: take spark4 offline under load and note `off.at`; restart the stand-in console with knowledge.json still saying online:true (or append a second spark-offline line with `last: null` to events.jsonl and restart); bring spark4 back. Assert `periods[0].wentDarkAt === off.at`, `periods[0].lastReading.gpuWatts === 140`, and that fleet_status showed `lastReadingBeforeDark.gpuWatts === 140` while dark. This fails today."
+   },
+   {
+    "id": "dark-2",
+    "title": "A last reading with no GPU numbers is reported as 'idle ... not counted as a fault'",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs:76 (`loaded`), :77-82 (finding), :209 (s.gpu always set while online)",
+    "fails": "When nvidia-smi fails on the Spark, service/worker.py:132,143 returns gpuUtilization and gpuPowerWatts as None. `noteSparkStates` stores busy:null, watts:null with a fresh time. `lastReading` returns an object, so `last` is truthy. `loaded` is `(null ?? 0) >= 50 || (null ?? 0) >= 60`, which is false. The finding becomes 'restarted; it was idle when it went dark (consistent with being switched off by hand or a power cut, not counted as a fault)'. A GPU that stopped answering just before a hard power-off is one of the likeliest real faults, and code tells the owner it was idle and not a fault. The same happens when only the sysfs reading is fresh and the gpu one is stale.",
+    "severity": 3,
+    "fix": "Before the `loaded` branch: `last.gpuBusyPercent == null && last.gpuWatts == null ? 'restarted; the last reading had no GPU numbers, so Spark Console can’t tell whether it was under load'`. Only say idle when at least one of the two was read.",
+    "test": "In test/dark.test.mjs: `setStatus('spark4', { gpuUtilization: null, gpuPowerWatts: null })`, wait for fleet_status to show null, take it offline, set uptimeSeconds 30, bring it back. Assert the finding does not match /idle|not counted as a fault/ and does match /no GPU numbers/. This fails today."
+   },
+   {
+    "id": "dark-3",
+    "title": "fleet_status gives an offline Spark's last reading with no time it went dark, and can show one from an older dark period",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:469-470; /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs:62 (ageSeconds)",
+    "fails": "(a) `lastReadingBeforeDark` carries `ageSeconds`, which is the age when the Spark went dark, but the offline entry has no `wentDarkAt` (only `lastSeenAt`, a different clock). For a Spark dark for eight hours Sparkie is handed `{ageSeconds: 20, gpuBusyPercent: 92, hottestC: 88}` and will say 'read 20 seconds ago'. `unsupportedNumbers` passes it because 20 is in the result. (b) `events.findLast(spark-offline)` does not check that the event belongs to the current dark stretch. If the console was down when the Spark went dark and knowledge.json already said online:false, no new offline event is written, and fleet_status shows the reading from an older period that already ended, labelled as the last reading before this one.",
+    "severity": 3,
+    "fix": "Build the offline entry from `darkPeriods(n.id).periods[0]` only when its finding is 'still dark': return `wentDarkAt` beside the reading, and rename the inner field to `secondsBeforeDark` (or add one code-built sentence using `readingWords`, as the guard asked). Otherwise return null with 'no reading near the time'.",
+    "test": "In test/dark.test.mjs, while spark4 is dark: assert the fleet_status entry has `wentDarkAt === off.at`. Then, for (b): events hold an offline and online pair for spark4 with a reading, knowledge.json says online:false, the console starts with spark4 unreachable; assert `lastReadingBeforeDark === null`. Both fail today."
+   },
+   {
+    "id": "dark-4",
+    "title": "The 90-second floor and the three-minute freshness cut have no test",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/dark.test.mjs:13, :32-33, :66-80; guards at /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs:74 and :54-58",
+    "fails": "The suite sets SPARK_CONSOLE_HEAL_OFFLINE_MS=1000 and every `online()` sleeps 1.5 s first, so no dark period is ever under the floor. Deleting `if (on && darkMs < HEAL_OFFLINE_MS) return;` leaves every test green, and on the real fleet each missed 25 s status call (state goes straight to 'unreachable' at service/src/12-status.mjs:100-101) would then list as a dark period. No test makes a reading older than three minutes either, so deleting the `fresh` check in `lastReading` also passes; that is the guard covering console restarts. The restart tests use uptime 25 and 40 s, which the 60 s margin alone satisfies, so they do not exercise the comparison with the dark length.",
+    "severity": 2,
+    "fix": "Add two tests. (1) Start the fleet with a larger floor (for example HEAL_OFFLINE_MS=20000) or bring the Spark back without the sleep, and assert the offline and online events exist but `darkPeriods.periods` gained no entry. (2) Seed knowledge.json with gpu and readings `at` ten minutes old (or add a test-only env for FRESH_READING_MS), take the Spark offline before a new status lands, and assert `off.last === null` and the finding 'restarted; there was no reading near the time it went dark'.",
+    "test": "The two tests above; each fails if its guard line is removed."
+   }
+  ],
+  "verdicts": [
+   {
+    "id": "dark-1",
+    "ruling": "real",
+    "why": "Confirmed. knowledge.json is written in one place only (service/src/19-watcher.mjs:232, `if (changed || learned) saveKnowledge()`), and a Spark that stops answering makes watchSpark return false at :127 before it marks anything changed, so the file normally keeps `online: true` for a dark Spark. After a console restart, noteSparkStates (:212) sees stale true against 'unreachable' and writes a second spark-offline; lastReading (:57) returns null because the stored gpu/readings `at` is older than three minutes. darkPeriods (:87, `off = e`) keeps the later event, so wentDarkAt, darkMinutes and lastReading are all wrong and the finding becomes 'no reading near the time'. fleet_status (service/src/16-actions.mjs:470) uses findLast, so it shows null while still dark. The first event with the real reading is still in events.jsonl but hidden. Side effect also real: cameBack (service/src/20-heal.mjs:25-31) pairs the online with the nearest offline, so a restart shortly before the Spark returns can put the gap under 90 s and the power cycle is not recognised. Severity 3 rather than 4: it needs a console restart during a dark stretch, which an install or Spark 2 reboot does make likely. One caution on the proposed fix: `off ||= e` alone is not safe. If the console restarts with stale `online: true` and the Spark is already back by the first status round, no spark-online is written, the old offline stays unpaired (spark_diagnostics says 'still dark' for an online Spark today), and with `||=` it would later pair with a much later online and report a dark period of days.",
+    "fix": "Fix the cause first: in noteSparkStates (19-watcher.mjs:212-213), call saveKnowledge() when `s.online` flips, so the stale flag and the duplicate event do not occur. Then in darkPeriods use `off ||= e` so a duplicate from a crash between event and save does not replace the first. In fleet_status take the reading from `darkPeriods(n.id).periods[0]` only when its finding is 'still dark'. Test in test/dark.test.mjs: take spark4 offline under load, note off.at, stop the stand-in console, append a second spark-offline line for spark4 with `last: null` to events.jsonl (or leave knowledge.json at online:true), start it, assert fleet_status `lastReadingBeforeDark.gpuWatts === 140`, bring spark4 back, assert `periods[0].wentDarkAt === off.at` and `periods[0].lastReading.gpuWatts === 140`. Add an assert that knowledge.json has `online: false` for spark4 right after the offline event. All fail today."
+   },
+   {
+    "id": "dark-2",
+    "ruling": "real",
+    "why": "Confirmed. service/worker.py:132,143 defaults the gpu probe to (None, None, None) and gpuPower to None; cleanStatus (service/src/12-status.mjs:49) passes null through; `reading(null, ...)` returns null (19-watcher.mjs:53), so `s.gpu` at :209 is `{at: now, busy: null, watts: null}` with a fresh time. lastReading (:57-61) returns an object, so `last` is truthy at :75; `loaded` at :76 is `(null ?? 0) >= 50 || (null ?? 0) >= 60`, false; the finding at :82 is 'restarted; it was idle when it went dark (... not counted as a fault)'. Code states 'idle' with no GPU number read, which breaks the guard that findings key on GPU busy or watts and that only a restart from idle is not counted as a fault. The builder's simplification (four findings) is fine otherwise; this is a missing fifth case, not an over-simplification. Severity 3: it needs nvidia-smi failing just before a power-off, but that is the case where the wrong words matter most. The 'only sysfs fresh, gpu stale' variant is very rare (status runs every 30 s and an unreachable status writes the offline at once) but the same fix covers it.",
+    "fix": "In darkPeriods (19-watcher.mjs:80-82), add before the `loaded` branch: `: last.gpuBusyPercent == null && last.gpuWatts == null ? 'restarted; the last reading had no GPU numbers, so Spark Console can’t tell whether it was under load'`. Test in test/dark.test.mjs: `setStatus('spark4', { gpuUtilization: null, gpuPowerWatts: null })`, wait for fleet_status to show gpuPowerWatts null, offline, set uptimeSeconds 30, online; assert the finding matches /no GPU numbers/ and does not match /idle|not counted as a fault/. Fails today. (Check the stand-in worker passes null through from status.json; if it drops nulls, the test needs that one-line change.)"
+   },
+   {
+    "id": "dark-3",
+    "ruling": "real",
+    "why": "Both parts hold, at lower severity than claimed (2). (a) service/src/16-actions.mjs:469-470 returns `lastReadingBeforeDark` with `ageSeconds` computed at the moment the Spark went dark (19-watcher.mjs:60), and the entry has no time it went dark; `lastSeenAt` comes from a different clock (status or watcher). Sparkie can relay 'read 20 seconds ago' for a Spark dark for hours, and unsupportedNumbers (service/src/14-chats.mjs:164-173) accepts it because 20 is in the tool result. The guard asked for 'the number, its age' and 'one code-built sentence for Sparkie to relay'; the builder dropped the sentence, and here that loses the guard's intent, because the age is the only thing that tells the owner how stale the number is and it is ambiguous as built. describeEvent (:37) does word it correctly ('last reading N s before'), so the wording exists and is just not used in fleet_status. (b) `findLast(spark-offline)` does not check the event is unpaired. With knowledge.json holding stale `online: false` (same cause as dark-1) and the Spark dark at console start, :212 writes no event, and fleet_status shows the reading from an earlier, finished dark period as the reading before this one. Narrow, but it is a wrong number given to the owner as fact.",
+    "fix": "In fleet_status (16-actions.mjs:469-470) build the offline entry from `const p = darkPeriods(n.id).periods[0]` and use it only when `p?.finding === 'still dark'`: return `wentDarkAt: p.wentDarkAt` and `lastReadingBeforeDark: p.lastReading`, plus one code-built string, for example `lastReadingWords: p.lastReading ? `${p.lastReading.ageSeconds} s before it went dark: ${readingWords(p.lastReading)}` : 'no reading near the time it went dark'`; otherwise null with the same 'no reading' words. Renaming `ageSeconds` to `secondsBeforeDark` is optional once the sentence exists. Tests in test/dark.test.mjs: while spark4 is dark assert the entry has `wentDarkAt === off.at` and words matching /before it went dark/; and seed events.jsonl with a finished offline/online pair for spark4 (with a reading) and knowledge.json `online: false`, start with spark4 unreachable, assert `lastReadingBeforeDark === null`. Both fail today."
+   },
+   {
+    "id": "dark-4",
+    "ruling": "real",
+    "why": "Confirmed as a test gap, severity 2. test/dark.test.mjs:13 sets SPARK_CONSOLE_HEAL_OFFLINE_MS=1000 and online() at :32 always sleeps 1.5 s, so no period is ever under the floor; deleting 19-watcher.mjs:74 leaves every test green. With that line gone, each missed 25 s status call (service/src/12-status.mjs:100-101 goes straight to 'unreachable') would be listed as a dark period on the real fleet, which is exactly the 'dark periods under 90 seconds are ignored' guard. No test produces a reading older than three minutes, so removing the `fresh` check at :57 also passes; test line :74 only asserts ageSeconds < 180 on a reading that is seconds old. The restart tests use uptime 25 and 40 s against a dark time of a few seconds, so `restarted` is decided by the +60000 margin alone at :75, and 900000 s is far beyond anything; the comparison with the dark length itself is not exercised. The code is right today; these are the two guards most likely to be broken by a later edit without anyone noticing.",
+    "fix": "Add two tests. (1) In a fleet with a larger floor (a second describe/file with SPARK_CONSOLE_HEAL_OFFLINE_MS=20000), take spark4 offline and bring it back with no sleep; assert both events exist and `darkPeriods.periods` gained no entry; fails if 19-watcher.mjs:74 is removed. (2) Seed knowledge.json before start with `sparks.spark4 = { online: true, gpu: { at: <ten minutes ago>, busy: 92, watts: 140 }, readings: { at: <ten minutes ago>, hottestC: 88 } }` and spark4 in the offline file; assert the spark-offline event has `last === null` and, after it returns with a small uptime, the finding is 'restarted; there was no reading near the time it went dark'; fails if the `fresh` check at :57 is removed. Optionally one case with uptime between the dark length and dark length + 60 s to pin the margin."
+   }
+  ]
+ },
+ {
+  "item": "step-check",
+  "summary": "Step-check (practice-2, R35) is built close to the attacked smaller version and its core guards hold. I read the code only; I did not run the suite.\n\n- **Hashed code:** every function in every workflow `code()` list, plus the bodies of the start_model, stop_model, restart_model and find_setups actions, is text-identical to a pre-round-two snapshot (`/private/tmp/claude-502/server-reverted.mjs`, 16:10, no `checkSteps`). `worker.py` and the engine files are older than the lock. So the five versions should be unchanged, though I did not compute them.\n- **`checkSteps`:** read-only. One inventory look, `checkInput`, `libraryModel`, and `resolveModelName` only after the repo-shape test, so Hugging Face is never asked. No `question()`, job, claim or file write.\n- **Sparkie gate (the main defects):** `sparkieCheck` checks only the workflow's name. A run goes at once with input values the brain chose, and despite \"don't stop X\" in the same message, because steps run as via `workflow` with no intent.\n- **Checker:** it refuses a whole run for a read step on a switched-off Spark even though that read would work. It says \"goes\" for a stop, restart or start step that is missing its required arguments.\n- **Tests:** several must-have guards have no test, and no real-brain eval exists for the rehearse phrasings.\n\nThe builder's simplifications (no stamps, no preview, no `gone`, no \"run anyway\", fixed-template lines) keep the guards' intent. Findings 1 to 3 were reachable before this build, but they sit in the branch this item rewrote and the design's name-in-words guard was meant to close them.",
+  "guardsKept": [
+   "Earns its place, about 60 lines, no new action, file, timer, page or port: kept. checkSteps is about 40 lines in 18-workflows.mjs, `workflows` gained two optional arguments, no new tool.",
+   "No function in any workflow code() list edited: kept. Every listed function and the four action bodies are text-identical to the 16:10 pre-round-two snapshot; worker.py and the engine files predate the lock. Missing: the test the guard asked for (versions equal before and after), see SC-7.",
+   "checkSteps only reads, never asks Hugging Face: kept. One inventory, checkInput, libraryModel, and resolveModelName only after the REPO_RE test at 18-workflows.mjs:194, so the versionOf branch is unreachable. No question(), job, claim, file write or audit change line. The test compares the containers files and the operation count.",
+   "Steps never run as trusted, no answer stored or forwarded: kept. Steps go through runAction with via 'workflow' and no trusted flag; a question ends the run at that step (18-workflows.mjs:278). save_workflow refuses all six approval arguments with the step number, and placeholder arguments are checked for name at save and in full at run. Gap: missing required arguments are not caught (SC-4).",
+   "Refuses only on facts that fail the real step the same way: mostly kept. Broken for read steps on a switched-off Spark (SC-3). The refusal names the step, says nothing was changed and lists the other steps (it includes 'nothing to do' ones, SC-8). A throwing or slow check lets the run go ahead and says so (kept, untested, SC-7).",
+   "Fixed wording: kept. `says` is a fixed sentence ('nothing known would stop that step right now, not that it will work') and lines are templates. Simplified, ok: no explicit data label, but the names in the lines come from the owner's saved arguments after the schema patterns, not from the Sparks.",
+   "Sparkie name-in-words gate: kept for the name. Every non-generic title word must be in the owner's words; a title with none is always a button; rehearse, dry run, test run, preview, simulate, what if and practice are a button at most; changeLabel gives 'Run the saved workflow \"X\"'. Not ok: inputs and negations are not checked (SC-1, SC-2), containing titles (SC-6), dead button for an unknown name (SC-5). Missing: the real-brain evals and stand-in tests for half the phrasings (SC-7).",
+   "`workflows` with no arguments unchanged; the lookup uses the shared 15-second inventory; run_workflow uses a fresh one with a 30-second cap and no GPU probes: kept (18-workflows.mjs:120, :129, :254).",
+   "Existing saved-workflow test, tool counts 24 and 37, contract's 'help, not a gate' line, one architecture row: kept by reading (no new action, contract.md:1268 intact, R35 row and the section 6 row present). Not run by me; `node test/lock.mjs` must be re-run on the final tree, since the lock is from 17:42 and predates this build.",
+   "record() writes lastRun only when the steps are the same as when the run began: kept (18-workflows.mjs:263-264). Untested (SC-7).",
+   "Trigger rules (owner-only arming, noStops, no downloads, no unattended undo or test steps): correctly not built. Nothing in this code runs a saved workflow by itself.",
+   "Not built now (preview flag, `gone`, pre-answered questions, 'run anyway', stamps, held notice): kept. None of them exist in the code."
+  ],
+  "findings": [
+   {
+    "id": "SC-1",
+    "title": "Sparkie runs a saved workflow at once with input values the owner never said; the button hides them too",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:272-276 (sparkieCheck run_workflow branch); /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs:83 (changeLabel); /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:275",
+    "fails": "Saved workflow \"swap mode\" has inputs {model} and step start_model {model:\"{model}\", spark:\"spark3\"}. The owner says \"run swap mode\". The brain calls run_workflow {name:\"swap mode\", inputs:{model:\"gpt-oss-120b\"}}. The branch checks only the title's words, so clear is true and it runs at once. The step runs as via 'workflow', so namesModel and tracesToRequest never see the model, and the start may stop other Spark Console models to make room. When it is a button instead, the label is only 'Run the saved workflow \"swap mode\"', so the owner presses without seeing which model or Spark the brain filled in. The design said a value the owner did not say is not guessed.",
+    "severity": 3,
+    "fix": "In the run_workflow branch, also require every token of every given input value to be in the owner's words: Object.values(out.inputs||{}).every(v => [...tokensOf(String(v))].every(t => said.has(t))). Otherwise it is a button. In changeLabel, append the inputs, for example 'Run the saved workflow \"swap mode\" with model gpt-oss-120b'.",
+    "test": "test/steps.test.mjs: save a workflow with input {model}; script the brain to call run_workflow with inputs {model:'gemma-3-12b-it'} on the words 'run swap mode'. Expect a button whose label contains gemma-3-12b-it and no workflow-run operation. Then 'run swap mode with gemma-3-12b-it' runs at once."
+   },
+   {
+    "id": "SC-2",
+    "title": "\"Run coding mode but don't stop GLM\" still runs the stop steps",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:266-276 (kinds for run_workflow is ['start'] only, :168); /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:275 (steps run via 'workflow' with no intent)",
+    "fails": "The owner says \"run coding mode, but don't stop anything\" or \"run coding mode and keep glm running\". changeIntent gives asked=['start'], negated=['stop']. run_workflow's kinds are only ['start'], so asked is true and clear is true. The steps then run through runAction with via 'workflow', which skips sparkieCheck, so step 1 (stop_model) stops the model the owner ruled out. The comment at 16-actions.mjs:314 promises that \"Don't stop ...\" rules stopping out for the whole request.",
+    "severity": 3,
+    "fix": "In the run_workflow branch, clear only if no kind the workflow's steps perform is negated or mixed: const stepKinds = (findSaved(out.name)?.steps||[]).flatMap(s => ACTION_KIND[s.action]||[]); require !stepKinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k)). Simpler still: any negation in the message makes it a button.",
+    "test": "test/steps.test.mjs: saved workflow with a stop_model step; script run_workflow on 'run free spark four but don't stop anything'. Expect one button, no workflow-run operation, containers file unchanged."
+   },
+   {
+    "id": "SC-3",
+    "title": "A read step naming a switched-off Spark refuses the whole run although that step would work",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:180-182",
+    "fails": "The off-Spark test applies to every action with a spark argument, not only the ones that need the Spark. Steps: [fleet_events {spark:'spark4'}, start_model {model, spark:'spark3'}] with Spark 4 off (its ordinary state). fleet_events and workloads read the console's own stored events and knowledge (16-actions.mjs:844, :872) and answer fine for an off Spark. checkSteps returns 'cannot run: Spark 4 is off or not answering' and run_workflow refuses with 409 'Nothing was changed'. Before this build the run worked. This breaks R35's own rule that it refuses only on facts that fail the real step the same way.",
+    "severity": 2,
+    "fix": "Apply the off-Spark refusal only to start_model, stop_model and restart_model (or to actions whose kind is not 'read'). Other actions fall through to 'goes'.",
+    "test": "test/steps.test.mjs: with spark4 in the offline file, a workflow [fleet_events {spark:'spark4'}, find_setups {...}] rehearses as goes/goes and run_workflow starts."
+   },
+   {
+    "id": "SC-4",
+    "title": "A stop, restart or start step missing its spark, container or model saves and checks as \"goes\", then fails mid-run",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:184, :192, :201 (checkSteps); :226-229 (save_workflow)",
+    "fails": "The stop_model, restart_model and start_model schemas have no required list, because a choice alone is allowed. So save_workflow accepts {action:'stop_model', args:{spark:'spark4'}} or {action:'start_model', args:{}}. checkSteps skips its container and model branches (they need args.container or args.model) and reports 'goes'. The real step throws 400 'Missing argument: spark and container.' (17-changes.mjs:535) after earlier steps have already stopped models. That is exactly the failure this item exists to prevent. With a container but no spark, the line reads '... isn't one of Spark Console's models on undefined'.",
+    "severity": 2,
+    "fix": "In save_workflow (when the step has no placeholders) and in checkSteps: stop_model and restart_model need both spark and container; start_model needs model. Otherwise the result is 'cannot run' with 'it needs spark and container' or 'it needs model', and the save is refused with 'Step N (stop_model): Missing argument: container.'",
+    "test": "test/steps.test.mjs, first test: add [{spark:'spark4'}, /Step 2 \\(stop_model\\): Missing argument/] to the refused list. Also a workflow [stop RADIX on spark4, start_model {}] is refused by run_workflow with RADIX still running."
+   },
+   {
+    "id": "SC-5",
+    "title": "An unknown workflow name becomes a button that can only fail",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:273-275, :320-326 (propose path); /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs:83",
+    "fails": "The owner says \"run codng mode\", or the brain passes a name that is not saved. findSaved returns null, the title has no tokens and clear is false. propose() offers 'Run the saved workflow \"codng mode\"'. Sparkie is told it is offered as a button and never sees the 404 with the list of saved names. The owner presses it and gets 'No saved workflow called ...'. Missing required inputs produce the same dead button (400 on press). Before this build a run word went straight to run_workflow's 404, which listed the saved names to the brain.",
+    "severity": 2,
+    "fix": "In the run_workflow branch of sparkieCheck (or just before propose), if findSaved(out.name) is null, throw the same HttpError 404 with the saved list. If required inputs are missing, throw the 400 naming them. A button is offered only for a run that could start.",
+    "test": "test/steps.test.mjs: script run_workflow {name:'no such thing'} on 'run no such thing'. Expect no choices on the message and the tool error text to contain 'Saved:'."
+   },
+   {
+    "id": "SC-6",
+    "title": "When one saved title is contained in another, the shorter workflow runs at once on the longer one's words",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:273-275",
+    "fails": "Saved: \"coding mode\" and \"coding mode big\". The owner says \"run coding mode big\". The brain calls run_workflow {name:'coding mode'}. Every token of that title is in the owner's words, so it runs at once: the wrong routine, with its own stops and starts. namesModel refuses this kind of tie for models (the best match must stand alone); the workflow branch has no such check.",
+    "severity": 2,
+    "fix": "Not clear when another saved workflow's title tokens are also all in the owner's words and that title has at least as many tokens: savedWorkflows().some(x => x.id !== w.id && tokens(x.title).length >= title.length && tokens(x.title).every(t => said.has(t))).",
+    "test": "test/steps.test.mjs: save 'look up setups' and 'look up setups twice'; script run_workflow {name:'look up setups'} on 'run look up setups twice'. Expect a button, nothing run."
+   },
+   {
+    "id": "SC-7",
+    "title": "Several must-have guards have no test, so the suite passes with them removed",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/test/steps.test.mjs (whole file; the header at :5 claims 'No function in a workflow's code() list was edited' with no assertion)",
+    "fails": "(a) Delete the try/catch at 18-workflows.mjs:253-256, so a checker bug stops every saved workflow: all tests still pass, because nothing exercises checkSkipped. (b) Drop the steps-equality test in record() (:264): still passes. (c) Edit a hashed start function: steps.test.mjs still passes, because no test compares the five versions to service/workflows.lock.json, and CHECK_LOCK is off in the stand-in fleet. (d) Remove test run, preview, simulate or what if from the regex at 16-actions.mjs:274: still passes, because only 'rehearse' and 'dry run' are tested. (e) A title with no distinguishing words ('On it') is untested. (f) No real-brain eval under test/eval covers 'rehearse X', 'dry run X' or 'can X run now?', which the spec required before release (three runs each).",
+    "severity": 2,
+    "fix": "Add to test/steps.test.mjs: (a) make the stand-in inventory fail or time out (or save a step the checker throws on) and expect run_workflow to return outcome 'started' with checkSkipped and the log line 'The check before step 1 was skipped'. (b) Start a run, re-save the workflow with different steps before it ends, expect the new entry's lastRun to be null. (c) Assert the `workflows` versions equal service/workflows.lock.json's when its build matches. (d) Loop the Sparkie test over test run, preview, simulate, what if and a title made only of generic words. (f) Add eval cases for the four phrasings.",
+    "test": "The tests listed in the fix. Each fails when its guard is removed."
+   },
+   {
+    "id": "SC-8",
+    "title": "The refusal tells the owner to ask for steps that have nothing to do",
+    "where": "/Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs:259-260",
+    "fails": "Steps: [stop A (already stopped: 'nothing to do'), stop B (not there: 'cannot run')]. The message reads 'Step 1 would have gone; ask for it by itself if you want.' Step 1 would do nothing. Sparkie or an agent may then issue a pointless stop and report it as progress.",
+    "severity": 1,
+    "fix": "Build the list from 'goes' only: const would = check.filter(l => l.result === 'goes').",
+    "test": "test/steps.test.mjs: workflow [stop sc-Qwen--Qwen3-32B on spark3 (not running), stop sc-not-there]. The refusal text has no 'would have gone'."
+   }
+  ],
+  "verdicts": [
+   {
+    "id": "SC-1",
+    "ruling": "real",
+    "why": "Confirmed. /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs:272-276 tests only the title's words; out.inputs is never compared with the owner's words. Steps then run via 'workflow' (18-workflows.mjs:275), which skips sparkieCheck, so namesModel and tracesToRequest never see the filled-in model or Spark. changeLabel (17-changes.mjs:83) prints only the title, so the button hides the inputs too, against the rule at 16-actions.mjs:297 that a button runs exactly what it names. Two limits on the finding: the spec's guard only asks for the name in the owner's words, and this gap existed before this build (run_workflow went through tracesToRequest, which ignores inputs). It is still a way to change more than the owner said. Severity 3 holds for the hidden-input button; the run-at-once half is 2-3.",
+    "fix": "In the run_workflow branch add: const vals = Object.values(out.inputs || {}); clear also needs vals.every(v => [...tokensOf(String(v))].every(t => said.has(t))). In changeLabel append the inputs: ` with ${Object.entries(input.inputs).map(([k, v]) => `${k} ${v}`).join(', ')}` when there are any. Test in test/steps.test.mjs: workflow with input {model}; brain scripted to pass inputs {model:'gemma-3-12b-it'} on 'run swap mode' gives one button whose label contains gemma-3-12b-it and no workflow-run operation; 'run swap mode with gemma-3-12b-it' runs at once."
+   },
+   {
+    "id": "SC-2",
+    "ruling": "real",
+    "why": "Confirmed. ACTION_KIND.run_workflow is ['start'] (16-actions.mjs:168). For 'run coding mode, but don't stop anything', changeIntent gives asked=['start'] ('run' is a start word, :104) and negated=['stop'] (NEGATOR, or KEEP for 'keep glm running'). `asked` at :257 only looks at the start kind, so clear is true. The inner steps get a fresh ctx at 18-workflows.mjs:275 with no intent and no noStops (14-chats.mjs:248 sets noStops only on the Sparkie turn's ctx), and a stop_model step ignores noStops anyway. The stop the owner ruled out runs, against the comment at 16-actions.mjs:314.",
+    "fix": "In the run_workflow branch: clear also needs intent.negated.length === 0 && intent.mixed.length === 0 (any ruled-out kind makes it a button). That is smaller than mapping step kinds. Optionally also pass noStops: Boolean(ctx.noStops) into the step ctx at 18-workflows.mjs:275 so a start step cannot stop others either. Test in test/steps.test.mjs: saved workflow with a stop_model step; brain scripted to call run_workflow on 'run free spark four but don't stop anything' gives one button, no workflow-run operation, containers files unchanged."
+   },
+   {
+    "id": "SC-3",
+    "ruling": "real",
+    "why": "Confirmed. 18-workflows.mjs:180-182 collects ids from args.spark for any action and refuses if that Spark is not online. fleet_events (16-actions.mjs:871-872) and workloads (:843-844) only filter the console's stored events and knowledge by Spark id and work with the Spark off. So a read step naming an off Spark is 'cannot run' and the whole run gets 409, which breaks R35's own wording (refuse only on facts that fail the real step the same way). Narrow in practice (a saved routine with a read step naming Spark 3 or 4), so severity 2 is right.",
+    "fix": "At 18-workflows.mjs:181 apply the off test only to steps that need the Spark: const off = a.kind !== 'read' && ids.find(id => !sparkOn(id)?.online). Test in test/steps.test.mjs: with spark4 in the offline file, [fleet_events {spark:'spark4'}, find_setups {...}] rehearses goes/goes and run_workflow returns outcome 'started'."
+   },
+   {
+    "id": "SC-4",
+    "ruling": "real",
+    "why": "Confirmed. The stop_model, restart_model and start_model schemas have no required list (17-changes.mjs:530, :630; start allows a choice alone), so checkInput passes {spark:'spark4'} or {} at save (18-workflows.mjs:226-229) and in checkSteps (:179). The container branch at :184 needs args.container and the model branch at :192 needs args.model, so both fall through to line({result:'goes'}) at :201. The real step then throws 400 'Missing argument: spark and container.' (17-changes.mjs:535, :635) or 'Missing argument: model.' (:523) after earlier steps already ran. With a container but no spark, ids[0] is undefined and the line reads '... on undefined'. This is the exact failure the item is meant to stop; it needs a badly formed saved step, so severity 2.",
+    "fix": "In checkSteps after checkInput: if ((st.action === 'stop_model' || st.action === 'restart_model') && !(args.spark && args.container)) line({result:'cannot run', why:'Missing argument: spark and container.'}); if (st.action === 'start_model' && !args.model) line({result:'cannot run', why:'Missing argument: model.'}); continue in both. In save_workflow throw the same words as `Step N (action): ...` when the step has no placeholders. Test: add [{spark:'spark4'}, /Step 2 \\(stop_model\\): Missing argument/] to the refused list in the first test of test/steps.test.mjs, and a workflow [stop RADIX on spark4, start_model {}] refused by run_workflow with the containers file unchanged."
+   },
+   {
+    "id": "SC-5",
+    "ruling": "real",
+    "why": "Confirmed for the unknown name. findSaved returns null, so title is empty and clear is false (16-actions.mjs:273-275); runAction goes to propose (:320-326) and changeLabel falls back to input.name (17-changes.mjs:83), giving a button 'Run the saved workflow “codng mode”' that can only 404 when pressed. Sparkie never sees the 'Saved: ...' list. Before this build the branch did not exist and a run word reached run_workflow's 404 directly, so this is a regression. The missing-inputs half is weaker: when the name is in the owner's words the run goes through and the brain gets the 400 naming the inputs; only an already unclear request yields a button that 400s. Severity 2.",
+    "fix": "At the top of the run_workflow branch in sparkieCheck: const w = findSaved(String(out.name || '')); if (!w) throw new HttpError(404, `No saved workflow called “${out.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`); and throw the same 400 as 18-workflows.mjs:247 when declared inputs are missing. Test in test/steps.test.mjs: brain scripted to call run_workflow {name:'no such thing'} on 'run no such thing' gives no choices on the message and the tool error contains 'Saved:'."
+   },
+   {
+    "id": "SC-6",
+    "ruling": "minor",
+    "why": "True as written: 16-actions.mjs:275 has no tie rule, so with 'coding mode' and 'coding mode big' both saved, a call naming 'coding mode' is clear on the words 'run coding mode big'. But it needs two saved titles where one contains the other and the brain choosing the wrong one when the exact longer title is in the message and in the `workflows` list. The guard's intent (the name the brain ran is in the owner's own words) is literally met, and the simplification from 'every distinguishing word' to 'every word' is stricter in the common case. One owner with a handful of routines makes this unlikely. Worth the one-line tie check only if SC-1 and SC-2 are being fixed in the same branch anyway.",
+    "fix": "Optional: not clear when another saved workflow's title tokens are all in `said` and it has more tokens than this one: savedWorkflows().some(x => x.id !== w.id && [...tokensOf(x.title)].length > title.length && [...tokensOf(x.title)].every(t => said.has(t)))."
+   },
+   {
+    "id": "SC-7",
+    "ruling": "real",
+    "why": "Mostly confirmed by reading /Users/akuppala/Documents/26aiRAG/spark-console/test/steps.test.mjs (130 lines) and grepping test/. (a) Nothing in test/ mentions checkSkipped or 'was skipped', so the try/catch at 18-workflows.mjs:253-256 (a must-have guard: a checker bug must not stop a workflow) can be deleted with every test green. (b) The steps-equality test in record() (:264) is untested; change.test.mjs:734 only checks lastRun.ok after a plain run. (d) Only 'rehearse', 'dry run' and half a name are scripted (steps.test.mjs:113-117); test run, preview, simulate and what if are not. (e) A title made only of GENERIC words is untested. (f) test/eval/cases.json has no rehearse, dry run or run_workflow case, which the spec asked for before release. (c) is wrong as a durable test: the lock file is rewritten by test/lock.mjs on every tree, so 'versions equal the lock' proves nothing lasting; the spec's check was a one-time before/after comparison and the header line at :5 is just a claim. Severity 2; (a) is the one that matters.",
+    "fix": "Add to test/steps.test.mjs: (a) a workflow whose check throws (simplest: make the stand-in inventory fail for that one call, or add a test-only env that makes checkSteps throw) and assert run_workflow returns outcome 'started' with checkSkipped and the log line 'The check before step 1 was skipped'; (b) start a run, re-save the same title with different steps before it ends, assert the saved entry's lastRun is null; (d, e) extend the Sparkie loop with 'test run look up setups', 'preview look up setups', 'simulate look up setups', 'what if I run look up setups', and a workflow titled 'the model' on 'run the model', each expecting the button and no run. (f) add eval cases for 'rehearse X', 'dry run X', 'can X run now?' and 'run X' to test/eval/cases.json. Drop (c)."
+   },
+   {
+    "id": "SC-8",
+    "ruling": "minor",
+    "why": "True: 18-workflows.mjs:259 includes 'nothing to do' steps in the 'would have gone' list, so a step that would do nothing is offered to be asked for by itself. Harmless: asking for it returns outcome 'already' (17-changes.mjs stop_model returns 'isn’t running'), nothing changes, and the per-step lines in `workflows {name}` say the truth. Wording only.",
+    "fix": "Optional one-word change: const would = check.filter(l => l.result === 'goes').map(l => l.step);"
+   }
+  ]
+ },
+ {
+  "item": "paste-card",
+  "summary": "Read-only review of the paste card (everywhere-1) and the brain cap (R36). Nothing was run, so every finding is from reading the source. The core is sound: the card is built by code, the model never sees the block, it is appended once from the action's value, and the count has no race and frees on every ending I could trace. There is no lock-out path and nothing changes on a Spark.\n\nThe \"one generic card, no clients.json\" simplification keeps the intent of the row-checking, basis-line and capability-line guards, because the text is now constants that only change by install.\n\nSix defects, none above severity 3:\n- **Context figure (3):** the card hands apps 1,000,000 tokens with no 262,144 ceiling, which is the slot-holding risk the attack named.\n- **Non-brain target (3):** when `sparkie` points at another model the card still gives a full block, with no \"tool calls are not known\".\n- **Untested \"minus one\" (3):** the stand-in brain answers 1 at once, so the reservation branch and the \"no cap when unset\" branch never run in a test.\n- **Result shape (2):** with `client` the action returns the whole `running_models` result with `paste` last; on a busy fleet the 12,000-character cut can drop the \"it is shown\" notice, and the model can still write its own block from `gateway.baseUrl`.\n- **429 wording (2):** \"one place stays for the owner's chat\" is untrue when the brain answers 1 at once, and agent-door and Telegram turns are not counted either.\n- **Claude match (1):** any app name containing \"claude\" is answered as \"Claude Code\".\n\nFiles: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/15-routes.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/paste.test.mjs.",
+  "guardsKept": [
+   "1 Read only, owner only, in INSIDE_READS, no fetch or state file: kept (16-actions.mjs:482, 14-chats.mjs:64; pasteCard does no I/O). `usedRecently` looks untouched; no git history here to prove it.",
+   "2 Template card only when sparkie is the brain; otherwise name by checked id: NOT kept. A block is emitted for a non-brain target and the id is not regex-checked; it does use the id, not the title (paste-2).",
+   "3 Card says model alone, no fleet tools or memory, and requests at once shared with chats: kept (16-actions.mjs:533-534).",
+   "4 One count of open brain calls, 429 with Retry-After above slots minus one, chat not counted, no per-caller table, 1-at-once card sentence: kept in code (15-routes.mjs:184-189; no await between check and increment). The minus-one branch is untested (paste-3) and the 429 wording is wrong at 1 (paste-5).",
+   "5 Non-brain model: no block, plain values, \"tool calls are not known\", start-again sentence: missing (paste-2). Dropping the start-again sentence is fine, since the card only ever names `sparkie`, which never starts a model.",
+   "6 No key in or out, no key-placement advice, unknown-app caution about maker's servers: kept (16-actions.mjs:531,537).",
+   "7 Reach sentence on every answer, no way around: kept for cards and both not-yet answers; absent only on the `[conflict]` and withheld answers, which is fine.",
+   "8 Rows checked on read, nothing writes clients.json: simplified, ok. There is no file; the text is constants in code that change only by install, which keeps the intent.",
+   "9 Result equals maskDeep(result) or withheld; test /mcp equals POST /actions with no [hidden], sck_, Bearer, {{: kept (16-actions.mjs:540; paste.test.mjs:38-42).",
+   "10 Brain's tool result leaves the block out; code appends once under a fixed label from the action's value; scripted-brain test: kept (14-chats.mjs:329-331,363-364; paste.test.mjs:58-71). Weakened by the full result and the 12,000 cut (paste-4).",
+   "11 Basis line with docs link and date, never \"tried/proven/worked\": simplified, ok. No per-app claim is made, so there is nothing to base; none of those words appear.",
+   "12 Explicit capability lines per app: simplified, ok for a generic card with the brain. Not ok for a non-brain target, where silence about tools is a claim (paste-2).",
+   "13 No guessed numbers, 262,144 ceiling with real figure beside it, non-https is a coded [conflict]: partly kept. No guesses and the [conflict] are there (16-actions.mjs:526); the 262,144 ceiling is missing (paste-1).",
+   "14 Eval checks arguments, or drop the eval claim: the eval was not extended (test/eval/cases.json has no client case), and R36 makes no eval claim, so the guard's fallback is met. The risk remains that Sparkie calls `running_models` without `client` and writes a block from training.",
+   "15 Touch list and full lock run before install: simplified, ok (paste.test.mjs instead of clients.test.mjs, no clients.json or SERVICE_FILES change). `mainArg` is defined in 16-actions.mjs and used in 15-routes.mjs only at call time, so load order is safe. I did not run the lock."
+  ],
+  "findings": [
+   {
+    "id": "paste-1",
+    "title": "Card gives apps the brain's full 1,000,000-token context, with no 262,144 ceiling",
+    "where": "service/src/16-actions.mjs:528,531,535; test/paste.test.mjs:29,35 (asserts 1000000); service/config.json:58-59,119-120",
+    "fails": "With the aphex or aphex-agent setup (`--context-length 1000000`), `running_models {client:'any app'}` returns `values.contextTokens: 1000000` and the note \"Context: 1,000,000 tokens (its server's setting)\". An app or the owner's agent configures a 1M window; one long request then holds a brain place for minutes. With `--max-running-requests 1` that is the owner's only place. Guard 13 asked for \"at most 262,144 with the server's real figure beside it\" for exactly this reason (attack problem 5). The test locks the wrong number in.",
+    "severity": 3,
+    "fix": "In `pasteCard`, set `contextTokens = Math.min(context, 262144)` and word the note as \"Give apps at most 262,144 tokens (its server allows 1,000,000)\" when the flag is larger.",
+    "test": "paste.test.mjs: with the stand-in aphex setup, expect `values.contextTokens === 262144` and a note containing both 262,144 and 1,000,000. Fails today (1000000)."
+   },
+   {
+    "id": "paste-2",
+    "title": "Full paste block is emitted when `sparkie` points at a model other than the brain",
+    "where": "service/src/16-actions.mjs:528-538 (no branch on `brain` before building `block`); service/src/14-chats.mjs:329-331",
+    "fails": "The owner sets the agents route to an endpoint model (say GLM on Spark 3), then asks \"how do I use Sparkie from Open WebUI\". `pasteCard` returns `fits: true` with the full env and curl block, and Sparkie's turn appends it. Guards 2 and 5 say: template cards only when `agentTarget().kind === 'main'`; otherwise plain values, no block, and \"tool calls are not known\". The card says nothing about tools, so an agent app's first tool call may be refused by a server started without a tool parser. `t.model` is only cut to 200 characters, not checked against `^[\\w./:@-]{1,200}$`; it does use the id, not the title.",
+    "severity": 3,
+    "fix": "When `!brain`, return `{app, fits: true, values, notes}` with no `block`, add the fixed note \"Tool calls with this model are not known.\", and name the model only if it matches `^[\\w./:@-]{1,200}$` (else \"the model chosen for agents\"). 14-chats.mjs already appends only when `block` exists.",
+    "test": "paste.test.mjs: write an endpoint agents route into main.json for the stand-in fleet, call `running_models {client:'curl'}`, expect no `paste.block` and the \"not known\" note. Fails today (block present)."
+   },
+   {
+    "id": "paste-3",
+    "title": "The \"minus one\" reservation and the \"no cap when unset\" branch are untested",
+    "where": "test/paste.test.mjs:73-88 (stand-in brain is aphex: 1 at once); service/src/15-routes.mjs:184-185",
+    "fails": "With slots = 1, `Math.max(1, slots - 1)` equals 1, the same as `slots`. If line 185 were written `>= slots` (no place kept), or if `mainArg` returned the wrong value for 4, every test still passes. The actual reservation the owner was promised, and the R36 words \"no cap when it is not set\", are never exercised. `mainArg` returning null (flag absent, or a vLLM brain using `--max-num-seqs`) silently means no reservation, also untested.",
+    "severity": 3,
+    "fix": "Add one test under the aphex-agent setup (4 at once), the way agent-setup.test.mjs:20 switches `current` in main.json: three slow `/v1` calls get in, the fourth gets 429. Add a unit-level case with the flag absent that expects no 429.",
+    "test": "The new test itself: it fails if line 185 is changed to `>= slots` or if the cap is off by one; today's suite does not."
+   },
+   {
+    "id": "paste-4",
+    "title": "With `client`, the whole `running_models` result is returned with `paste` last, so the 12,000-character cut can drop the \"it is shown\" notice",
+    "where": "service/src/16-actions.mjs:502-511 (`paste` is the last key); service/src/14-chats.mjs:331-339 (notice built, then `out.slice(0, 12000)`); service/src/16-actions.mjs:504 (`gateway.baseUrl` still in the model's view)",
+    "fails": "On a fleet with many containers or stopped deploys, the JSON passes 12,000 characters and `paste` (notes and the \"Spark Console shows this card's block… Don't repeat\" line) is cut off. The model then has `gateway.baseUrl` and the model name but no notice, and writes its own block; code still appends the exact one. The reply holds two blocks with nothing saying which to paste (attack problem 7). Even without the cut, the model sees the address twice and can retype it in prose. The design said: with `client`, return `observedAt` and the card only.",
+    "severity": 2,
+    "fix": "In `run`, when `client` is set, return `{observedAt, paste: pasteCard(client, gateway)}` only (or at least put `paste` first). Update the tool description to match.",
+    "test": "paste.test.mjs: `Object.keys(await card('curl'))` deep-equals `['observedAt','paste']`. Fails today."
+   },
+   {
+    "id": "paste-5",
+    "title": "The 429 says \"one place stays for the owner's chat\" when none does",
+    "where": "service/src/15-routes.mjs:185-186; test/paste.test.mjs:79 (asserts the sentence under the 1-at-once setup)",
+    "fails": "Case 1: under the aphex setup (1 at once) an app holds the only place; a second app is told \"one place stays for the owner's chat\" while the owner's chat is in fact queued behind the first app. The card note says the truth, the 429 does not. Case 2: with 4 at once, three app calls plus agent-door or Telegram turns with Sparkie (14-chats.mjs:188-189 allows two agents at once) fill all four places; these are not counted, so the owner's page chat waits with no message. R36's \"apps must never crowd the owner out\" holds only against `/v1` callers.",
+    "severity": 2,
+    "fix": "When `slots === 1`, word the 429 as \"Sparkie's model answers one request at a time and is answering an app now.\" Leave the counting as designed, and add \"agents talking to Sparkie are not counted\" to the R36 row rather than widening the code.",
+    "test": "paste.test.mjs:79: under aphex, expect the message not to contain \"one place stays\". Fails today."
+   },
+   {
+    "id": "paste-6",
+    "title": "Any app name containing \"claude\" is answered as \"Claude Code\"",
+    "where": "service/src/16-actions.mjs:519 (`/\\bclaude\\b/i`), 525",
+    "fails": "`client: \"Claude Desktop\"` (or \"claude.ai\") returns \"Claude Code isn't set up to use Sparkie yet. It speaks Anthropic's API…\". The verdict is right, but it names an app the owner did not ask about.",
+    "severity": 1,
+    "fix": "Use the owner's own word in the sentence (`${app} isn't set up…`) for the Claude row, or match `/\\bclaude\\s*code\\b/` for the \"Claude Code\" label and give other Claude apps the same reason under their own name.",
+    "test": "paste.test.mjs: `card('Claude Desktop')`, expect `says` to start with \"Claude Desktop\". Fails today."
+   }
+  ],
+  "verdicts": [
+   {
+    "id": "paste-1",
+    "ruling": "real",
+    "why": "Confirmed. service/src/16-actions.mjs:528 reads `--context-length` straight from MAIN.args and :531/:535 emit it uncapped as `values.contextTokens` and \"Context: 1,000,000 tokens (its server's setting)\". service/config.json:58-59 (and 119, 179, 244) set 1000000, reached through rope scaling (factor 4 over a 262,144 model, per test/agent-setup.test.mjs:39). Guard 13 is explicit: \"The brain's context is given as at most 262,144 with the server's real figure beside it\", and attack problem 5 gives the reason (one long request holds a place for minutes; under aphex that is the only place, 15-routes.mjs:184-185). The 'one generic card' simplification does not cover this: the number is still the value an owner types into an app's context field. test/paste.test.mjs:28 and :34 lock the uncapped number in. Severity 3.",
+    "fix": "In pasteCard (16-actions.mjs:528-535): `const give = context ? Math.min(context, 262144) : null`; put `give` in values.contextTokens; note becomes `Context: give apps at most 262,144 tokens (its server allows 1,000,000).` when context > 262144, else today's sentence. Test: paste.test.mjs:28 expects contextTokens === 262144 and the note at :34 contains both 262,144 and 1,000,000; fails today."
+   },
+   {
+    "id": "paste-2",
+    "ruling": "minor",
+    "why": "The facts are right but the described failure does not follow. 16-actions.mjs:529-531 does build the block when `brain` is false, against guards 2 and 5 as written. But the owner chose one generic card, and the block holds only the console address, key 'any' and model `sparkie` (never the endpoint's name), which is correct whichever model `sparkie` points at; the notes then say slots and context are 'not known here' (:534-535) and name the target (:533). The guards' reasons were app-specific templates making a tool claim by omission (Zed) and a stopped model restarting when called by name: the generic card has no capability lines, and a call to `sparkie` goes to proxyBrain (15-routes.mjs:179-188), never startOnCall, so the restart sentence does not apply. So the simplification keeps the intent, with two small gaps: (a) no 'tool calls are not known' sentence for a non-brain target; (b) `t.model` at :533 is the server-reported id saved at 15-routes.mjs:52 and is only sliced to 200, not checked against `^[\\w./:@-]{1,200}$`, though otherServers at :500 does check. It lands in a note the brain reads, not in the block, and maskDeep still applies (:540). Severity 2.",
+    "fix": "At 16-actions.mjs:533 use `/^[\\w./:@-]{1,200}$/.test(String(t?.model)) ? t.model : 'the model chosen for agents'`, and when `!brain` add the fixed note 'Tool calls with this model are not known.' Keep the block. Test: write an endpoint agents route into main.json for the stand-in fleet, call running_models {client:'curl'}, expect that note and the id (or the fallback words for an id with a space); fails today."
+   },
+   {
+    "id": "paste-3",
+    "ruling": "real",
+    "why": "Confirmed as a test that passes while the code is wrong. The only tests of the cap are test/paste.test.mjs:73-97, run under the stand-in aphex setup (1 at once; the file's own header at :5 says so). With slots = 1, `Math.max(1, slots - 1)` is 1, so 15-routes.mjs:185 behaves the same if rewritten `>= slots`, `>= 1`, or with the minus-one dropped. Nothing else in test/ touches gatewayBrainCalls. The promised reservation (R36: minus one, at least one, no cap when the flag is unset, docs/architecture.md:215) is therefore unproven for the 4-at-once setup (config.json:147), which is the only case where a place is actually kept. The mainArg-null branch (16-actions.mjs:522) is also unexercised. Severity 3 (a guard with no proof, against the 'proven before install' rule).",
+    "fix": "Add one test in paste.test.mjs that switches `current` to 'aphex-agent' in main.json the way test/agent-setup.test.mjs:20 does: three slow /v1 calls return 200, a fourth at the same time returns 429 with Retry-After, and the card note reads 'answers 4 requests at once ... apps get at most 3'. Add a second case with `--max-running-requests` removed from the setup's args: two calls at once both 200 and the note says 'isn't known here'. The first fails if :185 becomes `>= slots` or the cap is off by one; today's suite does not."
+   },
+   {
+    "id": "paste-4",
+    "ruling": "minor",
+    "why": "True as far as it goes, but it needs an unusual fleet and the harm is small. `paste` is the last key (16-actions.mjs:510) and 14-chats.mjs:339 cuts the string at 12,000 characters after the notice is put in (:331), so a long listing could drop the 'it is shown' line. On four Sparks the listing is a few hundred characters per server; passing 12,000 takes roughly 40 or more entries. The block itself is safe: it is taken from the value before the cut (:329-330) and appended once (:363-364), as guard 10 requires, and the tool description (16-actions.mjs:483) also tells the model not to repeat it. The design did say 'With client it returns observedAt and client only', so returning the whole listing is a departure, and it also spends brain context on every card question. Severity 2.",
+    "fix": "In run (16-actions.mjs:502-511): `if (client) return { observedAt: inv.observedAt, paste: pasteCard(client, gateway) };` before building the full result (the card needs no inventory beyond observedAt), and adjust the description. Test: `Object.keys(await card('curl'))` deep-equals ['observedAt','paste']; paste.test.mjs:54 (no client, no card) stays. Fails today."
+   },
+   {
+    "id": "paste-5",
+    "ruling": "real",
+    "why": "Case 1 confirmed: misleading words. Under the 1-at-once setup, 15-routes.mjs:185 lets one app call in (Math.max(1, 0) = 1) and the second gets 'Sparkie's model is already answering 1 app request, and one place stays for the owner's chat' (:186). No place stays: the brain's only place is held by the first app and the owner's chat queues behind it. The card says the truth for the same setup ('so an app's request makes your chat wait', 16-actions.mjs:534), so the two texts contradict each other, and test/paste.test.mjs:79 asserts the false sentence. The comment at :182 and the test's describe title (:72) repeat it. Case 2 (agent-door and Telegram turns not counted) is as designed: guard 4 says the console's own chat is not counted and no per-caller table; 14-chats.mjs:188-189 limits agents separately. Not a defect, at most a line for the R36 row. Severity 2.",
+    "fix": "At 15-routes.mjs:186 pick the tail by slots: `slots === 1 ? 'and it answers one request at a time' : 'and one place stays for the owner's chat'`. Test: paste.test.mjs:79 under aphex expects /already answering 1 app request, and it answers one request at a time/ and not 'one place stays'; the new 4-at-once test from paste-3 expects 'one place stays'. Fails today."
+   },
+   {
+    "id": "paste-6",
+    "ruling": "minor",
+    "why": "True and cosmetic. 16-actions.mjs:519 matches any name with the word 'claude' and :525 always prints the row's label, so 'Claude Desktop' is answered 'Claude Code isn't set up to use Sparkie yet'. The verdict and the reason (Anthropic's API against an OpenAI address) are still right for every Claude app, nothing is emitted that could be pasted, and `app` in the result keeps the owner's own word. Severity 1.",
+    "fix": "At :525 use the owner's word when it is not the row's label: `says: `${/code|codex/i.test(app) ? notYet[1] : app} isn't set up...`` (or simply `${app}` with the label only as fallback). Test: card('Claude Desktop').paste.says starts with 'Claude Desktop'; fails today. Optional."
+   }
+  ]
+ }
+]

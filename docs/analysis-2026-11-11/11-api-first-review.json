@@ -1,0 +1,518 @@
+{
+ "verdict": "Not quite: the action list, the agent door and /v1 are sound and the gates hold, but four things are confirmed broken for an API-only owner: the owner's own POST /actions call cannot cancel an operation and its failures pause every agent (20-desired.mjs:131, 07-jobs.mjs:64), an owner-only question raised outside a chat hands back choice ids nobody can ever press (17-changes.mjs:95), and a route that throws leaves no trace anywhere (24-handler.mjs:696-699). Fix those first with the small versions, then add the terminal `call` command with the header hint, the two missing verbs (download, forget), the audit and safety reads, and the missing tests for the brain routes, /actions callers and the /v1 strip. Of the 31 findings about a third are copies of each other (error codes three times, the terminal command four times, the route list three times), and the larger builds (update_console, a keyed agent on a Spark, watchdog put-back) are real gaps but need the owner's yes as rule changes rather than being fixes for this pass.",
+ "kept": [
+  {
+   "id": "api/coverage/API-1",
+   "title": "Owner-only questions from a direct API or agent call can never be answered",
+   "gap": "When an action called through POST /actions/<name> (via 'api') or a direct MCP tools/call needs the owner's own yes, it returns a question marked ownerOnly with choice ids: start_model that must stop something started outside Spark Console (service/src/17-changes.mjs:432-437), stop_model of the model answering Sparkie (17-changes.mjs:545), undo_update from an agent or an internet session (18-workflows.mjs:412-419), page-only actions from Telegram (16-actions.mjs:308-311). redeemChoice refuses any caller that is not the page (17-changes.mjs:95), and the page can only press buttons that live in a conversation (runChoice needs c.who to match that conversation, 14-chats.mjs:84-89). With no conversation, the question exists only in the caller's JSON. The note tells the agent \"Only the owner can answer this one, from Spark Console\" (17-changes.mjs:63), but there is no place in Spark Console where it shows. The owner has to notice, open a chat and ask again in their own words.",
+   "smallestBuild": "In question() (17-changes.mjs:49): when ownerOnly is true and ctx.conv is empty, also append one notice message with the same choices to a fixed owner chat (title 'Waiting for you', created on first use) and store the pending choice with who = sparkieWho(viewer, thatConv), so the existing POST /chats/:id/choose plus passkey runs it. Return waitingIn: <conversation id> to the caller, and keep the choice ids out of the caller's result. No new route, no new gate. Test (door.test.mjs): an agent that may change things calls start_model where the only room needs a container Spark Console did not start; today the question is unanswerable; after, GET /chats shows the waiting chat, POST /chats/<id>/choose with the passkey header starts the operation, and the same choice id through /mcp or /actions still gets 403.",
+   "severity": 4,
+   "value": 5,
+   "effort": "M",
+   "guards": [
+    "The yes still needs the owner's passkey on the page (22-passkey.mjs:155-157): unchanged",
+    "Agents and the API still cannot redeem an owner-only choice (17-changes.mjs:95 stays)",
+    "A choice still works once, for 15 minutes",
+    "Telegram never gets these buttons (R32)"
+   ],
+   "agentSays": "start_model {\"model\":\"gpt-oss-120b\"} -> {\"outcome\":\"question\",\"question\":\"...Stop bench-run so it can start?\",\"waitingIn\":\"sc_ab12...\",\"note\":\"Waiting for the owner in Spark Console\"}; later wait_operation or recent_operations shows it started",
+   "lens": "coverage",
+   "ruling": "smaller",
+   "build": "In question() only: when ownerOnly and there is no ctx.conv, hand back no choice ids (choice: null) and change the note to say exactly what works: 'Only the owner can say yes: in Spark Console ask Sparkie for the same thing and press the button there (agents: ask through ask_sparkie, so the button waits in that conversation).' No new chat, no new route, no gate change. One test: the direct call's result carries no redeemable id and names the way.",
+   "fixFirst": true,
+   "why": "Confirmed. redeemChoice refuses an owner-only choice unless via is 'page' (service/src/17-changes.mjs:95) and runChoice needs the choice to belong to a conversation (14-chats.mjs:84-89); a question raised through POST /actions (ctx via 'api', 24-handler.mjs:249) or a direct door call (20-mcp.mjs:229) has no conversation, so its choice ids are dead and the note 'from Spark Console' (17-changes.mjs:63) points nowhere. But a new fixed 'Waiting for you' chat is more than needed: the same request made through Sparkie already lands as a button in a conversation the owner can press with the passkey (14-chats.mjs:99-102, 22-passkey.mjs:159-160)."
+  },
+  {
+   "id": "api/coverage/API-2",
+   "title": "Three everyday verbs are page routes only: download, add to Recipes, forget from the should-run list",
+   "gap": "These exist only as REST routes, so Sparkie and agents with a key (who reach only /mcp and /v1, 24-handler.mjs:83) cannot do them, and POST /actions cannot either: POST /recipes/download (24-handler.mjs:678), POST /recipes/add and /recipes/add-list (:654, :661), POST /desired/forget (:503-515). start_model downloads only as part of a start (17-changes.mjs:459-503), so \"download it tonight, I'll start it tomorrow\" and \"add this Hugging Face link to my recipes\" cannot be said to Sparkie. The contract lists \"downloads on their own\" as missing (docs/contract.md:941) and the review plan already names the three actions (docs/reviews-2026-11-11.md:131); none is in the code (grep finds no download_model, add_recipe or forget_should_run in service/src).",
+   "smallestBuild": "Three action({...}) entries that wrap the code the routes already call: download_model {repo, spark?, file?} -> downloadVersion + refreshSetups (change, fleet:act, takes a claim on the Spark, never Spark 2 unless the owner names it); add_recipe {repos or text} -> addModel/addList + startDig (change); forget_should_run {spark, container} -> the body of /desired/forget moved into 20-desired.mjs (this also brings desired.json's writers down by one, R22). Add them to TOOLS/CHANGE_TOOLS in test/lib.mjs and the counts in test/change.test.mjs. Then point the page at POST /actions/<name> and delete the three REST copies. Cut instead of wrapping: GET /gpu (workloads covers it), GET /connections, POST /nodes/:id/actions (editor-restart), POST /main/route. Leave /main/start, /main/stop, /main/use as owner HTTP routes with no action (the owner swaps the brain). Test (door.test.mjs): a look-only key is not offered the three; a key that may change things runs download_model and gets {outcome:'started', operation}; fails today with \"No tool called download_model\".",
+   "severity": 3,
+   "value": 5,
+   "effort": "M",
+   "guards": [
+    "Only versions listed in Recipes download (24-handler.mjs:682-683 check kept)",
+    "Nothing new starts on Spark 2 (R1)",
+    "Counts toward the agents' safety pause like any change (R9)",
+    "Members keep their own /recipes/download scope until members are retired"
+   ],
+   "agentSays": "download_model {\"repo\":\"Qwen/Qwen3-Coder-30B\",\"spark\":\"spark3\"} -> {\"outcome\":\"started\",\"operation\":\"a1b2c3d4e5f6\"}; add_recipe {\"repos\":[\"org/model\"]}; forget_should_run {\"spark\":\"spark4\",\"container\":\"sc-glm\"}",
+   "lens": "coverage",
+   "ruling": "smaller",
+   "build": "Add two actions that call the code the routes already call: download_model {repo, spark?, file?} (same Recipes-only check, never Spark 2 unless named) and forget_should_run {spark, container} (move the forget body into 20-desired.mjs). Skip add_recipe (start_model already offers 'download and start' for a repo outside Recipes, 17-changes.mjs:465-467). Delete no routes now.",
+   "fixFirst": false,
+   "why": "Confirmed missing: no download_model, add_recipe or forget_should_run anywhere in service/src (grep), and the three verbs live only at 24-handler.mjs:503-515, :654-666, :678-694; agent keys reach only /mcp and /v1 (24-handler.mjs:83). But the proposal also deletes REST routes the page and members still use and cuts four more routes; that is a rewrite, not a gap fix, and risky in a final pass while another agent edits the handler."
+  },
+  {
+   "id": "api/coverage/API-3",
+   "title": "Owner scripts must guess two headers, and there is no generic terminal command or route list",
+   "gap": "Every non-GET owner call needs `x-spark-console: 1` and an Origin equal to the console's (service/src/24-handler.mjs:113). A script that omits them gets 403 \"Cross-site request blocked.\", which does not say what to send. The rule is written down only inside tools/console.mjs:40 and tools/brain-setup.mjs:30. AGENTS.md:53-54 tells whoever changes the code to check it with `POST /console/api/actions/<name>`, but tools/console.mjs has only status, test-changes, brain, sign-in, sign-out, rollback (tools/console.mjs:142-148): no way to run an action or read a route. No doc lists the ~70 REST routes (docs/agent-door.md covers MCP; docs/code-map.md lists functions, not routes). Two comments are also stale and mislead agents: tools/spark.mjs:15 says the key needs Tailscale (keys with internet:true work from anywhere, 20-mcp.mjs:36-47), and 20-mcp.mjs:6 says the door is \"Read-only for now\".",
+   "smallestBuild": "(1) tools/console.mjs: two commands, `call <action> [json]` -> POST /actions/<action>, and `get <path>` -> GET; both print JSON and exit non-zero on an error. (2) 24-handler.mjs:113: when the header or Origin is missing (not when the Origin is another site's), say \"Scripts: send x-spark-console: 1 and Origin: <console origin>, or use node tools/console.mjs call\". (3) tools/code-map.mjs: also write a routes table (method, path, who: public/member/owner, passkey: yes/no from needsPasskey, same-as-action) into docs/code-map.md from the handler source, so it cannot drift. (4) Fix the two stale comments. Test (cli.test.mjs): `console.mjs call fleet_status` prints sparks; `console.mjs call remember '{\"words\":1}'` exits 1 with the 400 text; api.test.mjs: a POST with no Origin gets the new message.",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "The cross-site check itself stays exactly as strict",
+    "A passkey-gated route still answers 428 to a script",
+    "The terminal token still goes only to the https origin it was made for (tools/console.mjs:29-34)"
+   ],
+   "agentSays": "node tools/console.mjs call start_model '{\"model\":\"qwen coder\"}'   and   node tools/console.mjs get /agents",
+   "lens": "coverage",
+   "ruling": "smaller",
+   "build": "Parts 1, 2 and 4 only: `console.mjs call <action> [json]` (longer timeout than the 30 s at tools/console.mjs:39), the helpful 403 text only when Origin is absent, and the two stale comments. Leave the route table to tested/F4.",
+   "fixFirst": false,
+   "why": "Confirmed: non-GET owner calls need x-spark-console and a matching Origin and get a bare 'Cross-site request blocked.' (24-handler.mjs:113); tools/console.mjs has six fixed commands and no way to run an action (tools/console.mjs:139-148); 20-mcp.mjs:6 still says 'Read-only for now' and tools/spark.mjs:15 still says Tailscale is needed although internet keys work (20-mcp.mjs:40-47). This is the one to build for the terminal command and hint; the route table part belongs to tested/F4."
+  },
+  {
+   "id": "api/coverage/API-5",
+   "title": "An agent running on a Spark cannot reach the agent door, even with its own key",
+   "gap": "requestGate refuses every path except /v1/ when the request comes from a Spark's own address (service/src/24-handler.mjs:43-46: \"Requests from the Sparks themselves can't act as a person\"). That is rule R5 and is right for Tailscale identity alone, because the Sparks are signed in as the owner. But it also blocks /mcp for a caller that brings a valid agent key, which is its own credential with its own scope. The owner's end goal is that the work happens on the Sparks: a coding engine or script on Spark 2/3/4 (contract 6.6, docs/contract.md:136) can call models at /v1 but cannot ask what is running, start a model, or talk to Sparkie. Today that pushes such agents back onto the Mac.",
+   "smallestBuild": "In requestGate (24-handler.mjs:44): let path === '/mcp' through from a Spark address only when the Authorization header matches AGENT_KEY_RE; mcpDoor then does what it does today (owner login plus a key of that login, 20-mcp.mjs:150-153). Record from: 'a Spark' in the audit line. Everything else from a Spark (page routes, /actions, sign-in) stays refused. This changes R5's wording in docs/architecture.md, so it is a change the owner approves. Test (fleet.test.mjs next to :135-149): from a Spark address, /mcp tools/list with a key is 200; without a key 403; POST /actions/fleet_status from the same address is still 403; undo_update through that key is still an owner-only question.",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "A Spark's Tailscale identity alone still gets nothing but /v1",
+    "Keys start look-only; changing things needs the owner's passkey per key (22-passkey.mjs:122)",
+    "A call from a Spark still never starts a model through /v1 (15-routes.mjs:172-173)",
+    "The owner approves this change to R5 before install"
+   ],
+   "agentSays": "From Spark 3: spark fleet_status   and   spark ask \"start the best coding model that fits\" (tools/spark.mjs with a key the owner made for that agent)",
+   "lens": "coverage",
+   "ruling": "keep",
+   "build": "In requestGate (24-handler.mjs:44): let path === '/mcp' through from a Spark address only when the Authorization header matches AGENT_KEY_RE; mcpDoor then does what it does today (owner login plus a key of that login, 20-mcp.mjs:150-153). Record from: 'a Spark' in the audit line. Everything else from a Spark (page routes, /actions, sign-in) stays refused. This changes R5's wording in docs/architecture.md, so it is a change the owner approves. Test (fleet.test.mjs next to :135-149): from a Spark address, /mcp tools/list with a key is 200; without a key 403; POST /actions/fleet_status from the same address is still 403; undo_update through that key is still an owner-only question.",
+   "fixFirst": false,
+   "why": "The code does what the finding says: requestGate refuses everything but /v1/ from a Spark's address before any key is looked at (24-handler.mjs:43-46), so a keyed agent on a Spark cannot reach /mcp. It is not broken, it is rule R5 as written (docs/architecture.md:163), so it is a rule change the owner must approve, not a fix for this pass. If approved, the proposed one-line exception (key pattern present, /mcp only) is the right size; note keys start look-only and acting needs the passkey per key (22-passkey.mjs:122)."
+  },
+  {
+   "id": "api/coverage/API-6",
+   "title": "The audit log is written but nothing can read it",
+   "gap": "Every agent call, every change, every access/passkey/device/agent-key event is appended to audit.jsonl (service/src/20-mcp.mjs:126-138; writers throughout 24-handler.mjs and 16-actions.mjs:393-399). There is no route, no action and nothing on the page that reads it (grep finds AUDIT_FILE only in the writer; public/app.js has no 'audit'). fleet_events and recent_operations show what happened to the Sparks, not who called what or who changed access. After the handoff the owner's only way to ask \"what did my Codex agent do last night?\" or \"who was let in?\" is SSH and reading the file, which is exactly what they want to stop doing. Sparkie cannot answer it either and, by its own rule, must not claim it checked.",
+   "smallestBuild": "One read action in 20-mcp.mjs: audit_log {limit (default 30, max 200), actor?, action?, since?} that reads the tail of audit.jsonl (and .1 if needed), newest first, through maskDeep. Offer it only to keys that may change things (scope 'fleet:act', so a look-only key cannot read what other agents and the owner did) and to Sparkie in the owner's own chats; it also works at POST /actions/audit_log. Add to TOOLS in test/lib.mjs. Test (door.test.mjs): after an agent calls fleet_status, audit_log {actor:<agent name>} returns that line with ms and ok; a look-only key is not offered it; a line whose args held a token comes back as [hidden].",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Read only; the file is never rewritten by it",
+    "Results masked (R7)",
+    "Not offered to look-only keys or members",
+    "Capped size so a 10 MB file cannot stall the console (read the tail only)"
+   ],
+   "agentSays": "audit_log {\"actor\":\"Codex on Spark 3\",\"limit\":20} -> [{\"at\":\"...\",\"action\":\"start_model\",\"ok\":true,\"outcome\":\"started\",\"operation\":\"...\"}]",
+   "lens": "coverage",
+   "ruling": "keep",
+   "build": "One read action in 20-mcp.mjs: audit_log {limit (default 30, max 200), actor?, action?, since?} that reads the tail of audit.jsonl (and .1 if needed), newest first, through maskDeep. Offer it only to keys that may change things (scope 'fleet:act', so a look-only key cannot read what other agents and the owner did) and to Sparkie in the owner's own chats; it also works at POST /actions/audit_log. Add to TOOLS in test/lib.mjs. Test (door.test.mjs): after an agent calls fleet_status, audit_log {actor:<agent name>} returns that line with ms and ok; a look-only key is not offered it; a line whose args held a token comes back as [hidden].",
+   "fixFirst": false,
+   "why": "Confirmed: AUDIT_FILE appears only in the writer (20-mcp.mjs:128-136); no route, action or page code reads it. After the handoff 'what did my agent do' has no answer without SSH. Keep it small: tail of the current file only (skip .1), limit and actor/action filters, through maskDeep, scope fleet:act so look-only keys never see it."
+  },
+  {
+   "id": "api/coverage/API-7",
+   "title": "Pause, self-heal, internet and backup state are in no action",
+   "gap": "Whether agents' changes are paused (and whether automatically), whether auto-restart is on, whether the console is open to the internet, and when the last backup ran are only in GET /health (service/src/24-handler.mjs:54-57, full answer on the tailnet only) and GET /agents (:254, owner HTTP). No read action returns them: sparkie_setup has the build and Telegram only (16-actions.mjs:785-791). An agent learns about a pause only by having a change refused (16-actions.mjs:306), and Sparkie cannot tell the owner \"self-healing is off because you paused\" from a tool, so by its own rule it cannot say it at all. For a fleet that is meant to heal itself, the brain not being able to see its own safety switches is a hole.",
+   "smallestBuild": "Add one field to sparkie_setup's result (16-actions.mjs:790): safety: { agentsPaused, pausedAutomatically, selfHeal, openToInternet: funnelOn, lastBackup, operationsRunning }. No new action, no new route. Update the description to say \"Use for: are agents paused, is auto-restart on\". Test (pause.test.mjs): after PUT /agents/settings {halted:true}, sparkie_setup through the door returns safety.agentsPaused true and pausedAutomatically false; fails today (field missing).",
+   "severity": 2,
+   "value": 3,
+   "effort": "S",
+   "guards": [
+    "Read only",
+    "No names of people, devices or keys in it",
+    "Resuming stays with the owner and the passkey"
+   ],
+   "agentSays": "sparkie_setup {} -> {..., \"safety\":{\"agentsPaused\":true,\"pausedAutomatically\":true,\"selfHeal\":true,\"openToInternet\":true,\"lastBackup\":\"2026-11-11T03:00Z\"}}",
+   "lens": "coverage",
+   "ruling": "keep",
+   "build": "Add one field to sparkie_setup's result (16-actions.mjs:790): safety: { agentsPaused, pausedAutomatically, selfHeal, openToInternet: funnelOn, lastBackup, operationsRunning }. No new action, no new route. Update the description to say \"Use for: are agents paused, is auto-restart on\". Test (pause.test.mjs): after PUT /agents/settings {halted:true}, sparkie_setup through the door returns safety.agentsPaused true and pausedAutomatically false; fails today (field missing).",
+   "fixFirst": false,
+   "why": "Confirmed: sparkie_setup returns model, routes, setups, build and Telegram only (16-actions.mjs:790-799); pause, automatic pause, self-heal, internet and backup are only in /health (24-handler.mjs:54-57) and GET /agents (:254). One extra field on an existing read action, no new action or route. Small and directly useful for self-healing answers."
+  },
+  {
+   "id": "api/ergonomics/A1",
+   "title": "The owner's own API call cannot cancel an operation",
+   "gap": "POST /actions/<name> runs with ctx { via: 'api', actor: 'owner' } (service/src/24-handler.mjs:249). cancel_operation decides who may cancel with `ctx.via === 'page' || (ctx.conv && j.conv === ctx.conv) || (ctx.via === 'agent' && ...)` (service/src/20-desired.mjs:131). 'api' matches none of these, so the owner's script gets 403 'Only the owner can cancel an operation someone else started.' The caller is the owner. A look-and-change agent key can cancel its own operations, but the owner's own way in cannot cancel anything. No test covers it: test/api.test.mjs only tries fleet_status, remember, memory and an unknown name. Two smaller cases of the same miss: stop_model's `owners` test leaves out 'api' (service/src/17-changes.mjs:547), so it will not cancel an operation Sparkie started that holds the Spark and answers 409 busy instead; and planOf labels api inputs as 'said' or 'live' instead of 'owner' (service/src/16-actions.mjs:209).",
+   "smallestBuild": "One helper in 16-actions.mjs, e.g. `const ownerCall = ctx => ctx.via === 'page' || ctx.via === 'api'`, used at 20-desired.mjs:131 and :135, 17-changes.mjs:547 and 16-actions.mjs:209. Leave the ownerOnly-question checks (17-changes.mjs:95, 14-chats.mjs:89) as page-only, since those are the passkey gate. Test in test/api.test.mjs: start an operation through POST /actions/start_model on the stand-in fleet, then POST /actions/cancel_operation {id} returns 200 with outcome cancelled or cancelling. It gets 403 today.",
+   "agentSays": "POST /console/api/actions/cancel_operation {\"id\":\"<operation>\"} -> {outcome:'cancelled', operation, status}",
+   "severity": 4,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Owner-only questions (ownerOnly choices) still answer only from the page with the passkey",
+    "Agent keys still cancel only their own operations",
+    "The pause switch still blocks via 'api' (16-actions.mjs:306)"
+   ],
+   "lens": "ergonomics",
+   "ruling": "keep",
+   "build": "One helper in 16-actions.mjs, e.g. `const ownerCall = ctx => ctx.via === 'page' || ctx.via === 'api'`, used at 20-desired.mjs:131 and :135, 17-changes.mjs:547 and 16-actions.mjs:209. Leave the ownerOnly-question checks (17-changes.mjs:95, 14-chats.mjs:89) as page-only, since those are the passkey gate. Test in test/api.test.mjs: start an operation through POST /actions/start_model on the stand-in fleet, then POST /actions/cancel_operation {id} returns 200 with outcome cancelled or cancelling. It gets 403 today.",
+   "fixFirst": true,
+   "why": "Confirmed broken. POST /actions runs as via 'api' (24-handler.mjs:249); cancel_operation's `mine` accepts only page, same chat or same agent (20-desired.mjs:131), so the owner's own API call gets 403 even for an operation it started. stop_model's `owners` also leaves out 'api' (17-changes.mjs:547) and planOf has no label for it (16-actions.mjs:209). No test covers cancel through /actions (grep of test/). The one-helper fix is the right size; leave the owner-only question checks page-only."
+  },
+  {
+   "id": "api/ergonomics/A4",
+   "title": "Three error shapes, and the REST one has no code and no next step",
+   "gap": "REST and POST /actions errors are `{ error: 'sentence' }` (service/src/24-handler.mjs:697). /v1 errors are `{ error: { message, type } }` (same line). The MCP door puts a code in the text, such as '[conflict, retry later] ...' (service/src/20-mcp.mjs:207 and :245). So a script on POST /actions must tell 'busy, retry' from 'refused' by HTTP status alone, although 409 covers both a busy Spark (07-jobs.mjs:28) and 'needs a choice'. The 428 passkey refusal is `{ error: 'Confirm it’s you with your passkey.', passkey: 'confirm' }` (22-passkey.mjs:171) with no word on where to go; tools/console.mjs:50 has to add that itself. wait_operation's 404 'That operation has expired' (18-workflows.mjs:228) gives no next step, while operation_log's 404 points to fleet_events (16-actions.mjs:731).",
+   "smallestBuild": "Move the status-to-code map from 20-mcp.mjs:242 into one shared `errorCode(e)` function. In the catch at 24-handler.mjs:697 send `{ error, code, retry: true|false }` for non-/v1 paths; `error` stays a string, so the page and tools keep working. For 428 add `next: 'Open <console address> and confirm with your passkey; then repeat this call.'` Make wait_operation's 404 point to fleet_events like operation_log's. Test in test/api.test.mjs: an unknown action returns code 'not_found'; bad arguments return 'invalid'; a start on a busy Spark returns code 'conflict' with retry true.",
+   "agentSays": "On any failure read { error, code, retry } and, when present, next; retry only when retry is true",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "The /v1 error shape stays OpenAI-style",
+    "The MCP text format is unchanged (door tests compare it)",
+    "Messages stay plain words"
+   ],
+   "lens": "ergonomics",
+   "ruling": "smaller",
+   "build": "One shared status-to-code map used by both doors; the HTTP catch adds `code` (and `retry: true` for 409/429/502/503) next to the unchanged `error` string on non-/v1 paths. Nothing else.",
+   "fixFirst": false,
+   "why": "Confirmed: REST errors are {error} with only the HTTP status (24-handler.mjs:698) while the door maps the same statuses to codes (20-mcp.mjs:243). This is the canonical one of the three error findings. But `retry` is derivable from the code, and a `next` on 428 and rewording wait_operation's 404 are extras; tools/console.mjs:50 already explains 428."
+  },
+  {
+   "id": "api/ergonomics/A6",
+   "title": "Waiting on a long operation is a caller-side loop, breaks across a console restart, and test_changes is not safe to repeat",
+   "gap": "wait_operation returns as soon as the step text changes and waits at most 45 s (service/src/18-workflows.mjs:224-229). Every caller must write its own loop, and tools/spark.mjs has none: its auto-wait is only for ask_sparkie (lines 131-134). Operations live only in memory (service/src/07-jobs.mjs:2), so after an update, undo_update or a watchdog restart an agent holding an operation id gets 404 'expired' and cannot learn the result by id. The start is written to the fleet record with its id (07-jobs.mjs:13), but wait_operation never looks there. test_changes answers 409 'A test of the changes is running already.' with no operation id (18-workflows.mjs:373), unlike start_model's already-starting, which returns the running operation. tools/console.mjs:81 works around that by searching /jobs.",
+   "smallestBuild": "Three small changes. (1) Give wait_operation an optional `until: 'done'`: it keeps waiting through step changes up to `seconds`, and the result gains `done: true|false` and `next` (the same call again while not done). (2) When the id is not in `jobs`, look for the last operation event with that id in the fleet record and return { status: 'interrupted' or the recorded end status, note: 'Spark Console restarted since; this is what was recorded.' } instead of 404. (3) Make test_changes return { outcome: 'already', operation: <running id>, next } instead of 409. Tests in test/workflows.test.mjs: a second test_changes returns the same operation id; wait_operation for an id that exists only in events.jsonl returns a status, not 404.",
+   "agentSays": "wait_operation {\"id\":\"...\",\"until\":\"done\",\"seconds\":45} -> {done:false,next:...}; repeat until done:true; safe to call again after a restart",
+   "severity": 3,
+   "value": 4,
+   "effort": "M",
+   "guards": [
+    "MCP answers stay under 50 s (the seconds maximum stays 45)",
+    "The page's POST /workflows/validate may keep its 409",
+    "No operation state is invented: only what the fleet record holds is returned"
+   ],
+   "lens": "ergonomics",
+   "ruling": "smaller",
+   "build": "Two things: test_changes returns {outcome:'already', operation:<running id>} instead of 409 from the action (the page route keeps its 409); wait_operation and operation_log, when the id is not in memory, answer from the last operation event with that id in the fleet record (started on disk at 07-jobs.mjs:13, ended at :79, 'interrupted' at 19-watcher.mjs:23) instead of 404. Put any wait loop in the CLI.",
+   "fixFirst": false,
+   "why": "Partly right. wait_operation does return on any step change and 404s once the id is gone from memory (18-workflows.mjs:305-308; jobs are memory only, 07-jobs.mjs:2), and test_changes throws 409 with no operation id (18-workflows.mjs:452). But `until: 'done'` cannot beat the door's 50-second cap (20-mcp.mjs:229-230), so the caller loops anyway; that part adds a mode without removing the loop."
+  },
+  {
+   "id": "api/ergonomics/A7",
+   "title": "Agents are told about three change actions and offered two that can never work for them",
+   "gap": "The door's instructions to a connecting agent name only start_model, stop_model and restart_model (service/src/20-mcp.mjs:56), and the part's header still says 'Read-only for now' (20-mcp.mjs:6), although 13 change actions are offered to a key that may change things. tools/list and GET /actions offer undo_last_change to every caller, but outside a Sparkie chat it always answers 409 'Say \"undo\" in the chat where the change was made' (service/src/20-desired.mjs:145); via MCP or POST /actions there is never a conv. undo_update is offered to agent keys too, but for them it always returns an owner-only question (service/src/18-workflows.mjs:414-419). That gate is right; the description just does not say so, so an agent learns only by calling.",
+   "smallestBuild": "Build the instructions line from ACTIONS: list the change-action names by kind, and say 'each returns an operation (follow with wait_operation), a refusal with the reason, or a question'. Add `chatOnly: true` to undo_last_change and leave it out of tools/list (20-mcp.mjs:166) and GET /actions; Sparkie keeps it. Add one sentence to undo_update's description: 'From an agent key, Telegram or a device signed in over the internet it comes back as a question only the owner answers on the page.' Fix the stale header comment. Tests in test/door.test.mjs: DOOR_ACT no longer has undo_last_change (test/lib.mjs lists are compared exactly; update the lists, not the checks); the initialize instructions contain every offered change action's name.",
+   "agentSays": "tools/list shows only what this caller can really run; initialize instructions name every change action",
+   "severity": 2,
+   "value": 3,
+   "effort": "S",
+   "guards": [
+    "Sparkie's own tool list still has undo_last_change (14-chats.mjs:62)",
+    "undo_update's owner-only gate is unchanged",
+    "Tool counts in test/change.test.mjs are updated together (AGENTS.md step 5)"
+   ],
+   "lens": "ergonomics",
+   "ruling": "keep",
+   "build": "Build the instructions line from ACTIONS: list the change-action names by kind, and say 'each returns an operation (follow with wait_operation), a refusal with the reason, or a question'. Add `chatOnly: true` to undo_last_change and leave it out of tools/list (20-mcp.mjs:166) and GET /actions; Sparkie keeps it. Add one sentence to undo_update's description: 'From an agent key, Telegram or a device signed in over the internet it comes back as a question only the owner answers on the page.' Fix the stale header comment. Tests in test/door.test.mjs: DOOR_ACT no longer has undo_last_change (test/lib.mjs lists are compared exactly; update the lists, not the checks); the initialize instructions contain every offered change action's name.",
+   "fixFirst": false,
+   "why": "Confirmed: the instructions name only start, stop and restart (20-mcp.mjs:56) though every fleet:act action is offered (20-mcp.mjs:166); the header comment says 'Read-only for now' (20-mcp.mjs:6); undo_last_change always refuses without a conversation (20-desired.mjs:146) yet is offered at the door; undo_update from a key always becomes an owner-only question (18-workflows.mjs:493-498) and its description does not say so. All text and one filter; small. Update test/lib.mjs lists together."
+  },
+  {
+   "id": "api/self-fix/F1",
+   "title": "The console's own errors leave no record an agent or Sparkie can read",
+   "gap": "A route that throws anything but a planned refusal answers 500 with the message and nothing else: the catch at service/src/24-handler.mjs:696-699 does not log it, record it or raise an event. The agent door logs such errors only to the journal (service/src/20-mcp.mjs:198, :232) and tells the agent just `[failed] <message>`. Unhandled errors and crashes go to the journal only (service/src/25-backup-and-start.mjs:86-91); a crash then restart leaves no event, and nothing says which build started or why. Failed action calls that never became an operation are written to audit.jsonl (service/src/16-actions.mjs:395) but no route or action reads that file (service/src/20-mcp.mjs:128-137 is write-only). The only window is `service_logs`, which returns the last 100 journal lines unfiltered (service/worker.py:222), so one busy minute pushes the error out. Result: Sparkie cannot notice a broken route, so it cannot propose a patch.",
+   "smallestBuild": "One function `noteProblem({where, message, stack})` in 23-http.mjs writing to `problems.jsonl` in the state folder (through maskSecrets, same name+message counted not repeated, rotate at 1 MB). Call it from the handler catch when `!e.status`, from the two MCP catches, from runJob's catch when the error is not an HttpError, and from unhandledRejection/uncaughtException (sync append before exit). At start, compare BUILD with the last one written and add one line: started, build, previous build, whether the last exit was a crash. One fleet `notice` per new distinct problem per day (events stay rare, R23). One read action `console_problems` (owner, fleet:read) returning the newest 30 with count, first and last time, route or action, top 5 stack lines, build. Also add `status` to the failed audit line. Test (api.test.mjs): make an action throw a plain Error (for example a state file replaced by a directory so a non-HttpError escapes), expect 500, then `POST /actions/console_problems` lists that action, message and build; fails today because the action does not exist and nothing is recorded.",
+   "agentSays": "POST /console/api/actions/console_problems {\"since\":\"2026-11-11\"}  (or MCP tools/call console_problems) -> [{where:\"POST /actions/start_model\", message, stack, count, build}]",
+   "severity": 5,
+   "value": 5,
+   "effort": "M",
+   "guards": [
+    "Text passes maskSecrets before it is written or returned",
+    "Marked as data, not instructions, like logs",
+    "Owner only; no member or internet-public read",
+    "At most one notice per distinct problem per day",
+    "Not copied into the system prompt"
+   ],
+   "lens": "self-fix",
+   "ruling": "smaller",
+   "build": "In the handler catch, when the error has no status: console.error it with method and path (so service_logs shows it) and keep it in a small in-memory list (last 30, same message counted, masked). Show that list as console.problems on sparkie_setup's result. No new file, no new action, no notices. Crashes stay in the journal as today (25-backup-and-start.mjs:86-91).",
+   "fixFirst": true,
+   "why": "The core is confirmed: the handler's catch sends the 500 and writes nothing anywhere (24-handler.mjs:696-699), unlike the door which at least logs (20-mcp.mjs:211, :245), so a broken route is invisible even to service_logs. But a new problems.jsonl with rotation, de-duplication, daily notices, a start-up crash line and a new action is a lot of machinery for a one-owner console."
+  },
+  {
+   "id": "api/self-fix/F2",
+   "title": "No API installs a fix: the repair loop ends at a terminal",
+   "gap": "`test_changes` and `undo_update` are actions (service/src/18-workflows.mjs:397-423), but nothing installs a build. The source is on Spark 2 and `bash ~/spark-console-src/deploy/host-on-portal.sh local` installs from there (deploy/host-on-portal.sh:29-33), yet no route or action runs it; grep for the installer in service/src finds nothing. docs/reviews-2026-11-11.md:104-107 plans `update_console` but it is not built. So even when Sparkie or an agent has a tested patch in the source tree, a person must SSH in.",
+   "smallestBuild": "Action `update_console` in 18-workflows.mjs (change, fleet:act, owner). It always comes back as an owner-only question naming what changed (file list and diff size from the source folder against the installed build) and runs only on the owner's yes (`ctx.ownerConfirmed`), from any door. On yes it does what `undoUpdate` does: refuse while operations run, then `systemd-run --user --collect --unit spark-console-update` a small script that runs `node test/lock.mjs` and, only if it passes, `deploy/host-on-portal.sh local`, writing the outcome to a file in the state folder. The new (or put-back) console reads that file at start and raises one notice with the result and the last 30 lines on failure. The installer's own 45-second check and put-back stay as they are (deploy/host-on-portal.sh:214-230). Add it to CHANGE_TOOLS in test/lib.mjs. Test (change.test.mjs or internet.test.mjs): an agent's call and Sparkie's call both return a question with an ownerOnly choice and start nothing; the owner's press starts it (under ALL_LOCAL it records the command instead of running it); fails today with 404 No action.",
+   "agentSays": "POST /console/api/actions/update_console {}  -> {question:\"Install the build in ~/spark-console-src (7 files changed)?\", choices:[...ownerOnly]} ; after the owner's yes -> {outcome:\"started\", next:\"console_problems / sparkie_setup shows the new build\"}",
+   "severity": 5,
+   "value": 5,
+   "effort": "L",
+   "guards": [
+    "Owner's yes every time; never runs straight from an agent, Sparkie, Telegram or a saved workflow",
+    "Refused while any operation is running",
+    "Only installs a tree whose whole test suite just passed (lock.mjs)",
+    "Runs the installer in `local` mode only: no sudo, no Tailscale, SSH or firewall change",
+    "At most 3 a day (contract 6.15, docs/contract.md:407)",
+    "Keeps the snapshot and the 45-second automatic put-back"
+   ],
+   "lens": "self-fix",
+   "ruling": "keep",
+   "build": "Action `update_console` in 18-workflows.mjs (change, fleet:act, owner). It always comes back as an owner-only question naming what changed (file list and diff size from the source folder against the installed build) and runs only on the owner's yes (`ctx.ownerConfirmed`), from any door. On yes it does what `undoUpdate` does: refuse while operations run, then `systemd-run --user --collect --unit spark-console-update` a small script that runs `node test/lock.mjs` and, only if it passes, `deploy/host-on-portal.sh local`, writing the outcome to a file in the state folder. The new (or put-back) console reads that file at start and raises one notice with the result and the last 30 lines on failure. The installer's own 45-second check and put-back stay as they are (deploy/host-on-portal.sh:214-230). Add it to CHANGE_TOOLS in test/lib.mjs. Test (change.test.mjs or internet.test.mjs): an agent's call and Sparkie's call both return a question with an ownerOnly choice and start nothing; the owner's press starts it (under ALL_LOCAL it records the command instead of running it); fails today with 404 No action.",
+   "fixFirst": false,
+   "why": "Confirmed missing: test_changes and undo_update are actions (18-workflows.mjs:477-502) but nothing in service/src runs the installer, though the installer supports installing from Spark 2 itself (deploy/host-on-portal.sh, 'local' mode, echoed at the source step) and the plan names update_console (docs/reviews-2026-11-11.md:101). Without it the handoff still ends at a terminal. It keeps the rules as proposed (always an owner-only question, refused while operations run, lock must pass, installer's own 45-second put-back). It is new and large, not a broken thing: build it after the fix-first items. Drop the file-list/diff-size wording and the 3-a-day counter from the first version; name the source build and the installed build in the question."
+  },
+  {
+   "id": "api/self-fix/F3",
+   "title": "The owner's own API cannot cancel an operation, and its failures pause the agents",
+   "gap": "`POST /actions/<name>` runs with `via: 'api', actor: 'owner'` (service/src/24-handler.mjs:249). `cancel_operation` allows only `ctx.via === 'page'`, the same chat, or the same agent name (service/src/20-desired.mjs:131), so the owner's API call always gets 403 'Only the owner can cancel an operation someone else started' (:132), even for an operation that same API call started. Separately, runAction says API calls are not an agent looping (service/src/16-actions.mjs:365 lists 'api'), but the failure counter in service/src/07-jobs.mjs:64 leaves 'api' out, so three failed operations from the owner's own scripts pause Sparkie and every agent (and line 52 resets the count on an API success).",
+   "smallestBuild": "20-desired.mjs:131: add `ctx.via === 'api'` to `mine`. 07-jobs.mjs:52 and :64: add 'api' to the lists. Then `POST /jobs/<id>/cancel` (24-handler.mjs:522-526) is a duplicate and can go. Test (api.test.mjs): start a slow start through `POST /actions/start_model`, then `POST /actions/cancel_operation {id}` answers 200 with outcome cancelled or cancelling (403 today); and three failed API-started operations leave `agentSettings().halted` false (true today).",
+   "agentSays": "POST /console/api/actions/cancel_operation {\"id\":\"3fa9c1d2e4b7\"} -> {outcome:\"cancelled\", note:\"What it had done was put back.\"}",
+   "severity": 4,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Agents with a key still cancel only their own operations",
+    "The owner's deliberate pause still stops API-started changes (16-actions.mjs:306 unchanged)"
+   ],
+   "lens": "self-fix",
+   "ruling": "smaller",
+   "build": "Add 'api' to the two lists at 07-jobs.mjs:52 and :64, with the pause test. Cancel is fixed under A1. Keep the page's cancel route.",
+   "fixFirst": true,
+   "why": "The cancel half is the same as api/ergonomics/A1 (20-desired.mjs:131). The second half is confirmed and separate: runAction says an API call is not an agent looping (16-actions.mjs:372 lists 'api') but the failure counter leaves 'api' out (07-jobs.mjs:64), so three failed operations from the owner's own script pause Sparkie and every agent. Deleting POST /jobs/<id>/cancel is wrong: the page uses it as via 'page' with the 120-second wait (24-handler.mjs:522-526, 20-desired.mjs:135)."
+  },
+  {
+   "id": "api/self-fix/F4",
+   "title": "An operation's log is gone after any restart, exactly when it is needed",
+   "gap": "Operations live only in memory (service/src/07-jobs.mjs:2, last 50 kept at :16). After an update, a rollback, a crash or a watchdog restart, `operation_log` and `wait_operation` answer 404 'expired' (service/src/16-actions.mjs:731-732, service/src/18-workflows.mjs:227-228). What survives on disk is one event with the first 300 characters of the error (07-jobs.mjs:78-79). An operation cut off by the restart is reported as 'interrupted' (service/src/19-watcher.mjs:18-25) with no log of how far it got. An agent that was following an operation across a restart cannot tell why it failed or what state it left.",
+   "smallestBuild": "In runJob's finally (07-jobs.mjs:68), when the status is failed or cancelled, append `{id, type, model, spark, status, error, log: last 120 lines, finishedAt}` to `operations.jsonl` (rotate at 5 MB, like events). On SIGTERM drain end (25-backup-and-start.mjs:82) write the still-running ones the same way with status interrupted. `operation_log` and `wait_operation` fall back to that file when the id is not in memory. Add the file to nothing else; it is covered by the daily copy already. Test (state.test.mjs): fail a start, restart the stand-in console, `operation_log {id}` returns the log and status failed (404 today).",
+   "agentSays": "POST /console/api/actions/operation_log {\"id\":\"3fa9c1d2e4b7\"}  after a restart -> {status:\"failed\", error, log:[...], kept:\"from disk\"}",
+   "severity": 4,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Log lines pass maskDeep on the way out as today",
+    "Only failed, cancelled and interrupted operations are written, so the file stays small",
+    "Lines stay labelled as data, not instructions"
+   ],
+   "lens": "self-fix",
+   "ruling": "smaller",
+   "build": "No new file: when the id is not in memory, both actions answer from the fleet record's events for that id (status, error, a note that the console restarted). Same change as the second half of A6; build once.",
+   "fixFirst": false,
+   "why": "Confirmed that operations live only in memory (07-jobs.mjs:2, :16) and operation_log / wait_operation answer 404 after a restart (16-actions.mjs:741, 18-workflows.mjs:306). But the start, the end with the first 300 characters of the error, and 'interrupted' are already on disk in the fleet record (07-jobs.mjs:13, :78-79; 19-watcher.mjs:17-25). A second file with rotation and a SIGTERM writer is more state to keep right."
+  },
+  {
+   "id": "api/self-fix/F5",
+   "title": "A build that crashes after the 45-second check stays broken until someone runs restore.sh by hand",
+   "gap": "The installer goes back on its own only if the new build does not answer within 45 seconds (deploy/host-on-portal.sh:214-230). After that, an uncaught error ends the process (service/src/25-backup-and-start.mjs:89-91) and systemd starts it again, forever. The watchdog only restarts, at most 3 times an hour, then stops trying (deploy/host-on-portal.sh:249-262); it never puts the last build back, and it writes only to the system log with `logger` (:252, :254), which no action reads (`service_logs` reads the console's unit only, service/worker.py:222). While the console is down every API door is down too, so `undo_update` cannot be called. The owner is not locked out of the Spark, but is locked out of Sparkie and the API until a terminal is used. The planned watchdog rollback (docs/reviews-2026-11-11.md:108-110) is not built.",
+   "smallestBuild": "In the watchdog script only (deploy/host-on-portal.sh:246-264): the installer writes the install time and snapshot path to `$S/last-install`. When the watchdog reaches its third restart inside an hour and the install is under 24 hours old and `$S/rolled-back-<build>` does not exist, it runs that snapshot's `restore.sh` (files only, never `--with-state`), touches the marker, and appends one JSON line to `$S/watchdog.jsonl` for every restart or put-back. The console reads new lines of that file at start and raises one notice each (covered by F1's start-up line). Test: a shell test in test/ that runs the watchdog script against a fake `systemctl`/`curl` on PATH with three recorded restarts and a fresh `last-install`, and expects restore.sh to be called once and the marker written; a second run does not call it again.",
+   "agentSays": "POST /console/api/actions/fleet_events {\"type\":\"notice\"} -> \"The watchdog put back the build from before the update on 20261111T0412Z: the new one stopped answering 3 times in an hour.\"",
+   "severity": 4,
+   "value": 4,
+   "effort": "M",
+   "guards": [
+    "Once per build, and only within 24 hours of an install",
+    "Files only; people, passkeys, sessions and chats stay as they are",
+    "Never touches SSH, Tailscale, firewall or users",
+    "Says what it did as a notice the owner sees",
+    "A console stopped on purpose is still left alone"
+   ],
+   "lens": "self-fix",
+   "ruling": "smaller",
+   "build": "Watchdog only records: append one line per restart (and per 'gave up') to a file in the state folder; the console reads new lines at start and raises one notice each (which also reaches Telegram), so the owner hears and can say 'undo the update'. Automatic put-back, if wanted at all, only when systemd reports the unit failed and the build never answered /health once since install, and only with the owner's explicit sign-off as a rule.",
+   "fixFirst": false,
+   "why": "The gap is real: the installer goes back only inside its 45-second check (deploy/host-on-portal.sh:214-230) and the watchdog only restarts, three times an hour, logging to the system log (:246-262). But an automatic put-back triggered by missed /health answers is risky now that the console is on the internet: anything that can stall or crash it three times within a day of an install would undo that install, security fixes included, which is exactly why undo_update from the internet needs the passkey (18-workflows.mjs:487-492). Changing builds without the owner's yes also sits badly with 'owner approves updates'."
+  },
+  {
+   "id": "api/self-fix/F6",
+   "title": "Restarting Sparkie's model is not an action, so no agent can do it",
+   "gap": "The in-place brain restart exists only as a typed word in the owner's page chat: service/src/20-words.mjs:3-4 says it is 'not an action: no tool, no agent, no /mcp or /v1'. Starting or stopping the brain is a page route (service/src/24-handler.mjs:586-594). Self-healing restarts a running-but-silent brain twice in six hours and then gives up with 'look at its log' (service/src/20-heal.mjs:145-149). At that point the owner's other agent (Claude Code, Codex, a script over MCP) can read the log with `service_logs` but has nothing to call; the only API route is to open a chat and send the literal text '/restart sparkie' to `POST /chats/<id>/messages`, which returns an event stream, not JSON.",
+   "smallestBuild": "Action `restart_sparkie` in 20-heal.mjs (change, fleet:act, owner, no inputs) that calls the existing `restartWord(via)` logic and returns `{outcome: 'started' | 'refused', note}`: same guards already there (one at a time, not while switching, not within 10 minutes of its start, never starts a stopped container; 20-words.mjs:47-66). Not offered to Sparkie's own tool list (it cannot call anything when its model is stuck) and added to PAGE_ONLY for Telegram. Add to CHANGE_TOOLS in test/lib.mjs and the counts in test/change.test.mjs. Test (door.test.mjs): an act-allowed key calls it with the stand-in brain running for over 10 minutes and gets outcome started plus an audit line; a look-only key gets not_allowed; fails today with 'No tool called restart_sparkie'.",
+   "agentSays": "POST /console/api/actions/restart_sparkie {}  (or MCP tools/call restart_sparkie) -> {outcome:\"started\", note:\"Restarting Sparkie's model; sparkie_setup shows when it answers.\"}",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Restart in place only: never docker run, never docker rm, never starts a stopped brain (R1, R8)",
+    "Only keys the owner let change things; counts toward the 12-changes-an-hour pause",
+    "Refused within 10 minutes of the brain's last start, and while a restart or switch is running",
+    "Still one brain: no fallback is added"
+   ],
+   "lens": "self-fix",
+   "ruling": "smaller",
+   "build": "Owner's terminal only, no server change: `console.mjs restart-sparkie` opens a chat (POST /chats) and posts the word to POST /chats/<id>/messages, printing the 'done' message from the stream. Same guards, same audit line, agents with keys still cannot.",
+   "fixFirst": false,
+   "why": "The fact is right (the restart is only a typed word, 20-words.mjs:83-95), but making it an action reverses a decision written into the code on purpose: 'not an action: no tool, no agent, no /mcp or /v1' (20-words.mjs:3-5). Self-healing already restarts a silent brain (20-heal.mjs), and the word also works from Telegram. Handing every acting agent key a brain restart is more reach than the owner's stuck-brain case needs."
+  },
+  {
+   "id": "api/tested/F2",
+   "title": "Starting, stopping and switching the brain has no test at all",
+   "gap": "One brain, no fallback, yet none of its routes is called by any test: GET /main/plan (service/src/24-handler.mjs:552), GET /main/choices (:561), POST /main/use (:576), POST /main/start and /main/stop (:586-593). grep for main/use, main/start, main/stop, main/plan, main/choices, switchMain, startMain, stopMain, brain-setup across test/ returns nothing; only GET /main (words.test.mjs:20) and POST /main/route (change.test.mjs:322) are used. The switch's own safety net (stop the old one, start the new one, put the old one back if the new one fails: 13-main-model.mjs:251-258) is therefore unproven, and so is tools/brain-setup.mjs, which the owner's `console.mjs brain <setup>` runs (tools/console.mjs:142-144, tools/brain-setup.mjs:53-66). These routes are also not actions, so Sparkie and agents cannot even plan a brain change.",
+   "smallestBuild": "One test file (test/brain.test.mjs) on the stand-in fleet: /main/plan?preset= names what would stop; /main/stop then /main/start bring it back healthy; /main/use to a second preset completes and GET /main shows it current; /main/use to a preset whose start fails ends with the previous brain running again; a member gets 403 on each; a second call while one runs gets 409. Then run tools/brain-setup.mjs --url <mock> once in cli.test.mjs. No product change needed unless a test fails. Optional, later: a read action `brain_plan` (wraps mainPlan) so Sparkie can say what a switch would do; the switch itself stays the owner's.",
+   "agentSays": "node tools/console.mjs brain aphex-agent (owner), proven by test; later, brain_plan {\"setup\":\"aphex-agent\"} for Sparkie to describe a switch without doing it",
+   "severity": 4,
+   "value": 4,
+   "effort": "M",
+   "guards": [
+    "Nothing starts another model on Spark 2",
+    "The switch stays the owner's call; no fallback brain is added"
+   ],
+   "lens": "tested",
+   "ruling": "keep",
+   "build": "One test file (test/brain.test.mjs) on the stand-in fleet: /main/plan?preset= names what would stop; /main/stop then /main/start bring it back healthy; /main/use to a second preset completes and GET /main shows it current; /main/use to a preset whose start fails ends with the previous brain running again; a member gets 403 on each; a second call while one runs gets 409. Then run tools/brain-setup.mjs --url <mock> once in cli.test.mjs. No product change needed unless a test fails. Optional, later: a read action `brain_plan` (wraps mainPlan) so Sparkie can say what a switch would do; the switch itself stays the owner's.",
+   "fixFirst": false,
+   "why": "Confirmed: no test file mentions main/use, main/start, main/stop, main/plan, main/choices or brain-setup (grep of test/ is empty), yet these are the only way to start, stop or switch the one brain (24-handler.mjs:552-594). With no fallback brain, the put-back path of the switch must be proven. Tests only; drop the optional brain_plan action."
+  },
+  {
+   "id": "api/tested/F3",
+   "title": "POST /actions/<name> is proven for one caller and 3 of 36 actions",
+   "gap": "api.test.mjs:10-21 calls fleet_status, remember and memory as the owner on the tailnet, plus one unknown name and one bad argument. Not tested: the owner's terminal token (scs_) from the internet, which is exactly how the owner's scripts will call it off the tailnet (internet.test.mjs:204-214 uses the token only on /status, /workflows, files); a member (should be 403: 24-handler.mjs:118); an agent key (should be 401: keys are only read for /mcp and /v1, :83); the short address; a missing Origin or page header (403 'Cross-site request blocked', :113); while agents are paused (the API is refused like an agent: 16-actions.mjs:306, and resuming needs the passkey); that a first run through the API counts as the workflow's validation run (16-actions.mjs:346, claimed in the comment at 24-handler.mjs:243-244); and that a change through the API is audited as via 'api'. No test starts or stops a model through this route.",
+   "smallestBuild": "Add to test/api.test.mjs: (1) for every name in ALL_TOOLS, POST /actions/<name> {} answers 200, 400 or 409, never 404 or 500 (catches an action that is registered but breaks outside the door); (2) one table of callers x expected status for /actions/fleet_status and /actions/stop_model: owner tailnet 200, terminal token over Funnel 200, browser cookie 200, member 403, look-only key 401, can-act key 401, short address, no Origin 403; (3) paused -> 403 for a change, 200 for a read; (4) in validate.test.mjs (nothing validated there): start_model through /actions runs and leaves the workflow active; (5) start then stop a small model through /actions and check the audit line says via 'api'.",
+   "agentSays": "POST /console/api/actions/stop_model {\"spark\":\"spark3\",\"container\":\"sc-gpt-oss-20b\"} from the owner's script, tailnet or signed-in terminal, with the result proven for each kind of caller",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Members and agent keys stay shut out of this route",
+    "Pause still stops API changes; resuming stays with the passkey"
+   ],
+   "lens": "tested",
+   "ruling": "keep",
+   "build": "Add to test/api.test.mjs: (1) for every name in ALL_TOOLS, POST /actions/<name> {} answers 200, 400 or 409, never 404 or 500 (catches an action that is registered but breaks outside the door); (2) one table of callers x expected status for /actions/fleet_status and /actions/stop_model: owner tailnet 200, terminal token over Funnel 200, browser cookie 200, member 403, look-only key 401, can-act key 401, short address, no Origin 403; (3) paused -> 403 for a change, 200 for a read; (4) in validate.test.mjs (nothing validated there): start_model through /actions runs and leaves the workflow active; (5) start then stop a small model through /actions and check the audit line says via 'api'.",
+   "fixFirst": false,
+   "why": "Confirmed: api.test.mjs:10-21 covers fleet_status, remember, memory, one unknown name and one bad argument, as the tailnet owner only; the only other /actions call in the suite is internet.test.mjs:454. Nothing proves a member or an agent key is refused, the terminal token works, a pause blocks it, or that a start/stop/cancel through it works, which is how A1 slipped through. Do the caller table, the every-action sweep and one start-stop-cancel; that is enough."
+  },
+  {
+   "id": "api/tested/F4",
+   "title": "No route list exists, and about 20 routes have no test",
+   "gap": "docs/code-map.md lists every action (generated by tools/code-map.mjs:26, :44-49) but not one HTTP route; an agent or Sparkie has to read 700 lines of service/src/24-handler.mjs to learn the API, and nothing can tell when a route is added without a test or a passkey rule. Routes with no test (grep of test/ finds none): GET /nodes/<id>/workloads, /diagnostics, /logs/<service>, /logs/container-<id> and POST /nodes/<id>/actions (24-handler.mjs:365-381); GET /gpu (:405); GET /deploy/options (:395), /deploy/plans (:399), /deploy/cluster-plan (:458); GET /recipes/search (:648), POST /recipes/add (:654), /recipes/add-list (:661); POST /public/ask (:93); POST /telegram/pair as its own call; /v1/completions and /v1/rerank (15-routes.mjs:144); plus the brain routes in F2.",
+   "smallestBuild": "tools/code-map.mjs: add a section 'Every route' built from the handler source (method and path from the `req.method === … && path === …` and path.match lines in 24-handler.mjs, 22-sessions.mjs, 21-telegram.mjs, 15-routes.mjs), with two columns filled by code: owner-only (an ownerOnly() call in the block) and may need the passkey (mayNeedPasskey/needsPasskey from 22-passkey.mjs). build.test.mjs:16 already fails when the map is stale. Then one test (test/routes.test.mjs): every route in that list is either named in some test file or in a short ROUTES_NOT_TESTED list in test/lib.mjs that may only shrink; and each owner-only route answers 403 to a member and 401 to an unsigned Funnel request. Cut: do not write an OpenAPI file by hand.",
+   "agentSays": "Read docs/code-map.md 'Every route' to find the call, e.g. GET /console/api/nodes/spark3/diagnostics, knowing who may call it and whether it needs the passkey",
+   "severity": 3,
+   "value": 4,
+   "effort": "M",
+   "guards": [
+    "Generated from the code, so it cannot drift",
+    "The member and Funnel sweep proves scoped callers stay scoped on every route, new ones included"
+   ],
+   "lens": "tested",
+   "ruling": "smaller",
+   "build": "tools/code-map.mjs writes an 'Every route' table (method, path, owner-only, may need the passkey) into docs/code-map.md from the handler source; build.test.mjs already fails when the map is stale. Add the member-gets-403 sweep later if wanted.",
+   "fixFirst": false,
+   "why": "Right that no route list exists (docs/code-map.md lists actions only) and the named routes have no test. This is the one place to build the route table (API-3 part 3 and A2 are copies). The 'may only shrink' untested list plus a per-route member and Funnel sweep is a second project."
+  },
+  {
+   "id": "api/tested/F5",
+   "title": "Several /v1 rules have no test, including the one that stops a caller's code running on the model server",
+   "gap": "service/src/15-routes.mjs:160-161 deletes custom_logit_processor and logits_processors from every /v1 body; no test mentions either word (grep 'logit' in test/ is empty), so removing that line would pass the suite. Also untested: a member calling /v1 with and without chat permission (24-handler.mjs:120) and seeing only models on Sparks shared with them (15-routes.mjs:95); the cross-site rule on /v1 (non-JSON content type or another Origin -> 403: 24-handler.mjs:108-110); a can-act key starting a stopped model by calling it (15-routes.mjs:176; only the look-only refusal is tested at internet.test.mjs:295-297); /v1/completions and /v1/rerank passing through (contract.md:1310 says rerank works; api.test.mjs:23-31 tests only responses and embeddings). gateway.test.mjs and fleet.test.mjs:182-200 call /v1 only as the owner on the tailnet.",
+   "smallestBuild": "Add to test/gateway.test.mjs, using the stand-in model server's record of what it received: (1) a body with custom_logit_processor and logits_processors arrives without them, for 'sparkie' and for a named model; (2) member with chat: 200 and /v1/models lists only their Sparks' models; member without chat: 403; (3) text/plain body -> 403, Origin of another site -> 403; (4) can-act key: a stopped recipe model answers 503 with Retry-After; (5) /v1/rerank and /v1/completions reach the stand-in. No product change expected.",
+   "agentSays": "POST /console/api/v1/chat/completions {\"model\":\"sparkie\",…} from any agent, with the safety strip and member scoping proven",
+   "severity": 3,
+   "value": 3,
+   "effort": "S",
+   "guards": [
+    "Pins the rule that callers cannot make a model server run their code",
+    "Members and look-only keys stay scoped at the model address"
+   ],
+   "lens": "tested",
+   "ruling": "keep",
+   "build": "Add to test/gateway.test.mjs, using the stand-in model server's record of what it received: (1) a body with custom_logit_processor and logits_processors arrives without them, for 'sparkie' and for a named model; (2) member with chat: 200 and /v1/models lists only their Sparks' models; member without chat: 403; (3) text/plain body -> 403, Origin of another site -> 403; (4) can-act key: a stopped recipe model answers 503 with Retry-After; (5) /v1/rerank and /v1/completions reach the stand-in. No product change expected.",
+   "fixFirst": false,
+   "why": "Confirmed: the strip of custom_logit_processor and logits_processors is at service/src/15-routes.mjs:159-160 and no test mentions 'logit' (grep of test/ is empty), so deleting that line would pass the lock. It is the rule that stops a caller's code running on the model server. Tests only, small; the member and cross-site cases on /v1 are worth the same file."
+  },
+  {
+   "id": "api/tested/F6",
+   "title": "The real way in is never proven: tests use a stand-in owner, and the installer checks only /health",
+   "gap": "Every test service runs with SPARK_CONSOLE_ALL_LOCAL=1 and SPARK_CONSOLE_DEV_LOGIN (test/start-mock.mjs:156), so a request with no identity is the owner (service/src/03-identity.mjs:159) and the Tailscale checks never run (23-http.mjs:71 checkRoute, :98 refreshBlocked are skipped). The production branches of the gate are therefore untested: API only on the socket once locked (24-handler.mjs:37-38; fleet.test.mjs:34 only sees apiLocked false), 503 until the Sparks' addresses are known (:42), the blocked list built from `tailscale status` (23-http.mjs:78-96). After an install, deploy/host-on-portal.sh checks only /health (:218, :232), which answers before every gate (R30), so a build can install 'healthy' while the owner, the agent door or the brain is unreachable. AGENTS.md:53-54 asks for a check 'the way the owner would use it' but there is no command for it.",
+   "smallestBuild": "tools/console.mjs: a `check` command (about 25 lines) that calls, on the live address, as the caller really is: GET /whoami (access must be owner), POST /actions/fleet_status, GET /actions (count), GET /v1/models (has 'sparkie'), POST /v1/chat/completions with max_tokens 1 (the brain answers), and POST /mcp tools/list when an agent key is saved; one line each, exit 1 on any miss. Have host-on-portal.sh print 'now run: node tools/console.mjs check' at the end. Test: cli.test.mjs runs it against the stand-in (exit 0), and against a stand-in with the brain stopped (exit 1, names the brain). Cut: no fake Tailscale in the suite.",
+   "agentSays": "node tools/console.mjs check -> 'whoami owner ok / fleet_status ok / 36 actions / sparkie answers / door 37 tools'; an agent or Sparkie runs it after every update before saying the update worked",
+   "severity": 3,
+   "value": 4,
+   "effort": "S",
+   "guards": [
+    "Read-only calls plus one 1-token chat; starts and stops nothing",
+    "Does not touch Tailscale, SSH or firewall settings"
+   ],
+   "lens": "tested",
+   "ruling": "keep",
+   "build": "tools/console.mjs: a `check` command (about 25 lines) that calls, on the live address, as the caller really is: GET /whoami (access must be owner), POST /actions/fleet_status, GET /actions (count), GET /v1/models (has 'sparkie'), POST /v1/chat/completions with max_tokens 1 (the brain answers), and POST /mcp tools/list when an agent key is saved; one line each, exit 1 on any miss. Have host-on-portal.sh print 'now run: node tools/console.mjs check' at the end. Test: cli.test.mjs runs it against the stand-in (exit 0), and against a stand-in with the brain stopped (exit 1, names the brain). Cut: no fake Tailscale in the suite.",
+   "fixFirst": false,
+   "why": "Right: every test service runs as a stand-in owner, and the installer checks only /health (deploy/host-on-portal.sh:207-218), which answers before every gate (24-handler.mjs:53-58), so a build can install as healthy while the owner, the door or the brain is unreachable. A read-only `console.mjs check` (whoami, one action, /v1/models, a one-token chat) is small and gives Sparkie and agents the 'did the update work' call. Skip the /mcp step unless a key is already saved."
+  },
+  {
+   "id": "api/tested/F7",
+   "title": "The owner's terminal tool has no test and cannot run an action",
+   "gap": "tools/console.mjs is the owner's documented terminal path (status, test-changes, brain, sign-in, sign-out, rollback: :136-148) but no test file mentions it (grep 'console.mjs' in test/ is empty), while the agents' tool has 19 tests (test/cli.test.mjs:27-193). It has no command for POST /actions/<name>, so 'one way in for scripts' (docs/contract.md:1307-1309) has no client: a script must know to send X-Spark-Console: 1 and a matching Origin, or it gets 403 'Cross-site request blocked' (service/src/24-handler.mjs:113), which is nowhere in the docs. Its messages for 428 and 401 (tools/console.mjs:45-48) are untested too.",
+   "smallestBuild": "tools/console.mjs: add `do <action> [json]` (POST /actions/<name>, print the JSON, exit 1 on error) and `actions` (GET /actions, one line each), about 12 lines using the existing api() helper. Tests in test/cli.test.mjs with --url <stand-in>: status prints the brain and workflows; `do fleet_status` prints sparks; `do format_disk` exits 1 with the 404 text; rollback with no snapshot says so; a 401 answer prints the sign-in hint. The sign-in flow itself is already covered server-side (internet.test.mjs:182-202).",
+   "agentSays": "node tools/console.mjs do stop_model '{\"spark\":\"spark3\",\"container\":\"sc-gpt-oss-20b\"}' (owner, tailnet or signed-in terminal); node tools/console.mjs actions",
+   "severity": 3,
+   "value": 3,
+   "effort": "S",
+   "guards": [
+    "Uses the owner's identity or terminal sign-in only; agent keys still go through tools/spark.mjs and /mcp",
+    "Passkey-gated calls still answer 428 and send the owner to the page"
+   ],
+   "lens": "tested",
+   "ruling": "smaller",
+   "build": "Tests in cli.test.mjs for what exists plus API-3's new command: status, call fleet_status, an unknown action exits 1, the 401 and 428 hints.",
+   "fixFirst": false,
+   "why": "Confirmed that no test mentions console.mjs (grep of test/ is empty) though it is the owner's documented terminal path. The new `do`/`actions` commands are the same as api/coverage/API-3; only the tests are new here."
+  },
+  {
+   "id": "api/tested/F8",
+   "title": "Docs give old tool counts and leave out how to call POST /actions",
+   "gap": "docs/agent-door.md:16 says '20 actions look things up; 3 change things'; the code has 23 and 13 (docs/code-map.md:10, test/lib.mjs:40-44). test/README.md:51-52 says a new key sees 22 tools (21 read actions) and act gives 25; the tests pin 24 and 37 (test/lib.mjs:46-49). test/README.md's table omits api, heal-more, heal-newer, intent, sparkie-more, words (and the new dark) test files. docs/contract.md:1307-1309 and AGENTS.md:53-54 describe POST /console/api/actions/<name> without saying it needs the page header and Origin, that only the owner (tailnet or signed-in device) may call it, or that agent keys use /mcp instead. docs/code-map.md is stale at this moment (`node tools/code-map.mjs --check` exits 1), which will fail build.test.mjs until regenerated.",
+   "smallestBuild": "Remove the numbers from docs/agent-door.md:16 and test/README.md:51-52 and point to the generated list in docs/code-map.md. Add four lines to docs/agent-door.md: who may call POST /actions/<name>, the two headers, one curl example, and 'agents with a key use /mcp'. Replace test/README.md's table with one line per test file taken from its first comment (or delete the table). Add one check to build.test.mjs: no file in docs/ or test/README.md contains the pattern '<number> (read )?(actions|tools)' unless the number equals the live count. Run node tools/code-map.mjs before the lock.",
+   "agentSays": "curl -X POST https://<console>/console/api/actions/fleet_status -H 'content-type: application/json' -H 'x-spark-console: 1' -H 'origin: https://<console>' -d '{}' , copied from the doc and known to work",
+   "severity": 2,
+   "value": 2,
+   "effort": "S",
+   "guards": [
+    "Docs only, plus one cheap check; no behaviour change"
+   ],
+   "lens": "tested",
+   "ruling": "smaller",
+   "build": "Remove the counts from docs/agent-door.md and test/README.md and point to docs/code-map.md; add the four lines on POST /actions (shared with A2's smaller version); regenerate the code map last. No new check.",
+   "fixFirst": false,
+   "why": "Confirmed: docs/agent-door.md:16 says 20 and 3 against 23 and 13 (docs/code-map.md:10); test/README.md:51-52 says 22 and 25 tools; `node tools/code-map.mjs --check` exits 1 right now (likely the other agent's edits in flight, but it must be rerun before the lock). A build check that greps docs for numbers is more test than the problem deserves."
+  }
+ ],
+ "dropped": [
+  {
+   "id": "api/coverage/API-4",
+   "title": "An owner script cannot talk to Sparkie or use the owner's words as plain JSON",
+   "ruling": "over-engineered",
+   "why": "A JSON way to talk to Sparkie already exists: an agent key plus `spark ask` (tools/spark.mjs:11-13, :131-134; 20-mcp.mjs:195-214). Pausing without a chat already exists and needs no passkey: PUT /agents/settings {halted:true} (24-handler.mjs:255-262, 22-passkey.mjs:123). /status is GET /health and GET /main. A stand-in 'owner-api' agent and a new /words route add a second identity and a second door for the same things. Only restarting the brain has no call, and that is F6."
+  },
+  {
+   "id": "api/coverage/API-8",
+   "title": "Three error shapes and no machine-readable code on the REST side",
+   "ruling": "duplicate",
+   "why": "Same as api/ergonomics/A4 and api/self-fix/F7 (error body {error} only at 24-handler.mjs:698 versus the door's coded text at 20-mcp.mjs:243-246). Build it once, under A4."
+  },
+  {
+   "id": "api/ergonomics/A2",
+   "title": "No API reference: routes are not listed anywhere and docs/agent-door.md is stale",
+   "ruling": "over-engineered",
+   "why": "The stale doc is real (docs/agent-door.md:16 '20 … 3', :79 'all read-only', :184 'service/server.mjs'), but a hand-kept ROUTES table plus a new GET /reference route is a second copy of the handler to keep in step. Agents with a key can only reach /mcp and /v1 (24-handler.mjs:83) and already get every action's schema from tools/list (20-mcp.mjs:187-193); owner-side agents read the repo. A generated table in docs/code-map.md (tested/F4) covers the rest."
+  },
+  {
+   "id": "api/ergonomics/A3",
+   "title": "A script calling POST /actions without two undocumented headers gets 'Cross-site request blocked.'",
+   "ruling": "duplicate",
+   "why": "Same as part 2 of api/coverage/API-3 (the check at 24-handler.mjs:113). Build it there; the wording here (hint only when Origin is absent, plain refusal for a foreign Origin) is the one to use."
+  },
+  {
+   "id": "api/ergonomics/A5",
+   "title": "The owner's terminal tool cannot list or run actions",
+   "ruling": "duplicate",
+   "why": "Same command as part 1 of api/coverage/API-3 (tools/console.mjs:139-148 has no way to run an action). Build one `call` command there; an `actions` listing is a GET /actions print and can ride along, `--name value` parsing and `--wait` are extras."
+  },
+  {
+   "id": "api/self-fix/F7",
+   "title": "HTTP errors are a sentence only: a script cannot tell 'retry', 'fix your input' and 'console bug' apart without parsing words",
+   "ruling": "duplicate",
+   "why": "The error-code half is api/ergonomics/A4 (24-handler.mjs:698 versus 20-mcp.mjs:243); the `console.mjs do` half is api/coverage/API-3; the 'console_bug' code depends on F1. Nothing new here."
+  },
+  {
+   "id": "api/self-fix/F8",
+   "title": "Undo and 'forget' work only from a chat or the page, not for an agent or the owner's API",
+   "ruling": "over-engineered",
+   "why": "The refusal is real (undo_last_change needs a chat, 20-desired.mjs:146) but undo-by-operation for agents adds ownership rules to the one function that writes revisions, for something an agent can already do exactly: stop_model what it started, restart_model what it stopped. forget_should_run is the same as the one in api/coverage/API-2."
+  },
+  {
+   "id": "api/tested/F1",
+   "title": "An owner-only question raised through POST /actions (or a direct door call) can never be answered",
+   "ruling": "duplicate",
+   "why": "Same broken thing as api/coverage/API-1 (17-changes.mjs:95, 14-chats.mjs:84-89). Its fix would not help the caller it is for: a script cannot produce a passkey answer, so once a passkey exists the second call gets 428 forever (tools/console.mjs:46-48 says only a browser can), and the page has no place to press an API-raised choice. It also widens the passkey gate to read every /actions body. Use API-1's smaller version; keep this finding's point that no test answers a question through /actions."
+  }
+ ]
+}

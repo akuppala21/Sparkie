@@ -1,0 +1,28 @@
+INFO 11-08 09:12:31 [__init__.py:216] Automatically detected platform cuda.
+INFO 11-08 09:12:35 [api_server.py:1896] vLLM API server version 0.11.2
+INFO 11-08 09:12:35 [utils.py:328] non-default args: {'model': '/models/gemma-3-27b-it', 'max_model_len': 131072, 'gpu_memory_utilization': 0.85, 'max_num_seqs': 8, 'enable_prefix_caching': True, 'served_model_name': ['sc-gemma-3-27b-it']}
+INFO 11-08 09:12:44 [model.py:547] Resolved architecture: Gemma3ForConditionalGeneration
+INFO 11-08 09:12:44 [model.py:1510] Using max model len 131072
+INFO 11-08 09:12:46 [scheduler.py:205] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 11-08 09:12:58 [core.py:644] Waiting for init message from front-end.
+INFO 11-08 09:13:02 [parallel_state.py:1208] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+INFO 11-08 09:13:05 [gpu_model_runner.py:2602] Starting to load model /models/gemma-3-27b-it...
+INFO 11-08 09:13:05 [cuda.py:366] Using Flash Attention backend on V1 engine.
+INFO 11-08 09:13:41 [default_loader.py:267] Loading weights took 34.92 seconds
+INFO 11-08 09:13:42 [gpu_model_runner.py:2653] Model loading took 51.42 GiB and 36.11 seconds
+INFO 11-08 09:13:55 [backends.py:548] Using cache directory: /root/.cache/vllm/torch_compile_cache/4f1c2a/rank_0_0/backbone for vLLM's torch.compile
+INFO 11-08 09:14:09 [monitor.py:34] torch.compile takes 13.6 s in total
+INFO 11-08 09:14:11 [gpu_worker.py:298] Available KV cache memory: 3.12 GiB
+ERROR 11-08 09:14:11 [core.py:708] EngineCore failed to start.
+ERROR 11-08 09:14:11 [core.py:708] Traceback (most recent call last):
+ERROR 11-08 09:14:11 [core.py:708]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 699, in run_engine_core
+ERROR 11-08 09:14:11 [core.py:708]     engine_core = EngineCoreProc(*args, **kwargs)
+ERROR 11-08 09:14:11 [core.py:708]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 498, in __init__
+ERROR 11-08 09:14:11 [core.py:708]     super().__init__(vllm_config, executor_class, log_stats,
+ERROR 11-08 09:14:11 [core.py:708]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 92, in __init__
+ERROR 11-08 09:14:11 [core.py:708]     self._initialize_kv_caches(vllm_config)
+ERROR 11-08 09:14:11 [core.py:708]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py", line 690, in check_enough_kv_cache_memory
+ERROR 11-08 09:14:11 [core.py:708]     raise ValueError(
+ERROR 11-08 09:14:11 [core.py:708] ValueError: To serve at least one request with the models's max seq len (131072), (8.50 GiB KV cache is needed, which is larger than the available KV cache memory (3.12 GiB). Based on the available memory, the estimated maximum model length is 47104. Try increasing `gpu_memory_utilization` or decreasing `max_model_len` when initializing the engine.
+Process EngineCore_DP0 pid=212 exited with code 1
+ERROR 11-08 09:14:13 [api_server.py:1950] RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}

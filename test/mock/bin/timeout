@@ -1,0 +1,3 @@
+#!/bin/bash
+# Stand-in timeout (macOS has none): runs the command without a limit; the stand-in commands it wraps return at once.
+shift; exec "$@"

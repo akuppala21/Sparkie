@@ -1,0 +1,1 @@
+{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","torch_dtype":"bfloat16","max_position_embeddings":40960}

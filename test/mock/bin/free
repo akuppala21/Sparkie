@@ -1,0 +1,16 @@
+#!/bin/bash
+# Stand-in free -b [-s n]: total and available from ~/.mock/meminfo (what the deploy plans read too), give or take a
+# little; read on every sample, so a test that changes it is seen. Without it, about 70 GB available.
+mi="$HOME/.mock/meminfo"
+while :; do
+  total=130670000000; avail=$(( total - 60000000000 ))
+  if [ -f "$mi" ]; then
+    total=$(awk '/^MemTotal:/ {print $2 * 1024}' "$mi"); avail=$(awk '/^MemAvailable:/ {print $2 * 1024}' "$mi")
+  fi
+  avail=$(( avail - RANDOM * 2000 ))
+  echo "               total        used        free      shared  buff/cache   available"
+  echo "Mem:    $total  $(( total - avail ))  1000000  0  2000000  $avail"
+  echo "Swap:   0 0 0"
+  [ "$2" = "-s" ] || break
+  sleep "$3"
+done

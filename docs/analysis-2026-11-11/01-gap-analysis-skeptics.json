@@ -1,0 +1,1037 @@
+[
+ {
+  "lens": "simplicity",
+  "overall": "Verdict: the eight reports find real faults, and I confirmed the important ones in the code, but added together they are over-built for one owner with four Sparks. They propose about 80 gaps and 28 new action names on top of today's 36. Seven of those names are three designs of one container runner (save/run/stop_workload, run_box/stop_box, run_job/job_result), four are one on/off switch (self_healing, change_setting, settings, pause_changes), and two are one call (restart_sparkie, start_sparkie). There are four ways to save what just ran, three page readers, five new state files and several new verb lists for the gate. The service is already 9,250 long lines (574 KB built) that Sparkie is meant to maintain alone, and all 36 actions are Sparkie's tools today (service/src/14-chats.mjs:60).\n\nMy cut keeps roughly a third and builds each shared idea once: seven new actions (start_sparkie, pause_changes, download_model, run_workload, stop_workload, read_page, update_console), one new state file (workload specs), no new background loop, and test_changes removed.\n\nOrder.\n1. Make what is installed true (all small): the carry-on race, the installer's stale-lock hole, heals that can stop a newer model, run_workflow running a name nobody said, a stopped brain that stays down, the owner's API being weaker than the page, and a re-start that deletes the working container before the new one is proven.\n2. Give the six page-only paths an action, then delete: most of the 5,292-line page, members and sharing, the short address and door socket, the workers.dev push, the editor and file browser, chat routing, about 40 REST copies, hand-started recipe approval, three brain presets and the YaRN overlay, the `local` installer mode, Spark 1 from config.json while it is locked out, and the contract down to what is built. Also the 'validated on these Sparks' second gate: the owner's own request, a saved workflow, an API call and self-healing already count as the validation run (16-actions.mjs:330, 20-heal.mjs:81), so it now only adds a question for outside agents, while nearly every report lists 'needs a validation run' as a risk. Keep the 'tested' lock. This deletion needs the owner's yes because tests pin it.\n3. Repeat: context and parallel on start_model, the usual setup, heal and undo carrying the setup, 'save that as X' built from the audit record, pair verbs, remembering what an off Spark holds, download_model, open problems, one heal decider, a multi-message eval.\n4. Independent: git on Spark 2, the gate in a container, a small update_console with a four-line probe, the watchdog's one-time put-back.\n5. Anything: one workload runner (services on Spark 2 first, then jobs) and one page reader.\nWaits for a real request: GPU services, a port per model, plugs and power, schedules, change_console, try_fix and learned-fix records, file and service pass-through routes, delete_model and free_disk, brain tuning.\n\nState of the tree: the brief is out of date. docs/reviews-2026-11-11.md lines 85-91 record build c0789b85fa67 (memory, carry-on, POST /actions, watchdog, source on Spark 2) as installed and checked live today, so the carry-on race is live on Spark 2. While I read, the tree moved again: its build is 4f371d567af6 and service/workflows.lock.json still says c0789b85fa67, so an install now would switch every workflow off without a warning. Start the build from GET /health, not from the brief. I ran nothing, changed nothing and called nothing live; upstream claims (the SGLang issue, GB10 memory limits) I did not re-check.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-heal.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/24-handler.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/deploy/host-on-portal.sh",
+  "rulings": [
+   {
+    "area": "usecases",
+    "proposal": "Gap 1: save_workload, run_workload, stop_workload with a spec store (19-workloads.mjs)",
+    "ruling": "shrink",
+    "why": "This is the right runner and the only one that should be built: learning's run_box and stop_box, chatapi's run_job and job_result and combine's 'tool template' are the same thing designed three more times. As written it still carries more than a first version needs: a separate save action, a gpu flag, written files, a `set` input and a budget table.",
+    "instead": "One part, two actions: run_workload {name} or {name, spec}, and stop_workload {name}. A new spec asks the owner once; when its check passes, code keeps it under its name (as recordVerified does for model starts), so there is no save action and no copy in saved-workflows.json. First version: services only, CPU-only, on Spark 2 under a memory cap, network off unless the first-run question shows it. Fields: name, image, command, env, port, check, memoryGB, net. Label spark.workload, never spark.console (the draft at /private/tmp/claude-502/-Users-akuppala-Documents-26aiRAG/aeda3f21-5bf5-4ab2-97c9-eb9169fa6d77/scratchpad/19-apps.mjs line 46 sets spark.console=1 and spark.model). No new verb list: run needs the name in the owner's words. If the owner says no to Spark 2, do not build services at all, because GLM fills Spark 3 and 4."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 2: watchServices (restart a service that fails its check for 10 minutes; bring services back on Spark 3 or 4)",
+    "ruling": "shrink",
+    "why": "The first version has no services on Spark 3 or 4, and the healing report itself skipped hang watches for models because no hang has been seen. A fourth heal path for a search box is not worth it.",
+    "instead": "Start services with Docker's --restart unless-stopped, as the brain is (13-main-model.mjs:128). A service that is down or failing its check is one line in open problems. Add a restart rule the first time a real hang is seen."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 3: job kind (scripts Sparkie writes and runs)",
+    "ruling": "reorder",
+    "why": "Needed for 'do anything', but it is the part most likely to fail on a 27B model (a script quoted inside JSON), and it adds result plumbing: exit watching, a result notice, time limits and carry-on rules. Nothing yet shows the brain can write a working spec.",
+    "instead": "Build after services have run for real and after a schema-only eval (ten 'set up X' and 'run this' prompts graded against the spec schema; no runner needed). Then: CPU jobs on Spark 2 only, network off by default, Docker as the record (a label carries the chat id), and the watcher posts the exit code and last 40 lines. Leave GPU jobs, jobs as workflow steps and file hand-over for later."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 4, part 2: find_recipes returns catalog.json playbooks as guides with image and ports",
+    "ruling": "infeasible",
+    "why": "I opened service/catalog.json: its 29 playbooks hold only id, title, description, category, sparks and url. There is no image, port or step to return, and Sparkie has no tool that can read the url.",
+    "instead": "Return the 29 as title and link (a few lines) and pair them with the one page reader (see the ruling on independence gap 8). Without a reader a guide is a dead link."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 4, part 4 (also brain gap 6): save every finished multi-step request by itself, as a workflow or a draft",
+    "ruling": "shrink",
+    "why": "Four reports answer this four ways (auto-save 20, drafts of 10 that expire, a button, only on request). Auto-saved names land in Sparkie's prompt and are named from a sentence the owner will never say again. The owner's 'I will forget to ask' rule is already met where the thinking was expensive: a model start keeps its setup and a workload keeps its spec on its first passing run.",
+    "instead": "The done line of a multi-step request ends with: Say 'save that as <name>' to keep it. No drafts, no cap, no expiry."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 7: GPU services (ComfyUI, speech) with declared memory",
+    "ruling": "defer",
+    "why": "Declared memory is a promise, not a cap. A runaway image or video job freezes a Spark until someone power-cycles it, Spark 4 is on Wi-Fi only, and GLM fills both GPU Sparks most days. It also changes plan() and memoryShare, the heart of every start.",
+    "instead": "Wait until the owner names a GPU app. Then allow one per Spark, only on a Spark that holds no model at that moment."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 8: a host port per model",
+    "ruling": "defer",
+    "why": "It touches 19 uses of the port across 7 files and all three start paths, and beside GLM across Spark 3 and 4 there is no memory left to use it. The backlog already says later.",
+    "instead": "Keep one model per Spark. Revisit when the two Sparks routinely run separate small models."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gaps 9 and 10: a file PUT/GET route and a /svc pass-through",
+    "ruling": "defer",
+    "why": "Two new unparsed streams on an address that is open to the internet, for needs nobody has yet. The report itself says build on first use.",
+    "instead": "Nothing until an agent first needs to send a file or call a service from off the tailnet."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 1 (also chatapi 2d, combine 4, brain 3 and 6): saved names in Sparkie's prompt, and run_workflow clear only when its title is in the owner's words",
+    "ruling": "reorder",
+    "why": "Five reports propose it; build it once. Today any message with a start verb clears any saved workflow: ACTION_KIND maps run_workflow to 'start' (16-actions.mjs:159) and tracesToRequest checks only model, container and Spark inputs, which run_workflow does not have.",
+    "instead": "First batch, in this order: the title gate, then the names in the prompt (at most 12 lines). Never put names in the prompt before the gate is in."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 2 and gap 9: run_box, stop_box and serve mode, cleared whenever the owner's message is an instruction",
+    "ruling": "unsafe",
+    "why": "As written, Sparkie chooses the script, the image and whether the network is on, and it runs with no question whenever the message is an instruction. A script shaped by a web page or a log, with the network on, can reach the home network from inside the container. It is also the second design of the same runner, and its 'kill below 4 GB free' rule is the console-side memory valve the healing report rejected.",
+    "instead": "Drop run_box, stop_box and serve mode; use the one workload runner. The first run of any new spec asks the owner once and shows the image, the network setting and the script. Saved specs then run by name with no question."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 3: passing runs saved as one-step workflows, with defaults, a cap of 40 and expiring drafts",
+    "ruling": "shrink",
+    "why": "It makes two registries for one thing (the spec and a workflow that wraps it) and adds cap, expiry and 'version it replaces' bookkeeping.",
+    "instead": "The spec store is the registry and `workloads` lists it; a saved workflow may still call run_workload as a step. Keep one small piece: job.result on an operation (last output, files, address) so wait_operation returns it. Fix fillIn so a script's braces are left alone when the job kind arrives."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 4: a try loop with 6 tries per name per day and its own minutes limit",
+    "ruling": "shrink",
+    "why": "New counters beside the three budgets that already exist.",
+    "instead": "Set the chat's task after any run Sparkie started and let the existing carry-on budget bound it (8 turns, 2 hours, 12 changes for the whole request). The failed notice carries the last 2,000 characters of output, marked as data."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 5: stale flags from input hashes, a 'failing' state after two runs, 'use the old way', a 15-minute wait on a step's question",
+    "ruling": "shrink",
+    "why": "State machines for a handful of saved routines. The real brittleness is two things: a saved stop names a container that has gone (stop_model answers 404), and step arguments are checked only when they run.",
+    "instead": "Three small changes: check every step with checkInput at save and before step 1; stop_model with only a Spark stops everything Spark Console runs there, and a stop that is already true counts as done; record who really saved it. Whether a saved workflow may stop an in-use model without asking is one owner decision. Drop the hashes, the failing state, the version swap and the waiting run."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 6 (also chatapi 2c, brain 6, combine 4): four ways to save what just ran: fromChat, operations:[ids], from:'last', fromRunning",
+    "ruling": "shrink",
+    "why": "Four designs, and two add a store. The exact record is already on disk: every runAction writes the action, masked arguments, chat id, outcome and operation id to audit.jsonl (20-mcp.mjs:124-128, written at 16-actions.mjs:369).",
+    "instead": "One input: save_workflow {title, from: 'last'}. Code reads this chat's completed changes for the last request from the audit lines, in order; Sparkie supplies only the title. Widen the save pattern to 'save or keep that as <name>'. No ops.jsonl, no arguments copied into chats.json, no fromRunning, no button."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 7 (also brain gap 8): the eval, listed after the features it should judge",
+    "ruling": "reorder",
+    "why": "Both reports place it late, yet it decides whether the later gaps are worth building. The carry-on race passed the suite only because the stand-in model answers instantly.",
+    "instead": "Second batch: cases of several messages graded from the audit, about 25 cases (not 50 run three times), run by test/eval.mjs when the prompt, tools or setup change. No score_sparkie action, no sparkie_stats and no eval-candidates file until someone has read a first report."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 8: find_playbook, an index and reader for NVIDIA's playbooks",
+    "ruling": "cut",
+    "why": "One of three proposed readers (find_playbook, read_page, guides). A second index of one repository and a tool for one source.",
+    "instead": "One reader, read_page, which also reads a playbook's README when the owner or a guide names its address."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 10 (and chatapi gap 9): schedules on saved workflows, and their rails",
+    "ruling": "defer",
+    "why": "The owner did not ask for timed runs and wants no notifications, and bring-back at power-on already covers the common trigger. A 60-second scheduler with pause rules is a new loop that acts with nobody watching.",
+    "instead": "Nothing now. If asked later: three fixed forms, proven routines only, healing's counters, never a download and never an answer to a question."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 4: update_console with updater.sh, probe.sh, path classification, update.json and a 30-minute watchdog probe",
+    "ruling": "shrink",
+    "why": "The action is what removes the Mac, so it stays. Classifying changed paths with a passkey question only matters once Sparkie writes code, which is deferred. The 30-minute watchdog probe duplicates healing gap 5's one-time put-back.",
+    "instead": "update_console {testOnly?}: the owner's words in chat or the owner's own POST /actions, never an agent key. It runs gate.sh, waits until idle, runs install.sh through systemd-run (as undo_update does, 18-workflows.mjs:383), then a four-line probe: health shows the new build, whoami says owner, a keyless internet request gets 401, one chat turn ends. The installer puts the old build back on failure. The result is posted in the chat at the next start. No path lists yet. First drill: a comment-only change."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 8: update_console with a patch input",
+    "ruling": "unsafe",
+    "why": "A patch sent over the API is code that runs as the console's user on the hub. The independence report rejects the same idea, and this report's own text says a protected-file list does not make it safe.",
+    "instead": "Code reaches Spark 2 through git over the owner's SSH. update_console only tests and installs what is in the checkout."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 5: the engine trial, then change_console",
+    "ruling": "defer",
+    "why": "The only run on record is a dry run with 0 passes, so whether a 27B can fix this code is unknown, and nothing can use the answer until update_console works.",
+    "instead": "Run the trial once (Qwen Code first) after update_console has passed its drills. Build change_console only at 2 of 3. If the answer is 'not yet', remove the second engine from agentbar and keep only the image the gate uses."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 6: internetUp() with a 'down since' tracker in fleet_status and a saved recipe index",
+    "ruling": "shrink",
+    "why": "A new probe and cached state for a rare case. The valuable half is moving image pulls and weight copies ahead of the stops, which configs gap 2 also needs.",
+    "instead": "Build pull-and-copy-before-stop once, with configs gap 2. Fix the untrue messages where the fetch fails: search_huggingface returns an error instead of no results, and a repo start says Hugging Face could not be reached. Skip the tracker and the saved index."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 8: seed memory, apply the staged work, console_docs and read_page",
+    "ruling": "unsafe",
+    "why": "Steps 1 and 2 are done: docs/reviews-2026-11-11.md lines 85-91 record memory seeded with twelve lines and the API batch installed. console_docs would hand Sparkie a 1,411-line contract that mostly describes things not built and says the code is wrong where they differ. read_page as written fetches any https address from the hub; with redirects it can reach the home network, tailnet addresses and the brain's own port.",
+    "instead": "One reader only: read_page {url}. The address must be in the owner's words or come from a guide; https only; refuse private, loopback, link-local and 100.64/10 addresses, also after a redirect; cap the size; mark the text as outside text. Defer console_docs until the contract is cut to what is built."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 10: a --socket transport in tools/spark.mjs and tools/console.mjs",
+    "ruling": "cut",
+    "why": "The owner can already do this with one curl line on the socket, as the watchdog does. The report rates it low itself.",
+    "instead": "Write the curl line in the recovery page. If console.mjs gains `ask` and `do <action>`, delete tools/spark.mjs so there is one command-line tool."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 3: forget_should_run and self_healing actions",
+    "ruling": "cut",
+    "why": "Three reports add an action for the same switch (self_healing, change_setting, pause_changes) and two add a separate 'forget' verb. The openProblems function itself is worth keeping.",
+    "instead": "Keep openProblems: five lines first in Sparkie's notes, the full list in fleet_status, a count in /health. stop_model on a listed entry that is not running takes it off the list (combine gap 1c). One switch action, pause_changes {on}; ask the owner to drop the separate self-heal switch."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 6: try_fix with a closed fix list",
+    "ruling": "shrink",
+    "why": "Once start_model takes context and parallel, 'start it again with one thing changed' is start_model. A second start path with its own list, budget and gate words duplicates it, and each wrong guess on GLM costs a 12-minute load.",
+    "instead": "After a failed start in the owner's chat, Sparkie gets one turn to read the log and say the cause. A retry with a changed setting comes back as one button ('Start X with a 32k context?'), because the number is not in the owner's words. A retry that works is kept as that model's setup, so the next chat or API start reuses it."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 7: problems.json of learned fixes matched by cause line, with forget_fix",
+    "ruling": "defer",
+    "why": "It carries a lesson from one model to another. One owner runs a handful of models, the same new failure on a second model is rare, and verified.json already reuses a fix for the same model. It is a new store, a new action and a silent change to what a start does.",
+    "instead": "Keep the small half now: mark a setup that failed in verified.json so bestHow tries it last for 7 days. Revisit learned fixes after the same cause has been fixed by hand twice."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 8 (also independence gap 7): watch key expiry, certificate, disk, backup age, linger, cable changes and a daily Hugging Face sign-in check",
+    "ruling": "shrink",
+    "why": "Two reports propose it; build once. The cable event and the daily Hugging Face check are extra: the second sends a token out every day to learn what the 'gated' failure already says when it matters.",
+    "instead": "Four lines in open problems, each from a call the console already makes: a Tailscale key within 21 days of expiry, linger off, free disk low, no backup for 2 days. Retry the backup when a Spark comes online."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 9: settle interrupted operations at start-up (adopt, or stop leftovers and start again what was stopped)",
+    "ruling": "shrink",
+    "why": "An automatic stop-and-restart pass at every console start is a new way for things to stop with nobody asking. Updates will wait until idle, so a cut-off operation stays rare.",
+    "instead": "At start-up, a model that a cut-off start left running and answering is added to the should-run list and its chat is told. Anything else is one line in open problems. No automatic stops."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 10: download and pull retries, a longer wait for a silent Spark, log size caps and free_disk",
+    "ruling": "shrink",
+    "why": "The retries are worth it on a 178 GB download over Wi-Fi. free_disk is a deleting action, and chatapi adds a second one (delete_model); AGENTS.md says never delete the owner's data.",
+    "instead": "Keep the stalled-download retry (3 tries), the log size cap on new containers and the longer wait during a pair load. Defer free_disk and delete_model together; until then a low-disk line in open problems names the folder and its size."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 2: ops.jsonl, arguments stored in chats, a 'Save these steps' button, carry-on for ask_sparkie conversations",
+    "ruling": "shrink",
+    "why": "audit.jsonl already holds each call with its arguments, chat and operation id. A button cannot take a name and an API caller cannot press it. Carrying on for agents adds brain turns before carry-on is proven in the owner's own chat.",
+    "instead": "recent_operations joins the audit record, so each operation shows its action and arguments, also after a restart. Saving is the one sentence 'save that as X' (the from:'last' input). Leave ask_sparkie conversations as they are for now."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 6: a why_failed action",
+    "ruling": "cut",
+    "why": "A 37th read tool that joins facts the failed operation already has: startWithFixes puts the known problem, its advice and the cause lines into the job's error (17-changes.mjs:285-293), and wait_operation returns the error, what was fixed and the last log lines.",
+    "instead": "Add three fields to what a failed operation already returns (wait_operation, operation_log and the chat notice): cause, tried, next. Stop pointing at 'Activity' (14-chats.mjs:122)."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 7: run_job and job_result (19-jobs.mjs)",
+    "ruling": "cut",
+    "why": "The third design of the same container runner, on Spark 3 or 4 only, where GLM usually leaves no room.",
+    "instead": "The one workload runner; its job kind covers this."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 10: remove the page's copies last (rated L, medium), and add delete_model",
+    "ruling": "reorder",
+    "why": "The owner asked to prefer removing. Every later batch has to keep the page routes and their tests green and wait for a longer gate. It is listed tenth.",
+    "instead": "Second batch, right after the six page-only paths have an action (pause_changes, start_sparkie, stop_model on a held entry, find_setups adding a repo, linked_sparks {test:true}, download_model). Delete: members, invites and access requests; the short address and door socket; the workers.dev push and /public routes (cloud/, deploy/web-page.sh, deploy/short-address.sh, pushCloud in 23-http.mjs); the editor proxy and file browser; chat routing (ROUTES, /main/route); the REST copies; the page down to chat, sign-in, keys and a status strip; hand-started recipe approval (19-watcher.mjs:120-136); the 'validated' gate with test_changes and validateChanged. Port the tests to /actions; never drop them. Defer delete_model."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 1 (also usecases gap 6 and chatapi gap 3): new start_model inputs: context, atOnce, memoryPercent, engine, image, flags, once, quant, category",
+    "ruling": "shrink",
+    "why": "Three reports give three schemas with different names. Each optional input is one more place for a 27B to put a number. The owner's sentence is 'a 64k context, 8 at once'; engine and image already travel in a setup id.",
+    "instead": "Two typed inputs, context and parallel, each required to be in the owner's words; `setup` also accepts a past run's id or 'best'. New settings on a running model restart it where it is. Add flags, image, a memory share or category only when a real request needs one. Ship in the same batch as configs gap 2, never before it."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gaps 4 and 6: settings and change_setting with nine keys",
+    "ruling": "shrink",
+    "why": "A settings system for one owner. The default home is a bug, not a setting (pickVersion never reads modelsHost, 17-changes.mjs:354). Protected names change a few times a year. Sparkie's thinking and limits are picked once by the eval. The hourly limit stops mattering once the owner's own requests no longer count toward it.",
+    "instead": "One action, pause_changes {on}: the owner's own POST /actions can resume while paused, and chat shows one button. fleet_status shows the pause, the build and the last backup. Fix pickVersion to prefer the default home when the model fits there."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 7: preset hash label, restartPending, a test prompt before a switch is kept",
+    "ruling": "shrink",
+    "why": "The owner switches the brain a few times a year from a terminal and knows when they did.",
+    "instead": "Keep two things. Delete aphex, aphex-x4, aphex-agent and the YaRN overlay, with the owner's yes because tests pin them. Make loadMainSetup refuse to fall back silently: today a missing saved id falls to the first preset, which is aphex with thinking off (13-main-model.mjs:12-16; config.json lists aphex first)."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 8: keep the previous copy of a replaced workflow, with restore",
+    "ruling": "shrink",
+    "why": "One more input and state for a mistake the reply already reports ('replaced'), with the state folder copied daily.",
+    "instead": "Keep only the argument check at save."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 3e and gap 4: 'move' and 'migrate' verbs, fromRunning, grouped undo",
+    "ruling": "shrink",
+    "why": "Each verb is another regular expression in the gate with its own false matches ('move on'). fromRunning is the fourth save design. Undoing a whole run means several 12-minute loads chosen by code.",
+    "instead": "Keep 3a to 3d: a start on the same Sparks answers 'already', a named start stops a pair as a pair, restart_model works on a pair, stop everything on a Spark. To go back after a mode switch the owner says the other mode's name."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 5: self-healing stops the leftover half of a pair, and restarts a silent pair",
+    "ruling": "defer",
+    "why": "Nobody has seen what the Spark 3 half does when Spark 4 goes off (the report says inferred, never observed), and this is the first rule that lets healing stop something. The healing report skipped hang watches for the same reason.",
+    "instead": "Report it truthfully now: a pair counts as running only when every part runs, should_be_running says 'held: Spark 4 is off', and the gateway stops listing it. Watch one real power-off, then decide."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gaps 6 and 7: power_spark off now; smart plugs, power-on and a guarded power cycle later",
+    "ruling": "defer",
+    "why": "Two other reports list power as not worth it now. Off-only needs a sudo rule the owner adds by hand and a new 'power' verb that collides with 'turn off gemma', and it leaves a Spark nobody can turn back on from chat. The power cycle cuts mains to a machine on two inferred signals.",
+    "instead": "Build on and off together, only once two metering plugs are on the LAN and the owner has checked that Spark 4 boots when power returns. Leave the unattended power cycle out of that first version."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 8: an embedder and reranker on Spark 2 as a 'tool template' in 19-apps.mjs",
+    "ruling": "defer",
+    "why": "The report itself says worth it only when a use case needs it, and it is a fourth container design.",
+    "instead": "When a documents use is real, it is one CPU-only spec on the workload runner, and runningModels lists it for the gateway. Do keep usecases gap 5 now (the embeddings done-check): it is small and fixes a misleading failure."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 9, part 4: pin NCCL_IB_GID_INDEX for pairs",
+    "ruling": "cut",
+    "why": "Two forum posters saw it; it has not been seen here. It changes the pair start, and the plain-sockets retry already recovers the case.",
+    "instead": "Keep parts 1 to 3: linked_sparks {test:true}, Spark 2's pairs no longer advertised, and the copy path inside download_model."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 2: brainCheck inside switchMain, POST /main/check and a check_sparkie action",
+    "ruling": "shrink",
+    "why": "The measurement matters and should happen before anything else is built on 4 at once. It does not need an action, a route and a hook in the switch: a switch is already the owner's terminal command, and the cut-stream and one-token probes can crash the live brain.",
+    "instead": "tools/brain-check.mjs: the parallel-versus-serial comparison, run once on today's setup at a quiet time and called by tools/brain-setup.mjs after a switch. Write the result in the contract's progress section. Run the crash probes by hand, once."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 4 (also independence 2, healing 1, chatapi 5b): bring back a stopped or missing brain",
+    "ruling": "reorder",
+    "why": "Four reports propose it under two action names. It is the one failure that leaves only SSH, so it belongs in the first batch, built once.",
+    "instead": "One action, start_sparkie (saved setup only, hidden from Sparkie's own tools). The watch must run even when the owner has paused changes or switched self-healing off: today healPass returns before watchBrain in both cases (20-heal.mjs:139-140). An owner's own stop is respected. Chat answers 'starting; ask again in a minute' in place of 'Start it from Models' (14-chats.mjs:282)."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 1, part 5: a carry-on turn by itself after a console restart",
+    "ruling": "shrink",
+    "why": "After a restart Sparkie's record of what already ran is thin, so an automatic turn could repeat a step that changes the fleet.",
+    "instead": "Ship parts 1 to 4 first. After a restart post one line in that chat ('I was restarted part-way; say carry on'). Make it automatic only once the code-built ledger exists."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 5 part 4, gap 8 part 2 and gap 9: per-reply timings, sparkie_stats, a three-way effort and temperature eval, chat archiving",
+    "ruling": "shrink",
+    "why": "Numbers nobody will read, for one owner.",
+    "instead": "Keep: the code-built ledger in the carry-on message, reasoning kept within a turn (after a one-request check that the engine honours it), tools hidden from Sparkie, 'next: wait_operation' dropped from what Sparkie sees, and a 10-minute limit on one turn."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 9: hide four tools so Sparkie's list is 24 or fewer",
+    "ruling": "infeasible",
+    "why": "36 minus 4 is 32, and this plan adds tools. All 36 are offered today (14-chats.mjs:60).",
+    "instead": "Set the rule, not the number: every new tool Sparkie sees hides or merges one. Hide from Sparkie (agents keep them): wait_operation, deploy_plan, cluster_plan, memory, where_it_fits, spark_detail, service_logs, sparkie_setup and start_sparkie; test_changes goes with the validation gate. That leaves about 30 with the new ones."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 10: a tuned preset (stage 1, four flags at once) and 8 at once (stage 2)",
+    "ruling": "defer",
+    "why": "Only the owner changes the brain, speed is not this goal, and stage 2 is the concurrency where the report says wrong answers were measured upstream. Stage 1 changes four flags at once on the machine everything depends on, for a gain nobody has measured.",
+    "instead": "Now: the silent-fallback fix and the dead presets. Later, one flag at a time, each checked by brain-check, and only when the queue counter shows agents actually wait. Drop stage 2 until an engine release fixes the parallel fault."
+   }
+  ],
+  "missing": [
+   "A facts check before the build, with no code. Several plans rest on guesses that one question to Sparkie or one API read settles: free memory on Spark 2 with the brain warm (the 6 GB budget), which Node runs the console (/health), whether git is on Spark 2, whether linger is on, the Tailscale client version and key expiry on each Spark, which cables are plugged in, and which build is installed.",
+   "Proof that the brain can write a spec before the runner is built. No report tests whether Qwen 27B can produce a valid container spec or a 50-line script as tool arguments until after the runner exists. Ten prompts against the proposed schema, graded by checkInput and one read-through, cost an hour and decide the shape. If it fails, the owner's outside agents write specs and Sparkie only runs them by name.",
+   "Docs that are true before Sparkie reads them. docs/contract.md is 1,411 lines, mostly things not built (Keeper, pipelines, gallery, checkers, 119 tests), and AGENTS.md says the code is wrong where they differ. The backlog's cut to about 200 true lines must come before console_docs or any self-change, or Sparkie will 'fix' the code toward designs nobody built. The same goes for docs/multi-spark.md, docs/retire-portal.md, docs/sharing.md and docs/sparkie-actions.md.",
+   "A time budget for the test gate. It takes 30 to 40 minutes on the Mac and nobody owns making it shorter. A console that updates itself cannot spend that per change. Set a target (10 minutes on Spark 2), measure the first container run, and count the deletions toward it: the page, members and sharing take whole test files with them.",
+   "Batch discipline and a real-fleet check. The tree outran its own lock while I read it (build 4f371d567af6 against lock c0789b85fa67), and batches have been piling up between installs. The plan needs a rule: one batch of about a day, gate, install, the owner or an agent runs a fixed list of about twelve sentences on the real Sparks, then the next batch. That list is also the measure of 'can do anything': each batch must move at least one sentence from failing to working.",
+   "Rebuilding Spark 2. Every report protects the console from bad updates; none says how to rebuild the hub after its disk dies. The daily copy goes to Spark 3 or 4, which are usually off, and a restore has never been run. One page (new disk, install, restore the state and the git bundle, brain image and weights) and one drill of the restore step. No code beyond the backup-age line.",
+   "One error shape for API callers. The backlog asks for one error object (code, retryable, retryAfter). No report took it up, while three add their own one-off types (sparks_off, model_starting, next: try_fix). For an owner whose agents use the API, a single shape with a `next` call is what lets an agent recover without Sparkie.",
+   "An owner of the totals. No report counts what all eight add up to: tools Sparkie sees, prompt length (saved names, open problems, memory, fleet notes, ledger), state files, background loops and gate verbs. The plan should carry four limits: about 30 tools for Sparkie, one new state file, no new loop, and no new verb list where a name in the owner's words already proves intent.",
+   "One name per idea. The reports use two or three names for the same thing: start_sparkie and restart_sparkie; parallel and atOnce; workload, box, job and app; `when`, which already means 'when to use it' at 18-workflows.mjs:150, and schedule. A 27B and outside agents will copy whatever the code says, so the plan should fix one word list before anything is built.",
+   "Disk with no way to free it from chat. With free_disk and delete_model deferred, a chat-only owner cannot free space, while every start and download only fills it (178 GB per copy of GLM). Until a deleting action is worth its risk, open problems should name the largest leftovers and the one command the owner runs by hand."
+  ],
+  "mustKeep": [
+   "The carry-on race fix (brain gap 1, parts 1 to 4), as the first change. Confirmed: the task is set only when the reply ends (14-chats.mjs:337), a finished operation looks for it at once (:127), and a new message clears it first (:190). A stop that finishes during Sparkie's reply ends the request silently, and this is installed now.",
+   "The installer refuses a lock whose build is not the build being installed (two lines at deploy/host-on-portal.sh:26, which checks only that the file exists). The service counts a workflow as tested only when the lock's build equals its own (18-workflows.mjs:81), and the tree is in the mismatched state as I write.",
+   "Self-healing never goes against the owner's latest wish (healing gap 2, combine gap 1): noStops on the bring-back (20-heal.mjs:87 has none), a newer start on a Spark replaces an older should-run entry, never under 16k and no context cut when nobody asked, and a failed bring-back leaves its reason.",
+   "run_workflow is clear only when the saved title is in the owner's words (brain gap 3), before any names go into the prompt and before anything is saved by itself.",
+   "A stopped or missing brain is started again with the same setup, at most twice in 6 hours, with one action for the API. Chat is the owner's only door.",
+   "A change of settings never loses the working model (configs gap 2): pull and copy before any stop, set the old same-name container aside until the new one answers. Today the one-Spark start stops the others and removes the old container before pulling or starting (07-jobs.mjs:131-132). It ships with the typed settings, never after them.",
+   "The owner's own API and chat calls count as the owner's (chatapi gap 1): cancel any operation, stop through a start in flight, not blocked by or counted toward the agents' pause, and a plain curl with JSON works.",
+   "Remembering what an off Spark holds, so a model is not downloaded a second time and refusals name the real cause (combine gap 2). It is what keeps 'no downloads until I want them' true when Spark 3 is off.",
+   "The code in git on Spark 2 with a bundle in the daily copy (independence gap 1). Today the Mac folder is the only complete copy and has no history.",
+   "The smallest true form of 'easily changeable configs': context and parallel on start_model, the asked-for setup becomes the usual one, and healing and undo bring back that setup and not the fastest one.",
+   "Open problems worked out from live state (healing gap 3): first in Sparkie's notes when there is one, the full list in fleet_status. With no notifications it is the only way the owner hears.",
+   "One container runner with fixed rails, the spec kept as data, one question on the first run. It is the only proposal that makes 'anything I tell it' true, and it must be one design, not three.",
+   "The hard lines every report agrees on: no host shell for Sparkie, nothing using the GPU on Spark 2, SSH, Tailscale, firewall and users never behind an action, the brain's setup never behind an action Sparkie can call, and no secrets inside a workload.",
+   "One slot kept for the owner's own chat and a reply-length cap on /v1 calls that set none (brain gap 7). The owner asked for chat to keep working while agents hammer the brain, and it needs no engine flag or restart.",
+   "The eval as the instrument, with cases of several messages, run before features are built on top of the loop it measures."
+  ]
+ },
+ {
+  "lens": "safety",
+  "overall": "The eight areas agree on the lines that matter most, and I checked the code they rest on: no host shell, no Keeper, no action for SSH, Tailscale, the firewall, users or keys, and no tool that switches the brain. Nothing proposed touches SSH or Tailscale directly, so a hard lock-out needs an indirect path. I found those paths in four new powers: code a model wrote running in containers, the console installing its own updates, more things healing or retrying by themselves, and saved workflows becoming stored programs.\n\nThe findings that change the plan:\n- Saved workflows are a way round every gate. Their steps run as 'workflow' with the owner's rights (18-workflows.mjs:193), an agent that may change things can save one, and run_workflow clears on any start verb. Every new action (jobs, power, updates, settings) inherits that hole unless it is closed first.\n- 'Ask the owner once' is not enforceable today: agents answer ordinary questions themselves (17-changes.mjs:80-87) and a typed 'ok' presses an ordinary button as the owner's click (14-chats.mjs:206-209). Anything that must be the owner's has to be an owner-only question or a check inside the action.\n- The passkey rule is by path (22-passkey.mjs:98) and no /actions path is in it; POST /actions also accepts sign-ins made from the internet. 'The owner's own hand' needs a definition in code.\n- restore.sh can leave the console stopped and empty (deploy/host-on-portal.sh:134-147), and undo_update, already in the batch in the gate, runs it unattended.\n- The safety pause's counters live in memory (16-actions.mjs:268), so any loop that restarts the console never trips it.\n- Containers on Spark 2 have two unverified hazards: being vouched for as the owner, and reaching the brain directly on Docker's default network.\n\nRulings below: 11 unsafe as written (each with the guard that makes it safe), 9 shrink, 3 cut, 5 defer. Build order from a safety view: the saved-workflow and hand-only rules, restore.sh, counters on disk, then update_console; the container fence proven on Spark 3 before anything runs on Spark 2.\n\nNot verified: anything on the live Sparks (Docker's default runtime, how Tailscale's serve labels a local connection, whether the owner's account is Tailscale's operator), and engine flag names.\n\nCritical files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/24-handler.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/deploy/host-on-portal.sh",
+  "rulings": [
+   {
+    "area": "independence",
+    "proposal": "Gap 4: update_console (test and install an update from chat or the API)",
+    "ruling": "unsafe",
+    "why": "This is the proposal that can take the console away. Read in the code: (1) the installer's last step can run `sudo tailscale serve` when a route looks missing, and rewrites the systemd unit at every install (deploy/host-on-portal.sh:334-340, 180-198). (2) restore.sh stops the service, empties the live folders and only then copies, under `set -e` (:134-147), so a failed copy (a full disk) leaves the console stopped and empty. Each snapshot holds its own frozen copy of that script, so a fix does not reach the ten already kept, and undo_update runs it unattended (18-workflows.mjs:362-393). (3) The 12-an-hour and three-failures counts are in memory (16-actions.mjs:268, 07-jobs.mjs:4), so a loop that includes a console restart never trips the pause. (4) The gate container as proposed mounts the source folder writable, so a test can rewrite deploy/install.sh or .git/hooks, which then run on the host as the owner's account (in the docker group, so as root). (5) Plain 'undo' in chat clears undo_update today (16-actions.mjs:160).",
+    "instead": "Build it with these guards in code. Install from `git archive` of the commit, never from the folder the tests ran in; mount the tree read-only in the gate with one separate output folder for the lock; run git with hooks off. `self` mode never writes the unit, the watchdog or Tailscale routes and never calls sudo. The updater, probe, watchdog and one current restore.sh live outside the source and are replaced only by an install a person runs over SSH. Fix restore.sh first: copy beside, swap by rename, always start the service on exit. Keep the 3-a-day cap in a file the updater writes. update_console and undo_update get their own intent kind that needs the word update, build or console in the owner's message. Callers: the owner's chat words, or the owner's POST /actions from the tailnet; a sign-in made from the internet gets a passkey question; never the agent door, never a saved-workflow step. It installs only what is already committed in ~/spark-console-src."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 8: update_console with a `patch` input",
+    "ruling": "cut",
+    "why": "A patch in a request body is code that runs as the owner's account on the hub. POST /actions accepts every owner sign-in, including a long-lived terminal token used from the internet (24-handler.mjs:224-229), and no /actions path is in the passkey rule (22-passkey.mjs:98). The protected-file list cannot make it safe: the parts are joined into one module, so a patch to any part can change sign-in.",
+    "instead": "No patch input. An agent pushes a branch into ~/spark-console-src over the owner's SSH (which stays the owner's), and the owner says 'update yourself'. One update_console, the independence area's, with the guards in that ruling."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 5, step 2: change_console (Sparkie writes and installs its own code)",
+    "ruling": "defer",
+    "why": "Unmeasured (the trial's only run is a dry run with 0 passes), and it is the one path where code nobody read becomes the console. The file list stops honest mistakes only. A test gate can be passed by adding a weak test as easily as by removing a strong one. The trial as built also runs with host networking (agentbar/run.mjs:93), which reaches the editors on 127.0.0.1, a full shell as the owner (21-editor.mjs:2-3).",
+    "instead": "Run the trial only after `--network host` is gone. If the action is built later: every install of code Sparkie wrote waits for the owner's passkey button with the changed files listed, and that rule does not relax after a few clean runs. The engine container gets no network, no Docker socket, and a purpose-built socket that passes chat calls to the brain only, never api.sock (which accepts a typed owner login). The task is the owner's words; Sparkie never starts one from its own error log."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 2: run_box runs whenever the owner's message is an instruction, with no button",
+    "ruling": "unsafe",
+    "why": "Today's gate checks names (a model, a container, a Spark) against the owner's words. A script's content has nothing to be checked against. In the same turn Sparkie can have read a playbook (20,000 characters of outside text), a log or an earlier try's output, and written it into the script. With the network on, that script can send out whatever it reads and reach the home network and the tailnet from the Spark's own address: other Sparks' model ports, the owner's Mac and phone, the router, later a smart plug's on/off address. The 6-tries-a-day cap is per name, and Sparkie picks the name.",
+    "instead": "The fence decides whether content needs a yes. Network off, image from the short list and already on that Spark, CPU only: it runs on the owner's instruction with no button; the worst case is wasted time inside its own folder. Network on, a GPU, or an image not on the list: one yes for that request, kept by code against the image, network and GPU setting; changing any of them asks again. That yes is an owner-only passkey question when an agent asks, or when outside text (a playbook, a page, search results) was read in that request; otherwise a plain button. Tries count per owner request (3 retries inside the request's 12 changes), not per name."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 1: workloads, with CPU services and jobs on Spark 2",
+    "ruling": "unsafe",
+    "why": "Spark 2 is the hub, and the proposal leaves these open. (1) Identity: person-level requests are refused only from a list of the Sparks' tailnet addresses and this host's own (23-http.mjs:65-85, 03-identity.mjs:192). A container has another address (172.x). If Tailscale's serve vouches for that local connection as the owner, a container on Spark 2 is the owner on every route. Not checked. (2) The brain runs on Docker's default network with its port published on 127.0.0.1 only (13-main-model.mjs:128-131); containers on that network reach it directly, round the gateway and any owner-first line. (3) `--memory` bounds CPU memory only; if Docker's default runtime on DGX OS is NVIDIA's, an image that sets NVIDIA_VISIBLE_DEVICES gets the GPU without `--gpus`, and a freeze there takes the console and the brain together. Not checked. (4) The console writes a spec's `files` into a folder the container also writes; a link left there (to ~/.ssh/authorized_keys or ~/.bashrc) receives the console's next write, made as the owner. (5) `--restart unless-stopped` retries for ever, and nothing bounds disk on the hub; passkey sign-in writes a file on every use (22-passkey.mjs:167-168).",
+    "instead": "Keep the design and add, in code with a test each: its own Docker network (never the default, never host); `--runtime runc`, all capabilities dropped, no-new-privileges, a process cap, memory equal to memory-plus-swap, a read-only root with a small tmpfs; ports picked by the console from one fixed range, bound to the tailnet address; spec files in a console-only folder mounted read-only and the data folder mounted apart, with the console never writing into it or following links out of it; only the Hugging Face cache's hub folder and ~/models mounted read-only, never the folder above (the token is there); `--restart on-failure:3`; a disk limit per workload and a free-disk floor on Spark 2. requestGate treats any forwarded address that is private and not a known tailnet device as a Spark's own program. Before the first container on Spark 2, two hand checks from inside a bridge container: /console/api/whoami says access none, and no /dev/nvidia* exists. Prove the runner on Spark 3 first."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 3: jobs whose first run 'asks the owner once'",
+    "ruling": "unsafe",
+    "why": "The once-only yes cannot be enforced where it is proposed. An agent that may change things answers an ordinary question itself with the choice id (17-changes.mjs:10-11, 80-87). A saved workflow's steps run as 'workflow', outside Sparkie's gate (18-workflows.mjs:193), so a spec run through a workflow never meets the question. A typed 'ok' presses an ordinary button as the owner's click (14-chats.mjs:206-209). And `set`, or saving again over a verified name, can change the image, command or network after the yes.",
+    "instead": "Keep the yes in the spec store and check it inside run_workload for every caller: who approved which hash (image digest, command, files, net, gpu, memory). No record for this hash means a question, whoever calls; from an agent or a workflow step it is owner-only. `set` changes only values the spec declares as settings; anything else is a new hash. A time limit and a disk limit are required fields with defaults. Jobs never mount ~/spark-console-src, the state folder, a socket or the home folder. Output reaches Sparkie as data and can only continue the owner's stored request."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 7: run_job and job_result as a second launcher",
+    "ruling": "cut",
+    "why": "Three areas propose the same ability three ways (save/run/stop_workload, run_box, run_job). Three launchers are three fences to keep right, and the approval record above needs one stored thing to point at.",
+    "instead": "Build one: the use-cases area's saved spec with two kinds. A workflow step names a spec; it never carries a script of its own."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gaps 3 and 4: passing runs save themselves as workflows that never ask; tries excluded from the safety pause",
+    "ruling": "shrink",
+    "why": "A saved run is a stored script that replays from chat, agents and the API with no question. That is right only when what replays is exactly what was approved. A second copy of the script inside saved-workflows.json can be rewritten by save_workflow, which replaces silently and records the owner as author even for an agent (18-workflows.mjs:164-167). Tries outside the pause, plus a brain turn after every try, is a loop braked only by a per-name counter.",
+    "instead": "The spec store is the only home of a script, with its approval hash; a passing run marks it proven there. Retries draw from the request's one budget (8 turns, 12 changes, 2 hours) kept on the task in chats.json, at most 3 tries, then Sparkie says what it tried and stops."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 1: ownerCall treats Sparkie in the owner's chat as the owner's own hand",
+    "ruling": "unsafe",
+    "why": "As written it is used at both pause checks (17-changes.mjs:31, 16-actions.mjs:298). Sparkie in the owner's chat would then run through the owner's pause and through the automatic pause that tripped because Sparkie looped. The pause is the only brake on carried-on turns.",
+    "instead": "ownerCall is the page or POST /actions, nothing else. Sparkie's turn gets two narrow things: it may cancel another asker's operation when the owner's message asks to cancel, and the first clear request of a message is not counted toward the hourly limit. It never passes a pause. Keep the `x-spark-console` header on /actions (curl can send it) and drop only the Origin requirement."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 4, part 4 (and the brain area's drafts): a multi-step request that worked is saved as a workflow by itself",
+    "ruling": "shrink",
+    "why": "An auto-saved entry is named from the request's own words. The planned name rule (run when the title is in the owner's words) would then match ordinary sentences, and the steps replay outside Sparkie's gate. The learning area skipped this for clutter; the safety reason is stronger.",
+    "instead": "After a carried request with two or more changes, offer one button, 'Save these steps as a workflow', with the steps built by code from what ran (the chat-and-API area's version). Nothing is saved, listed in the prompt or runnable by name until the owner names it."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 1 (also independence gap 2, brain gap 4, chatapi gap 5): start Sparkie's model when its container is exited or missing",
+    "ruling": "shrink",
+    "why": "The brain's container has Docker's unless-stopped policy (13-main-model.mjs:128), so Docker itself brings it back after a crash or reboot. A container found exited has almost always been stopped on purpose: by the owner over SSH, or by the console's own switch. The proposals restart it unless /main/stop set a flag, which a hand `docker stop` never sets, so healing would fight the owner on the one model only the owner changes. startMain also stops other GPU users on Spark 2 (brain report), which a heal must never do.",
+    "instead": "Start it by itself only when the container is missing, or was left stopped by the console's own operation (a failed switch, which the console records). An exited container nobody in the console stopped becomes an open problem with a 'Restart Sparkie' button in the code-written reply, and stays down. Same preset only, never a stop to make room, twice in 6 hours on the existing record. For agents, restart_sparkie refuses while the brain answers /v1/models and is capped at 3 a day."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 5: the watchdog restores the last snapshot after 10 minutes of failed /health",
+    "ruling": "unsafe",
+    "why": "restore.sh as written can leave the console stopped and empty, and here it runs with nobody present. Ten minutes of failed /health has causes a file restore cannot fix (a full disk, a bad state file). 'Newest snapshot under 24 hours old' also matches an install a person just made by hand while debugging.",
+    "instead": "Order matters: the restore.sh fix lands first, because undo_update in the batch in the gate already runs it. Then the watchdog may restore once, only in the 30 minutes after a self-update that wrote an 'update in progress' marker (the independence area's version), files only. `--with-state` is never reachable from an action or the watchdog: it would bring back old passkeys, sign-ins and agent keys. Outside that window the watchdog only restarts."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 7 (with gap 6's automatic turn): learned fixes tried by plain code for every caller",
+    "ruling": "shrink",
+    "why": "'Every caller' includes self-healing and a start triggered by an API call (15-routes.mjs:125). That contradicts gap 2 of the same area (an unattended heal never shrinks the context) and lets one lucky fix cut a model to a 16k context with nobody watching. A record can also be taught by an agent whose input came from the web.",
+    "instead": "Learned fixes apply to starts someone asked for (chat, agent, POST /actions). For the watcher and the gateway only sockets-instead-of-RoCE applies; anything else is held with its reason. The cause line is matched as literal text with its characters escaped. The automatic turn after a failed start is offered lookups and try_fix only, and its tries come from the request's budget."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 9: at console start, stop the leftovers of an interrupted operation and start again what it had stopped",
+    "ruling": "shrink",
+    "why": "It adds an actor that stops containers and starts models at every console start, from a replay of events.jsonl. With a watchdog and self-updates, starts become routine, and a console that crash-loops would repeat it each time.",
+    "instead": "At start-up, adopt what is running and answering (should-run list, verified run) and report the rest in open problems and in the chat that asked. The settle pass never stops or starts anything; what should run comes back through the existing heal pass and its budgets. Mark each interrupted operation settled on disk before acting on it."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 7: smart plugs, power-on, and one unattended power cycle by healing",
+    "ruling": "defer",
+    "why": "Cutting power to a machine is the one heal that can damage a disk, and its two signals (a standby-watts threshold, Spark 4 booting when power returns) have not been measured. The healing area skipped this for the same reason. Plugs with a local HTTP API are also reachable by any container that has the network.",
+    "instead": "Defer until the plugs exist. Then build power-on only, on the owner's words or a workflow the owner saved and runs. Cut the unattended power cycle from the first version: a frozen Spark is an open problem. Never list a plug for Spark 2. Keep plug addresses out of reach of workload containers (see the missing item on the home network)."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 6: power_spark turns a Spark off from chat, a saved workflow or the API",
+    "ruling": "unsafe",
+    "why": "It is safe for Spark 2 only through two things outside the action: brainSparks() (17-changes.mjs:384, which is empty if the brain's config can't be read and the local Spark isn't detected) and the owner never adding the sudo rule on Spark 2. 'From a saved workflow but never an agent's key' cannot be enforced today: an agent that may change things can save a workflow with this step and run it, and the steps run with the owner's rights (18-workflows.mjs:160, 193). 'Turn off' is already a stop verb for models.",
+    "instead": "The poweroff command is only ever sent over SSH to another host: the code path that runs commands on this machine refuses it, whatever the Spark list says. Its own intent kind needs a power word and a Spark named in the owner's message. Refused while an operation or a download runs there. Not on the agent door; a workflow step only when the owner saved the workflow and the owner runs it. The reply says first that someone has to press the button to turn it on again."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 8: read_page {url}, a general page reader for Sparkie",
+    "ruling": "unsafe",
+    "why": "Lookups run with no intent check. A general reader gives a brain that holds the owner's memory, chats and fleet record a way to send them out (a URL with the data in its query, written under the influence of a page or a log). From Spark 2 it can also call addresses inside the house: the brain's port, the editors on 127.0.0.1 (a full shell as the owner, 21-editor.mjs:2-3), other Sparks' model ports, later a smart plug's on/off address.",
+    "instead": "It fetches only a URL that is literally in the owner's message, or one on a short host list (huggingface.co, github.com and raw.githubusercontent.com, NVIDIA's docs) that a lookup returned. https and GET only, no redirect off the list, refuse any name that resolves to a private, loopback, link-local or tailnet address, and no query string unless the owner typed it. Build one reader (this or the learning area's find_playbook), not two."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 1 (and chatapi gap 3): free-form `flags` and an `image` input on start_model",
+    "ruling": "shrink",
+    "why": "The check behind `flags` is a deny list (service/dig.mjs:212). That works for recipes a person picks; as an open input it has to be complete for four engines that add flags every release. Flags not on it can fetch files nobody asked for (llama.cpp's model-URL and draft-repo flags, a speculative-config naming another repo; confirm the names with --help in the pinned images) or commit memory outside the measured share, which on shared memory freezes Spark 3 or 4. A recipe's env can also turn offline mode off again: ENV_OK allows HF_HUB_OFFLINE (dig.mjs:246) and the recipe's env wins (05-library.mjs:360).",
+    "instead": "Typed fields first: context, atOnce, memoryPercent (never above the measured share), engine. From Sparkie and agents, `flags` come from an allow list of about a dozen named flags per engine (the same list try_fix uses); free-form flags only on the owner's own POST /actions, still through cleanFlags. `image` only from the trusted prefixes, pinned by digest, and a pull is a download the owner asked for by naming it. The offline and no-telemetry settings go after the recipe's env so nothing overrides them. Settings an agent chose never become a model's usual setup."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 6: the hourly limit, protected names and Sparkie's own limits as settings changed by saying so",
+    "ruling": "shrink",
+    "why": "These are the rails. Each one that becomes a live setting is one more thing a looping or steered model can ask to loosen, and the owner changes them a few times a year.",
+    "instead": "The settings action covers selfHeal, the pause and defaultHome (never Spark 2). Adding a protected name is allowed; removing one, the hourly limit and Sparkie's tool rounds and changes per turn stay in config.json, changed by hand and installed. `settings` shows them read-only with where to change them."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 4 (also chatapi gap 5 and healing gap 3): three different actions to pause, resume and switch self-healing",
+    "ruling": "shrink",
+    "why": "The pause exists to stop a model that is looping. The chat-and-API area's version lets the owner's word 'resume' pass through Sparkie, which is the thing that is paused. Three actions for two switches is also two too many.",
+    "instead": "One action. Pausing, and turning self-healing off or on: anyone who may change things. Resuming an automatic pause: the owner's POST /actions, or the word 'resume' typed alone in the owner's chat and handled by code before the model is called (as a typed 'yes' is today, 14-chats.mjs:206). Resuming the owner's own pause: the passkey, as now. Never a Sparkie tool call, an agent key or a workflow step."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 10 (with healing gap 10's free_disk): delete_model, and the three hard stops moved into chat",
+    "ruling": "unsafe",
+    "why": "Deleting is the one change here that cannot be put back. The last copy of a model with no upstream repo (the owner's own files in ~/models) is gone for good, and a gated or withdrawn repo cannot be downloaded again. free_disk's 'one yes per list' is an ordinary button, which a typed 'ok' presses (14-chats.mjs:206-209). Moving 'let this model run its own code' into chat puts it one passkey tap from a suggestion Sparkie made after reading a model card; across two Sparks such a container runs with extra privileges and host networking, which is root on that Spark, including its SSH and Tailscale.",
+    "instead": "delete_model and free_disk's yes are owner-only passkey questions in chat, never through the API or an agent (contract 8.7). delete_model refuses the last copy of anything with no known repo, the brain's model, its draft and its caches, and removes one exact folder under the two fixed roots, resolved, never a pattern. 'Run its own code' stays a passkey question for one Spark only, never across two, with the repo and that sentence in the label. Stopping what the console didn't start stays behind the passkey as it is."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 4: add-to-Recipes folded into find_setups, and download_model for agents",
+    "ruling": "shrink",
+    "why": "Being in Recipes is the gate for running across two Sparks with extra privileges (17-changes.mjs:131-132). Folding 'add any Hugging Face repo' into a lookup that every agent and Sparkie can call removes that gate. A download an agent starts is a download the owner did not ask for.",
+    "instead": "A repo joins Recipes when it is named in the owner's own words or on the owner's POST /actions; from an agent it is an owner-only question. download_model from an agent: models already in Recipes only, counted toward the hourly limit, with the disk floor; anything else asks the owner."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 9 (and learning gap 10): saved workflows that run by themselves on a schedule",
+    "ruling": "defer",
+    "why": "A schedule runs stored steps with nobody watching, and nobody is told when it fails (no notifications). It should not exist before a saved workflow is safe to replay: the name rule, the stale check, and steps limited to the starter's rights.",
+    "instead": "Defer until those three are installed and used. Then: only the owner's words or POST /actions create a schedule; fixed replays only (an 'ask' step gets lookups only); never a download, never an answer to a question, no run under the owner's pause; two failures in six hours pause it, on the heal record."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 5: healing stops the leftover half of a pair, and restarts a pair that is running but silent",
+    "ruling": "defer",
+    "why": "Both rules rest on behaviour nobody has seen (the area says inferred, never observed; the healing area skipped silent-model restarts for that reason). A wrong call costs a 12-minute reload, and the first rule ends 'healing never stops anything', which the owner's trust in healing rests on.",
+    "instead": "Ship the reporting half now: a pair with a Spark off shows as held, 'Spark 4 is off', and leaves running_models and /v1/models. Add the stop only after one look at what the Spark 3 half does when Spark 4 goes off, and with the owner's yes."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 2: check_sparkie as an action that cuts a stream and sends a one-token call",
+    "ruling": "shrink",
+    "why": "The area itself says these probes could crash the engine. As an action on the agent door, any agent could take chat down for a minute at will, repeatedly.",
+    "instead": "Run it at the end of a switch and from the owner's hand only (POST /main/check, or 'check yourself' in the owner's chat). Not on the agent door, not a workflow step, at most once an hour."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 2, part f: ask_sparkie conversations are carried on like the owner's",
+    "ruling": "defer",
+    "why": "A carried agent conversation acts for up to 8 turns and 2 hours on the agent's stored message, and an outside agent's message can itself come from a web page. Carry-on has a confirmed race in the owner's own chat and has never run on the real brain.",
+    "instead": "Prove carry-on in the owner's chat first (the brain area's gap 1 and the eval). Until then ask_sparkie returns the operation ids it started and the agent follows them itself."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 8, optional part: each Spark asks Hugging Face daily who it is with its own token",
+    "ruling": "cut",
+    "why": "It sends a credential out every day with nobody asking, to detect a problem that shows itself plainly the first time a gated download fails.",
+    "instead": "Tell an invalid token (401) from a gated model (403) when a download fails, as gap 10 of the same area already proposes."
+   }
+  ],
+  "missing": [
+   "One rule for what a saved workflow may do. Its steps run as 'workflow' with the owner's rights and skip Sparkie's gate (18-workflows.mjs:193), and only five action names are barred as steps (:132). Needed before any new action: steps run with the rights of whoever started the run (an agent's run is an agent's call, counted and paused like one), and a 'hand only' mark on actions (update, undo of an update, power, resume, settings, restart of the brain) that keeps them off the agent door, out of Sparkie's tools and out of workflow steps unless the owner saved and runs the workflow.",
+   "A code definition of 'the owner's own hand'. POST /actions accepts the tailnet identity, a browser sign-in and a terminal token used from the internet alike (24-handler.mjs:224-229), and the passkey rule is by path with no /actions path in it (22-passkey.mjs:98). Hand-only actions should need the tailnet identity or a passkey answer; the code already treats a terminal signed in from the internet as weaker in one place (24-handler.mjs:132).",
+   "The safety pause's counters on disk. agentChanges and the failures-in-a-row list are in memory (16-actions.mjs:268, 07-jobs.mjs:4). With a watchdog and self-updates, console restarts become routine, so a loop that crosses a restart never pauses. undo_update is not counted at all: it returns no operation id.",
+   "undo_update is in the batch in the gate now with three open edges: any agent that may change things can call it (scope fleet:act, 18-workflows.mjs:402), plain 'undo' in chat clears it, and it runs the restore.sh that can leave the console stopped. Fix these before or with that install.",
+   "Overwrite protection for saved workflows and memory. save_workflow replaces an existing name silently and records the owner as author even when an agent saved it (18-workflows.mjs:164-167); the owner's next 'coding mode' would run the new steps with no button. forget_memory lets an agent delete the owner's lines (20-memory.mjs:54-63). Needed: an agent may replace or forget only what it saved itself, the previous copy is kept, and only titles (not agent-written 'when' text) go into Sparkie's prompt.",
+   "One memory and disk budget for Spark 2, enforced in one place. Four areas each add containers there on their own (services 6 GB, the gate 8 GB, a coding engine 8 GB, an embedder 4 to 6 GB, the eval's stand-in fleet), beside a brain holding about 80 percent. The 8 GB kept-free rule is not applied on Spark 2 by any code today. Needed: one sum checked against free memory at each start, one heavy thing at a time, and a free-disk floor.",
+   "What a container with the network on can reach. From Spark 3 or 4 it leaves with that Spark's tailnet address, so it can call the console's /v1 as the owner without a key, every other Spark's model port, the owner's other tailnet devices and the home network. Closing that is a firewall rule, which is the owner's by hand: one command per Spark (a DOCKER-USER rule dropping the work network's traffic to private and tailnet ranges). The plan should give that command and say that until it is run, a network-on first run needs the passkey. The plan must also settle how a job with no internet reaches the models, which no area resolved.",
+   "A lock-out test in the gate. Nothing tests the hard constraint today. A cheap static check: fail the gate if the built server.mjs, worker.py or the self-mode installer contains commands for Tailscale changes (up, down, set, serve, funnel, logout), ufw, iptables, nft, usermod, passwd, sudoers, authorized_keys or sshd. It stops honest mistakes, including Sparkie's own later.",
+   "One hand check per Spark that no area listed: whether the owner's account is Tailscale's operator (the installer tries `tailscale serve` without sudo first, deploy/host-on-portal.sh:337). If it is, any code running as the owner, including a self-update, can take Tailscale down without a password. Recommend it stays off on Spark 2.",
+   "An 'outside text was read in this request' flag kept by code (set by find_playbook, read_page, search results, guides, a job's output). The earlier two-lanes rule was removed for the owner; two rulings here (first run of a workload, the page reader) need a narrow version of it.",
+   "A recovery card that works with the console down, written in the repo and seeded into memory: SSH to Spark 2 on the LAN address, the restore command, how to restart the service and the brain by hand, where passkeys.json is. Plus one drill of it. Every self-update and watchdog proposal assumes this path and none writes it down.",
+   "What is installed is unclear, and the tree is ahead of its lock again. docs/reviews-2026-11-11.md lines 85-91 say build c0789b85fa67 is installed with memory seeded; the brief says that batch is not installed. The lock file names c0789b85fa67, while the tree's build is now 4f371d567af6 (server.mjs changed at 09:54, after the lock at 09:35). An install from the tree now would switch every workflow off. The build session should read /health first and install nothing until the lock matches."
+  ],
+  "mustKeep": [
+   "No host shell or exec action and no Keeper. Every container command is built by code from typed fields. No workload, job, gate or engine container ever gets --privileged, host networking, a host path, the Docker socket, the state folder, api.sock, ~/.ssh, ~/spark-console-src or the Hugging Face token.",
+   "The brain: no action or tool switches its preset (owner's REST or CLI only). Healing and restart_sparkie start the same preset and never stop anything to make room.",
+   "SSH, Tailscale, the firewall, users, sudo rules, linger, key expiry and plug setup: the console detects and says, with the exact command for the owner. It never runs them.",
+   "Behind the passkey: deleting anything (a model, leftovers, a chat); running a model with its own code; stopping what the console didn't start, a protected container or what answers Sparkie; resuming the owner's own pause; installing code Sparkie wrote, or any update touching sign-in, identity, sessions, the request gate, deploy/, the test harness or the brain's config; the first run of a workload that has the network, a GPU or an untrusted image when an agent asked or outside text was read; a new trusted image source; an agent adding a repo to Recipes.",
+   "Never actions at all, passkey or not: agent keys and their rights, passkeys, signed-in devices, restore with --with-state, the Spark list and addresses, turning Spark Console off, a plug for Spark 2.",
+   "Owner-only questions are answered only on the page with the passkey. A typed 'yes' never presses one (14-chats.mjs:206), an agent gets 'waiting for the owner' (17-changes.mjs:85), and from POST /actions they cannot be answered.",
+   "Carried-on turns act only on the owner's stored words (14-chats.mjs:218-222). Notices, logs, job output, guides and pages reach Sparkie as data.",
+   "Requests from the Sparks' own addresses reach only /v1 and never start a model (24-handler.mjs:44, 15-routes.mjs:172).",
+   "Recovery stays simple: until a passkey exists these changes need none, and the first passkey can only be set up from the tailnet.",
+   "Healing never downloads, never retries after out-of-memory, never shrinks a context unattended, keeps its attempt counts on disk and runs without the brain.",
+   "8 GB kept free on every Spark, the measured memory share, and no GPU workload on Spark 2 at any budget.",
+   "The configs area's gap 2 (the old container is set aside until the new one answers) ships in the same batch as any new settings input.",
+   "The name rule for run_workflow (the saved title must be in the owner's words) lands before saved names go into the prompt, before anything saves by itself and before any new action can be a step.",
+   "The installer's snapshot, 45-second check and put-back stay as they are; the stale-lock refusal ships first; `local` mode is not used meanwhile (it deletes the folder it runs from and can call sudo).",
+   "The engine trial does not run until `--network host` is removed (agentbar/run.mjs:93).",
+   "No notifications. Open problems are read in Sparkie's next reply, fleet_status and /health."
+  ]
+ },
+ {
+  "lens": "feasibility",
+  "overall": "Verdict. The eight reports are right about what is broken, and most of the fixes are sound. Read together, though, they are 79 gaps, about 25 of them the same change proposed two to four times (the brain keeper four times, typed start settings three times, the container runner three times under three names, save-from-what-ran four times), and more than 20 new actions on top of today's 36. One builder cannot ship that as written, and a 27B model will not choose well among 55 tools.\n\nWhat Qwen 3.8 27B can be trusted with (from the code, not measured):\n- Reliable: filling a typed field with something the owner said (a model, a Spark, a number), because code checks it against the owner's stored words (sparkieCheck and tracesToRequest in /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs).\n- Unproven: anything it must compose. That covers a request carried over several turns, a container description, a script inside a JSON argument, and a cause line picked from a log. The only evidence is 16 one-message eval cases and one partial run on record (test/eval/).\n- Not to be relied on unattended: turning a host-install guide into a container, repairing a failed start by guessing (12 minutes of GLM load per wrong guess), or changing the console's own code (the engine trial has 0 passes on record).\nSo each compose ability gets code around it and eval cases with a pass bar before the prompt promises it. Code builds saved steps from the audit record, a first run is one button, and a fix is one typed setting offered as a button.\n\nThree facts set the order:\n1. Any edit to a function listed in START_CODE (18-workflows.mjs:15-18), or to an action's run, inputs or description, gives start_model and start_model_across a new version. The next real start then validates it. Six areas touch that code separately; it should be two batches.\n2. Every build needs the whole gate (30 to 40 minutes on the Mac, per test/README.md). Moving the gate to Spark 2 early makes every later batch cheaper.\n3. The brief's state of the tree is out of date. docs/reviews-2026-11-11.md records build c0789b85fa67 as installed with memory, carry-on, POST /actions and seeded memory, and workflows.lock.json names that build. The tree is now one build ahead (I computed 4f371d567af6), and the installer still accepts a stale lock. I did not check the live console.\n\nBuild order (each step is usable alone):\n0. No gate needed.\n   - Read /health for the installed build.\n   - Add the lock check to deploy/host-on-portal.sh:26 (deploy/ is not in the build hash).\n   - Run git init in the Mac folder and copy the two scratchpad drafts into the repository.\n   - Owner: linger and Tailscale key expiry.\n   - Measure: the brain at 4 at once against one at a time, free memory on Spark 2 with the brain warm, and a baseline of about 12 multi-message eval cases.\n1. Finish what it starts and never heal against the owner (no start code).\n   - The carry-on race.\n   - noStops on bring-back, and the newer start wins on the should-run list.\n   - Retry heal skips that had a passing reason.\n   - One brain keeper with restart_sparkie.\n   - The saved-workflow name gate, and saved names in the prompt.\n2. The owner is told, and the API is the owner's hand.\n   - Open problems in Sparkie's notes and fleet_status.\n   - ownerCall.\n   - One change_setting action for the self-healing switch and the pause.\n   - An owner-first counter on the brain.\n   - Machinery tools hidden from Sparkie.\n3. Gate and install on Spark 2: a gate-only image, the meminfo fix, gate.sh, install.sh as a real file with a self mode, and git history kept.\n4. Start batch A.\n   - Pull and copy before any stop, and set the old container aside.\n   - Typed context and requests-at-once.\n   - A 16k floor on the out-of-memory fix.\n   - The usual setup, also kept on should-run entries.\n5. Start batch B.\n   - Off Sparks remembered, and true refusals.\n   - The embeddings answer test.\n   - Pair verbs.\n   - download_model with stall retry.\n   - After it, a failed-start explanation with a one-button fix.\n6. Workloads v1, CPU only: one spec store, save/run/stop, SearXNG and a script job, first run as one button, with eval cases.\n7. Repeat: save_workflow built from what ran and from what is running, with arguments checked at save.\n8. update_console (the owner's hand only) with three drills, then the engine trial. change_console only if the trial passes.\nLast: remove the REST copies and the cloud push.\n\nMy count is five to six weeks of one builder's time, not the two weeks the areas imply when read separately.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/07-jobs.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-heal.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/deploy/host-on-portal.sh",
+  "rulings": [
+   {
+    "area": "usecases",
+    "proposal": "Gap 1: workload runner (19-workloads.mjs, spec store, save/run/stop, SearXNG)",
+    "ruling": "shrink",
+    "why": "This is the right primitive and the only one of the three runner designs to build. But the gate cannot judge a free-form spec: tracesToRequest (16-actions.mjs:180-192) checks only model, container and Spark inputs, and the save pattern (line 113) needs the word workflow. Adding verb patterns for open-ended requests is the fragile part of this code. M is honest only if the 225-line bash stand-in for docker (test/mock/bin/docker) is counted.",
+    "instead": "Version 1 is CPU-only containers with two specs the builder writes (SearXNG, script). save_workload changes nothing on the Sparks, so it needs no word check. The first run of any spec that isn't built in is always one button showing image, network, memory and Spark. After a passing check, run_workload is clear only when the whole name is in the owner's words. Put Spark 2 placement behind a setting that is off until the owner says yes, so the build does not wait on that decision. Build it after the two start batches."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 3: jobs whose operation ends after 10 seconds, with a second job-result operation",
+    "ruling": "shrink",
+    "why": "It needs three new mechanisms: a result operation raised by the watcher, a carry-on that knows a job is still running, and a run_workflow wait that does not use waitJob (18-workflows.mjs:197). A long script inside a JSON tool argument is also where a 27B model most often produces broken JSON; today that comes back as a bare parse error from 14-chats.mjs:303.",
+    "instead": "Keep the job's operation open until the container exits, with a time limit of at most 2 hours in version 1 and no Spark claimed for a CPU job on Spark 2. Then postResult, carry-on and run_workflow work unchanged. Use the watcher's exit event (19-watcher.mjs:99-105) only for a job whose operation was lost to a console restart. Accept the script as a list of lines, compile it before running, and return the syntax error in plain words. One yes covers that spec's image, network, memory and Spark, plus up to 3 script fixes in the same request."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 4 part 2: find_recipes returns catalog.json playbooks as guides with image and ports",
+    "ruling": "infeasible",
+    "why": "The data isn't there. The 29 playbooks in service/catalog.json hold only id, title, description, category, sparks and url. Sparkie has no tool that opens a url, so a guide gives it nothing to build a spec from.",
+    "instead": "Leave it out of version 1. Once the runner exists, add the README text from NVIDIA's playbook repository to find_recipes, using the existing webGet and ghFiles in 11-setups.mjs. First measure with three eval cases whether the 27B turns a host-install guide into a working spec. Until that passes, new services are taught by the builder or by the owner's outside agent through save_workload."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 4 part 4: Spark Console saves a finished chain as a workflow named from the request (up to 20)",
+    "ruling": "shrink",
+    "why": "Code cannot name a routine well; it would be a slug of the request's first words. Twenty auto-named entries become a list the 27B must pick from, and the name gate needs names the owner would actually say.",
+    "instead": "After a finished multi-step request, add one line: say 'save that as <name>'. save_workflow with from: 'last' builds the steps in code."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 2: healing for workloads (watchServices)",
+    "ruling": "shrink",
+    "why": "On Spark 2, Docker's restart policy already covers a crash and a reboot. The Spark 3 and 4 bring-back only matters for GPU services, which are deferred.",
+    "instead": "Build only the rule that restarts a service whose check has failed for 10 minutes, at most twice in 6 hours, and the cut-off-job report. Add the Spark 3 and 4 rows when GPU services exist."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gap 5: answer test for embedding and rerank models",
+    "ruling": "reorder",
+    "why": "answerTest is in START_CODE (18-workflows.mjs:15-18), so this small change gives start_model and start_model_across a new version. Shipped alone it costs a validation run of its own.",
+    "instead": "Ship it in start batch B with the other start changes."
+   },
+   {
+    "area": "usecases",
+    "proposal": "Gaps 7 to 10: GPU services, a port per model, the files route, the /svc route",
+    "ruling": "defer",
+    "why": "The area itself says to wait. GPU memory reportedly isn't bounded by container limits on these machines. plan() and memoryShare are in the start fingerprint. No use case has asked for any of the four.",
+    "instead": "Revisit each when a real request needs it. The first GPU workload should be a job on Spark 3 or 4 with nothing else running there."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 2: run_box and 19-boxes.mjs",
+    "ruling": "cut",
+    "why": "It is the same primitive as the use-cases workload spec and the chat-and-API run_job. Three stores and three name spaces for 'a named thing that runs in a container' is what a 27B handles worst. The spec store is needed anyway for services, which need a stable name to stop, list and heal.",
+    "instead": "Build one design, the use-cases spec store. Take from this proposal the fixed rails (not root, capabilities dropped, no Docker socket, no host mounts, image pinned by digest) and the idea that a passing run makes the thing repeatable by name."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 2's gate: a box runs when the message is an instruction and not a question",
+    "ruling": "unsafe",
+    "why": "The gate's safety today comes from tying each change to words the owner said. This rule ties nothing: any imperative sentence would let a script the model wrote run, and text from a log or web page could shape that script without the gate seeing it. The container bounds the damage, not the gate.",
+    "instead": "The first run is always one button. After that, the saved name has to be in the owner's words."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 3: a passing run is written to saved-workflows.json as a one-step workflow",
+    "ruling": "shrink",
+    "why": "With one spec store, the spec's verified mark is the saved thing. A second copy as a one-step workflow doubles the names Sparkie sees. The fillIn change for script braces is not needed once scripts live in specs.",
+    "instead": "Keep two parts: job.result on operations, returned by wait_operation (the owner's agents need it), and typed whole-value placeholders. Drop the rest."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 4: a result turn after any box run, with 6 tries a day per name and an exemption from the safety pause",
+    "ruling": "shrink",
+    "why": "The result turn is needed: without it the first failed script is a dead end. But a per-name daily counter is new state, and exempting tries from the pause removes the one brake on a looping model.",
+    "instead": "Give a failed job's result turn the check result and the last 2,000 characters of output, inside the existing budget of 8 turns and 2 hours. Allow 3 script fixes per request under the owner's one yes. Keep counting them toward the hourly limit."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 5: stale hashes, failing marks, 'use the old way', and a run that waits 15 minutes on a question",
+    "ruling": "shrink",
+    "why": "That is five mechanisms for routines that have never yet been replayed for real. A waiting run that holds its Sparks for 15 minutes is new failure surface in claimSparks.",
+    "instead": "Keep three parts: every step's arguments checked at save and before step 1 (already on the backlog), stop_model for everything on a Spark, and a stop of something already gone counting as done. The last two go in start batch B because they change stop_model's version. A step's question keeps ending the run with the question in the result. Add the rest only after a saved routine has actually gone stale."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 6: keep masked arguments on each stored chat step so 'save that as X' can work",
+    "ruling": "reorder",
+    "why": "The record already exists. Every action call is written to audit.jsonl with its masked arguments, chat id, outcome and operation (20-mcp.mjs:124-129, 16-actions.mjs:369). A second copy on chat messages is not needed.",
+    "instead": "save_workflow with from: 'last' reads this chat's completed change calls from the audit lines. Two small fixes are needed: pass the chat id to workflow steps (18-workflows.mjs:193), and note that the audit cuts arguments over 1,000 characters, so it suits model actions and not script text. Build it once for this area, chat and API, combining Sparks and the brain."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 7: the eval comes after the five gaps above it",
+    "ruling": "reorder",
+    "why": "It is the only way to learn whether the 27B can do any of this, and today it cannot see a second message. The carry-on race passed the suite because the stand-in model answers instantly.",
+    "instead": "Extend test/eval.mjs to multi-message cases now; it is test code and needs no install. Take a baseline on the installed build. Every batch that adds a tool or changes the prompt adds 3 to 6 cases and must pass them before install."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 8: find_playbook as a new tool",
+    "ruling": "defer",
+    "why": "Playbooks describe installs on the host. Turning them into a container spec is the hardest thing asked of the 27B anywhere in this plan, and nothing measures it yet.",
+    "instead": "After the runner and the eval exist, return the text through find_recipes, not a 37th tool, behind eval cases."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 9: serve mode for boxes, and stop_box",
+    "ruling": "cut",
+    "why": "It is the service kind of the workload spec under another name.",
+    "instead": "Covered by use-cases gap 1."
+   },
+   {
+    "area": "learning",
+    "proposal": "Gap 10: rails for ask steps and schedules",
+    "ruling": "defer",
+    "why": "It protects a feature (schedules) that is itself deferred.",
+    "instead": "Build the rails in the same batch as schedules, if schedules are ever built."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 1: git on Spark 2, the lock check, and refusing an older Mac commit",
+    "ruling": "shrink",
+    "why": "The lock check is urgent and tiny. deploy/ is not part of the build hash or the gate, so it can ship today. 'Refuse a Mac install older than Spark 2's commit' and moving the checkout in restore.sh only matter once something on Spark 2 writes code, which is not yet true.",
+    "instead": "Now: compare the lock's build with API_BUILD at host-on-portal.sh:26, and run git init in the Mac folder. In the Spark 2 gate batch: keep .git across the source swap, commit and tag each install, and add a git bundle to the daily copy. Leave the divergence check for when change_console exists."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 3: the gate on Spark 2 in the agentbar image",
+    "ruling": "reorder",
+    "why": "Raising it from S to M was right; it is M with an unknown tail. I confirmed that the stand-in Sparks read the real /proc/meminfo first (05-library.mjs:52 and :335). But the agentbar image also installs two coding engines through npm (agentbar/Dockerfile), which the gate does not need. And the gate's value is as much for the builder as for independence: it cuts 30 to 40 minutes off every later batch.",
+    "instead": "Do it third, before the big feature batches. Use a gate-only image (Node 24, python3, python3-yaml), a smaller download for the owner to approve. Bundle install.sh as a real file with a self mode, because a lock made on Spark 2 is only useful if the install can run there too."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 4: update_console with an updater, a probe, path classes, a watchdog window and three drills, rated M",
+    "ruling": "shrink",
+    "why": "The estimate is not honest. The installer refactor, updater.sh, probe.sh, the path classifier, the watchdog probe window, a stand-in test and three drills on the real Spark 2 add up to L. Detecting 'removing an existing test assertion' from a diff is a heuristic that will miss. Path classes only matter once someone other than the owner writes the change.",
+    "instead": "Version 1 is the owner's hand only (POST /actions, or a passkey button). It runs through systemd-run as undo_update does (18-workflows.mjs:383): gate.sh, wait until idle, install.sh self, the /health build check plus one real chat turn on the socket, then put back on failure. Keep the three drills. Defer the path classifier and the watchdog's 30-minute probe until change_console is real."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 5 step 2: change_console (Sparkie edits its own code)",
+    "ruling": "defer",
+    "why": "Whether a 27B can fix a bug in 9,200 lines of one module is unmeasured; the only run on record is a dry run with 0 passes. The trial holds a brain slot for hours, and its container runs with host networking (agentbar/run.mjs:93).",
+    "instead": "Run step 1, the trial, after the owner-first counter exists and the network fix is in. Write no code for the action unless it scores 2 of 3. Until then, changes are written by the owner's outside agent and installed with update_console."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 6: pull and copy before stopping; internet up or down",
+    "ruling": "reorder",
+    "why": "deploy (07-jobs.mjs:131-145) and clusterDeploy are in the start fingerprints, so moving the pull is a start change. It is the same change as configs gap 2 and backlog item 7.",
+    "instead": "Pull-before-stop goes in start batch A, built once with the set-aside. internetUp, the true refusals and the image known-failure go in start batch B."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 8: seed memory, copy staged work, console_docs and read_page",
+    "ruling": "shrink",
+    "why": "docs/reviews-2026-11-11.md already records memory as seeded with twelve lines. Two more read tools for Sparkie have no measured need: it cannot act on source it reads until change_console exists, and nothing yet produces a link worth reading.",
+    "instead": "Copy the two scratchpad drafts into the repository today. Leave out console_docs and read_page. Bring back a page reader when a search service or a job with network access first needs one."
+   },
+   {
+    "area": "independence",
+    "proposal": "Gap 9: remove the cloud push; add offline and no-telemetry settings to model containers",
+    "ruling": "reorder",
+    "why": "These are two different kinds of change. The removal touches no start code. ENGINE_CACHE_ENV is in the start fingerprint, and HF_HUB_OFFLINE can break a setup that fetches at start.",
+    "instead": "The removal goes in the last removal batch. The environment settings go in start batch B, with the new known-failure message, so one validation run covers them."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 2: heal never stops anything, newer start wins, 16k floor, follow the operation",
+    "ruling": "reorder",
+    "why": "All four parts are right, but they split across the version boundary. bringBack's context and desiredAfter are not fingerprinted. The refusal wording at 17-changes.mjs:423 and :430 and the ladder at :212 are inside start code.",
+    "instead": "Batch 1: add noStops to the context at 20-heal.mjs:87 (startModel already refuses at :430), let the newer start win in desiredAfter, and follow the operation. Start batch A: the ladder (32,768, then 16,384, then stop; no shrink for healing or for a context the owner asked for) and the wording."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 4: one decider; delete maybeHeal and desiredNow's reasons",
+    "ruling": "shrink",
+    "why": "The dead end is real: maybeHeal runs once from 19-watcher.mjs:104, and healReason returns null for one-Spark entries at 20-heal.mjs:65. But the merge rewrites tested logic whose messages heal.test.mjs pins, for no new ability, and M understates the regression risk.",
+    "instead": "About 15 lines. When maybeHeal skips for a passing reason (a busy Spark, offline in the last half hour, the owner's pause), remember the container. healPass calls maybeHeal for it again each pass until it runs or the reason becomes a lasting one. Its own budgets and checks still apply. Leave the single table for later, if ever."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 5: the watchdog restores the last snapshot after 10 failed minutes",
+    "ruling": "shrink",
+    "why": "A watchdog that can roll back at any time can undo a good build over a passing fault; the independence area's own skip list says so. A build that crashes at start is already caught by the installer's 45-second check.",
+    "instead": "Keep the lock check, and the restore.sh fixes (check the saved copy fits before deleting; always start the service on exit). Leave out the watchdog's restore. A hung console is restarted by the watchdog, and undo_update is then reachable from the API."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 6: try_fix, a new action with a closed fix list, outside the safety pause",
+    "ruling": "shrink",
+    "why": "Once start_model takes typed settings, a fix is a start with one setting changed, so try_fix is a second way to do the same thing. Letting a 27B apply its own guess costs a 12-minute GLM load per miss. Taking fix attempts out of the pause removes the brake.",
+    "instead": "Keep step 1: a result turn after a failed start in the owner's chat, where Sparkie names the cause. For the fix, Sparkie calls start_model with the one setting. The gate turns numbers the owner didn't say into one button, which is the right amount of asking after a failure. The owner's agents send the setting directly."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 7: problems.json, learned fixes tried by code for every caller",
+    "ruling": "cut",
+    "why": "It depends on try_fix. It changes what a validated workflow does through data, with no version change. Its one benefit over verified.json, carrying a fix from one model to another, is speculative for four Sparks and a handful of models.",
+    "instead": "A start that worked with a changed setting is already a verified run and becomes that model's usual setup (configs gap 3). Keep only the mark on a setup that failed, so bestHow tries it last for 7 days."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 8: slow failures, including a daily Hugging Face sign-in check",
+    "ruling": "shrink",
+    "why": "Key expiry, disk, backup age, linger and cable changes are each a few lines on calls the console already makes. The Hugging Face check sends a token out every day to watch for a problem that the gated-model failure already reports when it matters.",
+    "instead": "Build the first five as rows of the open-problems list, after that list exists. Leave out the Hugging Face check."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 9: at start-up, settle interrupted operations (adopt, or stop leftovers and start again what was stopped)",
+    "ruling": "shrink",
+    "why": "Stopping and starting models at start-up with nobody watching is the kind of unattended change the rest of this area avoids. Restarts in the middle of an operation are rare, because the installer and the updater both wait until idle.",
+    "instead": "Record the chat id on the operation's started event. At start-up, adopt a model that is running and answers onto the should-run list. Otherwise post the plain result to the chat that asked and add an open problem. Stop and start nothing automatically."
+   },
+   {
+    "area": "healing",
+    "proposal": "Gap 10: download retry, 5-minute pair tolerance, log size cap, free_disk",
+    "ruling": "shrink",
+    "why": "These are four unrelated changes. downloadVersion and the run commands are fingerprinted. The pair tolerance changes a contract line for a case not yet seen. free_disk deletes things.",
+    "instead": "The download stall retry (up to 3) and the log size cap go in start batch B. Defer the pair tolerance until one Wi-Fi drop during a load has actually been seen. Defer free_disk until a disk warning has actually fired."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 2: ops.jsonl reloaded at start, arguments on chat messages, a save button, carry-on for ask_sparkie",
+    "ruling": "shrink",
+    "why": "A file of finished operations reloaded at start is the durable job store the healing area rightly skips, and the audit file already holds each call with its arguments. Carry-on for agent conversations doubles brain load before carry-on is proven in the owner's own chat.",
+    "instead": "recent_operations reads each call from the audit lines. save_workflow builds its steps in code from the same lines. Saved names go in the prompt. The save hint is one line of text. Add ask_sparkie carry-on only after the owner's chat passes its eval cases."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 3: start_model gains context, parallel, flags and category",
+    "ruling": "shrink",
+    "why": "A typed number is something a 27B fills reliably, and the gate can check it against the owner's words. Free-form flags and 'the best coding model' are two further features, each with its own gate rules and tests.",
+    "instead": "Start batch A: context, requests at once, and a setup that accepts a past run's id or 'best'. Defer flags and category until a real request cannot be met by those three."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 4: download_model, find_setups adds a recipe, stop_model forgets a held entry, linked_sparks test",
+    "ruling": "reorder",
+    "why": "This is the right shape: one new action and three folded in. But stop_model and find_setups are fingerprinted workflows, so each gets a new version.",
+    "instead": "Ship in start batch B, where their validation runs are shared with the other start and stop changes."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 5: pause_changes, plus four new console.mjs commands",
+    "ruling": "shrink",
+    "why": "The configs area proposes change_setting for the same two switches, and the healing area proposes a self_healing action. Three actions for two booleans.",
+    "instead": "One change_setting action with the keys selfHeal and agentsPaused. Resuming is the owner's own API call or an owner-only button. fleet_status gains the console block. The command-line additions wait for the socket transport in the independence batch."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 6: why_failed as a new read action",
+    "ruling": "shrink",
+    "why": "One structured answer is what a 27B needs, but as another tool it competes with operation_log, container_logs and fleet_events for the same question.",
+    "instead": "Put cause, tried and next on the failed operation itself, so wait_operation, operation_log and the posted notice all carry them. Each entry in next must be a real action call. Give container_logs the lines and match inputs."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 7: run_job and job_result in 19-jobs.mjs",
+    "ruling": "cut",
+    "why": "It is a third design for the same runner.",
+    "instead": "Covered by use-cases gaps 1 and 3."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 8: update_console accepts a patch in the request body",
+    "ruling": "unsafe",
+    "why": "A patch sent over the API is a way to put code on the hub from any device that holds the owner's identity. The area's own risk note says a protected-file list does not make it safe.",
+    "instead": "update_console takes only a git ref that is already in the checkout on Spark 2, as the independence area proposes. Code reaches Spark 2 over the owner's own SSH."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 9: schedules on saved workflows",
+    "ruling": "defer",
+    "why": "Unattended replays should wait until replays by name have been used for real and the eval covers them. Bring-back at power-on already covers the commonest trigger.",
+    "instead": "Revisit after the repeat batch has been in use. Keep the field name schedule, since when is taken."
+   },
+   {
+    "area": "chatapi",
+    "proposal": "Gap 10: message rewrites, delete_model, and removing about 40 REST routes",
+    "ruling": "reorder",
+    "why": "Removing the REST copies means porting over a hundred test calls without weakening them, for no new ability. Done early, it would slow every other batch. delete_model removes data, and nothing has asked for it yet.",
+    "instead": "Rewrite each page-pointing message in the batch that touches its code. Remove the REST copies, the page views and the cloud push as the last batch. Defer delete_model."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 1: seven new start_model inputs at once (context, atOnce, memoryPercent, engine, image, flags, once)",
+    "ruling": "shrink",
+    "why": "Seven inputs is a wide surface for the gate, the door's exact schema tests and a 27B's field choice. Only context and requests at once were in the owner's words.",
+    "instead": "Version 1: context and atOnce, with the rule that each number must be in the owner's message (64k counts as 65,536) or it is a button. Asking for new settings on a running model restarts it, not 'already'. Add the others one at a time when a real request needs them."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 3: usual setup, with a once flag",
+    "ruling": "shrink",
+    "why": "The usual-setup rule and the gave-up ranking are right and small. The once flag is one more input a 27B has to decide on every start.",
+    "instead": "Settings the owner asked for become the usual setup when they work. 'best' clears it. The reply names the setup used. No once flag in version 1."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 6: a settings table for defaultHome, protect, the hourly limit and four sparkie.* keys",
+    "ruling": "defer",
+    "why": "Nobody asked for these by voice. Making isProtected live changes stop_model's version. Letting the reply length and tool rounds change at run time adds variables to every eval result.",
+    "instead": "change_setting ships with selfHeal and agentsPaused only. Add a key the first time the owner asks to change it."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 7: brain preset cleanup, a restart-pending label, an answer test on switch",
+    "ruling": "defer",
+    "why": "Only the owner changes the brain, and tests pin the old presets. One part cannot wait, though. loadMainSetup falls back without a word to the first preset in config.json (13-main-model.mjs:14). That is aphex, with thinking off, and the new brain keeper would start it.",
+    "instead": "In batch 1, with the brain keeper: keep a saved setup id that is missing or unreadable, say so, and have the keeper refuse to start anything else. Do the rest when the owner next changes the brain."
+   },
+   {
+    "area": "configs",
+    "proposal": "Gap 8: keep the previous copy of a saved workflow, with restore",
+    "ruling": "cut",
+    "why": "The state folder is copied daily, and saving again takes one sentence. The argument check at save is already in the repeat batch.",
+    "instead": "Nothing beyond the argument check."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gaps 2, 3 and 9: off-Spark memory, pair verbs, cable test and copy path",
+    "ruling": "reorder",
+    "why": "All three are right, and all touch startModel, stop_model, restart_model or the across-Sparks environment, which are fingerprinted. The 'move' and 'migrate' verbs add pattern risk ('move on') for something that 'start X on 4' already says.",
+    "instead": "Ship in start batch B as one set. Leave out the two new verbs."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 4: fromRunning, grouped undo, and saved steps stopping an in-use model without asking",
+    "ruling": "shrink",
+    "why": "fromRunning suits a 27B well, because code writes the steps from the should-run list. Grouped undo changes undo logic that the tests cover closely, for a case that 'run the other mode' already handles.",
+    "instead": "Build fromRunning, the name gate and the names in the prompt in the repeat batch. Defer grouped undo. Whether a saved workflow may stop an in-use model without asking stays the owner's decision."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 5: stop the leftover half of a pair; restart a silent pair",
+    "ruling": "defer",
+    "why": "Both rules act on a case that is inferred and has never been observed. Both cost a 12-minute reload when wrong, and the first changes the contract's 'healing never stops anything'.",
+    "instead": "Now, with no version change: desiredNow and the gateway call a pair running only when every part runs, and name the Spark that is off. Build the stop rule after the Spark 3 half has been seen to hang once."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gaps 6 and 7: power_spark off, then smart plugs",
+    "ruling": "defer",
+    "why": "Off without on strands a Spark until someone presses its button, and Spark 4 is on Wi-Fi only. On needs plugs that have not been bought and a boot-on-power check on the MSI unit.",
+    "instead": "Build both together once the plugs are on the network, or not at all."
+   },
+   {
+    "area": "combine",
+    "proposal": "Gap 8: an embedder on Spark 2 as a tool template that the gateway lists as a model",
+    "ruling": "defer",
+    "why": "Listing a workload among running models is the leak the use-cases area warns against. No documents use case exists yet.",
+    "instead": "When one does, run it as a CPU workload spec and decide then whether the gateway may route to a spec that declares the /v1 paths it serves."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 2: brainCheck inside switchMain, with a cut-stream probe and a one-token probe",
+    "ruling": "shrink",
+    "why": "The parallel-against-serial comparison is worth knowing before anything else leans on 4 at once. Building it into every switch, plus an action and stand-in coverage, is M for a question one script answers. The two crash probes can take the live brain down.",
+    "instead": "Step 0: a script (extend tools/brain-load.mjs) sends the same prompts 4 at once and one at a time to the brain's own port and counts wrong answers. No install is needed. Run the crash probes once, on purpose, with the owner's yes. Wire a check into switchMain only if the script finds wrong answers."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 5: send reasoning back between tool rounds; a ledger; usage numbers",
+    "ruling": "shrink",
+    "why": "The ledger and the tool-call lines are code and help every carry-on turn. Whether SGLang v0.5.23 uses reasoning_content on an earlier assistant message is unverified, and the proposal itself says to check first.",
+    "instead": "Build the ledger from audit lines, one line per earlier reply's tool calls, and the usage numbers. Send reasoning back only if one request on Spark 2 shows the prompt token count rising; otherwise drop that part."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 6: draft workflows kept automatically (10 drafts, 30-day expiry)",
+    "ruling": "shrink",
+    "why": "It has the same naming problem as the use-cases version, plus an expiry rule and a draft state to keep in the store.",
+    "instead": "from: 'last' and the one-line hint only. This is the same build as learning gap 6."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 7: one line for the brain, with a slot reserved for the owner",
+    "ruling": "reorder",
+    "why": "S is honest; the chat loop already keeps a counter (modelInUse, 14-chats.mjs:64). But it comes after the eval in the area's list, and both the eval runs and the engine trial take brain slots the owner would otherwise wait behind.",
+    "instead": "Batch 2, before any eval run that uses two slots and before the engine trial."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 8: 50 cases, a score_sparkie action, sparkie_stats, eval-candidates",
+    "ruling": "shrink",
+    "why": "Fifty cases at three runs is about an hour of two brain slots per run. The two actions are more tools for numbers the builder reads, not the owner.",
+    "instead": "About 30 multi-message cases, grown batch by batch, run as a script by the builder and later by update_console when the prompt, the tools or the setup changed. Keep the per-reply numbers on each message. No new actions."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 9: tool trim, turn limits, a stop route, chat archive, and a three-way effort sweep",
+    "ruling": "shrink",
+    "why": "The trim, the stop route and the third-identical-call refusal are small and useful. The effort and temperature sweep is three full eval runs, hours of brain time, before the eval is stable enough to tell the three apart.",
+    "instead": "Batch 2: a sparkie: false flag filtered at 14-chats.mjs:60, the stop route and the repeat refusal. Hide wait_operation only after the carry-on fix has passed its eval cases. Defer the sweep and the archive."
+   },
+   {
+    "area": "brain",
+    "proposal": "Gap 10: tuned preset in two stages and removal of old presets",
+    "ruling": "defer",
+    "why": "It is owner-only, it needs brain restarts, and it changes four flags at once. Stage 2 goes to the concurrency where the upstream wrong-answer report was measured.",
+    "instead": "After the parallel check has passed at 4 and the owner-first counter shows agents really wait. The silent-fallback fix moves to batch 1."
+   }
+  ],
+  "missing": [
+   "A pass bar per ability. Nothing says how well the 27B must do before the prompt promises a thing. Each compose ability (carrying on, saving what ran, writing a script job, writing a service spec, naming a failure's cause) needs a few eval cases and a stated bar, for example 8 of 10 over three runs. It also needs a stated fallback: the owner's outside agent teaches it once through save_workload or save_workflow, and Sparkie repeats it by name.",
+   "A tool budget for Sparkie. The areas add more than 20 actions to 36 and none owns the total. Set a cap on what Sparkie sees (about 28), and require every new action to say which tool it hides or folds into. Outside agents keep the full list.",
+   "One start-path plan. Six areas change code in START_CODE or in the start, stop and restart actions; each such install re-versions the workflows, and the next real GLM start is the test. Nobody planned these as one or two batches with one validation each.",
+   "A way to pass long text that avoids JSON escaping. A script inside a tool argument is where a 27B most often breaks. One option: Sparkie writes the script as a fenced block in its reply, and code lifts the last block into the spec (the reply text is already in hand at 14-chats.mjs:294). Whichever way is chosen, the parse error at 14-chats.mjs:303 should come back in plain words.",
+   "What one yes covers. The owner hates prompts, and a new job needs several tries. No area says that the first-run yes covers a spec's image, network, memory and Spark and a small number of script fixes in the same request, while a change to any of those four asks again.",
+   "One memory and disk budget for Spark 2. The gate container (8 GB), the workload budget (6 GB), a coding engine (8 GB; the trial uses 24 GB) and the 8 GB kept free are each sized alone, and nobody has read free memory on Spark 2 with the brain warm. They need one measured budget and a rule that the gate does not run while jobs do. Disk has no guard at all: a job that fills Spark 2's disk stops chats from saving.",
+   "The rules in the docs. AGENTS.md says nothing starts a workload on Spark 2, and the contract says healing never stops anything and gives a context floor. Several proposals change these rules. Each batch must change the matching lines in /Users/akuppala/Documents/26aiRAG/spark-console/AGENTS.md and /Users/akuppala/Documents/26aiRAG/spark-console/docs/contract.md in the same install, or a later reader (Sparkie included) will 'fix' the code back.",
+   "A first step that checks what is installed. The brief, the reports and the tree disagree about what is installed. The plan needs a step 0 that reads /health and compares it with the lock, and a rule that nothing is installed while the tree is ahead of its lock.",
+   "Stopping the brain by hand. With the brain keeper, a docker stop over SSH is undone after a few minutes unless the stop went through the console. The owner's notes say to keep hands off during benchmarks, so the plan must say how the owner keeps the brain down: the console's stop, or self-healing off."
+  ],
+  "mustKeep": [
+   "The carry-on race fix goes first (brain gap 1). Confirmed: the task is set only when the reply ends (14-chats.mjs:337), and a finished operation looks for it at once (:127). Parts 1 and 3 must ship together, or a carry-on turn that starts nothing loops until the 8-turn limit.",
+   "The installer refuses a lock whose build is not the build being installed (deploy/host-on-portal.sh:26). The tree is ahead of its lock today.",
+   "Self-healing never stops a newer model: noStops on the bring-back's context (20-heal.mjs:87), and the newer start takes older entries for its Sparks off the should-run list.",
+   "One brain keeper, built once from the four proposals. It starts the same setup only, at most twice in 6 hours. It honours a stop made through the console. It never falls back to the first preset. It needs restart_sparkie for the API and a true chat reply while the brain is down.",
+   "A saved name runs only when the whole name is in the owner's words, and saved names are in Sparkie's prompt. This must land before anything is saved automatically or by an agent.",
+   "A changed setting must not cost the working model: pull and copy before any stop, and set the old container aside until the new one answers (07-jobs.mjs:131-132 removes it today). Same batch as the typed settings.",
+   "One store and one set of three actions for everything that isn't a model. The container label is never spark.console. No host shell, no Docker socket, no host mounts. One test asserts that a workload never appears in running_models or /v1/models.",
+   "The gate stays in code and reads only the owner's stored words. New abilities use the name-in-words rule or a button, not new verb patterns.",
+   "The open-problems list is worked out from live state, shown first in Sparkie's notes, and shown only when there is one. It replaces the page for an owner who gets no notifications.",
+   "The owner's own API call counts as the owner's hand (ownerCall), including resuming after a pause without the page.",
+   "The areas' skip lists stand: no Keeper, no host shell, no skill store, no workflow language, no durable job engine, no GPU work on Spark 2, no mirrors, no Tailscale replacement.",
+   "Tailscale, linger, SSH and the brain's setup stay the owner's by hand. Code only reads and reports them."
+  ]
+ }
+]

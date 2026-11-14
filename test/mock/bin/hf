@@ -1,0 +1,20 @@
+#!/bin/bash
+# Stand-in `hf download <repo> [--local-dir DIR] [patterns…]`: 12 MB of zeros in four steps (about 4 seconds). With
+# --local-dir the files go there; otherwise into the Hugging Face cache like the real one (snapshots/<rev>, refs/main).
+[ "$1" = download ] || exit 1
+# ~/.mock/hf-slow: a download that takes about 20 seconds (long enough for something else to happen meanwhile).
+[ -f "$HOME/.mock/hf-slow" ] && sleep 16
+# ~/.mock/hf-fails: the download fails the way the library's does on a file it can't write (a traceback with line numbers).
+[ -f "$HOME/.mock/hf-fails" ] && { printf 'Traceback (most recent call last):\n  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result\nOSError: I/O error: Permission denied (os error 13)\n' >&2; exit 1; }
+repo=$2; dir=""; while [ $# -gt 0 ]; do [ "$1" = --local-dir ] && dir=$2; shift; done
+if [ -z "$dir" ]; then
+  case "$repo" in */*) ;; *) echo "Repository Not Found for url: https://huggingface.co/api/models/$repo" >&2; exit 1 ;; esac
+  cache="${HF_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}/models--${repo/\//--}"
+  mkdir -p "$cache/refs" "$cache/snapshots/m0ck"; printf m0ck > "$cache/refs/main"; dir="$cache/snapshots/m0ck"
+fi
+mkdir -p "$dir"
+case "$repo" in
+  *gpt-oss*|"") echo '{"architectures":["GptOssForCausalLM"],"model_type":"gpt_oss","quantization_config":{"quant_method":"mxfp4"},"max_position_embeddings":131072}' > "$dir/config.json" ;;
+  *) echo '{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","torch_dtype":"bfloat16","max_position_embeddings":40960}' > "$dir/config.json" ;;
+esac
+for i in 1 2 3 4; do head -c 3000000 /dev/zero >> "$dir/model.safetensors"; echo "Fetching 4 files: $(( i * 25 ))%"; sleep 1; done

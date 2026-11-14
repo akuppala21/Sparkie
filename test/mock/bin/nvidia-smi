@@ -1,0 +1,33 @@
+#!/bin/bash
+# Stand-in nvidia-smi for Spark Console tests.
+# ~/.mock/gpu lines are "pid, MiB, process[, container]". A line naming a container is a GPU user inside it: the service
+# finds the container from /proc/<pid>/cgroup, which this machine doesn't have, so the pid is printed as
+# "<pid> ~/.mock/proc/<pid>" and that folder's cgroup file holds the container's id (the service's lookup reads
+# /proc/$pid/cgroup unquoted, so the second word is the file it reads).
+# A container's id, as the stand-in docker makes it (from its name).
+idOf() {
+  local s=$1 i c h=5381 hex=
+  for ((i = 0; i < ${#s} && i < 26; i++)); do printf -v c '%02x' "'${s:i:1}"; hex+=$c; done
+  for ((i = 0; i < ${#s}; i++)); do printf -v c '%d' "'${s:i:1}"; h=$(( (h * 33 + c) % 281474976710597 )); done
+  hex+=0000000000000000000000000000000000000000000000000000
+  printf -v c '%012x' "$h"
+  printf '%s%s\n' "${hex:0:52}" "$c"
+}
+case "$*" in
+  *-lms*)
+    base=$(( $(printf '%s' "$HOME" | cksum | cut -d' ' -f1) % 50 ))
+    while :; do u=$(( RANDOM % 25 + base )); echo "$u, $(( 8 + u )).$(( RANDOM % 10 )), $(( 40 + u / 3 ))"; sleep 1; done ;;
+  *query-compute-apps*)
+    [ -f "$HOME/.mock/gpu" ] || exit 0
+    while IFS=, read -r pid mem pname container; do
+      pid=$(echo $pid); container=$(echo $container)
+      [ -z "$pid" ] && continue
+      if [ -n "$container" ]; then
+        mkdir -p "$HOME/.mock/proc/$pid"
+        printf '0::/system.slice/docker-%s.scope\n' "$(idOf "$container")" > "$HOME/.mock/proc/$pid/cgroup"
+        echo "$pid $HOME/.mock/proc/$pid,$mem,$pname"
+      else
+        echo "$pid,$mem,$pname"
+      fi
+    done < "$HOME/.mock/gpu" ;;
+esac

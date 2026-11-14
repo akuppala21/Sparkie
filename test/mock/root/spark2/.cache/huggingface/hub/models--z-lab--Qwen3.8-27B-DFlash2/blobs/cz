@@ -1,0 +1,1 @@
+{"architectures":["DFlash2DraftModel"],"max_position_embeddings":262144,"rope_scaling":{"rope_theta":10000000,"rope_type":"default"}}

@@ -1,0 +1,16 @@
+{
+  "https://docs.example.org/vllm/kv-cache": { "file": "kv-cache.html" },
+  "https://docs.example.org/vllm/long": { "file": "long.txt", "type": "text/plain; charset=utf-8" },
+  "https://docs.example.org/vllm/owner-pasted": { "text": "<html><head><title>Pasted by the owner</title></head><body><p>The page the owner pasted.</p></body></html>" },
+  "https://docs.example.org/never-searched": { "text": "<p>NEVER-SEARCHED page text.</p>" },
+  "https://docs.vllm.ai/en/latest/serving/engine_args.html": { "text": "<html><head><title>Engine arguments — vLLM</title></head><body><p>Every engine argument. The old list is at docs.example.org/never-searched and https://docs.example.org/never-searched.</p></body></html>" },
+  "https://blog.example.org/stop-every-model": { "file": "stop.html" },
+  "http://127.0.0.1/secret": { "text": "INSIDE-SECRET" },
+  "http://localhost:8810/console/api/health": { "text": "INSIDE-SECRET" },
+  "http://10.0.0.5/": { "text": "INSIDE-SECRET" },
+  "http://100.100.100.100/": { "text": "INSIDE-SECRET" },
+  "http://[::1]/": { "text": "INSIDE-SECRET" },
+  "http://169.254.169.254/latest/meta-data/": { "text": "INSIDE-SECRET" },
+  "https://moved.example.org/go": { "status": 302, "location": "http://127.0.0.1/secret" },
+  "https://rebind.example.org/": { "text": "INSIDE-SECRET" }
+}

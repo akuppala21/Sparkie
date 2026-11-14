@@ -1,0 +1,6 @@
+#!/bin/bash
+# Stand-in gzip: the real one, except that `gzip -t` fails on a Spark whose ~/.mock/gzip-bad exists (a copy that
+# arrived cut short).
+if [ "$1" = -t ] && [ -e "$HOME/.mock/gzip-bad" ]; then echo "gzip: (stdin): unexpected end of file" >&2; exit 1; fi
+for g in /usr/bin/gzip /bin/gzip; do [ -x "$g" ] && exec "$g" "$@"; done
+echo "gzip stand-in: no real gzip here" >&2; exit 127

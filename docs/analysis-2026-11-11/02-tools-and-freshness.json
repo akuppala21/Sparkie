@@ -1,0 +1,348 @@
+{
+ "area": {
+  "verdict": "Sparkie is well equipped for models, containers and operations, and blind to the Sparks themselves. Its 36 tools (23 lookups, 13 changes) are built from the code every turn, so the tool list itself never goes stale. But no tool reads a wired or Wi-Fi link, a version, a pending update, what fills a disk, the console's own service or a Tailscale key. What it stores is dated at best and never checked, and some of it is shown as live when it isn't.\n\nToday's Ethernet answer has four causes, all confirmed in the code:\n- the link scan keeps only the 200G ports (06-links.mjs:8), and the worker counts only links of 100 Gb/s and up (worker.py:99);\n- linked_sparks returns those links with nothing saying they are Spark-to-Spark cables (16-actions.mjs:662-672);\n- `remember` returns only a note, with nothing about whether the fact was checked (20-memory.mjs:51);\n- the answer check covers only numbers with units (14-chats.mjs:146-155).\n\nBuild order is the ranking below.\n- Gaps 1 to 4 (about a week) close today's case end to end: an honest \"I can't see that\", stale state no longer shown as live, one `inspect` tool, and a remembered fact that carries its check.\n- Gaps 5 and 6 make \"what changed\" and \"what is out of date\" one question each.\n- Gap 7 is the answer to \"tools in the future\": new read-only looks saved from chat, with no release.\n- Gaps 8 to 12 are backstops and reach.\n\nWhere the three reports disagreed, I chose:\n- Probes are shell snippets in a new part, not in worker.py. worker.py is hashed into every workflow's version (18-workflows.mjs:14,66) and travels as one 45 KB argument (12-status.mjs:10-11). A new part changes no workflow version.\n- One `inspect` tool with named probes, not a tool per fact, and not only extra fields on existing lookups.\n- Saved checks sit behind `inspect`, not behind a second run tool.\n- Sparkie reads and reports. It never applies OS, driver, firmware, Docker, Tailscale or brain changes, never pulls an image or model unasked, and never edits or removes a memory line, held entry, proven run or saved workflow because of its age.\n\nChecked by me: every file:line cited here, by reading; the MCP 2026-07-28 changelog; NVIDIA's update guide; the two forum threads. Not checked: no test was run and no Spark was contacted, so each probe command (fwupdmgr, apt-get -s, iw or nmcli) needs one trial on a Spark. That today's agent clients still accept the older MCP revision is inferred.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-memory.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/06-links.mjs\n(new part: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-inspect.mjs)",
+  "worksToday": [
+   "Sparkie's tool list is built from the action list every turn, and agents get the same list from tools/list, so a new action shows up everywhere without a doc edit (14-chats.mjs:60-62, 20-mcp.mjs:167-173).",
+   "Every lookup result carries observedAt, and the prompt says live state beats memory (20-memory.mjs:20).",
+   "What the owner states in passing updates memory with no button, a changed fact replaces the old line in one call, and secrets are refused (20-memory.mjs:38-52, 70-80).",
+   "Setups are looked up again weekly per model, 20 a day. A look where a source failed keeps earlier finds and is not stamped fresh (11-setups.mjs:196-200, 231-239).",
+   "Saved workflows are procedures kept as data behind one tool, so new routines never add to the tool count (18-workflows.mjs:129-207).",
+   "A change tool the gate doesn't know comes back as a button, never straight away, so a tool added later is safe by default (16-actions.mjs:159-160, 251-263).",
+   "Numbers with units in an answer are checked against what the tools returned, and the page marks the rest (14-chats.mjs:146-155, 331).",
+   "Containers are watched every minute, Sparks going on and off become events, and the cable test runs every 10 minutes and is kept on disk (19-watcher.mjs, 06-links.mjs:88-97).",
+   "Image tags are pinned to a digest and checked for an ARM64 build before they become one click (11-setups.mjs:94-123).",
+   "Spark 2 already fetches Tailscale's status every minute (23-http.mjs:71-90), so key expiry needs no new call.",
+   "The build id, test lock, watchdog and undo_update exist, and /health reports build, start time and last backup (24-handler.mjs:54-57)."
+  ],
+  "gaps": [
+   {
+    "gap": "1. Sparkie has no rule for a fact no tool can read, and one lookup reads like proof of something it doesn't cover.",
+    "whyItMatters": "Today's false \"confirmed\" needed no new tool to avoid; Sparkie could have said it can't check. The prompt only forbids claiming a start without a tool result (14-chats.mjs:44-50). linked_sparks returns links like enp1s0f1np1 with up:true and a speed, and nothing says they are the cables between Sparks (16-actions.mjs:662-672). Neither the prompt nor the per-turn record gives today's date, so Sparkie can't judge how old a remembered line is. Worth it for one owner: about 15 lines, no new part, and the owner only ever reads Sparkie's words.",
+    "proposal": "(a) Two prompt lines: say \"checked\" or \"confirmed\" only for what a tool showed in this message; otherwise say \"you told me\" or \"I can't see that\", and never offer a different check as proof. (b) linked_sparks: each link gets kind \"200G cable between Sparks\", and the result gets notCovered \"Ethernet and Wi-Fi to the router\". (c) The per-turn record starts with the date and time. It goes in the record, not the system prompt, so the prompt cache stays warm. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/eval/cases.json.",
+    "effort": "S",
+    "value": "high",
+    "risk": "A prompt rule holds most of the time on a 27B model, not always; gap 8 is the backstop in code. A prompt change needs the eval run again on the real brain.",
+    "acceptance": "The owner says \"the router was replaced, Spark 3 is on the new one\". Sparkie answers that it has noted this in the owner's words and has no way to check it; it does not say \"confirmed\". POST /console/api/actions/linked_sparks with {\"detail\":true} shows kind on every link and notCovered on the result."
+   },
+   {
+    "gap": "2. Stale state is shown as live.",
+    "whyItMatters": "Sparks 3 and 4 are off often, so this is the most common wrong fact Sparkie reads.\n- When SSH fails, the watcher returns before touching that Spark's entries (19-watcher.mjs:74). They stay running:true and are listed under \"Containers running now\" (19-watcher.mjs:183-193). workloads stamps one time for all Sparks (16-actions.mjs:783).\n- A cable result carried over for an off Spark is saved under a new time (06-links.mjs:83-84).\n- Each daily setups look writes a start and a finish event, which push crashes out of the last 10 events Sparkie sees (19-watcher.mjs:188).\n- Held entries have no age and can only be forgotten through a REST route (24-handler.mjs:477-482).\n- A saved workflow is not checked before its first step runs (18-workflows.mjs:187-196).\n- \"November 2026\" is fixed text in a prompt (10-recipes.mjs:118).\nWorth it for one owner: each edit removes something wrong that Sparkie reads or acts on; no new mechanism.",
+    "proposal": "Six small edits, each with its own failing test first.\n(a) An off Spark reads \"off since \u2026; last seen running: \u2026\" in the record and in workloads. Do this in the view only; the stored state stays as it is.\n(b) Each cable pair keeps its own testedAt.\n(c) Held entries say since when, and a forget_should_run action wraps the existing route.\n(d) run_workflow checks every step's arguments, model and Sparks before step 1.\n(e) The daily setups looks write one summary notice instead of two events each.\n(f) The month is computed.\nFiles: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/06-links.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-desired.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/18-workflows.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/11-setups.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/10-recipes.mjs.",
+    "effort": "S",
+    "value": "high",
+    "risk": "Self-healing depends on the stored running flag: when a Spark comes back, the watcher compares it to find what stopped. So (a) must not change stored state. (d) changes run_workflow's code. forget_should_run is one more tool (offset in gap 9).",
+    "acceptance": "With Spark 3 powered off, the owner asks \"what's running?\". Sparkie says Spark 3 has been off since a stated time and names what was running there when last seen; it does not list it as running. POST /console/api/actions/workloads shows those containers as not running, with the Spark marked off and lastSeenAt. cluster_plan shows the 3-4 cable's own test time. \"Forget the old gemma on Spark 4\" removes a held entry from chat."
+   },
+   {
+    "gap": "3. No tool reads the Spark itself: its Ethernet or Wi-Fi link, versions, pending updates, what fills the disk, GPU memory by container, the console's own service, or Tailscale keys.",
+    "whyItMatters": "This is the root of today's case. The link scan keeps only 200G ports (06-links.mjs:8), the worker counts only links of 100 Gb/s and up (worker.py:99), and nothing reads a kernel, driver, apt, fwupd or reboot-required. The question will come back: an NVIDIA forum thread reports the Spark's wired port (enP7s7) vanishing after a warm reboot because the wrong Realtek driver loads. Worth it for one owner: one tool answers a dozen kinds of question, and each later question costs one snippet in a table.",
+    "proposal": "One action, inspect {spark, probe}, in a new part 20-inspect.mjs. Probes are fixed shell snippets sent through run(), like LINKS_SCRIPT; the caller sends only a probe's name. They do not go in worker.py, which is hashed into every workflow version and sent as one 45 KB argument.\nFirst probes:\n- network: every interface classed from /sys as wired, Wi-Fi, 200G cable or Tailscale, with carrier, speed, address, bound driver and default route;\n- versions: kernel, DGX OS, GPU driver, Docker, container toolkit, Tailscale, pending upgrades from apt-get -s, the package lists' age, reboot waiting, firmware waiting;\n- disk: total, used, free, and models, images, caches and partial downloads, each marked as Spark Console's leftover or yours;\n- gpu: memory by container, reusing gpuUsersScript (05-library.mjs:142-147);\n- services: failed units and clock sync; on Spark 2 also the console unit, watchdog, linger, build and last backup;\n- tailscale: each Spark's key expiry, from the status Spark 2 already fetches;\n- health: today's diagnostics, so spark_diagnostics goes and the count stays 36.\nEach result has observedAt and couldNotRead.\nFiles: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-inspect.mjs (new), /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/23-http.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/mock/, /Users/akuppala/Documents/26aiRAG/spark-console/test/lib.mjs.",
+    "effort": "M",
+    "value": "high",
+    "risk": "The probe commands come from docs, not from a run on a Spark; each needs one trial, and a value that can't be read must come back as \"couldn't read\", never zero or ok. Spark 4 is an MSI unit, so interfaces are classed by /sys, never by name. Spark 2's unit has NoNewPrivileges, so no setuid tools. du and docker system df can take tens of seconds: cap each and say what timed out. Results must fit the 12,000-character cut (14-chats.mjs:312). Removing spark_diagnostics changes the pinned tool lists (test/lib.mjs:40-45); that is a changed feature, not a weakened test.",
+    "acceptance": "The owner asks \"is Spark 4 on Ethernet?\". Sparkie calls inspect and answers with the wired port's name, link speed, whether it carries the default route, and when it was seen. POST /console/api/actions/inspect with {\"spark\":\"spark4\",\"probe\":\"network\"} returns the same, with the uplink named as wired or Wi-Fi. \"Anything waiting to update on Spark 3?\" gets the number of pending packages, how old the package lists are, and whether a reboot is waiting."
+   },
+   {
+    "gap": "4. A remembered fact has a date but no source and no check.",
+    "whyItMatters": "A memory entry is id, kind, text, by, at (20-memory.mjs:48-49), and remember returns only a note (20-memory.mjs:51). Nothing typed says whether a fact was checked, and Sparkie filled that gap with \"confirmed\". The prompt says live state wins, but for an uplink or a version there was no live source. Worth it for one owner: one optional field. It is the owner's own rule that every stored fact has a date and a way to be checked.",
+    "proposal": "remember gains optional spark and probe. When they are given, or when the line's words match a probe's topic words (ethernet, wi-fi, wired for network; kernel, driver, update for versions; disk, space for disk), it runs that probe. It returns checked {spark, probe, at, saw} beside the note, or \"nothing can check this\", or \"not checked: Spark 4 is off\". The entry keeps check and seen, and its prompt line reads \"(fact, 2026-11-11, seen by inspect network 2026-11-11)\" or \"(\u2026, your words, not checked)\". Code does not judge whether the words and the facts agree; it puts both in one tool result. Depends on gap 3. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-memory.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/sparkie-more.test.mjs.",
+    "effort": "S",
+    "value": "high",
+    "risk": "Sparkie can still misread the two lines side by side; gap 8 marks that. Memory never changes by itself: a probe that disagrees is reported, and the line stays until the owner says otherwise. A new seen date changes the end of the system prompt, so update it only when what was seen changes.",
+    "acceptance": "The owner says \"Spark 4 is on Ethernet now, it's fixed\". Sparkie answers that it has noted it and that it checked: the wired port is up and carries the default route. If the port has no link, it says it has noted the owner's words but Spark 4 still shows no link on its wired port and is online over Wi-Fi. POST /console/api/actions/memory shows the line with its check and when it was last seen."
+   },
+   {
+    "gap": "5. A probe's answer is thrown away, a change on a Spark leaves no event, and a Spark that is off has no facts.",
+    "whyItMatters": "fleet_events holds container changes, Sparks going on and off, and operations (16-actions.mjs:798). A new kernel, a dropped link, a filling disk or a new console build leaves nothing. For an off Spark, fleet_status returns only lastSeenAt (16-actions.mjs:441). A proven run records no kernel, driver or model snapshot (09-verified.mjs:95, 106-108), so \"proven\" can come to mean something else after an update. Worth it for one owner: Sparks 3 and 4 are off much of the time, and this lets Sparkie answer about them from the event list it already has, with no new store to query.",
+    "proposal": "Keep the last result per Spark and probe, with its time, in facts.json in the state folder. Refresh network, versions and the disk summary when a Spark comes online (noteSparkStates, 19-watcher.mjs:151-158) and every 6 hours; tailscale comes from the minute status call. When a watched value differs (uplink, kernel, GPU driver, OS release, Docker, reboot waiting, console build, a key expiring inside 14 days), write a changed event. fleet_status adds one line of kept facts per Spark, with its age, for an off Spark too. recordVerified stamps kernel, driver and model snapshot on each proven run from the kept facts. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-inspect.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/09-verified.mjs.",
+    "effort": "M",
+    "value": "high",
+    "risk": "A noisy watched value would flood the 500-event list (19-watcher.mjs:30), so the watched list stays short and fixed. Stale facts must always carry their time.",
+    "acceptance": "The owner asks \"what changed on Spark 3 since yesterday?\". The answer includes lines such as \"the kernel changed at 03:10 and a reboot is waiting\", read from fleet_events with type changed. With Spark 4 off, \"is Spark 4 wired?\" gets \"it was on Ethernet when last seen at 22:40; it is off now\". POST /console/api/actions/fleet_status shows each off Spark's last-known uplink and disk with their time."
+   },
+   {
+    "gap": "6. Nothing says what has aged.",
+    "whyItMatters": "Verified examples:\n- catalog.json is stamped 2026-11-04 by a fixed string (tools/build-catalog.py:266);\n- default engine images are bare digests with no version or date (service/config.json:27-30);\n- a recipe source that moves returns an empty list, read as \"0 found\";\n- Spark 1 is still listed and retried (service/config.json:7);\n- contract 9.17 (fleet care, expiries) is unbuilt.\nThe owner has no single question to ask. Worth it for one owner: one read replaces remembering to look in ten places, with no notifications.",
+    "proposal": "New part 20-fresh.mjs: one daily look, run as one operation with one event. The setups looks run inside it, and its summary says what is new. It serves whats_outdated: at most ten items, each with what, since when, how it knows, the next step and who decides.\nIt checks:\n- memory lines whose check now differs;\n- held entries older than 7 days;\n- saved workflows that fail a dry check;\n- a setups source that returns nothing where it used to;\n- a catalog older than 45 days, and models NVIDIA has a Spark recipe for that Recipes lacks;\n- a newer release of an engine in use (weekly, releases only);\n- per Spark: pending upgrades, a waiting reboot, and Sparks 3 and 4 on different kernels or drivers;\n- a Tailscale key inside 14 days;\n- a running build that differs from the source on Spark 2;\n- a Spark unseen for 30 days.\nfleet_status gets a count. It only re-reads; it changes nothing. Depends on gap 5. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-fresh.mjs (new), /Users/akuppala/Documents/26aiRAG/spark-console/service/src/11-setups.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/tools/build-catalog.py.",
+    "effort": "M",
+    "value": "high",
+    "risk": "Noise: cap at ten, and list only items that have a next step. For the digest-only defaults it can say only \"version unknown\". The web reads are a few small JSON files; nothing is pulled. It is one more tool in Sparkie's list (offset in gap 9).",
+    "acceptance": "The owner asks \"is anything out of date?\". Sparkie answers with a short list, for example: a newer SGLang release than the brain runs (your call); packages waiting on Spark 3 and how old the lists are (you run the update); Spark 1 unseen since a date (park it?). POST /console/api/actions/whats_outdated returns the same items, each with since, source, next step and who decides."
+   },
+   {
+    "gap": "7. A new read-only look costs a release, and after handoff nobody can make one.",
+    "whyItMatters": "Adding a probe in code means editing a part, rebuilding, the 30-minute gate and an install, because the lock is tied to the build id (18-workflows.mjs:81). Sparkie can't change its own code yet. Saved workflows already give changes a path as data (18-workflows.mjs:129-207); looks have none. Worth it for one owner: this is the direct answer to \"tools in the future\". The next \"can you see X?\" is one chat line, with no Claude and no install.",
+    "proposal": "save_check {name, when, steps}, kept in checks.json in the state folder and run through inspect. liveSchema adds saved names to the probe list, as it does for Spark ids (16-actions.mjs:73-79).\nA step is one of two kinds:\n- read: a file pattern under a short list of prefixes in /sys, /proc and /etc, with no .. and never /proc/<pid>;\n- run: a command that matches, whole, a small table of read-only forms in code (ip show, ethtool <iface>, df, uname, timedatectl show, systemctl is-active, docker version, nvidia-smi --query, tailscale version).\nNo shell and no sudo. Output is capped and masked. A check is saved only after one trial on an online Spark. Limits: 40 checks, 6 steps each. Add it to ACTION_KIND as a save. Depends on gap 3. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-inspect.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/door.test.mjs.",
+    "effort": "M",
+    "value": "high",
+    "risk": "A mistake in the read-only table is the main risk. Keep it short and exact, and test that every refused form (ip addr add, ethtool -s, paths outside the list) is refused. A check whose steps came from a web page must be a button. A saved check changes the tool list text, so the prompt cache is rebuilt once.",
+    "acceptance": "The owner asks \"can you see the fan speed on Spark 3?\". Sparkie says not yet and offers a check that reads the fan files under /sys. After the owner's yes it answers with the reading. A week later \"fans on Spark 4\" works, and /health shows the same build id as before. POST /console/api/actions/inspect with {\"spark\":\"spark4\",\"probe\":\"fans\"} returns the reading."
+   },
+   {
+    "gap": "8. The answer check covers numbers with units, not \"I checked\" claims, and the owner's API path never sees its marks.",
+    "whyItMatters": "The contract says numbers and facts (docs/contract.md 7.7); unsupportedNumbers matches only figures followed by a unit (14-chats.mjs:146-155). Sparkie's own earlier answers count as sources (14-chats.mjs:331), so a made-up number is \"supported\" from the next turn on. ask_sparkie drops the unverified field (20-mcp.mjs:110-118); only the page shows it. Worth it for one owner: about 40 lines of plain code and no second model pass. It is the only backstop not left to the model.",
+    "proposal": "(a) A sentence with a first-person confirmed, verified, checked or tested plus a topic word joins unverified when no tool covering that topic ran this turn. The topic words are the same table gap 4 uses, kept beside the probes. (b) Earlier answers count as sources only without what was marked in them. (c) ask_sparkie returns unverified and adds \"Not confirmed by your Sparks: \u2026\" to the reply text. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-mcp.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/eval/cases.json, /Users/akuppala/Documents/26aiRAG/spark-console/test/sparkie-more.test.mjs.",
+    "effort": "S",
+    "value": "medium",
+    "risk": "Word matching will sometimes mark a true sentence. It only marks, never removes, and the first-person pattern keeps it narrow.",
+    "acceptance": "Through ask_sparkie or POST /console/api/chats/<id>/messages, an answer that claims a check no tool ran carries an unverified entry naming that sentence, and its text ends with \"Not confirmed by your Sparks: \u2026\". An answer that used inspect network carries none."
+   },
+   {
+    "gap": "9. Tool choice was never measured, and two tools Sparkie is shown contradict its prompt.",
+    "whyItMatters": "Sparkie is offered every action (14-chats.mjs:60). wait_operation says to use it after a start (18-workflows.mjs:222), while the prompt says don't wait (14-chats.mjs:48). memory says \"Sparkie already sees these\" (20-memory.mjs:26). The eval has 16 cases, 3 of them answers. Published guidance puts the comfortable range under 20 to 30 tools, and nothing published covers a 27B open model. Worth it for one owner: an afternoon of measurement replaces guesswork before the list grows.",
+    "proposal": "Add a sparkie:false flag on memory and wait_operation, read by sparkieToolNames; agents keep both. Add about 30 \"which tool first\" cases, including the honest-answer ones: \"is Spark 4 on Ethernet?\", \"Spark 4 is on Ethernet now\", \"anything waiting to update?\", \"what changed since yesterday?\". Add a switch in the eval to run with the full list and with a smaller core. Hold one rule in code: Sparkie sees at most 36 tools, and new abilities arrive as probes, saved checks or saved workflows. Through gap 6 the count stays at 36. save_check, read_page and web_search would make 39, so the numbers decide which overlapping lookups Sparkie stops being shown: three plans, three histories, four inventories. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/eval/cases.json, /Users/akuppala/Documents/26aiRAG/spark-console/test/eval.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/lib.mjs.",
+    "effort": "S",
+    "value": "medium",
+    "risk": "The eval needs the real brain and today runs from the Mac's stand-in fleet, so it runs when the owner allows. Hiding a tool without the numbers could remove one Sparkie uses. SPARKIE_TOOLS in test/lib.mjs changes with it.",
+    "acceptance": "POST /console/api/actions/workflows and tools/list for agents are unchanged. In chat, Sparkie no longer waits on an operation it started. The eval prints a per-case table of the first tool chosen, for the full list and the core list."
+   },
+   {
+    "gap": "10. The text and the protocol agents meet are behind the code.",
+    "whyItMatters": "docs/agent-door.md says 20 lookups, 3 changes and \"all read-only\" (lines 16, 76); the code has 23 and 13. agentInstructions names three change tools by hand (20-mcp.mjs:49-56). The server reports version 1.0.0 (01-setup.mjs:14). Tool results still send the owner to page tabs they no longer use, such as \"Clusters \u2192 Test connections\" (16-actions.mjs:649). The door speaks MCP 2025-11-25 (20-mcp.mjs:10). The current revision, 2026-07-28, drops the initialize handshake and requires server/discover; I read its changelog. Worth it for one owner: agents are a main way in and choose tools by this text, which was wrong within six days.",
+    "proposal": "Build agentInstructions from the action list. Print the tables in agent-door.md from it with a small script run by build-server.mjs, and add a test that fails when a doc names a missing action or states a count. Report the build id as the server version. Replace pointers to page tabs with action names; keep the ones for sign-in and agent keys. Then also serve 2026-07-28: version read from _meta, server/discover, resultType, ttlMs and cacheScope on tools/list, and -32022 for an unknown version. Keep initialize and ping for older clients. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-mcp.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/docs/agent-door.md, /Users/akuppala/Documents/26aiRAG/spark-console/tools/build-server.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/door.test.mjs.",
+    "effort": "S",
+    "value": "medium",
+    "risk": "Strict header checks could refuse a client that works today, so stay lenient with requests that open with initialize. The protocol half can wait until a client refuses the old one; the text half should not.",
+    "acceptance": "An agent's tools/list instructions name every change tool its key holds. A client that speaks only 2026-07-28 lists tools with no initialize. The server reports the build id. When Sparkie refuses or explains, it names an action, not a page tab."
+   },
+   {
+    "gap": "11. Sparkie's web reach is Hugging Face plus four fixed recipe sources; it can't read a release note or an error thread.",
+    "whyItMatters": "search_huggingface and find_setups read fixed hosts parsed by code (10-recipes.mjs:63-66, 11-setups.mjs:59-91). Contract 6.17 plans search and a page reader; neither is built. Without Claude, this is how \"what is new\" and \"why did this fail\" get answered, and how a whats_outdated item becomes something the owner can act on. Worth it for one owner: about 100 lines built in, with no new service to run.",
+    "proposal": "New part 20-web.mjs.\n- read_page {url, offset}: https only, public addresses only (resolve first; refuse loopback, private and tailnet ranges). The address must appear in the owner's words or an earlier tool result in this chat. Returns plain text, up to 8,000 characters, cached with webGet (11-setups.mjs:8).\n- web_search {query, where}: GitHub issues and releases, and the NVIDIA forum's JSON search.\nBoth are marked openWorld, so the existing rate limit applies. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-web.mjs (new), /Users/akuppala/Documents/26aiRAG/spark-console/service/src/11-setups.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/test/lib.mjs.",
+    "effort": "M",
+    "value": "medium",
+    "risk": "Page text can try to steer Sparkie. Changes and memory still need the owner's own words (sparkieCheck, memoryClear), so the exposure is a wrong answer, not a wrong change. The address rule blocks sending data out inside a URL. A simple text stripper fails on script-heavy pages. Two more tools in Sparkie's list (gap 9).",
+    "acceptance": "The owner asks \"what's new in the latest SGLang release?\". Sparkie reads the release page and answers with its link. \"Look up this error: \u2026\" returns the matching issue thread, cited. Asking it to read an address on the tailnet or the home network is refused in plain words."
+   },
+   {
+    "gap": "12. There is no way to try a newer engine image before it replaces the proven one, and the defaults can't be told apart by version.",
+    "whyItMatters": "The default images are bare digests changed by editing service/config.json and reinstalling (lines 27-30); start_model takes no image (17-changes.mjs:497-506). A proven run always wins by speed alone, so a model never moves to a newer engine. Found setups do bring their own pinned images for new models, which is why this ranks last. Worth it for one owner: engines ship about every two weeks, and the answer test, speed test and proven-run record already exist, so this is mostly one input.",
+    "proposal": "start_model gains an owner-only image: from an approved source, pinned and ARM64-checked by pinImage (11-setups.mjs:94-123), run with the model's proven flags on Spark 3 or 4. The existing checks judge it, and the result is posted beside the proven run's numbers. \"Make it the default\" is a button that writes images.json in the state folder, read by imageOf (05-library.mjs:140), and keeps the previous one. Record the tag and date beside each default digest. Never the brain. Files: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/17-changes.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/05-library.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/src/09-verified.mjs, /Users/akuppala/Documents/26aiRAG/spark-console/service/config.json.",
+    "effort": "M",
+    "value": "medium",
+    "risk": "A new input changes start_model's workflow version (its input is hashed, 18-workflows.mjs:64), so the owner's next clear start is its validation run. Pulling an image is a download, so only on the owner's word. Kernel caches are per image, so the first start is slow; measure speed after they are warm.",
+    "acceptance": "The owner says \"try the new SGLang for GLM on Spark 3\". An operation runs, and its result gives the new image's speed beside the proven one's, with a \"make it the default\" button. POST /console/api/actions/recipe_detail shows both runs, each with its image, tag and date."
+   }
+  ],
+  "skip": [
+   {
+    "idea": "Probes inside worker.py (one sub-agent's proposal)",
+    "why": "worker.py is hashed into every workflow's version (18-workflows.mjs:14,66), so each new probe would send all five workflows back to validation. It also travels as one 45 KB argument against Linux's 128 KB limit. Shell snippets in a new part cost neither."
+   },
+   {
+    "idea": "A separate tool per fact, per check or per saved workflow",
+    "why": "The count grows without bound, and Sparkie already has 36. Names inside one tool's schema do the same job."
+   },
+   {
+    "idea": "A free shell for Sparkie, \"read-only\" or not",
+    "why": "A command can't be proven harmless by its text, and a shell reaches SSH, Tailscale and firewall settings. Named probes and allow-listed checks cover looks; changes stay workflows (contract 7.4)."
+   },
+   {
+    "idea": "Prometheus, node_exporter, DCGM, Netdata, Grafana, a time-series store or one-second history",
+    "why": "A monitoring stack for four machines is more to install, update and go stale than the facts it would hold."
+   },
+   {
+    "idea": "A 7-day ring of temperature, power and disk trends, now",
+    "why": "No question has needed it yet. Kept facts and changed events answer \"what changed\". If the owner asks a history question, it is one function beside sampleEnergy (12-status.mjs:70-89)."
+   },
+   {
+    "idea": "Sparkie applying OS, driver or firmware updates, running apt update or fwupdmgr refresh, or a revert-timer Keeper for them",
+    "why": "All need sudo, which the console must never hold. NVIDIA's own guide is five sudo commands and a reboot, and owners report reboots mid-job after updates. Sparkie says what is waiting and in what order; the owner runs it a few times a year."
+   },
+   {
+    "idea": "Following nightly images, a local registry or package mirrors (contract 9.18), or image vulnerability scans",
+    "why": "Nightlies ship daily; check releases only, for engines in use. Proven images are already on the Sparks' disks."
+   },
+   {
+    "idea": "Tool search by embeddings, or loading tool schemas on demand",
+    "why": "Under about 40 tools it adds a round and an embedding model, and a tool list that changes mid-chat throws away the prompt cache on a local model."
+   },
+   {
+    "idea": "An MCP client now; stdio or npx servers, OAuth sign-in, or passing attached servers' tools through the agent door, ever",
+    "why": "There is no server to attach yet. With the stateless 2026-07-28 revision a client is about 150 lines, so build it when the first server exists: HTTP, a bearer token, at most 8 pinned tools. stdio and npx servers download and run other people's code."
+   },
+   {
+    "idea": "SearXNG or a headless browser now",
+    "why": "Each is a download and an always-on container. Page reading plus GitHub and NVIDIA-forum search need neither; add SearXNG only if they prove too narrow."
+   },
+   {
+    "idea": "A second model pass that fact-checks answers, code that judges whether a memory line is contradicted, or the brain reviewing memory daily",
+    "why": "Contract v3 dropped same-brain checkers, and a 27B judge would invent conflicts. Show the owner's words and the probe's reading side by side, and mark claims with plain code."
+   },
+   {
+    "idea": "Removing or rewriting memory lines, held entries, proven runs or saved workflows by age, or deleting \"safe\" disk items automatically",
+    "why": "Only the owner's words change memory, and deleting has its own rules (8.2). Flag them and never remove them; inspect disk only lists."
+   },
+   {
+    "idea": "Alerts when a fact changes",
+    "why": "The owner wants no notifications. Changed events and whats_outdated are read when asked."
+   },
+   {
+    "idea": "Sparkie rebuilding catalog.json by web research, or a plug-in format for recipe sources",
+    "why": "Commands must be read by code from their sources, never written by a model (11-setups.mjs:2-6). Sources change perhaps twice a year; the \"source returns nothing\" flag in gap 6 is enough."
+   },
+   {
+    "idea": "A Tools, registry or freshness page",
+    "why": "The owner uses chat and the API. The inspect, workflows and whats_outdated listings are the registry."
+   },
+   {
+    "idea": "SMART, fan and per-core temperature probes built in, iperf speed tests, smart-plug wall power, Wake-on-LAN tooling",
+    "why": "Most need root, new hardware or a server. Forum reports say DGX Spark has no Wake-on-LAN. A saved check (gap 7) covers a sensor the day it is asked for."
+   },
+   {
+    "idea": "Re-measuring every proven run on a schedule, a lockfile for model weights, or a weekly offline docs library",
+    "why": "Re-measuring needs Sparks 3 and 4 powered on, which is the owner's call, and the next real start re-measures anyway. The snapshot stamp in gap 5 is enough to notice a change."
+   },
+   {
+    "idea": "Merging existing actions into fewer large tools for everyone, or Sparkie writing new action code for each tool",
+    "why": "Merging breaks agent keys and the pinned tests; a filter on what Sparkie is shown is enough. New action code needs the whole gate and an install each time."
+   }
+  ],
+  "ownerDecisions": [
+   "Tailscale key expiry (only you, by hand in Tailscale's admin page). The contract assumes the Sparks' keys don't expire (8.11); nothing checks it. Recommendation: turn expiry off for the four Sparks once. inspect tailscale will then show it, and whats_outdated will flag any that still expire.",
+   "OS, driver and firmware updates. Recommendation: Sparkie reports what is waiting and gives the commands, and you run them (they need sudo). Update Sparks 3 and 4 together so the pair stays on the same kernel and driver, and Spark 2 last. Also decide whether automatic updates stay on for Sparks 3 and 4: owners report reboots mid-job after updates, and the forum thread has no confirmed setting.",
+   "Spark 1. It is still in the Spark list (service/config.json:7), offline, and retried about once a minute. Recommendation: mark it parked, so it is not probed and reads as \"parked\", until you can sign in to it again. Bringing it back is one line.",
+   "May Sparkie add a read-only check from chat (gap 7)? Recommendation: yes, after one \"yes\" from you in chat when you asked for the look, and always as a button when the steps came from a web page.",
+   "May the daily look read engine release lists (a few small JSON files from GitHub, weekly, nothing pulled)? Recommendation: yes; it is a read, like the recipe sources it already reads every day. Pulling an image for a trial (gap 12) stays only on your word.",
+   "The brain's older setups, aphex and aphex-x4, are still offered though aphex-agent-fast is the live one. Only you change the brain. Recommendation: remove the two, as the brain review also said.",
+   "Is there an outside system you want Sparkie to drive, such as a smart plug or Home Assistant to power Sparks 3 and 4? Recommendation: none for now. If yes, that is the trigger to build the small MCP client, with a token for a low-rights account and never your password.",
+   "Spark 4's wired port. If inspect network shows the port missing after a reboot, the likely cause is a known fault where the wrong Realtek driver loads; the reported fix is a boot setting, which only you change. Recommendation: wait for what inspect reports (it names the bound driver) before touching anything."
+  ]
+ },
+ "challenge": {
+  "overall": "The report's diagnosis is right, and I confirmed its main citations in the code. Its build is about twice what one owner with four Sparks needs, and two proposals are hazards as written.\n\nSize, against the limits the earlier plan set (seven new actions, about 30 tools for Sparkie, one new state file, no new background loop):\n- As written: six new tools (inspect, forget_should_run, whats_outdated, save_check, read_page, web_search) and one removed, three new state files, three new parts, two new loops.\n- After these rulings: one new tool now (inspect), one later (saved checks), read_page where the earlier plan already has it, one new part, one new state file later, no new loop.\n\nTwo hazards the report missed:\n- A probe that times out counts as a failed SSH connection (02-ssh.mjs:60). Two in a row mark the Spark unreachable for a minute (02-ssh.mjs:31). A slow disk probe during a model start could fail that start.\n- Saved checks with command steps give an agent key, or text that steered one, a lasting path to commands on the Sparks. Lookups run with no gate for every caller (16-actions.mjs:292), and only Sparkie's calls pass the owner's-words check (16-actions.mjs:302).\n\nNothing that survives writes to a Spark, updates anything, or deletes anything by itself. The only new writes are to the console's own state folder. SSH, Tailscale, firewall and users are untouched, and no password is stored.\n\nChecked by reading: every file and line cited in these rulings, and the MCP 2026-07-28 changelog. Not checked: no test was run and no Spark was contacted, so the probe commands are untried. That `tailscale status --json` carries each Spark's key expiry is from memory of Tailscale's format, not from a run.\n\nCritical files for implementation:\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/16-actions.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/14-chats.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/19-watcher.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/service/src/02-ssh.mjs\n- /Users/akuppala/Documents/26aiRAG/spark-console/test/eval.mjs\n(new part: /Users/akuppala/Documents/26aiRAG/spark-console/service/src/20-inspect.mjs)",
+  "rulings": [
+   {
+    "proposal": "Gap 1: an honest \"I can't see that\" (two prompt lines, labels on linked_sparks, date in the per-turn record)",
+    "ruling": "keep",
+    "why": "This is the cheapest fix aimed at today's case, and the owner only ever reads Sparkie's words. Confirmed: linked_sparks returns link names and speeds with nothing saying they are cables between Sparks (16-actions.mjs:662-672), and nothing Sparkie reads carries today's date except event times. It adds no tool and no state. One addition: the worker's diagnostics line \"N high-speed links up\" (worker.py:176-178) reads like network proof too, so relabel it in the Node layer. Do not edit worker.py, which is hashed into every workflow version (18-workflows.mjs:66).",
+    "instead": "As proposed, plus the relabel. The prompt edit needs the eval run again on the real brain."
+   },
+   {
+    "proposal": "Gap 2: stale state shown as live (six edits)",
+    "ruling": "shrink",
+    "why": "Three of the six are real and small. Confirmed: the watcher returns before touching an off Spark's entries (19-watcher.mjs:74), so they stay listed as running, and each daily setups look writes two operation events (07-jobs.mjs:13, 76). The other three need changes:\n- (f) A month computed from the clock would make an old catalog claim to be current. The catalog's own date is the honest value, and build-catalog.py:266 stamps a fixed string.\n- (c) The earlier plan already decided that stop_model forgets a held entry, so forget_should_run is a tool nobody needs.\n- (d) Checking saved-workflow steps before step 1 is already in the parallel plan and changes run_workflow.",
+    "instead": "Keep (a) as a view-only change, including the `running` filter in workloads. Keep (b) per-pair test time. Do (e) as a filter on Sparkie's last-ten view, so the job events on disk stay as they are. Add the age to held entries. For (f), print the catalog's own date and have the build script stamp the real day. Leave (c)'s new action and (d) to the parallel plan."
+   },
+   {
+    "proposal": "Gap 3: one `inspect` tool with seven named probes in a new part",
+    "ruling": "shrink",
+    "why": "The shape is right: fixed snippets, the caller sends only a probe name, so no text can steer it into a change. Seven probes at once is more than has been asked for. spark_detail already returns GPU processes, models_on_disk has the big disk items, and /health has build and backup. The report also misses the timeout hazard: du or docker system df on a Spark that is loading a model can trip the offline marker and fail that start (02-ssh.mjs:31, 60).",
+    "instead": "First batch:\n- network, read from /sys and `ip` only. The stand-in fleet already has a /sys tree per Spark, so it is testable in the gate.\n- versions: kernel, OS, GPU driver, Docker, Tailscale, pending upgrades, reboot waiting, whether automatic updates are on, and whether the tools the workflows call are present.\n- Tailscale key expiry as a field in fleet_status, from the status Spark 2 already fetches.\n\nGuards: every snippet caps its own commands and always exits 0. A heavy probe does not run while an operation holds that Spark. An unreadable value comes back as \"couldn't read\". Firmware stays out until fwupdmgr is tried by hand, since it may fetch from the network. Add disk and services when first asked."
+   },
+   {
+    "proposal": "Gap 3 side change: remove spark_diagnostics so the count stays 36",
+    "ruling": "cut",
+    "why": "Removing a tool breaks the owner's agents that call it, the docs and the pinned lists (test/lib.mjs:40-45). The report's own skip list says a filter on what Sparkie is shown is enough. Holding a count is not a reason to break callers.",
+    "instead": "Keep it for agents and hide it from Sparkie with the same flag as gap 9. `inspect` offers it as the health probe."
+   },
+   {
+    "proposal": "Gap 4: a remembered fact carries its check (topic words run a probe; the prompt line says \"seen by inspect network <date>\")",
+    "ruling": "shrink",
+    "why": "Three problems as written:\n- \"Seen by inspect network\" reads as confirmed even when the probe disagreed with the owner's words. That is today's fault moved into the prompt.\n- Each new date rewrites the end of the system prompt, which throws away the prompt cache for the whole chat.\n- The topic-word table is a second list to keep in step with the probes.\n\nThe simpler rule fits the owner's wish better: a fact a probe can read does not belong in memory, so it cannot go stale there.",
+    "instead": "Three small parts:\n- remember's note ends, in fixed words, \"your words; not checked\" (20-memory.mjs:51, one line).\n- remember takes an optional spark and probe that Sparkie picks from the list. Code runs it and returns the reading beside the note. The entry keeps only how to check it.\n- Once inspect exists, a line it covers (\"Spark 4 is on Wi-Fi only\") is forgotten when the owner's statement replaces it.\n\nNo topic table and no dates added to the prompt."
+   },
+   {
+    "proposal": "Gap 5: kept readings per Spark, `changed` events, facts for an off Spark",
+    "ruling": "shrink",
+    "why": "Sparks 3 and 4 are off often, so a last reading with its time is worth keeping. It needs no new file and no new loop. knowledge.json already holds per-Spark state (19-watcher.mjs:11-12, 151-158), and the daily setups timer already exists. A refresh the moment a Spark comes online would add SSH load while it boots, and a timeout then marks it offline again.",
+    "instead": "- Store the last network and versions reading under each Spark in knowledge.json.\n- Refresh a few minutes after a Spark comes online (at most once per ten minutes), inside the existing daily look, and whenever inspect is called.\n- Write a `changed` event only for a short fixed list (uplink kind, kernel, GPU driver, OS release, Docker, reboot waiting, console build), with values passed through a strict pattern.\n- fleet_status adds one line of kept readings, with their age, for off Sparks too."
+   },
+   {
+    "proposal": "Gap 5 part: stamp kernel, driver and model snapshot on every proven run",
+    "ruling": "cut",
+    "why": "recordVerified is in the hashed start code (18-workflows.mjs:17), so this gives both start workflows a new version for a question that comes up rarely. The earlier plan's guard was no start-code changes.",
+    "instead": "Each proven run already has its last time. The `changed` events have theirs. Comparing the two says \"the driver changed after this last worked\" with no start code touched."
+   },
+   {
+    "proposal": "Gap 6: a whats_outdated tool, a new part 20-fresh.mjs and a daily look that wraps the setups looks",
+    "ruling": "shrink",
+    "why": "The earlier plan already puts open problems first in Sparkie's notes and in fleet_status. A second list under another name is two answers to one question. Several of its checks fail the report's own rule that every item has a next step:\n- A catalog-age flag has no step the owner can take from chat.\n- Re-checking memory lines needs code to judge whether words and readings agree.\n- A daily dry run of two or three saved workflows adds surface for little.\n\nMoving the working setups look inside a new operation is tidying with risk.",
+    "instead": "No new tool, part or loop.\n- These join the open-problems list, read from kept readings: pending upgrades, a waiting reboot, Sparks 3 and 4 on different kernels or drivers, a Tailscale key inside 14 days, a Spark unseen for 30 days, a running build that differs from the source.\n- One code fix: a setups source that found some before and finds none now counts as failed, so earlier finds are kept and the look is not stamped fresh (11-setups.mjs:195-197 covers only sources that error)."
+   },
+   {
+    "proposal": "Gap 7: save_check with `read` and `run` steps, run through inspect",
+    "ruling": "unsafe",
+    "why": "Four reasons, all confirmed in the code:\n- Lookups run with no gate for every caller (16-actions.mjs:292), so a saved check is a lasting, ungated path to commands on the Sparks.\n- An agent key with change rights calls change tools directly. Only Sparkie's calls pass the owner's-words check (16-actions.mjs:302). An outside agent steered by a web page or another MCP server could save one.\n- There is no \"no shell\" path. Everything runs through bash over SSH (02-ssh.mjs:5-17), so the command table is the only fence. Read-only-looking commands have flags that write or reach other hosts (systemctl -H, nvidia-smi -f, ip -batch).\n- /etc holds Wi-Fi and other secrets, and code cannot tell whether steps came from a web page.",
+    "instead": "File reads only.\n- Paths sit under a fixed list in /sys and /proc. Never /proc/<pid>, /proc/self or /etc.\n- The real path is checked on the Spark. Each read is capped, timed and masked.\n- Saving is always a button that shows the exact paths. It works only in the owner's own chat or the owner's own API call. Agent keys, and Sparkie speaking for an agent, are refused.\n- The owner's typed yes must count for this button. Today an owner-only button works only from the page (14-chats.mjs:87, 208).\n- Names are plain slugs that cannot shadow a built-in probe. At most 20 checks.\n\nA new command form stays code and a release. The fan-speed case is a /sys read, so the acceptance test still passes."
+   },
+   {
+    "proposal": "Gap 8: mark \"I checked\" claims with a topic table; stop earlier answers counting as sources; ask_sparkie returns the marks",
+    "ruling": "shrink",
+    "why": "(b) and (c) are certain and tiny. Confirmed: earlier answers count as sources (14-chats.mjs:336), so a made-up number is supported from the next turn, and ask_sparkie drops the marks (20-mcp.mjs:110-118). (a) needs a per-topic word table kept in step with the probes. Its value is unknown until the eval shows the false claim survives gaps 1 and 3; a model mostly claims a check when it lacks the tool.",
+    "instead": "Do (b) and (c) now. Hold (a) until the eval case \"Spark 4 is on Ethernet now\" still produces \"confirmed\" without an inspect call."
+   },
+   {
+    "proposal": "Gap 9: about 30 tool-choice cases, hide memory and wait_operation from Sparkie, a full-list versus core-list switch, and \"at most 36 tools\" held in code",
+    "ruling": "shrink",
+    "why": "The cases are the acceptance test for gaps 1 to 4, so they come first. But:\n- The eval's own list is stale. test/eval.mjs:44 counts five change tools, and only started operations, so a wrong remember or save would pass.\n- Hiding a tool is only cosmetic today. Sparkie's calls are looked up in the whole action list (14-chats.mjs:299), and results still say `next: wait_operation`.\n- A cap in code repeats what the pinned SPARKIE_TOOLS list already enforces (test/lib.mjs:55).",
+    "instead": "- Fix the grader to count every change tool.\n- Add ten cases, not thirty, including the four honest-answer ones.\n- Hide memory, wait_operation and spark_diagnostics from Sparkie, refuse them at call time, and drop the wait hints from what Sparkie is shown.\n- Skip the cap and the two-list switch until the count passes about 40."
+   },
+   {
+    "proposal": "Gap 10, text half: agent instructions from the action list, generated tables in agent-door.md with a doc test, build id as version, action names instead of page tabs",
+    "ruling": "shrink",
+    "why": "Agents choose tools by this text, and it was wrong within six days (docs/agent-door.md:16, 76 against 23 lookups and 13 changes in code). A generator script and a doc test are machinery to keep a copy fresh. The fix for a stale copy is to have no copy.",
+    "instead": "- Build agentInstructions from the action list.\n- Report the build id as the server version.\n- Replace the page-tab pointers in tool results (16 in parts 14 to 20) with action names.\n- Delete the hand-written table and counts from agent-door.md and point at GET /actions and the `spark` command, which list every action live."
+   },
+   {
+    "proposal": "Gap 10, protocol half: also serve MCP 2026-07-28",
+    "ruling": "defer",
+    "why": "I read the changelog. The handshake is gone and server/discover is required. The door is already stateless: tools/list never needed initialize (20-mcp.mjs:167). A newer client that probes server/discover gets \"method not found\" and falls back, and the spec tells clients to treat a result with no resultType as complete. No client the owner uses has refused yet.",
+    "instead": "When one does: answer server/discover and add resultType, ttlMs and cacheScope. About 20 lines. Keep initialize and ping."
+   },
+   {
+    "proposal": "Gap 11: read_page and web_search in a new part 20-web.mjs",
+    "ruling": "shrink",
+    "why": "read_page is already scheduled once, in phase 5 of the earlier plan; it should not be designed twice. \"Any public address\" needs resolve-then-connect pinning and a check on every redirect to be safe on Spark 2, where the brain answers on localhost with no key. \"An address from an earlier tool result\" lets a log line or a page choose what Sparkie reads next. The exposure is a wrong answer, not a wrong change, but a fixed host list removes both problems in a tenth of the code.",
+    "instead": "One tool, next to webGet (11-setups.mjs:8), built with phase 5.\n- A short list of hosts in config: GitHub, Hugging Face, NVIDIA's docs and forum, the engines' docs.\n- Redirects off the list are refused.\n- Text is capped and marked as data.\n- No web_search tool. A release list or an issue search is a page on a listed host."
+   },
+   {
+    "proposal": "Gap 12: an owner-only `image` on start_model and a \"make it the default\" button",
+    "ruling": "defer",
+    "why": "start_model already takes a setup (17-changes.mjs:506), and found setups bring their own pinned images, so newer engines already reach a model that way. A new input on a start belongs with context and parallel in the configs work the parallel analysis covers. An image pull is a download, which waits for the owner's word.",
+    "instead": "Now: write the tag and date beside each default digest in service/config.json at the next install, so the versions probe can say which release the default is. Build the rest when the owner first asks to try a newer engine."
+   },
+   {
+    "proposal": "Owner decision 3: a new \"parked\" state for Spark 1",
+    "ruling": "shrink",
+    "why": "The Spark list already has a switch. Only entries marked configured are used (03-identity.mjs:203), and the list comes from the console's own access file, not config.json. Removing Spark 1 from config.json alone would change nothing once that file lists the Sparks. A new parked state is code for one machine.",
+    "instead": "With the owner's yes, switch Spark 1's entry off in the access file, by hand or one owner-only call. Keep one memory line saying it is parked until the owner can sign in to it. That is a fact no tool can read, which is what memory is for."
+   },
+   {
+    "proposal": "The skip list (18 items) and the rule that Sparkie reads and reports but never applies OS, driver, firmware, Docker, Tailscale or brain changes",
+    "ruling": "keep",
+    "why": "I agree with every item. The probes-in-a-new-part choice holds: worker.py is hashed into every workflow version (18-workflows.mjs:66). The read-and-report rule is what keeps this area clear of the lock-out constraint. One note for the MCP client, when its day comes: an attached server's tool descriptions are outside text too, so pin them at attach time."
+   }
+  ],
+  "missing": [
+   "The timeout hazard. A probe that times out counts as a failed connection (02-ssh.mjs:60, 12-status.mjs:34). Two in a row mark the Spark unreachable for a minute (02-ssh.mjs:31), which writes false offline and online events and can fail a start in progress. Every new probe needs inner caps, exit 0, and a skip while an operation holds that Spark.",
+   "A check that each Spark has the tools the workflows call (docker, nvidia-smi, the hf command, python3 with yaml on Spark 2, timeout, ip, ss). This is the literal reading of \"has all the tools it needs\". It is one line in the versions probe, and it matters the day a Spark is re-imaged or Spark 1 comes back.",
+   "Whether automatic updates are on for each Spark. It is a readable file. Without it, Sparkie can say the kernel changed but not why, and Sparks 3 and 4 can drift apart unnoticed.",
+   "A rule that live-readable facts leave memory. The twelve seeded lines include fleet facts that inspect will be able to read. The report adds check data to them; it should remove them, with the owner's yes, once the probe exists.",
+   "The eval grader is itself out of date. test/eval.mjs:44 lists five change tools and counts only started operations, against thirteen change tools in code. The newest saved results are partial, from 2026-11-08.",
+   "Hiding a tool from Sparkie does not stop it being called (14-chats.mjs:299), and tool results still point to wait_operation. The flag needs a refusal at call time.",
+   "Owner-only buttons work only from the page (14-chats.mjs:87, 208). An owner who uses chat and the API cannot press one by typing yes. Any new owner-only approval, such as saving a check, needs the owner's own chat to count while an agent's conversation does not.",
+   "No route for new models into Recipes after handoff. catalog.json is built by a script with a fixed date (tools/build-catalog.py:266) and nothing on Spark 2 rebuilds it. The daily look only refreshes setups for models already listed. The planned add_recipe action is the route; until it exists a catalog-age flag has no next step.",
+   "A count against the earlier plan's limits. The report never adds up its new tools, state files, parts and loops, though that plan set seven actions, about 30 tools for Sparkie, one state file and no new loop.",
+   "Two documents named elsewhere are not in the local docs folder: docs/architecture.md (the map every change must follow, per the owner's notes) and docs/independence-plan.md (docs/reviews-2026-11-11.md:93). I could not tell whether they live only on Spark 2 or are still being written.",
+   "How the probe commands get their one trial with no SSH from the build session. The first inspect call on each Spark after install is the trial, so every probe must report \"couldn't read\" per value, and the acceptance run should call each probe on each online Spark once.",
+   "The Tailscale key-expiry field name is not confirmed on a Spark. If the status Spark 2 fetches does not carry it for the other Sparks, that item needs one short command per Spark instead."
+  ],
+  "buildOrder": [
+   "Step 0, no install: fix the eval grader to count every change tool (test/eval.mjs:44) and add ten cases, including \"is Spark 4 on Ethernet?\", \"Spark 4 is on Ethernet now\", \"anything waiting to update?\" and \"what changed since yesterday?\". Run it on the real brain when the owner allows, as the baseline.",
+   "Batch A, one gate and one install, no new tool and no start code touched: gap 1 (two prompt lines, labels and notCovered on linked_sparks, date and time at the top of the per-turn record, relabel of the diagnostics network line).",
+   "Batch A: remember's note ends \"your words; not checked\".",
+   "Batch A: gap 2 view fixes (an off Spark reads \"off since, last seen running\" in the record and in workloads; per-pair cable test time; setups looks filtered out of Sparkie's last ten events; age on held entries; the catalog's own date in the search prompt).",
+   "Batch A: gap 8 (b) and (c) (marked text no longer counts as a source; ask_sparkie returns the marks).",
+   "Batch A: gap 10 text (agent instructions from the action list, build id as version, action names instead of page tabs, hand table removed from docs/agent-door.md).",
+   "Batch A: hide memory, wait_operation and spark_diagnostics from Sparkie, refused at call time. Then run the eval again.",
+   "Batch B, one install: `inspect` in service/src/20-inspect.mjs with the network and versions probes (inner caps, exit 0, skipped while an operation holds the Spark), stand-in fixtures for wired and Wi-Fi links, and Tailscale key expiry as a field in fleet_status.",
+   "Batch B: optional spark and probe on remember, with the reading returned beside the note. Call each probe once on each online Spark as its trial, then run the eval.",
+   "Batch C, one install: last readings kept per Spark in knowledge.json, refreshed after a Spark comes online and in the existing daily look; one line per Spark in fleet_status, off Sparks included.",
+   "Batch C: `changed` events for the short fixed list; outdated items joined to the open-problems list from the earlier plan; the setups fix for a source that finds none where it found some.",
+   "Batch D, when the first \"can you see X?\" falls outside the built-in probes: saved checks as file reads only under fixed /sys and /proc paths, saved by a button in the owner's own chat, never by an agent key. Add disk and services probes when first asked.",
+   "With phase 5 of the earlier plan: read_page limited to a short list of hosts.",
+   "Held until a trigger: the \"I checked\" marker (if the eval still shows the claim), the image input on start_model (when the owner asks to try a newer engine), MCP 2026-07-28 (when a client refuses the door), the full-list versus core-list eval switch (when Sparkie's tool count passes about 40)."
+  ]
+ }
+}

@@ -1,0 +1,3 @@
+vllm/vllm-openai@sha256:3f7dd5b777d34d1724456ce71f87385dca288c3bb23029ab27dee358f5d2b971
+lmsysorg/sglang:v0.5.23
+ghcr.io/ggml-org/llama.cpp@sha256:71f26c2ef2f336418cd42d617db8e479a738a0b9283e327add00e4de633cccfd

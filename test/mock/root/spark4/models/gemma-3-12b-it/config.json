@@ -1,0 +1,1 @@
+{"architectures":["Gemma3ForConditionalGeneration"],"model_type":"gemma3","torch_dtype":"bfloat16"}

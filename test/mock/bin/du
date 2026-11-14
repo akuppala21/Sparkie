@@ -1,0 +1,14 @@
+#!/bin/bash
+# Stand-in du -sb[L] <dir>: apparent size; -L follows symlinks. Unlistable directories are skipped, like du.
+follow=0; for a in "$@"; do case "$a" in -*L*) follow=1 ;; esac; done
+dir=$(eval echo "\${$#}")
+python3 -c '
+import os, sys
+d, follow = sys.argv[1], sys.argv[2] == "1"
+total = 0
+for r, _, fs in os.walk(d, followlinks=follow):
+    for f in fs:
+        p = os.path.join(r, f)
+        try: total += (os.stat(p) if follow else os.lstat(p)).st_size
+        except OSError: pass
+print(f"{total}\t{d}")' "$dir" "$follow"

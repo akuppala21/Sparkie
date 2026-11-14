@@ -1,0 +1,22 @@
+{
+  "at": "2026-11-08T15:45:47.184Z",
+  "cases": 1,
+  "runs": 1,
+  "passOnce": 1,
+  "passAllRuns": 1,
+  "wrongChanges": 0,
+  "askedOnClear": 0,
+  "results": [
+    {
+      "id": "polite-start",
+      "expect": "act",
+      "passed": 1,
+      "runs": 1,
+      "wrong": 0,
+      "asked": 0,
+      "why": [],
+      "broken": 0,
+      "p95ms": 66074
+    }
+  ]
+}

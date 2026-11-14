@@ -1,0 +1,5 @@
+#!/bin/bash
+# Stand-in for `ip -4 -o addr show dev NAME`, reading the test Spark's fake /sys.
+dev="${@: -1}"; f="$SPARK_SYSFS/class/net/$dev/mock_ipv4"
+[ -s "$f" ] && printf '7: %s    inet %s brd 0.0.0.0 scope global %s\n' "$dev" "$(cat "$f")" "$dev"
+exit 0

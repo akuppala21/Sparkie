@@ -1,0 +1,6 @@
+{
+  "id": "add-disk-tool",
+  "title": "Add a feature with its tests (a disk_free tool for agents and Sparkie)",
+  "contract": "10.4: add a workflow with its tests (here, a read-only tool: the same steps, without touching the Sparks)",
+  "minutes": 40
+}

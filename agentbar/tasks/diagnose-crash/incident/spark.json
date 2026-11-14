@@ -1,0 +1,7 @@
+{
+  "title": "Gemma 3 27B",
+  "engine": "vllm",
+  "image": "vllm/vllm-openai:v0.11.2",
+  "args": ["--max-model-len", "131072", "--gpu-memory-utilization", "0.85", "--max-num-seqs", "8", "--enable-prefix-caching"],
+  "memoryGiB": 64
+}

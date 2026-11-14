@@ -1,0 +1,24 @@
+Spark Console: what to do when it doesn't answer
+
+This file is ~/.local/share/spark-console/RECOVERY.txt on Spark 2. Every install writes it again.
+Run these on Spark 2, in a terminal, signed in as the user Spark Console runs as. None needs sudo. None touches
+SSH, Tailscale, the firewall, users or any model.
+
+1. Go back to the build from before the last update. People, chats and settings stay as they are.
+     bash ~/.local/share/spark-console/go-back.sh
+
+2. Restart Spark Console as it is.
+     systemctl --user restart spark-console-api
+
+3. See why it stopped.
+     journalctl --user -u spark-console-api -n 80 --no-pager
+
+4. Check that it answers. A good answer starts with {"ok":true
+     curl -s --unix-socket ~/.local/state/spark-console/api.sock http://localhost/health
+
+If the page loads but Sparkie doesn't answer, type one of these alone in your own chat on the page.
+Code answers them, not Sparkie's model:
+     /status    /pause    /restart sparkie    /undo update    /help
+
+Earlier builds are kept in ~/.local/share/spark-console/releases, the newest 10. go-back.sh uses the newest one
+that isn't what's installed now; run it again to go back one more build.
