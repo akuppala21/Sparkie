@@ -396,12 +396,15 @@ async function maybeHeal(node, w) {
   if (/out of memory|OutOfMemoryError|CUDA error: out of memory|cudaErrorMemoryAllocation|Insufficient memory|less than desired/i.test(logs.out)) return skip('it ran out of memory, so restarting would only fail again');
   healTries.set(key, [...recentTries, Date.now()]);
   saveHealTries();
+  // (the self-test's own model, R22: a crash outside its drill too)
+  let test = false;
+  try { test = selfTestModels().has(key); } catch {}
   try {
     const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
-    // (the self-test's drill: its model is never the owner's wish, so its restart doesn't put it on the list either)
-    if (healDrills.has(`${node.id}/${w.id}`)) job.selfTest = true;
+    // (the self-test's drill, or its model all the same: never the owner's wish, so its restart doesn't put it on the list)
+    if (healDrills.has(`${node.id}/${w.id}`) || test) job.selfTest = true;
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
