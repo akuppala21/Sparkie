@@ -179,8 +179,10 @@ describe('ask_sparkie', { concurrency: 1 }, () => {
       await running();
       const k = await createActKey(prefix);
       const words = `Stop ${RADIX} on spark 4; take ${Math.round(3 * SLOW) + 3} seconds.`;
+      // (the other test here sends the same words: only a request logged after this point counts)
+      const seen = requests().length;
       const asked = ask(k, { message: words });
-      await waitFor(() => requests().includes(words), { every: 50, what: 'the request at the model' });
+      await waitFor(() => requests().slice(seen).includes(words), { every: 50, what: 'the request at the model' });
       assert.equal((await takeAway(k)).status, 200);
       const r = await asked;
       assert.equal(r.isError, false, r.text);
