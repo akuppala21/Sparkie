@@ -289,7 +289,7 @@ async function healApp(x, inv) {
     if (!out?.operation && !['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
   } catch (e) {
     skippedOnce.set(k, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
   }
 }
 

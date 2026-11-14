@@ -455,7 +455,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: String(e.message).slice(0, 200) });
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
     throw e;
   }
 }

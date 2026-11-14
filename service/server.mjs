@@ -1153,7 +1153,7 @@ function runJob(job, fn) {
     // (one started from Telegram whose chat is gone: off the list that restarts report)
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
-      ...(job.error ? { error: String(job.error).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
+      ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
   });
   return job;
 }
@@ -3519,8 +3519,9 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'done', message });
       return message;
     } catch (e) {
-      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on)
-      const why = link.gone ? TURN_STOPPED : e.message;
+      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on; any other error's text
+      // can quote the model's own answer, so a key in it is hidden before it is saved, A-5, 2026-11-14)
+      const why = link.gone ? TURN_STOPPED : maskSecrets(e.message);
       const choices = asked.flatMap(sparkieMessageChoices);
       const message = { role: 'assistant', content: maskSecrets(answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
         ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
@@ -4231,7 +4232,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: String(e.message).slice(0, 200) });
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
     throw e;
   }
 }
@@ -4977,11 +4978,12 @@ function changeLabel(name, input) {
   const what = input.model || input.container || 'it';
   // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
-  // A memory button says the line it would keep or drop.
-  if (name === 'remember') return `Remember: “${String(input.text || '').slice(0, 200)}”`;
+  // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
+  // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”`;
   if (name === 'forget_memory') return `Forget: “${String(memoryEntries().find(e => e.id === input.id)?.text || 'that line').slice(0, 200)}”`;
   if (name === 'run_workflow') {
-    const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${String(v).slice(0, 60)}`);
+    const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
   }
   if (name === 'keep_running') {
@@ -6919,7 +6921,7 @@ async function bringBack(x, why, parts, power = false) {
       await run(nodeById(d.spark), `docker start ${q(d.container)} >/dev/null 2>&1; true`, { timeout: 90000 }).catch(() => {});
     }
     skippedOnce.set(key, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
     audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: String(e.message).slice(0, 300) });
   }
 }
@@ -8143,7 +8145,7 @@ async function healApp(x, inv) {
     if (!out?.operation && !['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
   } catch (e) {
     skippedOnce.set(k, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
   }
 }
 

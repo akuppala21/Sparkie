@@ -79,7 +79,7 @@ function runJob(job, fn) {
     // (one started from Telegram whose chat is gone: off the list that restarts report)
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
-      ...(job.error ? { error: String(job.error).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
+      ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
   });
   return job;
 }

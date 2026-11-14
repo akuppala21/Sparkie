@@ -14,7 +14,8 @@
 //   tools ran. The other one-time failures are for the next request of any kind: "cut-off" answers 503 and closes the
 //   connection before the body its Content-Length promised (an engine dying mid-answer); "cut-off-200" starts a 200
 //   stream and closes it part-way; "held-open" answers 503 and part of its body, then holds the connection open until
-//   Spark Console hangs up (5 minutes at most).
+//   Spark Console hangs up (5 minutes at most); "answer-500" on the first line answers a whole 500 whose body is the
+//   rest of the file.
 // - A benchmark-style server that's always up, on $MOCK_BENCH_PORT.
 // - The port Spark Console's own deploys serve on ($MOCK_SERVE_PORT): the service measures a new deploy's speed there.
 //   Whether a deploy is up is the stand-in curl's call (per Spark); this one always answers, quickly.
@@ -98,8 +99,9 @@ async function mainReply(b, port, res, log = true) {
   }
   // The one-time failures for the next request (above), once.
   const fail = DIR && log && existsSync(`${DIR}/model-fail`) ? readFileSync(`${DIR}/model-fail`, 'utf8') : '', mode = fail.split('\n')[0].trim();
-  if (['cut-off', 'cut-off-200', 'held-open'].includes(mode)) {
+  if (['cut-off', 'cut-off-200', 'held-open', 'answer-500'].includes(mode)) {
     rmSync(`${DIR}/model-fail`, { force: true });
+    if (mode === 'answer-500') { res.writeHead(500, { 'content-type': 'application/json' }); return res.end(fail.slice(fail.indexOf('\n') + 1)); }
     if (mode === 'cut-off-200') { stream(res).send({ content: 'Half an ans' }); setTimeout(() => res.destroy(), 50); return; }
     res.writeHead(503, { 'content-type': 'application/json', 'content-length': '10000' });
     res.write('{"error":{"message":"shutting down');

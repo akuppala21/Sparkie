@@ -458,8 +458,9 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'done', message });
       return message;
     } catch (e) {
-      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on)
-      const why = link.gone ? TURN_STOPPED : e.message;
+      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on; any other error's text
+      // can quote the model's own answer, so a key in it is hidden before it is saved, A-5, 2026-11-14)
+      const why = link.gone ? TURN_STOPPED : maskSecrets(e.message);
       const choices = asked.flatMap(sparkieMessageChoices);
       const message = { role: 'assistant', content: maskSecrets(answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
         ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };

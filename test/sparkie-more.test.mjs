@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, auditLines, newChat, say, choose, sseEvents, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, auditLines, eventLines, newChat, say, choose, sseEvents, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
 let look, act;
@@ -376,4 +376,55 @@ test('a key typed in a chat, or repeated in Sparkie\'s answer, is hidden in the 
   assert.equal(msgs.find(m => m.role === 'user').content, 'keep [hidden] for downloads, and the app has WEBUI_SECRET_KEY=[hidden]');
   assert.match(msgs.find(m => m.role === 'assistant').content, /WEBUI_SECRET_KEY=\[hidden\]/);
   assert.ok(requests().slice(from).some(q => q.words.includes('hf_abcdefghijklmnopqrstuvwxyz654321')), 'the model got the words as typed');
+});
+
+// A-5 (review with Astra, 2026-11-14): a key in an error's text, in a button's label or in a failed operation's error is
+// hidden in what is kept (chats.json and its daily copy, events.jsonl). The fake key is built from pieces.
+const FAKE_KEY = ['hf_', 'FAKE', 'fake'.repeat(5), '0000'].join('');
+const chatsFile = () => readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8');
+test('a key in the model\'s error is hidden in the saved chat; the error still says what happened, once', { timeout: 90000 * SLOW }, async t => {
+  script([]);
+  writeFileSync(join(T.fleet.dir, 'model-fail'), `answer-500\n{"error":{"message":"upstream refused token ${FAKE_KEY}"}}`);
+  t.after(() => rmSync(join(T.fleet.dir, 'model-fail'), { force: true }));
+  const chat = await newChat();
+  const res = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: 'hello' } });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(sseEvents(res.text).filter(e => e.type === 'error').length, 1, res.text);
+  const saved = (await chatMessages(chat)).filter(m => m.role === 'assistant');
+  assert.equal(saved.length, 1);
+  assert.match(saved[0].error, /^The model answered 500: .*upstream refused token \[hidden\]/);
+  assert.ok(!chatsFile().includes('FAKEfake'), 'a piece of the key is in chats.json');
+});
+
+test('a key in a line Sparkie offers to remember, or in a saved workflow\'s value, is hidden on its button and in chats.json, also once pressed', { timeout: 120000 * SLOW }, async () => {
+  script([{ match: '^gemma keeps crashing', rounds: [[{ name: 'container_logs', arguments: { spark: 'spark4', container: RADIX } }], [{ name: 'remember', arguments: { text: `Use ${FAKE_KEY} for gated models` } }]] },
+    { match: '^run key check$', calls: [{ name: 'run_workflow', arguments: { name: 'key check', inputs: { model: FAKE_KEY } } }] }]);
+  try {
+    const chat = await newChat();
+    const q = await say(chat, 'gemma keeps crashing on spark 4, its log says why');
+    assert.deepEqual(q.message.tools.map(t => [t.name, t.outcome || null]), [['container_logs', null], ['remember', 'needs-ok']], JSON.stringify(q.message.tools));
+    assert.deepEqual(q.message.choices?.map(c => c.label), ['Remember: “Use [hidden] for gated models”']);
+    const p = await choose(chat, q.message.choices[0].id);
+    assert.equal(p.status, 200, p.text);
+    assert.match(p.json.message.content, /^Couldn’t do “Remember: “Use \[hidden\] for gated models””: That looks like it has a secret/);
+    assert.equal((await call(act.token, 'save_workflow', { title: 'key check', inputs: { model: 'the model' }, steps: [{ action: 'find_setups', args: { model: '{model}' } }] })).value?.outcome, 'saved');
+    const w = await say(await newChat(), 'run key check');
+    assert.deepEqual(w.message.choices?.map(c => c.label), ['Run the saved workflow “key check” with model [hidden]']);
+    assert.ok(!chatsFile().includes('FAKEfake'), 'a piece of the key is in chats.json');
+  } finally {
+    script([]);
+    await call(act.token, 'forget_workflow', { name: 'key check' }).catch(() => {});
+  }
+});
+
+test('a key in a failed operation\'s error is hidden in the fleet\'s record (events.jsonl)', { timeout: 150000 * SLOW }, async t => {
+  // (the stand-in gemma stops while loading, and its log is what docker logs shows)
+  writeFileSync(mock4('logs-sc-gemma-3-12b-it'), `loading weights\nRuntimeError: the hub refused ${FAKE_KEY} for this repo\n`);
+  t.after(() => rmSync(mock4('logs-sc-gemma-3-12b-it'), { force: true }));
+  const r = await api('/actions/start_model', { method: 'POST', body: { model: 'gemma-3-12b-it', spark: 'spark4' } });
+  assert.equal(r.json?.outcome, 'started', r.text);
+  const ev = await waitFor(() => eventLines().find(e => e.type === 'operation' && e.id === r.json.operation && ['completed', 'failed', 'cancelled'].includes(e.status)), { timeout: 120000, what: 'the start to end' });
+  assert.equal(ev.status, 'failed', JSON.stringify(ev));
+  assert.match(ev.error, /the hub refused \[hidden\] for this repo/, ev.error);
+  assert.ok(!readFileSync(join(T.fleet.stateDir, 'events.jsonl'), 'utf8').includes('FAKEfake'), 'a piece of the key is in events.jsonl');
 });
