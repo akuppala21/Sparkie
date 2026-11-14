@@ -73,6 +73,65 @@ test('Sparkie rephrases what the owner states: kept without a button in a turn t
   assert.equal((await call(act.token, 'forget_memory', { id: entries[0].id })).value.outcome, 'forgotten');
 });
 
+// A-3 (review with Astra, 2026-11-14): Sparkie's forget_memory runs at once only when the owner's own message says to
+// forget, in so many words, the line it is about. A question about a line, "don't forget …", words the owner quotes and
+// an unrelated "remember …" give the button that shows the line, and memory stays as it was.
+const WIFI = 'Spark 4 is on Wi-Fi only';
+const memoryNow = async () => (await call(look, 'memory', {})).value.entries;
+const forgetAll = async () => { for (const e of await memoryNow()) await call(act.token, 'forget_memory', { id: e.id }); };
+test('forget_memory runs at once only when the owner says to forget that very line; a question, "don\'t forget", quoted words or another line give a button', { timeout: 180000 * SLOW }, async () => {
+  const OTHER = 'Spark 3 is where models go', SAID = 'forget that Spark 4 is on Wi-Fi';
+  const seed = async text => (await call(act.token, 'remember', { text, kind: 'fact' })).value.id;
+  const other = await seed(OTHER), line = await seed(WIFI);
+  const forget = async (words, id) => {
+    script([{ match: `^${esc(words)}$`, calls: [{ name: 'forget_memory', arguments: { id } }] }]);
+    return (await say(await newChat(), words)).message;
+  };
+  try {
+    for (const words of ['What do you remember about Spark 4 being on Wi-Fi only?', 'Is Spark 4 on Wi-Fi only?', 'Don\'t forget that Spark 4 is on Wi-Fi only.',
+      'Never forget that Spark 4 is on Wi-Fi only.', 'Remember that I like short answers.', 'Yesterday I wrote "forget that Spark 4 is on Wi-Fi only" in my notes.']) {
+      const before = await memoryNow(), m = await forget(words, line);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.deepEqual(m.choices?.map(c => c.label), [`Forget: “${WIFI}”`], words);
+      assert.deepEqual(await memoryNow(), before, words);
+    }
+    // Said in so many words, about that line: forgotten at once.
+    const yes = await forget(SAID, line);
+    assert.deepEqual(yes.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'forgotten']], JSON.stringify(yes.tools));
+    assert.ok(!yes.choices?.length, JSON.stringify(yes.choices));
+    assert.deepEqual((await memoryNow()).map(e => e.text), [OTHER]);
+    // The same words, with the model aiming at another line: a button.
+    const wrong = await forget(SAID, other);
+    assert.deepEqual(wrong.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'needs-ok']], JSON.stringify(wrong.tools));
+    assert.deepEqual(wrong.choices?.map(c => c.label), [`Forget: “${OTHER}”`]);
+    assert.deepEqual((await memoryNow()).map(e => e.text), [OTHER]);
+  } finally { script([]); await forgetAll(); }
+});
+
+// The same review: "do not remember …" is a refusal the intent reads, and it is a button, never a line kept. "Don't
+// forget", "never forget" and "do not forget" ask to remember, and still keep the line at once.
+test('"do not remember …" or "don\'t note …" is a button and keeps nothing; "remember", "don\'t forget", "never forget" keep the line at once', { timeout: 180000 * SLOW }, async () => {
+  const remember = async words => {
+    script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text: WIFI } }] }]);
+    return (await say(await newChat(), words)).message;
+  };
+  try {
+    for (const words of [`Do not remember that ${WIFI}`, `Don't remember that ${WIFI}`, `Please don't note that ${WIFI}`]) {
+      const m = await remember(words);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.deepEqual(m.choices?.map(c => c.label), [`Remember: “${WIFI}”`], words);
+      assert.deepEqual(await memoryNow(), [], words);
+    }
+    for (const words of [`Don't forget that ${WIFI}`, `Remember that ${WIFI}`, `Never forget that ${WIFI}`, `Do not forget that ${WIFI}`]) {
+      const m = await remember(words);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.ok(!m.choices?.length, `${words}: ${JSON.stringify(m.choices)}`);
+      assert.deepEqual((await memoryNow()).map(e => e.text), [WIFI], words);
+      await forgetAll();
+    }
+  } finally { script([]); await forgetAll(); }
+});
+
 test('Sparkie carries on: when the stop it started finishes, it gets a turn in that chat and does the next step', { timeout: 240000 * SLOW }, async () => {
   const words = `stop ${RADIX} on spark 4, then start it again`;
   script([

@@ -7412,6 +7412,31 @@ action({
 // Anything else is a button, which shows the line.
 const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 'them', 'you', 'your', 'yours', 'yourself', 'itself', 'wants', 'want', 'wanted',
   'should', 'would', 'that', 'this', 'with', 'have', 'has', 'does', 'from', 'for', 'when', 'will', 'can', 'are', 'was', 'not', 'any', 'all', 'its', 'now']);
+// Whether this message itself says to forget, in so many words (A-3, 2026-11-14: a question about a line, "don't forget
+// that …", a quoted "forget that …" and an unrelated "remember …" each forgot a line with no button). A forget phrase
+// counts in a sentence that isn't a question (a polite "can you …" aside), isn't called off and doesn't follow don't,
+// never, if, whether or should; words in double quotes don't count. Sentence by sentence, as changeIntent reads them.
+const FORGET_WORDS = /\bforget\s+(?:that|this|what\s+i\s+said|the\s+note)\b/gi;
+function saysForget(text) {
+  for (const raw of normQuotes(text).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ').split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
+    if (!sentence.trim() || (!polite && (/\?\s*$/.test(raw) || QUESTION_START.test(sentence))) || INFO_START.test(sentence) || CALLED_OFF.test(sentence)) continue;
+    for (const m of sentence.matchAll(FORGET_WORDS)) {
+      const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
+      if (!NEGATOR.test(pre) && !HYPOTHETICAL.test(pre)) return true;
+    }
+  }
+  return false;
+}
+// Whether this message rules remembering out ("do not remember …", "please don't note …"), as the intent read it. A
+// forget phrase after don't or never asks to remember, though the intent reads "never forget that …" as ruled out, so it
+// is read as "remember" here (2026-11-14: "do not remember that …" was kept with no button).
+const NOT_FORGET = /\b(?:don't|dont|do\s+not|never)\s+(?:\w+\s+){0,2}?forget\b/gi;
+function refusesRemember(ctx) {
+  const text = normQuotes(ctx.request || ''), plain = text.replace(NOT_FORGET, 'remember');
+  const intent = plain === text ? ctx.intent || {} : changeIntent(plain);
+  return [...(intent.negated || []), ...(intent.mixed || [])].includes('remember');
+}
 function memoryClear(name, input, ctx, asked) {
   const words = String(ctx.said || ctx.request || '');
   const said = tokensOf(words), flat = squash(sparkNames(normQuotes(words)));
@@ -7420,7 +7445,9 @@ function memoryClear(name, input, ctx, asked) {
   const shared = text => { const t = [...tokensOf(text)].filter(x => x.length >= 3 && !MEMORY_FILLER.has(x)), hits = t.filter(has).length; return { share: t.length ? hits / t.length : 0, hits }; };
   const about = text => shared(text).share;
   const entry = id => memoryEntries().find(e => e.id === id);
-  if (name === 'forget_memory') return Boolean(entry(input.id)) && (asked || about(entry(input.id).text) >= 0.3);
+  // Forgetting: the line exists, this message says to forget, and the line is what they're talking about (never skipped).
+  if (name === 'forget_memory') { const e = entry(input.id); return Boolean(e) && saysForget(ctx.request) && about(e.text) >= 0.3; }
+  if (refusesRemember(ctx)) return false;
   const line = shared(input.text);
   if (ctx.readOutside ? line.share < 0.6 : line.share < 0.25 && line.hits < 2) return false;
   if (input.replaces && !(entry(input.replaces) && about(entry(input.replaces).text) >= 0.3)) return false;
