@@ -12,7 +12,7 @@
 // A version that's tested but not yet validated can be run by the owner on purpose, once, as its validation run; agents
 // can't run it. An untested version doesn't run at all.
 const WORKER_SOURCE = (() => { try { return readFileSync(fileURLToPath(new URL('worker.py', import.meta.url)), 'utf8'); } catch { return ''; } })();
-const START_CODE = () => [startModel, notBrainsSpark, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
+const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks, acrossGate, usedRecently, cancelCheck, placeModel, plansFor, fitOf, railsFor, unapprovedStops, planMoved, gpuUsersScript, agentSafeSetup,
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull];

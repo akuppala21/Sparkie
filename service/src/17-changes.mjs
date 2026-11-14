@@ -190,15 +190,15 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
     const p = await plan(m.name, spark, viewer, inv), r = railsFor(p, fitOf(p), allowStop);
     return r.ok ? { ok: true, nodes: [spark], two: false, stop: r.stop.map(c => `${spark}/${c}`), keep: r.keep, endpoint: p.endpoint } : { ...r, node: spark };
   }
-  const all = await plansFor(m.name, viewer, inv, new Map());
-  const tried = all.sparks.filter(f => f.node !== MAIN?.node).map(f => ({ f, r: f.error ? { ok: false, why: f.error } : railsFor(f.plan, f, allowStop) }));
+  const all = await plansFor(m.name, viewer, inv, new Map()), compute = computeSparks();
+  const tried = all.sparks.filter(f => compute.includes(f.node)).map(f => ({ f, r: f.error ? { ok: false, why: f.error } : railsFor(f.plan, f, allowStop) }));
   // When nothing may stop ("don't stop anything", or a start on call), a Spark with room as it is comes first.
   const one = (noStops && tried.find(t => t.r.ok && !t.r.stop.length)) || tried.find(t => t.r.ok);
   if (one) return { ok: true, nodes: [one.f.node], two: false, stop: one.r.stop.map(c => `${one.f.node}/${c}`), keep: one.r.keep, endpoint: one.f.plan.endpoint };
   // A pair that only needs the owner's yes (something started outside Spark Console holds one side) is asked about
   // when no single Spark can ask (F11).
   let pairAsk = null;
-  for (const pr of inRecipes(m) ? all.pairs.filter(x => x.fits && !x.nodes.includes(MAIN?.node)) : []) {
+  for (const pr of inRecipes(m) ? all.pairs.filter(x => x.fits && x.nodes.every(id => compute.includes(id))) : []) {
     const two = await placeModel(m, inv, viewer, { sparks: pr.nodes, allowStop });
     if (two.ok) return two;
     if (two.ask) pairAsk ||= two;
@@ -206,7 +206,8 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
   const askable = tried.find(t => t.r.ask);
   if (askable) return { ...askable.r, node: askable.f.node };
   if (pairAsk) return pairAsk;
-  return { ok: false, why: `${tried.map(t => t.r.why).filter(Boolean).join('; ') || 'no other Spark has room'}${MAIN?.node ? ` (${MAIN.node} is Sparkie’s, so nothing else starts there)` : ''}` };
+  const hub = brainSparks();
+  return { ok: false, why: `${tried.map(t => t.r.why).filter(Boolean).join('; ') || 'no other Spark has room'}${hub.length ? ` (${hub.join(' and ')} ${hub.length > 1 ? 'are' : 'is'} Sparkie’s, so nothing else starts there)` : ''}` };
 }
 
 // The setup to run it with: the fastest run that worked here before, else the best one-click setup, else defaults.
@@ -405,7 +406,7 @@ async function resolveModelName(name, inv) {
 // Spark isn't chosen; a repo from outside Recipes only goes on one Spark.
 async function pickVersion(recipe, repo, viewer, outside, only = null) {
   const status = await statusFor(viewer, false);
-  const online = status.nodes.filter(n => n.state === 'online' && canUse(viewer, n.id) && (only ? only.includes(n.id) : n.id !== MAIN?.node));
+  const online = status.nodes.filter(n => n.state === 'online' && canUse(viewer, n.id) && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
   const free = id => gbOfGiB(online.find(n => n.id === id)?.memoryFreeGiB) ?? 0, disk = id => gbOfGiB(online.find(n => n.id === id)?.diskFreeGiB) ?? 0;
   const pairs = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.some(n => n.id === p.a) && online.some(n => n.id === p.b));
   const versions = recipe.variants.filter(v => (!repo || sameRepo(v.repo, repo)) && v.needGB != null && v.sizeGB != null && (v.sparks ?? 1) <= (outside ? 1 : 2))
@@ -434,6 +435,9 @@ const alreadyStarting = (j, model) => ({ outcome: 'already-starting', operation:
 // Sparkie's Spark (Spark 2) is the brain's: no other workload starts there, named or not (docs/contract.md 8.3).
 // The brain's Spark: where Sparkie's model runs, and the one Spark Console itself runs on.
 function brainSparks() { return [...new Set([MAIN?.node, NODES.find(n => n.host === 'local')?.id].filter(Boolean))]; }
+// The compute Sparks: every Spark on the list but the hub (the brain's and the console's own). Placement that names no
+// Spark only ever picks among these (R1), so nothing lands on the console's Spark even while the brain runs elsewhere.
+function computeSparks() { const hub = brainSparks(); return NODES.map(n => n.id).filter(id => !hub.includes(id)); }
 function notBrainsSpark(ids) {
   for (const brain of brainSparks()) {
     if (ids.includes(brain)) throw new HttpError(403, `${sparkName(nodeById(brain) || { id: brain })} is Sparkie’s (the brain’s), so no other workload starts there. Pick another Spark.`);
