@@ -72,11 +72,9 @@ async function selfTestPlace(spark) {
 // The drill: the container this run started is killed by its id (a full id names that one container only), and
 // self-healing has to start it again and see it answer. Returns the restart's operation; throws why not. A model left
 // down is marked stopped on purpose, so no late restart brings it back after the test.
-async function healDrill(j, node, container) {
+async function healDrill(j, node, container, id) {
   const spark = node.id, key = `${spark}/${container}`;
-  const r = await run(node, `docker inspect -f '{{.Id}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
-  const id = r.out.trim();
-  if (r.code !== 0 || !/^[0-9a-f]{64}$/.test(id)) throw new Error('Its container’s id couldn’t be read, so nothing was stopped.');
+  if (!/^[0-9a-f]{64}$/.test(String(id || ''))) throw new Error('Its container’s id couldn’t be read, so nothing was stopped.');
   // The watcher has to have seen it running, or it couldn't tell that it stopped.
   for (const until = Date.now() + 3 * WATCH_EVERY + 15000; !(knowledge.workloads[key]?.id === id && knowledge.workloads[key].state === 'running'); await sleep(1000)) {
     cancelCheck(j);
@@ -116,10 +114,12 @@ async function selfTestJobParts(node, name) {
   for (const [, part, code, secs] of String(r.out).matchAll(/^selftest (gpu|address) (\d{1,3}) (\d{1,7})$/gm)) out[part] = { code: Number(code), seconds: Number(secs) };
   return out;
 }
-// Each container's state on a Spark ("gone" when Docker has none by that name), from one fixed look per name.
+// Each container's state and full id on a Spark (state "gone" when Docker has none by that name), from one fixed look
+// per name. A name says nothing about whose a container is (another start makes a new one under the same name): the id
+// does.
 async function containerStates(node, names) {
-  const r = await run(node, names.map(n => `printf 'state\\t%s\\t%s\\n' ${q(n)} "$(docker inspect -f '{{.State.Status}}' ${q(n)} 2>/dev/null || echo gone)"`).join('\n'), { timeout: 30000 });
-  return r.code === 0 ? Object.fromEntries(fields(r.out, 'state')) : null;
+  const r = await run(node, names.map(n => `printf 'state\\t%s\\t%s\\t%s\\n' ${q(n)} "$(docker inspect -f '{{.State.Status}}' ${q(n)} 2>/dev/null || echo gone)" "$(docker inspect -f '{{.Id}}' ${q(n)} 2>/dev/null)"`).join('\n'), { timeout: 30000 });
+  return r.code === 0 ? Object.fromEntries(fields(r.out, 'state').map(([n, state, id]) => [n, { state, id: /^[0-9a-f]{64}$/.test(id || '') ? id : null }])) : null;
 }
 
 async function selfTest(j, asked, where, image) {
@@ -143,7 +143,7 @@ async function selfTest(j, asked, where, image) {
   };
   const lineWords = l => `${l.what}: ${l.result}${l.seconds == null ? '' : ` in ${l.seconds} s`}. ${l.words}`;
   const stopApp = name => stepRun(j, me, appCtx, 'keep_running', { spark, container: name, do: 'stop' });
-  let modelStarted = false;
+  let modelStarted = false, modelId = null;
   try {
     // Model: started there, stopping nothing, and it answers its test prompt.
     between();
@@ -152,6 +152,8 @@ async function selfTest(j, asked, where, image) {
     try {
       await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, mine);
       modelStarted = true;
+      // (the container this run started: only that one is ever killed or stopped by it, never another under that name)
+      modelId = (await containerStates(node, [model]))?.[model]?.id || null;
       say('Model', 'worked', t, `${title} started on ${at} and answered its test prompt.`);
     } catch (e) { say('Model', 'failed', t, firstLine(e)); }
 
@@ -162,7 +164,7 @@ async function selfTest(j, asked, where, image) {
     else if (!agentSettings().selfHeal) say('Healing', 'not tried', null, 'Automatic restarts are off (Access → Agents), so the drill didn’t run.');
     else {
       try {
-        await healDrill(j, node, model);
+        await healDrill(j, node, model, modelId);
         say('Healing', 'worked', t, `${model} was stopped hard on purpose (only the container this test started), and self-healing started it again; it answers again.`);
       } catch (e) { if (e?.cancelled) throw e; say('Healing', 'failed', t, firstLine(e)); }
     }
@@ -173,9 +175,10 @@ async function selfTest(j, asked, where, image) {
     if (!modelStarted) say('Stop', 'not tried', null, 'The model didn’t start.');
     else {
       try {
-        const now = await containerStates(node, [model]);
+        const now = (await containerStates(node, [model]))?.[model];
         if (!now) throw new Error(`${at} didn’t answer, so whether ${model} runs isn’t known.`);
-        if (now[model] !== 'running') say('Stop', 'not tried', null, `${model} wasn’t running after the drill, so there was nothing to stop.`);
+        if (now.state !== 'running') say('Stop', 'not tried', null, `${model} wasn’t running after the drill, so there was nothing to stop.`);
+        else if (!modelId || now.id !== modelId) say('Stop', 'not tried', null, `${model} on ${at} is another container now (not the one this test started), so it was left alone.`);
         else {
           step(j, `Stopping ${model}`);
           await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'), undefined, mine);
@@ -227,15 +230,18 @@ async function selfTest(j, asked, where, image) {
     const mine = [...jobs.values()].filter(x => x !== j && x.status === 'running' && x.actor === 'Self-test' && x.createdAt >= j.createdAt);
     if (mine.length) await cancelJobsAndWait(mine, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (now?.[model] === 'running' && modelStarted) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, null, undefined, mine).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
-    for (const name of [web, job].filter(n => now?.[n] === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
+    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, null, undefined, mine).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    for (const name of [web, job].filter(n => now?.[n]?.state === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);
-    const running = left ? [model, web, job].filter(n => left[n] === 'running') : null;
-    const stopped = left ? [web, job].filter(n => left[n] && !['running', 'gone'].includes(left[n])) : [];
+    // (the model's name counts only while it is still the container this run started)
+    const ours = n => n !== model || (modelId && left?.[n]?.id === modelId);
+    const running = left ? [model, web, job].filter(n => left[n]?.state === 'running' && ours(n)) : null;
+    const stopped = left ? [web, job].filter(n => left[n] && !['running', 'gone'].includes(left[n].state)) : [];
+    const modelLeft = left && ours(model) && left[model] && !['running', 'gone'].includes(left[model].state);
     const leftWords = !left ? `Left behind: unknown, ${at} didn’t answer the last look.`
       : running.length ? `Left behind: ${wordList(running)} still running on ${at}. Stop ${running.length > 1 ? 'them' : 'it'} there.`
-        : `Left behind: nothing running.${left[model] && left[model] !== 'gone' ? ` ${model} is stopped on ${at}, as after any stop.` : ''}${stopped.length ? ` ${wordList(stopped)} ${stopped.length > 1 ? 'are' : 'is'} stopped there and used again next time.` : ''}`;
+        : `Left behind: nothing running.${modelLeft ? ` ${model} is stopped on ${at}, as after any stop.` : ''}${stopped.length ? ` ${wordList(stopped)} ${stopped.length > 1 ? 'are' : 'is'} stopped there and used again next time.` : ''}`;
     j.report = [...lines.map(lineWords), leftWords];
     note(j, leftWords);
     if (!left || running?.length) lines.push({ result: 'failed', what: 'Left behind' });
@@ -268,7 +274,7 @@ action({
     const job = newJob('self-test', { node: where.spark, model: where.model.repo || where.model.name, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
       request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     runJob(job, j => selfTest(j, ctx, where, image));
-    return { outcome: 'started', operation: job.id, spark: where.spark, model: where.model.repo || where.model.name,
+    return { outcome: 'started', operation: job.id, spark: where.spark, model: where.model.repo || where.model.name, container: containerName(where.model.name),
       note: `The self-test runs on ${sparkName(nodeById(where.spark))} for a few minutes. Its report is posted when it ends.`, next: `wait_operation {"id":"${job.id}"}` };
   },
 });

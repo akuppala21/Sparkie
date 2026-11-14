@@ -16,12 +16,14 @@ import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
 
 const page = await new Promise(res => { const s = http.createServer((req, r) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end('<p>self-test</p>'); }); s.listen(0, '127.0.0.1', () => res(s)); });
 const WEB_PORT = page.address().port;
 after(() => page.close());
 
+const MOCK_BIN = join(dirname(fileURLToPath(import.meta.url)), 'mock', 'bin');
 const keys = {};
 const SINCE = '2026-11-12T08:00:00.000Z';
 const SEEDED_RUNNING = [
@@ -36,7 +38,8 @@ useFleet({ watchMs: 2000, statusMs: 3000,
   prepare: ({ root, stateDir }) => {
     const list = join(root, 'spark3', '.mock', 'containers');
     writeFileSync(list, readFileSync(list, 'utf8').replace(/^(sc-testorg--Qwen3\.8-27B-abliterated-GGUF)\|running\|[^|]*\|/m, '$1|exited|Exited (0) 2 hours ago|'));
-    for (const f of ['jobs-run', 'stamp-starts']) writeFileSync(join(root, 'spark3', '.mock', f), '');
+    // (and on Spark 3 a container made again under a name gets a new id, as Docker gives)
+    for (const f of ['jobs-run', 'stamp-starts', 'ids-per-run']) writeFileSync(join(root, 'spark3', '.mock', f), '');
     // The owner's list of what should be running, as it would be on a fleet that has been up a while: Spark 4's model, and
     // one on Spark 3 that is down (stopped above). Written here, so the service never seeds it itself in the middle of a
     // test (it does that 60 s after it starts when there is no list).
@@ -62,12 +65,10 @@ async function finished(id, timeout = 300000) {
   }
 }
 const ORDER = ['Model', 'Healing', 'Stop', 'App', 'Job', 'Model address from a container', 'Left behind'];
-const idOf = s => { // the stand-in docker's container id for a name
-  let h = 5381n, hex = '';
-  for (let i = 0; i < Math.min(26, s.length); i++) hex += s.charCodeAt(i).toString(16).padStart(2, '0');
-  for (let i = 0; i < s.length; i++) h = (h * 33n + BigInt(s.charCodeAt(i))) % 281474976710597n;
-  return (hex + '0'.repeat(52)).slice(0, 52) + h.toString(16).padStart(12, '0');
-};
+// A container's id on Spark 3, as the stand-in docker made it (ids-per-run).
+const idOn3 = name => readFileSync(mockFile('spark3', `id-${name}`), 'utf8').trim();
+// The stand-in docker on one Spark, as someone at its terminal would run it.
+const byHand = (spark, ...args) => execFileSync('bash', [join(MOCK_BIN, 'docker'), ...args], { env: { ...process.env, HOME: join(T.fleet.root, spark), PATH: `${MOCK_BIN}:${process.env.PATH}` }, encoding: 'utf8' });
 
 const first = {};
 test('asked in the owner\'s words, it runs at once: the lines come in order, each with its seconds, and nothing is left running or on the hub', { timeout: 600000 * SLOW }, async () => {
@@ -120,8 +121,9 @@ test('asked in the owner\'s words, it runs at once: the lines come in order, eac
 test('the healing drill kills only the container this run started, by its id, and self-healing brings it back', async () => {
   assert.ok(first.job, 'the first run ran');
   const model = /\b(sc-\S+) is stopped on Spark 3/.exec(first.job.report[6])[1];
-  // One kill, on Spark 3 only, by the full id of the model's container.
-  assert.deepEqual(readFileSync(mockFile('spark3', 'killed'), 'utf8').trim().split('\n'), [idOf(model)]);
+  // One kill, on Spark 3 only, by the full id of the model's container (the one the run made).
+  assert.match(idOn3(model), /^[0-9a-f]{64}$/);
+  assert.deepEqual(readFileSync(mockFile('spark3', 'killed'), 'utf8').trim().split('\n'), [idOn3(model)]);
   for (const sp of ['spark1', 'spark2', 'spark4', 'spark5']) assert.ok(!existsSync(mockFile(sp, 'killed')), `nothing killed on ${sp}`);
   // The watcher called it a crash, as the drill's, and self-healing restarted it.
   const ev = eventLines().filter(e => e.at >= first.since && e.container === model);
@@ -184,6 +186,29 @@ test('a drill self-healing passes over (two restarts this hour already) says why
   assert.ok(!eventLines().some(e => e.at >= since && e.type === 'healing'), 'no restart');
 });
 
+test('the model it stops is the container it started, by id: one made by hand under that name on that Spark during the test keeps running', { timeout: 600000 * SLOW }, async () => {
+  const r = await api('/actions/self_test', { method: 'POST', body: {} });
+  assert.equal(r.status, 200, r.text);
+  const id = r.json.operation, name = r.json.container;
+  assert.match(name, /^sc-/, r.text);
+  const job = async () => (await api(`/jobs/${id}`)).json;
+  // Once it is past its model (stopped by it, or left down by its drill), someone runs a container of that name there by
+  // hand (docker rm, docker run: a new container, a new id), while the self-test goes on with its web page and job.
+  await waitFor(async () => (await job()).log.some(l => /A small web page on Spark 3/.test(l)), { timeout: 300000, what: 'the self-test\'s App step' });
+  const before = idOn3(name);
+  byHand('spark3', 'rm', '-f', name);
+  byHand('spark3', 'run', '-d', '--name', name, '--label', 'spark.console=1', '--label', `spark.model=${name.slice(3)}`, 'vllm/vllm-openai:v0.20.0');
+  const theirs = idOn3(name);
+  assert.notEqual(theirs, before, 'a new container');
+  const j = await finished(id);
+  assert.ok(j.report?.length, JSON.stringify(j));
+  // That container: still running, the same one; the report doesn't count it as the test's.
+  assert.equal(states('spark3')[name], 'running', j.report.join('\n'));
+  assert.equal(idOn3(name), theirs);
+  assert.doesNotMatch(j.report[6], new RegExp(`${name} (is stopped|still running)`), j.report[6]);
+  // (put back as it was)
+  byHand('spark3', 'stop', name);
+});
 test('a model on the list of what should be running on that Spark is never the test\'s: with every one there listed, it says so and changes nothing', async () => {
   // (every model with a copy on Spark 3 is on the list for Spark 3, down: as after the Spark was off, or a model held)
   const disk = (await call(keys.look.token, 'models_on_disk', {})).value.models.filter(m => m.onSparks.includes('spark3'));

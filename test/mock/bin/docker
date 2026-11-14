@@ -28,6 +28,7 @@
 # started, at once and to its end, in its /out folder (the source of its -v …:/out), with these stand-ins on PATH: what it
 # prints is its log, and it ends with the command's exit code (otherwise a job stays running). With ~/.mock/stamp-starts,
 # a run or start writes ~/.mock/started-<name> with the time, so a container's StartedAt is when it really started.
+# With ~/.mock/ids-per-run, a container made again under a name gets a new id (cid).
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
 cmd=$1; shift
@@ -45,12 +46,15 @@ idOf() {
   printf '%s%s\n' "${hex:0:52}" "$c"
 }
 lineOf() { grep "^$1|" "$M/containers"; }
+# A container's id: idOf its name; with ~/.mock/ids-per-run (a test turns it on) a new one each time a container is made
+# under that name (~/.mock/id-<name>), as Docker gives.
+cid() { if [ -s "$M/id-$1" ]; then cat "$M/id-$1"; else idOf "$1"; fi; }
 # The container a reference means: its name, else the one container whose id starts with it (hex only).
 resolve() {
   lineOf "$1" >/dev/null && { echo "$1"; return 0; }
   case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
   local n found= hits=0
-  while IFS='|' read -r n _; do [ -n "$n" ] || continue; case "$(idOf "$n")" in "$1"*) hits=$((hits + 1)); found=$n ;; esac; done < "$M/containers"
+  while IFS='|' read -r n _; do [ -n "$n" ] || continue; case "$(cid "$n")" in "$1"*) hits=$((hits + 1)); found=$n ;; esac; done < "$M/containers"
   [ "$hits" = 1 ] && echo "$found"
 }
 # An app's run: its image (the first word after the options) on one line, then the words after it as a JSON list.
@@ -123,7 +127,7 @@ case "$cmd" in
         run*) p=""; [ "$protect" = 1 ] && p=true; o=""; [ "$ours" = 1 ] && o=1; g=""; runLabel "$M/run-$name" spark.gpu=1 && g=1; printf 'run\t%s\t%s\t%s\t%s\n' "$name" "$p" "$o" "$g" ;;
         gpuapp*) printf 'gpuapp\t%s\n' "$name" ;;
         ctr*) printf 'ctr\t%s\t%s\n' "$name" "$state" ;;
-        '{{.ID}}|'*) printf '%s|%s|%s\n' "$(idOf "$name")" "$name" "$state" ;;
+        '{{.ID}}|'*) printf '%s|%s|%s\n' "$(cid "$name")" "$name" "$state" ;;
         '{{.ID}}'*) printf '%s\t%s\tc%s\t%s\n' "$name" "$name" "$ours" "$status" ;;
       esac
     done < "$M/containers" ;;
@@ -138,7 +142,7 @@ case "$cmd" in
   kill)
     ref=$(last "$@"); printf '%s\n' "$ref" >> "$M/killed"
     name=$(resolve "$ref") || { echo "Error response from daemon: No such container: $ref" >&2; exit 1; }
-    [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || { echo "Error response from daemon: Cannot kill container: $ref: container $(idOf "$name") is not running" >&2; exit 1; }
+    [ "$(lineOf "$name" | cut -d'|' -f2)" = running ] || { echo "Error response from daemon: Cannot kill container: $ref: container $(cid "$name") is not running" >&2; exit 1; }
     sed "s/^$name|running|[^|]*|/$name|exited|Exited (137) just now|/" "$M/containers" > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name"
     freeGpu "$name"; echo "$ref" ;;
   start)
@@ -161,7 +165,7 @@ case "$cmd" in
   rename)
     line=$(lineOf "$1") || { echo "Error response from daemon: No such container: $1" >&2; exit 1; }
     lineOf "$2" >/dev/null && { echo "Error response from daemon: Error when allocating new name: Conflict. The container name \"/$2\" is already in use" >&2; exit 1; }
-    setLine "$1" "$2|${line#*|}"; [ -f "$M/up-$1" ] && mv "$M/up-$1" "$M/up-$2"; true ;;
+    setLine "$1" "$2|${line#*|}"; [ -f "$M/up-$1" ] && mv "$M/up-$1" "$M/up-$2"; [ -f "$M/id-$1" ] && mv "$M/id-$1" "$M/id-$2"; true ;;
   # Like docker restart: stopped and started again (clears a hung brain, ~/.mock/brain-hung).
   restart)
     name=$(resolve "$(last "$@")") && line=$(lineOf "$name") || { echo "Error: No such container: $(last "$@")" >&2; exit 1; }
@@ -170,7 +174,7 @@ case "$cmd" in
   rm)
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
-      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name"
+      grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name"
     done ;;
   run)
     printf '%s\n' "$@" > "$M/last-run-args"
@@ -198,6 +202,7 @@ case "$cmd" in
       prev=$a
     done < "$M/last-run-args"
     lineOf "$name" >/dev/null && { echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2; exit 125; }
+    if [ -f "$M/ids-per-run" ]; then idOf "$name~$RANDOM$RANDOM$(date +%s)" > "$M/id-$name"; else rm -f "$M/id-$name"; fi
     [ "$ours" = app ] && cp "$M/last-run-args" "$M/run-$name"
     if [ "$ours" = app ] && [ -f "$M/app-port-taken" ]; then
       echo "$name|created|Created|$ours|$model|$protect|$role|$cluster|$rank" >> "$M/containers"
@@ -258,7 +263,7 @@ case "$cmd" in
       want=$(resolve "$1") || want=
       while IFS='|' read -r name state status ours model protect role cluster rank; do
         [ -z "$name" ] && continue
-        id=$(idOf "$name"); [ "$id" = "$1" ] || [ "$name" = "$want" ] || continue
+        id=$(cid "$name"); [ "$id" = "$1" ] || [ "$name" = "$want" ] || continue
         img=vllm/vllm-openai:v0.20.0; case "$name" in qwen-recipe-*) img=lmsysorg/sglang:latest;; *webui*|*web-app*) img=ghcr.io/open-webui/open-webui:main;; redis*) img=redis:7;; esac
         [ -s "$M/image-$name" ] && img=$(cat "$M/image-$name")
         # Ports, settings, volumes and memory cap: an app's from its run; else ~/.mock/ports and ~/.mock/memory-<name>.
@@ -311,7 +316,7 @@ case "$cmd" in
     # The protect label, as docker inspect -f '{{index .Config.Labels "spark.protect"}}' gives it.
     case "$*" in *'"spark.protect"'*) [ "$(echo "$line" | cut -d'|' -f6)" = 1 ] && echo true || echo '<no value>'; exit 0 ;; esac
     case "$*" in
-      *'{{.Id}}'*) idOf "$name" ;;
+      *'{{.Id}}'*) cid "$name" ;;
       # (exactly waitJobEnd's format: the brain's status check reads ExitCode too, with StartedAt, below)
       *'{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
       *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;;
