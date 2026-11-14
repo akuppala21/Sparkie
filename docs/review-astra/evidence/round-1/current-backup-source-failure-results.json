@@ -1,0 +1,12 @@
+{
+  "case": "failed-source-tar-replaces-good-backup",
+  "sendCopyAccepted": true,
+  "tarExitStatus": 1,
+  "tarStderr": "tar: Can't open `chats.json': Permission denied\ntar: Error exit delayed from previous errors.\n",
+  "previousBackupOverwritten": true,
+  "archiveIsValid": true,
+  "archiveEntries": [
+    "./"
+  ],
+  "missingChats": true
+}

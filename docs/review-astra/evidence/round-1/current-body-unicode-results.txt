@@ -1,0 +1,6 @@
+Exact code under test: /Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/src/23-http.mjs readBody
+Input shape: POST /console/api/actions/save_file.
+Submitted file text: "Price: €10 — café 😀"
+Parsed file text:    "Price: ���10 — café 😀"
+Buffer boundary: after the first of three UTF-8 bytes of the euro sign.
+CONFIRMED: valid UTF-8 JSON silently changes file content at a network chunk boundary.

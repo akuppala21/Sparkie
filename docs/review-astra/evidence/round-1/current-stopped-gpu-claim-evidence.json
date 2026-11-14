@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "sourceHashes": {
+    "service/src/07-jobs.mjs": "a7d3433899bb81e9979fd20ceba9d9ce2632d986ac32ea572be113344be303b4",
+    "service/src/21-apps.mjs": "5a10a79e894bbc324aa6e15b1979ae1c5604b8bdef87597e12067f87597c8739"
+  },
+  "testType": "controlled function interleaving; external commands only captured, never executed",
+  "claimsHeldDuringInitialMemoryCheck": false,
+  "inventoryCalls": 1,
+  "memoryCalls": 1,
+  "modelRunningAtAppStart": true,
+  "actionOutcome": "started",
+  "commands": [
+    {
+      "kind": "inspect-app",
+      "modelRunning": false
+    },
+    {
+      "kind": "docker start 'gpu-app'",
+      "modelRunning": true
+    }
+  ],
+  "bugReproduced": true
+}

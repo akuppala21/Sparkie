@@ -1,0 +1,31 @@
+[
+  {
+    "case": "memory-question-can-delete-memory",
+    "question": "What do you remember about Spark 4 being on Wi-Fi only?",
+    "tools": [
+      {
+        "name": "forget_memory",
+        "title": "Forget",
+        "ok": true,
+        "ms": 33,
+        "change": true,
+        "outcome": "forgotten"
+      }
+    ],
+    "remainingEntries": 0,
+    "approvalButtons": 0
+  },
+  {
+    "case": "truncated-error-response-leaves-chat-busy",
+    "afterUpstreamClosedMs": 1500,
+    "replying": true,
+    "retryStatus": 409,
+    "retryError": "Sparkie is still answering in this conversation."
+  },
+  {
+    "case": "upstream-error-secret-persists-in-chat",
+    "httpStatus": 200,
+    "rawFixtureTokenInSavedError": true,
+    "errorField": "The model answered 500: {\"error\":\"upstream rejected token [FAKE TEST TOKEN]\"}"
+  }
+]

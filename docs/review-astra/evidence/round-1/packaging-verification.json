@@ -1,0 +1,93 @@
+{
+  "verified_at": "2026-11-14T08:08:47.771506+00:00",
+  "scope": "Packaging smoke only; no HTTP fleets, browser launches, or broad suites rerun.",
+  "checks": [
+    {
+      "name": "syntax-and-portability",
+      "scripts": 11,
+      "passed": true
+    },
+    {
+      "name": "artifact-hashes",
+      "files": 23,
+      "unchanged_archived_results": 12,
+      "passed": true
+    },
+    {
+      "name": "reviewed-source-hashes",
+      "files": 10,
+      "passed": true
+    },
+    {
+      "name": "path-and-module-resolution",
+      "passed": true,
+      "details": {
+        "repositoryRootResolved": true,
+        "helperImportsResolved": true,
+        "workerPathResolved": true,
+        "playwrightModuleResolved": true,
+        "appSourceLoaded": true,
+        "browserLaunched": false,
+        "fleetStarted": false
+      }
+    },
+    {
+      "name": "current-stopped-gpu-claim-check.mjs",
+      "exit_code": 0,
+      "passed": true,
+      "stdout": "{\n  \"sourceCommit\": \"03866c09cf3edc0529ae8316c9356f44edb87dfd\",\n  \"sourceHashes\": {\n    \"service/src/07-jobs.mjs\": \"a7d3433899bb81e9979fd20ceba9d9ce2632d986ac32ea572be113344be303b4\",\n    \"service/src/21-apps.mjs\": \"5a10a79e894bbc324aa6e15b1979ae1c5604b8bdef87597e12067f87597c8739\"\n  },\n  \"testType\": \"controlled function interleaving; external commands only captured, never executed\",\n  \"claimsHeldDuringInitialMemoryCheck\": false,\n  \"inventoryCalls\": 1,\n  \"memoryCalls\": 1,\n  \"modelRunningAtAppStart\": true,\n  \"actionOutcome\": \"started\",\n  \"commands\": [\n    {\n      \"kind\": \"inspect-app\",\n      \"modelRunning\": false\n    },\n    {\n      \"kind\": \"docker start 'gpu-app'\",\n      \"modelRunning\": true\n    }\n  ],\n  \"bugReproduced\": true\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "current-first-job-end-check.mjs",
+      "exit_code": 0,
+      "passed": true,
+      "stdout": "{\n  \"sourceCommit\": \"03866c09cf3edc0529ae8316c9356f44edb87dfd\",\n  \"source\": \"/Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/src/19-watcher.mjs\",\n  \"sourceSha256\": \"2f0a4045f9a279bef8c94b1abca76cb05fb8acf0c21e82b96bac31362b2f4de4\",\n  \"testType\": \"real watcher functions with stand-in command output; no external commands executed\",\n  \"successfulEmptyLookMarksSawContainers\": false,\n  \"jobEndMarkedTold\": true,\n  \"completionCallbacks\": [],\n  \"emittedEvents\": [],\n  \"bugReproduced\": true\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "current-body-unicode-repro.mjs",
+      "exit_code": 0,
+      "passed": true,
+      "stdout": "Exact code under test: /Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/src/23-http.mjs readBody\nInput shape: POST /console/api/actions/save_file.\nSubmitted file text: \"Price: \u20ac10 \u2014 caf\u00e9 \ud83d\ude00\"\nParsed file text:    \"Price: \ufffd\ufffd\ufffd10 \u2014 caf\u00e9 \ud83d\ude00\"\nBuffer boundary: after the first of three UTF-8 bytes of the euro sign.\nCONFIRMED: valid UTF-8 JSON silently changes file content at a network chunk boundary.\n",
+      "stderr": ""
+    },
+    {
+      "name": "current-worker-delete-race-repro.py",
+      "exit_code": 0,
+      "passed": true,
+      "stdout": "{\n  \"scope\": \"current source; isolated temporary files only\",\n  \"source\": \"/Users/akuppala/Documents/ChatGPT/spark/Sparkie-review/service/worker.py\",\n  \"source_sha256\": \"fa09bbf92a2230879cce445b101a366a35bbec314d9e4f17e72557f4770c9280\",\n  \"repro\": \"concurrent in-place editor write during portal delete\",\n  \"concurrent_edit_written\": true,\n  \"worker_result\": {\n    \"deleted\": true,\n    \"path\": \"note.txt\",\n    \"kind\": \"file\"\n  },\n  \"file_still_exists\": false,\n  \"bug_reproduced\": true,\n  \"external_commands_executed\": 0\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "privacy-scope",
+      "passed": true,
+      "method": "Explicit current-source artifact allowlist; archived outputs inspected; common credential-pattern scan permits only the documented fake token in the chat script. No live response files copied."
+    },
+    {
+      "name": "current-backup-source-failure-repro.mjs",
+      "passed": true,
+      "exit_code": 0,
+      "stdout": "{\n  \"case\": \"failed-source-tar-replaces-good-backup\",\n  \"sendCopyAccepted\": true,\n  \"tarExitStatus\": 1,\n  \"tarStderr\": \"tar: Can't open `chats.json': Permission denied\\ntar: Error exit delayed from previous errors.\\n\",\n  \"previousBackupOverwritten\": true,\n  \"archiveIsValid\": true,\n  \"archiveEntries\": [\n    \"./\"\n  ],\n  \"missingChats\": true\n}\n",
+      "stderr": "",
+      "method": "Exact source parity guard passed; actual local tar/receiver in temp directories. Fatal variant maps source failure to exit2; no real remote calls."
+    },
+    {
+      "name": "current-backup-fatal-source-repro.mjs",
+      "passed": true,
+      "exit_code": 0,
+      "stdout": "{\n  \"case\": \"fatal-source-tar-error-still-replaces-good-backup\",\n  \"sourceErrorModel\": \"Real BSD tar permission failure mapped from exit 1 to fatal exit 2 (GNU semantics)\",\n  \"sendCopyAccepted\": false,\n  \"tarExitStatus\": 2,\n  \"tarStderr\": \"tar: Can't open `chats.json': Permission denied\\ntar: Error exit delayed from previous errors.\\n\",\n  \"previousBackupOverwritten\": true,\n  \"archiveIsValid\": true,\n  \"archiveEntries\": [\n    \"./\"\n  ],\n  \"missingChats\": true\n}\n",
+      "stderr": "",
+      "method": "Exact source parity guard passed; actual local tar/receiver in temp directories. Fatal variant maps source failure to exit2; no real remote calls."
+    },
+    {
+      "name": "backup-source-peer-review",
+      "passed": true,
+      "source": "service/src/25-backup-and-start.mjs",
+      "function": "sendCopy",
+      "observed": "Receiver promotes archive before sender exit is checked. Both variants reproduce valid incomplete archive replacing existing fixture.",
+      "limits": "Same-day overwrite needs missing or stale success record; fatal2 is a status simulation, not a GNU/Linux run. Scheduling and retention not run."
+    }
+  ],
+  "updated_at": "2026-11-14T08:13:35.312816+00:00"
+}

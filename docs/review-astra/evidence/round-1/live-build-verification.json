@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "prepared_at_utc": "2026-11-14T08:22:56.629263+00:00",
+  "scope": "Sanitized provenance derived only from previously saved read-only snapshots and local reviewed source. No new network request, live workflow test, workload mutation, or deployed-file enumeration was performed.",
+  "caveat": "This verifies the saved health identifiers, the service build fingerprint, and normalized frontend bytes. It does not prove every deployed file (including worker.py) matches the checkout or that live workflows pass. File modification times below describe saved artifacts, not independently verified server observation times.",
+  "expected_source_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "checked_out_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "saved_snapshot_directory": "/tmp/spark-early-review-20261113",
+  "saved_snapshot_metadata": [
+    {
+      "filename": "installed-console_api_health",
+      "sha256": "c33a900ae33c7c40f1487daf57ccbde90fc419aebcf8fca991ff1293acd664ac",
+      "file_mtime_utc": "2026-11-14T07:56:40.506446+00:00"
+    },
+    {
+      "filename": "installed-version.json",
+      "sha256": "ee83e4c1ad0e2f6265b83a747f54be40baf2e26daf9647e29b3718695bed92e6",
+      "file_mtime_utc": "2026-11-14T07:56:40.460957+00:00"
+    },
+    {
+      "filename": "installed-app.js",
+      "sha256": "cc73769af019cd03b15233f73950f91e62e7cab0ec529d6c53f8eb2abda0f05c",
+      "file_mtime_utc": "2026-11-14T07:56:40.694488+00:00"
+    }
+  ],
+  "sanitized_health": {
+    "build": "0be65f7314ab",
+    "ok": true,
+    "startedAt": "2026-11-14T07:52:17.924Z"
+  },
+  "service_build_check": {
+    "algorithm": "First 12 hexadecimal characters of SHA-256 over concatenated server.mjs, dig.mjs, and passkey.mjs bytes, in that order.",
+    "source_files": [
+      "service/server.mjs",
+      "service/dig.mjs",
+      "service/passkey.mjs"
+    ],
+    "local_build": "0be65f7314ab",
+    "matches_saved_health_build": true,
+    "source_sha256": {
+      "service/server.mjs": "b3b4936f51cc3c5f6b9b698077dbddb62e03ee3c46defeb1747f15f878c2e11e",
+      "service/dig.mjs": "5e77d68cbb92837e8e85fb0172c1c1603f0b374141cd59a5c8b57a8a829954a2",
+      "service/passkey.mjs": "2abd5f44c05cdd0eeef507f02f711131e358d463a27ed12ca8d05d878dcf823e"
+    }
+  },
+  "frontend_check": {
+    "saved_version_build": "35fe915048d9",
+    "saved_javascript_BUILD": "35fe915048d9",
+    "local_javascript_BUILD": "dev",
+    "local_source": "public/app.js",
+    "local_source_sha256": "5a642781bcb8e199f207fbcfdacbbd921d5cd29f42927624d7f7e5350567db81",
+    "saved_javascript_sha256": "cc73769af019cd03b15233f73950f91e62e7cab0ec529d6c53f8eb2abda0f05c",
+    "normalization": "Replace exactly one const BUILD = '<value>'; declaration with const BUILD = '<normalized>'; in each byte sequence; no other changes.",
+    "normalized_local_sha256": "d154f6b47caac462e5a6384153e8b253f7f57e7831e0491e5edc009da190a726",
+    "normalized_saved_sha256": "d154f6b47caac462e5a6384153e8b253f7f57e7831e0491e5edc009da190a726",
+    "normalized_bytes_equal": true
+  },
+  "privacy": "Only build/ok/startedAt values were selected from saved health JSON. Raw health/bootstrap/status/whoami data, credentials, addresses, and owner data are not included."
+}
