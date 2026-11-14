@@ -1,10 +1,11 @@
 // The self-test's clean-up (21-selftest.mjs) on a fleet where nothing is validated yet, as after an install that changed
 // the workflows: the self-test's runs are their validation runs, and its clean-up has to carry that pass too, or
 // runAction refuses its stop and the test model is left running. (selftest.test.mjs covers the rest, with everything
-// validated.) Spark 3 is made free as there.
+// validated.) Spark 3 is made free as there, and it came back on ten minutes ago (so self-healing restarts nothing
+// there for another twenty: the owner did what the self-test says when no compute Spark is on).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
@@ -16,7 +17,10 @@ const keys = {};
 useFleet({ watchMs: 2000, statusMs: 3000,
   env: { SPARK_CONSOLE_SELFTEST_PORT: String(page.address().port), SPARK_CONSOLE_JOB_WAIT_MS: '500', SPARK_CONSOLE_APP_ANSWER_MS: '20000', SPARK_CONSOLE_SELFTEST_HEAL_MS: '60000',
     SPARK_CONSOLE_ASSUME_VALIDATED: '0', SPARK_CONSOLE_DIG_FIXTURE: join(dirname(fileURLToPath(import.meta.url)), 'mock', 'dig-fixture.json') },
-  prepare: ({ root }) => {
+  prepare: ({ root, stateDir }) => {
+    const at = ms => new Date(Date.now() - ms).toISOString();
+    writeFileSync(join(stateDir, 'events.jsonl'), [{ at: at(8 * 3600000), type: 'spark-offline', spark: 'spark3' }, { at: at(10 * 60000), type: 'spark-online', spark: 'spark3', upSeconds: 45 }]
+      .map(e => JSON.stringify(e)).join('\n') + '\n', { mode: 0o600 });
     const list = join(root, 'spark3', '.mock', 'containers');
     writeFileSync(list, readFileSync(list, 'utf8').replace(/^(sc-testorg--Qwen3\.8-27B-abliterated-GGUF)\|running\|[^|]*\|/m, '$1|exited|Exited (0) 2 hours ago|'));
     for (const f of ['jobs-run', 'stamp-starts', 'ids-per-run']) writeFileSync(join(root, 'spark3', '.mock', f), '');
@@ -50,4 +54,14 @@ test('cancelled during its first step while stop_model waits for its validation 
   assert.deepEqual(running('spark3'), before);
   // (that stop was a real one, so it is stop_model's validation run)
   assert.equal((await workflows()).stop_model, 'active');
+});
+
+test('on a Spark turned on ten minutes ago the drill isn\'t run: healing is "not tried", saying when to ask again, nothing is killed, and the run passes', { timeout: 600000 * SLOW }, async () => {
+  const r = await api('/actions/self_test', { method: 'POST', body: {} });
+  assert.equal(r.status, 200, r.text);
+  const j = await finished(r.json.operation);
+  assert.equal(j.status, 'completed', `${j.error}\n${(j.report || []).join('\n')}`);
+  assert.match(j.report[1], /^Healing: not tried\. Spark 3 went off or came on in the last half hour, and self-healing restarts nothing there for half an hour after that, so the drill didn’t run\. Ask again in about \d+ minutes?\.$/, j.report[1]);
+  for (const i of [0, 2, 3, 4, 5]) assert.match(j.report[i], /: worked in \d+ s\. /, j.report[i]);
+  assert.ok(!existsSync(join(T.fleet.root, 'spark3', '.mock', 'killed')), 'nothing killed');
 });

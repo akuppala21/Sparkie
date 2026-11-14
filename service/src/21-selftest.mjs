@@ -114,6 +114,22 @@ async function healDrill(j, node, container, id) {
   } finally { healDrills.delete(mark); }
 }
 
+// Why self-healing wouldn't restart the drill's model now, and when to ask again; null when it would. maybeHeal's own
+// rules before it looks at the crash itself (18-workflows.mjs), asked before anything is killed: a drill that can't come
+// back is never run, and isn't a failure.
+const inAbout = at => { const m = Math.max(1, Math.ceil((at - Date.now()) / 60000)); return `in about ${m} minute${m === 1 ? '' : 's'}`; };
+function drillHeldBack(node, container) {
+  const s = agentSettings();
+  if (!s.selfHeal) return 'Automatic restarts are off (Access → Agents), so the drill didn’t run.';
+  if (s.halted && !s.autoPaused) return 'Agents’ changes are paused (Access → Agents), and self-healing waits too, so the drill didn’t run.';
+  const tries = healTriesThisHour(`${node.id}/${container}`);
+  if (tries.length >= 2) return `Self-healing restarted ${container} twice in the last hour, the most it does, so the drill didn’t run. Ask again ${inAbout(Math.min(...tries) + 3600000)}.`;
+  if (workflowStatus('restart_model').state === 'untested') return 'The restart workflow hasn’t passed Spark Console’s tests, so self-healing restarts nothing and the drill didn’t run.';
+  const flip = lastOnOff(node.id);
+  if (flip) return `${sparkName(node)} went off or came on in the last half hour, and self-healing restarts nothing there for half an hour after that, so the drill didn’t run. Ask again ${inAbout(flip + 30 * 60000)}.`;
+  return null;
+}
+
 // What a job printed about its two parts ("selftest gpu 0 3"), from the last lines of its log: numbers only.
 async function selfTestJobParts(node, name) {
   const r = await run(node, `docker logs --tail 20 ${q(name)} 2>/dev/null`, { timeout: 20000 });
@@ -174,8 +190,9 @@ async function selfTest(j, asked, where, image) {
     // Healing: the drill.
     between();
     t = Date.now();
+    const held = modelStarted ? drillHeldBack(node, model) : null;
     if (!modelStarted) say('Healing', 'not tried', null, 'The model didn’t start, so there was nothing to bring back.');
-    else if (!agentSettings().selfHeal) say('Healing', 'not tried', null, 'Automatic restarts are off (Access → Agents), so the drill didn’t run.');
+    else if (held) say('Healing', 'not tried', null, held);
     else {
       try {
         await healDrill(j, node, model, modelId);

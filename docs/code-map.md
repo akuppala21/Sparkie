@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together, and the rules every change must keep, are in `docs/architecture.md`. What to read first is in `AGENTS.md`.
 
-The service is 38 parts in `service/src/`, joined in name order into `service/server.mjs` (11297 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 38 parts in `service/src/`, joined in name order into `service/server.mjs` (11318 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -196,10 +196,10 @@ Sparkie, your agents (with "can change things" on their key) and the spark comma
 
 Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a workflow and fill in its inputs; they never make up the steps. A workflow's version is a fingerprint of its code (the functions it runs, its action, its known problems, and the worker that runs on the Sparks), so any change to that code is a new version. A version runs only once it's validated twice: - tested: the whole test suite passed with this exact build …
 
-- **Lines:** 586
+- **Lines:** 590
 - **Actions:** `workflows`, `save_workflow`, `run_workflow`, `forget_workflow`, `wait_operation`, `test_changes`, `undo_update`
 - **State files it names:** `validations.json`, `saved-workflows.json`, `.test-check-fails`, `heal-tries.json`, `updates.json`, `update-note.json`
-- **Functions:** `WORKER_SOURCE`, `START_CODE`, `workflowById`, `workflowFor`, `workflowVersion`, `WORKFLOW_LOCK`, `validations`, `workflowStatus`, `recordWorkflowRun`, `offMessage`, `unvalidatedMessage`, `pageWorkflow`, `rehearse`, `savedWorkflows`, `workflowSlug`, `fillIn`, `placeholders`, `savedView`, `findSaved`, `writeSaved`, `stepArgs`, `stepWords`, `missingTarget`, `checkFailsForTest`, `checkSteps`, `saveHealTries`, `maybeHeal`, `stepRun`, `testModels`, `validateChanged`, `lastSnapshot`, `updatesFrom`, `noteUpdate`, `lastUpdates`, `startTestChanges`, `undoUpdate`
+- **Functions:** `WORKER_SOURCE`, `START_CODE`, `workflowById`, `workflowFor`, `workflowVersion`, `WORKFLOW_LOCK`, `validations`, `workflowStatus`, `recordWorkflowRun`, `offMessage`, `unvalidatedMessage`, `pageWorkflow`, `rehearse`, `savedWorkflows`, `workflowSlug`, `fillIn`, `placeholders`, `savedView`, `findSaved`, `writeSaved`, `stepArgs`, `stepWords`, `missingTarget`, `checkFailsForTest`, `checkSteps`, `saveHealTries`, `healTriesThisHour`, `lastOnOff`, `maybeHeal`, `stepRun`, `testModels`, `validateChanged`, `lastSnapshot`, `updatesFrom`, `noteUpdate`, `lastUpdates`, `startTestChanges`, `undoUpdate`
 
 ### `19-watcher.mjs`: watching the fleet: what runs, what changed, and what it learns
 
@@ -293,9 +293,9 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 
 "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no model, model server or GPU app runs there, and nothing is changing there) and has a small chat model on disk (testModels): Model start_model there, stopping nothing (noStops); it answers its test prompt, and is timed. Healing the drill: that model's …
 
-- **Lines:** 295
+- **Lines:** 312
 - **Actions:** `self_test`
-- **Functions:** `selfTestJobCommand`, `selfTestAddress`, `selfTestName`, `wordList`, `firstLine`, `selfTestPlace`, `healDrill`, `selfTestJobParts`, `containerStates`, `selfTest`
+- **Functions:** `selfTestJobCommand`, `selfTestAddress`, `selfTestName`, `wordList`, `firstLine`, `selfTestPlace`, `healDrill`, `inAbout`, `drillHeldBack`, `selfTestJobParts`, `containerStates`, `selfTest`
 
 ### `21-telegram.mjs`: Telegram: the owner talks to Sparkie from any phone or laptop
 

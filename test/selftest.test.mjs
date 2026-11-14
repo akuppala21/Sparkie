@@ -167,23 +167,21 @@ test('with the stand-in GPU broken, the job line fails and the others still repo
   } finally { rmSync(mockFile('spark3', 'gpu-broken'), { force: true }); }
 });
 
-test('a drill self-healing passes over (two restarts this hour already) says why, and leaves the model stopped and off the list', { timeout: 600000 * SLOW }, async () => {
-  const before = { spark3: running('spark3'), desired: desiredRunning() }, since = new Date().toISOString();
+test('a third self-test within the hour: self-healing would pass the model over, so the drill isn\'t run ("not tried", with why and when), nothing is killed, and the run passes', { timeout: 600000 * SLOW }, async () => {
+  const before = { spark3: running('spark3'), desired: desiredRunning(), killed: readFileSync(mockFile('spark3', 'killed'), 'utf8') }, since = new Date().toISOString();
   const r = await api('/actions/self_test', { method: 'POST', body: {} });
   assert.equal(r.status, 200, r.text);
   const j = await finished(r.json.operation);
-  assert.equal(j.status, 'failed', JSON.stringify(j));
-  assert.equal(j.error, 'The self-test found a problem: healing.');
-  assert.match(j.report[1], /^Healing: failed in \d+ s\. Self-healing didn’t start it again: it crashed again after two restarts this hour\.$/, j.report[1]);
-  assert.match(j.report[2], /^Stop: not tried\. sc-\S+ wasn’t running after the drill, so there was nothing to stop\.$/, j.report[2]);
+  assert.equal(j.status, 'completed', `${j.error}\n${(j.report || []).join('\n')}`);
+  assert.match(j.report[1], /^Healing: not tried\. Self-healing restarted sc-\S+ twice in the last hour, the most it does, so the drill didn’t run\. Ask again in about \d+ minutes?\.$/, j.report[1]);
+  assert.match(j.report[2], /^Stop: worked in \d+ s\./, j.report[2]);
   for (const i of [3, 4, 5]) assert.match(j.report[i], /: worked in \d+ s\. /, j.report[i]);
-  assert.match(j.report[6], /^Left behind: nothing running\. sc-\S+ is stopped on Spark 3/);
-  // The model this test started was never the owner's wish: nothing is held on the list for it, and no late restart
-  // brings it back.
+  assert.match(j.report[6], /^Left behind: nothing running\./);
+  assert.equal(readFileSync(mockFile('spark3', 'killed'), 'utf8'), before.killed, 'nothing killed');
+  const model = /\b(sc-\S+) was|restarted (sc-\S+) twice/.exec(j.report[1]).slice(1).find(Boolean);
+  assert.ok(!eventLines().some(e => e.at >= since && e.container === model && ['crashed', 'healing', 'heal-skipped'].includes(e.type)), 'no crash, no restart');
   assert.deepEqual(desiredRunning(), before.desired);
-  await sleep(6000);
   assert.deepEqual(running('spark3'), before.spark3);
-  assert.ok(!eventLines().some(e => e.at >= since && e.type === 'healing'), 'no restart');
 });
 
 test('the model it stops is the container it started, by id: one made by hand under that name on that Spark during the test keeps running', { timeout: 600000 * SLOW }, async () => {

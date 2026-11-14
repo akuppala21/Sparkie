@@ -364,6 +364,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // exit counts as a crash (19-watcher.mjs: a kill reads as exit 137, which is otherwise someone's stop), and the
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
+// A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
@@ -372,7 +376,7 @@ async function maybeHeal(node, w) {
   const stoppedAt = consoleStopped.get(key) || 0;
   if (Date.now() - stoppedAt < 15 * 60000 && !(w.startedAt && Date.parse(w.startedAt) > stoppedAt)) return;
   const skip = why => { fleetEvent({ type: 'heal-skipped', spark: node.id, container: w.name, why }); audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: false, error: why }); };
-  const recentTries = (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
+  const recentTries = healTriesThisHour(key);
   if (recentTries.length >= 2) return skip('it crashed again after two restarts this hour');
   // A version not yet validated on these Sparks still restarts the owner's own model: that run is its validation (an
   // install that changed it shouldn't switch auto-restart off until a test run, 2026-11-11).
@@ -381,7 +385,7 @@ async function maybeHeal(node, w) {
   // A Spark that lost power or rebooted shows its containers as exited (often 255). The model that was running may be
   // what froze it, so it isn't started again by itself.
   if (Number(w.exitCode) === 255) return skip('it stopped when the Spark lost power or restarted');
-  if (events.some(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === node.id && Date.now() - Date.parse(e.at) < 30 * 60000)) {
+  if (lastOnOff(node.id)) {
     return skip(`${sparkName(node)} was offline in the last half hour`);
   }
   // One that dies within 10 minutes of starting is a setup problem (or a start that failed), not a crash to retry.
