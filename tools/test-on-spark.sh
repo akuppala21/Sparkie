@@ -101,6 +101,16 @@ if [ "$MODE" != "--watch" ]; then
   run_once "$HERE" "sparkie-tests-$(basename "$HERE")" "" "$DSLOW" "$DCONC" latest
   rc=$?; [ -f "$OUT/latest.lock.json" ] && cp "$OUT/latest.lock.json" "$OUT/workflows.lock.json"; exit $rc
 fi
+# One watcher at a time: two would take the same request and run it twice into one folder on the Spark.
+other=$(cat "$OUT/watcher.pid" 2>/dev/null)
+case "$other" in ''|*[!0-9]*) other="" ;; esac
+if [ -n "$other" ] && [ "$other" != "$$" ] && kill -0 "$other" 2>/dev/null && ps -o command= -p "$other" 2>/dev/null | grep -q "test-on-spark.sh"; then
+  echo "A watcher is already running (process $other), so this one is not needed. Nothing to do here."
+  exit 0
+fi
+echo "$$" > "$OUT/watcher.pid"
+trap 'if [ "$(cat "$OUT/watcher.pid" 2>/dev/null)" = "$$" ]; then rm -f "$OUT/watcher.pid"; fi' EXIT
+trap 'exit 130' INT TERM
 echo "Waiting for requests in $OUT/queue (Ctrl-C stops this)."
 while true; do
   if [ -e "$OUT/run-now" ]; then rm -f "$OUT/done" "$OUT/workflows.lock.json"; mv "$OUT/run-now" "$OUT/queue/latest.req"; fi
@@ -108,7 +118,7 @@ while true; do
   if [ -n "$req" ]; then
     name=$(basename "$req" .req)
     rm -f "$OUT/$name.done"
-    mv "$req" "$OUT/running.req"
+    mv "$req" "$OUT/running.req" 2>/dev/null || { sleep 1; continue; }
     run_req "$OUT/running.req" "$name"; rc=$?
     rm -f "$OUT/running.req"
     echo "$rc" > "$OUT/$name.done"
