@@ -1,6 +1,11 @@
 #!/bin/bash
 # Stand-in gzip: the real one, except that `gzip -t` fails on a Spark whose ~/.mock/gzip-bad exists (a copy that
 # arrived cut short).
+# The command it was run from (the daily copy's first command, as Spark Console sends it) is kept in ~/.mock/gzip-from.
+if [ "$1" = -t ] && [ -d "$HOME/.mock" ]; then
+  if [ -r "/proc/$PPID/cmdline" ]; then tr '\0' '\n' < "/proc/$PPID/cmdline" | sed -n '3,$p'
+  else ps -ww -o args= -p "$PPID" | sed 's/^[^ ]* -c //'; fi > "$HOME/.mock/gzip-from" 2>/dev/null
+fi
 if [ "$1" = -t ] && [ -e "$HOME/.mock/gzip-bad" ]; then echo "gzip: (stdin): unexpected end of file" >&2; exit 1; fi
 for g in /usr/bin/gzip /bin/gzip; do [ -x "$g" ] && exec "$g" "$@"; done
 echo "gzip stand-in: no real gzip here" >&2; exit 127

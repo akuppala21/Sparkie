@@ -413,7 +413,7 @@ async function maybeHeal(node, w) {
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
-  } catch (e) { skip(e.message); }
+  } catch (e) { skip(maskSecrets(String(e.message))); }
 }
 
 
