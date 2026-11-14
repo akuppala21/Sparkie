@@ -32,6 +32,7 @@ in your change (and fix the one that is wrong); never quietly change either.
 | `deploy/` | Install scripts (`host-on-portal.sh`; on Spark 2 itself, `host-on-portal.sh local`). `go-back.sh` and `RECOVERY.txt`: every install copies them to `~/.local/share/spark-console/` on Spark 2, the by-hand way back when the console doesn't answer. |
 | `tools/` | `build-server.mjs`, `code-map.mjs`, `console.mjs`, `spark.mjs`, `brain-load.mjs`, and catalog builders. |
 | `docs/` | The contract, the architecture map, the code map, and the analysis record. |
+| `.github/workflows/full-run.yml` | The full test run on GitHub, and the tested mark (`test/README.md`, "Where the full run happens"). |
 
 On Spark 2 the same tree is at `~/spark-console-src` (every install copies it there).
 
@@ -56,6 +57,15 @@ On Spark 2 the same tree is at `~/spark-console-src` (every install copies it th
    `POST /console/api/actions/<name>`. Passing tests are not the same as working on the real Sparks. The installer checks
    the new build by itself (40 seconds as one process, the ways in, one chat turn) and puts the previous files back on
    any miss (R30); put `SKIP_CHAT_CHECK=1` in front of the command to update while Sparkie's model is down.
+
+## Working from another computer
+
+Any computer with git, Node (the tests run on 26), Python 3 and bash will do: clone the repository, read this page,
+change the parts, rebuild, and run the test files closest to the change (step 4). Push a branch and open a pull
+request: GitHub runs the whole suite on it, and after a merge to `main` a passing run leaves the tag
+`tested/<first 12 hex of the tree>`, the tested commit plus its lock. No SSH to a Spark, no lock and no fleet key is
+needed for any of this. Installing still goes through the installer (step 7); a checkout of a `tested/` tag already
+holds the lock it asks for.
 
 ## Rules that matter
 
