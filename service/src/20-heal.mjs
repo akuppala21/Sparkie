@@ -125,7 +125,7 @@ async function bringBack(x, why, parts, power = false) {
       await run(nodeById(d.spark), `docker start ${q(d.container)} >/dev/null 2>&1; true`, { timeout: 90000 }).catch(() => {});
     }
     skippedOnce.set(key, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
     audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: String(e.message).slice(0, 300) });
   }
 }

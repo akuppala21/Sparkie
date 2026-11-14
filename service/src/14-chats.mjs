@@ -116,7 +116,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
     // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -220,7 +220,8 @@ const TURN_STOPPED = 'Stopped at your word.';
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
   conv.task = null;
-  if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); }
+  // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
+  if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
   // (results held on Telegram for the carry-on that now won't come go out)
   if (task?.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return Boolean(link || task);
@@ -287,7 +288,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     const actionable = open.filter(c => pendingChoices.get(c.id)?.action && !pendingChoices.get(c.id)?.ownerOnly && !pendingChoices.get(c.id)?.validation);
     if (tools.length && actionable.length === 1 && said.trim().length <= 60 && AFFIRM.test(said) && !REFUSE.test(said)) {
       try {
-        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange }
+        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange, agentId: agent.id }
           : channel === 'telegram' ? { via: 'telegram', actor: 'owner on Telegram' } : { via: 'page', actor: 'owner' });
         emit({ type: 'done', message: r.message });
         return r.message;
@@ -312,7 +313,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       // The addresses read_page may open from words (R39): the owner's own, every message of theirs in this chat; never
       // an agent's, a notice or a carry-on line.
       ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
-      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent),
+      // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
+      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
       ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
       // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
       noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
@@ -338,13 +340,21 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       const calls = [];
       let content = '', stepFinish = null;
       modelInUse++;
-      let released = false;
-      const release = () => { if (!released) { released = true; modelInUse--; } };
+      // Every way the call ends settles it once and gives the model back: the answer's end, an error on the request or
+      // the answer, an answer that closes before it ends, the timeout, and the owner's /stop (link.cancel, whatever state
+      // the connection is in). (A-4, 2026-11-14: an error answer cut off part-way never ended, so the chat stayed "still
+      // answering" for good and /stop freed nothing.)
+      let settled = false;
+      const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
+      link.cancel = () => settle(reject, new Error(TURN_STOPPED));
       const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+        // (after a whole answer its end comes first, and close changes nothing)
+        r.on('error', e => settle(reject, e));
+        r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
         if (r.statusCode !== 200) {
           let err = '';
           r.on('data', d => { err += d; });
-          r.on('end', () => { release(); reject(new Error(`The model answered ${r.statusCode}: ${err.slice(0, 300)}`)); });
+          r.on('end', () => settle(reject, new Error(`The model answered ${r.statusCode}: ${err.slice(0, 300)}`)));
           return;
         }
         let buf = '';
@@ -371,12 +381,11 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
             if (choice?.finish_reason) stepFinish = choice.finish_reason;
           }
         });
-        r.on('end', () => { release(); resolve({ content, calls: calls.filter(c => c && c.name), finish: stepFinish }); });
-        r.on('error', e => { release(); reject(e); });
+        r.on('end', () => settle(resolve, { content, calls: calls.filter(c => c && c.name), finish: stepFinish }));
       });
       link.upstream = up;
       up.on('timeout', () => up.destroy(new Error('The model stopped responding.')));
-      up.on('error', e => { release(); reject(e.code === 'ECONNREFUSED' ? new Error('Sparkie’s model isn’t running. The owner starts it by typing /restart sparkie in Spark Console’s chat.') : e); });
+      up.on('error', e => settle(reject, e.code === 'ECONNREFUSED' ? new Error('Sparkie’s model isn’t running. The owner starts it by typing /restart sparkie in Spark Console’s chat.') : e));
       up.end(JSON.stringify({ ...base, messages, ...(withTools && tools.length ? { tools, tool_choice: 'auto' } : {}) }));
     });
     try {
@@ -449,8 +458,9 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'done', message });
       return message;
     } catch (e) {
-      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on)
-      const why = link.gone ? TURN_STOPPED : e.message;
+      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on; any other error's text
+      // can quote the model's own answer, so a key in it is hidden before it is saved, A-5, 2026-11-14)
+      const why = link.gone ? TURN_STOPPED : maskSecrets(e.message);
       const choices = asked.flatMap(sparkieMessageChoices);
       const message = { role: 'assistant', content: maskSecrets(answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
         ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };

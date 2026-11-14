@@ -354,6 +354,12 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
   }
+  // An agent's key as it is now, not as it was when its reply began (A-1, 2026-11-14: an agent removed while Sparkie was
+  // answering it still stopped a model). agentKeys() throws when agents.json can't be read, so this fails closed.
+  if (ctx.agentId) {
+    const key = agentKeys().find(k => k.id === ctx.agentId);
+    if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
+  }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
@@ -449,7 +455,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: String(e.message).slice(0, 200) });
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
     throw e;
   }
 }

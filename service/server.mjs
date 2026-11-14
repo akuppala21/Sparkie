@@ -1153,7 +1153,7 @@ function runJob(job, fn) {
     // (one started from Telegram whose chat is gone: off the list that restarts report)
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
-      ...(job.error ? { error: String(job.error).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
+      ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
   });
   return job;
 }
@@ -3177,7 +3177,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
     // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -3281,7 +3281,8 @@ const TURN_STOPPED = 'Stopped at your word.';
 function stopTurn(conv) {
   const link = liveTurns.get(conv.id), task = conv.task;
   conv.task = null;
-  if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); }
+  // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
+  if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
   // (results held on Telegram for the carry-on that now won't come go out)
   if (task?.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return Boolean(link || task);
@@ -3348,7 +3349,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     const actionable = open.filter(c => pendingChoices.get(c.id)?.action && !pendingChoices.get(c.id)?.ownerOnly && !pendingChoices.get(c.id)?.validation);
     if (tools.length && actionable.length === 1 && said.trim().length <= 60 && AFFIRM.test(said) && !REFUSE.test(said)) {
       try {
-        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange }
+        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange, agentId: agent.id }
           : channel === 'telegram' ? { via: 'telegram', actor: 'owner on Telegram' } : { via: 'page', actor: 'owner' });
         emit({ type: 'done', message: r.message });
         return r.message;
@@ -3373,7 +3374,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       // The addresses read_page may open from words (R39): the owner's own, every message of theirs in this chat; never
       // an agent's, a notice or a carry-on line.
       ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
-      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent),
+      // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
+      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
       ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
       // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
       noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
@@ -3399,13 +3401,21 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       const calls = [];
       let content = '', stepFinish = null;
       modelInUse++;
-      let released = false;
-      const release = () => { if (!released) { released = true; modelInUse--; } };
+      // Every way the call ends settles it once and gives the model back: the answer's end, an error on the request or
+      // the answer, an answer that closes before it ends, the timeout, and the owner's /stop (link.cancel, whatever state
+      // the connection is in). (A-4, 2026-11-14: an error answer cut off part-way never ended, so the chat stayed "still
+      // answering" for good and /stop freed nothing.)
+      let settled = false;
+      const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
+      link.cancel = () => settle(reject, new Error(TURN_STOPPED));
       const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+        // (after a whole answer its end comes first, and close changes nothing)
+        r.on('error', e => settle(reject, e));
+        r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
         if (r.statusCode !== 200) {
           let err = '';
           r.on('data', d => { err += d; });
-          r.on('end', () => { release(); reject(new Error(`The model answered ${r.statusCode}: ${err.slice(0, 300)}`)); });
+          r.on('end', () => settle(reject, new Error(`The model answered ${r.statusCode}: ${err.slice(0, 300)}`)));
           return;
         }
         let buf = '';
@@ -3432,12 +3442,11 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
             if (choice?.finish_reason) stepFinish = choice.finish_reason;
           }
         });
-        r.on('end', () => { release(); resolve({ content, calls: calls.filter(c => c && c.name), finish: stepFinish }); });
-        r.on('error', e => { release(); reject(e); });
+        r.on('end', () => settle(resolve, { content, calls: calls.filter(c => c && c.name), finish: stepFinish }));
       });
       link.upstream = up;
       up.on('timeout', () => up.destroy(new Error('The model stopped responding.')));
-      up.on('error', e => { release(); reject(e.code === 'ECONNREFUSED' ? new Error('Sparkie’s model isn’t running. The owner starts it by typing /restart sparkie in Spark Console’s chat.') : e); });
+      up.on('error', e => settle(reject, e.code === 'ECONNREFUSED' ? new Error('Sparkie’s model isn’t running. The owner starts it by typing /restart sparkie in Spark Console’s chat.') : e));
       up.end(JSON.stringify({ ...base, messages, ...(withTools && tools.length ? { tools, tool_choice: 'auto' } : {}) }));
     });
     try {
@@ -3510,8 +3519,9 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'done', message });
       return message;
     } catch (e) {
-      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on)
-      const why = link.gone ? TURN_STOPPED : e.message;
+      // (a reply the owner stopped says so, whatever broke off underneath, and is never carried on; any other error's text
+      // can quote the model's own answer, so a key in it is hidden before it is saved, A-5, 2026-11-14)
+      const why = link.gone ? TURN_STOPPED : maskSecrets(e.message);
       const choices = asked.flatMap(sparkieMessageChoices);
       const message = { role: 'assistant', content: maskSecrets(answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
         ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
@@ -4121,6 +4131,12 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
   }
+  // An agent's key as it is now, not as it was when its reply began (A-1, 2026-11-14: an agent removed while Sparkie was
+  // answering it still stopped a model). agentKeys() throws when agents.json can't be read, so this fails closed.
+  if (ctx.agentId) {
+    const key = agentKeys().find(k => k.id === ctx.agentId);
+    if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
+  }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
@@ -4216,7 +4232,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: String(e.message).slice(0, 200) });
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
     throw e;
   }
 }
@@ -4962,11 +4978,12 @@ function changeLabel(name, input) {
   const what = input.model || input.container || 'it';
   // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
-  // A memory button says the line it would keep or drop.
-  if (name === 'remember') return `Remember: “${String(input.text || '').slice(0, 200)}”`;
+  // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
+  // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”`;
   if (name === 'forget_memory') return `Forget: “${String(memoryEntries().find(e => e.id === input.id)?.text || 'that line').slice(0, 200)}”`;
   if (name === 'run_workflow') {
-    const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${String(v).slice(0, 60)}`);
+    const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
   }
   if (name === 'keep_running') {
@@ -6747,7 +6764,8 @@ action({
     const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
-    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}` };
+    // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
+    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
     runJob(job, async j => {
       const problems = [];
@@ -6908,7 +6926,7 @@ async function bringBack(x, why, parts, power = false) {
       await run(nodeById(d.spark), `docker start ${q(d.container)} >/dev/null 2>&1; true`, { timeout: 90000 }).catch(() => {});
     }
     skippedOnce.set(key, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
     audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: String(e.message).slice(0, 300) });
   }
 }
@@ -7125,7 +7143,7 @@ async function askSparkie(agent, viewer, args) {
   }
   if (input.choice) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering. Get that answer first ({"conversation": id}), then choose.');
-    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange });
+    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange, agentId: agent.id });
   } else if (input.message) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering in this conversation. Call again with just {"conversation": id} to get that answer first.');
     const p = sparkieTurn({ viewer, conv, text: input.message, agent: { id: agent.id, name: agent.name, canChange } });
@@ -7249,7 +7267,7 @@ async function mcpDoor(req, res, viewer) {
     try {
       const started = Date.now();
       // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
+      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
         sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {
@@ -7409,6 +7427,31 @@ action({
 // Anything else is a button, which shows the line.
 const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 'them', 'you', 'your', 'yours', 'yourself', 'itself', 'wants', 'want', 'wanted',
   'should', 'would', 'that', 'this', 'with', 'have', 'has', 'does', 'from', 'for', 'when', 'will', 'can', 'are', 'was', 'not', 'any', 'all', 'its', 'now']);
+// Whether this message itself says to forget, in so many words (A-3, 2026-11-14: a question about a line, "don't forget
+// that …", a quoted "forget that …" and an unrelated "remember …" each forgot a line with no button). A forget phrase
+// counts in a sentence that isn't a question (a polite "can you …" aside), isn't called off and doesn't follow don't,
+// never, if, whether or should; words in double quotes don't count. Sentence by sentence, as changeIntent reads them.
+const FORGET_WORDS = /\bforget\s+(?:that|this|what\s+i\s+said|the\s+note)\b/gi;
+function saysForget(text) {
+  for (const raw of normQuotes(text).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ').split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
+    if (!sentence.trim() || (!polite && (/\?\s*$/.test(raw) || QUESTION_START.test(sentence))) || INFO_START.test(sentence) || CALLED_OFF.test(sentence)) continue;
+    for (const m of sentence.matchAll(FORGET_WORDS)) {
+      const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
+      if (!NEGATOR.test(pre) && !HYPOTHETICAL.test(pre)) return true;
+    }
+  }
+  return false;
+}
+// Whether this message rules remembering out ("do not remember …", "please don't note …"), as the intent read it. A
+// forget phrase after don't or never asks to remember, though the intent reads "never forget that …" as ruled out, so it
+// is read as "remember" here (2026-11-14: "do not remember that …" was kept with no button).
+const NOT_FORGET = /\b(?:don't|dont|do\s+not|never)\s+(?:\w+\s+){0,2}?forget\b/gi;
+function refusesRemember(ctx) {
+  const text = normQuotes(ctx.request || ''), plain = text.replace(NOT_FORGET, 'remember');
+  const intent = plain === text ? ctx.intent || {} : changeIntent(plain);
+  return [...(intent.negated || []), ...(intent.mixed || [])].includes('remember');
+}
 function memoryClear(name, input, ctx, asked) {
   const words = String(ctx.said || ctx.request || '');
   const said = tokensOf(words), flat = squash(sparkNames(normQuotes(words)));
@@ -7417,7 +7460,9 @@ function memoryClear(name, input, ctx, asked) {
   const shared = text => { const t = [...tokensOf(text)].filter(x => x.length >= 3 && !MEMORY_FILLER.has(x)), hits = t.filter(has).length; return { share: t.length ? hits / t.length : 0, hits }; };
   const about = text => shared(text).share;
   const entry = id => memoryEntries().find(e => e.id === id);
-  if (name === 'forget_memory') return Boolean(entry(input.id)) && (asked || about(entry(input.id).text) >= 0.3);
+  // Forgetting: the line exists, this message says to forget, and the line is what they're talking about (never skipped).
+  if (name === 'forget_memory') { const e = entry(input.id); return Boolean(e) && saysForget(ctx.request) && about(e.text) >= 0.3; }
+  if (refusesRemember(ctx)) return false;
   const line = shared(input.text);
   if (ctx.readOutside ? line.share < 0.6 : line.share < 0.25 && line.hits < 2) return false;
   if (input.replaces && !(entry(input.replaces) && about(entry(input.replaces).text) >= 0.3)) return false;
@@ -8105,7 +8150,7 @@ async function healApp(x, inv) {
     if (!out?.operation && !['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
   } catch (e) {
     skippedOnce.set(k, 'failed');
-    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${String(e.message).split('\n')[0].slice(0, 300)}` });
+    fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
   }
 }
 
@@ -10405,6 +10450,10 @@ const handler = async (req, res) => {
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
       }
+      // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
+      // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
+      // owner cancels one in Activity. A reply of Sparkie's to it that is still under way changes nothing more: runAction
+      // reads the key again before each change (ctx.agentId, R9).
       if (req.method === 'DELETE' && AGENT_ID.test(agentId)) {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);
