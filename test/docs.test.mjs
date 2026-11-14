@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
 import { checkDocs, rulesIndex, describe as say } from '../tools/check-docs.mjs';
-import { checkParts, readParts, registry } from '../tools/parts.mjs';
+import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
 
 test('this tree: the documents match the code', () => {
   const problems = checkDocs(REPO);
@@ -148,11 +148,13 @@ test('this tree: docs/registry.md is what the parts make', () => {
   assert.equal(readFileSync(join(REPO, 'docs/registry.md'), 'utf8'), registry(REPO));
 });
 
-// R22 listed desired.json's writers by hand; the scanner finds the same six in the code, so its owner must declare them.
+// R22 listed desired.json's six writers by hand; the scanner finds each of them in the code, and what it finds is
+// exactly what 20-desired's header declares (a new writer joins the header, not this test).
 test('this tree: desired.json’s six writers are found in the code', () => {
-  const found = [...new Set(readParts(REPO).writes.filter(w => w.file === 'desired.json').map(w => `${w.who} (${w.part})`))].sort();
-  assert.deepEqual(found, ['desiredAfter (20-desired.mjs)', 'forgetApp (20-desired.mjs)', 'handler (24-handler.mjs)', 'keepApp (20-desired.mjs)',
-    'markUndone (20-desired.mjs)', 'watchHeld (20-desired.mjs)']);
+  const tree = readParts(REPO), found = new Set(tree.writes.filter(w => w.file === 'desired.json').map(w => w.who));
+  for (const w of ['desiredAfter', 'watchHeld', 'markUndone', 'handler', 'keepApp', 'forgetApp']) assert.ok(found.has(w), `${w} isn’t found writing desired.json`);
+  const owns = tree.parts.find(p => p.file === '20-desired.mjs').header.fields.Owns;
+  assert.deepEqual([...found].sort(), owned(owns).find(o => o.file === 'desired.json').writers.sort());
 });
 
 // A small tree of parts with headers that pass; each test below adds one fault.
