@@ -116,17 +116,34 @@ function knownContainers(root, offline) {
 export const serviceConfig = () => JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8'));
 
 // prepare({ dir, root, stateDir }): runs after the fleet and state are copied and before the service starts (to seed
-// state files: events.jsonl, heal-tries.json, an unreadable verified.json, …).
+// state files: events.jsonl, heal-tries.json, an unreadable verified.json, …), once per attempt (below).
 // knowledge: true seeds the state's knowledge.json with the containers on the online stand-in Sparks, as the watcher
 // would have saved them before a restart (its own first look is 15 s after the service starts). Sparkie's changes trace
 // a container named in the owner's words through it.
 // telegram: true starts a stand-in Bot API (mock/telegram.mjs) and points the service at it, with its secrets file in
 // this start's folder (never the developer's home).
-export async function startMock({ watchMs = 3000, statusMs = 5000, editor = false, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false } = {}) {
+// firstPort (start-mock.test.mjs only): the service's port on the first attempt, one the test holds, as if another
+// file's fleet had taken it.
+//
+// freePorts() hands out ports that are free now; with four files at once another fleet can take one before this
+// start's server listens on it. That attempt is thrown away, folder and all, and made again from scratch on new ports
+// (a new folder, prepare run again), up to three in all. Any other failure is the same error as before, never retried.
+export async function startMock(opts = {}) {
+  for (let attempt = 1; ; attempt++) {
+    const fleet = await startOnce(opts, attempt);
+    if (fleet) return fleet;
+  }
+}
+// The service's refusal of a used port, or a stand-in's listen that failed the same way.
+const PORT_TAKEN = /Port \d+ is in use|EADDRINUSE: address already in use 127\.0\.0\.1:\d+/;
+
+async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null } = {}, attempt) {
   hookExit();
   const dir = mkdtempSync(join(tmpdir(), 'sct-'));
   const root = join(dir, 'root'), stateDir = join(dir, 'state'), socket = join(dir, 'api.sock'), offlineFile = join(dir, 'offline'), log = join(dir, 'service.log');
-  const [port, modelPort, benchPort, editorPort, servePort, telegramPort] = await freePorts(6);
+  const ports = await freePorts(6);
+  if (firstPort && attempt === 1) ports[0] = firstPort;
+  const [port, modelPort, benchPort, editorPort, servePort, telegramPort] = ports;
   const secretsFile = join(dir, 'secrets', 'secrets.json');
   copyFleet(root, benchPort);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -202,10 +219,15 @@ export async function startMock({ watchMs = 3000, statusMs = 5000, editor = fals
     }
   };
 
+  // The guard's line for each child that has exited.
+  const exits = () => { try { return readFileSync(join(dir, 'exits'), 'utf8'); } catch { return ''; } };
+
   // Ready when /health answers and the stand-in model listens.
   const until = Date.now() + timeoutMs;
   for (;;) {
     if (exited) { const l = logText(); await stop(); throw new Error(`Spark Console stopped while starting:\n${l.slice(-3000)}`); }
+    // A child exited because its port was taken (its last words are in the log before the guard notes the exit).
+    if (attempt < 3 && exits() && PORT_TAKEN.test(logText())) { await stop(); return null; }
     const ok = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) }).then(r => r.ok).catch(() => false)
       && await fetch(`http://127.0.0.1:${modelPort}/v1/models`, { signal: AbortSignal.timeout(2000) }).then(() => true).catch(() => false)
       && (!telegram || await fetch(`http://127.0.0.1:${telegramPort}/__mode`, { method: 'POST', body: '{}', signal: AbortSignal.timeout(2000) }).then(r => r.ok).catch(() => false));
@@ -215,7 +237,6 @@ export async function startMock({ watchMs = 3000, statusMs = 5000, editor = fals
   }
   // The service's own process id (to send it SIGTERM), and whether (and how) it has exited.
   const pids = () => { try { return JSON.parse(readFileSync(join(dir, 'pids.json'), 'utf8')); } catch { return {}; } };
-  const exits = () => { try { return readFileSync(join(dir, 'exits'), 'utf8'); } catch { return ''; } };
   return {
     base, mcp: `${base}/mcp`, origin: cfg.origin, port, socket, dir, root, stateDir, offlineFile, log,
     modelPort, benchPort, servePort, editorPort: editor ? editorPort : null, pid: guard.pid, keep, logText, stop, env,

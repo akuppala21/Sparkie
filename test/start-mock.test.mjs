@@ -1,12 +1,15 @@
-// The stand-in fleet's clean-up: stop() in start-mock.mjs. A process that outlives the guard and still writes in the
-// fleet's temporary folder (stop() tries again until it is done), and a folder that can't be removed at all (one line on
-// stderr, never an error). A leftover temporary folder is not a product failure: it must never fail a test or hide the
-// error a test's own body threw from inside `try { … } finally { await fleet.stop(); }`.
+// The stand-in fleet itself (start-mock.mjs). Its start: a port taken by someone else in the moment before the service
+// listens (another file's fleet, four files at once) is noticed at once and the start made again, clean, on new ports.
+// Its clean-up, stop(): a process that outlives the guard and still writes in the fleet's temporary folder (stop() tries
+// again until it is done), and a folder that can't be removed at all (one line on stderr, never an error). A leftover
+// temporary folder is not a product failure: it must never fail a test or hide the error a test's own body threw from
+// inside `try { … } finally { await fleet.stop(); }`.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import net from 'node:net';
 import { SLOW, waitFor } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
@@ -30,7 +33,34 @@ for (let i = 0; ; i++) {
 }
 `;
 
-describe('the stand-in fleet\'s clean-up', { concurrency: 1, timeout: 60000 * SLOW }, () => {
+describe('the stand-in fleet: its start and its clean-up', { concurrency: 1, timeout: 60000 * SLOW }, () => {
+  test('the service\'s port taken before it listens: a clean start on new ports, at once, each with its own prepare', async () => {
+    // The first attempt's port is one this test holds open (a listener that answers nothing).
+    const held = net.createServer(s => s.destroy());
+    await new Promise(r => held.listen(0, '127.0.0.1', r));
+    const taken = held.address().port, timeoutMs = 30000 * SLOW, prepared = [];
+    let fleet;
+    try {
+      const t0 = Date.now();
+      fleet = await startMock({ watchMs: 600000, statusMs: 600000, timeoutMs, firstPort: taken, prepare: ({ dir, stateDir }) => {
+        prepared.push(dir);
+        appendFileSync(join(stateDir, 'prepared'), 'one prepare\n');
+      } });
+      const took = Date.now() - t0;
+      assert.ok(took < timeoutMs / 2, `it noticed the exit instead of waiting it out: ${took} ms`);
+      assert.notEqual(fleet.port, taken);
+      assert.equal((await fetch(`${fleet.base}/health`)).ok, true);
+      assert.equal(prepared.length, 2, 'prepare ran once per attempt');
+      assert.equal(prepared[1], fleet.dir);
+      assert.equal(existsSync(prepared[0]), false, 'the first attempt\'s folder is gone');
+      assert.equal(readFileSync(join(fleet.stateDir, 'prepared'), 'utf8'), 'one prepare\n');
+      assert.doesNotMatch(fleet.logText(), /is in use|EADDRINUSE/);
+    } finally {
+      await fleet?.stop();
+      held.close();
+    }
+  });
+
   test('a process still writing in the folder after the guard has gone: stop() doesn\'t throw and the folder is removed', async () => {
     const fleet = await cheap();
     const writer = spawn(process.execPath, ['-e', WRITER, fleet.dir, String(fleet.pid), '1000'], { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
