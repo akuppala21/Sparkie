@@ -80,8 +80,10 @@ export async function lockFor(fleet, { git = gitFields(), env = process.env } = 
     ...git, ...(run ? { run } : {}), brainReads: brainReadsOf(await brainSent(fleet)) };
 }
 
-// By hand (not when a test imports this file).
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// By hand (not when a test imports this file, nor when a bare `node --test` picks it up). The paths are compared as real
+// paths: a folder reached through a link must still run.
+const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
+if (isMain() && !process.env.NODE_TEST_CONTEXT) {
   const fingerprint = () => {
     const h = createHash('sha256');
     for (const f of readdirSync(SERVICE).filter(f => /\.(mjs|py|json)$/.test(f) && f !== 'workflows.lock.json').sort()) h.update(f).update(readFileSync(join(SERVICE, f)));
