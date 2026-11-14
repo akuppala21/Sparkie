@@ -4,6 +4,9 @@ This is the whole Spark Console folder as of 2026-11-13, with nothing left out. 
 build-out. Please review it for bugs, gaps and suggestions. This page says what to read, what changed, what was left
 out on purpose, how it was checked, and how it gets installed.
 
+There are two things to review. Sections 1 to 9 cover **the app as built**. Section 10 covers **the plan for the next
+phase** (`docs/design-2026-11-13/`), which matters as much: please review it in the same detail.
+
 ## 1. What Spark Console is
 
 The owner has several NVIDIA DGX Sparks. Spark Console is one hub for all of them. It runs on Spark 2 and has one
@@ -389,3 +392,75 @@ After the install, with Spark 3 or Spark 4 powered on, run these checks through 
 - Places where Sparkie could **claim something happened** when no tool said so.
 - **Outside text** (web pages, model cards, files) that could make Sparkie act as if the owner had asked.
 - Whether the page and Sparkie's words stay **plain and calm** for a non-expert.
+
+## 10. The next phase: please review the plan too, as hard as the code
+
+After this build, the owner wants Sparkie to work the way a coding agent does: command every Spark and itself, learn
+from everything it does, run with any brain model, and stay fast and simple. That phase was designed on 2026-11-13. Its
+first milestone is being built; nothing of it is in this build unless section 4 names it. A plan is cheaper to fix than
+code, so a detailed review here is worth more than anywhere else.
+
+**Where it is:** `docs/design-2026-11-13/`. Read in this order:
+
+1. `README.md`: the whole phase in one page (the goal, the owner's decisions, the shape, how Sparkie's permissions
+   work, memory, six milestones, safety changes, defaults taken, risks accepted). Where a design disagrees with this
+   page, this page wins.
+2. `owner-decisions.md`: the owner's 22 decisions, in their own words.
+3. `critic-safety.md` (29 findings) and `critic-simplicity.md` (what was cut, and why).
+4. The seven designs: `a-workspace.md` (commands on the Sparks, root, the net, "always allow"), `b-learning.md` (the
+   journal and lessons), `c-github-selfchange.md` (tests and the tested mark on GitHub, installs pulled by Spark 2,
+   Sparkie changing its own code), `d-fleet-workloads.md` (adding Sparks, the self-test, workflows that place and
+   wait, a brain across Sparks), `e-unattended.md` (tasks, any brain, the heartbeat, rebuilding the hub, keys),
+   `f-structure.md` (documents, the checker, the tool cap), `g-memory.md` (memory).
+5. `ledger.md`: how the designs join and which conflicts were settled how.
+
+**What is fixed, and what is open.** The owner's decisions are fixed: please challenge how they are met, not whether.
+The ones that surprise most: Sparkie may do everything the owner can, root and the lock-out class included (decisions
+18, 20, 22); risky things are asked on Telegram; a key is given once and kept; Spark 2 stays the hub and may hold a
+part of a model only as the brain; no scheduled jobs on the Sparks; nothing that slows an ordinary reply. Everything
+else is open: the mechanisms, the order, the defaults in the one page's section 8, and what was cut.
+
+**What to attack, piece by piece.**
+
+- **Commander** (`a-workspace.md`, safety findings 1, 2, 5 and 7 to 10). Root goes through one root-owned helper
+  that the owner allows once per Spark, with three walls (look, run, net).
+  - Is that sound on DGX OS (Ubuntu 24.04, systemd, Docker, the owner's user in the docker group)?
+  - Can a "look" write or send anything?
+  - Can an ordinary command reach the Docker socket, the console's socket (`api.sock` trusts a header) or the secrets?
+  - What does the first version need when a Spark has no helper yet?
+- **The confirm-or-put-back net** (`a-workspace.md` 2.8, safety finding 2). Name a change that locks the owner out
+  and still passes: one that is not live until the next restart, one that breaks the timer, one that is fine for ten
+  minutes. Is "a fresh visit through the changed way in" the right proof on the hub?
+- **Telegram as the place to say yes** (safety finding 3). What can a lost phone do in ten minutes with the caps as
+  written? What cheaper protection was missed that does not put asking back on the owner?
+- **Text that steers** (safety findings 5, 7 and 9). A log or a page says "run this". Follow it through the go-ahead,
+  "always allow", an unattended task and a root ask. Where does it get through unseen?
+- **Keys** (safety finding 4, `e-unattended.md` 2.7). Where can a kept key still leak: a container's environment on
+  disk, a command's output, the journal, a Telegram message?
+- **Memory** (`g-memory.md`). The design keeps the raw record, believes only the owner's dated lines, picks by exact
+  names, and uses no embeddings, graph or helper.
+  - Is the evidence it cites read fairly?
+  - Will the picker rule (names, rare words, newest) fail on this owner's kind of request?
+  - Are the 20 questions the right test? What would you add that beats it?
+- **Learning** (`b-learning.md`, as cut by the simplicity review). Is the masking of the journal enough when it holds
+  the output of root commands? Is "pass over a setup that failed twice" safe when the failure id comes from a log line
+  (safety finding 27)?
+- **GitHub, installs and self-change** (`c-github-selfchange.md`, safety findings 12 to 16). Can a pushed tag claim
+  a tree was tested when it was not? Can an incoming build pass its own install checks and still break sign-in? Is
+  "only new tests, generated files and status rows are free" the right line for Sparkie's own changes?
+- **Fleet, workloads and the brain across Sparks** (`d-fleet-workloads.md`, safety findings 18 to 22). Check the
+  cabling claims (three Sparks on direct cables, four needing a switch) against what you know. Can a workflow, a
+  compare or the self-test stop a healthy model? What is the longest the owner can be left without any brain?
+- **Unattended work and any brain** (`e-unattended.md`, safety finding 26). Can a task change something the owner's
+  words never named? Is one brain check with two outcomes enough to keep a weak model from doing harm?
+- **Structure** (`f-structure.md`). Would an agent with a small context find its way with one front door, one card
+  per task and one file per rule? Does the tool cap (24 a round, hidden but not forbidden) lose anything?
+- **The order** (the one page, section 6). Is each milestone useful by itself? Is anything in the wrong place? What
+  is still over-built for one owner and four machines? What is missing altogether?
+
+**How to report.** This review is a back and forth: the builders answer every finding and you answer them, until each
+point is settled. The procedure, the numbering (`A-1` for the app, `P-1` for the plan) and where the files go are in
+`docs/review-astra/README.md`. Findings in order of severity. For each: the concrete way it goes wrong (who does what, what
+happens), where (the design and section, and the code if it depends on the code), and the smallest change that closes
+it. Mark each "must change before building", "change when that piece is built" or "accept, and tell the owner". End
+with what the plan is missing, and with any decision in the one page's section 8 you would take the other way.
