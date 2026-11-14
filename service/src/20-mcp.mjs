@@ -96,7 +96,7 @@ async function askSparkie(agent, viewer, args) {
   }
   if (input.choice) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering. Get that answer first ({"conversation": id}), then choose.');
-    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange });
+    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange, agentId: agent.id });
   } else if (input.message) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering in this conversation. Call again with just {"conversation": id} to get that answer first.');
     const p = sparkieTurn({ viewer, conv, text: input.message, agent: { id: agent.id, name: agent.name, canChange } });
@@ -220,7 +220,7 @@ async function mcpDoor(req, res, viewer) {
     try {
       const started = Date.now();
       // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
+      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
         sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {

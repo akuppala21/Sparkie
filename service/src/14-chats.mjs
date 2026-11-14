@@ -116,7 +116,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
     // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -287,7 +287,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     const actionable = open.filter(c => pendingChoices.get(c.id)?.action && !pendingChoices.get(c.id)?.ownerOnly && !pendingChoices.get(c.id)?.validation);
     if (tools.length && actionable.length === 1 && said.trim().length <= 60 && AFFIRM.test(said) && !REFUSE.test(said)) {
       try {
-        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange }
+        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange, agentId: agent.id }
           : channel === 'telegram' ? { via: 'telegram', actor: 'owner on Telegram' } : { via: 'page', actor: 'owner' });
         emit({ type: 'done', message: r.message });
         return r.message;
@@ -312,7 +312,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       // The addresses read_page may open from words (R39): the owner's own, every message of theirs in this chat; never
       // an agent's, a notice or a carry-on line.
       ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
-      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent),
+      // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
+      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
       ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
       // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
       noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),

@@ -214,7 +214,8 @@ action({
     const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
-    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}` };
+    // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
+    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
     runJob(job, async j => {
       const problems = [];

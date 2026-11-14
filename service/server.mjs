@@ -3177,7 +3177,7 @@ async function runChoice(viewer, conv, id, by) {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
     // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -3348,7 +3348,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     const actionable = open.filter(c => pendingChoices.get(c.id)?.action && !pendingChoices.get(c.id)?.ownerOnly && !pendingChoices.get(c.id)?.validation);
     if (tools.length && actionable.length === 1 && said.trim().length <= 60 && AFFIRM.test(said) && !REFUSE.test(said)) {
       try {
-        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange }
+        const r = await runChoice(viewer, conv, actionable[0].id, agent ? { via: 'agent', actor: agent.name, canChange: agent.canChange, agentId: agent.id }
           : channel === 'telegram' ? { via: 'telegram', actor: 'owner on Telegram' } : { via: 'page', actor: 'owner' });
         emit({ type: 'done', message: r.message });
         return r.message;
@@ -3373,7 +3373,8 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       // The addresses read_page may open from words (R39): the owner's own, every message of theirs in this chat; never
       // an agent's, a notice or a carry-on line.
       ownerWords: agent ? '' : task ? task.request : conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto).map(m => String(m.content).slice(0, 4000)).join('\n'),
-      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent),
+      // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
+      chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
       ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
       // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
       noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
@@ -4120,6 +4121,12 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.kind === 'read') return a.run(input, viewer, ctx);
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
+  }
+  // An agent's key as it is now, not as it was when its reply began (A-1, 2026-11-14: an agent removed while Sparkie was
+  // answering it still stopped a model). agentKeys() throws when agents.json can't be read, so this fails closed.
+  if (ctx.agentId) {
+    const key = agentKeys().find(k => k.id === ctx.agentId);
+    if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
@@ -6742,7 +6749,8 @@ action({
     const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
-    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}` };
+    // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
+    const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
     runJob(job, async j => {
       const problems = [];
@@ -7120,7 +7128,7 @@ async function askSparkie(agent, viewer, args) {
   }
   if (input.choice) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering. Get that answer first ({"conversation": id}), then choose.');
-    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange });
+    await runChoice(viewer, conv, input.choice, { via: 'agent', actor: agent.name, canChange, agentId: agent.id });
   } else if (input.message) {
     if (replying.has(conv.id)) throw new HttpError(409, 'Sparkie is still answering in this conversation. Call again with just {"conversation": id} to get that answer first.');
     const p = sparkieTurn({ viewer, conv, text: input.message, agent: { id: agent.id, name: agent.name, canChange } });
@@ -7244,7 +7252,7 @@ async function mcpDoor(req, res, viewer) {
     try {
       const started = Date.now();
       // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
+      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
         sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {
@@ -10391,6 +10399,10 @@ const handler = async (req, res) => {
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
       }
+      // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
+      // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
+      // owner cancels one in Activity. A reply of Sparkie's to it that is still under way changes nothing more: runAction
+      // reads the key again before each change (ctx.agentId, R9).
       if (req.method === 'DELETE' && AGENT_ID.test(agentId)) {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);
