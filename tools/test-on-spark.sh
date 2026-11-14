@@ -39,11 +39,14 @@ if [ "${1:-}" = "--ask" ]; then
   { echo "tree=$(basename "$top")"; for f in "$@"; do echo "$f"; done; } > "$OUT/queue/$name.tmp" || exit 2
   mv "$OUT/queue/$name.tmp" "$OUT/queue/$name.req"
   echo "Asked for a run on the Spark: $name (the watcher runs one at a time, so it may wait its turn)."
-  waited=0
+  quiet=0
   until [ -e "$OUT/$name.done" ]; do
-    sleep 2; waited=$((waited + 2))
-    # (still in the queue with nothing running: no watcher is there to take it)
-    if [ "$waited" -ge 120 ] && [ -e "$OUT/queue/$name.req" ] && [ ! -e "$OUT/running.req" ]; then
+    sleep 2
+    # No watcher is there to take it: the request has sat in the queue with nothing running for 2 minutes on end.
+    # (Counted in a row: between two requests nothing runs for a second or two, and one look in that gap once
+    # dropped a request that was only waiting its turn, 2026-11-14.)
+    if [ -e "$OUT/queue/$name.req" ] && [ ! -e "$OUT/running.req" ]; then quiet=$((quiet + 2)); else quiet=0; fi
+    if [ "$quiet" -ge 120 ]; then
       rm -f "$OUT/queue/$name.req"
       echo "No watcher took the request in 2 minutes, so nothing ran. The owner starts one with: bash $HERE/tools/test-on-spark.sh akuppala@<spark> --watch" >&2
       exit 3
