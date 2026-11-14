@@ -77,6 +77,9 @@ async function freePorts(n) {
   return [...out];
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// The errors Node's own rmSync retries on. stop() tries again itself, with real pauses: Node 26's maxRetries rounds
+// each pause down to whole seconds (none at all under 1 s).
+const RM_RETRY = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM', 'EMFILE', 'ENFILE']);
 
 // A fresh copy of the stand-in fleet: git can't hold empty folders or (cheaply) the zero-filled weights, so the
 // manifest recreates them; the benchmark-style server's port is moved to the one this start got.
@@ -178,14 +181,25 @@ export async function startMock({ watchMs = 3000, statusMs = 5000, editor = fals
 
   const base = `http://127.0.0.1:${port}${API_MOUNT}`;
   const logText = () => { try { return readFileSync(log, 'utf8'); } catch { return ''; } };
+  // Something can still be writing in the folder for a moment after the guard has gone (a child's exit line, a process
+  // the service started), so removing it is tried again for about 3 s. A folder left over after that is one line on
+  // stderr, never an error: it must not fail a test or hide the error the test itself threw.
   const stop = async () => {
     if (!exited) {
       guard.stdin.end();
       for (let i = 0; i < 80 && !exited; i++) await sleep(100);
       if (!exited) try { process.kill(-guard.pid, 'SIGKILL'); } catch {}
+      for (let i = 0; i < 30 && !exited; i++) await sleep(100);
     }
     live.delete(f);
-    if (!keep) rmSync(dir, { recursive: true, force: true });
+    if (keep) return;
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      try { rmSync(dir, { recursive: true, force: true }); return; } catch (e) {
+        if (Date.now() >= deadline || !RM_RETRY.has(e.code)) { process.stderr.write(`start-mock: couldn't remove ${dir} (${e.code || e.message}); left it there\n`); return; }
+      }
+      await sleep(150);
+    }
   };
 
   // Ready when /health answers and the stand-in model listens.
