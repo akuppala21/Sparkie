@@ -1,0 +1,127 @@
+# The full test run on GitHub (design C 2.2; safety review finding 15).
+#   suite  runs the repository's code (the build check, then the whole suite through test/lock.mjs) and can only read.
+#   mark   runs none of it: after a passing suite on a push to main, it checks the lock the suite wrote, commits it on
+#          top of the tested commit and pushes that commit as the tag tested/<first 12 hex of the tested tree>.
+#          It never pushes to main.
+name: Full run
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch (or pull request) cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nothing by default; each job says what it needs.
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suite:
+    # One job for now. Split the suite into jobs side by side only if this one measures over 30 minutes (simplicity
+    # review, C3): test/lock.mjs prints the seconds each test file took at the end of its log.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: server.mjs matches its parts
+        run: node tools/build-server.mjs --check
+      - name: The whole suite, then the lock
+        # The runner has 2 cores: two test files at a time, and twice the usual time limits.
+        env:
+          SPARK_TEST_SLOW: 2
+          SPARK_TEST_CONCURRENCY: 2
+        run: node test/lock.mjs
+      - name: Keep the lock for the mark
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: workflows-lock
+          path: service/workflows.lock.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  mark:
+    needs: suite
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: The tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: The lock the suite wrote
+        uses: actions/download-artifact@v8
+        with:
+          name: workflows-lock
+          path: ${{ runner.temp }}/lock
+      - name: Check the lock, then push the tested mark
+        env:
+          LOCK: ${{ runner.temp }}/lock/workflows.lock.json
+        # Only git, jq and coreutils from here on: nothing from the repository runs with this job's write right.
+        run: |
+          set -euo pipefail
+          export LC_ALL=C  # file names sorted as tools/build-server.mjs sorts them
+          commit=$(git rev-parse HEAD)
+          [ "$commit" = "$GITHUB_SHA" ] || { echo "::error::The checkout is $commit, not the tested commit $GITHUB_SHA."; exit 1; }
+          tree=$(git rev-parse 'HEAD^{tree}')
+          tag="tested/${tree:0:12}"
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          # The build id as the service and the installer compute it (service/src/01-setup.mjs buildOf,
+          # deploy/host-on-portal.sh): the first 12 hex of sha256(server.mjs + dig.mjs + passkey.mjs). And, as the
+          # installer checks, server.mjs is its parts joined.
+          cat service/src/[0-9][0-9]-*.mjs | cmp -s - service/server.mjs || { echo "::error::service/server.mjs doesn't match service/src."; exit 1; }
+          build=$(cat service/server.mjs service/dig.mjs service/passkey.mjs | sha256sum | cut -c1-12)
+
+          # The lock came from a job that ran the repository's code: it is data, taken only in its known shape and
+          # only for this commit, tree, run and build.
+          if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ "$(wc -c < "$LOCK")" -gt 65536 ]; then echo "::error::No lock came from the suite."; exit 1; fi
+          if ! jq -e -s --arg build "$build" --arg tree "$tree" --arg commit "$commit" --arg run "$run" '
+              length == 1 and (.[0] | type == "object"
+                and ((keys - ["brainReads", "build", "commit", "run", "testedAt", "tree", "versions"]) == [])
+                and .build == $build and .tree == $tree and .commit == $commit and .run == $run
+                and (.testedAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$"))
+                and (.brainReads | type == "string" and test("^[0-9a-f]{64}$"))
+                and (.versions | type == "object" and length > 0
+                  and all(to_entries[]; (.key | test("^[a-z][a-z0-9_]{0,63}$")) and (.value | type == "string" and test("^[0-9a-f]{12}$")))))
+            ' "$LOCK" > /dev/null; then
+            echo "::error::The lock isn't for commit $commit, tree $tree, build $build and this run, so nothing was marked."
+            stop=$(sha256sum "$LOCK" | cut -c1-32)
+            echo "::stop-commands::$stop"; head -c 4000 "$LOCK"; echo; echo "::$stop::"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag is already there: this tree was marked before."
+            exit 0
+          fi
+          cp "$LOCK" service/workflows.lock.json
+          git add -f service/workflows.lock.json
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' -c commit.gpgsign=false \
+            commit -q --no-verify -m "Tested: build $build, tree ${tree:0:12}" -m "The full run: $run"
+          [ "$(git diff --name-only HEAD~1 HEAD)" = service/workflows.lock.json ] || { echo "::error::The mark commit changes more than the lock."; exit 1; }
+          # A tag only (refs/tags/...): this job never pushes a branch.
+          if ! git push -q --no-verify origin "HEAD:refs/tags/$tag"; then
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then echo "Another run marked $tag first."; exit 0; fi
+            exit 1
+          fi
+          echo "Marked: $tag (build $build, commit $commit)"

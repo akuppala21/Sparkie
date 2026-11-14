@@ -2,7 +2,7 @@
 
 Spark Console is one Node service on Spark 2 that runs the owner's NVIDIA DGX Sparks: models, apps and jobs on the
 other Sparks, and Sparkie, the local brain the owner talks to. This page is the front door for whoever changes it
-(Sparkie, an agent or a person): read it, then the one card your task needs, then what that card names.
+(Sparkie, an agent or a person): read it, then your task's card, then what that card names.
 
 The contract (`docs/contract.md`) says what must be true; the rules (`docs/rules/`) say how; code that falls short is
 recorded (a "Today" note in its rule), never fixed by quietly editing either.
@@ -10,12 +10,11 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 ## Never break
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
-- Keep every rule in `docs/rules/` (one line each in `docs/rules.md`). Where a rule says "Today" the code falls short
-  of it; don't add to those gaps.
+- Keep every rule in `docs/rules/` (one line each in `docs/rules.md`); don't add to the gaps a rule's "Today" notes.
 - Nothing starts a model or workload on Spark 2 (the brain's Spark).
 - Today no action changes SSH, Tailscale, the firewall or users (R3, contract 8.3), and you don't while working here.
-  Milestone 2 lets Sparkie change them when the owner asks, asked first and inside the put-back net; until that is
-  built, add no path that touches them.
+  Milestone 2 lets Sparkie change them when the owner asks, asked first, inside the put-back net; until then, add no
+  path to them.
 - Don't delete the owner's data. Stopping something isn't deleting.
 - Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
 - Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
@@ -24,12 +23,12 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 
 | Path | What it is |
 |---|---|
-| `service/src/NN-name.mjs` | The service, in parts. **Edit these, never `service/server.mjs`.** |
+| `service/src/NN-name.mjs` | The service, in parts. **Edit these.** |
 | `service/server.mjs` | Generated: the parts joined in name order. |
 | `service/config.json` | The Sparks, images, and the brain's setups (`main.presets`). |
 | `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Recipe reading, passkeys (WebAuthn), the worker on each Spark. |
 | `public/` | The page: plain JavaScript, no build step. |
-| `test/` | The suite and the stand-in fleet; see `test/README.md`. |
+| `test/` | The suite and the stand-in fleet (`test/README.md`). |
 | `deploy/` | The installer (`host-on-portal.sh`); `go-back.sh` and `RECOVERY.txt`, the way back by hand. |
 | `tools/` | `make.mjs` (the one command), `console.mjs` (the owner's terminal), `spark.mjs` (agents), builders. |
 | `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
@@ -52,12 +51,16 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
 4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
    `SPARK_TEST_SLOW=3` on a slow machine). They start a stand-in fleet and never touch the real Sparks.
-5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if all of it passes, marks the
+5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if it all passes, marks the
    build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
    `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
 6. After installing, check the change the way the owner would use it: through Sparkie's chat or
    `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
    The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
+
+Any computer with git, Node, Python 3 and bash works. A pull request runs the whole suite on GitHub
+(`.github/workflows/full-run.yml`); a pass on `main` leaves the tag `tested/<first 12 hex of the tree>`: the commit
+plus the lock the installer asks for. No SSH, lock or fleet key needed.
 
 ## I want to …
 

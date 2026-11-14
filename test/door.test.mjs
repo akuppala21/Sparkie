@@ -687,3 +687,22 @@ describe('rate limit (120 a minute per key)', () => {
     } finally { await deleteKey(k.id); }
   });
 });
+
+describe('search_huggingface on the stand-in fleet', () => {
+  // GitHub's machines would be rate-limited by Hugging Face, so the stand-in fleet never reaches it: start-mock.mjs sets
+  // SPARK_CONSOLE_HF_FIXTURE to mock/hf-fixture.json, whose made-up repos exist nowhere else.
+  test('answers from the fixture: sizes, memory and Sparks read from its files; a format no engine serves and a model too big for four Sparks left out', async () => {
+    const k = await createKey('hf-fixture');
+    try {
+      const x = assertToolOk(await call(k.token, 'search_huggingface', { query: 'standin' }));
+      assert.ok(x.searchedFor.includes('standin'), JSON.stringify(x.searchedFor));
+      assert.deepEqual(x.results.map(r => [r.title, r.downloads, r.alreadyARecipe]), [['Tiny-1B', 800, null]]);
+      assert.deepEqual(x.results[0].versions, [
+        { repo: 'standin-org/Tiny-1B-FP8', quantization: 'FP8', downloadGB: 1.2, memoryNeededGB: 5, sparks: 1, gated: true, engine: null },
+        { repo: 'standin-org/Tiny-1B', quantization: 'BF16', downloadGB: 2.2, memoryNeededGB: 7, sparks: 1, gated: false, engine: null },
+      ]);
+      // A repo the fixture doesn't hold is not found, as Hugging Face would say.
+      assert.deepEqual(assertToolOk(await call(k.token, 'search_huggingface', { query: 'zzqx-not-in-the-fixture' })).results, []);
+    } finally { await deleteKey(k.id); }
+  });
+});

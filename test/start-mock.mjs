@@ -184,6 +184,8 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
     // Every workflow counts as validated on the stand-in fleet (workflows.test.mjs turns this off to test the rule), and a
     // model that loads but can't answer is given up on after 4 seconds instead of 90.
     SPARK_CONSOLE_ASSUME_VALIDATED: '1', SPARK_CONSOLE_ANSWER_TEST_MS: '4000',
+    // Hugging Face is never reached: searches and repo look-ups answer from this list (mock/hf-fixture.json).
+    SPARK_CONSOLE_HF_FIXTURE: join(MOCK, 'hf-fixture.json'),
     ...extraEnv,
   });
   const scripts = [SERVICE, join(MOCK, 'model.mjs'), ...(editor ? [join(MOCK, 'editor.mjs')] : []), ...(telegram ? [join(MOCK, 'telegram.mjs')] : [])];

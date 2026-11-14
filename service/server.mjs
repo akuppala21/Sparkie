@@ -1984,7 +1984,27 @@ const SKIP_REPO = /mlx|-exl\d|onnx|openvino|litert|coreml|-qnn|dflash|dspark|eag
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 // Words that mark a fine-tune of a model rather than the model itself.
 const FINETUNE = /abliterat|uncensor|heretic|merge|distill|finetune|lora|dpo|sft|roleplay|\brp\b/i;
+// The stand-in fleet never reaches Hugging Face (tests on GitHub's machines would be rate-limited): there
+// SPARK_CONSOLE_HF_FIXTURE is a JSON list of what /api/models/<repo> answers, one entry per repo, and a search lists the
+// entries whose id holds every word searched. 'none', the default there, answers as Hugging Face does when it can't be
+// reached. Ignored on the real Sparks.
+const HF_FIXTURE = ALL_LOCAL ? process.env.SPARK_CONSOLE_HF_FIXTURE || 'none' : null;
+function hfFixtureAnswer(path) {
+  if (HF_FIXTURE === 'none') throw new Error('the stand-in fleet doesn’t reach Hugging Face');
+  let list = [];
+  try { list = JSON.parse(readFileSync(HF_FIXTURE, 'utf8')); } catch {}
+  if (!Array.isArray(list)) list = [];
+  const u = new URL(path, 'https://huggingface.co'), one = /^\/api\/models\/([^/]+\/[^/]+)$/.exec(u.pathname);
+  const hit = one && list.find(x => sameRepo(x?.id, decodeURIComponent(one[1])));
+  if (hit) return structuredClone(hit);
+  if (u.pathname !== '/api/models') throw Object.assign(new Error('Hugging Face answered 404'), { status: 404 });
+  const words = String(u.searchParams.get('search') || '').toLowerCase().split(/\s+/).filter(Boolean);
+  return list.filter(x => typeof x?.id === 'string' && words.every(w => x.id.toLowerCase().includes(w)))
+    .sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, Number(u.searchParams.get('limit')) || 30)
+    .map(x => ({ id: x.id, downloads: x.downloads || 0, tags: x.tags || [] }));
+}
 async function hfJson(path, timeout = 15000) {
+  if (HF_FIXTURE) return hfFixtureAnswer(path);
   const r = await fetch(`https://huggingface.co${path}`, { headers: { accept: 'application/json', 'user-agent': 'spark-console' }, signal: AbortSignal.timeout(timeout) });
   if (!r.ok) throw Object.assign(new Error(`Hugging Face answered ${r.status}`), { status: r.status });
   return r.json();
