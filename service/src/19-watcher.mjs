@@ -21,6 +21,8 @@ setTimeout(() => {
   for (const e of events.filter(x => x.type === 'operation' && x.id && x.status === 'started' && !ended.has(x.id))) {
     const where = (e.sparks || [e.spark]).filter(Boolean).join(' + ');
     fleetEvent({ type: 'operation', id: e.id, operation: e.operation, status: 'interrupted', model: e.model || null, spark: e.spark || null, ...(e.sparks ? { sparks: e.sparks } : {}) });
+    // (the self-test's own: its clean-up after the restart says what it stopped, 21-selftest.mjs)
+    if (selfTestCutOff(e)) continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
 }, 0);

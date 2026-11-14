@@ -54,7 +54,7 @@ inside the action, as a new image in `keep_running` is.
 ## R30 (add to the switches)
 
 `SPARK_CONSOLE_SELFTEST_PORT` (the web page's port; needs `SPARK_CONSOLE_ALL_LOCAL=1`). `SPARK_CONSOLE_JOB_WAIT_MS`,
-`SPARK_CONSOLE_SELFTEST_JOB_MS` and `SPARK_CONSOLE_SELFTEST_HEAL_MS` work without it.
+`SPARK_CONSOLE_SELFTEST_JOB_MS`, `SPARK_CONSOLE_SELFTEST_HEAL_MS` and `SPARK_CONSOLE_SELFTEST_RECOVER_MS` work without it.
 
 ## R38 (add to the row)
 
@@ -69,6 +69,24 @@ end: one fixed `docker inspect` every 10 s through `run`, with a time limit; it 
 | To add | Touch | Also update | Never |
 |---|---|---|---|
 | A check of the real hardware | a line of `self_test` (21-selftest.mjs): a step through `stepRun` with the self-test's ctx, a line built by `say` from code, and what it leaves stopped in "Left behind" | the stand-in in `test/mock/bin` (opt-in switches such as `jobs-run`, `stamp-starts`, `gpu-broken`); `test/selftest.test.mjs` | stop anything that was running; start anything on the hub; leave anything running; a line built from a log or a program's words |
+
+## `docs/state.md` (and section 4): a new state file
+
+| File | Holds | Writer | Read | Notes |
+|---|---|---|---|---|
+| `self-test.json` | What the self-test under way has started: its operation, the chat that asked, the Spark, when it began, and for its model, web page and job the container name and, once Docker has one, the full id (the model's while it is still loading) | `selfTest` (`keep`, 21-selftest.mjs), through `writePrivate`; removed when the run ends | `readKept`: `selfTestRecover` at start-up, `selfTestCutOff` (the cut-off notice), `self_test` (refuses while one is pending) | No secret. Present only during a run, or after a restart cut one off until `selfTestRecover` has stopped what it started (a Spark that doesn't answer is tried again each minute). Copied by the daily copy and install snapshots like the rest of the folder; harmless there. |
+
+## R20 (add to the list of files that use `readKept`)
+
+`self-test.json` (read with `readKept`, written with `writePrivate`, removed with `unlinkSync` when the run ends).
+
+## R11 (add to the self-test's lines above)
+
+After a restart of Spark Console cut a self-test off, `selfTestRecover` (21-selftest.mjs, 5 s after start-up,
+`SPARK_CONSOLE_SELFTEST_RECOVER_MS`) stops what `self-test.json` says it started, through `runAction` (`stop_model` for
+the model, only while its container's id is the one recorded; `keep_running` stop for its web page and job, kept first
+when cut off before joining the list), then one notice, also in the chat that asked. The cut-off notice of 19-watcher
+("check it's running; if not, start it again") is not given for the self-test's own operations (`selfTestCutOff`).
 
 ## Section 4, "Who holds the truth" (a row, if the map lists config keys)
 

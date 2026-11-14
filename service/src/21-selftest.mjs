@@ -18,7 +18,9 @@
 // run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
 // (desiredAfter; its start, the drill's restart and its stop are marked selfTest), and a model that is on that list for
 // the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
-// a workflow (no lock entry): each step is an action with its own gate.
+// a workflow (no lock entry): each step is an action with its own gate. What a run starts is kept in self-test.json as it
+// starts (the model's container id as soon as Docker has one), so a restart of Spark Console in the middle stops exactly
+// those at start-up (selfTestRecover); the file is cleared when the run ends.
 const SELF_TEST_WEB_PORT = (ALL_LOCAL && Number(process.env.SPARK_CONSOLE_SELFTEST_PORT)) || 18990;
 const SELF_TEST_JOB_MS = Number(process.env.SPARK_CONSOLE_SELFTEST_JOB_MS || 10 * 60000);
 // How long the drill waits for self-healing to take it up: the watcher looks once a minute.
@@ -137,6 +139,33 @@ async function selfTestJobParts(node, name) {
   for (const [, part, code, secs] of String(r.out).matchAll(/^selftest (gpu|address) (\d{1,3}) (\d{1,7})$/gm)) out[part] = { code: Number(code), seconds: Number(secs) };
   return out;
 }
+// What the run under way started, for a restart in the middle (R20: writePrivate and readKept; no secret in it).
+const SELF_TEST_FILE = `${STATE_DIR}/self-test.json`;
+// As Spark Console: the starts and stops carry their validation run when their workflow waits for one (trusted only
+// where a validation mark has to pass); its model's own operations are marked, so they never touch the list.
+const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true });
+const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
+const selfTestMine = x => { x.selfTest = true; };
+// Its model's stop (the Stop step, the clean-up, and after a restart). stop_model asked as the page first cancels every
+// operation that changes models on that Spark; asked as a workflow's step it cancels only operations of the same actor,
+// its own (17-changes.mjs). So when anything of anyone else's is under way there (an owner's download-then-start, say),
+// that is how it asks. Always with stop_model's validation pass when that waits for its first run.
+function selfTestStopModel(j, spark, container) {
+  const others = [...jobs.values()].some(x => x.status === 'running' && x.actor !== 'Self-test' && holdsModelsOn(x, [spark]));
+  const ctx = selfTestCtx(spark);
+  return stepRun(j, healOwner(), others ? { ...ctx, via: 'workflow' } : ctx, 'stop_model', { spark, container }, selfTestNeed('stop_model'), undefined, selfTestMine);
+}
+// Its web page's or job's stop, through keep_running. One cut off before it joined the list (a restart while it was
+// being started) is kept first, so that its stop takes it off again.
+async function selfTestStopApp(j, spark, container) {
+  const me = healOwner(), ctx = { ...selfTestCtx(spark), trusted: false };
+  try { return await stepRun(j, me, ctx, 'keep_running', { spark, container, do: 'stop' }); } catch (e) {
+    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    await runAction('keep_running', me, { spark, container }, ctx);
+    return stepRun(j, me, ctx, 'keep_running', { spark, container, do: 'stop' });
+  }
+}
+
 // Each container's state and full id on a Spark (state "gone" when Docker has none by that name), from one fixed look
 // per name. A name says nothing about whose a container is (another start makes a new one under the same name): the id
 // does.
@@ -149,13 +178,28 @@ async function selfTest(j, asked, where, image) {
   const spark = where.spark, node = nodeById(spark), at = sparkName(node), m = where.model, title = m.repo || m.name, me = healOwner();
   const model = containerName(m.name), address = selfTestAddress();
   const web = selfTestName('web', [image, SELF_TEST_WEB_PORT, SELF_TEST_WEB]), job = selfTestName('job', [image, address, SELF_TEST_SH, SELF_TEST_PY]);
-  // As Spark Console: the starts and stops carry their validation run when their workflow waits for one; the apps' own
-  // arguments are checked as any caller's (trusted only where a validation mark has to pass).
-  const ctx = { via: 'page', actor: 'Self-test', request: `the self-test on ${at}`, canChange: true, trusted: true, noStops: true, selfTest: true };
-  const appCtx = { ...ctx, trusted: false };
-  // (its model's own operations: never on the list, desiredAfter)
-  const mine = x => { x.selfTest = true; };
-  const need = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
+  // (the apps' own arguments are checked as any caller's)
+  const ctx = selfTestCtx(spark), appCtx = { ...ctx, trusted: false }, mine = selfTestMine, need = selfTestNeed;
+  // What it starts, kept as it starts (the chat it was asked in is known once runAction has returned).
+  await sleep(0);
+  const record = { operation: j.id, chat: j.conv || null, spark, since: j.createdAt, model: { container: model }, web: { container: web }, job: { container: job } };
+  const keep = (what, id) => {
+    if (what) record[what].id = id || null;
+    try { writePrivate(SELF_TEST_FILE, record); } catch (e) { note(j, `Couldn’t keep a note of what the self-test starts (${firstLine(e)}); a restart of Spark Console now would leave it running.`); }
+  };
+  keep();
+  const idOf = async name => (await containerStates(node, [name]).catch(() => null))?.[name]?.id || null;
+  // (the model's id as soon as its container exists, while it loads: a restart then still knows it)
+  const watchStart = x => {
+    mine(x);
+    (async () => {
+      for (; x.status === 'running'; await sleep(2000)) {
+        if (!(x.ranHere || []).includes(`${spark}/${model}`)) continue;
+        const id = await idOf(model);
+        if (id && id !== record.model.id) keep('model', id);
+      }
+    })().catch(() => {});
+  };
   // (cancelling it, or the owner pausing changes, ends it at the next step; what it started is still stopped)
   const between = () => { cancelCheck(j); pausedCheck(asked); };
   const lines = [];
@@ -165,14 +209,8 @@ async function selfTest(j, asked, where, image) {
     note(j, lineWords(l));
   };
   const lineWords = l => `${l.what}: ${l.result}${l.seconds == null ? '' : ` in ${l.seconds} s`}. ${l.words}`;
-  const stopApp = name => stepRun(j, me, appCtx, 'keep_running', { spark, container: name, do: 'stop' });
-  // Its model's stop. stop_model asked as the page first cancels every operation that changes models on that Spark;
-  // asked as a workflow's step it cancels only operations of the same actor, its own (17-changes.mjs). So when anything
-  // of anyone else's is under way there (an owner's download-then-start, say), that is how it asks.
-  const stopModel = validate => {
-    const others = [...jobs.values()].some(x => x.status === 'running' && x.actor !== 'Self-test' && holdsModelsOn(x, [spark]));
-    return stepRun(j, me, others ? { ...ctx, via: 'workflow' } : ctx, 'stop_model', { spark, container: model }, validate, undefined, mine);
-  };
+  const stopApp = name => selfTestStopApp(j, spark, name);
+  const stopModel = () => selfTestStopModel(j, spark, model);
   let modelStarted = false, modelId = null;
   try {
     // Model: started there, stopping nothing, and it answers its test prompt.
@@ -180,10 +218,11 @@ async function selfTest(j, asked, where, image) {
     let t = Date.now();
     step(j, `Starting ${title} on ${at}, stopping nothing`);
     try {
-      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, mine);
+      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, watchStart);
       modelStarted = true;
       // (the container this run started: only that one is ever killed or stopped by it, never another under that name)
-      modelId = (await containerStates(node, [model]))?.[model]?.id || null;
+      modelId = await idOf(model);
+      keep('model', modelId);
       say('Model', 'worked', t, `${title} started on ${at} and answered its test prompt.`);
     } catch (e) { say('Model', 'failed', t, firstLine(e)); }
 
@@ -212,7 +251,7 @@ async function selfTest(j, asked, where, image) {
         else if (!modelId || now.id !== modelId) say('Stop', 'not tried', null, `${model} on ${at} is another container now (not the one this test started), so it was left alone.`);
         else {
           step(j, `Stopping ${model}`);
-          await stopModel(need('stop_model'));
+          await stopModel();
           say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
         }
       } catch (e) { say('Stop', 'failed', t, firstLine(e)); }
@@ -224,6 +263,7 @@ async function selfTest(j, asked, where, image) {
     step(j, `A small web page on ${at}`);
     try {
       const out = await stepRun(j, me, appCtx, 'keep_running', { spark, container: web, image, port: `${SELF_TEST_WEB_PORT}:8080`, command: SELF_TEST_WEB, memoryGB: 1 });
+      keep('web', await idOf(web));
       const link = jobs.get(out.operation)?.endpoint || null;
       const up = Math.round((Date.now() - t) / 1000);
       await stopApp(web);
@@ -238,6 +278,7 @@ async function selfTest(j, asked, where, image) {
     let parts = null;
     try {
       await stepRun(j, me, appCtx, 'keep_running', { spark, container: job, image, once: true, gpu: true, memoryGB: 2, command: selfTestJobCommand(address || '-') });
+      keep('job', await idOf(job));
       let end;
       try { end = await waitJobEnd(node, job, { limitMs: SELF_TEST_JOB_MS, job: j }); } catch (e) {
         if (e?.stillRunning) await stopApp(job).catch(() => {});
@@ -262,7 +303,7 @@ async function selfTest(j, asked, where, image) {
     const going = [...jobs.values()].filter(x => x !== j && x.status === 'running' && ((x.actor === 'Self-test' && x.createdAt >= j.createdAt) || x.id === j.drillRestart));
     if (going.length) await cancelJobsAndWait(going, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stopModel(need('stop_model')).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stopModel().catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
     for (const name of [web, job].filter(n => now?.[n]?.state === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);
@@ -276,6 +317,8 @@ async function selfTest(j, asked, where, image) {
         : `Left behind: nothing running.${modelLeft ? ` ${model} is stopped on ${at}, as after any stop.` : ''}${stopped.length ? ` ${wordList(stopped)} ${stopped.length > 1 ? 'are' : 'is'} stopped there and used again next time.` : ''}`;
     j.report = [...lines.map(lineWords), leftWords];
     note(j, leftWords);
+    // (the run is over: nothing for a restart to stop)
+    try { unlinkSync(SELF_TEST_FILE); } catch {}
     if (!left || running?.length) lines.push({ result: 'failed', what: 'Left behind' });
   }
   const bad = lines.filter(l => l.result === 'failed').map(l => l.what.toLowerCase());
@@ -299,6 +342,11 @@ action({
     }
     if (spark) mustUse(viewer, [spark]);
     if ([...jobs.values()].some(j => j.type === 'self-test' && j.status === 'running')) throw new HttpError(409, 'A self-test is running already. Its report is posted when it ends.');
+    if (existsSync(SELF_TEST_FILE)) {
+      let at = 'its Spark';
+      try { at = sparkName(nodeById(readKept(SELF_TEST_FILE)?.spark) || { id: 'its Spark' }); } catch {}
+      throw new HttpError(409, `The last self-test was cut off by a restart of Spark Console, and what it started on ${at} is stopped first (once ${at} answers). Ask again in a minute.`);
+    }
     // The image is the owner's, in config.json, checked as keep_running checks any image.
     const image = String(CONFIG.selfTestImage || '');
     if (!new RegExp(ACTIONS.get('keep_running').input.properties.image.pattern).test(image)) throw new HttpError(409, 'No self-test image is set in config.json (selfTestImage), so the self-test can’t run.');
@@ -310,3 +358,48 @@ action({
       note: `The self-test runs on ${sparkName(nodeById(where.spark))} for a few minutes. Its report is posted when it ends.`, next: `wait_operation {"id":"${job.id}"}` };
   },
 });
+
+// After a restart: what a self-test cut off in the middle had started, stopped if it still runs (its model only while it
+// is the very container it started, by id; its web page and job by their own names, by id when known). Then one notice,
+// also in the chat that asked. A Spark that doesn't answer is tried again a minute later; the file stays until then.
+async function selfTestRecover() {
+  let rec;
+  try { rec = readKept(SELF_TEST_FILE); } catch (e) { console.error(`The self-test's note of what it started can't be read: ${e.message}`); return; }
+  if (!rec || typeof rec !== 'object' || !rec.spark) return;
+  if ([...jobs.values()].some(x => x.type === 'self-test' && x.status === 'running')) return;
+  const node = nodeById(rec.spark);
+  if (!node) { try { unlinkSync(SELF_TEST_FILE); } catch {} return; }
+  const parts = [['model', rec.model], ['web', rec.web], ['job', rec.job]].filter(([, x]) => x && NAME_RE.test(String(x.container || '')));
+  const now = await containerStates(node, parts.map(([, x]) => x.container)).catch(() => null);
+  if (!now) { setTimeout(() => selfTestRecover().catch(() => {}), 60000).unref?.(); return; }
+  const at = sparkName(node), quiet = { log: [] }, stopped = [], problems = [];
+  for (const [what, x] of parts) {
+    const c = now[x.container];
+    if (c?.state !== 'running') continue;
+    if (x.id ? c.id !== x.id : what === 'model') {
+      if (!x.id) problems.push(`${x.container} runs there, and whether it is the one the test started isn’t known, so it was left alone: if it is, stop it`);
+      continue;
+    }
+    try { await (what === 'model' ? selfTestStopModel(quiet, rec.spark, x.container) : selfTestStopApp(quiet, rec.spark, x.container)); stopped.push(x.container); }
+    catch (e) { problems.push(`${x.container} couldn’t be stopped (${firstLine(e)}): stop it there`); }
+  }
+  try { unlinkSync(SELF_TEST_FILE); } catch {}
+  const text = `Spark Console restarted while the self-test ran on ${at}. ${stopped.length ? `It stopped what the test had started there: ${wordList(stopped)}.` : 'Nothing the test had started was still running there.'}${problems.length ? ` ${problems.join('; ')}.` : ''} Nothing else was touched. Ask again to run the self-test.`;
+  fleetEvent({ type: 'notice', spark: rec.spark, text });
+  const conv = /^sc_[0-9a-f]{16}$/.test(String(rec.chat || '')) ? chatData().conversations.find(c => c.id === rec.chat && c.login === accessList().owner) : null;
+  if (!conv) return;
+  const at2 = new Date().toISOString();
+  conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at2, notice: true });
+  conv.updatedAt = at2;
+  saveChats();
+  if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+}
+setTimeout(() => selfTestRecover().catch(e => console.error(`Stopping what a cut-off self-test started: ${e.message}`)), Number(process.env.SPARK_CONSOLE_SELFTEST_RECOVER_MS || 5000)).unref?.();
+// An operation a restart cut off that was the self-test's (its own, a step of it, or anything on its Spark since it began,
+// such as its drill's restart): its clean-up above says what happened, and "start it again" would be wrong.
+function selfTestCutOff(e) {
+  if (e.operation === 'self-test' || e.actor === 'Self-test') return true;
+  let rec = null;
+  try { rec = readKept(SELF_TEST_FILE); } catch {}
+  return Boolean(rec?.spark && (e.spark === rec.spark || (e.sparks || []).includes(rec.spark)) && String(e.at) >= String(rec.since || '~'));
+}
