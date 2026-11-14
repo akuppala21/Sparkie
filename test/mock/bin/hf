@@ -4,6 +4,8 @@
 [ "$1" = download ] || exit 1
 # ~/.mock/hf-slow: a download that takes about 20 seconds (long enough for something else to happen meanwhile).
 [ -f "$HOME/.mock/hf-slow" ] && sleep 16
+# ~/.mock/hf-hold: the download waits for as long as the file is there (a test lets it go by removing it).
+while [ -f "$HOME/.mock/hf-hold" ]; do sleep 1; done
 # ~/.mock/hf-fails: the download fails the way the library's does on a file it can't write (a traceback with line numbers).
 [ -f "$HOME/.mock/hf-fails" ] && { printf 'Traceback (most recent call last):\n  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result\nOSError: I/O error: Permission denied (os error 13)\n' >&2; exit 1; }
 repo=$2; dir=""; while [ $# -gt 0 ]; do [ "$1" = --local-dir ] && dir=$2; shift; done

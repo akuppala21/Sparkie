@@ -2389,6 +2389,7 @@ const SVC_LABEL = {
   'main-switch': j => `Switch ${ASSISTANT} to ${j.model}`,
   dig: j => `Find setups for ${j.model}`,
   'add-list': j => `Add ${j.model} from Hugging Face`,
+  'self-test': j => `Self-test on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 

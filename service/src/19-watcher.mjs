@@ -21,6 +21,8 @@ setTimeout(() => {
   for (const e of events.filter(x => x.type === 'operation' && x.id && x.status === 'started' && !ended.has(x.id))) {
     const where = (e.sparks || [e.spark]).filter(Boolean).join(' + ');
     fleetEvent({ type: 'operation', id: e.id, operation: e.operation, status: 'interrupted', model: e.model || null, spark: e.spark || null, ...(e.sparks ? { sparks: e.sparks } : {}) });
+    // (the self-test's own: its clean-up after the restart says what it stopped, 21-selftest.mjs)
+    if (selfTestCutOff(e)) continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
 }, 0);
@@ -39,7 +41,7 @@ const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model |
       : e.type === 'healing' ? (e.why ? `bringing back ${e.container} on ${e.spark}: ${e.why}` : `restarting ${e.container} on ${e.spark} after it crashed`)
         : e.type === 'heal-skipped' ? `didn’t restart ${e.container} on ${e.spark}: ${e.why}`
         : e.type === 'notice' ? String(e.text || '')
-      : `${e.container} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
+      : `${e.container} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.drill ? ' (the self-test’s healing drill, on purpose)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
 
 // What a Spark read last, for "why did Spark 4 go dark?" (round two, item 2). The status check keeps the GPU's numbers
 // (busy, watts, temperature, uptime); the watcher adds the hottest sensor on the board, the NVMe drive and the fan from
@@ -186,8 +188,10 @@ async function watchSpark(node) {
     else if (before.state !== state) {
       if (state === 'running') fleetEvent({ type: 'started', ...base });
       else if (before.state === 'running') {
-        const crashed = next.oomKilled || (next.exitCode !== null && ![0, 137, 143].includes(next.exitCode));
-        fleetEvent({ type: crashed ? 'crashed' : 'stopped', ...base, exitCode: next.exitCode, ...(next.oomKilled ? { oomKilled: true } : {}) });
+        // (the self-test's healing drill killed this very container on purpose: a crash, said as the drill's, 18-workflows.mjs)
+        const drill = healDrills.has(`${node.id}/${id}`);
+        const crashed = next.oomKilled || (next.exitCode !== null && ![0, 137, 143].includes(next.exitCode)) || drill;
+        fleetEvent({ type: crashed ? 'crashed' : 'stopped', ...base, exitCode: next.exitCode, ...(next.oomKilled ? { oomKilled: true } : {}), ...(drill ? { drill: true } : {}) });
         if (crashed) maybeHeal(node, next).catch(e => console.error(`Self-healing ${name}: ${e.message}`));
       }
     }

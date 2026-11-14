@@ -134,7 +134,8 @@ async function runChoice(viewer, conv, id, by) {
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
-const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting' };
+const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting',
+  'self-test': 'The self-test with' };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
   if (!conv) return;
@@ -144,7 +145,9 @@ function postResult(job) {
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
     : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
-  conv.messages.push({ role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status });
+  // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
+  const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
+  conv.messages.push({ role: 'assistant', content: `${content}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status });
   conv.updatedAt = new Date().toISOString();
   saveChats();
   // Work started from Telegram reports there too, as a fixed line (20-tell.mjs).

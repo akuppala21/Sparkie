@@ -45,16 +45,22 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 
 ## Where the full run happens
 
-- **A compute Spark**, the fast way before an install: `tools/test-on-spark.sh akuppala@<spark>` runs
-  `node test/lock.mjs` there in a container with no network (about 12 minutes); the lock comes back to
+- **A compute Spark** (the fast way, before an install): `tools/test-on-spark.sh akuppala@<spark>` copies this folder
+  there and runs `node test/lock.mjs` in a container with no network: about 12 minutes. The lock comes back to
   `../spark-test-runs/`. Never on Spark 2.
-- **GitHub**, on each push to `main` and each pull request (`.github/workflows/full-run.yml` says how): after a pass
-  on `main`, a job that runs none of this folder's code tags the tested commit plus its lock
-  `tested/<first 12 hex of the tree>`. Git doesn't keep the lock on `main`.
-- **This Mac**: one file at a time; the whole suite takes one to three hours here.
+- **GitHub, on every push to `main` and every pull request** (`.github/workflows/full-run.yml`): one job runs the build
+  check and `node test/lock.mjs` two files at a time (`SPARK_TEST_SLOW=2`; the runner has 2 cores) and can only read.
+  On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build,
+  and pushes it on top of the tested commit as the tag `tested/<first 12 hex of the tree>`. The lock is no longer kept
+  on `main`. Its minutes are not measured yet: the end of the suite's log lists the seconds each file took. If the job
+  is over 30 minutes, split it into jobs side by side.
+- **This Mac, by hand, one file at a time**: `SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/<file>.test.mjs`.
+  Its security software makes the whole suite take one to three hours, so don't run all of it here.
 
-The lock also names `tree`, `commit`, `run` and `brainReads`; the head of `test/lock.mjs` says what each is and when
-it is left out. `lock.test.mjs` checks them without the whole suite.
+The lock (`service/workflows.lock.json`) holds `build` and `versions` as before, and also `tree` (git's hash of the
+files tested, the lock left out), `commit` (only when those files are exactly that commit's), `run` (the GitHub run,
+only there) and `brainReads` (a sha256 of the system prompt and every tool as the stand-in brain was sent them). A copy
+without `.git` leaves out tree and commit. `test/lock.test.mjs` checks all of this without running the whole suite.
 
 ## What it covers
 
@@ -76,6 +82,9 @@ it is left out. `lock.test.mjs` checks them without the whole suite.
 | `gateway.test.mjs` | One address for every model (`/v1`): running models listed and answered by name wherever they run; a call marks a model in use for 30 minutes, so a start that would stop it asks first (naming who used it); a model that isn't running starts when called if nothing has to stop (503 with Retry-After, then it answers); one that would need a stop gets 409. |
 | `desired.test.mjs` | What should be running: a finished start is on the list; one stopped outside the console becomes held (a notice), Bring back starts it again, Forget takes it off; the owner's cancel puts back what a start stopped; the owner's stop on a Spark with a start loading cancels the start first; "undo that" in a chat reverses that chat's last change. |
 | `validate.test.mjs` | One tap ("Validate changed workflows"): start, stop and restart validated with a small model on Spark 3 or 4, what was running there runs again, Spark 2 untouched; "Auto-restart is OFF" until then; no earlier build to roll back to on the stand-in fleet. A model whose only proven setup is the brain's starts with it made plain; a cached copy whose files link outside its folder starts with each file mounted by itself. |
+| `selftest.test.mjs` | The self-test (`self_test`, D2) on a Spark 3 made free: asked in the owner's words it runs at once; the lines come in order (model, healing, stop, app, job, model address from a container), each with its seconds, then what is left; nothing is left running, Spark 2 is untouched, the list of what should be running is as it was, and a model already running elsewhere is never stopped. The healing drill kills only the container this run started, by its id, and self-healing brings it back; a third self-test within the hour doesn't run the drill ("not tried", with why and when to ask again), kills nothing and passes. With the stand-in GPU broken (`.mock/gpu-broken`) only the job line fails, and its stopped web page and job are used again. The model it stops is the container it started, by id: one made by hand under that name keeps running. An operation under way on a compute Spark makes that Spark not free, and one the owner starts there during the test is never cancelled by it. Cancelled during its first step, it still stops what it started. A model on the list of what should be running there is never the test's (every one listed: it says so and changes nothing). An agent's call is the owner's question; with every compute Spark off it says so and starts nothing. On Spark 3 a job runs its command (`.mock/jobs-run`) and starts carry their time (`.mock/stamp-starts`). |
+| `selftest-cleanup.test.mjs` | The self-test's clean-up on a fleet where nothing is validated yet (as after an install that changed the workflows), on a Spark 3 turned on ten minutes ago: cancelled during its first step while `stop_model` waits for its validation run, the clean-up still stops the model; the drill isn't run there ("not tried", saying when to ask again), nothing is killed and the run passes; after a restart of Spark Console in the middle, at start-up it stops exactly what the test had started (`self-test.json`), says so once in the chat that asked, and tells no one to start it again. |
+| `hub.test.mjs` | The hub guard (R1, D1), with the brain's setup on Spark 4 and Spark Console on Spark 2 (both the hub): a model on disk with no Spark named is refused rather than placed on Spark 2, even when only it has room, and a download with no Spark named goes to neither. |
 | `across.test.mjs` | One model across Spark 3 and Spark 4 with the brain's proven setup (the brain's own Qwen, in Recipes): SGLang split in two over the cable, without the draft model, the stretched context or Spark 2's cache folders. The cable before and during a start: a Spark that refuses connections (pings still pass) stops the start before anything stops, naming the Spark and the command to let the cable in; engines that can't connect (Gloo) fail in the short engine test before the parts start, in Gloo's words, with no second try; parts that never connect are stopped early with where each was waiting (their stack dumps) and, stuck in NCCL, tried once more over plain sockets, and the one-Spark copy that had the first part's name runs again; NCCL that only hangs over RoCE is caught by the engine check and starts over plain sockets, and that run is kept; a Spark that misses a cable re-test keeps its pairs' last result. A pair with room on Spark 4 only if a container started by hand stops (F11): an owner-only question that names it (also when no Sparks were named), asking stops nothing, an agent gets no choice to send back, and the owner's Yes on the page starts it across both Sparks with that stop in the plan. |
 | `telegram.test.mjs` | Telegram (R32) on the stand-in Bot API: connecting needs the owner, the page and the passkey, a refused token stores nothing, and the token lives only in the 0600 secrets file (never in the state folder, log, API or Sparkie's tools); strangers, wrong codes, groups and bots get silence and never burn the code; the paired chat talks to Sparkie (typing, plain text, previews off, split under 4,096, `/new`, `/status`), a change reports once as a fixed line, buttons press as `telegram`, one turn at a time; forwarded, photo, old and token-shaped messages aren't read; going back a build, memory and saved workflows wait in the console with the passkey; pause, injection, masking; unreachable, 409, a secrets file that can't be read (read again by itself, answered once it's back, no restart), brain down (the line names `/restart sparkie`), revoked token, disconnect and `/unpair`; the owner's words there (`/help`, `/pause` with no file path, `/restart sparkie`, `/stop` while Sparkie answers) answered by code, and `/resume` and `/undo update` resuming or undoing nothing; the lines after a restart; floods with the real limits; the build in `sparkie_setup`; Telegram's address and sender in one place. `/undo update` is not a word there. |
 | `words.test.mjs` | The owner's words (R34): with the stand-in brain stuck, `/status` is answered by code (no model call) and saved as one notice; `/restart sparkie` restarts the stuck brain in place with healing's restart (audit line, event); it changes nothing while the brain may still be loading (Docker says it started 2 minutes ago); a stopped brain, or one gone from Docker, starts again from its saved setup in a fresh container with nothing else on Spark 2 stopped, or is refused plainly when that setup can't start; `/pause` pauses without the passkey and says both ways to resume, and no word resumes; near misses (`/pause now`, a two-line message), a member, ask_sparkie and the owner's word in an agent's conversation all go to the model; `/help` prints the by-hand restart line, the same one healing runs. Also: a slow restart holds Spark 2 (a second `/restart sparkie` says it's already restarting, a brain stop is refused, one restart line), a restart is refused while the brain is being stopped, `/pause` over an automatic pause makes it the owner's, and with the brain down a near miss (`/restart`) gets `/help` with no model call. `/undo update` on the tailnet goes back a build by code (no model call, the audit's rollback line) and says so when there is no earlier build; `/help` lists it and the by-hand go-back line; the page's word list has it. `/stop` ends a reply under way at once (no further model call, the chat free, the next message answered; a second `/stop` has nothing to stop); the page's word list is the service's. |
@@ -109,67 +118,5 @@ made-up repos that searches and look-ups answer from (only with `SPARK_CONSOLE_A
 
 ## How it's put together
 
-- `start-mock.mjs` — `startMock()` starts the service on a fresh copy of the stand-in fleet: a temporary folder with a
-  copy of `mock/root`, a state folder seeded with `mock/access.json` (owner `owner@test`, member `member@test`, Sparks
-  1–4) and `mock/links.json` (the last cable test), its own socket and port, `SPARK_CONSOLE_WATCH_MS=3000`, and
-  `SPARK_CONSOLE_SERVE_PORT` (where deploys are checked) on a free port. The state's `main.json` points Sparkie's model
-  setup from `service/config.json` at the stand-in model. Everything runs in one process group, stopped (and the
-  folder removed) by `stop()` or however the test process ends. Tests change the copied fleet freely; `test/mock` is
-  never written. `prepare({ dir, root, stateDir })` runs before the service starts (to seed `events.jsonl`,
-  `heal-tries.json`, unreadable files, …); `knowledge: true` seeds the watcher's `knowledge.json` with the stand-in
-  containers (Sparkie traces a container named in the owner's words through it; the watcher's first look is 15 s in);
-  `env` adds environment variables (`SPARK_CONSOLE_AGENT_CHANGES_PER_HOUR` is 1000 unless a test sets it). The result
-  also has `env` (to start a second copy), `servicePid()` (to send it SIGTERM) and `serviceExit()`.
-- Each test file starts its own service (`useFleet()` in `lib.mjs`) and makes, then removes, its own agent keys through
-  `POST /agents` (with `X-Spark-Console: 1` and the configured Origin, as the page does; `createActKey()` keys may act).
-  Each request gets a fresh connection (`request()` in `lib.mjs`): Node 26's fetch can stall a second or two reusing a
-  kept-alive connection idle for a second.
-- `mock/` — the stand-in fleet:
-  - `root/spark1…5/` — each Spark's HOME: `.mock/containers` (`name|state|status|ours|model|protect|role|cluster|rank`),
-    `.mock/images`, `.mock/ports`, `.mock/meminfo` (like `/proc/meminfo`: 128 GB, about 22 / 64 / 46 GiB available on
-    Sparks 2 / 3 / 4), `.mock/gpu` (`pid, MiB, process[, container]`), `models/`, a Hugging Face cache, and
-    `sys/class/net` for the ConnectX links. Spark 1 starts offline (`mock/offline`); Spark 5 isn't in the access list.
-    Tests may add, in `.mock/`: `logs-<name>` (what `docker logs` shows), `stop-code-<name>` (the exit code
-    `docker stop` leaves), `started-<name>` (when `docker inspect` says it started; else 2026-11-04), a third field in
-    a `ports` line (the host address `docker port` shows; else 127.0.0.1), `cmd-<name>` (a JSON list: the command
-    `docker inspect` gives; else a fixed one with a FAKE `--api-key`), `stall` (seconds every `docker` command and the
-    worker hang, holding no output open, like a frozen Spark; `0` fails every `docker` command at once while the worker
-    answers: Docker not answering on a Spark that is on), `stall-worker` (only the worker), `gzip-bad` (the stand-in
-    `gzip -t` fails: a daily copy cut short), `serve-down` (no model there answers yet, so a start or restart stays
-    "loading"), `slow-<command>` (seconds `docker <command>` takes), `image-<name>` and `memory-<name>` (the image and
-    memory limit in bytes that `docker inspect` gives a container the console didn't start, as an app),
-    `app-port-taken` (an app's `docker run` fails on its port, leaving the container "created", as Docker does), `tsip`
-    (that Spark's tailnet address; else 127.0.0.1), `reject-flag` (a console model started with that flag exits at
-    once) and `slow-container-logs` (seconds the worker takes to read a container's log).
-  - `manifest.json` — what git can't hold: empty folders and the zero-filled weight files' sizes (recreated sparse).
-  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `ping`, `ss`, `tailscale`,
-    and `ssh`/`scp` stubs that always fail. `docker` runs, stops, starts and removes containers like the real one: the
-    console's model containers share the serve port (a second can't start while one runs: "port is already
-    allocated"), `*gemma*` models exit with code 1 as soon as they start, a stop frees the GPU memory `.mock/gpu` lists
-    for it, and "OOM" in a status means killed for memory. Like Docker, it takes a container's name or the start of its
-    id (hex, one container only); `docker port` answers only while a container runs; `docker inspect` keeps a stopped
-    one's published ports; an app's run (`spark.app=1`) is kept in `.mock/run-<name>`, so `docker inspect`
-    gives its image, settings, named volumes, ports, memory limit, command (the words after the image), `--gpus` and
-    its `spark.gpu`, `spark.job` and `spark.chat` labels; `docker ps --format 'run…'` shows `spark.gpu` as a fourth
-    column and `--filter label=spark.gpu=1` keeps only those (A13). `curl` answers on the serve port once a console
-    model on that Spark has run 4 seconds. `hf download` fills the Hugging Face cache. `tailscale ip` is 127.0.0.1 (or
-    `.mock/tsip`), so model addresses reach the stand-in serve port; `tailscale serve status --json` (the console's route check) answers `$MOCK_DIR/serve.json`, or `{}` (nothing loaded, as right after a boot).
-  - `worker.py` — stands in for `service/worker.py` (workspace files go to the real one; status without the removed
-    ray/model fields; logs for `editor`, `console` and `sparkie`).
-  - `model.mjs` — Sparkie's model (streams like SGLang; offered tools, it calls them from patterns in the owner's words
-    (the last user message, fleet record left out): "what's running", "start <model> [on spark N]", "stop/restart
-    <container> on spark N", "restart <container> on spark N once you've read its logs" (two rounds: `container_logs`,
-    then `restart_model`), "why did it fail"; or from rules a test writes to `$MOCK_DIR/model-script.json`
-    (`{match, calls}` or `{match, rounds: [[calls], [calls]]}`; `offered: false` calls a tool Sparkie isn't offered);
-    "take N seconds" makes it wait; a rule's `answerWhen` (a file name) holds the answer after its tools' results until
-    `$MOCK_DIR/<that file>` is there; `$MOCK_DIR/model-fail` makes one request fail, once, in a way its head lists;
-    every request goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last user message, the
-    round and the tool results), an always-up benchmark server, and the serve-port server deploys are speed-tested on.
-  - `editor.mjs` (a code-server, `startMock({ editor: true })`), `clock.mjs` (moves the service's `Date.now()`
-    ahead) and `fault.mjs` (faults inside the service): each one's head says how a test drives it.
-  - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs`: only the installer's routes (`/health`,
-    `/whoami`, `/mcp`, `/v1/models`, `/main`, `/chats`, a chat turn's stream), staged as `server.mjs` behind
-    `const MODE = '…'`; its head lists the modes.
-  - `telegram.mjs` — Telegram's Bot API for `telegram: true`; its head says what it answers and how a test drives it
-    (`/__push`, `/__mode`).
-- All tokens in the stand-ins (`hf_secret…`, `sk-abc…`, `nvapi-ABC…` and the like) are fake, to check masking.
+The harness (`startMock`, `useFleet`, `request`), the stand-in fleet, every stand-in command and model, and the
+`.mock/` files a test sets to change what they do: `test/stand-in-fleet.md`.
