@@ -121,7 +121,7 @@ flowchart TD
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
   STATE -->|"desired list, heal tries, the brain's left-down mark"| HEAL
-  STATE -->|"tar, read back (gzip -t) before it takes the old copy’s place; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
+  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
 Not drawn: the Telegram loop (one long poll at a time, started in the local port's listen callback; `telegram.json`

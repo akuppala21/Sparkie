@@ -11,7 +11,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { readFileSync, writeFileSync, appendFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
 
 // An app's page: answers anything, unless it's "down" (then it drops the connection without a reply).
 const down = new Set();
@@ -37,12 +37,14 @@ useFleet({ watchMs: 2000, statusMs: 3000, knowledge: true,
   // Hand-started containers: Open WebUI and one published only on a LAN address on Spark 3; a notes app and a
   // hand-started model server on Spark 4. Later cases' own: a stopped app (late-app) and one with no memory limit
   // (bare-app) on Spark 3; a database (hand-db), a running job (hand-job) and a stopped app with a 16 GB limit (big-app)
-  // on Spark 4.
+  // on Spark 4; and a job of Spark Console's on Spark 4 that had ended before the service started (old-job).
   prepare: ({ root }) => {
     appendFileSync(mock(root, 'spark3', 'containers'), 'open-webui|running|Up 2 hours||||||\nlan-only|running|Up 1 hour||||||\nlate-app|exited|Exited (0) 2 hours ago||||||\nbare-app|exited|Exited (0) 2 hours ago||||||\n');
     writeFileSync(mock(root, 'spark3', 'ports'), `open-webui|${P1}\nlan-only|${PLAN}|192.168.1.5\nlate-app|${P5}\n`);
     appendFileSync(mock(root, 'spark4', 'containers'), 'notes-app|running|Up 3 hours||||||\nhand-vllm|running|Up 1 hour||||||\nhand-db|running|Up 1 hour||||||\nhand-job|running|Up 1 hour||||||\nbig-app|exited|Exited (0) 1 hour ago||||||\n');
     writeFileSync(mock(root, 'spark4', 'ports'), `notes-app|${P2}\nhand-vllm|${PVLLM}\nhand-db|${PDB}\n`);
+    appendFileSync(mock(root, 'spark4', 'containers'), 'old-job|exited|Exited (0) 2 hours ago|app||||||\n');
+    writeFileSync(mock(root, 'spark4', 'run-old-job'), ['-d', '--name', 'old-job', '--label', 'spark.app=1', '--label', 'spark.job=1', '--memory', '4g', 'python:3.12-slim', 'python3', '/in/old.py', ''].join('\n'));
     writeFileSync(mock(root, 'spark4', `serve-${PVLLM}`), '{"object":"list","data":[{"id":"hand-model","object":"model"}]}');
     // What docker inspect says they are: an app's image, and its own memory limit (hand-vllm keeps the stand-in's vLLM
     // image; bare-app and hand-job have no limit).
@@ -759,6 +761,51 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
     assert.equal((await operations()).length, ops, 'nothing started');
   });
 
+  // The checks before the claim are made again inside it, just before docker start (A-2): another GPU thing that came,
+  // or memory that went, between the first look and the claim is never started beside.
+  test('a stopped GPU app is checked again inside its claim: another GPU app there, or less free memory, since the first look starts nothing', { timeout: 300000 * SLOW }, async () => {
+    // (gpu-box, the GPU app of the first case here, is stopped and off the list; with the model on Spark 3 stopped, the
+    // checks before the claim pass)
+    assert.equal(stateOf('spark3', 'gpu-box'), 'exited');
+    assert.equal(await listed('spark3', 'gpu-box'), undefined);
+    setState('spark3', MODEL3, 'exited', 'Exited (0) just now');
+    const meminfo = readFileSync(m('spark3', 'meminfo'), 'utf8');
+    const other = () => {
+      appendFileSync(m('spark3', 'containers'), 'gpu-other|running|Up 1 second|app||||||\n');
+      writeFileSync(m('spark3', 'run-gpu-other'), ['-d', '--name', 'gpu-other', '--label', 'spark.app=1', '--label', 'spark.gpu=1', '--gpus', 'all', '--memory', '8g', 'nvcr.io/nvidia/pytorch:25.01-py3', ''].join('\n'));
+    };
+    const noOther = () => {
+      const f = m('spark3', 'containers');
+      writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter(l => !l.startsWith('gpu-other|')).join('\n'));
+      rmSync(m('spark3', 'run-gpu-other'), { force: true });
+    };
+    // (every docker inspect on Spark 3 takes 2 s more: when keep_running answers, its claim is taken and the job's own
+    // look at gpu-box is still to come, so the change lands between the two)
+    writeFileSync(m('spark3', 'slow-inspect'), '2');
+    try {
+      for (const [what, change, re] of [
+        ['another GPU app', other, /^Spark 3 runs gpu-other now\. A GPU app or job has a Spark’s GPU to itself\./],
+        ['less free memory', () => writeFileSync(m('spark3', 'meminfo'), meminfo.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${20 * 1024 * 1024} kB`)),
+          /^Spark 3 doesn’t have room for gpu-box now: it may use up to 24 GB, and 12 GB is free beyond the 8 GB kept for the system\./]]) {
+        const r = await keep({ spark: 'spark3', container: 'gpu-box' });
+        assert.equal(r.json?.outcome, 'started', `${what}: ${r.text}`);
+        change();
+        const w = await finished(r.json.operation);
+        assert.equal(w.status, 'failed', `${what}: ${JSON.stringify(w)}`);
+        assert.match(w.error, re, what);
+        assert.equal(stateOf('spark3', 'gpu-box'), 'exited', `${what}: gpu-box wasn’t started`);
+        assert.ok(!w.recentLog.some(l => /It didn’t come up/.test(String(l.text ?? l))), `${what}: nothing to put back: ${JSON.stringify(w.recentLog)}`);
+        noOther();
+        writeFileSync(m('spark3', 'meminfo'), meminfo);
+      }
+    } finally {
+      rmSync(m('spark3', 'slow-inspect'), { force: true });
+      noOther();
+      writeFileSync(m('spark3', 'meminfo'), meminfo);
+      setState('spark3', MODEL3, 'running', 'Up 1 second');
+    }
+  });
+
   test('a job run again that ends before the watcher’s next look is told with its own end, not the run before’s', { timeout: 180000 * SLOW }, async () => {
     const r = await keep({ spark: 'spark4', container: 'rerun-job', image: 'python:3.12-slim', once: true, command: ['python3', '/in/rerun.py'] });
     assert.equal(r.json?.outcome, 'started', r.text);
@@ -782,6 +829,40 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
       assert.equal(ends.length, 1, JSON.stringify(ends));
       assert.match(ends[0], /^rerun-job on Spark 4 finished(?: after [^.]*)?\. Its files are in jobs\/rerun-job/);
     } finally { rmSync(m('spark4', 'start-exits-rerun-job'), { force: true }); }
+  });
+
+  // A Spark the watcher has only ever seen empty (A-8): the first look Docker answered there is its first look, even
+  // with nothing there, so the first job that ends there before the next look is told, once. A job that had ended
+  // before a Spark's first look is history: never told.
+  test('a job on a Spark the watcher has only seen empty is told once when it ends, in its chat; one that ended before a Spark’s first look isn’t', { timeout: 240000 * SLOW }, async () => {
+    // (old-job had ended on Spark 4 before the service started: the watcher's first look there knows it, and says nothing)
+    assert.equal((await call(keys.look.token, 'workloads', { spark: 'spark4' })).value.workloads.find(w => w.name === 'old-job')?.state, 'exited');
+    assert.ok(!eventLines().some(e => e.container === 'old-job' && e.type === 'notice'), 'no notice for old-job');
+    // Spark 1 (always off here, nothing on it) comes on: one look Docker answered, with nothing there.
+    const since = new Date().toISOString(), chat = await newChat();
+    writeFileSync(T.fleet.offlineFile, '');
+    try {
+      await waitFor(async () => (await call(keys.look.token, 'workloads', { spark: 'spark1' })).value?.observedAt, { timeout: 60000, what: 'a look at Spark 1' });
+      assert.deepEqual((await call(keys.look.token, 'workloads', { spark: 'spark1' })).value.workloads, [], 'nothing on Spark 1');
+      // A job that ends before the watcher's next look, as start-exits-… leaves one: its first sight is its end.
+      writeFileSync(m('spark1', 'run-first-job'), ['-d', '--name', 'first-job', '--label', 'spark.app=1', '--label', 'spark.job=1', '--label', `spark.chat=${chat}`,
+        '--memory', '4g', 'python:3.12-slim', 'python3', '/in/first.py', ''].join('\n'));
+      appendFileSync(m('spark1', 'containers'), 'first-job|exited|Exited (0) 1 second ago|app||||||\n');
+      const told = e => e.type === 'notice' && e.container === 'first-job';
+      const line = x => x.notice && /^first-job on Spark 1 finished\. Its files are in jobs\/first-job in the shared folder on Spark 1/.test(x.content);
+      await waitFor(async () => (await eventsSince(since)).some(told), { timeout: 30000, what: 'the end of first-job told' });
+      await waitFor(async () => (await chatMessages(chat)).some(line), { timeout: 30000, what: 'the end in its chat' });
+      // (a few more looks: told once)
+      await new Promise(res => setTimeout(res, 7000));
+      assert.equal((await eventsSince(since)).filter(told).length, 1);
+      assert.equal((await chatMessages(chat)).filter(line).length, 1);
+    } finally {
+      // (Spark 1 as it was: off, nothing on it)
+      writeFileSync(m('spark1', 'containers'), '');
+      rmSync(m('spark1', 'run-first-job'), { force: true });
+      writeFileSync(T.fleet.offlineFile, 'spark1\n');
+    }
+    await waitFor(async () => (await eventsSince(since)).some(e => e.type === 'spark-offline' && e.spark === 'spark1'), { timeout: 40000, what: 'Spark 1 off again' });
   });
 
   // A dev box has no password only when its command says so: a known image kept with no command gets its no-sign-in

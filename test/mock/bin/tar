@@ -1,0 +1,9 @@
+#!/bin/bash
+# Stand-in tar: the real one, except that with $MOCK_DIR/tar-fails it runs the real one to its end and then ends 2, as
+# GNU tar does after a whole archive that left out a file it couldn't read (the daily copy, A-9).
+for t in /usr/bin/tar /bin/tar; do
+  [ -x "$t" ] || continue
+  if [ -n "$MOCK_DIR" ] && [ -e "$MOCK_DIR/tar-fails" ]; then "$t" "$@"; exit 2; fi
+  exec "$t" "$@"
+done
+echo "tar stand-in: no real tar here" >&2; exit 127

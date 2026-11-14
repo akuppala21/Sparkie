@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.
 
-The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10937 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (10960 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -204,7 +204,7 @@ Every change Spark Console makes is a workflow: a named procedure with checked i
 
 Every minute the console looks at every container on every Spark (models, services, dev boxes, anything started by hand) and remembers how each was started: image, command (secrets hidden), ports, mounts, GPU use, and the names (never the values) of its environment variables. Changes become events: started, stopped, crashed, removed, a Spark going offline or coming back, and the console's own operations. A model server someone started by hand, from an image source the console trusts, is saved as a recipe ("worked before"), so it can be started again like any other. Sparkie and agents read all …
 
-- **Lines:** 298
+- **Lines:** 303
 - **State files it names:** `knowledge.json`, `events.jsonl`
 - **Runs on a timer:** `watchFleet`
 - **Functions:** `events`, `fleetEvent`, `describeEvent`, `reading`, `lastReading`, `readingWords`, `darkPeriods`, `watchScript`, `learnedFrom`, `watchSpark`, `learnRecipe`, `learnModels`, `noteSparkStates`, `saveKnowledge`, `watchFleet`, `sparkOff`, `fleetNotes`
@@ -269,7 +269,7 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 
 "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the owner names: no GPU, a memory cap, named volumes only, its port opened on 127.0.0.1 and the Spark's tailnet address only, labelled spark.app=1 (never spark.console=1, so no model start ever counts it as one of its own). Self-healing brings a kept app …
 
-- **Lines:** 544
+- **Lines:** 548
 - **Actions:** `keep_running`
 - **Functions:** `appSecretName`, `imageRepo`, `appModelImage`, `appAnswers`, `appStates`, `appLook`, `appDiffers`, `commandWords`, `appCommand`, `devBox`, `appRoom`, `jobDir`, `appRunCommand`, `gpuAlone`, `jobFolder`, `jobEnded`, `appUp`, `appDone`, `appPutBack`, `appNamed`, `appNow`, `healApp`
 
@@ -322,7 +322,7 @@ From the internet (Tailscale Funnel) a request carries no Tailscale identity, so
 
 ### `23-http.mjs`: HTTP
 
-- **Lines:** 136
+- **Lines:** 141
 - **State files it names:** `last-crash.json`, `watchdog-restarts`, `api.sock`, `api-locked`
 - **Runs on a timer:** `checkRoute`, `refreshBlocked`
 - **Functions:** `send`, `readBody`, `isFault`, `routePattern`, `faultText`, `faultFrames`, `recordFault`, `recordCrash`, `faultView`, `checkRoute`, `sparkAddresses`, `refreshBlocked`
@@ -336,9 +336,9 @@ Anyone may see the fleet's hardware and load, from the internet too. Internet (F
 
 ### `25-backup-and-start.mjs`: a daily copy of the console's state on another Spark
 
-People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part, is read back whole (gzip -t) and only then moved into place, so a copy cut short never replaces a good one. backup.json keeps the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today (UTC): it is tried ten …
+People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't finish (a file it …
 
-- **Lines:** 130
+- **Lines:** 139
 - **State files it names:** `backup.json`
 - **Runs on a timer:** `backupIfDue`, `needsMeTick`
 - **Functions:** `dayOf`, `backupLate`, `backupTargets`, `sendCopy`, `backupState`, `backupIfDue`, `refuseUpgrade`, `openSockets`
