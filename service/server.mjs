@@ -10914,8 +10914,10 @@ function sendCopy(target, name) {
     const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
-    // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first.)
-    const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && rm -f ${dir}/state-*.tgz.part && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
+    // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
+    // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
+    // pattern that matches nothing is an error and no copy would land.)
+    const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
     const finish = () => {

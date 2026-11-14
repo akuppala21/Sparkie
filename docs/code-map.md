@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.
 
-The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (11024 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 37 parts in `service/src/`, joined in name order into `service/server.mjs` (11026 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -338,7 +338,7 @@ Anyone may see the fleet's hardware and load, from the internet too. Internet (F
 
 People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't finish (a file it …
 
-- **Lines:** 139
+- **Lines:** 141
 - **State files it names:** `backup.json`
 - **Runs on a timer:** `backupIfDue`, `needsMeTick`
 - **Functions:** `dayOf`, `backupLate`, `backupTargets`, `sendCopy`, `backupState`, `backupIfDue`, `refuseUpgrade`, `openSockets`
