@@ -5,15 +5,17 @@ other Sparks, and Sparkie, the local brain the owner talks to. This page is the 
 (Sparkie, an agent or a person): read it, then the one card your task needs, then what that card names.
 
 The contract (`docs/contract.md`) says what must be true; the rules (`docs/rules/`) say how; code that falls short is
-recorded (a "Today:" line in its rule), never fixed by quietly editing either.
+recorded (a "Today" note in its rule), never fixed by quietly editing either.
 
 ## Never break
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
-- Keep every rule in `docs/rules/` (one line each in `docs/rules.md`). Where a rule says "Today:" the code falls short
+- Keep every rule in `docs/rules/` (one line each in `docs/rules.md`). Where a rule says "Today" the code falls short
   of it; don't add to those gaps.
-- Nothing starts a model or workload on Spark 2 (the brain's Spark). Never touch SSH, Tailscale, firewall or user
-  settings (contract 8.3).
+- Nothing starts a model or workload on Spark 2 (the brain's Spark).
+- Today no action changes SSH, Tailscale, the firewall or users (R3, contract 8.3), and you don't while working here.
+  Milestone 2 lets Sparkie change them when the owner asks, asked first and inside the put-back net; until that is
+  built, add no path that touches them.
 - Don't delete the owner's data. Stopping something isn't deleting.
 - Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
 - Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
@@ -27,24 +29,24 @@ recorded (a "Today:" line in its rule), never fixed by quietly editing either.
 | `service/config.json` | The Sparks, images, and the brain's setups (`main.presets`). |
 | `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Recipe reading, passkeys (WebAuthn), the worker on each Spark. |
 | `public/` | The page: plain JavaScript, no build step. |
-| `test/` | The suite (`*.test.mjs`) and the stand-in fleet (`test/mock/`, `test/start-mock.mjs`). See `test/README.md`. |
-| `deploy/` | Install scripts (`host-on-portal.sh`), and `go-back.sh` and `RECOVERY.txt`, the by-hand way back. |
+| `test/` | The suite and the stand-in fleet; see `test/README.md`. |
+| `deploy/` | The installer (`host-on-portal.sh`); `go-back.sh` and `RECOVERY.txt`, the way back by hand. |
 | `tools/` | `make.mjs` (the one command), `console.mjs` (the owner's terminal), `spark.mjs` (agents), builders. |
 | `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
-| `docs/rules/`, `docs/rules.md` | One rule per file (Rule, Why, Today, Where, Checked by), and their index (generated). |
+| `docs/rules/`, `docs/rules.md` | One rule per file, and their index (generated). |
 | `docs/how/` | One card per kind of work. |
 | `docs/state.md`, `docs/glossary.md` | Who holds each fact; the words this project uses. |
 | `docs/code-map.md` | Generated: every part, action, state file, timer and function. |
 | `docs/contract.md` | What the product must do and why. Search it. |
 | `docs/history/` | Dated records: old plans, reviews, analyses. Never edited. |
 
-State lives on Spark 2 in `~/.local/state/spark-console` (state files), `~/.local/share/spark-console` (snapshots,
-the way back), `~/.config/spark-console/secrets.json` (keys) and `~/spark-console-src` (the source).
+State lives on Spark 2: `~/.local/state/spark-console`, `~/.local/share/spark-console` (snapshots, the way
+back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the source).
 
 ## How to work
 
-1. Find it first: the task table below gives one card; `docs/code-map.md` says where each part, action and function
-   lives. Read the code before changing it.
+1. Find it first: the task table below gives one card. Read the code before changing it; `docs/code-map.md` says
+   where each part, action and function lives.
 2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs`, the code map
    and the rules index, then checks the documents against the code. `node tools/make.mjs --check` changes nothing.
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
@@ -54,8 +56,8 @@ the way back), `~/.config/spark-console/secrets.json` (keys) and `~/spark-consol
    build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
    `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
 6. After installing, check the change the way the owner would use it: through Sparkie's chat or
-   `POST /console/api/actions/<name>`. Passing tests are not the same as working on the real Sparks. The installer
-   puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates while Sparkie's model is down.
+   `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
+   The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
 
 ## I want to …
 
@@ -82,6 +84,8 @@ the way back), `~/.config/spark-console/secrets.json` (keys) and `~/spark-consol
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
 
+No card fits? Search `docs/rules.md`.
+
 ## Before you say done
 
 1. Parts edited, not `server.mjs`; the part's name fits R28; `node tools/make.mjs --check` passes.
@@ -90,7 +94,7 @@ the way back), `~/.config/spark-console/secrets.json` (keys) and `~/spark-consol
    its target traced in `sparkieCheck`.
 4. Anything new that changes a Spark goes through `runAction`, a claim, a job and `run`. Don't copy the paths that
    skip them today (R11).
-5. Nothing starts on Spark 2; the 8 GB rule holds; no SSH, Tailscale, firewall, user or access change.
+5. Nothing starts on Spark 2; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access.
 6. A new route sits below its checks and is tested every way R4 lists; a passkey-gated one is in `mayNeedPasskey`,
    `needsPasskey`, `describeChange` and `bodyLimit`.
 7. A new caller's `via` is handled at every comparison (`docs/how/add-a-way-in.md`); `ctx.trusted` never comes from a

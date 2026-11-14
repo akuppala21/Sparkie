@@ -98,6 +98,9 @@ describe('typed counts', () => {
   test('reads and changes', () => fails(doc('The registry holds 26 reads, 15 changes.'), 'counts', /26 reads, 15 changes/));
   test('parts', () => fails(doc('The service is 37 parts.'), 'counts', /37 parts/));
   test('every rule as a range', () => fails(doc('Keep R1–R1 always.'), 'counts', /R1–R1/));
+  for (const limit of ['at most 24 tools', 'up to 12 tools', 'runs in 2 parts', '3 tools at once', '4 tools a round']) {
+    test(`a limit is not a count: “${limit}”`, () => assert.deepEqual(problemsWith(doc(`The brain gets ${limit}.`)).map(say), []));
+  }
 });
 
 describe('sizes', () => {
@@ -118,9 +121,10 @@ describe('shape', () => {
 });
 
 describe('what is never checked', () => {
-  test('dated records: docs/history/ and docs/design-2026-11-13/', () => {
+  test('dated records: docs/history/, docs/design-2026-11-13/ and docs/review-astra/', () => {
     const fault = '# Old\n\nR99, `16-actions.mjs:286`, 26 reads, 15 changes, `propose_start`, `docs/gone.md`.\n';
-    assert.deepEqual(problemsWith({ 'docs/history/old.md': fault, 'docs/design-2026-11-13/x.md': fault }).map(say), []);
+    assert.deepEqual(problemsWith({ 'docs/history/old.md': fault, 'docs/design-2026-11-13/x.md': fault, 'docs/review-astra/reply.md': fault }).map(say), []);
+    assert.ok(problemsWith({ 'docs/notes.md': fault }).length > 0, 'the same text outside them is found');
   });
   test('REVIEW-GUIDE.md: only its paths', () => {
     assert.deepEqual(problemsWith({ 'REVIEW-GUIDE.md': '# Review\n\nThe service is 37 parts; `16-actions.mjs:286`.\n' }).map(say), []);

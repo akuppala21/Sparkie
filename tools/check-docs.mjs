@@ -14,7 +14,7 @@
 //   sizes    each document within its limit in bytes, and no line over 400 characters
 //   shape    each rule file and each card has its fixed headings; AGENTS.md's task table and docs/how/ agree;
 //            docs/rules.md is what docs/rules/ makes
-// Dated records are never checked: docs/history/ and docs/design-2026-11-13/.
+// Dated records are never checked: docs/history/, docs/design-2026-11-13/ and docs/review-astra/.
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const KB = 1024;
 
 // Dated records: kept as they were written, never checked.
-const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//];
+// docs/review-astra/ holds a review with an outside reviewer (its evidence quotes line numbers and old names on purpose).
+const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//, /^docs\/review-astra\//];
 // Written by tools: never edited by hand. tools/make.mjs rebuilds them; build.test.mjs and this checker compare them.
 const GENERATED = ['docs/code-map.md', 'docs/rules.md'];
 // Not the app's documents: the agent bar (a separate trial harness that names its own run outputs) and anything inside
@@ -221,7 +222,8 @@ function checkLinePointers(file, text, out) {
 
 function checkCounts(file, text, out) {
   const COUNTS = [
-    /\b\d+ (?:read |change |top-level )?(?:actions|lookups|tools|parts|rules)\b/g,
+    // (a limit is not a count: “at most 24 tools”, “up to 12 tools”, “in 2 parts”, “3 tools at once”, “4 tools a round”)
+    /(?<!\b(?:at most|up to|in) )\b\d+ (?:read |change |top-level )?(?:actions|lookups|tools|parts|rules)\b(?! at once| a round)/g,
     /\b\d+ (?:reads|lookups),? (?:and )?\d+ changes\b/g,
     /\bR1 ?(?:–|-|to) ?R\d+\b/g,
   ];

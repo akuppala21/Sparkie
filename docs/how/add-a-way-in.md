@@ -12,11 +12,17 @@ things go", row "A new way in".
 
 ## Also update
 
-- Every place `via` is compared. Find them with `grep -n "via ===\|via !==" service/src/*.mjs`; today they are in
-  `runAction`, `planOf` and `abilities` (`16-actions.mjs`), `runJob` (`07-jobs.mjs`), `pausedCheck`, `question`,
-  `redeemChoice`, `launch`, `acrossGate`, `startModel` and `restartJob` (`17-changes.mjs`), `runChoice`
-  (`14-chats.mjs`), `checkSteps` and `undoUpdate` (`18-workflows.mjs`), `memoryPrompt` (`20-memory.mjs`), and the
-  page's `whoKey` (`public/app.js`).
+- Every place `via` is compared. Find them with
+  `grep -nE "via (===|!==)|includes\((ctx\.|job\.)?via\)" service/src/*.mjs`; today they are in:
+  - `16-actions.mjs` (`runAction`, `planOf`, `sparkie_setup`)
+  - `07-jobs.mjs` (`runJob`)
+  - `17-changes.mjs` (`noStopWords`, `pausedCheck`, `question`, `redeemChoice`, `acrossGate`, `stop_model`)
+  - `14-chats.mjs` (`runChoice`)
+  - `18-workflows.mjs` (`startTestChanges`, `undoUpdate`, `undo_update`)
+  - `20-desired.mjs` (`cancel_operation`, `undo_last_change`)
+  - `20-memory.mjs` (`remember`); `21-apps.mjs` (`keep_running`); `21-web.mjs` (`addressRefusal`)
+  - `20-words.mjs` (`pauseWord`); the page's `whoKey` (`public/app.js`)
+  - `22-sessions.mjs` matches too, but its `via` is how a device signed in, not a caller
 - `carriesCredential`; `SECRET_PATTERNS`; `routes_ok` (`deploy/open-to-internet.sh`).
 
 ## Never

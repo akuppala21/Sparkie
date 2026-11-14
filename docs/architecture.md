@@ -5,7 +5,7 @@ which build runs). Pointers are names, never line numbers, and `node tools/make.
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
-`docs/rules/` (index: `docs/rules.md`), where "Today:" marks where existing code does not keep its rule; where new
+`docs/rules/` (index: `docs/rules.md`), where "Today" marks where existing code does not keep its rule; where new
 things go, one card per kind of work, in `docs/how/`; who holds each fact, in `docs/state.md`; the checklist, in
 `AGENTS.md` ("Before you say done").
 
@@ -145,7 +145,7 @@ X. It was build Y."); daily research (first run 3 minutes after start, 20 models
 long-running sampler per Spark through `spawnOn` while a page is open, `startSampler` in `04-metrics.mjs`); a third
 caller of the brain (the Hugging Face search helper asks the chat route's model for search terms, `searchTerms` in
 `10-recipes.mjs`); shutdown (SIGTERM refuses new jobs and waits up to 60 s for running ones; replies are not waited
-for, `openSockets` in `25-backup-and-start.mjs`).
+for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 
 ## 3. One sentence, start to finish
 
