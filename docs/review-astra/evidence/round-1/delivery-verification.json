@@ -1,0 +1,26 @@
+{
+  "verified_at": "2026-11-14T08:58:06.100118+00:00",
+  "reviewed_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "tracked_diff_clean": true,
+  "tracked_baseline_files_unchanged": 338,
+  "reproduction_artifact_hashes_verified": 25,
+  "test_artifact_hashes_verified": 10,
+  "local_markdown_links_resolve": 40,
+  "app_findings": 12,
+  "plan_points": 7,
+  "full_suite": {
+    "tests": 996,
+    "pass": 995,
+    "fail": 1,
+    "verdict": "failed",
+    "reported_failure": "ENOTEMPTY during temporary mock fleet teardown"
+  },
+  "isolated_updates": {
+    "tests": 6,
+    "pass": 6,
+    "fail": 0,
+    "does_not_close_full_suite_failure": true
+  },
+  "report_sha256": "edf18ac949abd4227f9e1f620e68344623a8fc507efdaf845249eec78c01bd35",
+  "scope": "Final document and evidence integrity check only; no new tests or live operations."
+}

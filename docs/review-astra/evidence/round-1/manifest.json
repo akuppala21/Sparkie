@@ -1,7 +1,7 @@
 {
   "reviewed_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
   "original_directory": "/tmp/spark-early-review-20261113",
-  "scope": "Current source review only. Supplemental /stop evidence supports the existing truncated-upstream-response finding. No legacy portal evidence or private live responses included. Backup source-failure evidence adds one durability scenario; the fatal-exit2 variant models GNU semantics using a real BSD tar failure, not a Linux run.",
+  "scope": "Current source review only. Supplemental /stop evidence supports the existing truncated-upstream-response finding. No legacy portal evidence or private live responses included. Backup source-failure evidence adds one durability scenario; the fatal-exit2 variant models GNU semantics using a real BSD tar failure, not a Linux run. Explicit memory-negation supplement supports existing A3; exact source VM only, no real model/HTTP/fleet behavior claimed.",
   "hash_algorithm": "SHA-256",
   "interpretation": "Original hashes were computed from the collected files before portability edits. Result artifacts are unchanged. Script edits are limited to locating inputs and helper modules, stdout result routing, and labels reflecting the current worker target. Backup scripts additionally guard exact parity of their copied sendCopy function against the selected source before running; only instrumentation is normalized.",
   "files": [
@@ -263,6 +263,28 @@
       "edits": [
         "Original isolated-run result copied byte for byte; no live data."
       ]
+    },
+    {
+      "original_filename": "current-memory-negation-gate-repro.mjs",
+      "packaged_filename": "current-memory-negation-gate-repro.mjs",
+      "kind": "script",
+      "original_sha256": "b8ea474b68732cbcdc3df1d545e9a7eabc78f08ef9368737becc9deb2b9cc215",
+      "packaged_sha256": "b8ea474b68732cbcdc3df1d545e9a7eabc78f08ef9368737becc9deb2b9cc215",
+      "byte_identical": true,
+      "edits": [
+        "Copied byte for byte. Script already resolves SPARK_REVIEW_ROOT or its packaged repository root and extracts exact source functions; state persistence is in memory only."
+      ]
+    },
+    {
+      "original_filename": "current-memory-negation-gate-results.json",
+      "packaged_filename": "current-memory-negation-gate-results.json",
+      "kind": "archived_result",
+      "original_sha256": "a407591e3019caf9fa9ddc94eaaa0bc6f1ee0c58c6e2a5697c25c4f7db2f8fe2",
+      "packaged_sha256": "a407591e3019caf9fa9ddc94eaaa0bc6f1ee0c58c6e2a5697c25c4f7db2f8fe2",
+      "byte_identical": true,
+      "edits": [
+        "Original isolated VM result copied byte for byte; no live data."
+      ]
     }
   ],
   "reviewed_source_sha256": {
@@ -275,6 +297,9 @@
     "service/src/23-http.mjs": "a370e50fc6b449d42ac9925fc10137eb9d813482655cb0a4865c26387590a04b",
     "test/start-mock.mjs": "44efc10fef90e874d6e738e004f17467dfd54efde9d1f7b64462c8c82f560694",
     "test/lib.mjs": "49c346737838c201d0474f8840df23c2e5f90023d0eb89d918373e697c63496c",
-    "service/src/25-backup-and-start.mjs": "a0ec4cc9d272880cf5f56ec59bed228fb378ecb02c5debdc2daef1c6d5d3f351"
+    "service/src/25-backup-and-start.mjs": "a0ec4cc9d272880cf5f56ec59bed228fb378ecb02c5debdc2daef1c6d5d3f351",
+    "service/src/11-setups.mjs": "23d15725368be77fe1a373e4a6b2feac31b5e3ab4ae6771b8803769e6b6316f7",
+    "service/src/16-actions.mjs": "8921a3dcc8dfe27157f66bfa77d4b1b662cb3375ec41ef699d5b58792ae8e4ce",
+    "service/src/20-memory.mjs": "0a4cdbde39df5fd10ab46e4ecd7e9697042ef62be09de867c83fc664c24abfa7"
   }
 }

@@ -1,5 +1,7 @@
 # Merge ledger: joining the six designs into one architecture (working notes, 2026-11-13)
 
+Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): section 5c added, one row for each of P-1 to P-7, items 1 to 14, clean-up 1 to 4, and trash.
+
 Status: A (workspace), B (learning), D (fleet and workloads) read. C (GitHub and self-change), E (unattended, any
 brain), F (structure and contract alignment) still to come. Fill the gaps marked `[C]`, `[E]`, `[F]` when they land.
 
@@ -141,6 +143,42 @@ What makes a coding agent effective, and where each piece sits in the designs.
 | 11 (open) | **Owner, a minute later: "or whats the best way, im no expert, run fable to figure out."** Not fixed either way. Design G decides on evidence: memory alone, memory with a narrow helper, or memory first and a helper only if a measured need appears. Until G reports, plan for memory alone. Earlier words, for the record: | | |
 | 11 (earlier) | **Owner, 2026-11-13: "would prefer avoid helpers and have it straight to memory."** Helpers are cut. What they were for (reading widely without filling a small model's context, and a second look) falls to the memory design: retrieval that returns ranked, short pieces within a budget. Do not build `look_into`. The original text follows for the record only | | |
 | 11 (was) | **Helpers: a fresh context for reading.** One lookup, `look_into {question}`: a separate short turn with read tools only, on one of the brain's free places, that returns a summary of at most 1,500 characters. Used to read widely (logs, the journal, pages) without filling the main turn, and as a second look at a plan before a risky change | A 27B model's context is its scarcest thing; this is how a coding agent stays sharp on long work. It also gives an independent check for everyday work, not only for code | A (the loop), E (slots from the profile) |
+
+## 5c. Changes after the first outside review (2026-11-14)
+
+The ids are the review's: P-1 to P-7 are its findings about the plan; "item N" is the Nth of the fourteen additions taken from its broader answers; "clean-up N" is the Nth of its four clean-up points; "trash" is the sentence added to the "no trash" default. Each change went into the one page first, then into its design. Rule numbers are the one page's (R42 Sparkie's reach, R43 learning, R45 memory).
+
+| Id | What changed | Where |
+|---|---|---|
+| P-1 | The net's timer is the command's own time limit plus ten minutes; a command inside the net runs 10 or 30 minutes; one guard per Spark; a put-back stops the command first and restores only what differs (R42) | One page 4 (the net); A 2.8 (net steps 1, 2, 3, 6), 2.10, 5 (defaults), build steps 11 to 13 |
+| P-2 | A change is written to the journal and synced before it runs, and its result after; no start line, no change; a start with no end is reported as cut off and never run again (R43) | One page 2 and 4 ("Written down first"); A 2.11, build step 7; B 2.1, build step 1 |
+| P-3 | State put back from a copy lets no device or key in by itself: no sessions in a copy, the rest held (`authSerial`) until the owner has seen the list on the tailnet; a running task is parked | One page 6 (milestone 4) and 8; E 2.5, build step 2 |
+| P-4 | A checked grade belongs to what the brain reads: one hash in the lock, eval results stored by it; an install that changes the hash needs the eval, else the button says so and Sparkie asks before every change | One page 6 (milestones 1 and 5) and 10; E 2.3, build step 5; C 2.3 (the install button) |
+| P-5 | The press runs the bytes the ask showed: a script's hash is kept with the button, and an installer from an address is downloaded once (R42) | One page 4 (dangerous asks); A 2.5, 2.8 (fetched code), build steps 7 and 12 |
+| P-6 | The install button for Sparkie's own change carries the one tested and reviewed tree, lists every difference from the installed build, and is void if `main` moves | One page 7 (item 12); C 2.5 (steps 4, 5, 6), build step 8 |
+| P-7 | The research wording says only what the papers show; word-first look-up is a bet the questions decide; 0.05 ms is the picker alone, on a Mac | One page 5; G "In short" (1, 3), 1 (the HippoRAG row, Benchmarks, Independent), 3.4, 3.5 |
+| item 1 | A line carrying a name from the owner's words is taken before the 400-candidate cap, with a test | G 3.4, build step 2 |
+| item 2 | Test: after a restart, a middle line in neither digest list is found by `recall {id, find}` (it needs clean-up 1) | G build step 5 |
+| item 3 | Tests of write intent: quoted, negated, supposed and past-tense "remember" and "forget"; a question about a line; an agent aimed at an owner's line | G build steps 1 and 6 |
+| item 4 | Retired memory lines live in their own file, `memory-past.json`, so an older build can never drop them; the new state files are six | One page 3; G 3 (A2), 3.1, 3.6, 4 (R22), 6, build step 1 |
+| item 5 | Tests: a wish left out of the block is still picked, with its source; an owner's line that holds change words causes no change | G build step 2 |
+| item 6 | A held-out set beside the twenty questions (rewordings; logs never seen before); results by case and by kind, with rounds and seconds | G 3.7, 6, build step 7 |
+| item 7 | Until the owner's one-time command has run on a Spark, `run` and `write_file` do not work there; the look grammar and its test of refused commands go; the helper is built before the first look (R42) | One page 4 (root); A 2.2, 2.3, 2.8 (root), 2.9, 5 (question 1), 6, build steps 1 and 12 |
+| item 7, the interim rule | The interim rules for a Spark without the helper in `critic-safety.md`, findings 7(c), 8 and 24, are no longer needed: nothing free-form runs on such a Spark. The critic is a dated review and is not edited | This row |
+| item 8 | The helper proves its walls on each Spark before first use and in `self_test`, directly and from a child process | One page 6 (milestone 2); A 2.3, 2.8 (root), 5, build step 1 |
+| item 9 | The confirming visit is a fresh sign-in with a passkey that existed before, or a new connection through the changed route; its link carries the guard's id and counts only once the change is live | One page 4 (the net); A 2.8 (net step 5), build step 13 |
+| item 10 | The 24-tool cap: two eval cases that need tools from three groups, and a test that an unoffered `undo_last_change`, `cancel_operation` or `undo_update` still runs | F 2.4, build step 10 |
+| item 11 | A setup passed over for failing twice is tried again when its image, its Sparks or its start code changed, or when the owner says so; the result says it was passed over | One page 6 (milestone 3); B 2.4, build step 3 |
+| item 12 | A failed try of a brain across three Sparks: 45 minutes plus the saved brain's own start, the planned limit, not a measured one | One page 9 (item 9); D 2.2 already says it |
+| item 13 | A generated file in Sparkie's proposal must equal what the installed build's own generator makes from the proposal's sources, else the proposal is refused | One page 7 (item 12); C 2.5 (step 2), build step 8 |
+| item 14 | Small test rows: an ask is void after a restart and after Telegram is paired again; the "read outside text" mark survives a restart; a made-up key is searched for in error fields, the state copy and after a restart | A build steps 7, 10 and 14 |
+| clean-up 1 | A record's long text is kept whole, written and masked in pieces; past 16 MB the command is ended and the record says so (it was 64 KB a record, and "1 MB kept") | One page 8; B 2.1, build step 1; A 2.3, 2.10, 2.11; G 3.4 |
+| clean-up 2 | The journal is never copied: E's sentence about copying its segments is struck, and the rebuild steps say `recall` starts empty | E (what it needs from Learning), 2.5 |
+| clean-up 3 | `remember` and forgetting work from the page and the paired Telegram chat, marked; `erase` on the page only; forgetting has its own test; an agent never replaces or forgets an owner's line (R45) | One page 5 and 8; G 3.3, 3.6, 3.8, 4, 6 (question 2) |
+| clean-up 4 | The guide says what the page shows today; D12, the delete already agreed, lands in milestone 4, and the page is then chat, sign-in and status | `REVIEW-GUIDE.md` (section 1); one page 6 (milestone 4); E 6, build step 10 |
+| trash | The "no trash" default stays, with its cost said: a save another program makes between Sparkie's copy and its delete is in neither place; a typed remove would move the file into the set | One page 8; A 2.6 |
+
+Found while writing these in, and left as they are because the one page already wins over them: C still says updates are approved "on the page only, never Telegram" (the one page lets the owner install from the phone); A keeps its seven tool names and its passwordless-sudo tables (the one page has two tools and one helper); E keeps three brain grades (the one page has two outcomes). Each is rewritten by the milestone that builds it.
 
 ## 6. For the two critics (after all six are in)
 

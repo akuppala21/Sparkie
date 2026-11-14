@@ -1,0 +1,14 @@
+{
+  "driverPid": 5758,
+  "state": "failed",
+  "startedAt": "2026-11-14T08:11:28.484508+00:00",
+  "commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "strict": true,
+  "slowFactor": 3,
+  "concurrency": 4,
+  "testFiles": 47,
+  "testPid": 5811,
+  "exitCode": 1,
+  "elapsedSeconds": 2392.0,
+  "finishedAt": "2026-11-14T08:51:20.469273+00:00"
+}

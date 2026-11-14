@@ -4,18 +4,18 @@
   "checks": [
     {
       "name": "syntax-and-portability",
-      "scripts": 11,
+      "scripts": 12,
       "passed": true
     },
     {
       "name": "artifact-hashes",
-      "files": 23,
-      "unchanged_archived_results": 12,
+      "files": 25,
+      "unchanged_archived_results": 13,
       "passed": true
     },
     {
       "name": "reviewed-source-hashes",
-      "files": 10,
+      "files": 13,
       "passed": true
     },
     {
@@ -87,7 +87,16 @@
       "function": "sendCopy",
       "observed": "Receiver promotes archive before sender exit is checked. Both variants reproduce valid incomplete archive replacing existing fixture.",
       "limits": "Same-day overwrite needs missing or stale success record; fatal2 is a status simulation, not a GNU/Linux run. Scheduling and retention not run."
+    },
+    {
+      "name": "current-memory-negation-gate-repro.mjs",
+      "passed": true,
+      "exit_code": 0,
+      "stdout": "{\n  \"case\": \"recognized-memory-refusal-is-overridden-by-statement-fallback\",\n  \"scope\": \"Exact checkout functions; isolated in-memory persistence. No model, HTTP or Spark operation.\",\n  \"sourceSha256\": {\n    \"service/src/11-setups.mjs\": \"23d15725368be77fe1a373e4a6b2feac31b5e3ab4ae6771b8803769e6b6316f7\",\n    \"service/src/16-actions.mjs\": \"8921a3dcc8dfe27157f66bfa77d4b1b662cb3375ec41ef699d5b58792ae8e4ce\",\n    \"service/src/20-memory.mjs\": \"0a4cdbde39df5fd10ab46e4ecd7e9697042ef62be09de867c83fc664c24abfa7\"\n  },\n  \"request\": \"Do not remember that Spark 4 is on Wi-Fi only\",\n  \"proposed\": \"Spark 4 is on Wi-Fi only\",\n  \"intent\": {\n    \"asked\": [],\n    \"negated\": [\n      \"remember\"\n    ],\n    \"mixed\": [],\n    \"keepOnly\": false\n  },\n  \"gateClear\": true,\n  \"outcome\": \"remembered\",\n  \"savedEntries\": [\n    {\n      \"text\": \"Spark 4 is on Wi-Fi only\",\n      \"by\": \"owner\"\n    }\n  ]\n}\n",
+      "stderr": "",
+      "result_matches_archived_result": true,
+      "method": "Peer-read exact parser, sparkieCheck, memoryClear and runAction integration. Ran only the exact-source VM with in-memory persistence; no model/HTTP/fleet operation. Explicit refusal is recognized but gate clear remains true."
     }
   ],
-  "updated_at": "2026-11-14T08:13:35.312816+00:00"
+  "updated_at": "2026-11-14T08:31:16.857742+00:00"
 }

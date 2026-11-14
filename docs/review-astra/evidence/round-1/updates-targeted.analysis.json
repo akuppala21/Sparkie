@@ -1,0 +1,91 @@
+{
+  "classification": "Observed full-suite failure is temporary-fleet teardown ENOTEMPTY, not a reported update-record assertion. It did not reproduce in one unchanged targeted rerun; the full suite remains failed.",
+  "full_suite_case": "a new build: one record (what it replaced, the snapshot, the note with a key hidden), one notice, 20 kept, five shown",
+  "targeted_result": {
+    "tests": 6,
+    "pass": 6,
+    "fail": 0,
+    "strict": true,
+    "slowFactor": 3,
+    "elapsedSeconds": 19.8,
+    "log": "updates-targeted.log",
+    "status": "updates-targeted.status.json"
+  },
+  "sandbox_attempt": {
+    "classification": "Environment failure: five service-dependent cases failed at localhost setup (listen EPERM on 127.0.0.1) before their assertions; the source-only case passed (1/6 overall). This does not reproduce the full-suite cleanup or a product failure.",
+    "log": "updates-targeted.sandbox.log",
+    "status": "updates-targeted.sandbox.status.json",
+    "tests": 6,
+    "pass": 1,
+    "fail": 5
+  },
+  "source_inspection": [
+    {
+      "source": "test/updates.test.mjs",
+      "function": "withService",
+      "lines": [
+        43,
+        48
+      ],
+      "finding": "The case callback is awaited in try and fleet.stop is awaited in finally; a thrown teardown exception can mask a prior callback/health/assertion error. Release-directory cleanup also follows fleet.stop and is skipped when stop throws."
+    },
+    {
+      "source": "test/start-mock.mjs",
+      "function": "startMock stop callback",
+      "lines": [
+        181,
+        188
+      ],
+      "finding": "stop ends guard stdin, waits in a bounded loop for guard exit, sends process-group SIGKILL if still alive, and then removes the temporary directory. In the fallback path it does not await guard exit after that final SIGKILL before rmSync."
+    },
+    {
+      "source": "test/start-mock.mjs",
+      "function": "GUARD stop/finish",
+      "lines": [
+        39,
+        47
+      ],
+      "finding": "The guard sends process-group SIGTERM, schedules SIGKILL after4seconds, waits for its directly tracked child processes, and also attempts recursive removal before exit. That inner removal catches errors. Child exit handlers append an exits file in the same temporary directory."
+    },
+    {
+      "source": "test/start-mock.mjs",
+      "function": "stop rmSync",
+      "lines": [
+        188,
+        188
+      ],
+      "finding": "The reported parent removal uses recursive:true and force:true without maxRetries. Force does not suppress ENOTEMPTY. Concurrent/recent writers or cleanup activity are plausible mechanisms, but the stack does not identify the exact writer or interleaving."
+    },
+    {
+      "source": "service/src/25-backup-and-start.mjs",
+      "function": "local listen callback / noteUpdate",
+      "finding": "The earlier startup review found synchronous update recording before readiness requests can be served; the observed final error supplies no evidence of a noteUpdate startup race."
+    }
+  ],
+  "limit": "No exact cleanup interleaving or writer has been reproduced. The isolated6/6pass does not replace the original995/996failed result and cannot prove an earlier assertion was not masked by finally. No app/test edits, assertion weakening, or further reruns were performed.",
+  "updated_at_utc": "2026-11-14T08:53:02.296714+00:00",
+  "full_suite_result": {
+    "tests": 996,
+    "pass": 995,
+    "fail": 1,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "duration_ms": 2391859.032042,
+    "source_log": "/tmp/spark-early-review-20261113/current-suite-parallel.log",
+    "source_log_sha256": "041c2b178596fa19317a56b0ec99769574145532352579fc068c771633dd9637",
+    "observed_failure": {
+      "code": "ENOTEMPTY",
+      "syscall": "rm",
+      "stage": "withService finally -> fleet.stop -> recursive temporary-directory removal",
+      "reported_stack": [
+        "node:fs rmSync",
+        "test/start-mock.mjs:188:16 Object.stop",
+        "test/updates.test.mjs:47:5 withService",
+        "test/updates.test.mjs:64:5 test body"
+      ],
+      "temporary_directory_basename": "sct-lsst26"
+    },
+    "interpretation": "The reporter surfaces cleanup removal failure. Since fleet.stop is awaited in finally, a cleanup exception could replace an earlier test-body error. The log does not prove every update-record assertion passed in that full-suite case."
+  }
+}

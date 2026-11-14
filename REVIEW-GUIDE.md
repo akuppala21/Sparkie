@@ -14,8 +14,8 @@ address: `https://akspark2.tailab9aa9.ts.net:8443`. It can be reached on the own
 behind a passkey sign-in.
 
 The owner uses it in only two ways: by talking to **Sparkie** and through the **APIs**. Sparkie is the console's chat
-brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The page is just chat, sign-in and
-status.
+brain, a Qwen model on Spark 2, and the owner talks to it on the page or on Telegram. The owner uses chat and the APIs.
+The page still shows Home, Models, Files and Access from earlier builds, and they still work.
 
 Sparkie and the APIs run anything the owner asks for on Spark 3, Spark 4, or any Spark added later:
 

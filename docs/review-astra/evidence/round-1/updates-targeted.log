@@ -1,0 +1,16 @@
+▶ the update record
+  ✔ a state folder with no update record gets a first record, and no notice (2859.847083ms)
+  ✔ a new build: one record (what it replaced, the snapshot, the note with a key hidden), one notice, 20 kept, five shown (6168.863334ms)
+  ✔ the build held in the newest snapshot runs again: recorded as going back, without the other build's note (3314.735417ms)
+  ✔ a go-back past a newer snapshot marked same (the second go-back in a row): still recorded as going back (4219.582541ms)
+  ✔ a restart on the same build adds nothing (2649.762125ms)
+  ✔ source: the installer hands the note over as update-note.json (96.75625ms)
+✔ the update record (19310.807375ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19450.049291

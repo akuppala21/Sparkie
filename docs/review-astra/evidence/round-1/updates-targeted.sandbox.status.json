@@ -1,0 +1,27 @@
+{
+  "driverPid": 21928,
+  "state": "failed",
+  "startedAt": "2026-11-14T08:44:59.150119+00:00",
+  "commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "strict": true,
+  "slowFactor": 3,
+  "testFiles": [
+    "test/updates.test.mjs"
+  ],
+  "command": [
+    "node",
+    "--test",
+    "test/updates.test.mjs"
+  ],
+  "scope": "Unchanged test, isolated local stand-in service; no live Spark or external network endpoint.",
+  "sourceSha256": {
+    "test/updates.test.mjs": "1b1994943056c93de0d71ba1065aa57951d5d64f55e8ec3b083dba542d332058",
+    "service/server.mjs": "b3b4936f51cc3c5f6b9b698077dbddb62e03ee3c46defeb1747f15f878c2e11e",
+    "service/src/18-workflows.mjs": "c5699a392f16fa47ad69a877a93b7169fe0f5567f977a53349e995a3c34608be"
+  },
+  "testPid": 22098,
+  "exitCode": 1,
+  "elapsedSeconds": 2.2,
+  "finishedAt": "2026-11-14T08:45:01.350252+00:00",
+  "sourceUnchangedAfterRun": true
+}

@@ -1,5 +1,7 @@
 # F. Structure: easy to find your way in, and documents that stay true
 
+Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): item 10.
+
 Design only; no file under `spark-console/` was changed and no test, server or build was run. "Verified" means read in the tree on 2026-11-13, or counted there by a read-only script. "Inference" means reasoned, not run. Paths are under `spark-console/`. Pointers are by name, never by line (2.2 says why).
 
 **In short.**
@@ -136,7 +138,7 @@ Evidence (web): OpenAI's function-calling guide says "aim for fewer than 20 func
 | `updates`, `checks` | `check_update`, `install_update`, `undo_update`, `propose_update`, `update_status`; `self_test`, `test_changes`, `try_brain` | update words; test words |
 
 - **The cap: 24 a round** (core and two groups; today every round carries 41). `TOOL_CAP` is one constant; a brain's setup may lower it. The list is built each round (design A needs that already). One table, `GROUP_WORDS`, beside `CHANGE_WORDS`, opens groups from the owner's words; state opens `work`, `control`, `dig` and `reading`. With a third group, the oldest one opened by words closes. Groups last for the request and its carry-on turns.
-- **Hidden is not forbidden.** A call to an action that exists but was not offered runs through `runAction` as always and opens its group. Permission stays where it is: `runAction`, `PAGE_ONLY`, the gates. So nothing that works today can stop working; a wrong guess by the word table costs one round.
+- **Hidden is not forbidden.** A call to an action that exists but was not offered runs through `runAction` as always and opens its group. Permission stays where it is: `runAction`, `PAGE_ONLY`, the gates. So nothing that works today can stop working; a wrong guess by the word table costs one round. A test proves it for the three calls a stuck owner needs: `undo_last_change`, `cancel_operation` and `undo_update` each run when they were not offered. Two eval cases need tools from three groups, so the cap's cost shows in the eval.
 - **Prompt lines follow the tools.** A line that names a tool belongs to that tool's group and is sent only with it. The core prompt stays under 2,500 characters and names only core tools.
 - **Discovering the rest.** `guide`'s description lists the group names with a few words each. `guide {tools: "dig"}` returns that group's tools and opens it.
 - **At the agent door** nothing is hidden: `tools/list` shows every action in the key's scope, as today. The agent's instructions gain one line, "call `guide` first", and `GET /actions` gains `group`. An agent talking through `ask_sparkie` gets Sparkie's groups.
@@ -242,7 +244,7 @@ Must change:
 | 7 P | The contract made flat, and the status table (the owner approves the move list; no rule's words change) | `docs/contract.md`, new `docs/status.md`, `docs/history/` | A rule id with no row; a `built` row with no test; a version mark still in the contract |
 | 8 P | The next phase written into the contract (the owner's word, once, on the list of changed rules) | `docs/contract.md`, `docs/status.md` | Every new rule id has a `not built` row |
 | 9 P | The glossary, and the renames in designs A to E before their code exists | new `docs/glossary.md`, the checker; `README.md` and `test/README.md` cut down | A "don't say" word in a document, a title or a prompt line |
-| 10 | Tool groups and the cap; before the first design adds a tool | `14-chats.mjs`, `16-actions.mjs` and later parts (`group`), `test/lib.mjs`, new `test/tools.test.mjs` | The stand-in brain is sent 41 tools today; a "why did it fail" request must list core and `dig` only |
+| 10 | Tool groups and the cap; before the first design adds a tool | `14-chats.mjs`, `16-actions.mjs` and later parts (`group`), `test/lib.mjs`, new `test/tools.test.mjs`, `test/eval/cases.json` (two cases that need tools from three groups) | The stand-in brain is sent 41 tools today; a "why did it fail" request must list core and `dig` only; an `undo_last_change`, `cancel_operation` or `undo_update` call that was not offered still runs |
 | 11 | `guide`; before design C's self-change | new `service/guide.json`, a small part `21-guide.mjs`, the installer's file list, new `test/guide.test.mjs` | `guide {rule: "R38"}` returns the rule; nothing returns it today |
 | 12 | The hub list; with design E's clearing of Spark 2 | new `service/hub.json`, `20-needs.mjs`, the checker | A stand-in hub with an extra unit gives one needs line |
 | 13 | The quick job and the meaning diff; with design C's steps 1 and 8 | `.github/workflows/full-run.yml`, the checker | A push that changes a Rule paragraph is listed by id |

@@ -82,6 +82,12 @@ existing button:
 A bare "forget it" is not a forget (it means never mind). A plain statement still corrects through
 `remember {replaces}`, unchanged.
 
+**Added in Astra's final text, and true (read; Astra ran the functions):** "Do not remember that Spark 4 is on Wi-Fi
+only". The parser gets it right (`negated: ['remember']`), but `memoryClear`'s `remember` path ends with "asked, or
+not a question", so a refusal the parser recognised is overridden by the owner's-statement fallback and the line is
+saved. The fix: when this message's intent has `remember` negated or mixed, `remember` is a button and nothing is
+saved. "Don't forget that …" is a request to remember, and still saves at once; a test holds both.
+
 **On the plan:** G 3.6 said `memoryClear`'s test stays unchanged; it now carries this rule, and G's "an agent never
 replaces an owner's line" also says "or forgets one". G's "forgetting retires the line" makes a wrong forget
 recoverable; it does not replace this gate.
@@ -277,3 +283,278 @@ upload and an area switch inside one file's upload. D12 removes the file browser
 **On testing A-10 to A-12:** the suite never runs `public/app.js` today. The honest test is a new `test/page.test.mjs`
 that runs the real functions in `node:vm` with drawing stood in (about 100 lines, no dependency). It is written with
 the first of these three fixes.
+
+## Astra's own test run
+
+### T-1. One clean-up failure in the Mac run (995 of 996): accepted, as a fault in the test harness
+
+**What it was.** Not an assertion: `ENOTEMPTY` from `rmSync` in the stand-in fleet's `stop()` (`test/start-mock.mjs`),
+reached from a `finally`. The same file passed 6 of 6 alone, as Astra records. On Linux the suite has passed whole on
+every gate run of this build (996 of 996, then 1,029 of 1,029 with the documents tests).
+
+**Why it can happen (read).** `stop()` removes the temporary folder as soon as the guard process has exited, or right
+after a last-resort SIGKILL without waiting. The guard removes the same folder itself just before it exits, its
+children's exit handlers append to a file in it, and anything that outlives the guard for a moment can still write
+there. `force` does not cover `ENOTEMPTY`. Astra's reading of the code is right, including the missing wait.
+
+**Astra's second point is also right:** a clean-up error thrown from `finally` replaces the body's own error, so the
+log cannot prove no assertion failed first.
+
+**What changes,** in `stop()` only: it waits for the guard after the last-resort kill, removes with retries, and
+never throws for a leftover temporary folder (one plain line on stderr instead). So clean-up can neither fail a test
+nor hide a failed assertion. No test's assertions change, and nothing under `service/` changes.
+
+### T-2. A second harness fault, found in our own run (not in Astra's report)
+
+The whole-suite run of `main` on Linux on 2026-11-14 (four files at once) failed one test, again not on an
+assertion: the stand-in fleet chose a port, and another test file's fleet took it before the service listened ("Port
+41455 is in use: Spark Console is already running"). `startMock` then waited out its 30 seconds, because it watches
+the guard process and not the service. The product's refusal to start twice is right and unchanged.
+
+**What changes,** in `startMock` only: an attempt that fails because a port was taken is thrown away whole (stopped,
+its temporary folder removed) and a clean one starts with new ports, up to three times; and a service that has
+already exited is noticed at once. Any other start failure behaves as before.
+
+## The plan (part 2)
+
+How these were checked: the one page, the owner's decisions, designs A to G, both critics and the ledger were read
+whole; the code each finding names was read; the three papers were opened. Nothing was run: the pieces are not built.
+Every accepted change is written into the one page first, then the design, with a row in the ledger's new section 5c.
+
+| Id | Answer | Lands in |
+|---|---|---|
+| P-1 | Accepted | Milestone 2, with the net |
+| P-2 | Accepted, with the block scoped to free-form changes | Milestone 2, with the journal |
+| P-3 | Accepted in part: open sign-ins and asks are never on disk; a smaller mechanism than "recovery candidates" | Milestone 4, with the rebuild steps |
+| P-4 | Accepted, with a rider so it does not bring back asking | Milestone 1 (the hash) and 5 (the grade) |
+| P-5 | Accepted: today's button fixes the arguments only | Milestone 2 |
+| P-6 | Accepted | Milestone 5, with Sparkie changing its own code |
+| P-7 | Accepted; one correction to the correction | Now (words only) |
+
+### P-1. The put-back timer can fire under a command that is still running: accepted
+
+**Right about the plan.** A 2.8 arms a fixed ten-minute timer. Safety finding 2 then put every root command and every
+Spark 2 command under it, and A 2.10 lets a command run 120 minutes. Neither safety finding 2 nor 10 changes a
+duration or says what happens to a command still running when the timer ends; they made the case easier to reach. On
+the hub the limit and the timer were both ten minutes, with the timer armed first, so a command that used its time
+was still running when the put-back began. One more gap read in the same place: a "keep it" pressed after the timer
+had fired stopped nothing, and nothing said so.
+
+**The change, with nothing new invented.**
+- The timer is the command's own time limit plus ten minutes. systemd already ends the unit at its limit, so the
+  timer cannot fire under a live command.
+- A command inside the net may run 10 minutes on Spark 2 or in the lock-out class, 30 minutes otherwise. Longer work
+  is a job. The ask says the time.
+- A put-back first stops the command's unit and waits until it is gone, then restores only what differs and reloads
+  only what it put back. (That last part is ours: a put-back on a Spark where nothing was wrong should not restart
+  Docker under a healthy model.)
+- One guard is open on a Spark at a time: the copy script refuses while another guard's `pending` file is there, and
+  the Spark's claim is held until the guard is kept or put back. The file is on the Spark, so a console restart cannot
+  forget it.
+- A "keep it" counts only if the timer was still waiting and its stop worked; otherwise the answer is "already put
+  back".
+
+It is Astra's fix in other words: no "transaction" and no new kind of claim; A's `pending` and result files are the
+kept state. **Test:** a stand-in systemd with a clock the test moves: the timer is the limit plus 600 s; a command
+that rewrites `sshd_config` every second is stopped before the first copy back and the restored bytes stay; a second
+root command during an open guard runs nothing; "keep it" after the timer says "already put back"; an expiry where
+nothing differs reloads nothing. Then once on a real compute Spark.
+
+### P-2. A change can run with no record on disk: accepted
+
+**Right about the plan.** A 2.11 recorded a command "once, when it ends"; B's journal "never throws"; and the
+simplicity review made that one record the only pointer to the copy taken first. So a console killed by the command
+it was running, or between the copy and the return, left no record and an orphaned copy; and a full disk let root
+commands run unrecorded. Today's code already does the right thing for operations (`newJob` writes a start line
+before the work, and a start with no end is reported as cut off at the next start, never replayed); the new `run` and
+`write_file` would not have.
+
+**The change.** Before a command or file write changes a Spark, code adds one line to the journal and syncs it: what,
+where, as whom, who allowed it, where its copies are. The result is a second line with the same id. If the first line
+cannot be written, the change does not run and the owner is told why. After a restart, a start with no end is
+reported as cut off, its copies can still be restored, and it is never run again.
+
+**One point made exact.** "Blocks a new mutation" applies to free-form commands that change something, `write_file`,
+and anything inside the net. Typed actions keep today's behaviour, so "stop the model on Spark 3" still works when
+the hub's disk is full; blocking those would leave the console stuck. `/stop`, `/pause`, `/putback`, `/undo update`
+and the way back by hand never wait on the journal. The cost is one append and one sync before a change, and nothing
+for a look or an ordinary reply.
+
+**Test:** the journal's append made to fail as a full disk does: a changing `run` answers "couldn't write the record,
+nothing was changed" and nothing ran; `/stop`, `/putback`, a look and `stop_model` still work. The console killed
+after a file write: the start line is there, one "cut off" notice, `undo_last_change` restores the file, the command
+ran once.
+
+### P-3. Putting old state back can let a removed device or passkey in again: accepted in part
+
+**Right for sessions, passkeys, agent keys, people and "always" entries.** `sessions.json`, `passkeys.json` and
+`agents.json` are in the state copy; `sessionFor` accepts any stored hash that has not aged out; fourteen dated copies
+are kept; `restore.sh --with-state` puts a snapshot's state back the same way. The builders already held this view
+for one thing (recovery codes live in the secrets file "so no backup, install snapshot or rollback can bring a used
+one back") and did not extend it. Astra is also right that the "copy when a Spark is awake" default makes the newest
+copy older, so the window is wider than today's.
+
+**Not right for open sign-ins and open asks.** `deviceCodes`, `challenges` and `pendingChoices` are each a `Map` in
+memory, and a go-ahead is in memory only. None is ever in a copy, and all end at a restart. Nothing to reset.
+
+**A smaller mechanism than "recovery candidates the owner selects".**
+- Sessions never come back: `sessions.json` leaves the copy and the snapshot's state. Every device signs in again.
+- One number, kept in the state folder and in the secrets file (which is never copied, by design). It goes up at
+  every removal: a sign-out by the owner, a passkey, an agent key, a person, an "always" entry. At start, a state
+  number lower than the secrets file's, or state with an owner and no number in the secrets file (a new disk), means
+  the state was put back. It works when the owner untars by hand.
+- While that holds: nothing that came back signs in from the internet, "always" entries are off (the trigger safety
+  finding 24 lacked), and a task found running is parked (ours; Astra did not ask for it). On the tailnet Tailscale
+  still says who the owner is, so nobody is locked out. The sign-in page there shows what came back, with dates; the owner
+  removes what they had removed and presses "Keep these".
+
+**Also true of the app as built today.** A restore by hand from an old copy would bring back anything removed since.
+It has never been done, and it is a step the owner takes with the steps in front of them, so it is not a fix for
+this install; it is on the later list as P-3a, and the owner has been told in plain words: after putting state back,
+open Access and remove again what you had removed since that copy.
+
+**Test:** seed a session, two passkeys, an agent key and an "always" entry; copy; remove some; untar by hand; start.
+The old cookie gets 401; the removed passkey and key are refused from the internet with the "confirm on your tailnet"
+line; the "always" command asks; after "Keep these" the remaining passkey signs in. State put back with nothing
+removed since: no hold. No secrets file: hold.
+
+### P-4. A "checked" grade must belong to what the brain reads now: accepted
+
+**Right about the plan.** The grade's key is model, engine, image and flags. The hash of what the brain reads (the
+prompt, tool texts, groups) is a separate fact on the install button. No sentence joined them, and sampling is in
+neither. So a build that changes three tool texts would truthfully say "not run" on the button and still act unasked
+on the old grade. The gates in code are unchanged, so it is not a hole in a wall; but the grade is the one thing that
+says "this brain may act unasked".
+
+**The change.** Checked means: an eval on record for this exact model, engine, image and flags, on what this build's
+brain reads, on today's case set. Otherwise every change is a button until it passes. The hash covers the system
+prompt as sent, every tool's name, text and inputs, the groups and the cap, and the brain setup's sampling and
+limits; not documents.
+
+**Two riders, ours, so the fix does not bring back the asking the owner complained about (decisions 10 and 16).**
+The profile keeps the newest five results by hash, so going back a build keeps that build's own grade. And before an
+install that changes what the brain reads, the eval runs on the build about to go in and its result is stored for it;
+if it has not run, the button says so, and Sparkie then asks before every change until it has. An install that leaves
+the hash unchanged needs no new eval.
+
+**Test:** a documents-only change keeps the hash and the grade. A changed tool text, prompt line or sampling value
+(same model, engine, image, flags) gives a new hash and a clear change is then a button. A passing result for the new
+hash restores it. Going back to a build with a result is checked with no new run. A result for another case set does
+not count.
+
+### P-5. The press must run the script text the ask showed: accepted
+
+**Right, and the existing button does not already guarantee it.** A button keeps its arguments (`pendingChoices`),
+is used once, and runs as kept, so the command's words cannot change. Nothing ties the press to the bytes of a file
+those words name. And the plan's own tools can change that file with no ask while the button waits: a box command,
+or a `write_file` under a go-ahead, both steerable by text Sparkie read. A fetched installer is downloaded once to
+show and again to run. So this needs no outside attacker.
+
+**The change, still one button.** When the ask is built, code reads each script file the command runs (links
+followed, once) and keeps its hash with the button; the text shown is those bytes. At the press the runner opens
+each file once, hashes what it opened, and runs that open file, not the path. A different hash: nothing runs and a
+new ask shows the new text. An installer from an address is downloaded once, when the ask is built, into a folder
+ordinary commands and the box cannot write; the press runs that copy. The limit is said on the button: what a script
+itself reads or downloads while it runs is not checked.
+
+**Test:** the file changed after the ask: no run, a new ask. A link pointed elsewhere after the ask: the same. A
+server that answers A then B: the press runs A and the server saw one request. The file rewritten after the runner
+opened it: what ran is what was shown.
+
+### P-6. Sparkie's own change must install the tree the owner approved: accepted
+
+**Right, and half covered.** For an ordinary update the button already carries one tree and `pull.sh install <tree>`
+refuses any other. C 2.5 step 6 was the one sentence that waited for the mark of `main`'s new tree and went on. With
+`main` moved, the owner approved four files and got those plus whatever else had landed. Every line came from the
+owner's computers and passed the tests, so it is not a break-in; but "the owner approves every update" was met for
+the proposal only.
+
+**The change removes a case:** Sparkie's Yes becomes the same button as any update. It carries the one tree that was
+tested and reviewed. Yes merges only if the head is still the one shown and `main` is still the commit the run was
+made on, then installs that tree; if `main` moved, nothing is merged or installed and the ask is built again. The
+file list is every difference from the build installed now, in two parts: Sparkie's change, and anything else already
+on `main`. A review counts only if it is of that head. No extra press unless `main` moved.
+
+**Test:** a commit pushed to the stand-in `main` after the ask: no merge, no install, a new ask. `main` not moved:
+exactly the tree on the button is installed. An installed build one commit behind: that commit is listed under "also
+in this build". A review of an older head does not count.
+
+### P-7. The memory research wording says more than the papers do: accepted
+
+**Right on all three papers** (opened; the numbers asked for twice). In the cited study, one round of search over
+raw chunks (77.6) is behind three of the eleven memory systems; only with a second round (81.4) is it ahead of all
+of them, and that baseline is word search and vectors together, reranked. The baselines nearest our picker scored
+68.2 (word search alone) and 46.2 (the query's two rarest words). LoCoMo is dated, linked events checked by people,
+and does test memory; LongMemEval's 9.4% is a model's extracted facts on a vector search, not names on a word match.
+
+**One correction to the correction.** G's "50" is the LoCoMo paper's benchmark count, not the 50 unfiltered chats of
+its training experiment. The fair fix is that vendors' later numbers use the public release of ten chats, and G now
+says so.
+
+**The change is words only; nothing is added to the first version.** G's opening no longer says plain search "beat
+all": it names the retriever, the rounds, the model and the scores, and says "it does not test a picker like ours".
+The one page calls word-first look-up "a bet that a fleet's exact names make it enough", says the 0.05 ms was the
+picker alone on synthetic lines on a Mac, and names what decides: the twenty questions and a held-out set of
+rewordings. Not checked by either side: LongMemEval-V2, Chroma, and the vendors' own figures in G.
+
+## The broader answers
+
+Astra's section "Answers to the review guide's broader questions" was read against the plan point by point.
+
+**Adopted (fourteen), each written where it belongs:**
+
+| # | What | Where |
+|---|---|---|
+| 1 | A line carrying a name from the owner's words is taken before the 400-candidate cap, with a test | G 3.4, step 2 |
+| 2 | A middle log line in neither digest list is found by `recall` after a restart (needs clean-up point 1 first) | G step 5 |
+| 3 | Quoted, negated, supposed and past-tense "remember" and "forget", A-3's question, an agent's `replaces` aimed at an owner's line | G steps 1 and 6 |
+| 4 | Retired lines (`past`) live in their own file, so going back a build cannot drop them | The one page section 3; G |
+| 5 | A wish left out of the block is still picked with its source; a remembered line that holds change words causes no change | G step 2 |
+| 6 | Held-out rewordings and logs never seen before; results by case and kind, with rounds and seconds | G step 7 |
+| 7 | On a Spark without the helper, `run` and `write_file` do not work: Sparkie uses today's typed actions and gives the owner the one command. This removes the interim look grammar | The one page section 4; A 2.3 |
+| 8 | The helper proves its own walls on each Spark before first use and in `self_test` | Milestone 2, the helper's step |
+| 9 | What counts as the confirming visit: a fresh sign-in with a passkey that existed before, or a new connection through the changed route, tied to that guard and only after the change is live | The one page's net bullet; A 2.8 |
+| 10 | Two eval cases that need tools from three groups; a test that an unoffered `undo_last_change`, `cancel_operation` or `undo_update` still runs | Milestone 1, the tool groups |
+| 11 | A setup passed over for failing twice is tried again when its image, its Sparks or its start code changed, or when the owner says so | B3 |
+| 12 | "Up to 45 minutes" becomes "45 minutes plus the saved brain's own start; the planned limit, not a measured one" | The one page section 9 |
+| 13 | Generated files in Sparkie's proposal must equal what the installed build's own generator makes from the proposal's sources | C step 8 |
+| 14 | An ask is void after a restart and after Telegram is paired again; the "read outside text" mark survives a restart; a made-up key is searched for in error fields, the state copy and after a restart | Test rows in A and B |
+
+**Already in the plan (eleven), no change:** Docker is root and the sockets are hidden; Telegram's caps limit pace,
+not harm, and two digits are not a secret; asks are one-use, expire and are built by code; read text never allows a
+change; any wrong change fails a brain and is never averaged into a score; "failed twice" counts known failure ids
+only; test jobs cannot write and the installed build judges the new one; the three gates for a brain across Sparks,
+with the code words answering with no brain; every rail is a check in `runAction`, and `run` and `recall` are always
+offered; task authority; no embeddings, helpers, new scheduler or second service until measured.
+
+## Design clean-up: all four accepted
+
+1. **Output caps.** A and B capped kept output at 1 MB and 64 KB; the one page says the journal is the raw record and
+   G says a long log is kept whole. The designs now say: a record's long text is kept whole, written to the `.out`
+   file in pieces as it arrives and never held whole in memory; each piece is masked before it is written, with an
+   overlap so a key across two pieces is still caught; past 16 MB (a default) reading stops, the command is ended,
+   and the record says so. The digest's size is a separate number.
+2. **The journal in E.** E copied and restored journal segments; the one page says the journal never leaves Spark 2.
+   E now says so, and says what it costs: after a dead hub disk `recall` starts empty, and a line's "you said" source
+   may point at a record that is gone.
+3. **G's page-only wording and `memoryClear`.** `remember` and forgetting work from the page and the paired Telegram
+   chat, marked as said on Telegram; `erase` stays on the page. G 3.6 carries A-3's rule.
+4. **The guide's description of the page.** This one is the guide against the app, not a design against the one
+   page. The guide now says: "The owner uses chat and the APIs. The page still shows Home, Models, Files and Access
+   from earlier builds, and they still work." And the plan now names when they go: milestone 4 gains the delete
+   already agreed (members and sharing, the browser editor, the file browser with its routes and the worker's delete,
+   rename and new-folder calls), and the Models view goes with it. That closes A-10, A-11 and A-12 and removes A-6's
+   only caller.
+
+## The "no trash" default: kept, with one sentence added
+
+**Not accepted as a change of default.** The default is about Sparkie's own deletes in the next phase, and those
+already keep a copy first (A 2.6: a bounded place to get a small file back from, kept 7 days). A-6's path is the
+page's delete through the worker, which the next phase does not use and the milestone-4 delete removes. A trash would
+add its own keep rules, a count against the shared folder, a way to get things back, and "permanently deletes" would
+stop being true.
+
+**Accepted: the copy must be of what was removed.** Copy-then-command has A-6's shape with a wider gap. A 2.6 now
+lists, under what cannot be put back, "what another program wrote to a file between the copy and the command"; and a
+typed remove, if one is ever added, moves the file into the set (a rename on the same disk) so the kept copy is
+exactly what was removed. The owner has been told this limit in plain words.

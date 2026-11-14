@@ -1,10 +1,11 @@
 # Round 1 reproduction evidence
 
 These files support the current-source app findings in the round 1 review. They were collected against commit
-`03866c09cf3edc0529ae8316c9356f44edb87dfd`. They cover 12 failure scenarios; the extra `/stop` check extends the
-truncated-response scenario. Finding IDs and severity belong to the review report, not this evidence bundle.
+`03866c09cf3edc0529ae8316c9356f44edb87dfd`. They support the 12 app findings, with supplemental checks for explicit
+memory refusal, `/stop` after a truncated response, and platform-qualified backup behavior. Finding IDs and severity
+belong to the review report, not this evidence bundle.
 
-The twelve archived result files are byte-for-byte copies of the original runs. The eleven scripts have the
+The thirteen archived result files are byte-for-byte copies of the original runs. The twelve scripts have the
 portability, output-routing, and source-parity checks listed in [manifest.json](manifest.json). The manifest records SHA-256 hashes
 of each original script before those edits, every packaged file, and the source files used by these checks. The
 original worker harness was named `worker-delete-race-repro.py`; its packaged default now targets this repository's
@@ -14,8 +15,37 @@ original worker harness was named `worker-delete-race-repro.py`; its packaged de
 fingerprints, and exact frontend-byte equality after normalizing only the injected `BUILD` value. It was prepared
 from existing snapshots without another network request. It does not establish complete deployed-file equality
 or test live workflows. [The generated-server check](build-check.txt) records a successful read-only
-`node tools/build-server.mjs --check` against the reviewed commit. These two provenance files are separate from
-the original reproduction artifacts listed in the manifest.
+`node tools/build-server.mjs --check` against the reviewed commit. [The review baseline](review-baseline.json)
+records 338 tracked-file hashes and the clean tracked diff; it is a source inventory, not a claim that every file
+was exhaustively reviewed. These provenance files are separate from the original reproduction artifacts listed
+in the manifest.
+
+## Full-suite and targeted verification
+
+The completed macOS run of all 47 test files reported **996 tests: 995 passed, 1 failed**, with no canceled,
+skipped or todo tests, in **39 minutes 52 seconds**. It used `SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3`
+and `node --test --test-concurrency=4 test/*.test.mjs` against the reviewed commit. The runner sorted the same
+47-file list explicitly. [Full log](full-suite.log) and [run status](full-suite-status.json) are unchanged copies
+of the original completed run. [Verification hashes](test-verification-manifest.json) cover these artifacts
+and the targeted results separately from the reproduction manifest.
+
+The reporter surfaced `ENOTEMPTY` from `test/start-mock.mjs:188` during `withService` cleanup for the
+“a new build: one record…” case at `test/updates.test.mjs:62`. Because cleanup runs in `finally`, it could mask an earlier error; the log
+does not establish that all that case's assertions passed. The exact writer or cleanup interleaving is not
+established. The unchanged update-record file passed **6/6** in a separate isolated strict run with slow factor 3
+in **19.8 seconds**: [log](updates-targeted.log), [status](updates-targeted.status.json),
+[source-based analysis](updates-targeted.analysis.json). The full run remains failed and the cleanup issue open.
+
+In the first targeted attempt, five service-dependent cases failed during setup before their assertions
+because the sandbox rejected localhost binding (`EPERM`); the source-only case passed (1/6 overall). Its
+[log](updates-targeted.sandbox.log) and [status](updates-targeted.sandbox.status.json) are retained as an
+environment failure, not a product failure reproduction. The targeted runner and driver logs preserve the
+execution provenance; they include original machine paths. An earlier serial full-suite attempt was deliberately
+interrupted in favor of the completed concurrent run and is not presented as a pass or failure.
+
+For a new targeted run, run `SPARK_TEST_STRICT=1 SPARK_TEST_SLOW=3 node --test test/updates.test.mjs` from the
+repository root and send output to a new temporary file. The archived targeted runner writes beside itself;
+do not rerun it in this evidence directory because it would replace the original logs/status.
 
 This bundle does not contain the older portal findings, raw responses from the live console, bootstrap data,
 screenshots, or live credentials. The token-shaped string in the chat script is a deliberately fake fixture; the
@@ -33,6 +63,7 @@ temporary stand-in service. Source paths and timestamps in archived output are p
 | `current-body-unicode-repro.mjs` | `current-body-unicode-results.txt` | Extracts the exact `readBody` function and emits two Buffer chunks splitting a UTF-8 character. No server or network. |
 | `current-body-unicode-http-repro.mjs` | `current-body-unicode-http-results.txt` | Real local HTTP request and service, followed by the real file worker under the stand-in Spark's temporary HOME. Confirms that the corrupted text is saved with a successful response. |
 | `current-chat-repros.mjs` | `current-chat-repros.json`, `current-chat-repros.log` | Real local service with controlled model replies: memory deletion without approval, a chat stuck after a truncated non-200 response, and a fake secret persisted in an error. The two output files contain the same original JSON. |
+| `current-memory-negation-gate-repro.mjs` | `current-memory-negation-gate-results.json` | Supplemental A-3 check using the exact intent parser, action gate, and memory action in a VM with in-memory persistence. “Do not remember that Spark 4 is on Wi-Fi only” is recognized as negated `remember`, yet the gate clears the proposed write and the action stores the fact. No real model, HTTP service, or Spark is used. |
 | `current-truncated-stop-repro.mjs` | `current-truncated-stop-results.json` | Supplemental real local HTTP check: `/stop` answers successfully but does not free the chat after the truncated-response failure; the next turn still receives 409. |
 | `current-frontend-race-repros.cjs` | `current-frontend-race-repros.log` | Real frontend code in headless Chrome, with `capi` stubbed and browser requests aborted. Demonstrates stale files across Spark changes, a multi-file upload switching destinations, and a late pair plan replacing a single-Spark plan. No backend or live upload/deploy is called. |
 | `current-backup-source-failure-repro.mjs` | `current-backup-source-failure-results.json` | Exact `sendCopy` snapshot with stderr/status instrumentation, local bash standing in for the receiver, and a temporary fake HOME. Actual BSD tar permission failure returns 1 while a valid incomplete archive replaces an existing good archive and the copy is accepted. This is a macOS observation, not a Linux result. |
@@ -76,6 +107,7 @@ The small deterministic checks do not start a server or browser:
 node current-stopped-gpu-claim-check.mjs
 node current-first-job-end-check.mjs
 node current-body-unicode-repro.mjs
+node current-memory-negation-gate-repro.mjs
 PYTHONDONTWRITEBYTECODE=1 python3 current-worker-delete-race-repro.py
 ```
 
@@ -151,6 +183,7 @@ print('All packaged hashes match; archived results are unchanged.')
 PY
 ```
 
-The packaging smoke check records syntax, path/module resolution, hash integrity, and reruns of the four
+The packaging smoke check records syntax, path/module resolution, hash integrity, and reruns of the five
 small deterministic checks and the two isolated backup variants in `packaging-verification.json`. The HTTP and browser outputs above remain the
-original observed runs. The full-suite log and review report are maintained separately by the lead reviewer.
+original observed runs. The completed full-suite and targeted results are linked above; the review is in
+[`../../findings-1.md`](../../findings-1.md).

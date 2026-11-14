@@ -1,0 +1,54 @@
+{
+  "prepared_at": "2026-11-14T08:55:36.444232+00:00",
+  "reviewed_commit": "03866c09cf3edc0529ae8316c9356f44edb87dfd",
+  "scope": "Full-suite and targeted test verification; separate from bug reproductions. Full run failed995/996; unchanged targeted file passed6/6. Sandbox EPERM attempt is environmental. No claim of a product fix.",
+  "hash_algorithm": "SHA-256",
+  "files": [
+    {
+      "filename": "full-suite.log",
+      "sha256": "041c2b178596fa19317a56b0ec99769574145532352579fc068c771633dd9637",
+      "original_filename": "current-suite-parallel.log",
+      "original_sha256": "041c2b178596fa19317a56b0ec99769574145532352579fc068c771633dd9637",
+      "byte_identical": true
+    },
+    {
+      "filename": "full-suite-status.json",
+      "sha256": "f8bc6e7395d1165324ee8464da1c57105916f01432261dfd8c02cc74b67005ac",
+      "original_filename": "current-suite-parallel-status.json",
+      "original_sha256": "f8bc6e7395d1165324ee8464da1c57105916f01432261dfd8c02cc74b67005ac",
+      "byte_identical": true
+    },
+    {
+      "filename": "updates-targeted.analysis.json",
+      "sha256": "dfa4a4519fbc9f47f3221586620e7219eb18a6306ef7dc6cd2f467143f50f701"
+    },
+    {
+      "filename": "updates-targeted.driver.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "filename": "updates-targeted.log",
+      "sha256": "4ee2827fff5985d27e28008f998b6f29ae75ce8fe70cc440c6ca6095424e7e0b"
+    },
+    {
+      "filename": "updates-targeted.runner.py",
+      "sha256": "679395eb65ea54e09c1972d27fb3559e0333a9d25b11c25970b7fd80bf9866c3"
+    },
+    {
+      "filename": "updates-targeted.sandbox.driver.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "filename": "updates-targeted.sandbox.log",
+      "sha256": "29c05383bb56e287331132cbd40870272495230f8b7dc1519634bf77bb01b277"
+    },
+    {
+      "filename": "updates-targeted.sandbox.status.json",
+      "sha256": "9def8c5c83da0d4048ec86da54379c50c8f7ff1b8ecc0a8a260704deeb02362a"
+    },
+    {
+      "filename": "updates-targeted.status.json",
+      "sha256": "654f268a060f8217fe0673f827c375f0f5f4f48388306d1dd170d8f9e67d6364"
+    }
+  ]
+}

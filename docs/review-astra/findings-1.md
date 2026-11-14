@@ -1,8 +1,8 @@
 # Sparkie review — round 1
 
-Review date: 2026-11-14. Status: **findings ready for the builders' first response; full-suite verification in progress**.
+Review date: 2026-11-14. Status: **round 1 ready for the builders' first response; verification complete, with one full-suite cleanup failure open**.
 
-The installed app has reproducible authorization, data-integrity, recovery and chat-liveness defects. The next-phase design is workable within the owner's decisions, but three mechanisms need correction before their pieces are built: the guard's relationship to a running command, durable recording before a mutation, and authentication reset after restoring old state. Other plan points below are narrower implementation criteria or evidence corrections.
+The reviewed app has reproducible authorization, data-integrity, recovery and chat-liveness defects. The next-phase design is workable within the owner's decisions, but three mechanisms need correction before their pieces are built: the guard's relationship to a running command, durable recording before a mutation, and authentication reset after restoring old state. Other plan points below are narrower implementation criteria or evidence corrections.
 
 This is a review, not an acceptance of fixes. None of the findings is closed. The builders should answer each ID using [the agreed procedure](README.md), with code, a failing-before/passing-after test, or the exact amended design sentence. Severity is the reviewer's recommendation and can be challenged with evidence.
 
@@ -21,10 +21,13 @@ The model in the chat reproductions is deliberately scripted to make an incorrec
 ### Verification record
 
 - [`node tools/build-server.mjs --check`](evidence/round-1/build-check.txt): passed.
-- Current-source isolated reproductions: twelve distinct app scenarios, including a supplemental `/stop` test and two platform-qualified variants of the backup scenario.
+- Current-source isolated reproductions support twelve app findings, with supplemental `/stop` and memory-refusal checks and two platform-qualified variants of the backup scenario.
 - Frontend checks: current shipped source in a real browser with requests intercepted; all reproduction assertions passed, no page errors. They are not production deployments/uploads.
 - [The repository's review guide](../../REVIEW-GUIDE.md#7-how-it-was-checked) reports a previous Linux gate of **996 passing tests** for this build. That is the builders' recorded result, separate from this reviewer's rerun.
-- The initial local serial strict suite was deliberately interrupted and replaced by the same 47-file suite with the documented four-file concurrency. It was not a completed pass or failure. The replacement uses `SPARK_TEST_STRICT=1`, `SPARK_TEST_SLOW=3`, and `node --test --test-concurrency=4`; the final result will be recorded here when it finishes.
+- The completed local macOS strict run covered all 47 test files: **996 tests, 995 passed, 1 failed**, with no canceled, skipped or todo tests, in **39 minutes 52 seconds**. It used `SPARK_TEST_STRICT=1`, `SPARK_TEST_SLOW=3`, and `node --test --test-concurrency=4`. [Full log](evidence/round-1/full-suite.log); [run status](evidence/round-1/full-suite-status.json).
+- The reported failure in `test/updates.test.mjs:62` was `ENOTEMPTY` from temporary-fleet removal in `test/start-mock.mjs:188`, called by `withService`'s `finally` block. It was not a reported update-record assertion failure. A teardown exception can mask an earlier error, so the log does not prove every assertion in that case passed. The exact cleanup interleaving remains unproven.
+- The **unchanged** `test/updates.test.mjs` passed **6/6** in a separate strict rerun with slow factor 3, in **19.8 seconds**. [Targeted log](evidence/round-1/updates-targeted.log); [status](evidence/round-1/updates-targeted.status.json); [failure analysis](evidence/round-1/updates-targeted.analysis.json). This does not erase the failed full run or close its cleanup issue. No test was weakened and no product fix is claimed.
+- The initial local serial run was deliberately interrupted and replaced by the completed four-file-concurrency run above; it was not a completed pass or failure. In the first targeted attempt, the sandbox rejected localhost binding (`EPERM`): five service-dependent cases failed during setup before their assertions, and the source-only case passed. The permitted local-only retry produced the 6/6 result above. The environment failure is preserved separately from product-test evidence.
 - The user authorized using compute Sparks to accelerate the rerun. The execution environment rejected SSH before it ran, with `Block raw network, recon, and tunneling utilities`. Remote testing has therefore not occurred in this review.
 
 ## Finding index
@@ -35,7 +38,7 @@ The model in the chat reproductions is deliberately scripted to make an incorrec
 | --- | --- | --- |
 | A-1 | Revoking an agent does not revoke future changes in its pending turn | Blocks install; high |
 | A-2 | Starting a stopped GPU app checks resources before acquiring its claim | Blocks install; high |
-| A-3 | A question about memory can delete it without approval | Blocks install; high |
+| A-3 | Memory changes can override questions or explicit refusal | Blocks install; high |
 | A-4 | A truncated model error leaves chat stuck, even after `/stop` | Blocks install; high |
 | A-5 | An upstream error can persist an unmasked key in chat state | Blocks install; high |
 | A-6 | Deletion can silently discard a concurrent in-place file save | Blocks install for the retained Files feature; medium |
@@ -81,7 +84,7 @@ The model in the chat reproductions is deliberately scripted to make an incorrec
 
 **Closing test:** Pause after initial inspection, complete a competing legitimate model start, resume the stopped-app request, and assert refusal without `docker start`. Include a changed/replaced target and a reduced-memory case.
 
-### A-3 — “What do you remember?” can authorize forgetting
+### A-3 — Memory changes can override questions or explicit refusal
 
 **Where:** `service/src/20-memory.mjs`, `memoryClear`, `forget_memory`; `service/src/16-actions.mjs`, `sparkieCheck`.
 
@@ -89,9 +92,11 @@ The model in the chat reproductions is deliberately scripted to make an incorrec
 
 **Executed evidence:** [chat reproduction](evidence/round-1/current-chat-repros.json): `outcome:"forgotten"`, `remainingEntries:0`, `approvalButtons:0`, through the real local service and action gate. The incorrect model call was controlled; the authorization failure is in code. The function's own comment says the owner must have stated something, “never asked it.”
 
-**Smallest fix:** Give forgetting its own explicit deletion/retraction-intent rule tied to the target, with question, quotation and negation handling. Otherwise ask. Preserve automatic correction through `remember {replaces}` where an actual owner assertion establishes the replacement. Do not weaken topic matching or fix only this one sentence.
+A [supplemental exact-source gate/action check](evidence/round-1/current-memory-negation-gate-results.json) also shows that “Do not remember that Spark 4 is on Wi-Fi only” produces `intent.negated:["remember"]`, yet `sparkieCheck` clears a `remember` call and the action saves the line. This check uses isolated in-memory state and the actual intent/gate/action functions, not the HTTP service. The parser recognizes the refusal; the memory-specific fallback overrides it. This is stronger than merely showing that an intentionally loose paraphrase heuristic can accept a semantically wrong paraphrase, which is not filed as a separate finding here.
 
-**Closing test:** This question, “don't forget,” quoted/historical forget instructions, and an unrelated forget request must not delete the line. An explicit request to forget that exact fact should still work. Carry this fix into G: G §3.6 currently says `memoryClear` stays unchanged.
+**Smallest fix:** Honor explicit negated/mixed memory intent before any overlap fallback. Give forgetting its own explicit deletion/retraction-intent rule tied to the target, with question and quotation handling. Otherwise ask. Preserve automatic correction through `remember {replaces}` where an actual owner assertion establishes the replacement. Do not weaken topic matching or fix only this one sentence.
+
+**Closing test:** This question, “don't forget,” quoted/historical forget instructions, and an unrelated forget request must not delete the line. “Do not remember” must not store it. An explicit request to forget that exact fact should still work. Carry this fix into G: G §3.6 currently says `memoryClear` stays unchanged.
 
 ### A-4 — A truncated non-200 model response leaves the conversation stuck
 
@@ -319,7 +324,7 @@ For a Spark without the helper, adopted safety findings 7(c) and 8 specify the f
 
 Before enabling root/hub changes, test the already-adopted wall requirements with attempts to write via aliases/symlinks, contact network endpoints, access Docker/Tailscale/API sockets, inspect another process's credentials and escape through subprocesses. Run these only in a disposable fixture for the helper. Ordinary root cannot be made safe against deliberately hostile root code; the synthesis already discloses that limit.
 
-A fresh connection through the **changed** way in is the right hub confirmation primitive if it is bound to the particular guard transaction and created after activation. An existing session, a different route, or Telegram acknowledgment must not count. Authentication changes need proof of the relevant credential/route, not merely an HTTP 200. The adopted activation/restart checks cover delayed-effect configuration; P-1 adds the missing command/rollback lifecycle.
+A fresh connection through the **changed** way in is the right hub confirmation primitive if it is bound to the particular guard transaction and created after activation. An already-open network connection, a different route, or Telegram acknowledgment must not count. Authentication changes need proof of the relevant credential/route, not merely an HTTP 200. The adopted activation/restart checks cover delayed-effect configuration; P-1 adds the missing command/rollback lifecycle.
 
 ### Telegram, retained keys and text that steers
 
