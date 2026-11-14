@@ -1,62 +1,109 @@
 #!/usr/bin/env bash
-# Runs the test suite on a Spark and brings the log back (2026-11-13: the whole suite takes about 10 minutes there,
+# Runs the test suite on a Spark and brings the log back (2026-11-13: the whole suite takes about 12 minutes there,
 # against one to three hours on the Mac, whose security software checks every process the stand-in fleet starts).
 #
 # The tests run inside a container that has no network and no access to Docker, as the Spark's own user, and can write
-# only the copy of this folder. They can't touch a model, a container or anything else on the Spark.
-#
-#   tools/test-on-spark.sh akuppala@<spark>            the whole suite once (test/lock.mjs)
-#   tools/test-on-spark.sh akuppala@<spark> --watch    wait for requests and run each (leave it running in a terminal)
-#
-# With --watch it looks at ../spark-test-runs/run-now once a second. An empty file means the whole suite; a file that
-# lists test files (test/apps.test.mjs, one per line or space) means only those. Each run leaves
-# ../spark-test-runs/run-<time>.log and latest.log; a whole-suite pass also leaves workflows.lock.json there, which
-# names the build it tested (copy it to service/ only when that build is the one in this folder).
+# only the copy of the folder being tested. They can't touch a model, a container or anything else on the Spark.
 # Never on Spark 2: it is the hub. Use a compute Spark that is on.
+#
+#   tools/test-on-spark.sh akuppala@<spark>            this folder's whole suite, once (test/lock.mjs)
+#   tools/test-on-spark.sh akuppala@<spark> --watch    wait for requests and run them one at a time (leave it running)
+#   tools/test-on-spark.sh --ask [test files…]         from inside any Spark Console work folder: ask the watcher to
+#                                                      run that folder's tests (the whole suite when no file is named),
+#                                                      wait, and print the result. It makes no connection itself.
+#
+# The watcher serves every work folder beside this one whose name starts with spark-console (the main folder and the
+# branches' worktrees), so builders in other folders use the same Spark. A request is a small file in
+# ../spark-test-runs/queue/<name>.req: an optional line tree=<folder name>, optional slow=<n> and conc=<n>, and test
+# files (test/apps.test.mjs). The answer is ../spark-test-runs/<name>.log and <name>.done (the exit code); a whole-suite
+# pass also leaves <name>.lock.json, which names the build it tested (copy it to service/ only when that build is the
+# one in the folder). An empty file ../spark-test-runs/run-now still means "the main folder's whole suite", answered
+# in latest.log, done and workflows.lock.json.
 set -u
-HOST=${1:?Say which Spark: tools/test-on-spark.sh akuppala@<address> [--watch]}
-MODE=${2:-once}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-OUT=${SPARK_TEST_OUT:-$HERE/../spark-test-runs}
+BASE=$(dirname "$HERE")
+OUT=${SPARK_TEST_OUT:-$BASE/spark-test-runs}
 IMAGE=${SPARK_TEST_IMAGE:-node:26-bookworm}
-SLOW=${SPARK_TEST_SLOW:-2}   # (1 ran four files side by side with one timing miss in 996; 2 doubles the waits' limits, not the run)
-CONC=${SPARK_TEST_CONCURRENCY:-4}
-case "$SLOW$CONC" in *[!0-9]*) echo "SPARK_TEST_SLOW and SPARK_TEST_CONCURRENCY are whole numbers." >&2; exit 2 ;; esac
-mkdir -p "$OUT"
+DSLOW=${SPARK_TEST_SLOW:-2}   # (1 ran four files side by side with one timing miss in 996; 2 doubles the waits' limits, not the run)
+DCONC=${SPARK_TEST_CONCURRENCY:-4}
+case "$DSLOW$DCONC" in *[!0-9]*) echo "SPARK_TEST_SLOW and SPARK_TEST_CONCURRENCY are whole numbers." >&2; exit 2 ;; esac
+mkdir -p "$OUT/queue"
+SUMMARY='^ℹ (tests|pass|fail|cancelled)|^real|^Marked build|didn.t pass|^exit='
 
-# $1: the test files to run, already checked; empty for the whole suite.
+if [ "${1:-}" = "--ask" ]; then
+  shift
+  top=$PWD
+  while [ "$top" != "/" ] && [ ! -f "$top/test/lock.mjs" ]; do top=$(dirname "$top"); done
+  [ -f "$top/test/lock.mjs" ] || { echo "Run this from inside a Spark Console work folder." >&2; exit 2; }
+  name="$(basename "$top")-$(date +%H%M%S)-$$"
+  { echo "tree=$(basename "$top")"; for f in "$@"; do echo "$f"; done; } > "$OUT/queue/$name.tmp" || exit 2
+  mv "$OUT/queue/$name.tmp" "$OUT/queue/$name.req"
+  echo "Asked for a run on the Spark: $name (the watcher runs one at a time, so it may wait its turn)."
+  until [ -e "$OUT/$name.done" ]; do sleep 2; done
+  grep -E "$SUMMARY|^✖|^Not |^The copy" "$OUT/$name.log" 2>/dev/null | head -80
+  echo "Whole log: $OUT/$name.log"
+  [ "$(cat "$OUT/$name.done")" = "0" ] && grep -q '^exit=0' "$OUT/$name.log"
+  exit $?
+fi
+
+HOST=${1:?Say which Spark: tools/test-on-spark.sh akuppala@<address> [--watch]   (or: --ask [test files])}
+MODE=${2:-once}
+
+# $1 folder to test, $2 its folder name on the Spark, $3 test files (already checked; empty = whole suite), $4 slow,
+# $5 files at once, $6 the name the answer is filed under.
 run_once() {
-  local files=$1 stamp inner
-  stamp=$(date +%Y%m%d-%H%M%S)
-  if [ -n "$files" ]; then inner="time node --test --test-concurrency=$CONC $files"; else inner="time node test/lock.mjs"; fi
-  echo "$(date +%H:%M:%S) copying this folder to $HOST and running: ${files:-the whole suite}"
-  rsync -a --delete --exclude .claude --exclude .git --exclude node_modules "$HERE/" "$HOST:sparkie-tests/" || { echo "The copy failed (is the Spark on?)."; return 1; }
-  ssh "$HOST" "cd ~/sparkie-tests && docker run --rm --network none --user \$(id -u):\$(id -g) -e HOME=/tmp -e SPARK_TEST_STRICT=1 -e SPARK_TEST_SLOW=$SLOW -e SPARK_TEST_CONCURRENCY=$CONC -v \"\$PWD\":/w -w /w $IMAGE bash -c '$inner' > ~/sparkie-tests-run.log 2>&1; echo \"exit=\$?\" >> ~/sparkie-tests-run.log"
-  scp -q "$HOST:sparkie-tests-run.log" "$OUT/run-$stamp.log" || { echo "Couldn’t bring the log back."; return 1; }
-  cp "$OUT/run-$stamp.log" "$OUT/latest.log"
-  rm -f "$OUT/workflows.lock.json"
-  if grep -q "^Marked build" "$OUT/latest.log"; then scp -q "$HOST:sparkie-tests/service/workflows.lock.json" "$OUT/workflows.lock.json"; fi
-  grep -E "^ℹ (tests|pass|fail)|^real|^Marked build|didn.t pass|^exit=" "$OUT/latest.log"
-  echo "$(date +%H:%M:%S) done: $OUT/run-$stamp.log"
+  local dir=$1 remote=$2 files=$3 slow=$4 conc=$5 name=$6 inner
+  if [ -n "$files" ]; then inner="time node --test --test-concurrency=$conc $files"; else inner="time node test/lock.mjs"; fi
+  echo "$(date +%H:%M:%S) $name: copying $(basename "$dir") to $HOST and running: ${files:-the whole suite}"
+  rsync -a --delete --exclude .claude --exclude .git --exclude node_modules "$dir/" "$HOST:$remote/" || { echo "The copy failed (is the Spark on?)." | tee "$OUT/$name.log"; return 1; }
+  ssh "$HOST" "cd ~/$remote && docker run --rm --network none --user \$(id -u):\$(id -g) -e HOME=/tmp -e SPARK_TEST_STRICT=1 -e SPARK_TEST_SLOW=$slow -e SPARK_TEST_CONCURRENCY=$conc -v \"\$PWD\":/w -w /w $IMAGE bash -c '$inner' > ~/$remote-run.log 2>&1; echo \"exit=\$?\" >> ~/$remote-run.log"
+  scp -q "$HOST:$remote-run.log" "$OUT/$name.log" || { echo "Couldn’t bring the log back." | tee "$OUT/$name.log"; return 1; }
+  rm -f "$OUT/$name.lock.json"
+  if grep -q "^Marked build" "$OUT/$name.log"; then scp -q "$HOST:$remote/service/workflows.lock.json" "$OUT/$name.lock.json"; fi
+  grep -E "$SUMMARY" "$OUT/$name.log"
+  echo "$(date +%H:%M:%S) $name: done"
+  grep -q '^exit=0' "$OUT/$name.log"
 }
 
-# The request file's words, kept only if every one is a test file's name.
-asked() {
-  local words w ok=""
-  words=$(tr '\n' ' ' < "$OUT/run-now")
-  for w in $words; do
-    case "$w" in test/*.test.mjs) ;; *) echo "Not a test file, so nothing ran: $w" >&2; return 1 ;; esac
-    case "$w" in *[!A-Za-z0-9./_-]*|*..*) echo "Not a test file, so nothing ran: $w" >&2; return 1 ;; esac
-    ok="$ok $w"
-  done
-  echo "$ok"
+# Reads one request and runs it. Anything it doesn't understand runs nothing.
+run_req() {
+  local req=$1 name=$2 tree slow=$DSLOW conc=$DCONC files="" line w
+  tree=$(basename "$HERE")
+  refuse() { echo "Not run: $1" | tee "$OUT/$name.log" >&2; return 2; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    for w in $line; do
+      case "$w" in
+        tree=*) tree=${w#tree=} ;;
+        slow=*) slow=${w#slow=} ;;
+        conc=*) conc=${w#conc=} ;;
+        test/*.test.mjs) case "$w" in *[!A-Za-z0-9./_-]*|*..*) refuse "not a test file: $w"; return 2 ;; esac; files="$files $w" ;;
+        *) refuse "not understood: $w"; return 2 ;;
+      esac
+    done
+  done < "$req"
+  case "$tree" in spark-console|spark-console-*) ;; *) refuse "not a Spark Console folder: $tree"; return 2 ;; esac
+  case "$tree" in *[!A-Za-z0-9._-]*|*..*) refuse "not a folder name: $tree"; return 2 ;; esac
+  case "$slow$conc" in ''|*[!0-9]*) refuse "slow and conc are whole numbers"; return 2 ;; esac
+  [ -f "$BASE/$tree/test/lock.mjs" ] || { refuse "no such work folder: $tree"; return 2; }
+  run_once "$BASE/$tree" "sparkie-tests-$tree" "$files" "$slow" "$conc" "$name"
 }
 
-if [ "$MODE" != "--watch" ]; then run_once ""; exit $?; fi
-echo "Waiting for requests in $OUT/run-now (Ctrl-C stops this)."
+if [ "$MODE" != "--watch" ]; then
+  run_once "$HERE" "sparkie-tests-$(basename "$HERE")" "" "$DSLOW" "$DCONC" latest
+  rc=$?; [ -f "$OUT/latest.lock.json" ] && cp "$OUT/latest.lock.json" "$OUT/workflows.lock.json"; exit $rc
+fi
+echo "Waiting for requests in $OUT/queue (Ctrl-C stops this)."
 while true; do
-  if [ -e "$OUT/run-now" ]; then
-    files=$(asked) && { rm -f "$OUT/run-now" "$OUT/done"; run_once "$files"; echo "$?" > "$OUT/done"; } || rm -f "$OUT/run-now"
+  if [ -e "$OUT/run-now" ]; then rm -f "$OUT/done" "$OUT/workflows.lock.json"; mv "$OUT/run-now" "$OUT/queue/latest.req"; fi
+  req=$(ls -tr "$OUT/queue"/*.req 2>/dev/null | head -1)
+  if [ -n "$req" ]; then
+    name=$(basename "$req" .req)
+    rm -f "$OUT/$name.done"
+    mv "$req" "$OUT/running.req"
+    run_req "$OUT/running.req" "$name"; rc=$?
+    rm -f "$OUT/running.req"
+    echo "$rc" > "$OUT/$name.done"
+    if [ "$name" = latest ]; then [ -f "$OUT/latest.lock.json" ] && cp "$OUT/latest.lock.json" "$OUT/workflows.lock.json"; echo "$rc" > "$OUT/done"; fi
   fi
   sleep 1
 done
