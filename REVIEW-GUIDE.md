@@ -372,6 +372,12 @@ bash spark-console/deploy/open-apps-to-internet.sh
 
 To close the app door again, add `--undo`.
 
+**Installed on 2026-11-13, 23:52 Pacific.** Build `0be65f7314ab`: health, the ways in (sign-in, the agent door, the
+model address) and a chat turn passed, the build was kept, and the watchdog is on. "Find setups" passed its check on
+the real Sparks. The other four workflows wait for their first real run: a model was running across Spark 3 and 4, and
+the test does not stop it. Node on Spark 2 is still code-server's own (v24). Spark 1 is not reachable without a
+password, as expected.
+
 After the install, with Spark 3 or Spark 4 powered on, run these checks through Sparkie's chat:
 
 1. **One live start, check and stop** of a small model on Spark 3 or 4. This proves the new `start_model` and
