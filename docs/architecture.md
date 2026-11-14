@@ -116,7 +116,7 @@ flowchart TD
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
@@ -267,4 +267,4 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
   (`chatReply` sets `link.detached`, on purpose, which nothing reads); a route that answers 500 is printed and counted
   (`recordFault`); other statuses are not; model `sparkie` at `/v1` is the bare model, with no tools, prompt or
   memory; `/health` says little through Funnel.
-- **Power is checked against stand-ins, not the real plug controller (R41).** Its Today says what to check live.
+- **Power is tested on stand-ins, not the real controller (R41).** Its Today says what to check live.
