@@ -9,19 +9,24 @@ function readBody(req, limit = 1e5) {
   return (req.bodyPromise = new Promise((resolve, reject) => {
     let data = '', drained = 0;
     let tooBig = false;
+    // One decoder for the whole body: a character whose bytes arrive in two pieces is read whole, never spoiled (each
+    // piece decoded by itself turns it into replacement marks, and the JSON still parses). It keeps a byte-order mark, so
+    // a body that starts with one is still refused.
+    const dec = new TextDecoder('utf-8', { ignoreBOM: true });
     req.on('data', chunk => {
       if (tooBig) {
         // Far too large: answer now rather than read it all (the answer may then be lost to a sender still writing).
         if ((drained += chunk.length) > Math.max(limit * 16, 2e6)) reject(new HttpError(413, 'Request too large.'));
         return;
       }
-      data += chunk;
+      data += dec.decode(chunk, { stream: true });
       // Too large: stop keeping it, let the rest drain, and answer 413 once it has. Answering mid-body makes Node close
       // the connection while the sender still writes, and the sender may never see the answer (seen in passkey.test).
       if (data.length > limit) { tooBig = true; data = ''; }
     });
     req.on('end', () => {
       if (tooBig) { reject(new HttpError(413, 'Request too large.')); return; }
+      data += dec.decode();
       try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new HttpError(400, 'Invalid JSON.')); }
     });
     req.on('aborted', () => reject(new HttpError(400, 'The request was cut off.')));
