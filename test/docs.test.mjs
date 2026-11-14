@@ -78,6 +78,11 @@ describe('paths', () => {
   test('a test file that is gone', () => fails(doc('Run `test/gone.test.mjs`.'), 'paths', /test\/gone\.test\.mjs/));
   test('a part that is gone', () => fails(doc('It is in `99-gone.mjs`.'), 'paths', /99-gone\.mjs/));
   test('a part named without .mjs', () => fails(doc('It is in `21-gone`.'), 'paths', /21-gone/));
+  // A fresh clone, GitHub and the copy sent to a Spark have no lock until node test/lock.mjs writes one, and that
+  // runs this test first. The made-up tree never has it, so this fails without the line in NOT_PATHS on any machine.
+  test('the lock, which git does not keep, is never a missing path', () => {
+    assert.deepEqual(problemsWith(doc('The lock is `service/workflows.lock.json`.')).map(say), []);
+  });
 });
 
 describe('names', () => {
