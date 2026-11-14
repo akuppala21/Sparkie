@@ -257,6 +257,20 @@ test('an operation under way on a compute Spark makes it not free; one the owner
   } finally { await release(op); }
 });
 
+test('cancelled during its first step, it still stops what it started: nothing is left running', { timeout: 600000 * SLOW }, async () => {
+  const before = running('spark3');
+  const r = await api('/actions/self_test', { method: 'POST', body: {} });
+  assert.equal(r.status, 200, r.text);
+  const c = await api(`/jobs/${r.json.operation}/cancel`, { method: 'POST', body: {} });
+  assert.equal(c.status, 200, c.text);
+  const j = await finished(r.json.operation);
+  assert.equal(j.status, 'cancelled', JSON.stringify(j));
+  // Its model did start (the step under way ends first), and its clean-up stopped it.
+  assert.match(j.report[0], /^Model: worked in \d+ s\./, j.report.join('\n'));
+  assert.match(j.report.at(-1), /^Left behind: nothing running\./, j.report.join('\n'));
+  assert.deepEqual(running('spark3'), before);
+});
+
 test('a model on the list of what should be running on that Spark is never the test\'s: with every one there listed, it says so and changes nothing', async () => {
   // (every model with a copy on Spark 3 is on the list for Spark 3, down: as after the Spark was off, or a model held)
   const disk = (await call(keys.look.token, 'models_on_disk', {})).value.models.filter(m => m.onSparks.includes('spark3'));

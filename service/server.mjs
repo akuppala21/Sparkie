@@ -9042,7 +9042,7 @@ async function selfTest(j, asked, where, image) {
     const going = [...jobs.values()].filter(x => x !== j && x.status === 'running' && ((x.actor === 'Self-test' && x.createdAt >= j.createdAt) || x.id === j.drillRestart));
     if (going.length) await cancelJobsAndWait(going, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stopModel(null).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stopModel(need('stop_model')).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
     for (const name of [web, job].filter(n => now?.[n]?.state === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);
