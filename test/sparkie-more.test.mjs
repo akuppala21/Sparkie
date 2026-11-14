@@ -95,6 +95,16 @@ test('forget_memory runs at once only when the owner says to forget that very li
       assert.deepEqual(m.choices?.map(c => c.label), [`Forget: “${WIFI}”`], words);
       assert.deepEqual(await memoryNow(), before, words);
     }
+    // The review of the fix: a forget called off in a later sentence, opposite asks in one message (the call aimed at
+    // the line the owner said not to forget) and "will you …?" are a button too.
+    for (const [words, id, text] of [[`Forget that ${WIFI}. Actually don't.`, line, WIFI], [`Forget that ${WIFI}. Never mind.`, line, WIFI],
+      [`Forget that ${WIFI}. No wait, keep it.`, line, WIFI], [`Don't forget that ${OTHER}. Forget that ${WIFI}.`, other, OTHER],
+      [`Will you forget that ${WIFI} if I restart you?`, line, WIFI]]) {
+      const before = await memoryNow(), m = await forget(words, id);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.deepEqual(m.choices?.map(c => c.label), [`Forget: “${text}”`], words);
+      assert.deepEqual(await memoryNow(), before, words);
+    }
     // Said in so many words, about that line: forgotten at once.
     const yes = await forget(SAID, line);
     assert.deepEqual(yes.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'forgotten']], JSON.stringify(yes.tools));
@@ -117,7 +127,7 @@ test('"do not remember …" or "don\'t note …" is a button and keeps nothing; 
     return (await say(await newChat(), words)).message;
   };
   try {
-    for (const words of [`Do not remember that ${WIFI}`, `Don't remember that ${WIFI}`, `Please don't note that ${WIFI}`]) {
+    for (const words of [`Do not remember that ${WIFI}`, `Don't remember that ${WIFI}`, `Please don't note that ${WIFI}`, `Remember that ${WIFI}. Actually don't.`]) {
       const m = await remember(words);
       assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
       assert.deepEqual(m.choices?.map(c => c.label), [`Remember: “${WIFI}”`], words);
