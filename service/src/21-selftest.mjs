@@ -40,7 +40,10 @@ const wordList = list => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and
 const firstLine = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
 
 // Where it runs: a compute Spark that is on and free, with a small chat model on disk (Spark 1 last, as for "Test the
-// changes"). Otherwise it says why, in plain words, and nothing is started.
+// changes"). Free: nothing is changing there (a claim, or any operation under way that names it: a download-then-start
+// holds no claim while it downloads), and no model, model server or GPU app runs there (a fresh look at Docker for the
+// GPU apps: the watcher's record of a job run again says "running" until its next look). Otherwise it says why, in plain
+// words, and nothing is started.
 async function selfTestPlace(spark) {
   const inv = await inventory(null), compute = computeSparks(), name = id => sparkName(nodeById(id) || { id });
   const on = inv.sparks.filter(sp => (spark ? sp.id === spark : compute.includes(sp.id)) && sp.online && sp.dockerOk);
@@ -49,8 +52,6 @@ async function selfTestPlace(spark) {
     if (!compute.length) throw new HttpError(409, 'There is no compute Spark on the list (only the hub, where nothing else runs), so the self-test didn’t run.');
     throw new HttpError(409, `No compute Spark is on: ${wordList(compute.map(name))} ${compute.length > 1 ? 'are' : 'is'} off or not answering, so the self-test didn’t run and nothing was started. It wakes nothing: turn one on, then ask again.`);
   }
-  // (a GPU app or job the watcher saw running: it has its Spark's GPU to itself, A13)
-  const gpuApps = id => Object.values(knowledge.workloads).filter(w => w.spark === id && w.running && w.labels?.['spark.gpu'] === '1').map(w => w.name);
   // (the owner's list of what should be running: a model on it for that Spark is the owner's, even while it is down, and
   // the test's stop would take it off. Read strictly: a list that can't be read isn't "empty".)
   let wanted;
@@ -58,8 +59,13 @@ async function selfTestPlace(spark) {
   const listedOn = id => new Set(wanted.filter(x => (x.sparks || [x.spark]).includes(id)).flatMap(x => [x.container, `${x.container}-part2`]));
   const models = testModels(inv), why = [];
   for (const sp of on.sort((a, b) => (a.id === 'spark1') - (b.id === 'spark1'))) {
-    const busy = [...sp.deployments.filter(d => d.state === 'running').map(d => d.container), ...sp.external.map(e => e.container), ...gpuApps(sp.id)];
     if (busySparks.has(sp.id)) { why.push(`something is changing on ${name(sp.id)} now (${busySparks.get(sp.id)})`); continue; }
+    const op = [...jobs.values()].find(x => x.status === 'running' && (x.nodes || [x.node]).includes(sp.id));
+    if (op) { why.push(`${name(sp.id)} has an operation under way (${op.type}${op.model ? ` ${String(op.model).slice(0, 80)}` : ''})`); continue; }
+    // (a GPU app or job running there has its GPU to itself, A13)
+    const look = await run(nodeById(sp.id), `docker ps --filter label=spark.gpu=1 --format 'gpuapp\t{{.Names}}' 2>/dev/null && echo looked`, { timeout: 20000 });
+    if (look.code !== 0 || !/^looked$/m.test(look.out)) { why.push(`Docker on ${name(sp.id)} didn’t answer just now`); continue; }
+    const busy = [...sp.deployments.filter(d => d.state === 'running').map(d => d.container), ...sp.external.map(e => e.container), ...fields(look.out, 'gpuapp').map(([n]) => n)];
     if (busy.length) { why.push(`${name(sp.id)} runs ${wordList([...new Set(busy)])}`); continue; }
     const here = models.filter(m => m.copies?.includes(sp.id)), listed = listedOn(sp.id), model = here.find(m => !listed.has(containerName(m.name)));
     if (!here.length) { why.push(`${name(sp.id)} has no small chat model on disk`); continue; }
@@ -97,6 +103,7 @@ async function healDrill(j, node, container, id) {
       if (Date.now() > until) throw new Error(`Self-healing didn’t start it again within ${Math.round(SELF_TEST_HEAL_MS / 60000)} minutes.`);
     }
     if (e.type === 'heal-skipped') throw new Error(`Self-healing didn’t start it again: ${e.why}.`);
+    j.drillRestart = e.operation;
     note(j, `Self-healing is starting it again (operation ${e.operation})`);
     const done = await waitJob(e.operation, 45 * 60000);
     if (done?.status !== 'completed') throw new Error(`Self-healing’s restart didn’t work: ${firstLine(done?.error || done?.status || 'unknown')}`);
@@ -143,6 +150,13 @@ async function selfTest(j, asked, where, image) {
   };
   const lineWords = l => `${l.what}: ${l.result}${l.seconds == null ? '' : ` in ${l.seconds} s`}. ${l.words}`;
   const stopApp = name => stepRun(j, me, appCtx, 'keep_running', { spark, container: name, do: 'stop' });
+  // Its model's stop. stop_model asked as the page first cancels every operation that changes models on that Spark;
+  // asked as a workflow's step it cancels only operations of the same actor, its own (17-changes.mjs). So when anything
+  // of anyone else's is under way there (an owner's download-then-start, say), that is how it asks.
+  const stopModel = validate => {
+    const others = [...jobs.values()].some(x => x.status === 'running' && x.actor !== 'Self-test' && holdsModelsOn(x, [spark]));
+    return stepRun(j, me, others ? { ...ctx, via: 'workflow' } : ctx, 'stop_model', { spark, container: model }, validate, undefined, mine);
+  };
   let modelStarted = false, modelId = null;
   try {
     // Model: started there, stopping nothing, and it answers its test prompt.
@@ -181,7 +195,7 @@ async function selfTest(j, asked, where, image) {
         else if (!modelId || now.id !== modelId) say('Stop', 'not tried', null, `${model} on ${at} is another container now (not the one this test started), so it was left alone.`);
         else {
           step(j, `Stopping ${model}`);
-          await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'), undefined, mine);
+          await stopModel(need('stop_model'));
           say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
         }
       } catch (e) { say('Stop', 'failed', t, firstLine(e)); }
@@ -227,10 +241,11 @@ async function selfTest(j, asked, where, image) {
     else say('Model address from a container', 'failed', Date.now() - a.seconds * 1000, `The job couldn’t get the model list from ${address} from inside its container; what it said is in jobs/${job}/address.txt in the shared folder on ${at}.`);
   } finally {
     // Whatever this run started that still runs is stopped (a step's operation still going is cancelled first).
-    const mine = [...jobs.values()].filter(x => x !== j && x.status === 'running' && x.actor === 'Self-test' && x.createdAt >= j.createdAt);
-    if (mine.length) await cancelJobsAndWait(mine, 'the self-test');
+    // (its own: its steps, and the drill's restart of its model)
+    const going = [...jobs.values()].filter(x => x !== j && x.status === 'running' && ((x.actor === 'Self-test' && x.createdAt >= j.createdAt) || x.id === j.drillRestart));
+    if (going.length) await cancelJobsAndWait(going, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, null, undefined, mine).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    if (modelStarted && modelId && now?.[model]?.state === 'running' && now[model].id === modelId) await stopModel(null).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
     for (const name of [web, job].filter(n => now?.[n]?.state === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);

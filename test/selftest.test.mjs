@@ -17,7 +17,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, createKey, newChat, say, chatMessages, eventLines, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
 
 const page = await new Promise(res => { const s = http.createServer((req, r) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end('<p>self-test</p>'); }); s.listen(0, '127.0.0.1', () => res(s)); });
 const WEB_PORT = page.address().port;
@@ -209,6 +209,54 @@ test('the model it stops is the container it started, by id: one made by hand un
   // (put back as it was)
   byHand('spark3', 'stop', name);
 });
+test('an operation under way on a compute Spark makes it not free; one the owner starts there during the test is never cancelled by it', { timeout: 600000 * SLOW }, async () => {
+  // The owner's start of a model that isn't on disk: it downloads first, holding no claim (the stand-in download is held
+  // while hf-hold is there).
+  const hold = mockFile('spark3', 'hf-hold');
+  const download = async () => {
+    const d = await api('/actions/start_model', { method: 'POST', body: { model: 'qwen3.5-4b', spark: 'spark3' } });
+    assert.equal(d.status, 200, d.text);
+    assert.equal(d.json.outcome, 'started', d.text);
+    await waitFor(async () => /Downloading/i.test((await api(`/jobs/${d.json.operation}`)).json.step || ''), { timeout: 60000, what: 'the download under way' });
+    return d.json.operation;
+  };
+  // (let go: the stand-in download fails, so the operation ends and nothing lands on disk)
+  const release = async op => {
+    writeFileSync(mockFile('spark3', 'hf-fails'), '');
+    rmSync(hold, { force: true });
+    try { await finished(op); } finally { rmSync(mockFile('spark3', 'hf-fails'), { force: true }); }
+  };
+  writeFileSync(hold, '');
+  let op = await download();
+  try {
+    // Asked while it runs: Spark 3 isn't free (and Spark 4 runs a model), so nothing is started.
+    const ops = (await operations()).length;
+    const no = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(no.status, 409, no.text);
+    assert.match(no.json.error, /Spark 3 has an operation under way \(start-model [^)]*Qwen3\.5-4B[^)]*\)/i, no.json.error);
+    assert.equal((await operations()).length, ops, 'nothing started');
+    assert.equal((await api(`/jobs/${op}`)).json.status, 'running');
+  } finally { await release(op); }
+  // Started while the self-test runs there: it is left alone, also by the self-test's stop of its own model. (Automatic
+  // restarts are off for this run, so the drill doesn't run and the Stop step has a model to stop.)
+  writeFileSync(hold, '');
+  await agentSettings({ selfHeal: false });
+  let j;
+  try {
+    const r = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.spark, 'spark3');
+    op = await download();
+    j = await finished(r.json.operation);
+  } finally { await agentSettings({ selfHeal: true }); }
+  try {
+    assert.match(j.report[2], /^Stop: worked in \d+ s\./, j.report.join('\n'));
+    const owner = (await api(`/jobs/${op}`)).json;
+    assert.equal(owner.cancelled, undefined, `the self-test cancelled the owner's operation: ${owner.error}`);
+    assert.equal(owner.status, 'running', JSON.stringify(owner));
+  } finally { await release(op); }
+});
+
 test('a model on the list of what should be running on that Spark is never the test\'s: with every one there listed, it says so and changes nothing', async () => {
   // (every model with a copy on Spark 3 is on the list for Spark 3, down: as after the Spark was off, or a model held)
   const disk = (await call(keys.look.token, 'models_on_disk', {})).value.models.filter(m => m.onSparks.includes('spark3'));
