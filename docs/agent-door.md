@@ -16,7 +16,7 @@ Two ways in, through the same door:
   Sparkie and outside agents use the same list under the same checks. 20 actions look things up; 3 change things
   (start, stop and restart models), for agents you allow (below).
 
-Commands on the Sparks come later (see [sparkie-actions.md](sparkie-actions.md)).
+Commands on the Sparks come later (see [history/sparkie-actions.md](history/sparkie-actions.md)).
 
 ## Talking with Sparkie
 
