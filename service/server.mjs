@@ -7443,14 +7443,19 @@ function saysForget(text) {
   }
   return false;
 }
-// Whether this message rules remembering out ("do not remember …", "please don't note …"), as the intent read it. A
-// forget phrase after don't or never asks to remember, though the intent reads "never forget that …" as ruled out, so it
-// is read as "remember" here (2026-11-14: "do not remember that …" was kept with no button).
-const NOT_FORGET = /\b(?:don't|dont|do\s+not|never)\s+(?:\w+\s+){0,2}?forget\b/gi;
+// Whether this message rules the remembering itself out (2026-11-14: "do not remember that …" was kept with no button):
+// don't, do not, never or no need to, then a remember word at most two words on ("do not remember …", "please don't
+// note that …"), or a remember word in a sentence that is called off ("remember that …, actually don't"). A "not"
+// anywhere else is part of what to keep ("don't use Spark 1 from now on", "Spark 4 is not on Ethernet, remember that"),
+// and "don't forget", "never forget" ask to remember.
+const REMEMBER_WORD = /\b(?:remember|note\s+(?:that|this|it)|make\s+a\s+note|keep\s+(?:(?:that|this|it)\s+)?in\s+mind)\b/i;
+const NOT_REMEMBER = /\b(?:don't|dont|do\s+not|never|no\s+need\s+to)\s+(?:\w+\s+){0,2}?(?:remember|note\s+(?:that|this|it)|make\s+a\s+note|keep\s+(?:(?:that|this|it)\s+)?in\s+mind)\b/i;
 function refusesRemember(ctx) {
-  const text = normQuotes(ctx.request || ''), plain = text.replace(NOT_FORGET, 'remember');
-  const intent = plain === text ? ctx.intent || {} : changeIntent(plain);
-  return [...(intent.negated || []), ...(intent.mixed || [])].includes('remember');
+  for (const raw of normQuotes(ctx.request || '').split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const sentence = raw.replace(/[?!;\n]+\s*$/, '');
+    if (NOT_REMEMBER.test(sentence) || (REMEMBER_WORD.test(sentence) && CALLED_OFF.test(sentence))) return true;
+  }
+  return false;
 }
 function memoryClear(name, input, ctx, asked) {
   const words = String(ctx.said || ctx.request || '');

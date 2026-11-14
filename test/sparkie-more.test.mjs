@@ -109,10 +109,11 @@ test('forget_memory runs at once only when the owner says to forget that very li
 });
 
 // The same review: "do not remember …" is a refusal the intent reads, and it is a button, never a line kept. "Don't
-// forget", "never forget" and "do not forget" ask to remember, and still keep the line at once.
+// forget", "never forget" and "do not forget" ask to remember, and still keep the line at once. So does a statement
+// with a "not" in it (the review of the fix: "don't use Spark 1 from now on" became a button).
 test('"do not remember …" or "don\'t note …" is a button and keeps nothing; "remember", "don\'t forget", "never forget" keep the line at once', { timeout: 180000 * SLOW }, async () => {
-  const remember = async words => {
-    script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text: WIFI } }] }]);
+  const remember = async (words, text = WIFI) => {
+    script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text } }] }]);
     return (await say(await newChat(), words)).message;
   };
   try {
@@ -127,6 +128,14 @@ test('"do not remember …" or "don\'t note …" is a button and keeps nothing; 
       assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']], `${words}: ${JSON.stringify(m.tools)}`);
       assert.ok(!m.choices?.length, `${words}: ${JSON.stringify(m.choices)}`);
       assert.deepEqual((await memoryNow()).map(e => e.text), [WIFI], words);
+      await forgetAll();
+    }
+    for (const [words, line] of [['Don\'t use Spark 1 from now on', 'Don\'t use Spark 1'], ['Remember: never stop Qwen at night from now on', 'Never stop Qwen at night'],
+      ['Spark 4 is not on Ethernet any more, remember that', 'Spark 4 is not on Ethernet any more']]) {
+      const m = await remember(words, line);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.ok(!m.choices?.length, `${words}: ${JSON.stringify(m.choices)}`);
+      assert.deepEqual((await memoryNow()).map(e => e.text), [line], words);
       await forgetAll();
     }
   } finally { script([]); await forgetAll(); }
