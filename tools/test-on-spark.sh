@@ -39,7 +39,16 @@ if [ "${1:-}" = "--ask" ]; then
   { echo "tree=$(basename "$top")"; for f in "$@"; do echo "$f"; done; } > "$OUT/queue/$name.tmp" || exit 2
   mv "$OUT/queue/$name.tmp" "$OUT/queue/$name.req"
   echo "Asked for a run on the Spark: $name (the watcher runs one at a time, so it may wait its turn)."
-  until [ -e "$OUT/$name.done" ]; do sleep 2; done
+  waited=0
+  until [ -e "$OUT/$name.done" ]; do
+    sleep 2; waited=$((waited + 2))
+    # (still in the queue with nothing running: no watcher is there to take it)
+    if [ "$waited" -ge 120 ] && [ -e "$OUT/queue/$name.req" ] && [ ! -e "$OUT/running.req" ]; then
+      rm -f "$OUT/queue/$name.req"
+      echo "No watcher took the request in 2 minutes, so nothing ran. The owner starts one with: bash $HERE/tools/test-on-spark.sh akuppala@<spark> --watch" >&2
+      exit 3
+    fi
+  done
   grep -E "$SUMMARY|^✖|^Not |^The copy" "$OUT/$name.log" 2>/dev/null | head -80
   echo "Whole log: $OUT/$name.log"
   [ "$(cat "$OUT/$name.done")" = "0" ] && grep -q '^exit=0' "$OUT/$name.log"
