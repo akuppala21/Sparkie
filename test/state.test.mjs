@@ -11,7 +11,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, rmSync, chmodSync, renameSync, symlinkSync, lstatSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, rmSync, chmodSync, renameSync, symlinkSync, lstatSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import http from 'node:http';
 import { T, useFleet, api, call, request, createActKey, createKey, eventLines, waitFor, sleep, bug, newChat, say, SERVICE_FILE, SLOW } from './lib.mjs';
@@ -495,6 +495,71 @@ describe('the main service', { concurrency: 1 }, () => {
       writeFileSync(F.offlineFile, 'spark1\n');
       await sleep(8000);
       assert.equal((await record()).at, b.at, 'no second copy that day');
+    });
+  });
+
+  // The far side keeps the stream as <name>.part, read back, and moves it in (and prunes) only once this side knows tar
+  // ended well too (A-9): a tar that ends badly after a whole stream (a file it couldn't read) replaces nothing and prunes
+  // nothing. A fleet of its own: only Spark 3 takes copies; today's copy and 14 older ones are there; tried 2 s after the
+  // start, then every 20 s (a quiet spell after each try, so its folder is read between two).
+  describe('the daily copy: a tar that ends badly after a whole stream replaces nothing and prunes nothing', { concurrency: 1 }, () => {
+    const today = () => `state-${new Date().toISOString().slice(0, 10)}.tgz`;
+    const OLDER = Array.from({ length: 14 }, (_, i) => `state-2026-10-${String(i + 1).padStart(2, '0')}.tgz`);
+    // GNU tar ends 2 after a file it can't read; BSD tar (macOS) ends 1, which the copy accepts. Root reads any file.
+    const GNU_TAR = (() => { try { return /GNU tar/.test(execFileSync('tar', ['--version'], { encoding: 'utf8' })); } catch { return false; } })();
+    let F;
+    const copies = () => join(F.root, 'spark3', '.local', 'share', 'spark-console', 'backups');
+    const record = async () => (await health(F.base)).lastBackup;
+    const nextTry = last => waitFor(async () => { const b = await record(); return b && b.at !== last?.at && b; }, { timeout: 60000, what: 'the next try' });
+    // Nothing replaced, nothing pruned, no .part left, and the try recorded as failed with no good copy.
+    const untouched = async last => {
+      assert.equal(last.ok, false, JSON.stringify(last));
+      assert.match(last.error, /Spark 3/);
+      assert.equal(last.good, null);
+      assert.deepEqual(readdirSync(copies()).sort(), [...OLDER, today()].sort(), 'no .part left, none pruned');
+      assert.equal(readFileSync(join(copies(), today()), 'utf8'), 'an earlier good copy');
+      OLDER.forEach((f, i) => assert.equal(readFileSync(join(copies(), f), 'utf8'), `an older copy ${i + 1}`, f));
+    };
+    before(async () => {
+      F = await startMock({ watchMs: 600000, statusMs: 3000,
+        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '20000' },
+        prepare: ({ dir, root }) => {
+          writeFileSync(join(dir, 'offline'), 'spark1\nspark4\n');
+          // (the stand-in tar runs the real one to its end, then ends 2)
+          writeFileSync(join(dir, 'tar-fails'), '');
+          const b = join(root, 'spark3', '.local', 'share', 'spark-console', 'backups');
+          mkdirSync(b, { recursive: true });
+          OLDER.forEach((f, i) => { writeFileSync(join(b, f), `an older copy ${i + 1}`); const t = new Date(Date.UTC(2026, 9, i + 1)); utimesSync(join(b, f), t, t); });
+          writeFileSync(join(b, today()), 'an earlier good copy');
+        } });
+    }, { timeout: 180000 });
+    after(() => F?.stop(), { timeout: 30000 });
+
+    test('tar ends 2 after a whole stream (the stand-in): the try fails, today’s file and the 14 older ones stay as they were, no .part is left', { timeout: 90000 * SLOW }, async () => {
+      // (the try after whatever is recorded now: its folder is read in the quiet spell before the next)
+      await untouched(await nextTry(await record()));
+    });
+
+    test('on Linux, a state file tar can’t read (mode 000): GNU tar ends 2, and the same holds', { timeout: 90000 * SLOW,
+      skip: !GNU_TAR ? 'GNU tar only: BSD tar ends 1 for a file it can’t read, which the copy accepts' : process.getuid?.() === 0 ? 'root reads a mode-000 file' : false }, async () => {
+      const stray = join(F.stateDir, 'unreadable-by-tar.json');
+      writeFileSync(stray, '{}');
+      chmodSync(stray, 0o000);
+      try {
+        rmSync(join(F.dir, 'tar-fails'), { force: true });
+        // (the second try from now: the first may have started with the stand-in still failing)
+        await untouched(await nextTry(await nextTry(await record())));
+      } finally { chmodSync(stray, 0o600); rmSync(stray, { force: true }); }
+    });
+
+    test('tar ending well again: the copy lands as today’s file, and the oldest of the 14 goes', { timeout: 90000 * SLOW }, async () => {
+      const last = await record();
+      rmSync(join(F.dir, 'tar-fails'), { force: true });
+      const b = await waitFor(async () => { const x = await record(); return x?.ok && x.at !== last?.at && x; }, { timeout: 60000, what: 'a good copy' });
+      assert.deepEqual({ to: b.to, file: b.file }, { to: 'spark3', file: today() });
+      assert.deepEqual(readdirSync(copies()).sort(), [...OLDER.slice(1), today()].sort(), 'the newest 14, no .part');
+      const listed = execFileSync('tar', ['-tzf', join(copies(), today())], { encoding: 'utf8' }).split('\n');
+      assert.ok(listed.some(f => /(^|\/)access\.json$/.test(f)), listed.join(' '));
     });
   });
 
