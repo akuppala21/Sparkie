@@ -23,14 +23,24 @@ const WEB_PORT = page.address().port;
 after(() => page.close());
 
 const keys = {};
+const SINCE = '2026-11-12T08:00:00.000Z';
+const SEEDED_RUNNING = [
+  { spark: 'spark4', container: 'sc-RadixArk--Qwen3.8-27B-NVFP4', model: 'RadixArk--Qwen3.8-27B-NVFP4', since: SINCE, by: 'owner' },
+  { spark: 'spark3', container: 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', model: 'testorg--Qwen3.8-27B-abliterated-GGUF', since: SINCE, by: 'owner' },
+];
+const SEEDED = { revision: 1, running: SEEDED_RUNNING, revisions: [{ revision: 1, at: SINCE, by: 'owner', chat: null, operation: null, added: SEEDED_RUNNING.map(x => `${x.spark}/${x.container}`), removed: [], before: [] }] };
 const mockFile = (spark, file) => join(T.fleet.root, spark, '.mock', file);
 useFleet({ watchMs: 2000, statusMs: 3000,
   env: { SPARK_CONSOLE_SELFTEST_PORT: String(WEB_PORT), SPARK_CONSOLE_JOB_WAIT_MS: '500', SPARK_CONSOLE_APP_ANSWER_MS: '20000', SPARK_CONSOLE_SELFTEST_HEAL_MS: '60000',
     SPARK_CONSOLE_DIG_FIXTURE: join(dirname(fileURLToPath(import.meta.url)), 'mock', 'dig-fixture.json') },
-  prepare: ({ root }) => {
+  prepare: ({ root, stateDir }) => {
     const list = join(root, 'spark3', '.mock', 'containers');
     writeFileSync(list, readFileSync(list, 'utf8').replace(/^(sc-testorg--Qwen3\.8-27B-abliterated-GGUF)\|running\|[^|]*\|/m, '$1|exited|Exited (0) 2 hours ago|'));
     for (const f of ['jobs-run', 'stamp-starts']) writeFileSync(join(root, 'spark3', '.mock', f), '');
+    // The owner's list of what should be running, as it would be on a fleet that has been up a while: Spark 4's model, and
+    // one on Spark 3 that is down (stopped above). Written here, so the service never seeds it itself in the middle of a
+    // test (it does that 60 s after it starts when there is no list).
+    writeFileSync(join(stateDir, 'desired.json'), JSON.stringify(SEEDED), { mode: 0o600 });
   } }, async () => {
   keys.act = await createActKey('selftest');
   keys.look = await createKey('selftest-look');
@@ -63,7 +73,8 @@ const first = {};
 test('asked in the owner\'s words, it runs at once: the lines come in order, each with its seconds, and nothing is left running or on the hub', { timeout: 600000 * SLOW }, async () => {
   first.before = { spark2: running('spark2'), spark3: running('spark3'), spark4: running('spark4') };
   first.hub = readFileSync(mockFile('spark2', 'containers'), 'utf8');
-  first.desired = existsSync(join(T.fleet.stateDir, 'desired.json')) ? desiredRunning() : [];
+  first.desired = desiredRunning();
+  assert.deepEqual(first.desired, SEEDED_RUNNING.map(x => `${x.spark}/${x.container}`).sort(), 'the seeded list');
   first.since = new Date().toISOString();
   writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: 'run the self-test', calls: [{ name: 'self_test', arguments: {} }] }]));
   let chat, r;
