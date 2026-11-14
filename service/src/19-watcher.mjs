@@ -146,14 +146,19 @@ async function watchSpark(node) {
   }
   const dockerBack = Boolean(s.dockerDownAt);
   delete s.dockerDownAt;
-  // The first look that finds containers only learns them; after that, changes are announced.
+  // The first look Docker answered at a Spark only learns what's there; after that, changes are announced. sawContainers
+  // marks that look (kept in knowledge.json under its old name), also when it found nothing: a Spark first seen empty
+  // has had its first look, so the first job that ends there before the next look is told. Docker answered (the return
+  // above), so an empty list here means nothing there, not "couldn't read".
   const first = !s.sawContainers;
-  if (fields(r.out, 'ps').length) s.sawContainers = true;
+  s.sawContainers = true;
   s.watchedAt = now;
   s.lastSeenAt = now;
   const inspected = new Map(fields(r.out, 'inspect').map(([id, b64]) => [id, b64json(b64)?.[0]]).filter(([, c]) => c && c.Id));
   const seen = new Set();
-  let changed = dockerBack;
+  // (the first look is a change, so the mark is saved: a restart before the next save would make the next look a first
+  // again)
+  let changed = dockerBack || first;
   for (const [id, name, state] of fields(r.out, 'ps')) {
     // The engine check before a two-Spark start runs for about a minute; it isn't a workload.
     if (!id || !name || name === ENGINE_CHECK_NAME) continue;
