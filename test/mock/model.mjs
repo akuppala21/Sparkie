@@ -17,9 +17,10 @@
 //   Whether a deploy is up is the stand-in curl's call (per Spark); this one always answers, quickly.
 // Every request to Sparkie's model is logged to $MOCK_DIR/model-requests.jsonl: the tools offered, the system prompt, the
 // last user message (whole, record included), which round it is, the tool results it was sent, and how it was asked
-// (temperature, top_p, top_k, max_tokens, thinking).
+// (temperature, top_p, top_k, max_tokens, thinking). The first round of each turn with tools also leaves exactly what
+// the brain was sent, the system prompt and every tool in full, in $MOCK_DIR/brain-sent.json (test/lock.mjs hashes it).
 import http from 'node:http';
-import { readFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, appendFileSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 
 const MAIN_PORT = Number(process.env.MOCK_MODEL_PORT), BENCH_PORT = Number(process.env.MOCK_BENCH_PORT), SERVE_PORT = Number(process.env.MOCK_SERVE_PORT);
 if (!process.env.MOCK_ROOT || !MAIN_PORT || !BENCH_PORT) process.exit(0);
@@ -92,6 +93,12 @@ async function mainReply(b, port, res, log = true) {
       params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, top_k: b.top_k ?? null, max_tokens: b.max_tokens ?? null,
         thinking: b.chat_template_kwargs?.enable_thinking ?? null } };
     try { appendFileSync(`${DIR}/model-requests.jsonl`, `${JSON.stringify(entry)}\n`); } catch {}
+    if (tools.length && round === 0) {
+      try {
+        writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools }));
+        renameSync(`${DIR}/brain-sent.json.tmp`, `${DIR}/brain-sent.json`);
+      } catch {}
+    }
   }
   const wait = /\btake (\d+) seconds\b/i.exec(words);
   if (wait && last.role === 'user') await sleep(Number(wait[1]) * 1000);
