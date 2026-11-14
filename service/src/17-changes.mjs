@@ -361,9 +361,7 @@ function launch(viewer, ctx, m, placed, how) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
     model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
-    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [],
-    // (the self-test's own start: not one the owner wants kept running, so it never joins the list, desiredAfter)
-    ...(ctx.selfTest ? { selfTest: true } : {}) }));
+    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
   return job;
 }

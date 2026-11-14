@@ -396,6 +396,8 @@ async function maybeHeal(node, w) {
     const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
+    // (the self-test's drill: its model is never the owner's wish, so its restart doesn't put it on the list either)
+    if (healDrills.has(`${node.id}/${w.id}`)) job.selfTest = true;
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
@@ -406,11 +408,13 @@ async function maybeHeal(node, w) {
 // One step of a test run on the Sparks (Test the changes, the self-test): an action run as Spark Console with its ctx,
 // and waited on to its end. With id it is that workflow's validation run; a step whose workflow is validated already (id
 // null) just runs, to set up the next one (seen 2026-11-09: only restart had changed, and the start before it had no
-// workflow to name). Throws when it didn't start or didn't finish.
-async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000) {
+// workflow to name). Throws when it didn't start or didn't finish. `started` gets the step's operation as soon as it
+// exists, before it ends (the self-test marks its own jobs there).
+async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000, started = null) {
   const title = workflowById(id || name)?.title || name;
   const out = await runAction(name, viewer, id ? { ...args, __validate: id } : args, ctx);
   if (!out?.operation) throw new Error(`${name}: ${out?.note || out?.question || out?.outcome || 'didn’t start'}`);
+  if (started && jobs.has(out.operation)) started(jobs.get(out.operation));
   note(job, `${title}: running (operation ${out.operation})`);
   const done = await waitJob(out.operation, limit);
   if (done?.status !== 'completed') throw new Error(`${title} failed${id ? ' its check' : ''}: ${String(done?.error || done?.status).split('\n')[0]}`);

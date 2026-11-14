@@ -107,6 +107,10 @@ test('asked in the owner\'s words, it runs at once: the lines come in order, eac
   assert.deepEqual(running('spark3'), first.before.spark3);
   assert.equal(readFileSync(mockFile('spark2', 'containers'), 'utf8'), first.hub, 'Spark 2 untouched');
   assert.deepEqual(desiredRunning(), first.desired);
+  // The test's model never touched the list: its start, the drill's restart and its stop leave it alone.
+  const model = /\b(sc-\S+) is stopped on Spark 3/.exec(j.report[6])[1];
+  const revisions = JSON.parse(readFileSync(join(T.fleet.stateDir, 'desired.json'), 'utf8')).revisions;
+  assert.deepEqual(revisions.filter(rv => [...(rv.added || []), ...(rv.removed || [])].includes(`spark3/${model}`)), []);
   // Every step ran on Spark 3, none on the hub.
   const steps = (await operations()).filter(o => o.actor === 'Self-test' || o.id === id);
   assert.ok(steps.length >= 6, JSON.stringify(steps));
@@ -178,6 +182,22 @@ test('a drill self-healing passes over (two restarts this hour already) says why
   await sleep(6000);
   assert.deepEqual(running('spark3'), before.spark3);
   assert.ok(!eventLines().some(e => e.at >= since && e.type === 'healing'), 'no restart');
+});
+
+test('a model on the list of what should be running on that Spark is never the test\'s: with every one there listed, it says so and changes nothing', async () => {
+  // (every model with a copy on Spark 3 is on the list for Spark 3, down: as after the Spark was off, or a model held)
+  const disk = (await call(keys.look.token, 'models_on_disk', {})).value.models.filter(m => m.onSparks.includes('spark3'));
+  const listed = [...SEEDED_RUNNING.filter(x => x.spark !== 'spark3'), ...disk.map(m => ({ spark: 'spark3', container: `sc-${m.modelId}`, model: m.modelId, since: SINCE, by: 'owner' }))];
+  const file = join(T.fleet.stateDir, 'desired.json'), saved = readFileSync(file, 'utf8');
+  writeFileSync(file, JSON.stringify({ ...SEEDED, running: listed }), { mode: 0o600 });
+  try {
+    const before = desiredRunning(), ops = (await operations()).length;
+    const r = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(r.status, 409, r.text);
+    assert.match(r.json.error, /every small chat model on Spark 3 is on the list of what should be running there, and the self-test never touches those/);
+    assert.deepEqual(desiredRunning(), before);
+    assert.equal((await operations()).length, ops, 'nothing started');
+  } finally { writeFileSync(file, saved, { mode: 0o600 }); }
 });
 
 test('an agent\'s call is the owner\'s question, and nothing starts', async () => {

@@ -16,8 +16,9 @@
 // stop_model or restart_model wait for their validation run, these runs are it (the drill's heal is restart_model's).
 // The web page's and job's containers stay, stopped, and are used again next time (their names carry a hash of what they
 // run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
-// (desiredAfter). It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not a workflow (no lock
-// entry): each step is an action with its own gate.
+// (desiredAfter; its start, the drill's restart and its stop are marked selfTest), and a model that is on that list for
+// the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
+// a workflow (no lock entry): each step is an action with its own gate.
 const SELF_TEST_WEB_PORT = (ALL_LOCAL && Number(process.env.SPARK_CONSOLE_SELFTEST_PORT)) || 18990;
 const SELF_TEST_JOB_MS = Number(process.env.SPARK_CONSOLE_SELFTEST_JOB_MS || 10 * 60000);
 // How long the drill waits for self-healing to take it up: the watcher looks once a minute.
@@ -50,13 +51,19 @@ async function selfTestPlace(spark) {
   }
   // (a GPU app or job the watcher saw running: it has its Spark's GPU to itself, A13)
   const gpuApps = id => Object.values(knowledge.workloads).filter(w => w.spark === id && w.running && w.labels?.['spark.gpu'] === '1').map(w => w.name);
+  // (the owner's list of what should be running: a model on it for that Spark is the owner's, even while it is down, and
+  // the test's stop would take it off. Read strictly: a list that can't be read isn't "empty".)
+  let wanted;
+  try { wanted = desired(true).running; } catch { throw new HttpError(409, 'The list of what should be running can’t be read just now, so the self-test didn’t run. Try again in a minute.'); }
+  const listedOn = id => new Set(wanted.filter(x => (x.sparks || [x.spark]).includes(id)).flatMap(x => [x.container, `${x.container}-part2`]));
   const models = testModels(inv), why = [];
   for (const sp of on.sort((a, b) => (a.id === 'spark1') - (b.id === 'spark1'))) {
     const busy = [...sp.deployments.filter(d => d.state === 'running').map(d => d.container), ...sp.external.map(e => e.container), ...gpuApps(sp.id)];
     if (busySparks.has(sp.id)) { why.push(`something is changing on ${name(sp.id)} now (${busySparks.get(sp.id)})`); continue; }
     if (busy.length) { why.push(`${name(sp.id)} runs ${wordList([...new Set(busy)])}`); continue; }
-    const model = models.find(m => m.copies?.includes(sp.id));
-    if (!model) { why.push(`${name(sp.id)} has no small chat model on disk`); continue; }
+    const here = models.filter(m => m.copies?.includes(sp.id)), listed = listedOn(sp.id), model = here.find(m => !listed.has(containerName(m.name)));
+    if (!here.length) { why.push(`${name(sp.id)} has no small chat model on disk`); continue; }
+    if (!model) { why.push(`every small chat model on ${name(sp.id)} is on the list of what should be running there, and the self-test never touches those`); continue; }
     return { spark: sp.id, model };
   }
   throw new HttpError(409, `No compute Spark that is on is free for the self-test: ${why.join('; ')}. It stops nothing, so it didn’t run and nothing was started.`);
@@ -123,6 +130,8 @@ async function selfTest(j, asked, where, image) {
   // arguments are checked as any caller's (trusted only where a validation mark has to pass).
   const ctx = { via: 'page', actor: 'Self-test', request: `the self-test on ${at}`, canChange: true, trusted: true, noStops: true, selfTest: true };
   const appCtx = { ...ctx, trusted: false };
+  // (its model's own operations: never on the list, desiredAfter)
+  const mine = x => { x.selfTest = true; };
   const need = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
   // (cancelling it, or the owner pausing changes, ends it at the next step; what it started is still stopped)
   const between = () => { cancelCheck(j); pausedCheck(asked); };
@@ -141,7 +150,7 @@ async function selfTest(j, asked, where, image) {
     let t = Date.now();
     step(j, `Starting ${title} on ${at}, stopping nothing`);
     try {
-      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'));
+      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, mine);
       modelStarted = true;
       say('Model', 'worked', t, `${title} started on ${at} and answered its test prompt.`);
     } catch (e) { say('Model', 'failed', t, firstLine(e)); }
@@ -169,7 +178,7 @@ async function selfTest(j, asked, where, image) {
         if (now[model] !== 'running') say('Stop', 'not tried', null, `${model} wasn’t running after the drill, so there was nothing to stop.`);
         else {
           step(j, `Stopping ${model}`);
-          await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'));
+          await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'), undefined, mine);
           say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
         }
       } catch (e) { say('Stop', 'failed', t, firstLine(e)); }
@@ -218,7 +227,7 @@ async function selfTest(j, asked, where, image) {
     const mine = [...jobs.values()].filter(x => x !== j && x.status === 'running' && x.actor === 'Self-test' && x.createdAt >= j.createdAt);
     if (mine.length) await cancelJobsAndWait(mine, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (now?.[model] === 'running' && modelStarted) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    if (now?.[model] === 'running' && modelStarted) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, null, undefined, mine).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
     for (const name of [web, job].filter(n => now?.[n] === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);

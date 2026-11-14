@@ -5248,9 +5248,7 @@ function launch(viewer, ctx, m, placed, how) {
   const ids = placed.nodes, title = m.repo || m.name;
   const job = claimed(ids, `starting ${title}`, () => newJob(placed.two ? 'deploy-cluster' : 'deploy', {
     model: m.name, node: ids[0], ...(placed.two ? { nodes: ids } : {}), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
-    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [],
-    // (the self-test's own start: not one the owner wants kept running, so it never joins the list, desiredAfter)
-    ...(ctx.selfTest ? { selfTest: true } : {}) }));
+    request: ctx.request ? String(ctx.request).slice(0, 300) : null, setup: how?.setupId || null, stops: placed.stop || [] }));
   runJob(job, j => deployPlaced(j, viewer, ctx, m, placed, how));
   return job;
 }
@@ -6077,6 +6075,8 @@ async function maybeHeal(node, w) {
     const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
+    // (the self-test's drill: its model is never the owner's wish, so its restart doesn't put it on the list either)
+    if (healDrills.has(`${node.id}/${w.id}`)) job.selfTest = true;
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
@@ -6087,11 +6087,13 @@ async function maybeHeal(node, w) {
 // One step of a test run on the Sparks (Test the changes, the self-test): an action run as Spark Console with its ctx,
 // and waited on to its end. With id it is that workflow's validation run; a step whose workflow is validated already (id
 // null) just runs, to set up the next one (seen 2026-11-09: only restart had changed, and the start before it had no
-// workflow to name). Throws when it didn't start or didn't finish.
-async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000) {
+// workflow to name). Throws when it didn't start or didn't finish. `started` gets the step's operation as soon as it
+// exists, before it ends (the self-test marks its own jobs there).
+async function stepRun(job, viewer, ctx, name, args, id = null, limit = 45 * 60000, started = null) {
   const title = workflowById(id || name)?.title || name;
   const out = await runAction(name, viewer, id ? { ...args, __validate: id } : args, ctx);
   if (!out?.operation) throw new Error(`${name}: ${out?.note || out?.question || out?.outcome || 'didn’t start'}`);
+  if (started && jobs.has(out.operation)) started(jobs.get(out.operation));
   note(job, `${title}: running (operation ${out.operation})`);
   const done = await waitJob(out.operation, limit);
   if (done?.status !== 'completed') throw new Error(`${title} failed${id ? ' its check' : ''}: ${String(done?.error || done?.status).split('\n')[0]}`);
@@ -6581,9 +6583,8 @@ const keyOf = x => `${x.spark}/${x.container}`;
 // isn't on it.
 function desiredAfter(job) {
   if (job.status !== 'completed') return;
-  // The self-test's own model start (21-selftest.mjs) isn't the owner's wish: it never joins the list, so a drill that
-  // leaves it down leaves nothing held. (If self-healing brings it back, that restart joins it, and the test's stop
-  // takes it off again.)
+  // The self-test's own model (21-selftest.mjs) isn't the owner's wish: its start, the drill's restart and its stop
+  // (marked by the self-test and by maybeHeal) leave the list as it is.
   if (job.selfTest) return;
   const started = [...new Set([...(job.ranHere || []), ...(job.type === 'restart' && job.node && job.container ? [`${job.node}/${job.container}`] : [])])]
     .filter(x => !/-part2$/.test(x) && !brainSparks().includes(x.split('/')[0]));
@@ -8812,8 +8813,9 @@ async function editorUpgrade(req, socket, head) {
 // stop_model or restart_model wait for their validation run, these runs are it (the drill's heal is restart_model's).
 // The web page's and job's containers stay, stopped, and are used again next time (their names carry a hash of what they
 // run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
-// (desiredAfter). It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not a workflow (no lock
-// entry): each step is an action with its own gate.
+// (desiredAfter; its start, the drill's restart and its stop are marked selfTest), and a model that is on that list for
+// the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
+// a workflow (no lock entry): each step is an action with its own gate.
 const SELF_TEST_WEB_PORT = (ALL_LOCAL && Number(process.env.SPARK_CONSOLE_SELFTEST_PORT)) || 18990;
 const SELF_TEST_JOB_MS = Number(process.env.SPARK_CONSOLE_SELFTEST_JOB_MS || 10 * 60000);
 // How long the drill waits for self-healing to take it up: the watcher looks once a minute.
@@ -8846,13 +8848,19 @@ async function selfTestPlace(spark) {
   }
   // (a GPU app or job the watcher saw running: it has its Spark's GPU to itself, A13)
   const gpuApps = id => Object.values(knowledge.workloads).filter(w => w.spark === id && w.running && w.labels?.['spark.gpu'] === '1').map(w => w.name);
+  // (the owner's list of what should be running: a model on it for that Spark is the owner's, even while it is down, and
+  // the test's stop would take it off. Read strictly: a list that can't be read isn't "empty".)
+  let wanted;
+  try { wanted = desired(true).running; } catch { throw new HttpError(409, 'The list of what should be running can’t be read just now, so the self-test didn’t run. Try again in a minute.'); }
+  const listedOn = id => new Set(wanted.filter(x => (x.sparks || [x.spark]).includes(id)).flatMap(x => [x.container, `${x.container}-part2`]));
   const models = testModels(inv), why = [];
   for (const sp of on.sort((a, b) => (a.id === 'spark1') - (b.id === 'spark1'))) {
     const busy = [...sp.deployments.filter(d => d.state === 'running').map(d => d.container), ...sp.external.map(e => e.container), ...gpuApps(sp.id)];
     if (busySparks.has(sp.id)) { why.push(`something is changing on ${name(sp.id)} now (${busySparks.get(sp.id)})`); continue; }
     if (busy.length) { why.push(`${name(sp.id)} runs ${wordList([...new Set(busy)])}`); continue; }
-    const model = models.find(m => m.copies?.includes(sp.id));
-    if (!model) { why.push(`${name(sp.id)} has no small chat model on disk`); continue; }
+    const here = models.filter(m => m.copies?.includes(sp.id)), listed = listedOn(sp.id), model = here.find(m => !listed.has(containerName(m.name)));
+    if (!here.length) { why.push(`${name(sp.id)} has no small chat model on disk`); continue; }
+    if (!model) { why.push(`every small chat model on ${name(sp.id)} is on the list of what should be running there, and the self-test never touches those`); continue; }
     return { spark: sp.id, model };
   }
   throw new HttpError(409, `No compute Spark that is on is free for the self-test: ${why.join('; ')}. It stops nothing, so it didn’t run and nothing was started.`);
@@ -8919,6 +8927,8 @@ async function selfTest(j, asked, where, image) {
   // arguments are checked as any caller's (trusted only where a validation mark has to pass).
   const ctx = { via: 'page', actor: 'Self-test', request: `the self-test on ${at}`, canChange: true, trusted: true, noStops: true, selfTest: true };
   const appCtx = { ...ctx, trusted: false };
+  // (its model's own operations: never on the list, desiredAfter)
+  const mine = x => { x.selfTest = true; };
   const need = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
   // (cancelling it, or the owner pausing changes, ends it at the next step; what it started is still stopped)
   const between = () => { cancelCheck(j); pausedCheck(asked); };
@@ -8937,7 +8947,7 @@ async function selfTest(j, asked, where, image) {
     let t = Date.now();
     step(j, `Starting ${title} on ${at}, stopping nothing`);
     try {
-      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'));
+      await stepRun(j, me, ctx, 'start_model', { model: m.name, spark }, need('start_model'), undefined, mine);
       modelStarted = true;
       say('Model', 'worked', t, `${title} started on ${at} and answered its test prompt.`);
     } catch (e) { say('Model', 'failed', t, firstLine(e)); }
@@ -8965,7 +8975,7 @@ async function selfTest(j, asked, where, image) {
         if (now[model] !== 'running') say('Stop', 'not tried', null, `${model} wasn’t running after the drill, so there was nothing to stop.`);
         else {
           step(j, `Stopping ${model}`);
-          await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'));
+          await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, need('stop_model'), undefined, mine);
           say('Stop', 'worked', t, `${model} stopped, and Docker says it isn’t running.`);
         }
       } catch (e) { say('Stop', 'failed', t, firstLine(e)); }
@@ -9014,7 +9024,7 @@ async function selfTest(j, asked, where, image) {
     const mine = [...jobs.values()].filter(x => x !== j && x.status === 'running' && x.actor === 'Self-test' && x.createdAt >= j.createdAt);
     if (mine.length) await cancelJobsAndWait(mine, 'the self-test');
     const now = await containerStates(node, [model, web, job]).catch(() => null);
-    if (now?.[model] === 'running' && modelStarted) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
+    if (now?.[model] === 'running' && modelStarted) await stepRun(j, me, ctx, 'stop_model', { spark, container: model }, null, undefined, mine).catch(e => note(j, `Couldn’t stop ${model}: ${firstLine(e)}`));
     for (const name of [web, job].filter(n => now?.[n] === 'running')) await stopApp(name).catch(e => note(j, `Couldn’t stop ${name}: ${firstLine(e)}`));
     // What is left, as Docker has it now (R21).
     const left = await containerStates(node, [model, web, job]).catch(() => null);
