@@ -41,6 +41,7 @@ const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' })
 const TOKEN = 'testtoken_made_up_0123456789';   // not a real token
 const OWNER_REPO = 'someone/spark-console';
 const LOCK = 'service/workflows.lock.json';
+const SPARK2_IP = '100.64.0.2';   // Spark 2's tailnet address in the trees' config.json (the stand-in fleet's, as in fleet.test.mjs)
 const homes = [];
 
 // A HOME short enough for the socket under it (macOS allows 104 characters).
@@ -87,7 +88,8 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'service/src/00-standin.mjs': { text: server }, 'service/server.mjs': { text: server },
     'service/dig.mjs': { text: '// stand-in dig.mjs\n' }, 'service/passkey.mjs': { text: '// stand-in passkey.mjs\n' },
     // (a Spark to reach over ssh: the installer must not try it here)
-    'service/config.json': { text: '{"nodes":[{"id":"spark2","host":"local"},{"id":"spark3","host":"spark3.test"}],"user":"standin"}\n' },
+    // (Spark 2's own tailnet address too: the console refuses it as a person, and the real address's stand-in sends it)
+    'service/config.json': { text: `{"nodes":[{"id":"spark2","host":"local","ip":"${SPARK2_IP}"},{"id":"spark3","host":"spark3.test"}],"user":"standin"}\n` },
     'service/catalog.json': { text: '[]\n' }, 'service/worker.py': { text: '# stand-in worker\n' },
     'deploy/host-on-portal.sh': { text: installer, mode: '100755' },
     'deploy/update-guard.sh': { text: read(REPO, 'deploy', 'update-guard.sh'), mode: '100755' },
@@ -182,7 +184,10 @@ esac
 exit 0
 `;
 // The real address's stand-in, one a home, as Tailscale serve routes it: /console/api/… to the console's socket, the
-// rest to the page's folder. $HOME/door-down: no answer at all; $HOME/door-502: the API route answers 502;
+// rest to the page's folder. As Tailscale forwards a request from Spark 2 itself over the tailnet, it carries Spark 2's
+// own address (X-Forwarded-For) and its owner's login, which the console refuses on every path but /health and /v1/;
+// through Funnel ($HOME/door-funnel) it carries Funnel's header and an address on the internet, and no login.
+// $HOME/door-down: no answer at all; $HOME/door-502: the API route answers 502;
 // $HOME/door-funnel: /health is the console's own answer cut to {"ok":true}, as through Funnel (502 when the console
 // is down, as Tailscale answers then); $HOME/door-kill-console: the next /health asked there stops the console first
 // (once); $HOME/door-stale-page: every version.json is
@@ -212,7 +217,9 @@ function startDoor(home) {
     if (path.endsWith('version.json') && existsSync(join(home, 'door-stale-page'))) { res.writeHead(200); res.end(readFileSync(join(home, 'door-stale-page'))); return; }
     if (path.startsWith('/console/api/')) {
       if (existsSync(join(home, 'door-502'))) { res.writeHead(502); res.end('Bad Gateway'); return; }
-      const up = http.request({ socketPath: join(home, '.local', 'state', 'spark-console', 'api.sock'), path: path.slice('/console/api'.length), method: req.method }, r => {
+      const headers = existsSync(join(home, 'door-funnel')) ? { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.7' }
+        : { 'x-forwarded-for': SPARK2_IP, 'tailscale-user-login': 'owner@test' };
+      const up = http.request({ socketPath: join(home, '.local', 'state', 'spark-console', 'api.sock'), path: path.slice('/console/api'.length), method: req.method, headers }, r => {
         res.writeHead(r.statusCode, r.headers); r.pipe(res);
       });
       up.on('error', () => { res.writeHead(502); res.end(); });
@@ -235,8 +242,11 @@ async function sparkTwo() {
   for (const f of ['ssh', 'sudo', 'tailscale', 'systemd-run']) sh(join(bin, f), `#!/bin/sh\necho "${f} $*" >> "$HOME/never-called.log"\nexit 97\n`);
   // (the installer's look for the retired web page: this Spark has no containers)
   sh(join(bin, 'docker'), '#!/bin/sh\nexit 0\n');
-  // git as it is, with what each call was given on its command line and in GIT_CONFIG_VALUE_0 written down.
-  sh(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "$HOME/git-args.log"\nprintf '%s\\n' "\${GIT_CONFIG_VALUE_0:-}" >> "$HOME/git-env.log"\nexec '${REAL_GIT}' "$@"\n`);
+  // git as it is, with what each call was given on its command line and in GIT_CONFIG_VALUE_0 written down. ($HOME/git-hold:
+  // git archive waits while it is there, after writing its process group to $HOME/git-held.)
+  sh(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "$HOME/git-args.log"\nprintf '%s\\n' "\${GIT_CONFIG_VALUE_0:-}" >> "$HOME/git-env.log"
+case " $* " in *' archive '*) if [ -e "$HOME/git-hold" ]; then ps -o pgid= -p $$ | tr -d ' ' > "$HOME/git-held"; while [ -e "$HOME/git-hold" ]; do sleep 0.2; done; fi ;; esac
+exec '${REAL_GIT}' "$@"\n`);
   if (!gnuTar) sh(join(bin, 'tar'), `#!/bin/bash
 args=(); for a in "$@"; do case "$a" in --warning=*) ;; *) args+=("$a") ;; esac; done
 PATH="\${PATH#*:}" exec tar "\${args[@]}"
@@ -1121,16 +1131,19 @@ describe('the way back for an update from GitHub, armed by the build installed n
     nothingArmed();
   });
 
-  // (C5: the guard's check signs in as far as it can without a passkey)
-  test('the guard signs in as far as it can without a passkey: an old page script, or no sign-in at the real address, is not kept', CASE, async () => {
+  // (C5: the guard's check signs in as far as it can without a passkey; the real address's sign-in only through Funnel,
+  // where it can answer)
+  test('the guard signs in as far as it can without a passkey: an old page script, or (through Funnel) no sign-in at the real address, is not kept', CASE, async () => {
     needs('kept');
     for (const [n, flag, why] of [[70, 'door-old-script', /its page's script \(\/?[^)]*app\.js\) isn't the new page's/], [71, 'door-no-signin', /its sign-in \(\/console\/api\/whoami\) doesn't answer/]]) {
       const g = push(treeFiles(n), `The sign-in look, ${n}`);
       mark(g);
       const mk = mark0(), old = read(home, 'spark-console', 'app.js');
+      if (flag === 'door-no-signin') writeFileSync(join(home, 'door-funnel'), '');
       const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' },
         onOut: out => { if (out.includes('Installing tree') && !existsSync(join(home, flag))) writeFileSync(join(home, flag), flag === 'door-old-script' ? old : ''); } });
       rmSync(join(home, flag), { force: true });
+      rmSync(join(home, 'door-funnel'), { force: true });
       assert.equal(r.code, 1, r.out);
       assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/, 'its own installer had kept it');
       assert.match(resultOf(home).why, why);
@@ -1163,5 +1176,75 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.match(r.out, new RegExp(`A fetch that was cut off left git's lock behind in this Spark's copy of the repository\\. Remove it once \\(rm '[^']*refs/heads/main\\.lock'\\), then run this again\\. Nothing was changed\\.`));
       assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
     } finally { rmSync(lock, { force: true }); }
+  });
+
+  // (the seventh read of C4b, fix 1: from Spark 2 over the tailnet the real address carries Spark 2's own address, which
+  // the console refuses on /whoami; there the sign-in is looked at on the socket, as a visitor from the internet)
+  test('over the tailnet the real address refuses Spark 2’s own address on /whoami, as the console does; a good build is still kept there, its sign-in looked at on its socket', CASE, async () => {
+    needs('kept');
+    const at = await new Promise(resolve => http.get(`${envFor(home).SPARK_CONSOLE_DOOR_URL}/console/api/whoami`, res => {
+      let d = ''; res.on('data', c => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, text: d }));
+    }).on('error', e => resolve({ status: 0, text: e.message })));
+    assert.equal(at.status, 403, at.text);
+    assert.match(at.text, /Requests from the Sparks themselves can’t act as a person/);
+    const g = push(treeFiles(74), 'Kept over the tailnet');
+    mark(g);
+    const from = lines(home, 'door.log').length, r = await pull(home, ['install', g.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Through the real address: the new build answers/);
+    assert.match(r.out, /On its socket, as from the internet: sign-in answers as before\./);
+    assert.ok(!lines(home, 'door.log').slice(from).includes('/console/api/whoami'), 'not asked where it can only refuse');
+    assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'kept']);
+    base = g;
+    nothingArmed();
+  });
+
+  // (Later 8: the smallest look at passkey sign-in that needs no passkey)
+  test('with a passkey on file: kept when sign-in from the internet answers as before and a passkey sign-in begins; not kept when it is off after the install, or doesn’t begin', CASE, async () => {
+    needs('kept');
+    const keys = join(home, '.local', 'state', 'spark-console', 'passkeys.json'), KEYS = JSON.stringify({ keys: [{ id: 'standin-key', rpId: 'localhost' }] });
+    writeFileSync(keys, KEYS);
+    try {
+      let g = push(treeFiles(75), 'Signs in as before');
+      mark(g);
+      let r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /On its socket, as from the internet: sign-in answers as before, and a passkey sign-in begins\./);
+      base = g;
+      for (const [n, mode, why] of [[76, 'good', /its passkey sign-in from the internet is off \(asked on its socket\), and it was on before the install/],
+        [77, 'no-begin', /a passkey sign-in doesn't begin \(\/auth\/signin\/begin, asked on its socket as from the internet\)/]]) {
+        g = push(treeFiles(n, mode), `The passkey look, ${n}`);
+        mark(g);
+        const mk = mark0();
+        r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' },
+          onOut: out => { if (n === 76 && out.includes('Installing tree') && existsSync(keys)) rmSync(keys); } });
+        writeFileSync(keys, KEYS);
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/, 'its own installer had kept it');
+        assert.match(resultOf(home).why, why);
+        await fromBefore(r, mk);
+      }
+    } finally { rmSync(keys, { force: true }); }
+  });
+
+  // (Later 7: the unit an install from chat runs in has a time limit; a stop before the way back is armed is said)
+  test('stopped before the way back is armed (the time limit of an install from chat, or by hand): refused, said, nothing changed', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(78), 'Stopped before anything changed');
+    mark(g);
+    const mk = mark0(), hold = join(home, 'git-hold'), held = join(home, 'git-held');
+    writeFileSync(hold, '');
+    rmSync(held, { force: true });
+    try {
+      const run = pull(home, ['install', g.t12], { detached: true });
+      await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'pull.sh at git archive' });
+      // (as systemd stops a unit: every process in it gets SIGTERM)
+      process.kill(-Number(read(held).trim()), 'SIGTERM');
+      const r = await run;
+      assert.equal(r.code, 130, r.out);
+      assert.match(r.out, /The install was stopped before it changed anything\./);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result, resultOf(home).why], [g.t12, 'refused', 'the install was stopped before it changed anything']);
+      await fromBefore(r, mk);
+    } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
   });
 });

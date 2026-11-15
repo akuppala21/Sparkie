@@ -72,6 +72,15 @@ ask() {
   read -r a <"$from" 2>/dev/null || a=''
   echo "$a"
 }
+# Stopped before the way back is armed: by the time limit of the unit an install from chat runs in, or by hand. Nothing
+# of the install has changed yet (once the way back is armed, interrupted puts back and says what answers).
+stopped() {
+  set +e; trap '' PIPE
+  trap - INT TERM HUP
+  echo "  The install was stopped before it changed anything." >&2
+  result refused "the install was stopped before it changed anything"
+  exit 130
+}
 # Cut off (Ctrl-C, the terminal closed) once the way back is armed: it puts back what differs, and the result says what
 # answers then. (A cut at the very end, while the confirmed build's copy is being removed, leaves that build running.)
 interrupted() {
@@ -271,6 +280,22 @@ health_build() {
 d = json.loads(sys.stdin.read())
 print(d.get("build") or "" if d.get("ok") is True else "")' 2>/dev/null || true
 }
+# Sign-in as a visitor from the internet sees it, asked on the socket as Funnel brings one (its header, no forwarded
+# address): sock_signin prints whoami's signin ("true": a passkey can sign the owner in from there; "false"), nothing
+# when whoami doesn't answer so; sock_begin succeeds when a passkey sign-in begins (a challenge comes back; it is kept
+# nowhere, and nothing signs in).
+sock_signin() {
+  curl -q -s -m 5 --unix-socket "$STATE/api.sock" -H 'Tailscale-Funnel-Request: ?1' http://localhost/whoami 2>/dev/null | python3 -I -c 'import json, sys
+d = json.loads(sys.stdin.read())
+if isinstance(d, dict) and "access" in d and isinstance(d.get("signin"), bool): print("true" if d["signin"] else "false")' 2>/dev/null || true
+}
+sock_begin() {
+  curl -q -s -m 5 --unix-socket "$STATE/api.sock" -X POST -H 'Tailscale-Funnel-Request: ?1' -H 'X-Spark-Console: 1' \
+    -H 'Content-Type: application/json' -d '{}' http://localhost/auth/signin/begin 2>/dev/null | python3 -I -c 'import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if isinstance(d, dict) and isinstance(d.get("challengeId"), str) and isinstance(d.get("allow"), list) and d["allow"] else 1)' 2>/dev/null
+}
+onoff() { if [ "$1" = true ]; then echo on; else echo off; fi; }
 
 setup() {
   [ $# = 1 ] && [[ "$1" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || usage
@@ -358,22 +383,24 @@ check() {
 # of 12 hex digits, a time, a hash of 64), never its text. Commit subjects and git's words ("why") are as written
 # on GitHub and by git: the reader treats them as outside text.
 check_json() {
-  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' bad='' newer=false subj='' dif='' problem='' why=''
+  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' ns='' bad='' newer=false subj='' dif='' known='' problem='' why=''
   out() {  # out <problem> <why>
     printf '%s' "$subj" | python3 -I -c 'import json, re, sys
 a = sys.argv[1:]
 def opt(v): return None if v in ("", "-") else v
 newest = None
 if opt(a[9]) and not opt(a[14]):
-    newest = {"commit": a[8], "tree": a[9], "build": opt(a[11]), "testedAt": opt(a[12]), "brainReads": opt(a[13])}
+    newest = {"commit": a[8], "tree": a[9], "build": opt(a[11]), "testedAt": opt(a[12]), "brainReads": opt(a[13]),
+              "evalSet": {"version": a[18].split(" ")[0], "cases": int(a[18].split(" ")[1])} if opt(a[18]) else None}
 print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo": opt(a[2]),
   "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[15])},
   "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8] and not opt(a[14])},
   "newest": newest, "badTag": {"commit": a[8], "tree": a[9], "why": a[14]} if opt(a[14]) else None,
   "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10],
   "differs": [f for f in a[16].split("\n") if re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)][:200],
-  "differsOther": len([f for f in a[16].split("\n") if f and not re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)])}))' \
-      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}" "$dif"
+  "differsOther": len([f for f in a[16].split("\n") if f and not re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)]),
+  "differsKnown": a[17] == "yes"}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}" "$dif" "$known" "$ns"
   }
   # (the stand-in fleet marks a program missing with ~/.mock/off-path-<program>, as the console's own look reads it)
   if ! command -v git >/dev/null 2>&1 || { [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -e "$HOME/.mock/off-path-git" ]; }; then
@@ -401,14 +428,25 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   elif [ -n "${nt:-}" ]; then
     nb=$TAG_BUILD nat=$TAG_AT
     nr=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | reads_of /dev/stdin || true)
+    ns=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | set_of /dev/stdin || true)
     if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
     # (the files that differ from the installed build: names of a plain shape only, the rest counted; data from the
     # repository, for the install's ask to list)
-    if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null; then dif=$(g diff --no-renames --name-only "$ic" "$nc" 2>/dev/null | head -n 1000 || true); fi
+    # (not known when the installed build's commit isn't in this copy: one installed from the Mac before it reached main)
+    if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null; then dif=$(g diff --no-renames --name-only "$ic" "$nc" 2>/dev/null | head -n 1000 || true) known=yes; fi
     if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
     else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
   fi
   out '' ''
+}
+# set_of <lock file>: the eval's case set that build was tested with (its lock's evalSet): "<version> <cases>", the
+# version 64 hex digits and the count of its cases (1 to 500), else nothing.
+set_of() {
+  python3 -I -c 'import json, re, sys
+try: s = json.load(open(sys.argv[1])).get("evalSet")
+except Exception: s = None
+v, c = (s.get("version"), s.get("cases")) if isinstance(s, dict) else (None, None)
+print("%s %d" % (v, len(c)) if isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) and isinstance(c, list) and 0 < len(c) <= 500 else "")' "$1"
 }
 # reads_of <lock file>: what the brain reads in that build (its lock's brainReads), only as 64 hex digits, else nothing.
 reads_of() {
@@ -427,6 +465,7 @@ install() {
     flock -n 9 || die "Another install from pull.sh is running. Nothing was changed."
   fi
   WANT="$1"
+  trap stopped INT TERM HUP
   ready
   local c t tc lat code_build p txt note code=0 now why trees ib it ic
   read -r c t <<<"$(newest_tested || true)"
@@ -483,7 +522,7 @@ install() {
 
   # When a build answers now: the real address must answer with it (else a new one couldn't be confirmed), the owner
   # is asked here if work is running, and the way back is armed from this build before the new one's code runs.
-  local before pages='' pg ui busy answer
+  local before pages='' pg ui busy answer signin_was=''
   before=$(health_build)
   # (a build is installed but didn't answer: asked twice more; still silent, nothing starts unguarded)
   if [ -z "$before" ] && [ -f "$HOME/spark-console-service/server.mjs" ]; then
@@ -504,6 +543,8 @@ install() {
     # (through Funnel /health names no build: then the page's version.json, served there, has to name the build)
     [ "$pg" = "$before" ] || { [ "$pg" = ok ] && [ -n "$pages" ]; } \
       || refuse "The real address ($DOOR) doesn't answer with the build running now ($before; it answered ${pg:-nothing}), so a new build couldn't be confirmed through it."
+    # (how sign-in answers a visitor from the internet now: the new build's has to answer the same)
+    signin_was=$(sock_signin)
     busy=$(curl -q -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null || echo '0 0')
@@ -520,6 +561,8 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     trap interrupted INT TERM HUP
   else
     echo "Spark Console isn't answering now, so there is no working build to go back to: the new build stays if it passes its own installer's checks."
+    # (from here an install without a way back changes things: a stop is not said to have changed nothing)
+    trap - INT TERM HUP
   fi
   # tailscale, sudo, ssh and systemd-run, refused for the incoming installer (SKIP_ROUTES=1 asks it not to call them).
   mkdir "$W/guard-bin"
@@ -556,7 +599,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   elif [ -n "$ARMED" ]; then
     # The real door: through the real address, the new service answers, and each page that was served before still is.
     echo "Checking the new build through the real address ($DOOR), for up to $(span "$CONFIRM_S") …"
-    local until=$((SECONDS + CONFIRM_S)) ok='' newui hc pb signin=''
+    local until=$((SECONDS + CONFIRM_S)) ok='' newui hc pb signin='' sg=''
     newui=$(ui_build)
     while :; do
       hc=$(door_get /console/api/health); last='' signin=''
@@ -572,7 +615,18 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
             if [ "$(door_get "${pg%/}/app.js")" != 200 ] || ! grep -qF "const BUILD = '$newui';" "$W/door.body"; then ok='' signin="its page's script (${pg%/}/app.js) isn't the new page's"; break; fi
           done
         fi
-        if [ -n "$ok" ] && { [ "$(door_get /console/api/whoami)" != 200 ] || ! grep -q '"access"' "$W/door.body"; }; then ok='' signin="its sign-in (/console/api/whoami) doesn't answer"; fi
+        # (sign-in through the real address only where it can answer: through Funnel. From Spark 2 over the tailnet the
+        # request carries Spark 2's own address, which the console refuses on every path but /health and /v1/)
+        if [ -n "$ok" ] && [ "$last" = ok ] && { [ "$(door_get /console/api/whoami)" != 200 ] || ! grep -q '"access"' "$W/door.body"; }; then ok='' signin="its sign-in (/console/api/whoami) doesn't answer"; fi
+        # (and on its socket as a visitor from the internet, on both legs: whoami's signin is what it was before the
+        # install, and when a passkey can sign in, its sign-in begins)
+        if [ -n "$ok" ]; then
+          sg=$(sock_signin)
+          if [ -z "$sg" ]; then ok='' signin="its sign-in (/whoami, asked on its socket as from the internet) doesn't answer"
+          elif [ -n "$signin_was" ] && [ "$sg" != "$signin_was" ]; then ok='' signin="its passkey sign-in from the internet is $(onoff "$sg") (asked on its socket), and it was $(onoff "$signin_was") before the install"
+          elif [ "$sg" = true ] && ! sock_begin; then ok='' signin="a passkey sign-in doesn't begin (/auth/signin/begin, asked on its socket as from the internet)"
+          fi
+        fi
         [ -z "$ok" ] || break
       fi
       [ "$SECONDS" -lt "$until" ] || break
@@ -590,6 +644,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
       # (through Funnel /health names no build: then a service answers there, and the page is the word on the build)
       if [ "$last" = "$code_build" ]; then named=yes; echo "  Through the real address: the new build answers$([ -z "$pages" ] || echo ", and its page is served")."
       else echo "  Through the real address: a service answers, and the new page is served."; fi
+      echo "  On its socket, as from the internet: sign-in answers as before$([ "$sg" != true ] || echo ', and a passkey sign-in begins')."
     fi
   fi
   if [ -z "$failed" ] && [ -n "$ARMED" ] && ! bash "$SHARE/update-guard/update-guard.sh" disarm 9>&-; then

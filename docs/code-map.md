@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21405 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21455 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -419,7 +419,7 @@ A step that runs a job (keep_running with once true, or one whose answer says it
 Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a workflow and fill in its inputs; they never make up the steps. A workflow's version is a fingerprint of its code (the functions it runs, its action, its known problems, and the worker that runs on the Sparks), so any change to that code is a new version. A version runs only once it's validated twice: - tested: the whole test suite passed with this exact build …
 
 - **Area:** core. **Rules:** R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37. **Tests:** workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
-- **Lines:** 711
+- **Lines:** 713
 - **Actions:** `workflows`, `save_workflow`, `run_workflow`, `forget_workflow`, `wait_operation`, `test_changes`, `undo_update`
 - **Owns:** validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer writes it, noteUpdate reads it)
 - **Timers:** none
@@ -472,11 +472,11 @@ Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its by
 Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes. One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text (the Telegram …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 316
+- **Lines:** 322
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `dangerEnvMs`, `dangerPlain`, `dangerHhmm`, `dangerSha`, `dangerSame`, `dangerHead`, `dangerCodeOf`, `dangerBack`, `dangerMore`, `dangerAskedFor`, `dangerOwnerWords`, `dangerAsk`, `dangerBound`, `dangerJournal`, `dangerLive`, `dangerClose`, `dangerGone`, `dangerHeadOf`, `dangerStopped`, `dangerPaused`, `dangerTelegramGone`, `dangerParked`, `dangerShown`, `dangerTell`, `dangerPressedHere`, `dangerWrong`, `dangerHolds`, `dangerPairInChat`, `dangerTypedHere`, `dangerPress`, `dangerForTest`
+- **Functions:** `dangerEnvMs`, `dangerPlain`, `dangerHhmm`, `dangerDay`, `dangerSha`, `dangerSame`, `dangerHead`, `dangerCodeOf`, `dangerBack`, `dangerMore`, `dangerAskedFor`, `dangerOwnerWords`, `dangerAsk`, `dangerBound`, `dangerJournal`, `dangerLive`, `dangerClose`, `dangerGone`, `dangerHeadOf`, `dangerStopped`, `dangerPaused`, `dangerTelegramGone`, `dangerParked`, `dangerShown`, `dangerTell`, `dangerPressedHere`, `dangerWrong`, `dangerHolds`, `dangerPairInChat`, `dangerTypedHere`, `dangerPress`, `dangerForTest`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `HttpError`, `q`, `STATE_DIR`, `sleep`), `03-identity` (`accessList`), `07-jobs` (`note`), `09-verified` (`answers`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`, `replying`), `16-actions` (`sizeWords`, `action`, `ACTION_KIND`, `tokensOf`, `ACTIONS`), `17-changes` (`question`, `pendingChoices`), `20-came-from` (`cameFrom`, `dangerThings`, `dangerReadsLoaded`), `20-journal` (`journal`, `jSub`), `20-mcp` (`maskSecrets`), `20-tell` (`TELL_PART`, `tell`), `20-tg-approve` (`tgAsks`, `tgApproveOn`, `TG_ASK_MAX`, `tgAskOpen`, `tgApprovalsHeld`), `21-telegram` (`tgPaired`, `tg`, `tgRun`)
 - **Used by:** `14-chats`, `14-rounds`, `17-changes`, `20-came-from`, `20-tg-approve`, `20-words`, `21-telegram`, `21-updates`, `24-handler`
 
@@ -911,7 +911,7 @@ One brain check with two outcomes (design E 2.3, cut by the one page). Checked: 
 - **Wakes:** none
 - **Functions:** `brainRanLook`, `brainRanOf`, `brainLimits`, `brainSetupKey`, `evalSetLocked`, `evalSetToday`, `evalSealKey`, `evalSealOf`, `evalSealed`, `evalMainSet`, `evalCouldUnlock`, `evalCounts`, `brainRail`, `railWords`, `evalBar`, `evalWait`, `evalWaitingGone`, `evalYes`, `evalWaitingNeeds`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `BUILD`, `HttpError`), `02-ssh` (`run`, `fields`), `03-identity` (`accessList`, `clean`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `13-main-model` (`MAIN`, `mainNode`, `mainSnapshots`, `chatTarget`, `mainBusy`), `14-chats` (`chatData`, `LIMITS`, `sparkieMessageChoices`, `saveChats`), `14-rounds` (`turnBudgets`), `16-actions` (`action`), `17-changes` (`question`, `pendingChoices`), `18-workflows` (`WORKFLOW_LOCK`), `20-mcp` (`audit`), `21-brain-check` (`brainSetupOf`, `brainReadsNow`, `brainProfileOf`, `brainKey`, `checkWhen`), `21-brain-eval` (`EVAL_EXPECT`, `evalSetNow`, `evalRecordProblem`, `evalScore`, `evalOrder`, `keepEvalRecord`), `21-guide` (`toolCap`), `22-passkey` (`passkeys`)
-- **Used by:** `15-routes`, `16-actions`, `16-reads`, `20-needs`, `21-brain-check`, `21-brain-eval`, `24-handler`
+- **Used by:** `15-routes`, `16-actions`, `16-reads`, `20-needs`, `21-brain-check`, `21-brain-eval`, `21-updates`, `24-handler`
 
 ### `21-compare.mjs`: compare_models: a saved workload run with each candidate model, and the winner kept (D8)
 
@@ -1065,13 +1065,13 @@ Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long 
 check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer; whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update is not in INSIDE_READS). It installs and changes nothing; the token never leaves pull.sh. When GitHub refuses the …
 
 - **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs
-- **Lines:** 242
+- **Lines:** 284
 - **Actions:** `install_update`, `check_update`
-- **Owns:** update-asked.json (writers: updInstallRun, updResultLook), update-result.json (writers: none; pull.sh writes it)
+- **Owns:** update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 - **Timers:** updResultLook (every 10 s while an install asked from chat waits for its result)
 - **Wakes:** none
-- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updInstallRun`, `updResultLook`, `updSelfTest`, `updAfterRestart`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`writePrivate`, `readJson`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `audit`, `maskSecrets`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`)
+- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`, `dangerDay`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`)
 - **Used by:** `20-needs`, `25-backup-and-start`
 
 ### `21-web.mjs`: looking things up on the web
