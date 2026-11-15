@@ -9830,15 +9830,17 @@ function recallLines(ctx, names) {
   const live = names.length ? [...new Set(names.flatMap(n => memoryLinesAbout(n)))] : index.lines;
   return { live, past: memoryPastShown(ctx) && !recallOff('past') ? memoryPast().filter(p => !ids.has(p.id)) : [] };
 }
-// Where a line came from, in words: the owner (in Spark Console, on Telegram, or on their own call), or an agent.
-const recallLineFrom = e => (e.by === 'owner' ? `the owner said it${e.src?.channel === 'telegram' || e.src?.via === 'telegram' ? ' on Telegram' : e.src?.via === 'api' ? ' on their own call' : ' in Spark Console'}`
-  : `an agent noted it (${e.by || 'unnamed'})`);
-// A line as recall shows it: as memory shows it (`about` on the owner's own call only), 300 characters at most.
+// Where a line came from, in the picker's words (pickLine): said by the owner (on Telegram, if said there), or noted by
+// the agent.
+const recallLineFrom = e => (e.by === 'owner' ? `said by the owner${e.src?.channel === 'telegram' ? ' on Telegram' : ''}` : `noted by ${e.by || 'an agent'}`);
+// A line as recall shows it: as the picker shows it (shown: "- [id] (kind, date, who) text"), and a retired one with
+// when and why; `about` on the owner's own call only, as memory shows it.
 function recallLine(e, past, ctx) {
-  const x = ctx.via === 'api' ? e : withoutAbout(e);
-  return { id: x.id, kind: 'line', at: x.at ?? null, source: recallLineFrom(x), line: x.kind ?? null, text: String(x.text ?? '').slice(0, 300),
+  const x = ctx.via === 'api' ? e : withoutAbout(e), gone = x.gone || {};
+  return { id: x.id, kind: 'line', at: x.at ?? null, source: recallLineFrom(x), text: String(x.text ?? '').slice(0, 300),
+    shown: `${pickLine(x)}${past ? ` (retired ${String(gone.at).slice(0, 10)}: ${gone.why || 'retired'}${gone.by ? `, by [${gone.by}]` : ''})` : ''}`,
     ...(x.about?.length ? { about: x.about } : {}), ...(x.replaces ? { replaces: x.replaces } : {}),
-    ...(past ? { retired: { at: x.gone?.at ?? null, why: x.gone?.why ?? null, ...(x.gone?.by ? { by: x.gone.by } : {}) } } : {}) };
+    ...(past ? { retired: { at: gone.at ?? null, why: gone.why ?? null, ...(gone.by ? { by: gone.by } : {}) } } : {}) };
 }
 // A lesson in a line, from its typed fields only.
 function recallLesson(l) {
@@ -9910,7 +9912,15 @@ async function recallAnswer({ about, id, kind, spark, when, since, until, limit 
   const mine = [...live.map(e => recallLine(e, false, ctx)), ...lessons.map(recallLesson), ...proven.map(recallProven), ...past.map(e => recallLine(e, true, ctx))];
   const j = !kind || JOURNAL_KINDS.includes(kind) ? await journalHits({ words, kind: kind || null, spark: spark || null, inWindow, upTo, keep: Math.max(0, offset + limit - mine.length) }, see)
     : { count: 0, tally: {}, shown: [], empty: false };
-  const count = mine.length + j.count, shown = [...mine, ...j.shown.map(v => ({ ...v, source: 'the journal' }))].slice(offset, offset + limit), end = offset + shown.length;
+  // (the pieces of this page, within a recall answer's size, memorySizes: at least one)
+  const room = memorySizes().recall, shown = [];
+  let used = 0;
+  for (const p of [...mine, ...j.shown.map(v => ({ ...v, source: 'the journal' }))].slice(offset, offset + limit)) {
+    const n = JSON.stringify(p).length;
+    if (shown.length && used + n > room) break;
+    shown.push(p); used += n;
+  }
+  const count = mine.length + j.count, end = offset + shown.length;
   return maskDeep({ ...(recallOff('count') ? {} : { inAll: recallInAll({ about, when, live, lessons, proven, past, j }) }), ...base, count, records: shown,
     next: end < count ? `${end}-${Date.parse(upTo)}` : null, ...(count > end ? { more: `${count - end} more: recall again with next to read on, or narrow it with kind, spark, when or other words.` } : {}),
     ...(count ? {} : { note: `Nothing kept here matches. Try an exact name (a model, a Spark, a container) or an operation id, or other words.${j.empty ? ' The journal is empty: it starts with the build that added it.' : ''}` }),

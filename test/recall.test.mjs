@@ -112,7 +112,9 @@ test('“What did I tell you about Spark 4 last month?”: the retired line with
   const r = await ok({ about: 'Spark 4', when: 'last-month' });
   assert.deepEqual(r.records.map(x => [x.id, x.kind]), [[WIFI, 'line'], ['j_5a1d00000001', 'said']], JSON.stringify(r));
   const [wifi] = r.records;
-  assert.deepEqual([wifi.at, wifi.text, wifi.source, wifi.retired.why, wifi.retired.by], [lastMonth(14), 'Spark 4 is on Wi-Fi only', 'the owner said it in Spark Console', 'replaced', ETH]);
+  assert.deepEqual([wifi.at, wifi.text, wifi.source, wifi.retired.why, wifi.retired.by], [lastMonth(14), 'Spark 4 is on Wi-Fi only', 'said by the owner', 'replaced', ETH]);
+  // (shown as the memory picker shows a line, and when and why it was retired)
+  assert.equal(wifi.shown, `- [${WIFI}] (fact, ${lastMonth(14).slice(0, 10)}, said by the owner) Spark 4 is on Wi-Fi only (retired ${RECENT.slice(0, 10)}: replaced, by [${ETH}])`);
   assert.equal(r.inAll, `2 about “Spark 4” (last-month): 1 line (1 retired), 1 journal record (1 message of the owner); ${day(lastMonth(14))}.`);
   assert.equal(r.next, null);
   // Asked by id: the line whole, with where it came from and the line that replaced it.
@@ -123,7 +125,7 @@ test('“What did I tell you about Spark 4 last month?”: the retired line with
   script([{ match: '^What did I tell you about Spark 4 last month', calls: [{ name: 'recall', arguments: { about: 'Spark 4', when: 'last-month' } }] }]);
   await say(await newChat(), words);
   const sent = await resultsFor(words);
-  assert.ok(sent.includes(`"id":"${WIFI}"`) && sent.includes(`"at":"${lastMonth(14)}"`) && sent.includes('"source":"the owner said it in Spark Console"'), sent);
+  assert.ok(sent.includes(`"id":"${WIFI}"`) && sent.includes(`"at":"${lastMonth(14)}"`) && sent.includes('"source":"said by the owner"'), sent);
 });
 
 test('a lesson and a run that worked, about a named model, come back with their source', { timeout: 60000 * SLOW }, async () => {
