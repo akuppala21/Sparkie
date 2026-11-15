@@ -72,26 +72,50 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
 
   // Everyday requests, several for each group (most from the review's thirty, 2026-11-14): the groups each should be
   // offered in round one, exactly, and the prompt lines that come with them. A longer request keeps the groups it began
-  // with. ([] is the core alone.)
+  // with. ([] is the core alone.) One a line, grouped by the groups they open: a new one goes at the end of its group's.
   const REQUESTS = [
-    ['what\'s running?'], ['anything need me?'], ['start qwen coder on spark 3'], ['how much memory is free on spark 3?'],
-    ['what\'s new in vllm this month?'], ['is it out of memory?'],
-    ['which models fit on spark 3?', 'find'], ['list my models', 'find'], ['where can I run gpt-oss-120b?', 'find'],
+    ['what\'s running?'],
+    ['anything need me?'],
+    ['start qwen coder on spark 3'],
+    ['how much memory is free on spark 3?'],
+    ['what\'s new in vllm this month?'],
+    ['is it out of memory?'],
+    ['which models fit on spark 3?', 'find'],
+    ['list my models', 'find'],
+    ['where can I run gpt-oss-120b?', 'find'],
     ['which model is best for coding, and where would it fit?', 'find'],
-    ['are spark 3 and 4 linked by a cable?', 'sparks'], ['how much disk space is left on spark 3?', 'sparks'],
-    ['why did my job on spark 3 fail?', 'dig'], ['what went wrong?', 'dig'], ['show me the log', 'dig'],
+    ['are spark 3 and 4 linked by a cable?', 'sparks'],
+    ['how much disk space is left on spark 3?', 'sparks'],
+    ['why did my job on spark 3 fail?', 'dig'],
+    ['what went wrong?', 'dig'],
+    ['show me the log', 'dig'],
     ['spark 4 went dark, what\'s up with it?', 'dig'],
-    ['what happened on the fleet yesterday?', 'past'], ['what changed while I was away?', 'past'],
-    ['what happened last time we started GLM?', 'past'], ['did we ever run gemma before the restart?', 'past'],
-    ['show me the notes.md file in my shared folder', 'reading'], ['what\'s in my shared folder on spark 3?', 'reading'],
-    ['save this as notes.md on spark 3', 'reading'], ['save that as settings.toml on spark 3', 'reading'],
-    ['list my saved workflows', 'routines'], ['what workflows do I have?', 'routines'],
-    ['cancel the operation that is running', 'control'], ['cancel that', 'control'], ['stop the download', 'control'],
-    ['never mind, kill that start', 'control'], ['undo that', 'control'], ['never mind, put it back', 'control'],
-    ['roll back spark console', 'control'], ['go back to the previous version', 'control'],
-    ['what do you remember about me?', 'memory'], ['forget that I prefer gemma', 'memory'], ['what\'s in your memory?', 'memory'],
-    ['run the self-test please', 'checks'], ['test spark 3', 'checks'],
-    ['is spark 4 asleep?', 'power'], ['shut down spark 4', 'power'], ['turn on spark 3', 'power'],
+    ['what happened on the fleet yesterday?', 'past'],
+    ['what changed while I was away?', 'past'],
+    ['what happened last time we started GLM?', 'past'],
+    ['did we ever run gemma before the restart?', 'past'],
+    ['show me the notes.md file in my shared folder', 'reading'],
+    ['what\'s in my shared folder on spark 3?', 'reading'],
+    ['save this as notes.md on spark 3', 'reading'],
+    ['save that as settings.toml on spark 3', 'reading'],
+    ['list my saved workflows', 'routines'],
+    ['what workflows do I have?', 'routines'],
+    ['cancel the operation that is running', 'control'],
+    ['cancel that', 'control'],
+    ['stop the download', 'control'],
+    ['never mind, kill that start', 'control'],
+    ['undo that', 'control'],
+    ['never mind, put it back', 'control'],
+    ['roll back spark console', 'control'],
+    ['go back to the previous version', 'control'],
+    ['what do you remember about me?', 'memory'],
+    ['forget that I prefer gemma', 'memory'],
+    ['what\'s in your memory?', 'memory'],
+    ['run the self-test please', 'checks'],
+    ['test spark 3', 'checks'],
+    ['is spark 4 asleep?', 'power'],
+    ['shut down spark 4', 'power'],
+    ['turn on spark 3', 'power'],
     // (longer: more groups match than fit, and the ones it began with stay)
     ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
     ['why did it fail? check the logs and the config file', 'dig', 'find'],
@@ -104,8 +128,12 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
     await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/,
-      power_off: /To shut a Spark down or turn it on, call power_off/ };
+    const LINES = {
+      forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./,
+      power_off: /To shut a Spark down or turn it on, call power_off/,
+      read_page: /read one or two good results with read_page/,
+      workflows: /The workflows tool lists every workflow/,
+    };
     for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(...groups), `“${words}”: ${groups.join(' + ') || 'the core'}`);

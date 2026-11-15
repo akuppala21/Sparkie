@@ -25,9 +25,32 @@
 set -euo pipefail
 HOST="${1:-akuppala@100.79.155.126}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-UI_FILES=(index.html app.js styles.css theme.js qr.js favicon.svg nvidia-logo-white.svg nvidia-logo-black.svg
-  manifest.webmanifest icon-192.png icon-512.png icon-maskable-512.png apple-touch-icon.png)
-SERVICE_FILES=(server.mjs dig.mjs passkey.mjs config.json catalog.json worker.py workflows.lock.json)
+# The page's files, one a line in this order: the page's build stamp is the hash of them read in this order.
+UI_FILES=(
+  index.html
+  app.js
+  styles.css
+  theme.js
+  qr.js
+  favicon.svg
+  nvidia-logo-white.svg
+  nvidia-logo-black.svg
+  manifest.webmanifest
+  icon-192.png
+  icon-512.png
+  icon-maskable-512.png
+  apple-touch-icon.png
+)
+# The service's files, one a line, in name order.
+SERVICE_FILES=(
+  catalog.json
+  config.json
+  dig.mjs
+  passkey.mjs
+  server.mjs
+  worker.py
+  workflows.lock.json
+)
 # The by-hand way back, kept at a fixed path on Spark 2 (~/.local/share/spark-console/): deploy/RECOVERY.txt says how.
 RECOVERY_FILES=(go-back.sh RECOVERY.txt)
 # pull.sh (the install from GitHub) and update-guard.sh (its way back) go there too, but only once the build they came
