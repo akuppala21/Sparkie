@@ -1384,7 +1384,7 @@ PAGES.spark = function sparkPage(view, r) {
   const id = r.a;
   const n0 = node(id);
   if (!n0) {
-    put(view, empty('chip', 'Spark not found', 'It may not be shared with you.', h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
+    put(view, empty('chip', 'Spark not found', 'It isn’t on the fleet list.', h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
     return;
   }
   const tabs = owner()

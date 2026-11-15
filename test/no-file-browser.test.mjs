@@ -4,7 +4,8 @@
 // (~/workspaces), no member folder, no editor folder in a listing, no editor restart and no editor log; a member's or
 // the personal folder left on a Spark is not touched. The service's old file route (POST /nodes/<spark>/files) answers
 // the owner as an unknown path does, and the editor's log as a log Spark Console doesn't have; service_logs offers
-// console and sparkie only, and the page's Logs tab has no VS Code choice. Starts a stand-in fleet: run it on a Spark.
+// console and sparkie only, the page's Logs tab has no VS Code choice, and a Spark not found names no sharing. Starts a
+// stand-in fleet: run it on a Spark.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -105,10 +106,11 @@ describe('the service and the page', () => {
     assert.match(r.json.error, /service should be one of: console, sparkie/);
   });
 
-  test('the page: no VS Code log choice; with nothing to show, the Logs tab says so', () => {
+  test('the page: no VS Code log choice, no member words; with nothing to show, the Logs tab says so', () => {
     const app = read('public/app.js');
     assert.ok(!app.includes("['editor', 'VS Code']"), 'no VS Code log');
     assert.ok(!/keywords: '[^']*\beditor\b/.test(app), 'no editor in the palette’s words');
     assert.ok(app.includes('so there is no log to show'), 'an empty Logs tab says so');
+    assert.ok(!app.includes('shared with you'), 'a Spark not found: no member words');
   });
 });
