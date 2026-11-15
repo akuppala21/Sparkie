@@ -1,3 +1,12 @@
+// Covers: The documents match the code (`tools/check-docs.mjs`): on this tree, and on a made-up tree with one fault at
+// a time (an id, a path, a name, an action, a line pointer, a typed count, a size, a heading, the task table, a stale
+// rules index); dated records are never checked, nor the lock's path. `node tools/make.mjs --check` passes and changes
+// nothing. The parts' headers (`tools/parts.mjs`): every part has one and it matches its code, `docs/registry.md` is
+// current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
+// rule or test that isn't there, an undeclared or a declared-but-absent writer, a state file nobody owns, a helper
+// writing a file it is given, an undeclared repeating timer, an unlisted event or job type, a part outside its band,
+// brackets it can't read).
+//
 // The documents match the code: tools/check-docs.mjs, the same code tools/make.mjs runs. File reads only, no server.
 // First on this tree; then on a small made-up tree that passes, with one fault added at a time, so each check is
 // shown to fail on the drift it is for.

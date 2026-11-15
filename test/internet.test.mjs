@@ -1,3 +1,22 @@
+// Covers: From anywhere, without Tailscale (contract 4.10, v3.1): from the internet (Funnel) only the public fleet,
+// whoami and a bare /health answer, and a Tailscale identity it brings counts for nothing; the owner's passkey signs a
+// browser in (an HttpOnly, Secure, SameSite=Strict cookie for /console/api only); refused for a stranger's passkey,
+// another site's origin, a used, changed or made-up challenge, a made-up or misplaced token, and after 30 tries from
+// one address (every spelling of one IPv6 /64 counting as one); a fake cookie of the same name doesn't hide the real
+// one; signing out, which also ends the device's live stream; no device let in before a passkey exists; a terminal's
+// code typed and let in with the passkey (no approve link; its token comes once, works only in its header, never for
+// the editors or hidden files), a code from the internet marked so, at most 3 waiting per address, a browser let in by
+// code, turned away, or expired after 10 minutes; the signed-in devices list and signing one out; an agent's own key at
+// the agent door from the internet, and a look-only key not starting a model at the model address; "Test the changes"
+// and going back a build without the passkey; and an agent that may change things running a validation run by taking
+// its choice. `/undo update` typed by a signed-in device gives the owner-only button; pressing it needs the passkey. A
+// request made from a signed-in device carries on as one: its "then undo the last update" is the owner-only button,
+// never a rollback. With no passkey on file, whoami still says a recovery code works (`recovery`, yes or no) and the
+// code signs a browser in (F18). `sparkie_setup`'s `access` (who is signed in, passkeys by name, recovery codes left)
+// on the owner's `POST /actions` and own chat only, never for an agent's key, `ask_sparkie` or a chat an agent started,
+// never with an address or id, and an unreadable file said rather than shown as none (A5). Uses `authenticator.mjs`,
+// the test passkey shared with this file.
+//
 // From anywhere, without Tailscale (docs/contract.md 4.10, v3.1). The main address is open to the internet (Tailscale
 // Funnel: every request from there carries "Tailscale-Funnel-Request" and never a Tailscale identity). Nobody gets past
 // the public fleet page until they sign in: the owner's passkey signs a browser in (a cookie only it sends), a device

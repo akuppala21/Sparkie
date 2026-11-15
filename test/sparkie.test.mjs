@@ -1,3 +1,16 @@
+// Covers: Sparkie in the owner's chats: the stream starts with `started`; `tool` events, results in the answer, `tools`
+// on the saved message; every action can be called (a tool that doesn't exist → `[error] No tool called …`); a static
+// system prompt, the fleet record in the last user message; members' chats offer none. Requests run at once (a polite
+// "can you …" too), also after reading a log; questions, "if …", "whether to …", "could you tell me …", "don't …", "…,
+// actually don't", "keep … running", a model or container the words don't point to (a tie too), "everything on spark N"
+// said in another message and more than 4 changes become a question with a button (`needs-ok`, labels only, no ids for
+// the model; a model passing an id gets 403). A Spark the owner didn't name is dropped (the console picks one). A start
+// that stops one of the console's models runs and says what it stopped. Buttons: `POST /chats/<id>/choose` (checks;
+// runs as the owner, a notice with the outcome, the operation's result posted later); a whole-message "yes" presses the
+// one open button without the model (also after an operation's result came in), "yes but …" doesn't; questions from
+// actions and follow-up questions are buttons; "no" puts them away; another chat's button can't be pressed. Busy (409),
+// more than 4 at once (429), a member's 1 (429) are plain HTTP errors.
+//
 // Sparkie in the owner's chats. The model is offered the core and its request's groups (R46) as OpenAI tools; its
 // tool_calls run through the same checks as an agent's (runAction, via 'sparkie'), each shows on the page as a `tool`
 // event, and the saved answer lists the tools it used. A change runs at once when the owner's message asks for that kind
