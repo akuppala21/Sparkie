@@ -3655,9 +3655,10 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
     `You are ${MAIN?.assistant || 'Sparkie'}, the assistant for this team's NVIDIA DGX Spark machines.`,
     tools ? [
       'Be concise and practical. You have tools: use them to look things up instead of guessing, and say what you found.',
-      // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
-      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
-        : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
+      // From Telegram (R32): saved workflows and updates are changed in Spark Console, so those tools aren't offered;
+      // memory is remembered and forgotten there as here (R25).
+      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.' : null,
+      'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
       'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
@@ -3880,7 +3881,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   // or memory that can't be read) frees the chat and the slot too. No catch: the caller still gets the error.
   try {
     emit({ type: 'started' });
-    // From Telegram, memory and saved workflows aren't offered (R32: they're changed in Spark Console).
+    // From Telegram, saved workflows aren't offered (R32: they're changed in Spark Console); memory is (R25).
     const tools = viewer.role === 'owner' ? sparkieTools().filter(t => !(channel && PAGE_ONLY_TOOLS.has(t.function.name))) : [];
     const said = normQuotes(text);
     Object.assign(turn, { tools, said });
@@ -4703,7 +4704,8 @@ function changeIntent(text) {
   return { asked: [...asked], negated: [...negated], mixed, keepOnly: negated.has('stop') && !worded.has('stop') };
 }
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
-// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
+// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
+// owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
@@ -4715,9 +4717,7 @@ const PAGE_ONLY = new Set([
   'forget_workflow',
 ]);
 const PAGE_ONLY_TOOLS = new Set([
-  'forget_memory',
   'forget_workflow',
-  'remember',
   'save_workflow',
 ]);
 const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
@@ -4971,7 +4971,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
-  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed) {
+  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
     const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
@@ -5661,7 +5661,7 @@ function abilities() {
       `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. The owner does those by hand.`,
       'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.',
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
-      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}.`,
+      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
@@ -6627,6 +6627,145 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
+/* ───────── a saved workflow's job is handed the one model address (D7) ───────── */
+// Area: core        Rules: R57, R36        Tests: workloads-address.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The address rule (design D 2.4 and 2.3's "handing results on", as cut): a job a saved workflow's run starts from its
+// image (keep_running with once and an image) is told where its model is, in its settings: SPARK_MODEL_URL, Spark
+// Console's one OpenAI-compatible address (the one the self-test's job calls from inside its container, 9.9);
+// SPARK_MODEL_NAME, the model to ask there; SPARK_MODEL_PARALLEL, how many calls it may make at once. Which model: the
+// one the step's own settings name (SPARK_MODEL_NAME), else the one an earlier step of this run started or found running
+// (jobModel: a start's model, or a restarted container's), else Sparkie's ("sparkie", the brain). Settings the step names
+// itself are kept as they are; only the missing ones are added. The brain is handed only when its setup says it can
+// chat (`can` on the setup, ["chat"] when not said) and answers at least 2 calls at once: a job then gets its
+// --max-running-requests less two (at least 1), which with R36's cap on app calls (its slots less one) leaves one place
+// for another app and one for the owner's chat; a setup that doesn't say how many gets 1. A model of the run's own gets
+// JOB_MODEL_PARALLEL (4). A job run again by name keeps what it was made with (a container keeps its settings), and
+// nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these run-time settings).
+// Real use waits on the self-test's fifth line passing on the real Sparks: a container reaches the one address (R57's
+// Today).
+const JOB_MODEL_PARALLEL = 4;
+const JOB_MODEL_KEYS = ['SPARK_MODEL_URL', 'SPARK_MODEL_NAME', 'SPARK_MODEL_PARALLEL'];
+// The one address as a container on a compute Spark sees it (the self-test's, less its /models).
+const jobModelAddress = () => selfTestAddress()?.replace(/\/models$/, '') || null;
+// The model a finished step leaves the run with, from its answer: a start's (started or already running), a restart's.
+function jobModel(action, args, out) {
+  if (action === 'start_model' && ['started', 'already'].includes(out?.outcome) && out.model) return { name: String(out.model) };
+  if (action === 'restart_model' && out?.outcome === 'started') return { spark: sparkIdOf(args.spark) || String(args.spark), container: String(args.container) };
+  return null;
+}
+const jobFromImage = (action, args) => action === 'keep_running' && args.once === true && typeof args.image === 'string' && (args.do || 'keep') === 'keep';
+// The settings to add to step n's job (null when none): what it lacks of the three, and a note of what it was handed.
+async function jobModelEnv(j, n, args) {
+  const env = Array.isArray(args.env) ? args.env : [], given = k => env.find(e => e.startsWith(`${k}=`))?.slice(k.length + 1);
+  if (JOB_MODEL_KEYS.every(given)) return null;
+  const url = given('SPARK_MODEL_URL') || jobModelAddress();
+  if (!url) { note(j, `Step ${n}: ${args.container} isn’t handed a model address: Spark Console’s own address isn’t known.`); return null; }
+  const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
+  let name, parallel;
+  if (m && m.name !== SPARKIE_ID) {
+    name = m.name || (await inventory(null).catch(() => null))?.sparks.find(sp => sp.id === m.spark)?.deployments.find(d => d.container === m.container && d.state === 'running')?.model;
+    if (!name) { note(j, `Step ${n}: ${args.container} isn’t handed a model: ${m.container} isn’t running on ${sparkName(nodeById(m.spark) || { id: m.spark })} any more.`); return null; }
+    parallel = JOB_MODEL_PARALLEL;
+  } else {
+    const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
+    const why = !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
+      : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
+    if (why) { note(j, `Step ${n}: ${args.container} isn’t handed Sparkie’s model: ${why}.`); return null; }
+    name = SPARKIE_ID;
+    parallel = slots ? Math.max(1, slots - 2) : 1;
+  }
+  const add = [['SPARK_MODEL_URL', url], ['SPARK_MODEL_NAME', name], ['SPARK_MODEL_PARALLEL', String(given('SPARK_MODEL_PARALLEL') || parallel)]].filter(([k]) => !given(k));
+  note(j, `Step ${n}: ${args.container} is handed ${name} at ${url}, ${given('SPARK_MODEL_PARALLEL') || parallel} at once`);
+  return { env: [...env, ...add.map(([k, v]) => `${k}=${v}`)] };
+}
+/* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
+// Area: core        Rules: R57        Tests: workloads-restart.test.mjs
+// Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
+// Timers: none        Wakes: none
+// Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
+// of itself in saved-runs.json (R20: writePrivate and readKept; names, Spark ids and the chat id, no secret), rewritten as
+// it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
+// (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
+// (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
+// known only once its operation has ended), and the Sparks it keeps awake. The record goes when the run ends, however it
+// ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
+// no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
+// same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
+// keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
+// and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
+// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
+// copy ignores it (COPY_IGNORES).
+const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
+const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
+const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
+// Merges `fields` into run j's record. A record that can't be written is said once in the run's log: then a restart
+// would leave what it started running, as before this record existed.
+function savedRunKeep(j, fields) {
+  try {
+    const f = savedRunsNow();
+    f.runs[j.id] = { ...(f.runs[j.id] || { operation: j.id, since: j.createdAt }), ...fields };
+    writePrivate(SAVED_RUNS_FILE, f);
+  } catch (e) {
+    if (j.runRecordLost) return;
+    j.runRecordLost = true;
+    note(j, `Couldn’t keep a note of what this run starts (${savedRunWords(e)}); a restart of Spark Console now would leave it running.`);
+  }
+}
+function savedRunDone(j) {
+  try {
+    const f = savedRunsNow();
+    if (!f.runs[j.id]) return;
+    delete f.runs[j.id];
+    if (Object.keys(f.runs).length) writePrivate(SAVED_RUNS_FILE, f); else unlinkSync(SAVED_RUNS_FILE);
+  } catch {}
+}
+// What a step that answered `started` is still bringing up, while its own operation runs.
+function savedRunPending(action, args, out, keep) {
+  if (out?.outcome !== 'started' || !out.operation) return [];
+  const id = v => sparkIdOf(v) || String(v);
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  return [];
+}
+// An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
+// steps' (its actor, since the run began).
+function savedRunCutOff(e) {
+  let runs = [];
+  try { runs = Object.values(savedRunsNow().runs); } catch { return false; }
+  return runs.some(r => r?.operation === e.id || (r?.title && e.actor === `${r.title} (saved workflow)` && String(e.at) >= String(r.since || '~')));
+}
+async function savedRunsRecover() {
+  let f;
+  try { f = savedRunsNow(); } catch (e) { console.error(`The note of saved workflows under way can't be read: ${e.message}`); return; }
+  const cut = Object.values(f.runs).filter(r => r && typeof r === 'object' && typeof r.operation === 'string' && !jobs.has(r.operation));
+  if (!cut.length) return;
+  for (const r of cut) {
+    const title = String(r.title || 'a saved workflow').slice(0, 80);
+    const items = [...(Array.isArray(r.started) ? r.started : []), ...(Array.isArray(r.pending) ? r.pending : [])]
+      .filter(x => x && ['model', 'app', 'job'].includes(x.kind) && nodeById(x.spark) && NAME_RE.test(String(x.container || '')));
+    let words;
+    try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }
+    const awake = (Array.isArray(r.awake) ? r.awake : []).filter(id => nodeById(id));
+    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || 'Nothing it had started was still running.'}`
+      + `${awake.length ? ` ${awake.map(id => sparkName(nodeById(id))).join(' and ')}, which it had turned on, ${awake.length > 1 ? 'are' : 'is'} no longer held awake for it.` : ''} Nothing was run again: ask for it again if it’s still wanted.`;
+    fleetEvent({ type: 'notice', text });
+    const conv = /^sc_[0-9a-f]{16}$/.test(String(r.chat || '')) ? chatData().conversations.find(c => c.id === r.chat && c.login === accessList().owner) : null;
+    if (conv) {
+      const at = new Date().toISOString();
+      conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at, notice: true });
+      conv.updatedAt = at;
+      saveChats();
+      if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+    }
+  }
+  try {
+    const now = savedRunsNow();
+    for (const r of cut) delete now.runs[r.operation];
+    if (Object.keys(now.runs).length) writePrivate(SAVED_RUNS_FILE, now); else unlinkSync(SAVED_RUNS_FILE);
+  } catch (e) { console.error(`The note of saved workflows under way couldn't be cleared: ${e.message}`); }
+}
 /* ───────── "save that as …": a saved workflow from the changes a request made (D6e) ───────── */
 // Area: core        Rules: R35, R43        Tests: workloads-save.test.mjs
 // Owns: none
@@ -6774,7 +6913,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+        : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
@@ -6784,6 +6923,15 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+async function stopAppStarted(viewer, x, c) {
+  try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
+    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
+    return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+  }
 }
 // The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
 // error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
@@ -6833,6 +6981,7 @@ async function placeStep(j, n, args, viewer, title) {
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
+    savedRunKeep(j, { awake: [...j.keptAwake.keys()] });
     try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
     note(j, `Step ${n}: ${at} is on`);
   }
@@ -7229,12 +7378,15 @@ action({
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
+      savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
         for (const [i, st] of w.steps.entries()) {
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
+          if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -7242,17 +7394,20 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
+          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedBy(st.action, args, out, st.keep === true));
+          savedRunKeep(j, { started: ran, pending: [] });
+          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
@@ -7556,8 +7711,11 @@ setTimeout(() => {
     fleetEvent({ type: 'operation', id: e.id, operation: e.operation, status: 'interrupted', model: e.model || null, spark: e.spark || null, ...(e.sparks ? { sparks: e.sparks } : {}) });
     // (the self-test's own: its clean-up after the restart says what it stopped, 21-selftest.mjs)
     if (selfTestCutOff(e)) continue;
+    // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
+    if (savedRunCutOff(e)) continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
+  savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
 }, 0);
 function fleetEvent(e) {
   const x = { at: new Date().toISOString(), ...e };
@@ -9849,6 +10007,22 @@ function keepSaid(turn) {
     console.error(`A line the owner said outright wasn’t kept (${e.message}).`);
   }
 }
+/* ───────── memory from the paired Telegram chat: the owner's own words remember and forget there (G6b) ───────── */
+// Area: safety        Rules: R25, R32, R45        Tests: memory-tg.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// Contract 4.10 and 5.5, the one page's section 8, ledger 5c clean-up 3: a line the owner states in the paired Telegram
+// chat is remembered or forgotten as on the page, marked as said there (`src.channel`). `remember` and `forget_memory`
+// stay in PAGE_ONLY; runAction lets them through from a channel in this one case only: Sparkie answering the owner's own
+// words in the chat paired now (via sparkie, channel telegram, from the paired user; not an agent's conversation, not a
+// button, not an erase). Everything after that check holds as on the page: the rest of runAction, sparkieCheck and
+// memoryClear (the forget gate, the owner's-words share), an agent never replacing an owner's line. A press from
+// Telegram on a memory button, an erase for good (eraseLine) and memory's history (memoryWithPast) still wait for the
+// page, and the approvals from Telegram (20-tg-approve.mjs) still never ask about a PAGE_ONLY action.
+const TG_MEMORY = new Set(['remember', 'forget_memory']);
+function tgOwnMemory(name, input, ctx) {
+  if (!TG_MEMORY.has(name) || input?.erase || ctx.via !== 'sparkie' || ctx.channel !== 'telegram' || ctx.agent || ctx.button || ctx.trusted) return false;
+  try { const p = tgPaired(); return Boolean(p) && ctx.from === `telegram:${p.userId}`; } catch { return false; }
+}
 /* ───────── memory's lines in time: an end date, a fact said again, the other lines about the same thing ───────── */
 // Area: record        Rules: R45        Tests: memory-time.test.mjs
 // Owns: none        Timers: none        Wakes: none
@@ -10487,10 +10661,10 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json and sessions.json, which no
-// copy carries (so a sign-in alone sends none).
+// healing, power and Telegram keep; the watchdog's counts; a crash record; what a saved workflow under way started; and
+// cloud.json and sessions.json, which no copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
-  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json']);
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json', 'saved-runs.json']);
 // What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
 // to it alone makes no copy due. (A counter put back from an older copy is lower than the passkey's own: accepted.)
 const COPY_USE_FIELDS = { 'passkeys.json': ['signCount', 'lastUsedAt'], 'agents.json': ['lastUsedAt', 'lastAction'] };
@@ -11151,7 +11325,8 @@ function stopWord(conv) {
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
-// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt).
+// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt) and the rebuild steps
+// (deploy/REBUILD.txt).
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
@@ -11177,6 +11352,7 @@ function helpWord() {
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
+  lines.push(`  bring ${consoleSparkWords().replace(/^on /, '')} back after its disk is lost: deploy/REBUILD.txt on GitHub (a copy: ${BY_HAND_DIR}/REBUILD.txt)`);
   lines.push(`  resume agents’ changes (${consoleSparkWords()}): set "halted": false in ${SETTINGS_FILE}`);
   return lines.join('\n');
 }
