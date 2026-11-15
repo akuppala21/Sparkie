@@ -64,6 +64,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”) | falls short today: its file says where |
 | [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “a member's /key and an agent's”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “a value typed in plain words, then given with /key”, “a kept key that reached the secrets file another way”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
+| [R57](rules/R57.md) | partly | `test/workloads-restart.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
