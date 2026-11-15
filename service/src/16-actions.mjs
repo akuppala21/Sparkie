@@ -218,7 +218,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'forget_workflow',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}${input.from ? '' : savedImagesLabel(input.steps)}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -434,7 +434,7 @@ function tripBreaker(why) {
   if (agentSettings().halted) return;
   // Marked as automatic, so resuming it needs no passkey (nothing about the pause can lock the owner out).
   setAgentSettings({ halted: true, autoPaused: true });
-  fleetEvent({ type: 'notice', text: `Agents’ changes were paused automatically: ${why}. Look at Activity, then resume them in Access → Agents.` });
+  fleetEvent({ type: 'notice', text: `Agents’ changes were paused automatically: ${why}. Look at Activity, then resume them in your account menu → Agents and Telegram.` });
   audit({ via: 'console', actor: 'Safety pause', action: 'pause-agents', args: { why }, ok: true });
 }
 // A button runs exactly what it names: a model said loosely ("RadixArk Qwen 3.8 27B") is matched to the model it means
@@ -457,7 +457,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.kind === 'read' && journalLooks(ctx)) return journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx));
   if (a.kind === 'read') return a.run(input, viewer, ctx);
   if (!ctx.canChange) {
-    throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
+    throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in your account menu → Agents and Telegram.' : 'This agent can look but not change things. The owner can allow it in your account menu → Agents and Telegram.');
   }
   // An agent's key as it is now, not as it was when its reply began (A-1, 2026-11-14: an agent removed while Sparkie was
   // answering it still stopped a model). agentKeys() throws when agents.json can't be read, so this fails closed.
@@ -467,7 +467,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
-  if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
+  if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
   if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);

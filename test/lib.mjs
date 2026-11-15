@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import { join } from 'node:path';
 import { startMock, REPO, OWNER, MEMBER } from './start-mock.mjs';
+import { atFileLimit } from './file-limit.mjs';
 
 // A slower machine (one whose security software checks every process the stand-in fleet starts, say) gives the tests
 // more time: SPARK_TEST_SLOW=3 triples every time limit. 1 everywhere else.
@@ -19,6 +20,8 @@ export const SERVICE_FILE = join(REPO, 'service', 'server.mjs');
 // Filled in by useFleet's before hook: { fleet, base, mcp, origin }. Root-level before hooks of one file run
 // concurrently, so a file's own setup goes in useFleet's second argument (it runs once the service answers).
 export const T = {};
+// A file that runs past its limit (file-limit.mjs) stops its fleet before it ends.
+atFileLimit(() => T.fleet?.stop());
 export function useFleet(opts = {}, setup = null) {
   before(async () => {
     T.fleet = await startMock(opts);
@@ -250,22 +253,26 @@ export async function waitFor(fn, { timeout: limit = 45000, every = 500, what = 
 
 // A POST whose body reaches the server in two pieces, cut inside a character of several bytes (the first one that ends
 // at or after byte `from`), a moment apart so the server reads them separately: what a long body, or a slow sender,
-// does by chance. Resolves with the status, the answer's text and where the cut was.
-export function postInTwo(url, text, { from = 0, headers = {}, pause = 200 } = {}) {
+// does by chance. Resolves with the status, the answer's text and where the cut was; rejects when the answer hasn't
+// ended after `timeout` (times SLOW), saying what had come back.
+export function postInTwo(url, text, { from = 0, headers = {}, pause = 200, timeout = 120000 } = {}) {
   const bytes = Buffer.from(text);
   let cut = Math.max(1, from);
   while (cut < bytes.length && (bytes[cut] & 0xc0) !== 0x80) cut++;
   if (cut >= bytes.length) throw new Error(`no character of several bytes after byte ${from} to cut inside`);
   const u = new URL(url);
   return new Promise((resolve, reject) => {
+    let seen = 'nothing had come back';
+    const timer = setTimeout(() => { reject(new Error(`timed out after ${timeout * SLOW} ms waiting for the answer to a POST in two pieces to ${url} (cut at byte ${cut}): ${seen}`)); req.destroy(); }, timeout * SLOW);
     const req = http.request({ hostname: u.hostname, port: u.port, path: `${u.pathname}${u.search}`, method: 'POST',
       headers: { 'content-type': 'application/json', 'content-length': bytes.length, ...headers } }, res => {
       const chunks = [];
+      seen = `status ${res.statusCode} came back, and the answer had not ended`;
       res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), cut }));
-      res.on('error', reject);
+      res.on('end', () => { clearTimeout(timer); resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), cut }); });
+      res.on('error', e => { clearTimeout(timer); reject(e); });
     });
-    req.on('error', reject);
+    req.on('error', e => { clearTimeout(timer); reject(e); });
     req.on('socket', s => s.setNoDelay(true));
     req.write(bytes.subarray(0, cut));
     setTimeout(() => req.end(bytes.subarray(cut)), pause * SLOW);

@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'no
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, newChat, say, request, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
+import { brainSent, brainReadsOf } from './lock.mjs';
 
 let agent, look;
 useFleet({ watchMs: 60000 }, async () => { agent = await createActKey('time-agent'); look = (await createKey('time-look')).token; });
@@ -27,6 +28,8 @@ const past = async () => { const r = await owner('memory', { past: true }); asse
 const systemFor = async words => { const from = requestsOf().length; await say(await newChat(), words); return requestsOf().slice(from).find(x => x.words === words)?.system || ''; };
 // A day counted from today, as Spark 2 counts its days (the service runs beside this test, in the same time zone).
 const day = n => { const t = new Date(Date.now() + n * 86400000); return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+// A day as the owner reads it at a glance, as the console says it (memoryDayWords): "Friday 20 November".
+const dayWords = d => new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', ...(d.slice(0, 4) === day(0).slice(0, 4) ? {} : { year: 'numeric' }) }).replace(',', '');
 const dayAfter = d => { const t = new Date(`${d}T00:00:00`); t.setDate(t.getDate() + 1); return t.toISOString(); };
 const ENDED = { id: 'e1d0e1d0', kind: 'fact', text: 'Spark 4 is busy with the GLM trial', by: 'owner', at: '2026-11-01T10:00:00.000Z', until: day(-3) };
 
@@ -83,7 +86,7 @@ test('until at save: a day already gone is refused and nothing is kept; a day th
     assert.deepEqual(await live(), []);
     const r = await owner('remember', { text: 'Spark 4 is busy with the GLM trial', kind: 'fact', until: day(5) });
     assert.equal(r.json?.outcome, 'remembered', r.text);
-    assert.equal(r.json.note, `I’ll remember: Spark 4 is busy with the GLM trial (until ${day(5)})`);
+    assert.equal(r.json.note, `I’ll remember: Spark 4 is busy with the GLM trial (until ${dayWords(day(5))})`);
     assert.deepEqual((await live()).map(e => [e.text, e.until]), [['Spark 4 is busy with the GLM trial', day(5)]]);
   } finally { fresh(); }
 });
@@ -126,6 +129,14 @@ test('lines that share only common words, or differ in a number, both stay; the 
     assert.deepEqual(await past(), []);
     // A line about other names carries none.
     assert.equal((await remember('Spark 3 is where models go')).also, undefined);
+    // Numbers as written: two versions, two addresses, two dates are two facts (review of the memory steps, 2026-11-15).
+    for (const [a, b] of [['vLLM 0.11.0 works with gemma on Spark 3', 'vLLM 0.11.1 works with gemma on Spark 3'], ['the agent build 2.0.1 runs on Spark 2', 'the agent build 2.1.0 runs on Spark 2'],
+      ['the NAS sits at 10.0.0.5 on the house network', 'the NAS sits at 10.0.5.0 on the house network'], ['the lab borrows Spark 1 on 11/12', 'the lab borrows Spark 1 on 12/11']]) {
+      await remember(a);
+      const second = await remember(b);
+      assert.equal(second.replaced, undefined, `${b}: ${second.note}`);
+      assert.ok((await live()).some(e => e.text === a), a);
+    }
   } finally { fresh(); }
 });
 
@@ -183,4 +194,50 @@ test('with the eval\'s switch time off, memory is as the build before this one k
     const sys = requestsOf(fleet.dir).find(x => x.words === 'what do you remember?')?.system || '';
     assert.ok(sys.endsWith(`\n- [${ENDED.id}] (fact, 2026-11-01) ${ENDED.text}\n- [${a.json.id}] (preference, ${new Date().toISOString().slice(0, 10)}) Spark 3 is where models go\n- [${b.json.id}] (preference, ${new Date().toISOString().slice(0, 10)}) Spark 3 is where the models go now`), sys.slice(-600));
   } finally { await fleet.stop(); }
+});
+
+// The review of the memory steps (2026-11-15), fix 7.
+test('the same words said again with another end, or none, take the line\'s place; with the same end they are already kept', { timeout: 60000 * SLOW }, async () => {
+  fresh();
+  try {
+    const first = (await owner('remember', { text: 'Spark 1 is lent to the lab', kind: 'fact', until: day(3) })).json;
+    const same = (await owner('remember', { text: 'Spark 1 is lent to the lab', kind: 'fact', until: day(3) })).json;
+    assert.equal(same.outcome, 'already', JSON.stringify(same));
+    const none = (await owner('remember', { text: 'Spark 1 is lent to the lab', kind: 'fact' })).json;
+    assert.deepEqual([none.outcome, none.replaced?.id], ['remembered', first.id], JSON.stringify(none));
+    assert.deepEqual((await live()).map(e => [e.text, e.until ?? null]), [['Spark 1 is lent to the lab', null]]);
+    const later = (await owner('remember', { text: 'Spark 1 is lent to the lab', kind: 'fact', until: day(6) })).json;
+    assert.deepEqual([later.outcome, later.replaced?.id], ['remembered', none.id], JSON.stringify(later));
+    assert.deepEqual((await live()).map(e => [e.text, e.until ?? null]), [['Spark 1 is lent to the lab', day(6)]]);
+  } finally { fresh(); }
+});
+
+// Fix 5: the brain is told the day where it decides an end, in the turn's record, and the line said back names the end
+// in words; what the brain reads (the lock's mark) is the same from one day to the next.
+test('the turn\'s record tells the brain today\'s weekday and date, and remember says the end back as a day in words', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  const words = 'Spark 4 is busy with the nightly eval until Friday';
+  script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text: 'Spark 4 is busy with the nightly eval', kind: 'fact', until: day(4) } }] }]);
+  try {
+    const from = requestsOf().length, m = (await say(await newChat(), words)).message;
+    const first = requestsOf().slice(from).find(x => x.words === words && x.round === 0);
+    const today = new Date(`${day(0)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '');
+    assert.ok(String(first.lastUser).includes(`\nToday on Spark 2: ${today} (${day(0)}).\n`), String(first.lastUser).slice(0, 1500));
+    assert.ok(!first.system.includes(day(0)) && !JSON.stringify(first.tools).includes(day(0)), 'the day is in the system prompt or a tool');
+    assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']]);
+    assert.ok(m.content.includes(`(until ${dayWords(day(4))})`), m.content);
+  } finally { script([]); fresh(); }
+});
+
+test('on a fixed clock, two turns a day apart: what the brain reads (the lock\'s mark) is the same, and only the record\'s day line differs', { timeout: 240000 * SLOW }, async () => {
+  const marks = [], lines = [];
+  for (const today of ['2026-11-20', '2026-11-21']) {
+    const fleet = await startMock({ watchMs: 60000, statusMs: 60000, env: { SPARK_CONSOLE_TODAY: today } });
+    try {
+      marks.push(brainReadsOf(await brainSent(fleet)));
+      lines.push(requestsOf(fleet.dir).map(x => String(x.lastUser).split('\n').find(l => l.startsWith('Today on Spark 2:'))).filter(Boolean).at(-1));
+    } finally { await fleet.stop(); }
+  }
+  assert.equal(marks[0], marks[1]);
+  assert.deepEqual(lines, ['Today on Spark 2: Friday 20 November 2026 (2026-11-20).', 'Today on Spark 2: Saturday 21 November 2026 (2026-11-21).']);
 });

@@ -211,12 +211,15 @@ test('never: a retired line to an agent\'s key, an agent\'s chat or Telegram; th
   assert.ok(!toAgent.includes(`"id":"${WIFI}"`) && !/Wi-Fi only|used to run on spark 3|"retired"/.test(toAgent), toAgent);
   assert.ok(toAgent.includes(`"id":"${ETH}"`), toAgent);
   const phone = 'g3 asks what is remembered about spark 4 from the phone';
-  script([{ match: '^g3 asks what is remembered', calls: asks.filter(a => a.kind === 'line' || a.id).map(a => ({ name: 'recall', arguments: a })) }]);
+  script([{ match: '^g3 asks what is remembered', calls: asks.filter(a => a.kind === 'line' || a.id || a.about === 'Spark 4').map(a => ({ name: 'recall', arguments: a })) }]);
   await tgSay(phone);
   const toPhone = await resultsFor(phone);
   assert.ok(!toPhone.includes(`"id":"${WIFI}"`) && !toPhone.includes(KESTREL_OLD) && !toPhone.includes('"retired"'), toPhone);
   assert.match(toPhone, /There’s no line a1f1a1f1 in memory \(the lines that were replaced or forgotten are shown to the owner only/);
   assert.ok(toPhone.includes(`"id":"${ETH}"`), toPhone);
+  // (by words too, {about: "Spark 4"}: none of the owner's words said on the page, here last month's "Spark 4 is on Wi-Fi
+  // only, remember that", review of the memory steps, 2026-11-15)
+  assert.ok(!/Wi-Fi only/.test(toPhone), toPhone);
   // The owner, in Spark Console, sees them.
   const mine = await ok({ kind: 'line', limit: 20 });
   assert.ok(mine.records.some(x => x.id === WIFI && x.retired) && mine.records.some(x => x.id === KESTREL_OLD && x.retired.why === 'forgotten'), JSON.stringify(mine));
