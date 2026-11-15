@@ -11,7 +11,8 @@
 // down, or a pair when one Spark was named, is not already. A step that runs a job (`keep_running` once) waits for the
 // job's end before the next step (D6b): a model, a job, then a job that reads the first's file, which it starts only
 // after the first ended; a job that exits 3 ends the run, naming the step, with its last lines masked and cut; one that
-// never ends is given up on at the limit and left running; cancelling the run ends the wait at once.
+// never ends is given up on at the limit and stopped, as the run started it (D6d); cancelling the run ends the wait at
+// once and stops the job it started.
 //
 // A saved workflow's steps checked before step 1 (service/src/18-workflows.mjs checkSteps; round two, item 3). One look
 // at the Sparks, changing nothing: a run that can't work is refused with its step number and nothing changed (before,
@@ -396,23 +397,23 @@ describe('a saved workflow\'s job steps wait for the job\'s end (D6b)', { concur
     } finally { await forget('a job fails'); }
   });
 
-  test('a job that never ends is given up on at the limit: the run ends, says so, and the job is left running', { timeout: 180000 * SLOW }, async () => {
+  test('a job that never ends is given up on at the limit: the run ends, says so, and stops the job it started', { timeout: 180000 * SLOW }, async () => {
     jobsRun(false);
     await save({ title: 'never ends', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-a' } }] });
     const began = Date.now();
     try {
       const run = await opEnd(await runIt('never ends'), 'the run');
       assert.equal(run.status, 'failed', run.log.join('\n'));
-      assert.equal(run.error, 'Step 1 (keep_running) didn’t end in time: wl-a was still running on Spark 4 after 30 seconds. It was left running, and the run ended here.');
+      assert.equal(run.error, 'Step 1 (keep_running) didn’t end in time: wl-a was still running on Spark 4 after 30 seconds. The run ended here. Stopped what this run had started: wl-a on Spark 4.');
       assert.ok(Date.now() - began >= 30000, 'it waited the whole limit');
-      assert.equal(stateOf('wl-a'), 'running', 'left as it is');
+      assert.equal(stateOf('wl-a'), 'exited', 'stopped: the run started it (D6d)');
     } finally {
       end('wl-a', 0);
       await forget('never ends');
     }
   });
 
-  test('cancelling the run while it waits ends the wait at once: the job is left as it is, and no later step runs', { timeout: 180000 * SLOW }, async () => {
+  test('cancelling the run while it waits ends the wait at once: the job it started is stopped, and no later step runs', { timeout: 180000 * SLOW }, async () => {
     jobsRun(false);
     await save({ title: 'cancel me', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-a' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-b' } }] });
     const second = line('wl-b');
@@ -425,8 +426,9 @@ describe('a saved workflow\'s job steps wait for the job\'s end (D6b)', { concur
       assert.ok(took < 5000, `the wait ended at once, not at its next look (${took} ms)`);
       const run = await opNow(id);
       assert.equal(run.status, 'cancelled');
-      assert.ok(logOf(run).includes('Stopped waiting for wl-a on Spark 4: the run was cancelled. wl-a was left as it is.'), run.log.join('\n'));
-      assert.equal(stateOf('wl-a'), 'running', 'the job is left as it is');
+      assert.ok(logOf(run).includes('Stopped waiting for wl-a on Spark 4: the run was cancelled.'), run.log.join('\n'));
+      assert.ok(logOf(run).includes('After the end: Stopped what this run had started: wl-a on Spark 4.'), run.log.join('\n'));
+      assert.equal(stateOf('wl-a'), 'exited', 'the job the run started is stopped (D6d)');
       // The job ends afterwards: nothing more happens.
       jobsRun(true);
       end('wl-a', 0);

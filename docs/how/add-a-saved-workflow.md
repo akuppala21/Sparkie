@@ -12,7 +12,8 @@ the map's "Where new things go", row "A saved workflow".
 - A stack (several apps that work together) is one of these: `keep_running` steps, one per piece with all its
   settings, and a second workflow that stops them (A13).
 - A `keep_running` step that runs a job waits for the job's end before the next step (`jobStepEnd`,
-  `18-step-jobs.mjs`); a job that ends badly ends the run and names the step (R35).
+  `18-step-jobs.mjs`); a job that ends badly ends the run and names the step (R35). A run that ends badly stops what
+  its own steps started (`runCleanUp`), never what was running before it.
 
 ## Also update
 
