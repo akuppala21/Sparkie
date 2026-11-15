@@ -1,4 +1,9 @@
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
+// Area: core
+// Rules: R3, R7, R9, R11, R12, R18, R21, R23, R25, R26, R32, R33, R35, R36, R37, R38
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
 // time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the
 // page's buttons move onto the same list, with the same checks. Each action says:

@@ -1,4 +1,9 @@
 /* ───────── a daily copy of the console's state on another Spark ───────── */
+// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, fleet.test.mjs, install.test.mjs
+// Owns: backup.json (writers: backupState)
+// Timers: backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop
+//   waits for running operations, 60 s at most)
+// Wakes: none
 // People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
 // Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
 // one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is

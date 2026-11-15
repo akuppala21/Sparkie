@@ -1,4 +1,7 @@
 /* ───────── running commands on Sparks ───────── */
+// Area: ground        Rules: R10        Tests: fleet.test.mjs, dark.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command.
 // `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there
 // after this side gave up.

@@ -1,7 +1,7 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
+Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+`docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
@@ -33,7 +33,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes"]
-  JOURNAL["The journal (20-journal, R43): outside the state folder, never copied off Spark 2 or deleted"]
+  JOURNAL["The journal (20-journal, R43): outside the state folder; never copied or deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -100,9 +100,9 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
-  RUN -->|"a start line, synced, before a change written down first (else nothing runs); each change's result; recall"| JOURNAL
-  CHAT -->|"the owner's words, each tool call and its result, the turn"| JOURNAL
-  JOBS -->|"an operation's end and log; a start's attempts"| JOURNAL
+  RUN -->|"a synced start line before a change written down first (else it won't run); results; recall"| JOURNAL
+  CHAT -->|"the owner's words, tool calls with results, turns"| JOURNAL
+  JOBS -->|"operations' ends and logs; start attempts"| JOURNAL
   SENSE -->|"each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT

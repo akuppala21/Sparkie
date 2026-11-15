@@ -87,7 +87,7 @@ test('a failed start: its log (keys hidden, also across two pieces), its attempt
     assert.ok((text.match(/\[hidden\]/g) || []).length >= 40, text);
     assert.deepEqual(leaks(everything()), [], 'no piece of any key, whole or split');
     const attempt = records().find(r => r.k === 'attempt' && r.op === x.operation);
-    assert.deepEqual([attempt?.n, attempt?.failure], [1, 'unknown'], JSON.stringify(attempt));
+    assert.deepEqual([attempt?.n, attempt?.failure], [1, 'unknown'], JSON.stringify(attempt ?? null));
     const ev = records().filter(r => r.k === 'event' && r.op === x.operation).map(r => r.outcome);
     assert.deepEqual(ev, ['started', 'failed']);
   } finally { rmSync(mock('spark4', `logs-${GEMMA}`), { force: true }); }

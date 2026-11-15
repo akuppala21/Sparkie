@@ -1,4 +1,9 @@
 /* ───────── Sparkie's main model ───────── */
+// Area: brain
+// Rules: R2, R8, R14, R15, R17, R19, R20, R22, R27, R34
+// Tests: brain.test.mjs, agent-setup.test.mjs
+// Owns: main.json (writers: writeMainFile)
+// Timers: none        Wakes: none
 // Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark
 // so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after
 // reboots until someone stops it here, and it's labeled protected, so deploys never stop it.

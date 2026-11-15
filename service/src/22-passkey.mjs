@@ -1,4 +1,7 @@
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
+// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
+// Owns: passkeys.json (writers: savePasskeys)
+// Timers: none        Wakes: none
 // One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to
 // who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a
 // passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that

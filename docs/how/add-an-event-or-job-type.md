@@ -9,7 +9,9 @@ map's "Where new things go", row "An event type or a job type".
 
 ## Also update
 
-- `EVENT_TYPES` (`16-actions.mjs`).
+- `EVENT_TYPES` (`16-actions.mjs`) for an event type; `docs/rules/R13.md` names a job type and says whether it takes a
+  claim. `node tools/make.mjs` fails on a type sent or started that isn't there, and `docs/registry.md` lists who
+  sends or starts each.
 - `describeEvent` (`19-watcher.mjs`); the last 10 events go to Sparkie with every owner message (`fleetNotes`).
 - The page's `SVC_LABEL` (`public/app.js`); `OP_WORDS` (`14-chats.mjs`); `TELL_OPS` (`20-tell.mjs`); `CHANGES_MODELS`
   (`20-desired.mjs`); `startingNow` (`17-changes.mjs`). A job type that holds no claim and changes no model itself,
@@ -31,6 +33,7 @@ map's "Where new things go", row "An event type or a job type".
 ## Tests
 
 - `state.test.mjs` (“the fleet's record of operations”), `fleet.test.mjs` (“the watcher”).
+- `docs.test.mjs` (“an event type EVENT_TYPES doesn’t list”, “an operation type R13 doesn’t name”).
 
 ## Copy from
 

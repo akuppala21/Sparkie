@@ -1,4 +1,8 @@
 /* ───────── the journal: what was said, called, run and seen here, kept on Spark 2 (B1, R43) ───────── */
+// Area: record        Rules: R7, R22, R26, R43        Tests: journal.test.mjs, door.test.mjs, fuzz.test.mjs
+// Owns: none (its own files, journal-YYYY-MM.jsonl and .out in JOURNAL_DIR, are outside the state folder; one writer,
+//   journal)
+// Timers: none        Wakes: none
 // Spark Console's own record of what happens through it, so it is still known after a restart (operation_log forgets
 // then) and can be looked up (recall). Append-only: never rewritten, never deleted, never copied off Spark 2. Its folder
 // (JOURNAL_DIR, 0700, files 0600) is outside the state folder, so neither the daily copy nor an install snapshot takes
@@ -54,25 +58,22 @@ function jMasker(put) {
   };
 }
 function* jSlices(s) { for (let i = 0; i < s.length; i += J_PIECE) yield s.slice(i, i + J_PIECE); }
-// Writes long text (a string, or anything iterable that gives text) to this month's .out, masked, in one go, so it is
-// one stretch of the file: { o: [offset, length] }, and cut (the limit) when reading stopped there.
-function jBody(month, body) {
-  const fd = openSync(jFile(month, 'out'), 'a', 0o600);
-  try {
-    const offset = fstatSync(fd).size;
-    let length = 0, read = 0, cut = null;
-    const m = jMasker(t => { if (t) length += writeSync(fd, t); });
-    for (const piece of typeof body === 'string' || Buffer.isBuffer(body) ? jSlices(String(body)) : body) {
-      let t = String(piece ?? '');
-      const n = Buffer.byteLength(t);
-      if (read + n > J_MAX) { t = Buffer.from(t).subarray(0, J_MAX - read).toString(); cut = J_MAX; }
-      read += Buffer.byteLength(t);
-      m.add(t);
-      if (cut) break;
-    }
-    m.end();
-    return { o: [offset, length], ...(cut ? { cut } : {}) };
-  } finally { closeSync(fd); }
+// Writes long text (a string, or anything iterable that gives text) to this month's .out (fd), masked, in one go, so it
+// is one stretch of the file: { o: [offset, length] }, and cut (the limit) when reading stopped there.
+function jBody(fd, body) {
+  const offset = fstatSync(fd).size;
+  let length = 0, read = 0, cut = null;
+  const m = jMasker(t => { if (t) length += writeSync(fd, t); });
+  for (const piece of typeof body === 'string' || Buffer.isBuffer(body) ? jSlices(String(body)) : body) {
+    let t = String(piece ?? '');
+    const n = Buffer.byteLength(t);
+    if (read + n > J_MAX) { t = Buffer.from(t).subarray(0, J_MAX - read).toString(); cut = J_MAX; }
+    read += Buffer.byteLength(t);
+    m.add(t);
+    if (cut) break;
+  }
+  m.end();
+  return { o: [offset, length], ...(cut ? { cut } : {}) };
 }
 // One line of at most 1,500 bytes: long fields are cut (they are masked already, so a cut never shows more).
 function jLine(rec) {
@@ -100,7 +101,11 @@ function journal(kind, fields = {}, body = null) {
     // (masked first; empty fields left out, so a line stays short)
     const rec = { id, at, k: kind, ...Object.fromEntries(Object.entries(maskDeep({ ...rest, ...(args !== undefined ? { args: jArgsKept(args) } : {}) }))
       .filter(([, v]) => v != null && !(Array.isArray(v) && !v.length))) };
-    if (body != null) { try { Object.assign(rec, jBody(month, body)); } catch (e) { rec.textLost = e.code || 'error'; } }
+    if (body != null) {
+      let out = null;
+      try { out = openSync(jFile(month, 'out'), 'a', 0o600); Object.assign(rec, jBody(out, body)); } catch (e) { rec.textLost = e.code || 'error'; }
+      finally { if (out !== null) try { closeSync(out); } catch {} }
+    }
     const fd = openSync(jFile(month, 'jsonl'), 'a', 0o600);
     try { writeSync(fd, `${jLine(rec)}\n`); if (fields.start) fsyncSync(fd); } finally { closeSync(fd); }
     journalWorked = Date.now();
@@ -169,7 +174,7 @@ function* jOpText(job) { for (const l of job.log) yield `${l}\n`; if (job.error)
 function journalOp(job) {
   try {
     const failure = job.status === 'failed' ? knownStartFailure(job.error)?.id || 'unknown' : null, sub = jSub(job.model, job.node, job.nodes, job.container, failure);
-    if (START_JOBS.has(job.type) && failure && (failure !== 'unknown' || job.ranHere?.length)) {
+    if (START_JOBS.has(job.type) && failure) {
       journal('attempt', { op: job.id, act: job.type, n: job.log.filter(l => /Known problem: .* \(attempt \d+ of 3\)$/.test(l)).length + 1, failure, fix: null, err: jErr(job.error), model: job.model || null, sub });
     }
     journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,

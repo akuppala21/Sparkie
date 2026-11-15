@@ -1,4 +1,11 @@
 /* ───────── workflows ───────── */
+// Area: core
+// Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
+// Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
+//   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
+//   writes it, noteUpdate reads it)
+// Timers: none        Wakes: none
 // Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it
 // worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a
 // workflow and fill in its inputs; they never make up the steps.

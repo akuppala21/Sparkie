@@ -1,4 +1,7 @@
 /* ───────── what is waiting on the owner (H4) ───────── */
+// Area: safety        Rules: R21, R26        Tests: needs.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model
 // call, no look at another Spark, and no text from a log, an error, a container's output or the web (so fleet_status
 // stays a read of the console's own numbers). Lock-out first, then the owner's data, then the fleet. A line stands while
