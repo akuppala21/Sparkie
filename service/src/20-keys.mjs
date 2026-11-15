@@ -1,5 +1,5 @@
 /* ───────── keys given once: taken out of the owner's words at the door, kept by name ───────── */
-// Area: safety        Rules: R50, R7, R32        Tests: app-keys.test.mjs
+// Area: safety        Rules: R51, R7, R32        Tests: app-keys.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the
@@ -13,7 +13,7 @@
 // message is answered by code, never by the brain: the chat keeps the words with the value replaced by what became of
 // it, then the answer as a notice. On Telegram the message that held it is deleted, and if that fails the owner is told
 // to delete it. Nobody else gives a key: a member's, an agent's or a carry-on turn's words go to sparkieTurn, whose first
-// line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R50.md)
+// line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R51.md)
 const KEY_NAME_RE = /^[A-Z][A-Z0-9_]{1,40}$/, KEYS_MAX = 30, KEY_BYTES = 4096, KEY_MIN = 8;
 // "/key" at the start of the words (Telegram may add the bot's name: /key@bot).
 const KEY_FORM = /^\s*\/key(?:@\w+)?(?=\s|$)/i;

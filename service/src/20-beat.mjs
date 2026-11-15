@@ -1,5 +1,5 @@
 /* ───────── the outside heartbeat: an outside service notices when Spark 2 stops ───────── */
-// Area: safety        Rules: R32, R50        Tests: beat.test.mjs, app-keys.test.mjs
+// Area: safety        Rules: R32, R51        Tests: beat.test.mjs, app-keys.test.mjs
 // Owns: none
 // Timers: beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that,
 //   and from a beat at once when an address is saved)
@@ -99,7 +99,7 @@ async function heartbeatRoute(req, res, viewer) {
   await beatSave(url, via);
   return send(res, 200, beatView());
 }
-// Saving a check's address, from this route or pasted in the owner's own chat (20-keys.mjs, R50): the same save, and the
+// Saving a check's address, from this route or pasted in the owner's own chat (20-keys.mjs, R51): the same save, and the
 // beat starts the same way.
 async function beatSave(url, via) {
   secretsWrite(s => ({ ...s, heartbeat: { url, savedAt: new Date().toISOString() } }));

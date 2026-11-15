@@ -282,7 +282,7 @@ const KEY_WORDS = new Set(['KEY', 'APIKEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASS
 const keyName = n => { const w = n.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase().split(/_+/).filter(Boolean); return !w.includes('PUBLIC') && KEY_WORDS.has(w.at(-1)); };
 const randomish = v => (v.length >= 8 && /[A-Za-z]/.test(v) && /\d/.test(v)) || (v.length >= 20 && /[a-z]/.test(v) && /[A-Z]/.test(v));
 // Key shapes: a known token format, a private key block, a key setting, a password inside an address. What a saved file
-// may never hold and what `files` hides (R37); plain words and code pass. First, every kept key by its exact value (R50).
+// may never hold and what `files` hides (R37); plain words and code pass. First, every kept key by its exact value (R51).
 const hideKeys = text => SECRET_PATTERNS.reduce((t, re) => t.replace(re, '[hidden]'), hidePrivateKeys(keptHidden(text)))
   .replace(KEY_SETTING, (m, n, sep, v) => (keyName(n) && randomish(v) ? `${n}${sep}[hidden]` : m))
   .replace(/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]+:)[^\s@/]+@/gi, '$1[hidden]@');

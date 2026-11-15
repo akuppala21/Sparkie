@@ -239,12 +239,12 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     const msgs = await chatMessages(chat);
     assert.equal(msgs[0].content, `${TYPED} [key HEARTBEAT kept], keep it to yourself`);
     assert.ok(!JSON.stringify(msgs).includes(ID), JSON.stringify(msgs));
-    // (the answer is code's: the address was taken at the door, R50)
+    // (the answer is code's: the address was taken at the door, R51)
     assert.match(msgs[1].content, /^Kept the heartbeat’s address/);
     const title = (await api('/chats')).json.chats.find(c => c.id === chat)?.title;
     assert.ok(title && !title.includes(ID), title);
     assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(ID), 'chats.json, which the daily copy carries');
-    // What the brain was sent: never the address (the turn it was typed in asked no brain, R50); the next turn, whose
+    // What the brain was sent: never the address (the turn it was typed in asked no brain, R51); the next turn, whose
     // history is the saved chat, holds none of it.
     const sent = brainRecord().slice(from), next = sent.filter(e => e.words === 'thanks');
     assert.deepEqual(brainRecord().filter(e => JSON.stringify(e).includes(ID)).map(e => e.words), [], 'a record in the brain’s log holds the address');

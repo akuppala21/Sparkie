@@ -470,14 +470,14 @@ function sameOrigin(req) {
 }
 
 /* ───────── secrets: one owner-only file outside the state folder ───────── */
-// Area: ground        Rules: R20, R32, R50        Tests: telegram.test.mjs, needs.test.mjs, app-keys.test.mjs
+// Area: ground        Rules: R20, R32, R51        Tests: telegram.test.mjs, needs.test.mjs, app-keys.test.mjs
 // Owns: secrets.json (writers: secretsWrite; outside the state folder)
 // Timers: none        Wakes: none
 // What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is
 // in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the
 // install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). Telegram's
 // token is typed only on the passkey page; a key the owner gives in their own chat is kept here by name (20-keys.mjs,
-// R50). A file that exists but can't be read is never written over. Under ALL_LOCAL the store is off
+// R51). A file that exists but can't be read is never written over. Under ALL_LOCAL the store is off
 // unless a test names its own file, so tests never read the developer's home.
 const SECRETS_FILE = ALL_LOCAL ? (/^\/[^\0]+$/.test(process.env.SPARK_CONSOLE_SECRETS_FILE || '') ? process.env.SPARK_CONSOLE_SECRETS_FILE : null)
   : `${homedir()}/.config/spark-console/secrets.json`;
@@ -514,7 +514,7 @@ function secretsWrite(change) {
   Object.assign(keptSeen, { at: 0, mtime: null });
   return next;
 }
-// Every value kept here (named keys, the GitHub token, the heartbeat's address, Telegram's token: R50), with the forms
+// Every value kept here (named keys, the GitHub token, the heartbeat's address, Telegram's token: R51), with the forms
 // it may be printed in (its %-form in an address; base64 at each of the three alignments, its ends cut where they hang
 // on the bytes beside it). hideKeys (20-mcp.mjs) hides each by its exact text wherever text is written or sent. The
 // file is looked at again at most once a second, and read again only when it changed (pull.sh writes it too); no timer.
@@ -3638,7 +3638,7 @@ function stopTurn(conv) {
   return Boolean(link || task);
 }
 async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}, agent = null, link = { gone: false, upstream: null }, task = null, channel = null }) {
-  // First, a key in the words is hidden: a /key form, a heartbeat's address, a kept key's value (20-keys.mjs, R50).
+  // First, a key in the words is hidden: a /key form, a heartbeat's address, a kept key's value (20-keys.mjs, R51).
   text = keysHidden(text);
   // The turn’s state, in one object its pieces share: each piece below adds what it makes. They run in this order,
   // which is the order of the turn’s effects (what is saved, emitted and journalled, and when): keep it.
@@ -3723,7 +3723,7 @@ function keepWords({ conv, text, context, agent, task, channel }) {
   const lastAsk = conv.messages.map(m => m.role).lastIndexOf('user');
   const open = conv.messages.slice(lastAsk + 1).flatMap(m => m.choices || []).filter(c => c.state === 'open' && pendingChoices.has(c.id));
   // What is saved has keys hidden: chats.json is copied to another Spark every day (F20). This turn's gate and the model
-  // still get the words as typed, but for what keysHidden took out at the top of the turn (R50).
+  // still get the words as typed, but for what keysHidden took out at the top of the turn (R51).
   const kept = maskSecrets(text);
   conv.messages.push({ role: 'user', content: kept, context: context || null, createdAt: now, ...(agent ? { from: agent.name } : {}), ...(task ? { auto: true } : {}) });
   if (!conv.title || conv.title === 'New chat') conv.title = `${agent ? `${agent.name}: ` : ''}${kept.replace(/\s+/g, ' ')}`.slice(0, 60);
@@ -7224,7 +7224,7 @@ function fleetNotes(viewer) {
 }
 
 /* ───────── the outside heartbeat: an outside service notices when Spark 2 stops ───────── */
-// Area: safety        Rules: R32, R50        Tests: beat.test.mjs, app-keys.test.mjs
+// Area: safety        Rules: R32, R51        Tests: beat.test.mjs, app-keys.test.mjs
 // Owns: none
 // Timers: beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that,
 //   and from a beat at once when an address is saved)
@@ -7324,7 +7324,7 @@ async function heartbeatRoute(req, res, viewer) {
   await beatSave(url, via);
   return send(res, 200, beatView());
 }
-// Saving a check's address, from this route or pasted in the owner's own chat (20-keys.mjs, R50): the same save, and the
+// Saving a check's address, from this route or pasted in the owner's own chat (20-keys.mjs, R51): the same save, and the
 // beat starts the same way.
 async function beatSave(url, via) {
   secretsWrite(s => ({ ...s, heartbeat: { url, savedAt: new Date().toISOString() } }));
@@ -8224,7 +8224,7 @@ function journalNeeds(add, here) {
   if (bytes > J_LARGE) add('journal-size', `Spark Console’s journal on ${here} holds ${Math.round(bytes / 1e8) / 10} GB (${tilde(JOURNAL_DIR)}). Nothing in it is ever deleted: move old months out of that folder if the disk needs the room.`);
 }
 /* ───────── keys given once: taken out of the owner's words at the door, kept by name ───────── */
-// Area: safety        Rules: R50, R7, R32        Tests: app-keys.test.mjs
+// Area: safety        Rules: R51, R7, R32        Tests: app-keys.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the
@@ -8238,7 +8238,7 @@ function journalNeeds(add, here) {
 // message is answered by code, never by the brain: the chat keeps the words with the value replaced by what became of
 // it, then the answer as a notice. On Telegram the message that held it is deleted, and if that fails the owner is told
 // to delete it. Nobody else gives a key: a member's, an agent's or a carry-on turn's words go to sparkieTurn, whose first
-// line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R50.md)
+// line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R51.md)
 const KEY_NAME_RE = /^[A-Z][A-Z0-9_]{1,40}$/, KEYS_MAX = 30, KEY_BYTES = 4096, KEY_MIN = 8;
 // "/key" at the start of the words (Telegram may add the bot's name: /key@bot).
 const KEY_FORM = /^\s*\/key(?:@\w+)?(?=\s|$)/i;
@@ -8768,7 +8768,7 @@ const KEY_WORDS = new Set(['KEY', 'APIKEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASS
 const keyName = n => { const w = n.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase().split(/_+/).filter(Boolean); return !w.includes('PUBLIC') && KEY_WORDS.has(w.at(-1)); };
 const randomish = v => (v.length >= 8 && /[A-Za-z]/.test(v) && /\d/.test(v)) || (v.length >= 20 && /[a-z]/.test(v) && /[A-Z]/.test(v));
 // Key shapes: a known token format, a private key block, a key setting, a password inside an address. What a saved file
-// may never hold and what `files` hides (R37); plain words and code pass. First, every kept key by its exact value (R50).
+// may never hold and what `files` hides (R37); plain words and code pass. First, every kept key by its exact value (R51).
 const hideKeys = text => SECRET_PATTERNS.reduce((t, re) => t.replace(re, '[hidden]'), hidePrivateKeys(keptHidden(text)))
   .replace(KEY_SETTING, (m, n, sep, v) => (keyName(n) && randomish(v) ? `${n}${sep}[hidden]` : m))
   .replace(/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]+:)[^\s@/]+@/gi, '$1[hidden]@');
@@ -12598,7 +12598,7 @@ async function tgUpdate(u) {
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
-  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R50).
+  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
   if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
@@ -14447,7 +14447,7 @@ const handler = async (req, res) => {
         const { text, context = null } = await readBody(req);
         if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.text) throw new HttpError(400, `Write a message of up to ${LIMITS.text} characters.`);
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
-        // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R50).
+        // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).

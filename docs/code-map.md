@@ -102,9 +102,9 @@ The owner, the members and the Spark list live in the console's own owner-only f
 
 ### `03-secrets.mjs`: secrets: one owner-only file outside the state folder
 
-What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). Telegram's token is typed only on the passkey page; a key the owner gives in their own chat is kept here by name (20-keys.mjs, R50). A file that exists but can't be read is never written over. Under ALL_LOCAL the store is off unless a test names its own file, …
+What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). Telegram's token is typed only on the passkey page; a key the owner gives in their own chat is kept here by name (20-keys.mjs, R51). A file that exists but can't be read is never written over. Under ALL_LOCAL the store is off unless a test names its own file, …
 
-- **Area:** ground. **Rules:** R20, R32, R50. **Tests:** telegram.test.mjs, needs.test.mjs, app-keys.test.mjs
+- **Area:** ground. **Rules:** R20, R32, R51. **Tests:** telegram.test.mjs, needs.test.mjs, app-keys.test.mjs
 - **Lines:** 83
 - **Owns:** secrets.json (writers: secretsWrite; outside the state folder)
 - **Timers:** none
@@ -350,7 +350,7 @@ Every minute the console looks at every container on every Spark (models, servic
 
 Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>), pasted in their own chat (20-keys.mjs) or with the passkey (PUT /heartbeat), Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot) when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing changed. The request carries nothing: no body, no query, no cookie, one fixed User-Agent. The host is fixed; what the owner saves only names the check, and a redirect is never followed. The address …
 
-- **Area:** safety. **Rules:** R32, R50. **Tests:** beat.test.mjs, app-keys.test.mjs
+- **Area:** safety. **Rules:** R32, R51. **Tests:** beat.test.mjs, app-keys.test.mjs
 - **Lines:** 110
 - **Owns:** none
 - **Timers:** beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that, and from a beat at once when an address is saved)
@@ -404,7 +404,7 @@ Spark Console's own record of what happens through it, so it is still known afte
 
 A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the message here, before anything else reads it: the chat file, the journal, the audit, a title, the gate, the brain. Two forms: "/key NAME value" (the value alone, after the name or on the next line), and the heartbeat's address, known by its shape anywhere in the words. It is kept by name in the secrets file (03-secrets.mjs, through secretsWrite), never shown back, and its exact value is hidden wherever text is written or sent (keptHidden, which hideKeys runs first). Two names …
 
-- **Area:** safety. **Rules:** R50, R7, R32. **Tests:** app-keys.test.mjs
+- **Area:** safety. **Rules:** R51, R7, R32. **Tests:** app-keys.test.mjs
 - **Lines:** 149
 - **Owns:** none
 - **Timers:** none

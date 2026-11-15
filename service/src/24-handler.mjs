@@ -643,7 +643,7 @@ const handler = async (req, res) => {
         const { text, context = null } = await readBody(req);
         if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.text) throw new HttpError(400, `Write a message of up to ${LIMITS.text} characters.`);
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
-        // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R50).
+        // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).

@@ -13,7 +13,7 @@ messaging channel".
 
 ## Also update
 
-- R32; R50 (keys given once).
+- R32; R51 (keys given once).
 - `PAGE_ONLY` (`16-actions.mjs`).
 - `sparkie_setup` and `fleetNotes` for its state.
 - A mock in `test/mock` started by `startMock` (`test/start-mock.mjs`).

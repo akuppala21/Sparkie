@@ -198,7 +198,7 @@ async function tgUpdate(u) {
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
-  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R50).
+  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
   if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.

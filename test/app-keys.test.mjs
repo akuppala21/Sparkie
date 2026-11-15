@@ -1,4 +1,4 @@
-// Covers: Keys given once (A14a, R50; design A step 14, E 2.4, C 2.3). A key the owner gives in their own chat, on the
+// Covers: Keys given once (A14a, R51; design A step 14, E 2.4, C 2.3). A key the owner gives in their own chat, on the
 // page or in the paired Telegram chat (`/key NAME value`, the value also on the next line, or a heartbeat address
 // pasted as it is) is taken out before anything reads the words: answered by code (the brain is not asked), kept by
 // name in the secrets file, and the chat keeps only that a key named NAME was given. Every value made up here is
