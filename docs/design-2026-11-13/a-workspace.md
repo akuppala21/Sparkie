@@ -371,11 +371,17 @@ holds it for the command and everything the command starts. The helper runs no w
   `.cache/spark-console`, `~/.local/share/spark-console`, the jobs' shared folder), and the one-time command makes the missing ones, before the password, as the owner (a
   `.bash_profile` it makes is one line that reads what bash read without one); and a held path in the home must be
   the real thing, not a link nor under one. `run` refuses by name when a name is missing or a link, or when the
-  owner's login shell is not bash, sh or dash (the names are bash's start files); a look, which writes nothing, is
-  not refused. Any other listed name that is a link (a change could have left it) is left alone by both walls: not
+  owner's login shell is not bash, sh or dash (the names are bash's start files); a look is refused only while
+  `.ssh`, `.docker` or `~/.local/share/spark-console` is a link (it would see what the link points at). The names
+  include `~/.config/spark-console`, and the one-time command makes the console's own folders the owner's alone
+  (0700). Any other listed name that is a link (a change could have left it) is left alone by both walls: not
   held and never followed, and `check` names it. A folder under a held one is never pinned (it is held already, and
-  a pin would be a writable place inside it). The jobs' shared and output folders, which the console mounts into
-  containers, hold their place the same way: there, real, and bound onto themselves. `--check` names them, says whether PAM reads `~/.pam_environment`, lists enabled
+  a pin would be a writable place inside it). The jobs' shared folder and the folder that holds their output
+  folders, which the console mounts into containers, hold their place the same way: there, real, and bound onto
+  themselves; so does each job's own output folder that is there when the run wall is built (the proof's attempt 19),
+  and the console checks it is the real folder before it mounts it. A held place under a read-only or `--protect`
+  folder is not bound (it is read-only there already). The state folder's `door.json` and `cloud.json`, the retired
+  door's, are never put back. `--check` names them, says whether PAM reads `~/.pam_environment`, lists enabled
   units of the owner's whose program is in the home outside the read-only list, and says whether Tailscale SSH is on.
 - **What the walls cannot promise.** A key in a file nobody listed (2.3). A file a walled change may write that the
   owner later runs outside the wall (a project script, something on the owner's `PATH`), or that a start file

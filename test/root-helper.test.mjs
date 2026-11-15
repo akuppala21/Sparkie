@@ -274,7 +274,7 @@ describe('the walls asked for', () => {
       [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--', 'true', 'two'], 'the command must be one word'],
       [['run', '--id', newId(), '--sha256', sha(''), '--seconds', '5', '--dir', s.work, '--', ''], 'the command is empty'],
       [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, 'true'], 'not understood'],
-      [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--net', '--', 'true'], 'not understood'],
+      [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--network', '--', 'true'], 'not understood'],
       [['run', '--id', newId(), '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--', 'true'], '--id is given twice'],
       [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--protect', 'home/owner/models', '--', 'true'], '--protect must name a whole path'],
       [['run', '--id', newId(), '--sha256', ok, '--seconds', '5', '--dir', s.work, '--protect', '/home/owner/my models', '--', 'true'], '--protect must name a whole path'],
@@ -394,7 +394,7 @@ describe('what the run wall holds in the home', () => {
     renameSync(share, join(s.R, 'home/owner/.local/share-real'));
     symlinkSync(join(s.R, 'home/owner/.local/share-real'), share);
     refused(change(s, 'true'), '/home/owner/.local/share/systemd is a link, or under one, so the wall would hold only what it points at');
-    assert.equal(look(s, 'true').status, 0);
+    refused(look(s, 'true'), '/home/owner/.local/share/spark-console is a link, or under one, so a look would see what it points at');
   });
   test('a link a change left at a listed name that was not there is left alone in both walls, and check names it; changes still run', () => {
     const s = proven();
