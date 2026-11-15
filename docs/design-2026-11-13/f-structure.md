@@ -1,6 +1,7 @@
 # F. Structure: easy to find your way in, and documents that stay true
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): item 10.
+Amended again the same day, for the build map's unclear items 5, 9 and 12: the names and groups of the update and compare actions (2.4).
 
 Design only; no file under `spark-console/` was changed and no test, server or build was run. "Verified" means read in the tree on 2026-11-13, or counted there by a read-only script. "Inference" means reasoned, not run. Paths are under `spark-console/`. Pointers are by name, never by line (2.2 says why).
 
@@ -137,6 +138,10 @@ Evidence (web): OpenAI's function-calling guide says "aim for fewer than 20 func
 | `memory` | `memory`, `forget_memory`, `app_keys` | the words ask what is remembered, to forget, or about keys |
 | `updates`, `checks` | `check_update`, `install_update`, `undo_update`, `propose_update`, `update_status`; `self_test`, `test_changes`, `try_brain` | update words; test words |
 
+- **Names and groups settled on 2026-11-14.** The table above is the first cut, and it names actions that are cut. R46 holds the table as built. Three things are settled for the steps still to come:
+  - `updates` holds `check_update`, `install_update` (design C, step 5) and `propose_update` (C, step 8): three of six seats. There is no `update_status` and no `change_*`: `check_update` also answers for the open proposal (C 2.5). `undo_update` stays in `control`, beside `undo_last_change` (R46).
+  - `compare_models` goes in `routines`, its fifth seat (design D, 2.5). There is no `save_pipeline`, `pipeline` or `remove_copy`.
+  - `test_changes` stays in `checks` until the owner answers whether the self-test replaces it (design D, 2.9).
 - **The cap: 24 a round** (core and two groups; today every round carries 41). `TOOL_CAP` is one constant; a brain's setup may lower it. The list is built each round (design A needs that already). One table, `GROUP_WORDS`, beside `CHANGE_WORDS`, opens groups from the owner's words; state opens `work`, `control`, `dig` and `reading`. With a third group, the oldest one opened by words closes. Groups last for the request and its carry-on turns.
 - **Hidden is not forbidden.** A call to an action that exists but was not offered runs through `runAction` as always and opens its group. Permission stays where it is: `runAction`, `PAGE_ONLY`, the gates. So nothing that works today can stop working; a wrong guess by the word table costs one round. A test proves it for the three calls a stuck owner needs: `undo_last_change`, `cancel_operation` and `undo_update` each run when they were not offered. Two eval cases need tools from three groups, so the cap's cost shows in the eval.
 - **Prompt lines follow the tools.** A line that names a tool belongs to that tool's group and is sent only with it. The core prompt stays under 2,500 characters and names only core tools.
@@ -173,7 +178,7 @@ Evidence (web): OpenAI's function-calling guide says "aim for fewer than 20 func
 | paused | Agents' changes are stopped, by the owner or the breaker | `agent-settings.json` | paused for anything else |
 | tested; validated | The whole suite passed for this tree; one real run passed on the Sparks | the lock; `validations.json` | verified |
 | brain check; brain trial | E's three-minute probe that sets a brain's grade; B's comparison of a candidate with the brain in use | `21-brain-check.mjs`; `21-brain-trial.mjs`, `brain-trials.json` | two things called brain check |
-| update; proposed update | A new build installed; a change Sparkie offers as a pull request | `install_update`; `propose_update`, `update_status` (not C's `change_…`: change is a kind of action) | change for a code change |
+| update; proposed update | A new build installed; a change Sparkie offers as a pull request | `install_update`; `propose_update` (not C's `change_…`: change is a kind of action). No `update_status`: `check_update` answers for it (settled 2026-11-14, C 2.5) | change for a code change |
 | agent door; app door | `/mcp`; port 10000 | `mcpDoor`; `doorHandler` | the door |
 
 What checks it: each row may carry a pattern; the checker fails when a "don't say" pattern is found in a hand-written document outside history, in an action's title or description, or in a prompt line, and when an "in code" name is not in the code. Two things for the other designers to settle, since they are rules and not words: the journal's place (B's wins: outside the state folder, monthly), and whether an owner's request for a workspace wakes a Spark (D's rule says yes).
