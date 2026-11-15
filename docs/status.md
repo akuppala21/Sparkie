@@ -53,7 +53,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
-| [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
+| [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”, “only the owner's own call reads them back”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group closes the oldest one opened by words”, “hidden is not forbidden”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)

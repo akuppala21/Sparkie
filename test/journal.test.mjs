@@ -13,7 +13,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, cpSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, call, createKey, createActKey, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sleep, ASK, MEMBER, SLOW } from './lib.mjs';
 import { startMock, TEST_DIR } from './start-mock.mjs';
 
 const keys = {};
@@ -113,6 +113,36 @@ test('Sparkie\'s turn: the owner\'s words, each tool call with its result, the t
 
 // Part of acceptance test T123: with the journal unwritable, a file write (save_file, and an app from an image) runs
 // nothing and the owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
+// The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
+// to an agent's key that looks or acts, an agent through ask_sparkie, or a member.
+test('words said to Sparkie and a chat\'s tool results: only the owner\'s own call reads them back', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  await say(chat, 'the NAS password is hunter2; what\'s running?');
+  const said = records().find(r => r.k === 'said' && r.chat === chat), tool = records().find(r => r.k === 'tool' && r.turn === said?.id && r.o);
+  assert.ok(said && tool, JSON.stringify(records().filter(r => r.chat === chat)));
+  const asks = [{ kind: 'said', limit: 20 }, { about: 'hunter2' }, { about: 'password' }, { kind: 'tool', limit: 20 }, { id: said.id }, { id: tool.id }];
+  const blind = text => !/hunter2/.test(text) && !text.includes(textOf(tool).slice(0, 60));
+  for (const token of [keys.look.token, keys.act.token]) {
+    for (const args of asks) {
+      const r = await call(token, 'recall', args);
+      assert.ok(blind(r.text), `${JSON.stringify(args)}: ${r.text}`);
+      if (args.id === said.id) assert.match(r.text, /^\[not_allowed\] Words said in a chat/);
+    }
+  }
+  // Through ask_sparkie: Sparkie's recall for an agent gets no more than the agent's own call.
+  script([{ match: '^recall what the owner said', rounds: [asks.slice(0, 4).map(arguments_ => ({ name: 'recall', arguments: arguments_ })), asks.slice(4).map(arguments_ => ({ name: 'recall', arguments: arguments_ }))] }]);
+  const from = existsSync(join(T.fleet.dir, 'model-requests.jsonl')) ? readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').length : 0;
+  const v = await call(keys.look.token, ASK, { message: 'recall what the owner said about the NAS' });
+  assert.equal(v.isError, false, v.text);
+  await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('Words said in a chat'), { what: 'the tool results at the brain' });
+  assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
+  // A member may not call it at all; the owner's own call reads both.
+  assert.equal((await api('/actions/recall', { method: 'POST', body: { kind: 'said' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
+  const own = await api('/actions/recall', { method: 'POST', body: { kind: 'said', limit: 20 } });
+  assert.ok(own.json.records.some(r => r.id === said.id && /hunter2/.test(r.said)), own.text);
+  assert.equal((await api('/actions/recall', { method: 'POST', body: { id: tool.id } })).json.text, textOf(tool).slice(0, 8000));
+});
+
 test('with the journal\'s disk full, a change written down first answers "couldn\'t write the record, nothing was changed" and nothing runs; a look, /stop and stop_model still work', { timeout: 180000 * SLOW }, async () => {
   const file = join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'full-disk.md');
   const size = () => readdirSync(T.fleet.journalDir).reduce((n, f) => n + statSync(join(T.fleet.journalDir, f)).size, 0);
@@ -173,7 +203,7 @@ test('a console killed between a start line and its end: after the restart, one 
   assert.match(needs.find(l => /cut off/.test(l)), /^A restart of Spark Console cut off “Save a file” on Spark 3 before its end was written\. It may or may not have happened and won’t be run again/);
   const mine = records(B.journalDir).filter(r => r.id === start.id);
   assert.deepEqual(mine.map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'cut-off']]);
-  assert.equal(records(B.journalDir).filter(r => r.start && r.act === 'save_file').length, 1, 'never run again');
+  assert.equal(records(B.journalDir).filter(r => r.start && r.act === 'save_file' && r.chat === cutChat).length, 1, 'never run again');
 });
 
 test('after the restart, recall still has the failed start\'s log (operation_log says expired)', { timeout: 60000 * SLOW }, async () => {
@@ -199,8 +229,9 @@ test('past its limit a record\'s text stops and the record says so; a journal pa
   await r.text();
   const said = records(B.journalDir).find(x => x.k === 'said' && x.chat === chat);
   assert.deepEqual([said.cut, said.o[1]], [2048, 2048]);
-  const full = await ok('recall', { id: said.id }, await keyOn(B), B.base);
+  const full = await (await post(B, '/actions/recall', { id: said.id })).json();
   assert.equal(full.text, long.slice(0, 2048));
+  assert.match((await call(await keyOn(B), 'recall', { id: said.id }, { url: B.mcp })).text, /^\[not_allowed\] Words said in a chat/);
   assert.match(full.stopped, /^Past 2 KB reading stopped/);
   assert.ok((await needsOn(B)).some(l => /^Spark Console’s journal on Spark 2 holds/.test(l)));
 });
