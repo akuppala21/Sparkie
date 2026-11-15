@@ -586,7 +586,8 @@ More checking agents are added only where the eval (10.1) shows they catch real 
   download, a search, the GitHub mirror), so anything else shows up.
   *(2026-11-11)* One outside service is spoken to on purpose once the owner connects it: Telegram's Bot API, outbound
   from Spark 2 only. What leaves is what 13 allows, to the owner's paired chat only, and each send is on the record
-  (its kind and size, not its text).
+  (its kind and size, not its text). *(2026-11-14)* And once its address is saved, the heartbeat: an empty GET to
+  hc-ping.com every 5 minutes (R32).
 - 8.13 *(v3)* **The Keeper.** A small service on every Spark, running as its own system user, installed and changed
   only by the owner (its installer needs sudo, once). Sparkie can't change it. It:
   - owns the installed Spark Console, its passkeys and access list, the secrets, the last-good builds, and the git
