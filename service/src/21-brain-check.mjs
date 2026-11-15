@@ -37,11 +37,12 @@ function brainProfiles() {
   const all = readKept(BRAIN_PROFILES_FILE)?.profiles;
   return all && typeof all === 'object' && !Array.isArray(all) ? all : {};
 }
-const brainProfileOf = m => brainProfiles()[brainKey(m)] || null;
+// (an entry counts only under its own key: one copied under another brain's name is no profile of that brain, R52)
+const brainProfileOf = m => { const k = brainKey(m), p = brainProfiles()[k]; return p && p.key === k ? p : null; };
 // The one writer of brain-profiles.json (R22). A new check of a setup keeps what the eval stored for it (evals), and
 // the newest 50 setups are kept. evals: the eval's results, given only by storeBrainEval (21-brain-eval.mjs).
 function saveBrainProfile(p, evals = null) {
-  const kept = brainProfiles(), all = { ...kept, [p.key]: { ...p, evals: evals || kept[p.key]?.evals || {} } };
+  const kept = Object.fromEntries(Object.entries(brainProfiles()).filter(([k, x]) => x?.key === k)), all = { ...kept, [p.key]: { ...p, evals: evals || kept[p.key]?.evals || {} } };
   const newest = Object.values(all).filter(x => x && typeof x === 'object').sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 50);
   writePrivate(BRAIN_PROFILES_FILE, { profiles: Object.fromEntries(newest.map(x => [x.key, x])) });
 }

@@ -44,7 +44,8 @@ function evalRecordProblem(r) {
   if (r.setFile !== undefined && !text(r.setFile, 200)) return 'setFile: the case file, as the runner names it';
   const sw = r.memorySwitches, names = v => Array.isArray(v) && v.length <= 20 && v.every(n => text(n, 40));
   if (sw !== undefined && !(sw && typeof sw === 'object' && names(sw.on) && names(sw.off))) return 'memorySwitches: {on, off}, the memory additions on and off for the run';
-  if (!text(r.at, 40) || Number.isNaN(Date.parse(r.at)) || Date.parse(r.at) > Date.now() + 300000) return 'at: when it ran';
+  // (only the runner's own form, so the text's order is time's order: R52)
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(String(r.at)) || Number.isNaN(Date.parse(r.at)) || Date.parse(r.at) > Date.now() + 300000) return 'at: when it ran, as the runner writes it (2026-11-15T09:40:00.000Z)';
   const b = r.brain;
   if (!b || typeof b !== 'object' || typeof b.standIn !== 'boolean' || !/^[0-9a-f]{16}$/.test(String(b.key)) || !['setup', 'model', 'engine', 'image'].every(k => b[k] == null || text(b[k], 300))
     || !Array.isArray(b.flags) || b.flags.length > 200 || !b.flags.every(f => text(f, 1000))) return 'brain: {standIn, key (16 hex digits), setup, model, engine, image, flags}';
@@ -116,12 +117,17 @@ function storeBrainEval(r, viewer = null) {
 // and the owner's yes to a waiting result.
 function keepEvalRecord(p, rec, setupId) {
   const slot = `${rec.reads}:${rec.set}`, set = evalSetToday();
+  // (the brain's own key, never only the file's; and a kept record is never replaced: R52)
+  if (!MAIN || p.key !== brainKey(MAIN)) throw new HttpError(409, 'Kept nothing: the brain check on record isn’t this brain’s.');
+  if ((p.evals?.[slot] || []).some(x => x?.at === rec.at && x?.build === rec.build)) {
+    return { stored: false, slot, kept: p.evals[slot].length, setup: setupId, says: 'Already kept: a result of this build from that moment is on record, and a kept result is never replaced. Nothing changed.' };
+  }
   const sealKey = evalSealKey(true);
   if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
   const kept = Object.fromEntries(Object.entries(p.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v)));
   // (a slot keeps the newest five full runs of the main set and the newest five of the rest: neither pushes out the other)
   const newest = list => list.sort((a, b) => String(b?.at).localeCompare(String(a?.at))), counts = x => evalMainSet(x) && x?.score?.full === true;
-  const all = [rec, ...(kept[slot] || []).filter(x => !(x?.at === rec.at && x?.build === rec.build))];
+  const all = [rec, ...(kept[slot] || [])];
   kept[slot] = newest([...newest(all.filter(counts)).slice(0, EVAL_KEEP), ...newest(all.filter(x => !counts(x))).slice(0, EVAL_KEEP)]);
   // (the slot this build counts on is kept first, then the newest)
   const ours = `${brainReadsNow()}:${set?.version}`;

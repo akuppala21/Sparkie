@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 67 parts in `service/src/`, joined in name order into `service/server.mjs` (17330 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 67 parts in `service/src/`, joined in name order into `service/server.mjs` (17341 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -733,7 +733,7 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 A few fixed requests to the brain's own port, with one toy tool written here (never the action registry, so nothing can run or change), and a profile of what came back in brain-profiles.json, kept per brain setup and shown in sparkie_setup. Two outcomes, not three grades (the one page): "checked" when it answers, calls the tool with arguments that fit three times out of three, and answers from the tool's result; "not checked" otherwise, with why. The rail (21-brain-rail.mjs, R52) reads it: while it says not checked, every change Sparkie asks for is a button. A profile belongs to what was …
 
 - **Area:** features. **Rules:** R22, R24, R26, R36. **Tests:** brain-check.test.mjs
-- **Lines:** 212
+- **Lines:** 213
 - **Owns:** brain-profiles.json (writers: saveBrainProfile)
 - **Timers:** none
 - **Wakes:** none
@@ -746,7 +746,7 @@ A few fixed requests to the brain's own port, with one toy tool written here (ne
 test/eval.mjs runs the eval's cases on a stand-in console with the real brain and writes one record of the run (R47). The owner's own call, POST /main/eval, keeps a record in the profile of the brain serving now (brain-profiles.json, written by saveBrainProfile, 21-brain-check.mjs), under evals["<reads>:<set>"]: what the brain read in the build that ran and the version of the case set. The newest five of each, and the six of those with the newest results. It refuses a record that isn't one (400); one run at another cap; one from another brain (the stand-in's on a real console, a real brain's …
 
 - **Area:** features. **Rules:** R47. **Tests:** brain-eval.test.mjs
-- **Lines:** 158
+- **Lines:** 164
 - **Owns:** cases.json (writers: none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it)
 - **Timers:** none
 - **Wakes:** none
@@ -759,12 +759,12 @@ test/eval.mjs runs the eval's cases on a stand-in console with the real brain an
 One brain check with two outcomes (design E 2.3, cut by the one page). Checked: the chat goes to Sparkie's own model, the brain check on record for this exact brain passed, and the eval on record for it, for what this build's brain reads and on this build's case set, is a full run that met the bar. Then a change the owner's words clearly ask for runs at once, as before. Otherwise every change Sparkie asks for is one button, the same as an unclear one: the check is in runAction (16-actions.mjs), under every way in (the page, Telegram, the agent door), and a lookup never meets it. Unknown is …
 
 - **Area:** features. **Rules:** R52, R47. **Tests:** brain-rail.test.mjs
-- **Lines:** 198
+- **Lines:** 202
 - **Owns:** eval-seal.json (writers: evalSealKey; beside secrets.json, outside the state folder)
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `brainRanLook`, `brainRanOf`, `brainLimits`, `brainSetupKey`, `evalSetLocked`, `evalSetToday`, `evalSealKey`, `evalSealOf`, `evalSealed`, `evalMainSet`, `evalCouldUnlock`, `evalCounts`, `brainRail`, `railWords`, `evalBar`, `evalWait`, `evalWaitingGone`, `evalYes`, `evalWaitingNeeds`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `BUILD`, `HttpError`), `02-ssh` (`run`, `fields`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `13-main-model` (`MAIN`, `mainNode`, `mainSnapshots`, `chatTarget`, `mainBusy`), `14-chats` (`chatData`, `LIMITS`, `sparkieMessageChoices`, `saveChats`), `14-rounds` (`turnBudgets`), `16-actions` (`action`), `17-changes` (`question`, `pendingChoices`), `18-workflows` (`WORKFLOW_LOCK`), `20-mcp` (`audit`), `21-brain-check` (`brainSetupOf`, `brainReadsNow`, `brainProfileOf`, `checkWhen`), `21-brain-eval` (`EVAL_EXPECT`, `evalSetNow`, `evalRecordProblem`, `evalScore`, `keepEvalRecord`), `21-guide` (`toolCap`), `22-passkey` (`passkeys`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `BUILD`, `HttpError`), `02-ssh` (`run`, `fields`), `03-identity` (`accessList`, `clean`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `13-main-model` (`MAIN`, `mainNode`, `mainSnapshots`, `chatTarget`, `mainBusy`), `14-chats` (`chatData`, `LIMITS`, `sparkieMessageChoices`, `saveChats`), `14-rounds` (`turnBudgets`), `16-actions` (`action`), `17-changes` (`question`, `pendingChoices`), `18-workflows` (`WORKFLOW_LOCK`), `20-mcp` (`audit`), `21-brain-check` (`brainSetupOf`, `brainReadsNow`, `brainProfileOf`, `brainKey`, `checkWhen`), `21-brain-eval` (`EVAL_EXPECT`, `evalSetNow`, `evalRecordProblem`, `evalScore`, `keepEvalRecord`), `21-guide` (`toolCap`), `22-passkey` (`passkeys`)
 - **Used by:** `15-routes`, `16-actions`, `16-reads`, `20-needs`, `21-brain-check`, `21-brain-eval`, `24-handler`
 
 ### `21-door.mjs`: the app door: the owner's kept apps from anywhere (R40)

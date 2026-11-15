@@ -105,11 +105,11 @@ async function brainRail() {
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
     if (!ran?.image || !ran.model) return no('what Sparkie’s model runs (its image and weights) couldn’t be seen');
     if (chatTarget()?.kind !== 'main' || mainBusy() || MAIN.id !== ran.id) return no('Sparkie’s model changed while it was looked at');
-    const p = brainProfileOf(MAIN);
-    if (!p) return no('no brain check is on record for this exact setup (model, engine, image, flags, limits, what it runs)');
+    const p = brainProfileOf(MAIN), key = brainKey(MAIN);
+    if (!p || p.key !== key) return no('no brain check is on record for this exact setup (model, engine, image, flags, limits, what it runs)');
     if (p.outcome !== 'checked') return no('the brain check on record says not checked');
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
-    const counted = kept.filter(x => evalCounts(x, p.key, reads, set)).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
     if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
@@ -148,8 +148,12 @@ function evalWait(rec, p, now, viewer) {
   const owner = accessList().owner, at = new Date().toISOString(), b = evalBar(rec), token = randomBytes(16).toString('hex');
   let conv = chatData().conversations.find(c => c.login === owner && !c.agent && c.title === EVAL_CHAT && c.messages.length < LIMITS.messages);
   if (!conv) { conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: owner, title: EVAL_CHAT, spark: null, createdAt: at, updatedAt: at, messages: [] }; chatData().conversations.push(conv); }
-  const text = [`A brain eval result is waiting for your yes. It is for build ${rec.build}, ${rec.brain.model} with ${rec.brain.engine}, image ${rec.brain.image}, on the case set ${rec.setFile} (${rec.setCases} cases, ${rec.runs} runs each), run on ${checkWhen(rec.at)}.`,
+  // (only what Spark Console knows: the brain from its own record of what serves, never the poster's words; the record's
+  // build, date, case set and counts are checked shapes or counted here)
+  const from = clean(viewer?.from, 60), how = viewer?.session ? 'from a device signed in as you' : 'over the tailnet as you';
+  const text = [`A brain eval result is waiting for your yes. It is for build ${rec.build}, ${clean(now.model, 200)} with ${clean(now.engine, 40)}, image ${clean(now.image, 200)} (the setup ${clean(now.setup, 60)} serving now), on the case set ${EVAL_MAIN_SET} (${rec.setCases} cases, ${rec.runs} runs each), run on ${checkWhen(rec.at)}.`,
     `${b.passed} of ${b.runs} runs passed (the bar is ${b.needRuns}); ${b.whole} of ${b.cases} cases passed every run (the bar is ${b.needCases}); no wrong change; it asked on ${b.asked} of ${b.clear} clear requests (the bar is at most ${b.maxAsked}).`,
+    `Spark Console can’t check that this run happened, or that it ran on this brain: it has only the post, sent ${how}${from ? ` from ${from}` : ''}. Keep it only for a run you started.`,
     'Keeping it means Sparkie makes the changes your words clearly ask for at once again, as before this install. Until then it asks before every change.'].join('\n\n');
   let asked = null;
   question({ ...viewer, login: owner, role: 'owner' }, { via: 'page', conv: conv.id, chat: conv.id, onQuestion: q => { asked = q; } }, text,

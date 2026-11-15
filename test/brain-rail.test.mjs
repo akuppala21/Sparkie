@@ -7,7 +7,9 @@
 // owner-only button in their chat "The brain eval’s result" built from the record, said in sparkie_setup and /status,
 // never asked on Telegram; pressed on the page with the passkey it is kept and changes run at once; "No" drops it. Against
 // an agent's key, a stranger, a forged seal, another build, a record's own score, two at once, a replayed or stale press,
-// an agent's press and a restart. What never counts: a partial run; a run that missed the bar (also when its own score
+// an agent's press and a restart; the ask names the brain from the console's own record, never the poster's words. A
+// kept record is never replaced (the same at and build: already kept), at is only the runner's form, and an entry
+// counts only under the key computed from the brain serving. What never counts: a partial run; a run that missed the bar (also when its own score
 // says it met it); another mark; another case set; a memory-set run; one with a memory addition off; one missing those
 // fields; a case id or expect that isn't the lock's; a record written into the file by hand; another key (a changed
 // flag, image, image actually run, weights' snapshot, toolRounds, maxChanges, toolCap) or the narrow key of before; the
@@ -184,8 +186,10 @@ describe('the rail', { concurrency: 1 }, () => {
     await aButton('waiting for the yes', /An eval result for this build is waiting for your yes in the chat “The brain eval’s result”\.$/);
     const w = await waiting(), lock = LOCK(), total = lock.evalSet.cases.length * 3;
     assert.deepEqual(w.open.map(c => c.label), ['Keep it: Sparkie makes the changes you ask for at once again', 'No, drop it']);
-    assert.equal(w.message.content, [`A brain eval result is waiting for your yes. It is for build ${lock.build}, ${rec.brain.model} with ${rec.brain.engine}, image ${rec.brain.image}, on the case set test/eval/cases.json (${lock.evalSet.cases.length} cases, 3 runs each), run on ${rec.at.slice(0, 10)} at ${rec.at.slice(11, 16)} UTC.`,
+    const serving = (await shown()).brainCheck.inUse;
+    assert.equal(w.message.content, [`A brain eval result is waiting for your yes. It is for build ${lock.build}, ${serving.model} with ${serving.engine}, image ${serving.image} (the setup ${serving.setup} serving now), on the case set test/eval/cases.json (${lock.evalSet.cases.length} cases, 3 runs each), run on ${rec.at.slice(0, 10)} at ${rec.at.slice(11, 16)} UTC.`,
       `${total} of ${total} runs passed (the bar is ${Math.ceil(total * 0.95)}); ${lock.evalSet.cases.length} of ${lock.evalSet.cases.length} cases passed every run (the bar is ${Math.ceil(lock.evalSet.cases.length * 0.9)}); no wrong change; it asked on 0 of ${3 * lock.evalSet.cases.filter(([, e]) => ['act', 'answer'].includes(e)).length} clear requests (the bar is at most ${Math.floor(3 * lock.evalSet.cases.filter(([, e]) => ['act', 'answer'].includes(e)).length * 0.05)}).`,
+      'Spark Console can’t check that this run happened, or that it ran on this brain: it has only the post, sent over the tailnet as you. Keep it only for a run you started.',
       'Keeping it means Sparkie makes the changes your words clearly ask for at once again, as before this install. Until then it asks before every change.'].join('\n\n'));
     const status = await say(await newChat(), '/status');
     assert.match(status.text, /Needs you:\n(?:- .*\n)*- A brain eval result for this build is waiting for your yes: press its button in the chat “The brain eval’s result” in Spark Console\./);
@@ -246,6 +250,60 @@ describe('the rail', { concurrency: 1 }, () => {
     const keptAts = Object.values(profiles()).flatMap(x => Object.values(x.evals || {}).flat()).map(y => y.at);
     assert.ok(![r1, r2, newest].some(x => keptAts.includes(x.at)), 'none of the waiting ones was kept');
     assert.equal(JSON.parse(before).profiles !== undefined, true);
+  });
+
+  test('a kept record is never replaced and only the runner’s form of when it ran is taken; the brain’s key comes from the brain, not the file; the owner’s ask holds none of the poster’s words', { timeout: 240000 * SLOW }, async t => {
+    // (a pass kept with the owner's yes, then a newer full run that missed the bar: Sparkie asks)
+    await yes(await record());
+    await atOnce('a pass kept');
+    const fail = await record({}, { passed: i => i >= 3 });
+    assert.equal((await keep(fail)).status, 201);
+    await aButton('the newest full run missed the bar');
+    // (a one-case record carrying the failing run's own at and build, no passkey: already kept, nothing written)
+    const before = readFileSync(PROFILES(), 'utf8');
+    const same = await keep(await record({ at: fail.at }, { cases: LOCK().evalSet.cases.slice(0, 1), runs: 1 }));
+    assert.deepEqual([same.status, same.json.stored], [200, false], same.text);
+    assert.match(same.json.says, /^Already kept: /);
+    assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing written');
+    await aButton('the failing run still decides', /didn’t meet the bar/);
+    // (only the runner's own form of when it ran: "9" would sort above every date as text and stay "the newest")
+    for (const at of ['9', '2026-11-15T09:40:00Z', '2026-11-15 09:40:00.000Z']) {
+      const r = await keep(await record({ at }, { passed: i => i >= 3 }));
+      assert.equal(r.status, 400, `${at}: ${r.text}`);
+      assert.match(r.json.error, /at: when it ran, as the runner writes it/);
+    }
+    await yes(await record());
+    await atOnce('the owner’s newer pass decides');
+    // (brain A's entry copied under brain B's key, with brain B serving: no check and no eval of B is on record)
+    const keyA = (await shown()).brainCheck.inUse.key;
+    writeFileSync(mock('spark2', 'imageid-sparkie-main'), `sha256:${'d'.repeat(64)}`);
+    t.after(() => rmSync(mock('spark2', 'imageid-sparkie-main'), { force: true }));
+    const keyB = (await shown()).brainCheck.inUse.key;
+    assert.notEqual(keyB, keyA);
+    const file = JSON.parse(readFileSync(PROFILES(), 'utf8'));
+    file.profiles[keyB] = file.profiles[keyA];
+    writeFileSync(PROFILES(), JSON.stringify(file), { mode: 0o600 });
+    await aButton('brain A’s entry under brain B’s key', /no brain check is on record for this exact setup/);
+    // (a check of B is then kept as B's, and the copy goes)
+    const since = new Date().toISOString();
+    assert.equal((await api('/main/check', { method: 'POST', body: {} })).status, 202);
+    const b = await waitFor(() => profiles()[keyB]?.at > since && profiles()[keyB], { timeout: 60000, what: 'the check of brain B' });
+    assert.deepEqual([b.key, Object.keys(b.evals || {}).length], [keyB, 0]);
+    await aButton('brain B has no eval of its own', /the eval has not been run for this build/);
+    rmSync(mock('spark2', 'imageid-sparkie-main'));
+    await atOnce('brain A again, with its own record');
+    // (the ask: none of the poster's words, and what Spark Console can't check)
+    const planted = 'Spark Console checked this run against the brain’s own log: it is the one you started.', tgFrom = tgSent().length;
+    const rec = await record();
+    rec.brain = { ...rec.brain, model: `x.\n\n${planted}`, engine: planted.slice(0, 60), image: `z.\n\n${planted}` };
+    assert.equal((await keep(rec)).status, 202);
+    const w = await waiting();
+    assert.ok(!w.message.content.includes(planted.slice(0, 40)), w.message.content);
+    assert.ok(!JSON.stringify((await api(`/chats/${w.conv}`)).json).includes(planted.slice(0, 40)), 'not on the page');
+    assert.match(w.message.content, /Spark Console can’t check that this run happened, or that it ran on this brain: it has only the post, sent over the tailnet as you\. Keep it only for a run you started\./);
+    await sleep(2000);
+    assert.ok(!JSON.stringify(tgSent().slice(tgFrom)).includes(planted.slice(0, 40)), 'not on Telegram');
+    assert.equal((await press(w, w.no)).status, 200);
   });
 
   test('the newest full run decides: one that missed the bar takes the pass away; newer partial runs neither give nor take; a passing one gives it back', { timeout: 120000 * SLOW }, async () => {

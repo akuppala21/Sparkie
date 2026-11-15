@@ -10,7 +10,7 @@ Run it on a compute Spark that is on (never Spark 2, the hub: contract 6.23), fr
 that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`sparkie_setup`'s `savedSetups`, `current`):
 1. The build about to go in, at its own cap: `node test/eval.mjs --brain-url https://<Spark 2>:8443/console/api
    --setup <id>`. The relay sends only the brain's requests to the one model address. The run reads which setup Spark 2
-   serves and what it runs from its `sparkie_setup`, and refuses another `--setup` (R52).
+   serves and what it runs from its `GET /v1/models`, and refuses another `--setup` (R52).
 2. What the cap costs: the same with `--cap all` (its results file only; never kept in a profile).
 3. The installed build as it is: a copy of its tree beside this one, then from this tree `--tree <that copy>` with the
    same options. Its record names its build; a build from before the mark has `reads: null`.
