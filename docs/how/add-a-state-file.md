@@ -9,7 +9,8 @@ new things go", row "A state file".
 
 ## Also update
 
-- `docs/state.md`: a row for the new fact.
+- `docs/state.md`: a row for the new fact. (A fact kept anywhere but the state folder, or only in memory, has its
+  row in `docs/state-outside.md` instead.)
 - The state copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`) and the install snapshot (`on_exit` and its
   `save` in `deploy/host-on-portal.sh`), if it must be left out.
 - `COPY_IGNORES` (`20-state-copy.mjs`), if Spark Console rewrites it by itself as it watches or logs: a change to it

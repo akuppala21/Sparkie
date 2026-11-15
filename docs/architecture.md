@@ -81,7 +81,7 @@ flowchart TD
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
   TG -->|"polled from Spark 2: the paired chat's words, a turn with ctx.channel telegram"| CHAT
-  TG -->|"a button pressed there: runChoice, via telegram, plain buttons only"| RUN
+  TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
   CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
   PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
@@ -130,7 +130,7 @@ flowchart TD
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
-list (`docs/state.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
+list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
 
 ## 3. One sentence, start to finish
 
