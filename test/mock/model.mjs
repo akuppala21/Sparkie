@@ -44,7 +44,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // What the main model does with tools, by the owner's words. A test's own rules come first:
 // $MOCK_DIR/model-script.json = [{ "match": "<regex>", "calls": [{ "name": "...", "arguments": { ... } }] }], or with
 // "rounds": [[calls], [calls], …] for a model that looks something up and then acts on what it saw (round 2 comes after
-// round 1's results).
+// round 1's results). A call is made whether or not that tool was offered (Spark Console runs any action it is asked for:
+// R46), so a scripted call no longer shows a tool was offered; "offered": true on a call makes it only when it was
+// (test/tools.test.mjs tests what is offered).
 const sparkOf = n => (n ? { spark: `spark${n}` } : {});
 const RULES = [
   [/\bwhat(?:'|’)?s running\b|\bwhat is running\b/i, () => [[{ name: 'running_models', arguments: {} }]]],
@@ -130,7 +132,7 @@ async function mainReply(b, port, res, log = true) {
     try { appendFileSync(`${DIR}/model-requests.jsonl`, `${JSON.stringify(entry)}\n`); } catch {}
     if (tools.length && round === 0) {
       try {
-        writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools }));
+        writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools, params: entry.params }));
         renameSync(`${DIR}/brain-sent.json.tmp`, `${DIR}/brain-sent.json`);
       } catch {}
     }
@@ -162,8 +164,9 @@ async function mainReply(b, port, res, log = true) {
   }
   const s = stream(res);
   s.send({ role: 'assistant', reasoning_content: 'Let me look at the snapshot.' });
-  // The owner's words (or the results of the round before) call for tools: call them.
-  const calls = tools.length && ['user', 'tool'].includes(last.role) ? (roundsFor(words)[round] || []).filter(c => tools.some(t => t.function?.name === c.name) || c.offered === false) : [];
+  // The owner's words (or the results of the round before) call for tools: call them (offered or not, unless a call says
+  // "offered": true). A turn with no tools at all (a member's) calls none.
+  const calls = tools.length && ['user', 'tool'].includes(last.role) ? (roundsFor(words)[round] || []).filter(c => c.offered !== true || tools.some(t => t.function?.name === c.name)) : [];
   if (calls.length) {
     for (const [i, c] of calls.entries()) {
       const args = JSON.stringify(c.arguments || {}), cut = Math.ceil(args.length / 2);

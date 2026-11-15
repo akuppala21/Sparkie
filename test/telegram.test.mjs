@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, writeFileSync, rmSync, statSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, MEMBER, useFleet, api, sleep, waitFor, auditLines, chatMessages, choose, createKey, call, agentSettings, SLOW } from './lib.mjs';
+import { T, REPO, MEMBER, useFleet, api, sleep, waitFor, auditLines, chatMessages, choose, createKey, call, agentSettings, newChat, say, CORE_TOOLS, SLOW } from './lib.mjs';
 import { serviceConfig, startMock, TEST_DIR } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
@@ -165,7 +165,28 @@ describe('Telegram', { concurrency: 1 }, () => {
       const asked = requests().findLast(x => x.words === 'what\'s running');
       assert.match(asked.system, /writing from Telegram/);
       for (const t of ['remember', 'forget_memory', 'save_workflow', 'forget_workflow']) assert.ok(!asked.tools.includes(t), `${t} offered`);
-      assert.ok(asked.tools.includes('undo_update') && asked.tools.includes('start_model'));
+      // Telegram is offered what the page is for the same words (R46), less the page-only tools: here the core, start_model
+      // in it.
+      const pageOnly = ['remember', 'forget_memory', 'save_workflow', 'forget_workflow'];
+      await say(await newChat(), 'what\'s running');
+      const onPage = requests().findLast(x => x.words === 'what\'s running' && !/writing from Telegram/.test(x.system));
+      assert.deepEqual([...asked.tools].sort(), onPage.tools.filter(t => !pageOnly.includes(t)).sort());
+      assert.deepEqual([...asked.tools].sort(), CORE_TOOLS.filter(t => !pageOnly.includes(t)).sort());
+      assert.ok(asked.tools.includes('start_model'));
+      // undo_update, not offered for "revert that" (it opens control, not updates), still reaches runAction from Telegram
+      // when called, and gives what it gives today: the owner-only button, waiting in Spark Console.
+      script([{ match: '^revert that$', calls: [{ name: 'undo_update', arguments: {} }] }]);
+      try {
+        const before = tgCalls().length;
+        await tgSay('revert that');
+        const [reply] = await sentAfter(before);
+        assert.match(reply.body.text, /That one waits for you in Spark Console\.$/);
+        assert.equal(reply.body.reply_markup, undefined, 'no button for it in Telegram');
+        assert.ok(!requests().findLast(x => x.words === 'revert that' && x.round === 0).tools.includes('undo_update'), 'undo_update was offered');
+        const line = auditLines().findLast(l => l.action === 'undo_update');
+        assert.deepEqual([line.outcome, line.channel], ['question', 'telegram']);
+        assert.ok(!auditLines().some(l => l.action === 'rollback'), 'nothing was undone');
+      } finally { noScript(); }
     });
 
     test('a long answer is split under 4,096 characters a message; a long message is cut to 4,000', async () => {

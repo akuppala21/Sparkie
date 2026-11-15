@@ -128,6 +128,23 @@ describe('shape', () => {
   test('docs/rules.md not what docs/rules/ makes', () => fails({ 'docs/rules.md': '# Rules\n\n- R1: something else.\n' }, 'shape', /docs\/rules\/.*make\.mjs/));
 });
 
+describe('tool groups (R46)', () => {
+  // A tree whose actions part has GROUP_WORDS: each action's group is read from its own line.
+  const WORDS = "const GROUP_WORDS = [\n  ['dig', 'why something failed', /\\bwhy\\b/i],\n  ['find', 'which model', /\\bmodels?\\b/i],\n];\n";
+  const grouped = list => ({ 'service/src/16-actions.mjs': `function action(a) {}\nasync function runAction(name) {}\n${WORDS}${list.map(([name, group]) =>
+    `action({\n  name: '${name}', title: 'A ${name}', kind: 'read', scope: 'fleet:read', who: 'owner',${group ? ` group: '${group}',` : ''}\n});\n`).join('')}// R1, contract 8.3, T1\n` });
+  // (action names are letters and underscores)
+  const many = (n, group) => Array.from({ length: n }, (_, i) => [`look_${group}_${String.fromCharCode(97 + i)}`, group]);
+  test('every action in a group, the core within 12 and each group within 6: no problem', () => {
+    assert.deepEqual(problemsWith(grouped([['fleet_status', 'core'], ...many(11, 'core'), ...many(6, 'dig'), ...many(1, 'find')])).map(say), []);
+  });
+  test('an action with no group: the message says what to add, and where', () => fails(grouped([['fleet_status', 'core'], ['operation_log', null]]), 'groups',
+    /^the action operation_log has no group: add group: '…' at the end of its line \(name: 'operation_log', title: …\), with core or one of dig, find \(GROUP_WORDS in service\/src\/16-actions\.mjs\)$/));
+  test('a group GROUP_WORDS doesn’t have', () => fails(grouped([['fleet_status', 'core'], ['operation_log', 'digging']]), 'groups', /operation_log has the group digging, which isn’t one/));
+  test('a group over six', () => fails(grouped([['fleet_status', 'core'], ...many(7, 'dig')]), 'groups', /^the group dig has 7 actions .*at most 6/));
+  test('a core over twelve', () => fails(grouped([['fleet_status', 'core'], ...many(12, 'core')]), 'groups', /^the core has 13 actions .*at most 12/));
+});
+
 describe('what is never checked', () => {
   test('dated records: docs/history/, docs/design-2026-11-13/ and docs/review-astra/', () => {
     const fault = '# Old\n\nR99, `16-actions.mjs:286`, 26 reads, 15 changes, `propose_start`, `docs/gone.md`.\n';
