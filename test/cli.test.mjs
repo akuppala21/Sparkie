@@ -1,3 +1,8 @@
+// Covers: `spark`: help (`spark`, `help`, `--help`, `-h` exit 0; `ask_sparkie` listed), positional and `--name value` /
+// `--name=value` arguments, `--json`, exit codes 0 / 1 (action failed) / 2 (usage, key, address, unreachable); `spark
+// ask "…"` (reply and conversation id, `--conversation`, `--message`, `--json`, choice lines with the command that
+// takes each, `--choice`, no control characters printed, usage errors).
+//
 // The spark CLI (tools/spark.mjs): help, positional args, --name value / --name=value, --json, exit codes 0/1/2, and
 // `spark ask` (talking with Sparkie through ask_sparkie; its waiting while Sparkie is still answering is in ask.test.mjs).
 import { test, describe, after } from 'node:test';

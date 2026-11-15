@@ -2,11 +2,12 @@
 
 Written by `node tools/make.mjs` from the rule files and the tests; don’t edit it by hand. One row per rule and per
 contract requirement. To change a row, change what it is made from: a rule file’s “Checked by” and “Today”, or a
-test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`).
+test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`), or part of one
+(`// T54 (part): which part`).
 
 - **built**: a test that is here today holds it, and nothing is marked short.
 - **partly**: a test holds part of it. The rule’s file marks where the code falls short today or a test still to
-  add, or only some of the requirement’s acceptance tests have a test.
+  add, or only some of the requirement’s acceptance tests have a test, or a test holds only part of one.
 - **no test yet**: no test holds it. It may still be in the code; the note says what checks it instead, if anything.
 
 ## Rules (`docs/rules/`)
@@ -97,7 +98,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.10 | no test yet |  | T106: no test holds it yet |
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
-| 5.13 | no test yet |  | T123: no test holds it yet |
+| 5.13 | partly | `test/journal.test.mjs` (“with the journal's disk full, a change written down first answers "couldn't”, “a console killed between a start line and its end: after the restart, one "cut”) | holds part of T123: “with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the owner is told why.”, “killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run again.” |
 | 5.14 | no test yet |  | T137: no test holds it yet |
 | 6.1 | no test yet |  | no acceptance test lists it |
 | 6.2 | no test yet |  | T2, T17: no test holds them yet |

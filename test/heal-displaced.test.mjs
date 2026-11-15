@@ -1,3 +1,7 @@
+// Covers: Only the newest model the owner wants on a Spark comes back (gate, 2026-11-13): with a model started on Spark
+// 3 since, and down too, the older pair across Spark 3 and 4 stays down (`heal-skipped`, saying why) and nothing
+// starts; once the owner starts the pair again it is the newest there, and a part that stops is brought back as before.
+//
 // Self-healing brings back only the newest model the owner wants on a Spark (gate, 2026-11-13). A two-Spark model was
 // down, and the owner had started another model on one of its Sparks since. When that newer model went down too, two
 // healers raced for the Spark: the watcher restarting the newer one, and the healing pass bringing the older pair back.

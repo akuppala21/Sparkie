@@ -7,7 +7,6 @@
 // masking, also of env-style names ending in `_KEY` or `_PASS`, a passphrase and `PGPASS` in a container's log, never
 // of a path to a key file (F20); `search_huggingface` on the fixture (`test/mock/hf-fixture.json`, test/README.md).
 //
-// Agent door (MCP): handshake, every read tool with valid and invalid arguments, auth, key lifecycle, masking, rate limit.
 // What a key that can act sees and does (start_model, stop_model, restart_model) is in change.test.mjs.
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
 import { test, describe } from 'node:test';

@@ -1,3 +1,10 @@
+// Covers: `ask_sparkie`: a conversation tagged with the agent (owner's list shows `agent`, messages carry `from`), the
+// answer's shape, continuing and fetching it, audit lines; a look-only key's change requests turned down in the reply;
+// another agent's conversation → 404; argument checks; choices for a change that wasn't clearly asked for, taken with
+// `{conversation, choice}` (not by another agent; a key made look-only since gets the refusal); a start that stops
+// something asks first; an operation's result (completed or failed) posted into the conversation; one answer at a time
+// per agent, two agents at once, never the owner's slots; a 45 s answer: `thinking`, and `spark ask` keeps waiting.
+//
 // ask_sparkie: another agent talks with Sparkie in plain words through the agent door (and `spark ask` in the CLI).
 // {message} starts a conversation tagged with the agent; {conversation} waits for or fetches the answer;
 // {conversation, choice} takes one of Sparkie's buttons (a key the owner let act only). The answer is
