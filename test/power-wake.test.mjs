@@ -144,6 +144,10 @@ describe('a start wakes only the Spark it needs (D5)', { concurrency: 1 }, () =>
     const before = plugs.commands.length;
     const r = await act('start_model', { model: 'qwen3.5-0.8b' });
     assert.deepEqual(r.json?.poweringOn, ['spark3'], r.text);
+    // (and the start after the wake runs: its version is picked from the live look at Spark 3, R56)
+    const end = await finished(r.json.operation);
+    assert.equal(end.status, 'completed', JSON.stringify(end));
+    assert.ok((await look('running_models')).models.some(x => x.spark === 'spark3' && /Qwen3\.5-0\.8B/.test(x.container)), 'it runs on Spark 3');
     await settle(r, 'spark3');
     assert.deepEqual(commandsSince(before), [{ node: 2, command: 'on' }], 'only Spark 3');
     assert.ok(offline().includes('spark4'));

@@ -56,6 +56,8 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R52](rules/R52.md): The rail (contract 3.11; the one page, milestone 5 and section 7, item 13): a change Sparkie asks for runs at once only while its brain is *checked*; otherwise it is one button, …
 - [R53](rules/R53.md): What the console runs as the owner reads nothing from the owner's home.
 - [R55](rules/R55.md): What `run` does with a change (R42 is the root helper and the look).
+- [R56](rules/R56.md): Asleep, and waking for work (contract 9.22 and 9.28; it carries on from R41, which is full).
 - [R57](rules/R57.md): A saved workflow run as a workload (contract 9.27; design D 2.3 as cut): what R35 says of its steps, its job waits and its clean-up holds; this rule adds what outlives the process.
 - [R58](rules/R58.md): Updates from chat (design C 2.3, step 5; contract 6.24): `check_update` (a lookup in the group `updates`, the owner's and any read key's) runs `pull.sh check --json` on Spark 2, …
 - [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).
+- [R61](rules/R61.md): What the runner does with a change (R55 is the sorter, R42 the root helper and its walls).
