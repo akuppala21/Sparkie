@@ -6,8 +6,8 @@
 // at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an
 // operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens
 // reading. A call to an action that wasn't offered runs through runAction like any other call, and opens its group; so
-// does guide {tools: "<group>"}. With more groups than fit, the oldest one opened by words closes. The groups last for
-// the request and its carry-on turns (kept on the chat's carry-on task). The agent door hides nothing.
+// does guide {tools: "<group>"}. With more groups than fit, the newest one the words opened gives way, so a request
+// keeps the groups it began with. The groups last for the request and its carry-on turns (kept on its carry-on task). The agent door hides nothing.
 // guide answers {tools} only, for now; the rest of it (rules, cards, words) comes later.
 const TOOL_CAP = 24;   // limit: tools sent to the brain in one round: the core and two groups
 const GROUP_SIZE = 6;  // limit: actions in one group (tools/check-docs.mjs holds it, and the core's)
@@ -33,28 +33,34 @@ function requestGroups(cap, kept = []) {
   for (const o of Array.isArray(kept) ? kept : []) openGroup(groups, o?.group, o?.by);
   return groups;
 }
-// Opens a group (true when it is open afterwards). Past the cap, the oldest group opened by words closes, else the oldest.
+// Opens a group (true when it is open afterwards). Past the cap the words' newest group gives way: a group the words
+// open after the ones that fit isn't opened, and one that state, a call or guide needs closes the newest group the
+// words opened (else the oldest), so a request keeps the groups it began with.
 function openGroup(groups, group, by) {
   if (!TOOL_GROUPS.has(group)) return false;
   if (groups.open.some(o => o.group === group)) return true;
   const most = groupsUnder(groups.cap);
-  if (most < 1) return false;
+  if (most < 1 || (by === 'words' && groups.open.length >= most)) return false;
   groups.open.push({ group, by: String(by || 'call') });
   while (groups.open.length > most) {
-    const words = groups.open.findIndex(o => o.by === 'words' && o.group !== group);
+    const words = groups.open.findLastIndex(o => o.by === 'words' && o.group !== group);
     groups.open.splice(words >= 0 ? words : groups.open.findIndex(o => o.group !== group), 1);
   }
   return true;
 }
-// The groups the owner's words open, in the order the words come. A saved workflow named by its title opens routines.
+// The groups the owner's words open, in the order the words come. A saved workflow named by any word of its name of four
+// letters or more ("run my coding thing" for "coding mode"), other than words most requests have, opens routines.
+const SAVED_COMMON = new Set(['mode', 'with', 'from', 'that', 'this', 'then', 'when', 'what', 'start', 'stop', 'model', 'models', 'spark', 'sparks', 'list', 'check', 'test', 'show']);
 function wordGroups(text) {
   const said = normQuotes(text), low = said.toLowerCase(), at = new Map();
   for (const [group, , re] of GROUP_WORDS) { const i = said.search(re); if (i >= 0) at.set(group, i); }
   let saved = [];
   try { saved = savedWorkflows(); } catch {}
   for (const w of saved) {
-    const title = String(w?.title || '').toLowerCase(), i = title.length >= 3 ? low.indexOf(title) : -1;
-    if (i >= 0 && !(at.get('routines') <= i)) at.set('routines', i);
+    for (const word of String(w?.title || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length >= 4 && !SAVED_COMMON.has(x))) {
+      const i = low.search(new RegExp(`\\b${word}\\b`));
+      if (i >= 0 && !(at.get('routines') <= i)) at.set('routines', i);
+    }
   }
   return [...at].sort((a, b) => a[1] - b[1]).map(([group]) => group);
 }

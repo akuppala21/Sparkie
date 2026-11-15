@@ -539,6 +539,8 @@ const handler = async (req, res) => {
       ownerOnly();
       return await telegramRoute(req, res, path, viewer);
     }
+    // The outside heartbeat (20-beat.mjs, R32): saving its address needs the passkey (the gate above); removing it never does.
+    if (path === '/heartbeat') { ownerOnly(); return await heartbeatRoute(req, res, viewer); }
     if (path === '/rollback') {
       ownerOnly();
       const snap = lastSnapshot();
