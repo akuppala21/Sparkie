@@ -53,6 +53,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
+| [R42](rules/R42.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
