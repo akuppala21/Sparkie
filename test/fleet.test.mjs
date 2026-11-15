@@ -1,3 +1,11 @@
+// Covers: `/health` and its `build` (the first 12 hex of sha256 of `server.mjs` + `dig.mjs` + `passkey.mjs`), its new
+// fields, also on the private socket; the watcher (`workloads` lists every container after a few seconds; a container
+// stopping, starting or disappearing, and a Spark going offline and coming back, become `fleet_events`; `workloads
+// detail` hides secrets); refusing requests whose `X-Forwarded-For` is a Spark's address; oversized bodies get 413
+// JSON; `/v1`: `sparkie`, Sparkie's own model id and no model are answered, any other model → 404 naming `sparkie`;
+// `/status` without the removed `model`/`cluster`/ray/codex fields; `internet` is null (not known) while Tailscale's
+// answer doesn't name the main address (and `/status` says not known), true or false once it does.
+//
 // The service as a whole on the stand-in fleet: /health and its build id, the watcher (workloads, fleet_events, Sparks
 // going offline and coming back), requests from the Sparks' own addresses, and oversized bodies.
 import { test, describe } from 'node:test';
