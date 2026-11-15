@@ -3655,9 +3655,10 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
     `You are ${MAIN?.assistant || 'Sparkie'}, the assistant for this team's NVIDIA DGX Spark machines.`,
     tools ? [
       'Be concise and practical. You have tools: use them to look things up instead of guessing, and say what you found.',
-      // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
-      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
-        : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
+      // From Telegram (R32): saved workflows and updates are changed in Spark Console, so those tools aren't offered;
+      // memory is remembered and forgotten there as here (R25).
+      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.' : null,
+      'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
       'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
@@ -3880,7 +3881,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   // or memory that can't be read) frees the chat and the slot too. No catch: the caller still gets the error.
   try {
     emit({ type: 'started' });
-    // From Telegram, memory and saved workflows aren't offered (R32: they're changed in Spark Console).
+    // From Telegram, saved workflows aren't offered (R32: they're changed in Spark Console); memory is (R25).
     const tools = viewer.role === 'owner' ? sparkieTools().filter(t => !(channel && PAGE_ONLY_TOOLS.has(t.function.name))) : [];
     const said = normQuotes(text);
     Object.assign(turn, { tools, said });
@@ -4703,7 +4704,8 @@ function changeIntent(text) {
   return { asked: [...asked], negated: [...negated], mixed, keepOnly: negated.has('stop') && !worded.has('stop') };
 }
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
-// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
+// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
+// owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
@@ -4715,9 +4717,7 @@ const PAGE_ONLY = new Set([
   'forget_workflow',
 ]);
 const PAGE_ONLY_TOOLS = new Set([
-  'forget_memory',
   'forget_workflow',
-  'remember',
   'save_workflow',
 ]);
 const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
@@ -4971,7 +4971,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
-  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed) {
+  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
     const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
@@ -5661,7 +5661,7 @@ function abilities() {
       `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. The owner does those by hand.`,
       'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.',
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
-      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}.`,
+      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
@@ -10007,6 +10007,22 @@ function keepSaid(turn) {
     console.error(`A line the owner said outright wasn’t kept (${e.message}).`);
   }
 }
+/* ───────── memory from the paired Telegram chat: the owner's own words remember and forget there (G6b) ───────── */
+// Area: safety        Rules: R25, R32, R45        Tests: memory-tg.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// Contract 4.10 and 5.5, the one page's section 8, ledger 5c clean-up 3: a line the owner states in the paired Telegram
+// chat is remembered or forgotten as on the page, marked as said there (`src.channel`). `remember` and `forget_memory`
+// stay in PAGE_ONLY; runAction lets them through from a channel in this one case only: Sparkie answering the owner's own
+// words in the chat paired now (via sparkie, channel telegram, from the paired user; not an agent's conversation, not a
+// button, not an erase). Everything after that check holds as on the page: the rest of runAction, sparkieCheck and
+// memoryClear (the forget gate, the owner's-words share), an agent never replacing an owner's line. A press from
+// Telegram on a memory button, an erase for good (eraseLine) and memory's history (memoryWithPast) still wait for the
+// page, and the approvals from Telegram (20-tg-approve.mjs) still never ask about a PAGE_ONLY action.
+const TG_MEMORY = new Set(['remember', 'forget_memory']);
+function tgOwnMemory(name, input, ctx) {
+  if (!TG_MEMORY.has(name) || input?.erase || ctx.via !== 'sparkie' || ctx.channel !== 'telegram' || ctx.agent || ctx.button || ctx.trusted) return false;
+  try { const p = tgPaired(); return Boolean(p) && ctx.from === `telegram:${p.userId}`; } catch { return false; }
+}
 /* ───────── memory's lines in time: an end date, a fact said again, the other lines about the same thing ───────── */
 // Area: record        Rules: R45        Tests: memory-time.test.mjs
 // Owns: none        Timers: none        Wakes: none
@@ -11309,7 +11325,8 @@ function stopWord(conv) {
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
-// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt).
+// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt) and the rebuild steps
+// (deploy/REBUILD.txt).
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
@@ -11335,6 +11352,7 @@ function helpWord() {
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
+  lines.push(`  bring ${consoleSparkWords().replace(/^on /, '')} back after its disk is lost: deploy/REBUILD.txt on GitHub (a copy: ${BY_HAND_DIR}/REBUILD.txt)`);
   lines.push(`  resume agents’ changes (${consoleSparkWords()}): set "halted": false in ${SETTINGS_FILE}`);
   return lines.join('\n');
 }
@@ -15035,7 +15053,9 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
+    // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
+    // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
+    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
