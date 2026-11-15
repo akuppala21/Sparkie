@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stand-in du -sb[L] <dir>: apparent size; -L follows symlinks. Unlistable directories are skipped, like du.
 follow=0; for a in "$@"; do case "$a" in -*L*) follow=1 ;; esac; done
-dir=$(eval echo "\${$#}")
+dir=${!#}
 python3 -c '
 import os, sys
 d, follow = sys.argv[1], sys.argv[2] == "1"
