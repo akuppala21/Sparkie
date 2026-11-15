@@ -45,6 +45,7 @@ Object.assign(SORT_HANDLERS, {
       const any = (w, text) => ({ ...w, text: text.replace(/#\d+|\{[^}]*\}|\[[^\]]*\]/g, '*'), glob: w.glob || /#\d|\{|\[/.test(text) });
       for (const w of o.all('o', 'output')) if (w.text !== '-') { sortTouch(any(w, w.text), ctx, r); if (dir) sortTouch(any(w, at(w.text).text), ctx, r); }
       // (and -w's %output{file} writes the rest of what -w prints to that file)
+      if (o.all('w', 'write-out').some(w => w.text.startsWith('@'))) unsure(`${sortQ(name)} -w @file reads its format from a file nobody read.`);
       for (const w of o.all('w', 'write-out')) for (const m of w.text.matchAll(/%output\{>{0,2}([^}]*)\}/g)) sortTouch(any(w, m[1]), ctx, r);
       if (o.has('J', 'remote-header-name')) sortInto(dir, ctx, r);
       else if (o.has('O', 'remote-name', 'remote-name-all')) for (const u of urls) if (last(u)) sortTouch(any(at(last(u)), at(last(u)).text), ctx, r);
