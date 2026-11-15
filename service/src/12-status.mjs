@@ -47,7 +47,7 @@ function runWorker(node, payload, timeout = 30000) {
 
 // The same cleaning the portal applied to the worker's report.
 const STATUS_KEYS = ['gpu', 'gpuUtilization', 'temperature', 'memoryTotalGiB', 'memoryFreeGiB', 'uptimeSeconds', 'load', 'load1Minute', 'cpuLogicalCount',
-  'editorReady', 'dockerAccessible', 'diskFreeGiB', 'gpuPowerWatts'];
+  'dockerAccessible', 'diskFreeGiB', 'gpuPowerWatts'];
 const sparkName = n => n.name || `Spark ${String(n.id).replace(/^spark/, '')}`;
 function cleanStatus(node, raw) {
   const value = { id: node.id, name: sparkName(node), configured: true, reachable: true, state: 'online' };
@@ -138,16 +138,17 @@ setTimeout(() => {
   setInterval(() => collectStatus().catch(() => {}), STATUS_EVERY);
 }, 3000);
 
-/* ───────── Spark pages: workloads, logs, diagnostics, files (taking over from the portal) ───────── */
-// The same worker operations and checks the portal used, for the owner (the only one who gets past the handler): the
-// owner's own files and the shared folder.
-const LOG_SERVICES = ['editor', 'console', 'sparkie'];
-const FILE_OPS = ['list', 'read', 'write', 'mkdir', 'rename', 'delete'];
+/* ───────── Spark pages: workloads, logs, diagnostics; shared-folder files (from the portal) ───────── */
+// The same worker operations and checks the portal used, for the owner (the only one who gets past the handler). Files
+// are a Spark's shared folder only, for the files and save_file actions (R37): the page's file browser, its route and
+// the worker's delete, rename and new-folder calls are gone (E10e).
+const LOG_SERVICES = ['console', 'sparkie'];
+const FILE_OPS = ['list', 'read', 'write'];
 const fileBusy = new Map();
 
 function sparkFor(viewer, id) {
   const node = nodeById(id);
-  if (!node || !canUse(viewer, id)) throw new HttpError(403, 'There’s no such Spark on the list.');
+  if (!node || !canUse(viewer)) throw new HttpError(403, 'There’s no such Spark on the list.');
   return node;
 }
 async function workerCall(node, payload, timeout) {
@@ -155,25 +156,21 @@ async function workerCall(node, payload, timeout) {
 }
 
 async function sparkFiles(viewer, node, data) {
-  const allowed = ['operation', 'path', 'data', 'revision', 'area', 'destination', 'offset', 'limit'];
+  const allowed = ['operation', 'path', 'data', 'area', 'offset', 'limit'];
   if (!data || typeof data !== 'object' || Object.keys(data).some(k => !allowed.includes(k))) throw new HttpError(400, 'Unsupported request settings.');
-  const area = data.area || 'personal';
-  if (!['personal', 'shared'].includes(area)) throw new HttpError(400, 'Choose personal or shared files.');
+  if (data.area !== 'shared') throw new HttpError(400, 'Only a Spark’s shared folder is read or written here.');
   if (!FILE_OPS.includes(data.operation) || typeof data.path !== 'string' || data.path.length > 1000) throw new HttpError(400, 'Choose a workspace file operation.');
-  if ((data.operation !== 'write' && data.data !== undefined) || (!['write', 'rename', 'delete'].includes(data.operation) && data.revision !== undefined)
-    || (data.operation !== 'rename' && data.destination !== undefined) || (data.operation !== 'list' && (data.offset !== undefined || data.limit !== undefined))) {
+  if ((data.operation !== 'write' && data.data !== undefined) || (data.operation !== 'list' && (data.offset !== undefined || data.limit !== undefined))) {
     throw new HttpError(400, 'Unexpected file settings.');
   }
   // (only the owner reaches here: canUse is the owner's alone, and Sparkie and agents act as the owner)
   if (!canUse(viewer)) throw new HttpError(403, 'Only the owner can do that.');
   const { area: _area, ...settings } = data;
-  const scope = area === 'shared' ? { workspaceScope: 'shared' } : {};
   const mine = fileBusy.get(viewer.login) || 0, all = [...fileBusy.values()].reduce((a, b) => a + b, 0);
   if (mine >= 2 || all >= 8) throw new HttpError(429, 'File operations are busy. Try again shortly.');
   fileBusy.set(viewer.login, mine + 1);
   try {
-    const { editorFolder, editorRoot, ...visible } = await workerCall(node, { action: 'workspace-files', ...settings, ...scope }, 30000);
-    return visible;
+    return await workerCall(node, { action: 'workspace-files', ...settings, workspaceScope: 'shared' }, 30000);
   } finally {
     fileBusy.set(viewer.login, Math.max(0, (fileBusy.get(viewer.login) || 1) - 1));
   }

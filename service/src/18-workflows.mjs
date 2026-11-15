@@ -170,6 +170,7 @@ const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isAr
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
 const NOT_A_STEP = new Set([
+  'compare_models',
   'forget_memory',
   'forget_workflow',
   'power_settings',
@@ -188,7 +189,7 @@ function fillIn(v, inputs) {
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}) });
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}), ...(w.best ? { best: w.best } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -202,11 +203,15 @@ function stepArgs(st) {
 const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
 // One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
 // image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+// A control, direction or zero-width character is left out, so none turns how the rest of the label reads (the second
+// read's Later 2; a step holding one is never covered, stepCovered).
+const NOT_SHOWN = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+const notShown = t => t.replace(new RegExp(NOT_SHOWN.source, 'g'), '');
 function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
-  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return maskSecrets(changeLabel(action, a)).slice(0, 140);
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return notShown(maskSecrets(changeLabel(action, a))).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  const words = maskSecrets(`${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`);
+  const words = notShown(maskSecrets(`${ACTIONS.get(action)?.title || notShown(action) || 'not a step'}${given ? ` (${given})` : ''}`));
   if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
   return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
 }
@@ -288,7 +293,7 @@ action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
-    title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
+    title: { type: 'string', minLength: 2, maxLength: 80, pattern: '^[^\\x00-\\x1f\\x7f-\\x9f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff]+$', description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
@@ -321,8 +326,10 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
     // (and its answer, and the chat line after the press, say what that yes covers)
-    const images = savedImages(w.steps), yes = !carried && savedImagesYes(viewer, ctx, images), asked = savedStepsAsked(w.steps);
-    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
+    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it; one that carried
+    // `from` is no yes at all, and its words say so)
+    const { images, keys, asked } = savedCover(w.steps, ctx.button && !carried ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), covered: keys, by: viewer.login, at: w.at };
     const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
     return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
@@ -337,9 +344,13 @@ action({
     inputs: { type: 'object', description: 'Its inputs, name → value.', additionalProperties: { type: ['string', 'number', 'boolean'] } },
   }, required: ['name'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
-    const w = findSaved(input.name);
+    // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
+    const w = ctx.compare?.workflow || findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    const given = input.inputs || {}, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
+    const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
+    if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
@@ -354,10 +365,12 @@ action({
       throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
+    if (usedBest) job.usedBest = usedBest;
     const steps = JSON.stringify(w.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
+      if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
       // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
@@ -367,6 +380,7 @@ action({
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (ctx.compare) compareStep(j, i + 1, st, args, ctx.compare);
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
@@ -396,7 +410,7 @@ action({
         await runEndWell(j, ran, viewer, ctx, w.title);
       } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
-    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
+    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
 });
 action({

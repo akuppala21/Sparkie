@@ -43,6 +43,7 @@ const CODED = /^\[(invalid|not_allowed|not_found|conflict|too_large|busy|unreach
 const ctx = {};
 const VALID = () => ({
   cluster_plan: { model: ctx.model, sparks: ctx.pair },
+  compare_models: { workflow: 'fuzz work', candidates: [ctx.model] },
   container_logs: { spark: ctx.spark, container: ctx.container },
   deploy_plan: { model: ctx.model, spark: ctx.spark },
   files: { spark: ctx.spark },

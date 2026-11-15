@@ -266,7 +266,7 @@ async function engineCheck(job, { cp, model, net, nodeIds, fix }) {
 async function clusterPlan(modelName, nodeIds, viewer, known = null, probes = new Map(), how = null) {
   if (!Array.isArray(nodeIds) || nodeIds.length !== 2 || nodeIds[0] === nodeIds[1]) throw new HttpError(400, 'Pick two Sparks.');
   for (const id of nodeIds) if (!nodeById(id)) throw new HttpError(400, 'Unknown Spark.');
-  for (const id of nodeIds) if (!canUse(viewer, id)) throw new HttpError(403, `${sparkName(nodeById(id))} isn’t shared with you.`);
+  if (!canUse(viewer)) throw new HttpError(403, 'Only the owner can do that.');
   const inv = known || await inventory(null);
   const runs = withHow(inv.library.find(m => m.name === modelName), how);
   if (runs && !ENGINES[engineOf(runs)].pairs) throw new HttpError(409, `Running across Sparks uses vLLM or SGLang; this setup uses ${ENGINES[engineOf(runs)].title}.`);

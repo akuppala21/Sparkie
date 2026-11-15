@@ -70,7 +70,7 @@ covers, is in `test/README.md`.
     `setNames('upper')` for the other cases, and `setWatts(node, mW)` for a reading that stays put whatever the Spark
     does (one the controller hasn't caught up with; `null` ends it).
   - `worker.py` — stands in for `service/worker.py` (workspace files go to the real one; status without the removed
-    ray/model fields; logs for `editor`, `console` and `sparkie`).
+    ray/model fields; logs for `console` and `sparkie`).
   - `model.mjs` — Sparkie's model (streams like SGLang; offered tools, it calls them from patterns in the owner's words
     (the last user message, fleet record left out): "what's running", "start <model> [on spark N]", "stop/restart
     <container> on spark N", "restart <container> on spark N once you've read its logs" (two rounds: `container_logs`,
@@ -82,9 +82,7 @@ covers, is in `test/README.md`.
     `$MOCK_DIR/<that file>` is there; `$MOCK_DIR/model-fail` makes one request fail, once, in a way its head lists;
     every request goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last user message, the
     round and the tool results), an always-up benchmark server, and the serve-port server deploys are speed-tested on.
-  - `editor.mjs` — a code-server stand-in; the fleet doesn't start it (Spark Console has no editor since E10c),
-    only `start-mock.test.mjs` does, for its body reading.
-    `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
+  - `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
     listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while

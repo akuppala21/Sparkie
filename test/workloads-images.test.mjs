@@ -5,8 +5,10 @@
 // agent's run of the owner's workflow. The yes is what the button showed, whole (the workloads review, A1 to A3): a job
 // step is never cut, so its image shows after a long command, and the button and the chat line after the press say runs
 // start it without asking again and that a tag can change; an image shown part-hidden as a key isn't covered, nor is a
-// step with an input in its command. With the images running, D6a's chain end to end: a new job placed where its /in
-// file is, and the next one, naming no Spark, on the Spark the run's last step ran on, where it reads its folder.
+// step with an input in its command. What a press covers is fixed when its button is built: a key no longer kept by
+// the press covers nothing more; a direction or zero-width character is refused in the title and left out of a step's
+// words (the second read, Later 1 and 2). With the images running, D6a's chain end to end: a new job placed where its
+// /in file is, and the next one, naming no Spark, on the Spark the run's last step ran on, where it reads its folder.
 //
 // The stand-in fleet: on Sparks 3 and 4 a job runs its command at once, to its end (~/.mock/jobs-run). A new image's job
 // in a saved step is a question for the owner without the yes (keep_running, R38), so a run that meets one fails with
@@ -14,8 +16,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
+import { join, dirname } from 'node:path';
+import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, sleep, SLOW } from './lib.mjs';
 
 const keys = {};
 useFleet({ watchMs: 60000, prepare: ({ root }) => {
@@ -61,6 +63,27 @@ async function pressSave(title, steps, inputs) {
     assert.equal(p.status, 200, p.text);
     return { label, after: p.json?.message?.content, workflow: await saved(title.toLowerCase().replace(/[^a-z0-9]+/g, '-')) };
   } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+}
+// The same button, asked and pressed apart: its label and the choice, then the press's chat line and what was saved.
+async function askSave(title, steps) {
+  const words = `make a workflow called ${title}`;
+  writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'save_workflow', arguments: { title, steps } }] }]));
+  try {
+    const chat = await newChat(), r = await say(chat, words);
+    assert.deepEqual(r.message.tools.map(x => [x.name, x.outcome ?? null]), [['save_workflow', 'needs-ok']], JSON.stringify(r.message.tools));
+    return { chat, title, label: r.message.choices?.[0]?.label || '', choice: r.message.choices[0].id };
+  } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+}
+async function pressAsked({ chat, title, choice }) {
+  const p = await choose(chat, choice);
+  assert.equal(p.status, 200, p.text);
+  return { after: p.json?.message?.content, workflow: await saved(title.toLowerCase().replace(/[^a-z0-9]+/g, '-')) };
+}
+// The kept keys (what every mask hides by its exact text): read again by the service a second after the file changes.
+async function keptKeys(keys) {
+  mkdirSync(dirname(T.fleet.secretsFile), { recursive: true, mode: 0o700 });
+  writeFileSync(T.fleet.secretsFile, JSON.stringify(keys ? { keys } : {}), { mode: 0o600 });
+  await sleep(1500);
 }
 async function ownerSaves(title, steps, inputs) {
   const s = await pressSave(title, steps, inputs);
@@ -173,6 +196,38 @@ describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
     assert.equal(run.status, 'failed', run.log.join('\n'));
     assert.match(run.error, ASKED);
     assert.ok(!existsSync(jobFile('wl-p4', 'changed.txt')) && stateOf('wl-p4') === undefined, 'the changed command never ran');
+  });
+
+  // The second read's Later 1: a step shown with a key hidden, and no yes for it, stays so when the key goes before the press.
+  test('a key removed between the ask and the press: the press covers no more than its button said', { timeout: 180000 * SLOW }, async () => {
+    const KEPT = 'keptword-Zq81mPx2';
+    await keptKeys({ WL: { value: KEPT, at: new Date().toISOString() } });
+    let asked;
+    try {
+      asked = await askSave('kept key', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-k1', image: IMAGE, once: true, command: ['sh', '-c', `echo ${KEPT} > k.txt`] } }]);
+      assert.ok(asked.label.includes('echo [hidden] > k.txt') && !asked.label.includes(KEPT) && !/Pressing it/.test(asked.label), asked.label);
+    } finally { await keptKeys(null); }
+    const s = await pressAsked(asked);
+    assert.equal(s.workflow?.imagesApproved, undefined, JSON.stringify(s.workflow));
+    assert.equal(s.after, 'Saved the workflow “kept key”. A run asks before step 1 starts an image: a step that takes an input, or with part of it hidden as a key, isn’t covered by a yes.');
+    const run = await ownerRun('kept key');
+    assert.equal(run.status, 'failed', run.log.join('\n'));
+    assert.match(run.error, ASKED);
+    assert.equal(stateOf('wl-k1'), undefined, 'nothing started');
+  });
+
+  // The second read's Later 2: such a character could turn how the rest of the label reads.
+  test('a direction or zero-width character is refused in the title and left out of a step’s words on the button; a job step holding one isn’t covered', { timeout: 120000 * SLOW }, async () => {
+    for (const ch of ['\u202e', '\u2066', '\u200b']) {
+      const r = await act('save_workflow', { title: `odd${ch}name`, steps: [job('wl-b0')] });
+      assert.equal(r.status, 400, `${JSON.stringify(ch)}: ${r.text}`);
+    }
+    const one = await askSave('odd words', [job('wl-b1'), { action: 'find_setups', args: { model: 'gpt\u202e-oss\u2066-20b\u200b' } }]);
+    assert.ok(!/[\u202e\u2066\u200b]/.test(one.label), JSON.stringify(one.label));
+    assert.ok(one.label.includes('(model gpt-oss-20b)') && one.label.includes(`image ${IMAGE}`), one.label);
+    assert.match(one.label, /\. Pressing it is also your yes to python:3\.12-slim: /);
+    const two = await askSave('odd job', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-b2', image: IMAGE, once: true, command: ['sh', '-c', 'echo \u202eok'] } }]);
+    assert.ok(!/[\u202e]/.test(two.label) && two.label.includes('echo ok') && !/Pressing it/.test(two.label), JSON.stringify(two.label));
   });
 
   // D6a's chain, end to end now that the images run: a new job placed where its /in file is, and the next one, which
