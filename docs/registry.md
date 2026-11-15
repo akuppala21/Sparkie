@@ -76,7 +76,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
-| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `storeBrainEval` | yes | yes |
+| `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
@@ -85,6 +86,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `heal-tries.json` | `18-workflows` | `saveHealTries`; `saveHealTries` is called by `maybeHeal`, `healMark` | yes | no |
 | `knowledge.json` | `19-watcher` | `saveKnowledge`; `saveKnowledge` is called by `watchSpark`, `noteSparkStates`, `watchFleet` | yes | no |
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
+| `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
