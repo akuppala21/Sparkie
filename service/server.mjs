@@ -1194,7 +1194,7 @@ function runJob(job, fn) {
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
       ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
-    journalOp(job);
+    learnFrom(job, journalOp(job));
   });
   return job;
 }
@@ -4962,7 +4962,7 @@ function pasteCard(client, baseUrl) {
 
 action({
   name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length.',
+  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length. asleep: the Sparks Spark Console powered off, with what was on their disks then and since when (looking never wakes one).',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => {
     const inv = await recentInventory();
@@ -4972,6 +4972,7 @@ action({
         architecture: m.architecture || null, quantization: m.dtype || null, contextLength: m.contextLength || null, draftOnly: m.role === 'draft' })),
       stillDownloading: inv.incomplete.filter(x => x.reason === 'downloading').map(x => ({ repo: x.repo, spark: x.node })),
       offline: inv.sparks.filter(sp => !sp.online).map(sp => sp.id),
+      asleep: asleepView(),
     };
   },
 });
@@ -5085,16 +5086,16 @@ async function estimateFit(name, viewer, inv) {
 
 action({
   name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. Next: deploy_plan or cluster_plan for the exact dry run.',
+  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. asleep: Sparks Spark Console powered off whose disk held it then (a start wakes one; looking never does). Next: deploy_plan or cluster_plan for the exact dry run.',
   input: { type: 'object', properties: { model: modelArg }, required: ['model'], additionalProperties: false },
   run: async ({ model }, viewer) => {
     const inv = await recentInventory(), m = libraryModel(inv, model);
-    if (!m) return estimateFit(model, viewer, inv);
+    if (!m) return { ...(await estimateFit(model, viewer, inv)), asleep: asleepView([String(model)]) };
     const r = await plansFor(m.name, viewer, inv, new Map());
     const sparks = r.sparks.map(fitView), pairs = r.pairs.map(pairView);
     const one = sparks.find(s => s.fitsNow) || sparks.find(s => s.canRun), two = pairs.find(p => p.canRun);
     return {
-      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs,
+      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs, asleep: asleepView([m.name, m.repo].filter(Boolean)),
       pairsNote: 'Only pairs whose cable passed the connection test are listed (linked_sparks).',
       next: one ? `deploy_plan {"model":"${m.name}","spark":"${one.spark}"}` : two ? `cluster_plan {"model":"${m.name}","sparks":${JSON.stringify(two.sparks)}}` : 'Nothing can run it right now; see blockers.',
     };
@@ -5744,6 +5745,7 @@ const FIX_WINDOW_MS = Number(process.env.SPARK_CONSOLE_FIX_WINDOW_MS || 30 * 600
 async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
+  job.setupTried = setupTried(m, how, placed);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -5895,6 +5897,8 @@ async function startModel(args, viewer, ctx) {
   const parkedAt = !args.spark && !args.sparks ? parkedFor(args.model) : null;
   if (parkedAt) args = { ...args, model: parkedAt.model, ...(parkedAt.sparks ? { sparks: parkedAt.sparks } : { spark: parkedAt.spark }) };
   const { model, spark, sparks, setup, allowStop = [], confirmOutside = false } = args;
+  // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
+  const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
   for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
   if (!ctx.poweredOn) {
@@ -5912,9 +5916,9 @@ async function startModel(args, viewer, ctx) {
     if (e.status === 404 && off.length) throw new HttpError(404, `${e.message} ${sparksWords(off)} ${off.length > 1 ? 'are' : 'is'} powered off by Spark Console, so what’s on ${off.length > 1 ? 'their disks' : 'its disk'} can’t be seen now: turn ${off.length > 1 ? 'them' : 'it'} on to look there.`);
     throw e;
   }
-  // Not on any Spark that is on, with a Spark Spark Console powered off: its files may be there (the models' home is
-  // Spark 3), so that Spark is turned on first, before anything is downloaded or stopped.
-  // (those whose record lists the model first; a call turns on only those that may hold it)
+  // Not on any Spark that is on, with a Spark Spark Console powered off whose record lists it (or has no list): its files
+  // are there, so that one Spark is turned on first, before anything is downloaded or stopped (wakeOne, D5). One whose
+  // record doesn't list it isn't woken here: the download goes to a Spark that is on, or, when none has room, below.
   if (!found.lib && !found.choices && !ctx.poweredOn) {
     const first = powerFirst(args, viewer, ctx, 'all', wakeNames(model, found));
     if (first) return first;
@@ -5939,7 +5943,7 @@ async function startModel(args, viewer, ctx) {
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -5952,11 +5956,11 @@ async function startModel(args, viewer, ctx) {
       ], 'question', { ownerOnly: true });
     }
     // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.`);
+    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -5989,8 +5993,8 @@ async function startModel(args, viewer, ctx) {
     ]);
   }
   const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
-  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.`);
+  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
+  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
   mustUse(viewer, pick.nodes);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
@@ -6266,7 +6270,7 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -8016,7 +8020,7 @@ function journalOp(job) {
     if (START_JOBS.has(job.type) && failure) {
       journal('attempt', { op: job.id, act: job.type, n: job.log.filter(l => /Known problem: .* \(attempt \d+ of 3\)$/.test(l)).length + 1, failure, fix: null, err: jErr(job.error), model: job.model || null, sub });
     }
-    journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
+    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
       version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }
@@ -8169,6 +8173,118 @@ function journalNeeds(add, here) {
   let bytes = 0;
   try { for (const f of readdirSync(JOURNAL_DIR)) bytes += statSync(`${JOURNAL_DIR}/${f}`).size; } catch {}
   if (bytes > J_LARGE) add('journal-size', `Spark Console’s journal on ${here} holds ${Math.round(bytes / 1e8) / 10} GB (${tilde(JOURNAL_DIR)}). Nothing in it is ever deleted: move old months out of that folder if the disk needs the room.`);
+}
+/* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs
+// Owns: lessons.json (writers: recordLesson)
+// Timers: none        Wakes: none
+// A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
+// what, and the known way it failed. Code writes it when an operation ends (learnFrom, at runJob's end), from the
+// console's own typed facts on the job, never from a log's, the brain's or the owner's words: every value is one of the
+// console's names that its pattern allows and no mask would change, a hash, an id from a fixed list, a number or a time,
+// else null. A start: the model, its engine and how many Sparks; the setup it tried (setupTried, which the start puts on
+// the job before its first attempt); the START_FAILURES id its error matched, or unknown. An app (keep_running starting a
+// container): its container and image, the Spark, and one of three ways its start gives up (APP_FAILURES); any other
+// failure of an app leaves none. The same failure of the same setup again adds to its count: two or more of the same
+// known failure with no success between make it proven, while an unknown one stays seen. A later success of the same
+// setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
+// its proven run (verified.json). Nothing reads lessons to change what a start does yet: passing over a setup that
+// failed twice is B3, cards for the brain B4.
+const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
+// (a cap, never reached in use: the newest are kept)
+const LESSONS_MAX = 500;
+// How an app's start gave up, from the opening words 21-apps.mjs itself writes where it gives up: a name, then fixed
+// words. What follows them (Docker's words, the app's own log) is never read.
+const APP_FAILURES = [
+  ['image', /^Image download failed: /],
+  ['docker', /^Docker couldn’t (?:start|restart) it: /],
+  ['stopped-at-once', /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127} stopped right after starting\.(?:\n|$)/],
+];
+// The names a lesson may hold: a model as the library names it (or org/repo), a container, an image (keep_running's own
+// pattern), how a setup was chosen, a 12-hex fingerprint or version, a journal id.
+const L_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,119})?$/;
+const L_CONTAINER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const L_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,200}(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
+const L_HOW = /^(?:setup:[a-z0-9]{4,32}|proven|own)$/;
+const L_HEX12 = /^[0-9a-f]{12}$/;
+const L_JOURNAL = /^j_[0-9a-f]{12}$/;
+// One of the console's own values, or null: a string its pattern allows that no mask changes (a key-shaped name is no
+// name). Anything else (words with spaces, a crafted name, a key) is stored as null.
+const lValue = (v, re) => (typeof v === 'string' && re.test(v) && maskSecrets(v) === v ? v : null);
+// The Sparks, in order, joined by "+": each one on the list, else null.
+const lSparks = ids => {
+  const list = String(ids || '').split('+');
+  return list.every(id => /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(id) && nodeById(id)) ? list.join('+') : null;
+};
+
+// The setup a start tries, as its lesson keeps it (B 2.2's subject and tried): the model's name in the library, its
+// engine; how the setup was chosen (setup:<id>, a recipe setup, or a run that worked here kept with its setup's id;
+// proven, another run that worked here; own, the model's own spark.json or the engine's defaults); a fingerprint of its
+// flags and the names of its environment values (never their values); its image as named; the Sparks it starts on, in
+// order. startWithFixes puts it on the job before the first attempt, and B3 works it out the same way for the next
+// start. It is checked again when a lesson is written (lessonOf). Never throws.
+function setupTried(m, how, placed) {
+  try {
+    const known = Boolean(m) && 'manifest' in m, model = how ? withHow(known ? m : { name: m?.name }, how) : known ? m : null;
+    const man = model?.manifest || {}, env = how ? how.env || {} : { ...(man.env || {}), ...(man.cluster?.env || {}) };
+    const flags = model ? createHash('sha256').update(JSON.stringify([(Array.isArray(man.args) ? man.args : []).map(String), Object.keys(env).sort()])).digest('hex').slice(0, 12) : null;
+    return { model: m?.name ?? null, engine: model ? engineOf(model) : null, how: how ? (how.setupId ? `setup:${how.setupId}` : 'proven') : 'own',
+      flags, image: model ? imageOf(model) : null, on: (placed?.nodes || []).join('+') || null };
+  } catch { return null; }
+}
+
+// What an operation's end gives a lesson, from typed facts on the job only, or null when it gives none: { kind, subject,
+// tried, failure } (failure null when it ended well).
+function lessonOf(job) {
+  const failed = job.status === 'failed';
+  if (job.app) {
+    if (!['deploy', 'restart'].includes(job.type)) return null;
+    const failure = failed ? APP_FAILURES.find(([, re]) => re.test(String(job.error || '')))?.[0] || null : null;
+    if (failed && !failure) return null;
+    const image = lValue(job.image, L_IMAGE);
+    return { kind: 'app', subject: { container: lValue(job.container, L_CONTAINER), image }, tried: { how: null, flags: null, image, on: lSparks(job.node), code: null }, failure };
+  }
+  const t = job.setupTried;
+  if (!START_JOBS.has(job.type) || !t) return null;
+  const on = lSparks(t.on);
+  return { kind: 'start', subject: { model: lValue(t.model, L_MODEL), engine: Object.hasOwn(ENGINES, String(t.engine)) ? t.engine : null, sparks: on ? on.split('+').length : null },
+    tried: { how: lValue(t.how, L_HOW), flags: lValue(t.flags, L_HEX12), image: lValue(t.image, L_IMAGE), on, code: lValue(job.workflowVersion, L_HEX12) },
+    failure: failed ? knownStartFailure(job.error)?.id || 'unknown' : null };
+}
+
+// Every lesson, read strictly: a file that can't be read just now throws (readKept), so no save goes over it (R20).
+const lessonsKept = () => { const f = readKept(LESSONS_FILE); return Array.isArray(f?.lessons) ? f.lessons.filter(x => x && typeof x === 'object') : []; };
+// The one writer of lessons.json (R22), read and written with nothing between (R20). A failure adds a lesson, or counts
+// again on the one for the same setup and failure: while what the setup was true of (its image, its Sparks, its start
+// code) is unchanged, else it is written anew with failed: 1. A success takes out the lessons of the same setup: for a
+// start, the same model, engine and number of Sparks with the same flags, image and Sparks; for an app, its container on
+// that Spark. evidence: the journal's record of this operation.
+function recordLesson(l, ok, evidence) {
+  const all = lessonsKept(), same = x => x.kind === l.kind && JSON.stringify(x.subject) === JSON.stringify(l.subject);
+  if (ok) {
+    const worked = l.kind === 'app' ? x => x.kind === 'app' && x.subject?.container === l.subject.container && x.tried?.on === l.tried.on
+      : x => same(x) && ['flags', 'image', 'on'].every(k => x.tried?.[k] === l.tried[k]);
+    const left = all.filter(x => !worked(x));
+    if (left.length < all.length) writePrivate(LESSONS_FILE, { lessons: left });
+    return;
+  }
+  const now = new Date().toISOString(), ev = lValue(evidence, L_JOURNAL);
+  const i = all.findIndex(x => same(x) && x.tried?.how === l.tried.how && x.tried?.flags === l.tried.flags && x.failure === l.failure), old = all[i];
+  const again = Boolean(old) && ['image', 'on', 'code'].every(k => old.tried?.[k] === l.tried[k]), failed = again ? (Number(old.failed) || 0) + 1 : 1;
+  const lesson = { id: /^l_[0-9a-f]{8}$/.test(old?.id) ? old.id : `l_${randomBytes(4).toString('hex')}`, kind: l.kind, subject: l.subject, tried: l.tried,
+    failure: l.failure, state: failed >= 2 && l.failure !== 'unknown' ? 'proven' : 'seen', failed,
+    evidence: [...(again && Array.isArray(old.evidence) ? old.evidence : []), ...(ev ? [ev] : [])].slice(-3), firstAt: again ? old.firstAt : now, lastAt: now };
+  const next = i >= 0 ? all.map((x, n) => (n === i ? lesson : x)) : [...all, lesson];
+  writePrivate(LESSONS_FILE, { lessons: next.sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt))).slice(0, LESSONS_MAX) });
+}
+// At an operation's end (runJob, after the journal's record of it, whose id is the evidence): the lesson its failure
+// gives, or the lessons its success takes out. A cancelled one gives and takes nothing. Never throws.
+function learnFrom(job, evidence) {
+  try {
+    if (job.status !== 'failed' && job.status !== 'completed') return;
+    const l = lessonOf(job);
+    if (l) recordLesson(l, job.status === 'completed', evidence);
+  } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
 }
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
@@ -8902,6 +9018,8 @@ function openProblems() {
     () => journalNeeds(add, here),
     // The outside heartbeat (20-beat.mjs) has failed for an hour.
     () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
+    // The ways in, watched ahead (20-ways-in.mjs): a Tailscale key near expiry, linger off, Funnel off.
+    () => waysInNeeds(add, here),
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;
@@ -9079,6 +9197,104 @@ async function needsMeTick() {
     st.needs = { told: [...new Set([...told, ...settled])], sent: [...sent, now] };
     tgSave();
   } catch (e) { console.error(`The needs-me line: ${e.message}`); } finally { needsBusy = false; }
+}
+/* ───────── the ways in, watched ahead: Tailscale's keys, linger, Funnel (ledger 5b, addition 6) ───────── */
+// Area: safety        Rules: R49        Tests: ways-in.test.mjs
+// Owns: funnel-seen.json (writers: noteFunnel; deploy/open-to-internet.sh --undo removes it)
+// Timers: none        Wakes: none
+// The owner reaches Spark Console through ways in that can each close with no warning: a Tailscale key that expires
+// (Spark 2's takes every way in but Telegram with it; a compute Spark's cuts that Spark off), the console's user without
+// linger on Spark 2 (its services stop at logout and stay off after a reboot until someone logs in), and Funnel switched
+// off. Each is read on a look the console already takes, never on a timer of its own: Tailscale's own status
+// (`tailscale status --json`, read by refreshBlocked in 23-http.mjs every 60 s: Spark 2 is Self, a compute Spark the peer
+// holding its tailnet address, so no command runs on another Spark), and linger and Funnel with the route check
+// (checkRoute, at start and every 60 s). Each look only reads. What they found is kept in memory (a restart looks again
+// within a minute), and waysInNeeds turns it into needs-you lines (20-needs.mjs): a key within 14 days of expiring, or
+// expired; linger off; Funnel off while funnel-seen.json says it was on. An answer that can't be read, or none for three
+// looks, is "couldn't check", never silence. A line's key is its kind and Spark (never a date), so the needs-me line
+// (20-tell.mjs) tells it once. Disk space is the status loop's line in 20-needs.mjs: the state folder and the journal sit
+// under the home folder whose free space worker.py reports. The GitHub token isn't watched here: its expiry is known only
+// by asking GitHub. (docs/rules/R49.md)
+const KEY_SOON_MS = 14 * 86400000;
+// How often the route check and Tailscale's status are read: every 60 s (tests shorten it, only under ALL_LOCAL).
+const ROUTE_MS = ALL_LOCAL && Number(process.env.SPARK_CONSOLE_ROUTE_MS) > 0 ? Number(process.env.SPARK_CONSOLE_ROUTE_MS) : 60000;
+// No answer for three looks is "couldn't check"; one look waits 10 s at most.
+const LOOK_STALE_MS = 3 * ROUTE_MS + 10000, LOOK_WAIT_MS = 10000;
+const FUNNEL_SEEN = `${STATE_DIR}/funnel-seen.json`;
+const WAYS_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WAYS_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const waysDay = t => { const d = new Date(t); return `${WAYS_WEEKDAYS[d.getDay()]} ${d.getDate()} ${WAYS_MONTHS[d.getMonth()]}`; };
+// The last readable answers and when they came (keysAt, lingerAt); a miss is the latest answer, unreadable.
+const waysIn = { from: Date.now(), keys: null, keysAt: 0, keysMiss: false, linger: null, lingerAt: 0, lingerMiss: false, lingerBusy: false };
+
+// Tailscale's status, as refreshBlocked read it: each Spark's key expiry (none: expiry is off for it) and whether
+// Tailscale says it has expired, with the machine's name as Tailscale's admin page shows it (a plain name, or none).
+function noteTailnet(code, out) {
+  let st = null;
+  try { st = code === 0 ? JSON.parse(out) : null; } catch {}
+  if (!st || typeof st !== 'object' || !st.Self || typeof st.Self !== 'object') { waysIn.keysMiss = true; return; }
+  const peers = Object.values(st.Peer && typeof st.Peer === 'object' ? st.Peer : {}).filter(p => p && typeof p === 'object'), keys = {};
+  for (const n of NODES) {
+    const p = n.host === 'local' ? st.Self : peers.find(x => Array.isArray(x.TailscaleIPs) && x.TailscaleIPs.some(ip => ip && (ip === n.ip || ip === n.host)));
+    if (!p) continue;
+    const t = Date.parse(typeof p.KeyExpiry === 'string' ? p.KeyExpiry : ''), name = [String(p.DNSName || '').split('.')[0], p.HostName].find(x => /^[a-z0-9][a-z0-9-]{0,62}$/i.test(x || ''));
+    keys[n.id] = { expires: Number.isFinite(t) ? t : null, expired: p.Expired === true, machine: name || null };
+  }
+  Object.assign(waysIn, { keys, keysAt: Date.now(), keysMiss: false });
+}
+
+// Linger for the console's own user on Spark 2, read as the installer reads it. One look at a time.
+function lookLinger() {
+  const hub = NODES.find(n => n.host === 'local');
+  if (!hub || waysIn.lingerBusy) return;
+  waysIn.lingerBusy = true;
+  let out = '';
+  const child = spawnOn(hub, { command: `loginctl show-user ${Number(process.getuid?.() ?? -1)} -p Linger --value` });
+  const timer = setTimeout(() => child.kill('SIGKILL'), LOOK_WAIT_MS);
+  child.stdout.on('data', d => { out += d; });
+  child.stderr.on('data', () => {});
+  child.on('error', () => {});
+  child.on('close', code => {
+    clearTimeout(timer);
+    waysIn.lingerBusy = false;
+    const v = code === 0 ? out.trim() : '';
+    if (v === 'yes' || v === 'no') Object.assign(waysIn, { linger: v === 'yes', lingerAt: Date.now(), lingerMiss: false });
+    else waysIn.lingerMiss = true;
+  });
+}
+
+// The console's record that Funnel should be on: written the first time the route check sees Funnel on for the main
+// address. Only the owner's `deploy/open-to-internet.sh --undo` (closing it on purpose) removes it.
+function noteFunnel() {
+  if (funnelOn !== true || existsSync(FUNNEL_SEEN)) return;
+  try { writePrivate(FUNNEL_SEEN, { seenOnAt: new Date().toISOString() }); } catch {}
+}
+
+// The needs-you lines (openProblems, 20-needs.mjs). Each is tried by itself.
+function waysInNeeds(add, here) {
+  const now = Date.now(), stale = at => now - (at || waysIn.from) > LOOK_STALE_MS;
+  const keyLines = () => {
+    for (const n of NODES) {
+      const k = waysIn.keys?.[n.id], name = sparkName(n), hub = n.host === 'local';
+      if (!k) continue;
+      const gone = k.expired || (k.expires !== null && k.expires <= now);
+      if (!gone && (k.expires === null || k.expires - now > KEY_SOON_MS)) continue;
+      const machine = k.machine || name, cut = hub ? 'only Telegram reaches Spark Console' : `Spark Console can’t reach ${name}`;
+      if (gone) add(`tailscale-key:${n.id}`, `${name}’s Tailscale key expired${k.expires !== null ? ` on ${waysDay(k.expires)}` : ''}, so ${cut}. To fix it, sign in to Tailscale again on ${name}, then turn off key expiry in Tailscale’s admin page (Machines → ${machine}).`);
+      else {
+        const days = Math.ceil((k.expires - now) / 86400000);
+        add(`tailscale-key:${n.id}`, `${name}’s Tailscale key expires in ${days} day${days === 1 ? '' : 's'}, on ${waysDay(k.expires)}. After that, ${cut}. Before then: Tailscale’s admin page → Machines → ${machine} → Disable key expiry.`);
+      }
+    }
+  };
+  const tries = [
+    keyLines,
+    () => { if (waysIn.keysMiss || stale(waysIn.keysAt)) add('tailscale-unread', `Spark Console couldn’t read Tailscale’s state on ${here}, so it can’t warn before a Tailscale key expires. Check that Tailscale is running there: tailscale status`); },
+    () => { if (waysIn.linger === false) add('linger', `Spark Console stops when you log out of ${here}, and after a restart it stays off until you log in. To keep it running, run this once on ${here}: sudo loginctl enable-linger $USER`); },
+    () => { if (waysIn.lingerMiss || stale(waysIn.lingerAt)) add('linger-unread', `Spark Console couldn’t check whether it starts by itself after ${here} restarts. Check on ${here}: loginctl show-user $USER -p Linger`); },
+    () => { if (funnelOn === false && existsSync(FUNNEL_SEEN)) add('funnel', 'Funnel is off, so Spark Console can’t be reached from the internet: only devices with Tailscale on get in. To open it again: bash spark-console/deploy/open-to-internet.sh. Closed on purpose? Run it with --undo and this line goes.'); },
+  ];
+  for (const f of tries) { try { f(); } catch {} }
 }
 /* ───────── the owner's words: /status, /pause, /restart sparkie, /stop, /undo update, /help (round two, 2026-11-11) ───────── */
 // Area: safety        Rules: R34        Tests: words.test.mjs
@@ -10687,7 +10903,7 @@ const IDLE_GPU_PERCENT = 5, IDLE_LOAD = 2;
 const POWER_WHY = { idle: 'idle', asked: 'asked', start: 'a start needed it', outside: 'turned on outside Spark Console' };
 
 // power.json: { idleMinutes, changedAt, changedBy, off: { spark4: { at, why: 'idle'|'asked', by, parked: ['spark4/sc-…'],
-// plugCut, problem } } }. A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
+// plugCut, problem, models, memTotal, diskFree } } } (the last three from its look just before it went off, D5). A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
 // (R20), so a read error writes nothing.
 function powerState(strict = false) {
   let v = null;
@@ -10740,6 +10956,50 @@ function offFor(off, names, listedOnly) {
   const st = powerState(), listed = off.filter(id => offHolds(st.off[id], names) === true);
   if (listed.length) return listed;
   return listedOnly ? off.filter(id => offHolds(st.off[id], names) === null) : off;
+}
+// Which one of the Sparks it powered off a start that names none wakes (D5, design D 2.6), chosen from their records
+// alone; once it is on, the start is placed again from the live look. In list order: one whose record lists the model
+// (with its linked partner when its memory alone can't hold it and that one is off too). Without room, or for a call (a
+// call never copies or downloads): else one with no list, which may hold anything. With room (a start that fits on no
+// Spark that is on): else the first whose record's free disk holds the model with the usual floor (its size and a
+// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; a record with no numbers (an older build) last. A
+// Spark that is off with no record is never woken here. [] when none fits; then why goes into `why`, for the answer.
+function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, why = null } = {}) {
+  const st = powerState(), order = NODES.map(n => n.id);
+  const recs = off.filter(id => st.off[id]).sort((a, b) => order.indexOf(a) - order.indexOf(b)), rec = id => st.off[id];
+  const listed = recs.filter(id => offHolds(rec(id), names) === true);
+  if (listed.length) {
+    const id = listed[0], need = needBytes ?? sizeBytes, mem = rec(id).memTotal;
+    const pair = Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need
+      ? (lastCheck?.pairs || []).find(p => p.fastLink === 'full' && [p.a, p.b].includes(id)) : null;
+    const partner = pair ? (pair.a === id ? pair.b : pair.a) : null;
+    return partner && recs.includes(partner) ? [id, partner] : [id];
+  }
+  const unknown = recs.filter(id => offHolds(rec(id), names) === null);
+  if ((!room || call) && unknown.length) return [unknown[0]];
+  const numbers = recs.filter(id => Number.isFinite(rec(id).diskFree) && Number.isFinite(rec(id).memTotal));
+  const holdsIt = r => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === 1 && v.sizeGB != null && v.needGB != null)
+    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9)
+    : !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes)));
+  if (room && !call) {
+    const fits = numbers.find(id => holdsIt(rec(id)));
+    if (fits) return [fits];
+    const older = recs.filter(id => !numbers.includes(id));
+    if (older.length) return [older[0]];
+  }
+  if (why && recs.length) {
+    const said = recs.map(id => (call || !room || !numbers.includes(id) ? `${sparkWord(id)}’s record doesn’t list it`
+      : `${sparkWord(id)} had ${gbOf(rec(id).diskFree)} GB of disk free and ${gbOf(rec(id).memTotal)} GB of memory when it went off (${atWords(rec(id).at)})`));
+    why.push(`${sparksWords(recs)} ${recs.length > 1 ? 'were' : 'was'} powered off by Spark Console and ${recs.length > 1 ? 'weren’t' : 'wasn’t'} turned on for it: ${said.join('; ')}.`);
+  }
+  return [];
+}
+// What a read says of the Sparks Spark Console powered off (D5: a read never wakes one), from their records: since when,
+// and what was on each one's disk then. With names, only those whose record lists the model, or has no list.
+function asleepView(names = null) {
+  return Object.entries(powerState().off).filter(([id, r]) => nodeById(id) && (!names || offHolds(r, names) !== false)).map(([id, r]) => ({
+    spark: id, since: r.at || null, ...(Array.isArray(r.models) ? { modelsThen: r.models } : {}), diskFreeGBThen: gbOf(r.diskFree), memoryTotalGBThen: gbOf(r.memTotal),
+    words: `${sparkWord(id)} is asleep since ${atWords(r.at)}${Array.isArray(r.models) ? `; ${r.models.length} model${r.models.length === 1 ? '' : 's'} on its disk then` : ''}. A look doesn’t wake it.` }));
 }
 
 // What a Spark Spark Console powered off shows: when, why, what it parked, and how to turn it on. Built by code from its
@@ -11042,7 +11302,8 @@ async function powerOffJob(j, ids, ctx, why) {
   // (a record that can't be written: nothing is shut down, what was parked is put back, and the records written go)
   try {
     for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, problem: null,
-      ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}) });
+      ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}),
+      ...(inv.sparks.find(x => x.id === id)?.online ? { memTotal: inv.sparks.find(x => x.id === id).memTotal, diskFree: inv.sparks.find(x => x.id === id).diskFree } : {}) });
   } catch (e) {
     for (const id of up) try { offRecord(id, null); } catch {}
     await unpark(j, stopped, pairHeads);
@@ -11253,14 +11514,16 @@ action({
 // fits on the Sparks that are on): the Spark is turned on first, inside one operation, and the start follows. What else
 // was parked there stays parked (it comes back on its next call), so it can't crowd out what was asked for. null when
 // no Spark needs turning on.
-// mode: 'named' turns on only the Sparks the start names; 'any' every one Spark Console powered off when the start names
-// none; 'all' those whose files may hold the model (`names`, by their records: offFor), named or not. A call (which never
-// downloads) turns on only Sparks whose record lists the model, or has no list.
-function powerFirst(args, viewer, ctx, mode = 'named', names = null) {
+// mode: 'named' turns on only the Sparks the start names; 'all' one whose files hold the model (`names`, by the
+// records: wakeOne), named or not; 'any', when the start names none, one with room for it (`size`: sizeBytes,
+// needBytes or versions, and `why`, which says why none was when none was). A call (which never downloads) turns on only
+// a Spark whose record lists the model, or has no list.
+function powerFirst(args, viewer, ctx, mode = 'named', names = null, size = null) {
   const off = Object.keys(powerState().off).filter(id => nodeById(id) && canUse(viewer, id) && switchablePlug(id) && !brainSparks().includes(id));
   if (!off.length) return null;
-  const named = [args.spark, ...(args.sparks || [])].filter(Boolean);
-  const need = mode === 'all' ? offFor(off, names || [String(args.model)], ctx.via === 'gateway') : named.length ? named.filter(id => off.includes(id)) : mode === 'any' ? off : [];
+  const named = [args.spark, ...(args.sparks || [])].filter(Boolean), call = ctx.via === 'gateway';
+  const need = mode === 'all' ? wakeOne(off, names || [String(args.model)], { call }) : named.length ? named.filter(id => off.includes(id))
+    : mode === 'any' ? wakeOne(off, names || [String(args.model)], { room: true, call, ...(size || {}) }) : [];
   return need.length ? powerThenStart(viewer, ctx, need, args) : null;
 }
 // (the workflow the start runs, so this operation is recorded under it: across two Sparks when it will be, F11)
@@ -13321,7 +13584,7 @@ async function sessionRoute(req, res, path, viewer) {
 // Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
 // Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
 //   (writers: checkRoute)
-// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s, not on the stand-in fleet)        Wakes: none
+// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s)        Wakes: none
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -13413,6 +13676,7 @@ let tcpApiOff = existsSync(API_LOCKED);
 // known. Only read: turning it on or off is the owner's (deploy/open-to-internet.sh).
 let funnelOn = null;
 function checkRoute() {
+  lookLinger();
   const child = spawn('tailscale', ['serve', 'status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
@@ -13432,10 +13696,11 @@ function checkRoute() {
     tcpApiOff = out.includes(`unix:${API_SOCKET}`);
     if (tcpApiOff) try { writeFileSync(API_LOCKED, `${new Date().toISOString()}\n`, { mode: 0o600 }); } catch {}
   });
+  child.on('close', noteFunnel);
   child.on('error', () => {});
 }
 // (it only reads; on the stand-in fleet test/mock/bin/tailscale answers it, from the test's serve.json or with nothing)
-checkRoute(); setInterval(checkRoute, 60000);
+checkRoute(); setInterval(checkRoute, ROUTE_MS);
 const sparkAddresses = () => new Set(NODES.flatMap(n => [n.ip, n.host]).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x || '')));
 // Every tailnet address (IPv4 and IPv6) of the Sparks and of this machine, from tailscale status. They're all signed in
 // as the owner, so Tailscale would vouch for anything running on them as the owner: requests from them can't act as a
@@ -13445,6 +13710,7 @@ function refreshBlocked() {
   const child = spawn('tailscale', ['status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
+  child.on('close', code => noteTailnet(code, out));
   child.on('close', () => {
     try {
       const st = JSON.parse(out), v4 = sparkAddresses();
@@ -13460,7 +13726,7 @@ function refreshBlocked() {
   // Without the tailscale command, the Sparks' IPv4 addresses from the config still count.
   child.on('error', () => { blockedAddresses ||= new Set([...sparkAddresses(), ...LOCAL_IPS]); });
 }
-if (!ALL_LOCAL) { setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, 60000); }
+setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, ROUTE_MS);
 
 /* ───────── the public page ───────── */
 // Area: ways in

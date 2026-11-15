@@ -23,7 +23,7 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',

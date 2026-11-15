@@ -338,6 +338,7 @@ const FIX_WINDOW_MS = Number(process.env.SPARK_CONSOLE_FIX_WINDOW_MS || 30 * 600
 async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
+  job.setupTried = setupTried(m, how, placed);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -489,6 +490,8 @@ async function startModel(args, viewer, ctx) {
   const parkedAt = !args.spark && !args.sparks ? parkedFor(args.model) : null;
   if (parkedAt) args = { ...args, model: parkedAt.model, ...(parkedAt.sparks ? { sparks: parkedAt.sparks } : { spark: parkedAt.spark }) };
   const { model, spark, sparks, setup, allowStop = [], confirmOutside = false } = args;
+  // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
+  const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
   for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
   if (!ctx.poweredOn) {
@@ -506,9 +509,9 @@ async function startModel(args, viewer, ctx) {
     if (e.status === 404 && off.length) throw new HttpError(404, `${e.message} ${sparksWords(off)} ${off.length > 1 ? 'are' : 'is'} powered off by Spark Console, so what’s on ${off.length > 1 ? 'their disks' : 'its disk'} can’t be seen now: turn ${off.length > 1 ? 'them' : 'it'} on to look there.`);
     throw e;
   }
-  // Not on any Spark that is on, with a Spark Spark Console powered off: its files may be there (the models' home is
-  // Spark 3), so that Spark is turned on first, before anything is downloaded or stopped.
-  // (those whose record lists the model first; a call turns on only those that may hold it)
+  // Not on any Spark that is on, with a Spark Spark Console powered off whose record lists it (or has no list): its files
+  // are there, so that one Spark is turned on first, before anything is downloaded or stopped (wakeOne, D5). One whose
+  // record doesn't list it isn't woken here: the download goes to a Spark that is on, or, when none has room, below.
   if (!found.lib && !found.choices && !ctx.poweredOn) {
     const first = powerFirst(args, viewer, ctx, 'all', wakeNames(model, found));
     if (first) return first;
@@ -533,7 +536,7 @@ async function startModel(args, viewer, ctx) {
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -546,11 +549,11 @@ async function startModel(args, viewer, ctx) {
       ], 'question', { ownerOnly: true });
     }
     // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.`);
+    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -583,8 +586,8 @@ async function startModel(args, viewer, ctx) {
     ]);
   }
   const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
-  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.`);
+  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
+  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
   mustUse(viewer, pick.nodes);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
