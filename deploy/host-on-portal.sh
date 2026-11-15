@@ -595,6 +595,8 @@ cfg = json.load(open(os.path.expanduser('~/spark-console-service/config.json')))
 # (a Spark Spark Console powered off on purpose is asleep, not unreachable: its record in power.json, R41)
 try: asleep = {k: v for k, v in json.load(open(os.path.expanduser('~/.local/state/spark-console/power.json')))['off'].items() if isinstance(v, dict)}
 except Exception: asleep = {}
+# (only what can be printed of the file's text: no escape sequence reaches the terminal, and print never fails on it)
+clean = lambda s: ''.join(c for c in str(s) if c.isprintable())
 for n in cfg['nodes']:
     if n['host'] == 'local':
         print(f"  {n['id']}: this machine"); continue
@@ -605,7 +607,10 @@ for n in cfg['nodes']:
     except subprocess.TimeoutExpired:
         ok, why = False, 'timed out'
     if not ok and n['id'] in asleep:
-        print(f"  {n['id']}: asleep (Spark Console powered it off at {str(asleep[n['id']].get('at') or '?')[:16].replace('T', ' ')} UTC; a start or power_on turns it on)"); continue
+        at = clean(asleep[n['id']].get('at') or '?')[:16].replace('T', ' ')
+        # (its record carries a problem, a wake that failed: not asleep, and the problem is said)
+        if asleep[n['id']].get('problem'): print(f"  {n['id']}: NOT reachable ({clean(why)[:200]}); Spark Console powered it off at {at} UTC and its record says: {clean(asleep[n['id']]['problem'])[:300]}"); continue
+        print(f"  {n['id']}: asleep (Spark Console powered it off at {at} UTC; a start or power_on turns it on)"); continue
     print(f"  {n['id']}: " + ('ok' if ok else 'NOT reachable without a password: ' + why))
 PY
 fi
