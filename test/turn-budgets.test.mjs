@@ -1,13 +1,16 @@
 // Covers: the chat loop's budgets (design A 2.10, step 3; R50), counted by code on each turn: the run calls one message
 // may make (the setup's workSteps, else twice its tool rounds, at most 30; 12 for today's stand-in brain), the tool
-// output it may read (40% of the setup's contextTokens, else 32,768, at 3 characters a token: 39,321 characters), and
-// three refused calls in a row. A brain that runs commands again and again stops at the step budget, and the calls past
-// it in that round are not run; a result past the output budget, and every one after it, is cut to a notice naming the
-// journal record that keeps it whole; three refusals in a row (run's own checks, a Spark with no helper, an input the
-// gate refuses) put the tools away, and a call that works between resets the count. Each ends the turn the way a
-// token budget does (the next round offers no tools), and the answer ends with code's own report and "go on". Lookups
-// other than run are no work steps; a new message, and another chat answering at once, start from nothing; a setup's
-// own workSteps and contextTokens apply and change the tested mark, and its ask block cannot raise them.
+// output it may read (40% of its context at 3 characters a token: the setup's contextTokens, else the number after its
+// --context-length, --max-model-len or --ctx-size flag, else 32,768), and three refused calls in a row. A brain that runs
+// commands again and again stops at the step budget, and the calls past it in that round are not run; a result past the
+// output budget, and every one after it, is cut to a notice naming the journal record that keeps it whole; three
+// refusals in a row (run's own checks, a Spark with no helper, an input the gate refuses) put the tools away, and a call
+// that works between resets the count. Each ends the turn the way a token budget does (the next round offers no tools),
+// and the answer ends with code's own report. A request that is a task (one with a next step) then carries on in a
+// fresh turn, within the carry-on's own limit of turns; a plain request, a task past that limit, and three refusals
+// wait for the owner's "go on". Lookups other than run are no work steps; a new message, and another chat answering at
+// once, start from nothing; a setup's own workSteps and contextTokens apply and change the tested mark, its context
+// flag sets the output budget without changing it, and its ask block cannot raise them.
 //
 // The stand-in fleet, with the real root helper as a rehearsal on Spark 3 and Spark 4 (as test/work.test.mjs sets it
 // up; its sudo stand-in, in a temporary folder first on the PATH, runs only the rehearsal's helper); Spark 2 has none.
@@ -18,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, waitFor, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, REPO, SLOW } from './lib.mjs';
 
 const MOCKBIN = join(REPO, 'test', 'mock', 'bin');
 const HELPER_SRC = join(REPO, 'deploy', 'spark-console-root');
@@ -57,13 +60,19 @@ function rehearse(root, spark) {
   mkdirSync(join(home, 'docs'), { recursive: true });
   writeFileSync(join(home, 'docs', 'plain.txt'), `hello from ${spark}\n`);
 }
-useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_LOOK_SECONDS: '10' },
+useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_LOOK_SECONDS: '10', SPARK_CONSOLE_CONTINUE_MS: '300' },
   prepare: ({ root, stateDir }) => {
     rehearse(root, 'spark3');
     rehearse(root, 'spark4');
     // A setup that states its own budgets, with an ask block that asks for more (its maxTokens shows the block is read).
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8')), base = m.presets[m.current];
     m.presets['a3-small'] = { ...base, title: 'Small budgets', workSteps: 3, contextTokens: 8000, ask: { workSteps: 30, contextTokens: 1048576, maxTokens: 5000 } };
+    // Today's brain (its flags say --context-length 1000000) with its context flag set otherwise: 262,144; none; nonsense.
+    const flag = (args, value) => args.flatMap((a, i) => (a === '--context-length' ? (value == null ? [] : [a, value]) : args[i - 1] === '--context-length' ? [] : [a]));
+    assert.deepEqual(flag(base.args, '1000000'), base.args, 'today\'s brain states its context');
+    m.presets['a3-262k'] = { ...base, title: 'Context 262,144', args: flag(base.args, '262144') };
+    m.presets['a3-plain'] = { ...base, title: 'No context flag', args: flag(base.args, null) };
+    m.presets['a3-nonsense'] = { ...base, title: 'Nonsense context', args: [...flag(base.args, null), '--ctx-size', 'lots'] };
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   } });
 
@@ -94,7 +103,23 @@ const errors = words => JSON.stringify(requests(words).flatMap(x => x.results.ma
 // (each request the stand-in brain got for these words: its round, and whether it was offered tools)
 const rounds = words => requests(words).map(x => [x.round, x.tools.length > 0]);
 const offeredThen = n => [...Array(n).keys()].map(i => [i, true]).concat([[n, false]]);
-const NOTICE = budget => new RegExp(`^\\[Spark Console\\] Not shown: this result \\(([\\d,]+) characters\\) would pass the ${budget} characters of tool results one message may read\\. It is kept whole in record (j_[0-9a-f]{12}): recall \\{"id":"\\2"\\} reads it, in a later message\\. Answer now with what you have; the owner can say “go on” to carry on\\.$`);
+const NOTICE = budget => new RegExp(`^\\[Spark Console\\] Not shown: this result \\(([\\d,]+) characters\\) would pass the ${budget} characters of tool results one message may read\\. It is kept whole in record (j_[0-9a-f]{12}): recall \\{"id":"\\2"\\} reads it, in a later message\\. Answer now with what you have\\.$`);
+// The brain's setup switched (as the owner does), and answering again.
+async function use(preset) {
+  const r = await api('/main/use', { method: 'POST', body: { preset } });
+  assert.equal(r.status, 202, r.text);
+  assert.equal((await ended(r.json.id)).status, 'completed');
+  await answering();
+}
+// Each turn of a chat, as its journal line keeps its budgets.
+const budgetsIn = chat => records().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets);
+// What the stand-in brain is told in a carry-on turn after a reply a budget ended (continueTask), for a script's rule.
+const CARRIED = '^\\[Spark Console\\] Your last reply stopped at the limit of one message \\(its last lines say which\\)\\. Carry on with that request: “';
+// No carry-on turn comes: the chat still holds the n messages it had, a while after its reply.
+async function noCarryOn(chat, n) {
+  await sleep(2000 * SLOW);
+  assert.equal((await chatMessages(chat)).length, n, 'no carry-on turn');
+}
 
 test('a brain that runs commands again and again stops at 12, twice its 6 rounds: no command past them runs, the answer says how many ran and that the owner can say go on, and the next message starts fresh', { timeout: 300000 * SLOW }, async () => {
   await answering();
@@ -106,9 +131,12 @@ test('a brain that runs commands again and again stops at 12, twice its 6 rounds
   assert.equal(looks() - before, 12, 'twelve commands reached the helper, no more');
   assert.deepEqual(rounds('look again and again'), offeredThen(4), 'the round after the twelfth offered no tools, and was the last');
   const last = requests('look again and again').at(-1).results.map(x => x.content);
-  assert.equal(last.filter(c => c === '[error] Not run: one message may run 12 commands, and this one has. Answer now with what you found and what is left; the owner can say “go on” to carry on.').length, 2);
+  assert.equal(last.filter(c => c === '[error] Not run: one message may run 12 commands, and this one has. Answer now with what you found and what is left.').length, 2);
   assert.match(r.text, /^I checked\. /, 'the brain\'s last words first');
   assert.ok(r.text.endsWith('\n\nStopped here: one message may run 12 commands, and 12 ran; 2 more were asked for and not run.\nSay “go on” to carry on.'), r.text.slice(-300));
+  // A plain question, not a task: it waits for the owner.
+  await noCarryOn(chat, 2);
+  assert.deepEqual(budgetsIn(chat), [{ steps: 12, output: 1200000, spent: 'steps', carried: false }], 'today\'s brain: 40% of its 1,000,000 tokens');
   // The owner says go on: a new message, with its own twelve.
   const again = await saying([{ match: '^go on$', rounds: [[RUN('spark3')]] }], chat, 'go on');
   assert.deepEqual(calls(again), [['run', true]]);
@@ -116,7 +144,35 @@ test('a brain that runs commands again and again stops at 12, twice its 6 rounds
   assert.doesNotMatch(again.text, /Stopped/);
 });
 
-test('past 39,321 characters of tool output a result is cut to a notice naming the record that keeps it whole, and the turn ends', { timeout: 300000 * SLOW }, async () => {
+test('a task whose reply reaches the step budget carries on in a fresh turn, and finishes there', { timeout: 300000 * SLOW }, async () => {
+  const FOUR = [RUN('spark3'), RUN('spark3'), RUN('spark4'), RUN('spark4')], words = 'look everywhere, then tell me what you found';
+  const chat = await newChat(), before = looks();
+  script([{ match: `^${words}$`, rounds: [FOUR, FOUR, FOUR, FOUR] }, { match: CARRIED, rounds: [[RUN('spark3')]] }]);
+  let r, m;
+  try {
+    r = await say(chat, words);
+    m = await waitFor(async () => { const x = await chatMessages(chat); return x.length >= 4 && x.at(-1).role === 'assistant' && x; }, { timeout: 120000, what: 'the carry-on turn' });
+  } finally { noScript(); }
+  assert.deepEqual(calls(r), Array(12).fill(['run', true]), errors(words));
+  assert.ok(r.text.endsWith('\n\nStopped here: one message may run 12 commands, and 12 ran.\nCarrying on with your request in a fresh turn.'), r.text.slice(-200));
+  assert.equal(m[2].role, 'user');
+  assert.ok(m[2].auto, 'Spark Console\'s own turn, not the owner\'s words');
+  assert.match(m[2].content, new RegExp(`${CARRIED}${words}”\\. Do the next step`));
+  assert.deepEqual(m[3].tools.map(t => [t.name, t.ok]), [['run', true]]);
+  assert.doesNotMatch(m[3].content, /Stopped|Carrying on/);
+  assert.equal(looks() - before, 13);
+  assert.deepEqual(budgetsIn(chat), [{ steps: 12, output: 1200000, spent: 'steps', carried: true }, { steps: 12, output: 1200000 }]);
+  await noCarryOn(chat, 4);
+});
+
+test('the output budget follows the setup\'s context flag (with no flag, or one that says nothing, 32,768 tokens); past 39,321 characters a result is cut to a notice naming the record that keeps it whole, and the turn ends', { timeout: 500000 * SLOW }, async () => {
+  for (const [preset, output] of [['a3-262k', 314572], ['a3-plain', 39321], ['a3-nonsense', 39321]]) {
+    await use(preset);
+    const hello = await newChat();
+    await say(hello, 'hello');
+    assert.deepEqual(budgetsIn(hello), [{ steps: 12, output }], preset);
+  }
+  // (a3-nonsense now: 39,321 characters)
   const chat = await newChat(), from = records().length, before = looks();
   const r = await saying([{ match: '^read a lot$', rounds: Array(6).fill([SEQ('spark3'), SEQ('spark4')]) }], chat, 'read a lot');
   const asked = requests('read a lot'), notice = NOTICE('39,321');
@@ -142,15 +198,18 @@ test('past 39,321 characters of tool output a result is cut to a notice naming t
   assert.match(r.text, new RegExp(`\\n\\nStopped here: one message may read 39,321 characters of tool results, so (?:1 result wasn’t|${cut.length} results weren’t) read \\(kept whole in Spark Console’s record: ${alt}(?:, ${alt})*\\)\\.\\nSay “go on” to carry on\\.$`));
 });
 
-test('three refused calls in a row put the tools away and the answer says what was refused and why; a call that works between resets the count', { timeout: 300000 * SLOW }, async () => {
+test('three refused calls in a row put the tools away, the answer says what was refused and why, and even a task waits for the owner; a call that works between resets the count', { timeout: 300000 * SLOW }, async () => {
   const BOGUS = { name: 'stop_model', arguments: { spark: 'spark4', container: 'nothing-here', bogus: true } };
   let before = looks();
-  const r = await saying([{ match: '^try what is refused$', rounds: [[RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [BOGUS], [RUN('spark3')], [RUN('spark4')]] }], await newChat(), 'try what is refused');
+  // (a task, with a next step: even so it waits for the owner)
+  const words = 'try what is refused, then tell me', chat = await newChat();
+  const r = await saying([{ match: `^${words}$`, rounds: [[RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [BOGUS], [RUN('spark3')], [RUN('spark4')]] }], chat, words);
   // run's own check, a Spark with no helper (it answers, and runs nothing), and an input the gate refuses.
-  assert.deepEqual(calls(r), [['run', false], ['run', true], ['stop_model', false]], errors('try what is refused'));
-  assert.deepEqual(rounds('try what is refused'), offeredThen(3));
+  assert.deepEqual(calls(r), [['run', false], ['run', true], ['stop_model', false]], errors(words));
+  assert.deepEqual(rounds(words), offeredThen(3));
   assert.equal(looks(), before, 'nothing was run after them');
   assert.match(r.text, /\n\nStopped asking: 3 calls in a row were refused, so the tools were put away for this message\.\n- run: Leave out sudo: a look already reads what root can read \(keys aside\), and it changes nothing\.\n- run: Commands on Spark 2, the hub, come with a later build \(its set-up waits for the lock-out net\), so nothing ran there\.\n- stop_model: Unknown argument: bogus\. stop_model takes [^\n]+\.\nSay what to change, or “go on” to try again\.$/);
+  await noCarryOn(chat, 2);
   // Two refused, one that works, two refused, a lookup: every round runs.
   before = looks();
   const s = await saying([{ match: '^refused, then not$', rounds: [[RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [RUN('spark3')], [RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [GUIDE]] }], await newChat(), 'refused, then not');
@@ -161,12 +220,9 @@ test('three refused calls in a row put the tools away and the answer says what w
 });
 
 test('a setup\'s own budgets apply and change the tested mark; its ask block can\'t raise them; lookups are no work steps; two chats at once each have their own', { timeout: 400000 * SLOW }, async () => {
-  // Today's setup states none: the brain's catalog (part of the tested mark) is as it was.
+  // A setup that states neither (its context flag aside): the brain's catalog (part of the tested mark) is as it was.
   assert.ok(!('workSteps' in (await api('/actions')).json.brain.setup) && !('contextTokens' in (await api('/actions')).json.brain.setup));
-  const use = await api('/main/use', { method: 'POST', body: { preset: 'a3-small' } });
-  assert.equal(use.status, 202, use.text);
-  assert.equal((await ended(use.json.id)).status, 'completed');
-  await answering();
+  await use('a3-small');
   const setup = (await api('/actions')).json.brain.setup;
   assert.deepEqual([setup.workSteps, setup.contextTokens], [3, 8000]);
   // Three run calls, whatever the ask block says; the lookups between them are not counted.
@@ -197,4 +253,23 @@ test('a setup\'s own budgets apply and change the tested mark; its ask block can
   // (their requests overlapped in time: each chat's first request came before the other's last)
   const [ra, rb] = [requests('chat a looks'), requests('chat b looks')];
   assert.ok(ra[0].at < rb.at(-1).at && rb[0].at < ra.at(-1).at, 'the two answered at once');
+});
+
+test('a task whose every reply reaches the step budget carries on within the carry-on\'s own limit of turns, then waits for the owner', { timeout: 400000 * SLOW }, async () => {
+  // (a3-small now: three commands a message)
+  const words = 'small task, then tell me', chat = await newChat(), before = looks();
+  script([{ match: `^${words}$`, rounds: Array(4).fill([RUN('spark3')]) }, { match: CARRIED, rounds: Array(4).fill([RUN('spark4')]) }]);
+  let m;
+  try {
+    await say(chat, words);
+    // The owner's reply and 8 carry-on turns (CONTINUE_MAX).
+    m = await waitFor(async () => { const x = await chatMessages(chat); return x.length >= 18 && x.at(-1).role === 'assistant' && x; }, { timeout: 300000, what: 'eight carry-on turns' });
+    await noCarryOn(chat, 18);
+  } finally { noScript(); }
+  const replies = m.filter(x => x.role === 'assistant');
+  assert.equal(replies.length, 9);
+  for (const x of replies.slice(0, 8)) assert.ok(x.content.endsWith('\n\nStopped here: one message may run 3 commands, and 3 ran.\nCarrying on with your request in a fresh turn.'), x.content.slice(-200));
+  assert.ok(replies[8].content.endsWith('\n\nStopped here: one message may run 3 commands, and 3 ran.\nSay “go on” to carry on.'), replies[8].content.slice(-200));
+  assert.equal(looks() - before, 27);
+  assert.deepEqual(budgetsIn(chat).map(x => x.carried), [...Array(8).fill(true), false]);
 });
