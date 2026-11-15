@@ -3812,7 +3812,8 @@ const waking = new Set();
 function wakeWork(id) {
   try {
     const conv = chatData().conversations.find(c => c.id === id);
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !resultSince(conv)) return;
+    // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
+    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -3823,6 +3824,8 @@ async function continueTask(id) {
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || chatBusy(id)) return;
+  const carried = Boolean(t.carry);
+  delete t.carry;
   if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
@@ -3831,7 +3834,7 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] What you started for the owner’s request has finished (the results are above). Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
@@ -3911,7 +3914,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }
   } finally { finish(); }
@@ -4029,8 +4032,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups }) {
-  if (!agent && used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+  // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
+  if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
 }
@@ -4097,7 +4102,7 @@ async function chatReply(req, res, viewer, conv, text, context) {
 }
 
 /* ───────── Sparkie’s rounds ───────── */
-// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs
+// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
@@ -4114,10 +4119,88 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
+// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
+// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
+// its rounds, at most 30); the tool output it may read (40% of its context, budgetContext, at 3 characters a token);
+// and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const CONTEXT_TOKENS = 32768;      // limit: the context of a setup that says none
+const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
+// (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
+const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
 function turnBudgets({ tuned }) {
   const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
-  return { ROUNDS, CHANGES };
+  const steps = Number(tuned.workSteps);
+  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
+  const TOOL_OUTPUT = Math.floor(budgetContext(tuned) * 12 / 10);
+  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
+// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
+// else 32,768.
+const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+function budgetContext(setup) {
+  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576, args = Array.isArray(setup?.args) ? setup.args.map(String) : [];
+  if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);
+  const at = args.findIndex(a => BUDGET_CONTEXT_FLAG.test(a)), n = at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+  return fits(n) ? n : CONTEXT_TOKENS;
+}
+// Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
+// (continueTask: CONTINUE_MAX turns in CONTINUE_HOURS, not while agents are paused): only the owner's request that is a
+// task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
+function budgetCarries({ spent, agent, task, text, now }) {
+  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text))) return false;
+  const t = task || { continuations: 0, at: now };
+  return t.continuations < CONTINUE_MAX && Date.now() - Date.parse(t.at) <= CONTINUE_HOURS * 3600000 && !(agentSettings().halted && !agentSettings().autoPaused);
+}
+// What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
+const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
+// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
+// step that reaches them makes the next round the last.
+function workStep(turn) {
+  if (turn.works >= turn.WORK_STEPS) {
+    turn.notRun++;
+    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
+  }
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+}
+// After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
+// refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
+// sent of the result (budgetCut).
+function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
+  const why = ok ? nothing : out.replace(/^\[error\] /, '');
+  if (why == null) turn.refusedRow.length = 0;
+  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW && !turn.spent) {
+    turn.spent = 'refused';
+    turn.refused.push(...turn.refusedRow);
+  }
+  if (name === 'run' && ok && nothing == null) turn.ran++;
+  return budgetCut(turn, out, jid);
+}
+// The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
+// by its record (journalTool keeps it whole), and the next round is the last. (Kept apart: how a long result is cut may
+// change, design G step 5.)
+function budgetCut(turn, out, jid) {
+  if (!turn.unread.length && turn.outChars + out.length <= turn.TOOL_OUTPUT) { turn.outChars += out.length; return out; }
+  turn.unread.push(jid);
+  turn.spent ||= 'output';
+  return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${jid ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : 'It wasn’t kept: the record couldn’t be written.'} Answer now with what you have.`;
+}
+// A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
+// results weren't read and where they are kept, or which calls were refused and why; then that the task carries on in
+// a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+function budgetReport(turn) {
+  if (!turn.spent) return;
+  turn.carry = budgetCarries(turn);
+  const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
+  if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
+  lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
+  const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
+  turn.answer += text;
+  turn.emit({ type: 'delta', text });
 }
 // The tools of each round (R46): the core and this request's groups, opened by its words (a carry-on turn starts
 // from the groups its request kept), by state, by a call to a tool that wasn't offered, and by guide.
@@ -4195,8 +4278,9 @@ async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs)
-    const last = round >= ROUNDS || overBudget(turn);
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
+    // or at one of the loop's budgets, turnBudgets)
+    const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
     turn.usage = r.usage || turn.usage;
@@ -4206,6 +4290,7 @@ async function turnRounds(turn) {
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
   }
+  budgetReport(turn);
 }
 // One round’s tool calls (at most 4): on the record first; lookups together, then changes one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
@@ -4239,12 +4324,14 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null;
+  let nothing = null;   // (why a call that answered ran nothing: a run where the helper can't run it; budgetsAfter)
   try {
     // (the owner's /stop came while another call of this round ran: nothing more is handed to runAction)
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
+    if (c.name === 'run') workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
     let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -4257,13 +4344,15 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     out = JSON.stringify(maskDeep(value));
     outcome = typeof value?.outcome === 'string' ? value.outcome : null;
     if (value?.plan) plan = value.plan;
+    if (value?.ran === false) nothing = maskSecrets(String(value.why || 'Nothing ran.'));
   } catch (e) {
     ok = false;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
-  journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
   const shown = commandShown(c, ok, out);
   if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
+  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
   const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
   steps[i] = step;
@@ -8834,11 +8923,11 @@ function journalSaid(conv, text, agent, channel, task) {
 }
 function journalTool({ turn, chat, brain, call, ok, outcome, ms }, out) {
   const a = jArgs(call.args || '{}'), n = a && typeof a === 'object' ? a : {};
-  journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
+  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
 }
-function journalTurn({ id, conv, brain, messages, used, since }) {
+function journalTurn({ id, conv, brain, messages, used, since, budgets = null }) {
   journal('turn', { turn: id, chat: conv.id, brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
-    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since) });
+    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since), budgets });
 }
 // A start's failed attempt that has a next fix (startWithFixes notes it; the hook is note(), outside the workflows' code).
 function journalNote(job, line) {
@@ -12720,7 +12809,7 @@ function brainCatalog() {
   return { toolCap: TOOL_CAP, groupSize: GROUP_SIZE, groups: GROUP_WORDS.map(([group, about, re]) => ({ group, about, words: re.source, tools: groupActions(group).map(a => a.name) })),
     core: groupActions('core').map(a => a.name), lines: TOOL_LINES.map(([tools, text]) => ({ tools, text })),
     setup: { sampling: s.sampling || null, thinking: Boolean(s.thinking), templateKwargs: s.templateKwargs || null, maxTokens: s.maxTokens || null,
-      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...askSet(s) } };
+      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) } };
 }
 
 action({
