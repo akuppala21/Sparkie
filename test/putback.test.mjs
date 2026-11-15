@@ -237,6 +237,18 @@ describe('go-back.sh and an update’s way back never trip the hold', () => {
     assert.match(goBack, /exec bash "\$last\/restore\.sh"\n/);
   });
 
+  test('restore.sh --with-state signs every device out, whether or not anything was removed since the snapshot', () => {
+    const x = home();
+    try {
+      writeFileSync(join(x.snap, 'state', 'auth-serial.json'), '{"serial":5}');
+      writeFileSync(join(x.live, 'sessions.json'), JSON.stringify({ sessions: [{ id: 'signedinnow1', hash: 'b'.repeat(64) }] }));
+      const r = run(x, '--with-state');
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(!existsSync(join(x.live, 'sessions.json')), 'no device stays signed in');
+      assert.equal(readFileSync(join(x.live, 'auth-serial.json'), 'utf8'), '{"serial":5}', 'nothing was removed since: no hold follows');
+    } finally { rmSync(x.h, { recursive: true, force: true }); }
+  });
+
   test('restore.sh --with-state brings the older number back, so the next start holds', () => {
     const x = home();
     try {

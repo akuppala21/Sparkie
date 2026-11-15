@@ -134,13 +134,14 @@ describe('restore.sh --with-state', () => {
   }
   const run = ({ h, snap, bin }) => spawnSync('bash', [join(snap, 'restore.sh'), '--with-state'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8', timeout: 60000 * SLOW });
 
-  test('the snapshot’s state comes back but never its sessions.json: who is signed in stays as it is now', () => {
+  // (E2c, contract 6.25: until then the devices signed in at the time stayed signed in)
+  test('the snapshot’s state comes back but never its sessions.json, and every device signs in again', () => {
     const now = JSON.stringify({ sessions: [{ id: 'signedinnow1', hash: 'b'.repeat(64) }] });
     const x = home({ liveSessions: now });
     try {
       const r = run(x);
       assert.equal(r.status, 0, r.stdout + r.stderr);
-      assert.equal(readFileSync(join(x.live, 'sessions.json'), 'utf8'), now, 'the sessions of now stay');
+      assert.ok(!existsSync(join(x.live, 'sessions.json')), 'no device stays signed in');
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'passkeys.json'), 'utf8')), { keys: [{ id: 'from-the-snapshot' }] }, 'the rest is put back');
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json'), 'utf8')), { entries: ['from the snapshot'] });
     } finally { rmSync(x.h, { recursive: true, force: true }); }

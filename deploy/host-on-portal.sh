@@ -316,8 +316,8 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 #!/usr/bin/env bash
 # Puts back the Spark Console install saved in this folder: the UI, the service and its systemd unit. Then restarts
 # the service. People, chats and the rest of the state stay as they are; with --with-state, the state saved here is
-# copied back too (state files made since then stay), but never sessions.json: who is signed in stays as it is now, so
-# a device signed out since isn't let back in (contract 6.25).
+# copied back too (state files made since then stay), and sessions.json goes: every device signs in again, and none
+# signed out since is let back in (contract 6.25).
 #   bash restore.sh [--with-state]
 set -euo pipefail
 S="$(cd "$(dirname "$0")" && pwd)"
@@ -341,6 +341,7 @@ if [ "${1:-}" = --with-state ] && [ -d "$S/state" ]; then
     [ -e "$f" ] && [ "${f##*/}" != sessions.json ] || continue
     cp -a "$f" "$HOME/.local/state/spark-console/"
   done
+  rm -f "$HOME/.local/state/spark-console/sessions.json"
 fi
 # The files are back: this snapshot is what's installed now, answering or not, so the next go-back passes over it
 # (one that only marked itself once it answered would be put back again and again if its build is dead).
