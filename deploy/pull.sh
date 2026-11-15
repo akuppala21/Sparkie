@@ -27,7 +27,8 @@
 # an install changes and one timer in the owner's systemd that puts it back unless this script confirms the new build
 # through the real address within 10 minutes of its installer ending. The incoming installer runs with tailscale, sudo,
 # ssh and systemd-run refused, whatever it does with SKIP_ROUTES=1; a call to one of them means not kept. Tests may
-# use SPARK_CONSOLE_DOOR_URL and SPARK_CONSOLE_UPDATE_CONFIRM_S, only with SPARK_CONSOLE_ALL_LOCAL=1.
+# use SPARK_CONSOLE_DOOR_URL, SPARK_CONSOLE_UPDATE_CONFIRM_S and SPARK_CONSOLE_FETCH_S, only with
+# SPARK_CONSOLE_ALL_LOCAL=1. A fetch gets 60 seconds.
 # The token reaches git only through its environment, never a command line or git's config. A test may point at
 # another repository with SPARK_CONSOLE_REPO_URL, only with SPARK_CONSOLE_ALL_LOCAL=1.
 set -euo pipefail
@@ -42,6 +43,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WANT='' W='' DOOR='' ARMED=''
 CONFIRM_S=600
 if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_CONFIRM_S:-}" =~ ^[0-9]+$ ]]; then CONFIRM_S=$SPARK_CONSOLE_UPDATE_CONFIRM_S; fi
+FETCH_S=60 FETCH_SLOW='' FETCH_ERR=''
+if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_FETCH_S:-}" =~ ^[0-9]+$ ]]; then FETCH_S=$SPARK_CONSOLE_FETCH_S; fi
 
 die() { echo "  STOP: $*" >&2; exit 1; }
 usage() {
@@ -86,11 +89,12 @@ interrupted() {
 
 # git, on the bare copy only, with nothing from the system's or the user's git config (a rewrite to SSH, a credential
 # store), no prompt, no hooks, HTTPS only, and every fetched object checked.
-g() {
+g() { git_safe git -C "$REPO" "$@"; }
+git_safe() {  # git_safe <command…>: runs it with that environment (the command is git, or timeout in front of git)
   local proto=https
   [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || proto=https:file
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS='' \
-    GIT_ALLOW_PROTOCOL="$proto" git -C "$REPO" "$@"
+    GIT_ALLOW_PROTOCOL="$proto" "$@"
 }
 need_git() {
   command -v git >/dev/null 2>&1 || die "git isn't installed on this Spark. Install it once (sudo apt install git), then run this again."
@@ -105,14 +109,24 @@ url_for() {
   else echo "https://github.com/$1.git"; fi
 }
 # fetch <url> <basic credentials>: main and the tested/ tags, and nothing else. The token is in git's environment
-# (GIT_CONFIG_*), for github.com only.
+# (GIT_CONFIG_*), for github.com only. It gets FETCH_S seconds: timeout runs git in a process group of its own and ends
+# all of it (git's https helper too), so nothing waits on a network that doesn't answer (FETCH_SLOW=1 then). Where
+# there is no timeout (a Mac), there is no limit.
 fetch() {
-  local err
+  local err code=0 cut=()
+  ! command -v timeout >/dev/null 2>&1 || cut=(timeout "$FETCH_S")
+  FETCH_SLOW=''
   err=$(GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="Authorization: basic $2" \
     GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='' GIT_CONFIG_KEY_2=core.hooksPath GIT_CONFIG_VALUE_2=/dev/null \
     GIT_CONFIG_KEY_3=fetch.fsckObjects GIT_CONFIG_VALUE_3=true \
-    g fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
-    && return 0
+    git_safe ${cut[@]+"${cut[@]}"} git -C "$REPO" fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
+    || code=$?
+  [ "$code" != 0 ] || return 0
+  if [ "$code" = 124 ] && [ ${#cut[@]} -gt 0 ]; then
+    FETCH_SLOW=1 FETCH_ERR="no answer from $1 in $FETCH_S seconds"
+    echo "  Couldn't fetch from $1: no answer in $FETCH_S seconds." >&2
+    return 1
+  fi
   FETCH_ERR=$err
   echo "  Couldn't fetch from $1. git said: $(printf '%s' "$err" | tail -n 2 | tr '\n' ' ')" >&2
   return 1
@@ -166,6 +180,38 @@ newest_tested() {
   while read -r c t; do
     case "$tags" in *" ${t:0:12} "*) echo "$c $t"; return 0 ;; esac
   done < <(g log --topo-order -n 5000 --format='%H %T' refs/heads/main)
+}
+# tag_check <commit> <tree> [lock-only]: tested/<tree> is that commit plus the lock and nothing else, and the lock names
+# that tree (its build 12 hex digits, its tree in full; its time, if any, a time) and, unless lock-only, the build that
+# code is. Sets TAG_COMMIT, TAG_BUILD and TAG_AT (the time it was tested, or -). On a miss it fails, with why in TAG_WHY
+# (only this script's words and checked ids: nothing from the repository's text). install refuses on a miss; check
+# (lock-only: it reads no code) doesn't offer it.
+tag_check() {
+  local c=$1 t=$2 want=${2:0:12} tab lockf fields ltree p
+  TAG_WHY='' TAG_COMMIT='' TAG_BUILD='' TAG_AT=-
+  TAG_COMMIT=$(g rev-parse -q --verify "refs/tags/tested/$want^{commit}" 2>/dev/null) \
+    || { TAG_WHY="tested/$want doesn't name a commit."; return 1; }
+  tab=$(printf '\t')
+  [ "$(g diff-tree -r --no-renames --name-status "$c" "$TAG_COMMIT" 2>/dev/null)" = "A${tab}$LOCK_PATH" ] \
+    || { TAG_WHY="tested/$want changes more than adding $LOCK_PATH to commit ${c:0:12}."; return 1; }
+  lockf=$(g cat-file -s "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null || echo 0)
+  [[ "$lockf" =~ ^[0-9]+$ ]] && [ "$lockf" -gt 0 ] && [ "$lockf" -le 65536 ] \
+    || { TAG_WHY="The lock in tested/$want is missing or too big."; return 1; }
+  fields=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" | python3 -I -c 'import json, re, sys
+d = json.loads(sys.stdin.read())
+ok = lambda k, p: isinstance(d.get(k), str) and re.fullmatch(p, d[k])
+if not (isinstance(d, dict) and ok("build", "[0-9a-f]{12}") and isinstance(d.get("versions"), dict)): sys.exit(1)
+print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-",
+      d["testedAt"] if ok("testedAt", r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z") else "-")' 2>/dev/null) \
+    || { TAG_WHY="The lock in tested/$want isn't one the installer can read."; return 1; }
+  read -r TAG_BUILD ltree TAG_AT <<<"$fields"
+  [ "$ltree" != - ] || { TAG_WHY="The lock in tested/$want names no tree."; return 1; }
+  [ "$ltree" = "$t" ] || { TAG_WHY="The lock in tested/$want is for tree ${ltree:0:12}, not this tree ($want)."; return 1; }
+  [ "${3:-}" != lock-only ] || return 0
+  p=$(for p in server.mjs dig.mjs passkey.mjs; do g cat-file blob "$c:service/$p" || exit 1; done | sha12) \
+    || { TAG_WHY="Tree $want has no service/server.mjs, dig.mjs or passkey.mjs."; return 1; }
+  [ "$TAG_BUILD" = "$p" ] || { TAG_WHY="The lock in tested/$want is for build $TAG_BUILD, but this code is build $p."; return 1; }
+  TAG_BUILD=$p
 }
 # The installed build, from its lock: "<build> <tree or -> <commit or ->".
 installed() {
@@ -267,6 +313,7 @@ check_facts() {
   if [ "$nc" = "$head" ]; then echo "  main: commit ${head:0:12}, tree ${ht:0:12}, tested."
   else echo "  main: commit ${head:0:12}, tree ${ht:0:12}, not tested yet (no tested/${ht:0:12} tag)."; fi
   [ -n "${nt:-}" ] || { echo "  Nothing on main is tested yet."; return 0; }
+  tag_check "$nc" "$nt" lock-only || { echo "  The newest tree on main with a tested/ tag (${nt:0:12}) isn't offered: $TAG_WHY"; return 0; }
   if [ "$nt" = "$it" ]; then echo "  The newest tested build on main (tree ${nt:0:12}) is the one installed."; return 0; fi
   echo "  Newest tested on main: tree ${nt:0:12}, commit ${nc:0:12}."
   if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; then
@@ -285,38 +332,38 @@ check() {
   ready; check_facts
 }
 # check --json: the same facts for the console (check_update, R58), one JSON object on stdout; a problem is one too:
-# "no git", "not set up", "token" (GitHub refused the token: it may have expired) or "unreachable". Commit subjects are
-# as written on GitHub: the reader treats them as outside text.
+# "no git", "not set up", "token" (GitHub refused the token: it may have expired), "slow" (no answer in FETCH_S
+# seconds) or "unreachable". The newest tested tree is offered only when its tag passes install's own checks of the tag
+# and its lock (tag_check, lock-only); otherwise "badTag" says why and nothing is offered. From the lock only shaped values come out (a build
+# of 12 hex digits, a time, a hash of 64), never its text. Commit subjects and git's words ("why") are as written
+# on GitHub and by git: the reader treats them as outside text.
 check_json() {
-  local s ib it ic ir head='' ht='' nc='' nt='' tc lock='' newer=false subj='' problem='' why=''
+  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' bad='' newer=false subj='' problem='' why=''
   out() {  # out <problem> <why>
     printf '%s' "$subj" | python3 -I -c 'import json, sys
 a = sys.argv[1:]
 def opt(v): return None if v in ("", "-") else v
-lock = {}
-try: lock = json.loads(a[13]) if a[13] else {}
-except Exception: lock = {}
 newest = None
-if opt(a[9]):
-    newest = {"commit": a[8], "tree": a[9], "build": lock.get("build") if isinstance(lock.get("build"), str) else None,
-              "testedAt": lock.get("testedAt") if isinstance(lock.get("testedAt"), str) else None,
-              "brainReads": lock.get("brainReads") if isinstance(lock.get("brainReads"), str) else None}
+if opt(a[9]) and not opt(a[14]):
+    newest = {"commit": a[8], "tree": a[9], "build": opt(a[11]), "testedAt": opt(a[12]), "brainReads": opt(a[13])}
 print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo": opt(a[2]),
-  "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[12])},
-  "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8]},
-  "newest": newest, "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10]}))' \
-      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "" "${ir:-}" "$lock"
+  "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[15])},
+  "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8] and not opt(a[14])},
+  "newest": newest, "badTag": {"commit": a[8], "tree": a[9], "why": a[14]} if opt(a[14]) else None,
+  "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10]}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}"
   }
-  command -v git >/dev/null 2>&1 || { out 'no git' "git isn't installed on Spark 2."; return 0; }
+  # (the stand-in fleet marks a program missing with ~/.mock/off-path-<program>, as the console's own look reads it)
+  if ! command -v git >/dev/null 2>&1 || { [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -e "$HOME/.mock/off-path-git" ]; }; then
+    out 'no git' "git isn't installed on Spark 2 where Spark Console looks for it."; return 0
+  fi
   read -r ib it ic <<<"$(installed)"
-  ir=$(python3 -I -c 'import json, re, sys
-try: r = json.load(open(sys.argv[1])).get("brainReads") or ""
-except Exception: r = ""
-print(r if re.fullmatch(r"[0-9a-f]{64}", str(r)) else "")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || true)
+  ir=$(reads_of "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || true)
   s=$(from_secrets) && [ -d "$REPO" ] || { out 'not set up' "The install from GitHub isn't set up on Spark 2: $ME setup <owner>/<repository>"; return 0; }
   read -r REPO_NAME AUTH <<<"$s"
   FETCH_ERR=''
   if ! fetch "$(url_for "$REPO_NAME")" "$AUTH" 2>/dev/null; then
+    if [ -n "$FETCH_SLOW" ]; then out slow "$FETCH_ERR"; return 0; fi
     why=$(printf '%s\n' "$FETCH_ERR" | grep -E '^(fatal|remote):' | tail -n 1 | cut -c1-300 || true)
     [ -n "$why" ] || why=$(printf '%s' "$FETCH_ERR" | tail -n 1 | cut -c1-300)
     case "$FETCH_ERR" in
@@ -327,14 +374,22 @@ print(r if re.fullmatch(r"[0-9a-f]{64}", str(r)) else "")' "$HOME/spark-console-
   fi
   read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
   read -r nc nt <<<"$(newest_tested || true)"
-  if [ -n "${nt:-}" ]; then
-    tc=$(g rev-parse -q --verify "refs/tags/tested/${nt:0:12}^{commit}" 2>/dev/null || true)
-    [ -z "$tc" ] || lock=$(g cat-file blob "$tc:$LOCK_PATH" 2>/dev/null | head -c 65536 || true)
+  if [ -n "${nt:-}" ] && ! tag_check "$nc" "$nt" lock-only; then bad=$TAG_WHY
+  elif [ -n "${nt:-}" ]; then
+    nb=$TAG_BUILD nat=$TAG_AT
+    nr=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | reads_of /dev/stdin || true)
     if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
     if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
     else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
   fi
   out '' ''
+}
+# reads_of <lock file>: what the brain reads in that build (its lock's brainReads), only as 64 hex digits, else nothing.
+reads_of() {
+  python3 -I -c 'import json, re, sys
+try: r = json.load(open(sys.argv[1])).get("brainReads") or ""
+except Exception: r = ""
+print(r if re.fullmatch(r"[0-9a-f]{64}", str(r)) else "")' "$1"
 }
 
 install() {
@@ -347,7 +402,7 @@ install() {
   fi
   WANT="$1"
   ready
-  local c t tc lockf tab fields lbuild ltree lat code_build p txt note code=0 now why trees ib it ic
+  local c t tc lat code_build p txt note code=0 now why trees ib it ic
   read -r c t <<<"$(newest_tested || true)"
   if [ -z "${c:-}" ] || [ "${t:0:12}" != "$WANT" ]; then
     trees=$'\n'$(g log --topo-order -n 5000 --format=%T refs/heads/main)
@@ -368,27 +423,9 @@ install() {
   if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$c"; then
     refuse "Tree $WANT (commit ${c:0:12}) isn't newer than the installed build (commit ${ic:0:12}). To go back a build: bash $SHARE/go-back.sh"
   fi
-  # The tag: that commit plus the lock, nothing else.
-  tc=$(g rev-parse -q --verify "refs/tags/tested/$WANT^{commit}") || refuse "tested/$WANT doesn't name a commit."
-  tab=$(printf '\t')
-  [ "$(g diff-tree -r --no-renames --name-status "$c" "$tc")" = "A${tab}$LOCK_PATH" ] \
-    || refuse "tested/$WANT changes more than adding $LOCK_PATH to commit ${c:0:12}."
-  # The lock names this tree and the build this code is.
-  lockf=$(g cat-file -s "$tc:$LOCK_PATH" 2>/dev/null || echo 0)
-  [ "$lockf" -gt 0 ] && [ "$lockf" -le 65536 ] || refuse "The lock in tested/$WANT is missing or too big."
-  fields=$(g cat-file blob "$tc:$LOCK_PATH" | python3 -I -c 'import json, re, sys
-d = json.loads(sys.stdin.read())
-ok = lambda k, p: isinstance(d.get(k), str) and re.fullmatch(p, d[k])
-if not (isinstance(d, dict) and ok("build", "[0-9a-f]{12}") and isinstance(d.get("versions"), dict)): sys.exit(1)
-print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-",
-      d["testedAt"] if ok("testedAt", r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z") else "-")' 2>/dev/null) \
-    || refuse "The lock in tested/$WANT isn't one the installer can read."
-  read -r lbuild ltree lat <<<"$fields"
-  [ "$ltree" != - ] || refuse "The lock in tested/$WANT names no tree."
-  [ "$ltree" = "$t" ] || refuse "The lock in tested/$WANT is for tree ${ltree:0:12}, not this tree ($WANT)."
-  code_build=$(for p in server.mjs dig.mjs passkey.mjs; do g cat-file blob "$c:service/$p" || exit 1; done | sha12) \
-    || refuse "Tree $WANT has no service/server.mjs, dig.mjs or passkey.mjs."
-  [ "$lbuild" = "$code_build" ] || refuse "The lock in tested/$WANT is for build $lbuild, but this code is build $code_build."
+  # The tag: that commit plus the lock, nothing else; the lock names this tree and the build this code is.
+  tag_check "$c" "$t" || refuse "$TAG_WHY"
+  tc=$TAG_COMMIT lat=$TAG_AT code_build=$TAG_BUILD
   # Plain files and folders (a submodule is code from elsewhere), and no .gitattributes that changes what git archive
   # gives out. Links only where links_ok allows them (a link elsewhere could copy a secret into the page folder).
   p=$(g ls-tree -r "$tc" | awk -F'\t' '{ split($1, m, " ") } m[1] != "100644" && m[1] != "100755" && m[1] != "120000" && !n++ { print $2 }')
