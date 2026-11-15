@@ -13,6 +13,8 @@ row "An engine".
 - Trusted image sources (`imageSources` in `CONFIG`, `01-setup.mjs`).
 - `pinImage`'s registries (`11-setups.mjs`).
 - A lock run, then validation runs: every workflow version changes.
+- For an engine that can serve the brain: the brain check (`brainAsk`, `21-brain-check.mjs`) reads tool calls the
+  way the chat loop does; a server that streams them differently fails the check, so try it with `POST /main/check`.
 
 ## Never
 

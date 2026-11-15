@@ -8,52 +8,53 @@ a header declares (the owner of a state file, its writers, the timers) is checke
 Kind: a lookup runs at once; a change goes through the checks in `runAction`. Answers to: the words of the owner’s
 request it may follow (`ACTION_KIND`). Page only: never run from a channel (`PAGE_ONLY`). Step: may be a step of a
 saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own (`INSIDE_READS`), or text
-from outside.
+from outside. Group: the tool group Sparkie is offered it in (R46; the core is in every round).
 
-| Action | Kind | Part | Answers to | Page only | Step | Text |
-|---|---|---|---|---|---|---|
-| `fleet_status` | read | `16-actions` | — | — | yes | inside |
-| `running_models` | read | `16-actions` | — | — | yes | inside |
-| `models_on_disk` | read | `16-actions` | — | — | yes | inside |
-| `find_recipes` | read | `16-actions` | — | — | yes | outside |
-| `recipe_detail` | read | `16-actions` | — | — | yes | outside |
-| `search_huggingface` | read | `16-actions` | — | — | yes | outside |
-| `where_it_fits` | read | `16-actions` | — | — | yes | inside |
-| `deploy_plan` | read | `16-actions` | — | — | yes | inside |
-| `cluster_plan` | read | `16-actions` | — | — | yes | inside |
-| `linked_sparks` | read | `16-actions` | — | — | yes | inside |
-| `spark_detail` | read | `16-actions` | — | — | yes | outside |
-| `recent_operations` | read | `16-actions` | — | — | yes | outside |
-| `operation_log` | read | `16-actions` | — | — | yes | outside |
-| `container_logs` | read | `16-actions` | — | — | yes | outside |
-| `spark_diagnostics` | read | `16-actions` | — | — | yes | outside |
-| `service_logs` | read | `16-actions` | — | — | yes | outside |
-| `files` | read | `16-actions` | — | — | yes | outside |
-| `sparkie_setup` | read | `16-actions` | — | — | yes | inside |
-| `workloads` | read | `16-actions` | — | — | yes | outside |
-| `fleet_events` | read | `16-actions` | — | — | yes | outside |
-| `start_model` | change | `17-changes` | start | — | yes | — |
-| `stop_model` | change | `17-changes` | stop | — | yes | — |
-| `restart_model` | change | `17-changes` | restart, start | — | yes | — |
-| `find_setups` | change | `17-changes` | find | — | yes | — |
-| `save_file` | change | `17-changes` | file | — | no | — |
-| `workflows` | read | `18-workflows` | — | — | yes | inside |
-| `save_workflow` | change | `18-workflows` | save | yes | no | — |
-| `run_workflow` | change | `18-workflows` | start | — | no | — |
-| `forget_workflow` | change | `18-workflows` | forget | yes | no | — |
-| `wait_operation` | read | `18-workflows` | — | — | yes | outside |
-| `test_changes` | change | `18-workflows` | test | — | yes | — |
-| `undo_update` | change | `18-workflows` | undo | yes | yes | — |
-| `should_be_running` | read | `20-desired` | — | — | yes | inside |
-| `cancel_operation` | change | `20-desired` | cancel | — | yes | — |
-| `undo_last_change` | change | `20-desired` | undo | — | yes | — |
-| `memory` | read | `20-memory` | — | — | yes | inside |
-| `remember` | change | `20-memory` | remember | yes | no | — |
-| `forget_memory` | change | `20-memory` | remember | yes | no | — |
-| `keep_running` | change | `21-apps` | keep, start, restart, stop | — | yes | — |
-| `self_test` | change | `21-selftest` | selftest | — | no | — |
-| `search_web` | read | `21-web` | — | — | yes | outside |
-| `read_page` | read | `21-web` | — | — | yes | outside |
+| Action | Kind | Part | Group | Answers to | Page only | Step | Text |
+|---|---|---|---|---|---|---|---|
+| `fleet_status` | read | `16-actions` | core | — | — | yes | inside |
+| `running_models` | read | `16-actions` | core | — | — | yes | inside |
+| `models_on_disk` | read | `16-actions` | find | — | — | yes | inside |
+| `find_recipes` | read | `16-actions` | find | — | — | yes | outside |
+| `recipe_detail` | read | `16-actions` | find | — | — | yes | outside |
+| `search_huggingface` | read | `16-actions` | find | — | — | yes | outside |
+| `where_it_fits` | read | `16-actions` | find | — | — | yes | inside |
+| `deploy_plan` | read | `16-actions` | sparks | — | — | yes | inside |
+| `cluster_plan` | read | `16-actions` | sparks | — | — | yes | inside |
+| `linked_sparks` | read | `16-actions` | sparks | — | — | yes | inside |
+| `spark_detail` | read | `16-actions` | sparks | — | — | yes | outside |
+| `recent_operations` | read | `16-actions` | dig | — | — | yes | outside |
+| `operation_log` | read | `16-actions` | dig | — | — | yes | outside |
+| `container_logs` | read | `16-actions` | dig | — | — | yes | outside |
+| `spark_diagnostics` | read | `16-actions` | dig | — | — | yes | outside |
+| `service_logs` | read | `16-actions` | dig | — | — | yes | outside |
+| `files` | read | `16-actions` | reading | — | — | yes | outside |
+| `sparkie_setup` | read | `16-actions` | core | — | — | yes | inside |
+| `workloads` | read | `16-actions` | core | — | — | yes | outside |
+| `fleet_events` | read | `16-actions` | past | — | — | yes | outside |
+| `start_model` | change | `17-changes` | core | start | — | yes | — |
+| `stop_model` | change | `17-changes` | core | stop | — | yes | — |
+| `restart_model` | change | `17-changes` | core | restart, start | — | yes | — |
+| `find_setups` | change | `17-changes` | find | find | — | yes | — |
+| `save_file` | change | `17-changes` | reading | file | — | no | — |
+| `workflows` | read | `18-workflows` | routines | — | — | yes | inside |
+| `save_workflow` | change | `18-workflows` | routines | save | yes | no | — |
+| `run_workflow` | change | `18-workflows` | routines | start | — | no | — |
+| `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
+| `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
+| `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
+| `undo_update` | change | `18-workflows` | updates | undo | yes | yes | — |
+| `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
+| `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
+| `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
+| `memory` | read | `20-memory` | memory | — | — | yes | inside |
+| `remember` | change | `20-memory` | core | remember | yes | no | — |
+| `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
+| `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
+| `guide` | read | `21-guide` | core | — | — | yes | inside |
+| `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
+| `search_web` | read | `21-web` | core | — | — | yes | outside |
+| `read_page` | read | `21-web` | reading | — | — | yes | outside |
 
 ## State files and their writers
 
@@ -71,6 +72,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `backup.json` | `25-backup-and-start` | `backupState`; `backupState` is called by `backupIfDue` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck` | yes | yes |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
@@ -81,7 +83,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory.json` | `20-memory` | `remember`, `forget_memory` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |

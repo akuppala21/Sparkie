@@ -231,10 +231,12 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    // The action list, as agents see it (Access → Agents shows it).
+    // The action list, as agents see it (Access → Agents shows it), each with its group; and what Sparkie's brain is
+    // offered from it (brainCatalog, 21-guide.mjs: the cap, the groups and their words, the lines that follow tools).
     if (req.method === 'GET' && path === '/actions') {
       ownerOnly();
-      return send(res, 200, { actions: [...ACTIONS.values()].map(a => ({ name: a.name, title: a.title, kind: a.kind, scope: a.scope, description: a.description, input: liveSchema(a.input) })) });
+      return send(res, 200, { actions: [...ACTIONS.values()].map(a => ({ name: a.name, title: a.title, kind: a.kind, scope: a.scope, group: a.group || null, description: a.description, input: liveSchema(a.input) })),
+        brain: brainCatalog() });
     }
     // Any action, for the owner's own scripts and terminal (2026-11-11: one way in, the same actions Sparkie and agents
     // use): POST /actions/<name> with its arguments as the body. It runs as the owner's own call: a change runs at once
@@ -586,6 +588,14 @@ const handler = async (req, res) => {
       if (target.id === MAIN?.id) throw new HttpError(409, `${target.title} is already Sparkie’s model.`);
       const job = claimed([...new Set([target.node, MAIN?.node].filter(Boolean))], `switching Sparkie’s model`, () => newJob('main-switch', { node: target.node, model: target.title, from: MAIN?.title || null }));
       return send(res, 202, publicJob(runJob(job, j => switchMain(j, target, keep.map(String)))));
+    }
+    // The brain check (21-brain-check.mjs): a few requests to Sparkie's model with a toy tool; it changes nothing. It
+    // runs after this answers, and sparkie_setup shows the result.
+    if (req.method === 'POST' && path === '/main/check') {
+      ownerOnly();
+      if (!MAIN) throw new HttpError(404, 'No main model is configured.');
+      if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Ask for the check when that’s done.');
+      return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');

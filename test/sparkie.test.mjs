@@ -1,4 +1,17 @@
-// Sparkie in the owner's chats. The model is offered every action (the lookups and the workflows) as OpenAI tools; its
+// Covers: Sparkie in the owner's chats: the stream starts with `started`; `tool` events, results in the answer, `tools`
+// on the saved message; every action can be called (a tool that doesn't exist → `[error] No tool called …`); a static
+// system prompt, the fleet record in the last user message; members' chats offer none. Requests run at once (a polite
+// "can you …" too), also after reading a log; questions, "if …", "whether to …", "could you tell me …", "don't …", "…,
+// actually don't", "keep … running", a model or container the words don't point to (a tie too), "everything on spark N"
+// said in another message and more than 4 changes become a question with a button (`needs-ok`, labels only, no ids for
+// the model; a model passing an id gets 403). A Spark the owner didn't name is dropped (the console picks one). A start
+// that stops one of the console's models runs and says what it stopped. Buttons: `POST /chats/<id>/choose` (checks;
+// runs as the owner, a notice with the outcome, the operation's result posted later); a whole-message "yes" presses the
+// one open button without the model (also after an operation's result came in), "yes but …" doesn't; questions from
+// actions and follow-up questions are buttons; "no" puts them away; another chat's button can't be pressed. Busy (409),
+// more than 4 at once (429), a member's 1 (429) are plain HTTP errors.
+//
+// Sparkie in the owner's chats. The model is offered the core and its request's groups (R46) as OpenAI tools; its
 // tool_calls run through the same checks as an agent's (runAction, via 'sparkie'), each shows on the page as a `tool`
 // event, and the saved answer lists the tools it used. A change runs at once when the owner's message asks for that kind
 // of change (a polite "can you …" counts; questions, "if …", "whether to …" and "could you tell me …" don't) and its
@@ -13,7 +26,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, MEMBER, SPARKIE_TOOLS, waitFor, auditLines, newChat, say, sseEvents, chatMessages, choose, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, MEMBER, SPARKIE_TOOLS, CORE_TOOLS, TOOL_CAP, waitFor, auditLines, newChat, say, sseEvents, chatMessages, choose, SLOW } from './lib.mjs';
 
 let look, small;   // small: a chat for the tests that don't care which
 // knowledge: what the watcher knows about the containers is seeded (its first look is 15 s in): a container named in
@@ -58,8 +71,9 @@ describe('Sparkie in the owner\'s chats', { concurrency: true }, () => {
       assert.ok(r.events.indexOf(t) < r.events.findIndex(e => e.type === 'done'));
       assert.match(r.text, /running_models said: \{"observedAt"/);
       assert.deepEqual(r.message.tools.map(x => ({ name: x.name, ok: x.ok, change: x.change })), [{ name: 'running_models', ok: true, change: false }]);
-      // The model was offered every action (the same as the agent door's), then got the result back.
-      assert.deepEqual([...asked[0].tools].sort(), [...SPARKIE_TOOLS].sort());
+      // The model was offered the core (R46: these words open no group), no more than the cap, then got the result back.
+      assert.deepEqual([...asked[0].tools].sort(), [...CORE_TOOLS].sort());
+      assert.ok(asked[0].tools.length <= TOOL_CAP, String(asked[0].tools.length));
       assert.equal(asked[0].toolChoice, 'auto');
       assert.equal(asked[1].lastRole, 'tool');
       assert.match(asked[1].results[0].content, /"models"/);
@@ -79,7 +93,7 @@ describe('Sparkie in the owner\'s chats', { concurrency: true }, () => {
       assert.ok(requests().slice(from).filter(x => x.words === 'please start gpt-oss-20b on spark 3').every(x => x.tools.length === 0));
       assert.notEqual(stateOf('spark3', 'sc-gpt-oss-20b'), 'running');
     });
-    test('every action is offered (workflows and service_logs too); a tool that doesn\'t exist → "[error] No tool called …"', { timeout: 60000 * SLOW }, async () => {
+    test('every action can be called, offered or not (workflows and service_logs too); a tool that doesn\'t exist → "[error] No tool called …"', { timeout: 60000 * SLOW }, async () => {
       const from = requests().length, words = 'use the other tools please';
       const r = await withScript([{ match: '^use the other tools', calls: [{ name: 'format_disk', arguments: { spark: 'spark3' }, offered: false },
         { name: 'workflows', arguments: {} }] }], () => say(small, words).catch(e => e));

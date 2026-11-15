@@ -24,7 +24,6 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | Path | What it is |
 |---|---|
 | `service/src/NN-name.mjs` | The service, in parts. **Edit these.** |
-| `service/server.mjs` | Generated: the parts joined in name order. |
 | `service/config.json` | The Sparks, images, and the brain's setups (`main.presets`). |
 | `service/dig.mjs`, `service/passkey.mjs`, `service/worker.py` | Recipe reading, passkeys (WebAuthn), the worker on each Spark. |
 | `public/` | The page: plain JavaScript, no build step. |
@@ -34,13 +33,10 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
 | `docs/rules/`, `docs/rules.md` | One rule per file, and their index (generated). |
 | `docs/how/` | One card per kind of work. |
-| `docs/state.md`, `docs/glossary.md` | Who holds each fact; the words this project uses. |
+| `docs/state.md`, `docs/glossary.md` | Who holds each fact; this project's words. |
 | `docs/code-map.md`, `docs/registry.md` | Generated: parts and who uses what; actions, state files, timers. |
-| `docs/contract.md` | What the product must do and why. Search it. |
-| `docs/history/` | Dated records: old plans, reviews, analyses. Never edited. |
-
-State lives on Spark 2: `~/.local/state/spark-console`, `~/.local/share/spark-console` (snapshots, the way
-back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the source).
+| `docs/contract.md` | What the product must do and why. |
+| `docs/history/` | Dated records: plans, reviews, analyses. Never edited. |
 
 ## How to work
 
@@ -49,17 +45,13 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs` and the
    generated documents, and checks them and the parts' headers. `node tools/make.mjs --check` changes nothing.
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
-4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
-   `SPARK_TEST_SLOW=3` on a slow machine). They never touch the real Sparks.
-5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if it all passes, marks the
-   build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
-   `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
+4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs`
+   (`SPARK_TEST_SLOW=3` on a slow machine). They never touch a real Spark.
+5. Land each step: `node tools/land.mjs <branch>` (affected tests, R29). Before an install, `node test/lock.mjs`
+   runs the whole suite; only a pass marks the build tested (`service/workflows.lock.json`). Install with a note of
+   what changed: `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets).
 6. After installing, check the change the way the owner would use it: through Sparkie's chat or
-   `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
-   The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
-
-From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`), and a pass
-on `main` leaves a `tested/` tag holding the commit and the lock the installer asks for. No SSH or fleet key needed.
+   `POST /console/api/actions/<name>`. Passing tests don't prove it works on the Sparks.
 
 ## I want to …
 
@@ -86,6 +78,7 @@ on `main` leaves a `tested/` tag holding the commit and the lock the installer a
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+| land a step on main | `docs/how/land-a-step.md` |
 
 No card fits? Search `docs/rules.md`.
 
@@ -93,25 +86,17 @@ No card fits? Search `docs/rules.md`.
 
 1. Parts edited, not `server.mjs`; each part's name and header fit R28; `node tools/make.mjs --check` passes.
 2. A test that fails without the change; no existing test weakened.
-3. A new action is in `test/lib.mjs` and in the door and fuzz argument tables; a new change is in `ACTION_KIND`, with
-   its target traced in `sparkieCheck`.
+3. A new action, page route, caller (`via`) or state file follows its card: Touch, Also update, Never. Anything new
+   kept in memory may be lost at a restart.
 4. Anything new that changes a Spark goes through `runAction`, a claim, a job and `run`. Don't copy the paths that
    skip them today (R11).
 5. Nothing starts on Spark 2; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access.
-6. A new route sits below its checks and is tested every way R4 lists; a passkey-gated one is in `mayNeedPasskey`,
-   `needsPasskey`, `describeChange` and `bodyLimit`.
-7. A new caller's `via` is handled at every comparison (`docs/how/add-a-way-in.md`); `ctx.trusted` never comes from a
-   request.
-8. A new state file uses `writePrivate` and `readKept`, holds no secret, and has its row in `docs/state.md`; anything
-   new kept in memory may be lost at a restart; no owner setting lives in `config.json`.
-9. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
-10. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect
+6. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
+7. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect
     "needs validation" after install.
-11. A new shipped file is in `UI_FILES`, `SERVICE_FILES` or `RECOVERY_FILES`; a new code file is in all four build-id
-    lists (`buildOf` in `01-setup.mjs`, `API_BUILD` in `deploy/host-on-portal.sh`, `full-run.yml`'s `mark` job,
-    `test/fleet.test.mjs` (“answers with the build”)). A change to what the installer reads (R30) keeps
-    `test/install.test.mjs` passing.
-12. `node test/lock.mjs` passed on this exact tree, and again after any `worker.py` edit; after install, `/health`
-    shows no workflow `untested`.
-13. The documents change in the same change: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
+8. A new shipped file is in the installer's lists (R30), a new code file in all four build-id lists (R29's Where); a
+   change to what the installer reads keeps `test/install.test.mjs` passing.
+9. Before an install, `node test/lock.mjs` passed on that exact tree (again after a `worker.py` edit); after it,
+    `/health` shows no workflow `untested`.
+10. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
     rule's file in `docs/rules/` (its Today, Where and Checked by), a card in `docs/how/`.

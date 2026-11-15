@@ -1,3 +1,8 @@
+// Covers: One way in for the owner's own scripts: `POST /actions/<name>` runs a lookup and a change (`remember`;
+// `memory` then shows it as the owner's), and answers 404 for an unknown action and 400 for a wrong argument;
+// `/v1/responses` and `/v1/embeddings` reach the model server (`/v1/files` is 404); a program on a Spark (its own
+// address) gets 409 and starts no model by calling `/v1`.
+//
 // One way in (reviews, 2026-11-11): POST /actions/<name> runs any action for the owner's own scripts, the same actions
 // Sparkie and agents use. /v1 passes the Responses API (Codex), embeddings and rerank through to the model, and a
 // program on a Spark (it calls /v1 as the owner) uses the models that run but never starts one by calling it.
