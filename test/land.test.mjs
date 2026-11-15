@@ -31,6 +31,14 @@ echo "Whole log: $STANDIN_DIR/run.log"
 exit "$(cat "$STANDIN_DIR/rc" 2>/dev/null || echo 0)"
 `;
 const ONE = 'function one(x) {\n  return x + 1;\n}\n';
+const TWO = 'function two(y) {\n  return y * 2;\n}\n';
+const MAKE = `import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+const made = readdirSync('service/src').sort().map(f => readFileSync('service/src/' + f, 'utf8')).join('');
+if (!process.argv.includes('--check')) writeFileSync('service/server.mjs', made);
+else if (readFileSync('service/server.mjs', 'utf8') !== made) process.exit(1);
+process.exit(existsSync('make-fails') ? 1 : 0);
+`;
+const make = dir => assert.equal(spawnSync(process.execPath, ['tools/make.mjs'], { cwd: dir }).status, 0);
 
 let base, main, out, sd;
 beforeEach(() => {
@@ -39,9 +47,12 @@ beforeEach(() => {
   mkdirSync(main); mkdirSync(sd); mkdirSync(out);
   writeFileSync(join(sd, 'runner.sh'), STANDIN);
   git(main, 'init', '-q', '-b', 'main');
-  // The branch folder's own make check: fails when the branch holds make-fails.
-  put(main, 'tools/make.mjs', "import { existsSync } from 'node:fs';\nprocess.exit(existsSync('make-fails') ? 1 : 0);\n");
+  // The folder's own make: server.mjs is its parts joined (--check: fails when it isn't), and it fails when the folder
+  // holds make-fails.
+  put(main, 'tools/make.mjs', MAKE);
   put(main, 'service/src/30-alpha.mjs', ONE);
+  put(main, 'service/src/31-beta.mjs', TWO);
+  make(main);
   put(main, 'test/a.test.mjs', '// a\n');
   put(main, 'test/b.test.mjs', '// b\n');
   put(main, 'docs/notes.md', '# Notes\n');
@@ -59,6 +70,7 @@ function branch(name, { from = 'main', text = 'x + 2', file = 'service/src/30-al
   git(main, 'worktree', 'add', '-q', '-b', name, dir, from);
   if (file) put(dir, file, file.includes('30-alpha') ? ONE.replace('x + 1', text) : `${name}\n`);
   if (also) put(dir, also, `${name}\n`);
+  make(dir);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', `${name}: a step`);
   return { dir, tip: git(dir, 'rev-parse', 'HEAD') };
@@ -135,7 +147,7 @@ describe('landing a step', () => {
     const moved = mainTip();
     let r = land('behind');
     assert.equal(r.status, 1);
-    assert.match(said(r), /behind doesn’t hold main’s tip \([0-9a-f]{7}\): merge or rebase main into it/);
+    assert.match(said(r), /behind doesn’t hold main’s tip \([0-9a-f]{7}\): node tools\/land\.mjs --catch-up behind merges it in/);
     git(s.dir, 'merge', '-q', '--no-edit', 'main');
 
     put(s.dir, 'loose.txt', 'not committed\n');
@@ -225,5 +237,73 @@ describe('landing a step', () => {
     assert.equal(land('fourth').status, 0);
     assert.match(log().find(e => e.kind === 'landed' && e.branch === 'fourth').why, /from [0-9a-f]{7}, the last tested build\)$/);
     assert.deepEqual(log().find(e => e.kind === 'landed' && e.branch === 'fourth').picked, ['test/a.test.mjs', 'test/b.test.mjs']);
+  });
+});
+
+describe('--whole, the queue for the whole run after, and catching up with main', () => {
+  test('--whole runs the whole suite before landing, whatever the pick, and asks for no other whole run after', () => {
+    const s = branch('careful');
+    const r = spawnSync(process.execPath, [LAND, '--whole', 'careful'], { cwd: main, encoding: 'utf8', env: env() });
+    assert.equal(r.status, 0, said(r));
+    assert.equal(mainTip(), s.tip);
+    assert.deepEqual(asked(), [`${git(s.dir, 'rev-parse', '--show-toplevel')}|`]);
+    assert.deepEqual([log()[0].picked, log()[0].why], ['all', 'the whole suite, as asked (--whole)']);
+    assert.match(said(r), /The whole suite just passed on this tree: no other whole run needed/);
+    assert.deepEqual(queued(), []);
+  });
+
+  test('the whole run after a landing goes to SPARK_LAND_TIP_OUT, or else the main queue, whichever queue the tests used', () => {
+    const q = dir => (existsSync(join(base, dir, 'queue')) ? readdirSync(join(base, dir, 'queue')).filter(f => f.endsWith('.req')) : []);
+    branch('fourb');
+    let r = spawnSync(process.execPath, [LAND, 'fourb'], { cwd: main, encoding: 'utf8',
+      env: env({ SPARK_TEST_OUT: join(base, 'spark-test-runs-4'), SPARK_LAND_TIP_OUT: join(base, 'spark-test-runs-4b') }) });
+    assert.equal(r.status, 0, said(r));
+    assert.equal(q('spark-test-runs-4b').length, 1);
+    assert.deepEqual([q('spark-test-runs-4'), q('spark-test-runs')], [[], []]);
+    assert.equal(log().at(-1).out, join(base, 'spark-test-runs-4b'));
+    branch('four', { text: 'x + 4' });
+    r = spawnSync(process.execPath, [LAND, 'four'], { cwd: main, encoding: 'utf8', env: env({ SPARK_TEST_OUT: join(base, 'spark-test-runs-4') }) });
+    assert.equal(r.status, 0, said(r));
+    assert.equal(q('spark-test-runs').length, 1);
+    assert.deepEqual(q('spark-test-runs-4'), []);
+  });
+
+  test('--catch-up merges main, makes the generated files again instead of merging them, and commits', () => {
+    // main changes the end of one part and the branch the start of the next: the parts merge, server.mjs conflicts.
+    const s = branch('side', { file: 'service/src/31-beta.mjs' });
+    put(s.dir, 'service/src/31-beta.mjs', `// side was here\n${TWO}`);
+    make(s.dir);
+    git(s.dir, 'commit', '-q', '-am', 'side: the start of beta');
+    put(main, 'service/src/30-alpha.mjs', `${ONE}// main was here\n`);
+    make(main);
+    git(main, 'commit', '-q', '-am', 'main: the end of alpha');
+    const merged = spawnSync('git', ['-C', s.dir, 'merge-tree', '--write-tree', '--name-only', 'HEAD', 'main'], { encoding: 'utf8' });
+    assert.match(merged.stdout, /service\/server\.mjs/, 'server.mjs would conflict if merged by hand');
+
+    const r = land('--catch-up', 'side');
+    assert.equal(r.status, 0, said(r));
+    assert.match(said(r), /side now holds main \([0-9a-f]{7}\), with the generated files made again/);
+    assert.equal(git(s.dir, 'status', '--porcelain'), '');
+    assert.equal(git(s.dir, 'rev-parse', 'HEAD^2'), mainTip());
+    const server = readFileSync(join(s.dir, 'service/server.mjs'), 'utf8');
+    assert.equal(server, `${ONE}// main was here\n// side was here\n${TWO}`);
+    assert.match(said(land('--catch-up', 'side')), /side already holds main/);
+    assert.equal(land('side').status, 0);
+  });
+
+  test('--catch-up stops on a conflict in a file written by hand, and finishes once it is resolved', () => {
+    const s = branch('words', { file: 'docs/notes.md' });
+    put(main, 'docs/notes.md', 'main\n');
+    git(main, 'commit', '-q', '-am', 'main: notes');
+    const r = land('--catch-up', 'words');
+    assert.equal(r.status, 1);
+    assert.match(said(r), /main is half merged into words: these files written by hand conflict: docs\/notes\.md\. Resolve them and git add them/);
+    assert.ok(git(s.dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'));
+    put(s.dir, 'docs/notes.md', 'both\n');
+    git(s.dir, 'add', 'docs/notes.md');
+    const again = land('--catch-up', 'words');
+    assert.equal(again.status, 0, said(again));
+    assert.equal(git(s.dir, 'status', '--porcelain'), '');
+    assert.ok(spawnSync('git', ['-C', s.dir, 'merge-base', '--is-ancestor', 'main', 'HEAD']).status === 0);
   });
 });
