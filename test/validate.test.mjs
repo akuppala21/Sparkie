@@ -4,6 +4,9 @@
 // whose files link outside its folder starts with each file mounted by itself.
 // Only a weight file that is a plain file may link out of a cached copy: any other (a chat template, a folder, a device,
 // an entry that is itself a link) stops the start with one line naming it, and nothing runs; the ordinary layout starts.
+// A start that first copies the model from another Spark checks the same before anything is sent, with a weight file
+// that leads out at least 16 MiB: a chat template or a small file under a weight name linked out stops it, a large
+// shard is copied as a file and the model starts.
 //
 // One tap after an install (docs/contract.md 6.3): "Test the changes" runs each workflow that isn't validated
 // with a small model on Spark 3 or 4 (never Spark 2), and starts again whatever had to stop. Auto-restart works before
@@ -11,7 +14,7 @@
 // Nothing here counts as validated at first (SPARK_CONSOLE_ASSUME_VALIDATED=0).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync, existsSync, statSync, lstatSync, closeSync, openSync, truncateSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, SLOW } from './lib.mjs';
 
@@ -215,6 +218,43 @@ test('a weight file linked out to a folder or a device, or a cached copy that is
   const c = cachedCopy('Linkedentry-27B', {}, elsewhere);
   symlinkSync(c.entry, join(hub4(), 'models--testorg--Linkedentry-27B'));
   await refusedOn4(c.model, 'config.json');
+});
+
+// A start on Spark 4 of a model only Spark 3 holds copies it first, following its links (copyModel): before anything is
+// sent the copy checks the same rule, and a weight file that leads out must be 16 MiB or more there, since the copy
+// hands the bytes over and any readable file would land on Spark 4 under a weight's name.
+const hub3 = () => join(T.fleet.root, 'spark3', '.cache', 'huggingface', 'hub');
+async function copyRefused(model, file) {
+  const before = lastRun4();
+  const w = await ownerStartOn4(model);
+  assert.equal(w.status, 'failed', JSON.stringify(w));
+  assert.match(w.error, /wasn’t copied from spark3/, w.error);
+  assert.match(w.error, new RegExp(`${file.replace(/\./g, '\\.')} in the Hugging Face cache copy of ${model} links outside the model’s folder`), w.error);
+  assert.ok(!existsSync(join(hub4(), `models--${model}`)), 'nothing copied');
+  assert.ok(!existsSync(join(hub4(), '.spark-console-incoming', `models--${model}`)), 'nothing half copied');
+  assert.equal(lastRun4(), before, 'no docker run');
+}
+
+test('a start that copies the model from another Spark first: a chat template or a small file under a weight name linked out stops it before anything is sent', { timeout: 600000 * SLOW }, async () => {
+  const key = join(T.fleet.root, 'spark3', 'made-up-key');
+  writeFileSync(key, '-----BEGIN MADE-UP KEY-----\nnot a real one\n-----END MADE-UP KEY-----\n');
+  await copyRefused(cachedCopy('Copytemplate-27B', { 'chat_template.jinja': key }, hub3()).model, 'chat_template.jinja');
+  await copyRefused(cachedCopy('Copykey-27B', { 'model-00002-of-00002.safetensors': key }, hub3()).model, 'model-00002-of-00002.safetensors');
+});
+
+test('a start that copies the model from another Spark first: a real weight shard linked out to a large plain file is copied as a file, and the model starts', { timeout: 300000 * SLOW }, async () => {
+  const disk = join(T.fleet.root, 'spark3', 'shardsdisk');
+  mkdirSync(disk, { recursive: true });
+  const shard = join(disk, 'shard2');
+  closeSync(openSync(shard, 'w'));
+  truncateSync(shard, 17 * 2 ** 20);
+  const c = cachedCopy('Copyshard-27B', { 'model-00002-of-00002.safetensors': shard }, hub3());
+  const w = await ownerStartOn4(c.model);
+  assert.equal(w.status, 'completed', JSON.stringify(w));
+  const there = join(hub4(), `models--${c.model}`, 'snapshots', 'c1', 'model-00002-of-00002.safetensors');
+  assert.ok(!lstatSync(there).isSymbolicLink(), 'a file, not a link');
+  assert.equal(statSync(there).size, 17 * 2 ** 20);
+  assert.match(lastRun4(), /^spark\.model=testorg--Copyshard-27B$/m);
 });
 
 test('going back to the last good build: none on the stand-in fleet, so it says so', async () => {

@@ -95,3 +95,57 @@ test('the page still parses, keeps what the installer reads, and ships every fil
   for (const f of ['index.html', 'app.js', 'styles.css']) assert.ok(files.includes(f), `${f} is shipped`);
   for (const f of files) assert.ok(existsSync(join(PUBLIC, f)), `public/${f} is there`);
 });
+
+// What the owner sees of a command Sparkie ran (design A 2.10, step 5): the page's own functions that build its row,
+// taken from public/app.js and run here with an h() that builds plain nodes (no test here drives a browser). The
+// service builds and masks the five fields (test/work.test.mjs); the page only draws them.
+function pageFunctions(...names) {
+  const src = names.map(n => {
+    const m = new RegExp(`^function ${n}\\([^)]*\\) \\{\\n[\\s\\S]*?^\\}`, 'm').exec(APP);
+    assert.ok(m, `${n} is in public/app.js`);
+    return m[0];
+  }).join('\n');
+  const h = (tag, props, ...kids) => {
+    const el = { tag, attrs: {}, hidden: false, onclick: null, kids: kids.flat(Infinity).filter(k => k != null && k !== false), setAttribute(k, v) { this.attrs[k] = String(v); } };
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v == null || v === false) continue;
+      if (k === 'hidden') el.hidden = true; else if (k === 'onclick') el.onclick = v; else el.attrs[k] = v === true ? '' : String(v);
+    }
+    return el;
+  };
+  return vm.runInNewContext(`${src}\n({ ${names.join(', ')} })`, { h, ASSISTANT: 'Sparkie', num: v => typeof v === 'number' && Number.isFinite(v) });
+}
+const textOf = el => (typeof el === 'string' ? el : el.kids.map(textOf).join(''));
+
+test('a command Sparkie ran is one quiet row of its own, the command on a button; a press shows it whole with the end of what it printed', () => {
+  const { toolLines, commandRow } = pageFunctions('commandRow', 'toolLines');
+  const LOOK = 'It ran as a look: nothing on Spark 3 was changed and nothing was sent.';
+  const look = (line, more = {}) => ({ name: 'run', title: 'Run a command on a Spark', ok: true, ms: 400, change: false, outcome: 'look', where: 'Spark 3',
+    line, tail: 'hello from spark 3\nexit 0', root: false, kept: 'j_0123456789ab', look: LOOK, ...more });
+  const models = { name: 'running_models', title: 'Running models', ok: true, ms: 300, change: false };
+  const ul = toolLines([look('$ cat docs/plain.txt'), look('$ cat docs/plain.txt'), models, models]);
+  // Two looks are two rows, never folded; other lookups fold as before.
+  assert.equal(ul.kids.length, 3);
+  assert.equal(textOf(ul.kids[2]), 'Checked Running models twice · 0.6 s');
+  const [btn, shown] = ul.kids[0].kids;
+  assert.deepEqual([btn.tag, btn.attrs.type, btn.attrs['aria-expanded']], ['button', 'button', 'false']);
+  assert.deepEqual(btn.kids.map(k => [k.tag, textOf(k)]), [['span', 'Spark 3, as a look'], ['code', '$ cat docs/plain.txt']]);
+  // Nothing more is on screen until it is pressed: then the line saying it ran as a look (the service's own, not the
+  // output), the command and the tail, and where all of it is kept.
+  assert.equal(shown.hidden, true);
+  btn.onclick();
+  assert.deepEqual([shown.hidden, btn.attrs['aria-expanded']], [false, 'true']);
+  assert.equal(textOf(shown.kids[0]), LOOK);
+  assert.equal(shown.kids[1].tag, 'pre');
+  assert.equal(textOf(shown.kids[1]), '$ cat docs/plain.txt\nhello from spark 3\nexit 0');
+  assert.match(textOf(shown.kids[2]), /\bj_0123456789ab\b/);
+  btn.onclick();
+  assert.deepEqual([shown.hidden, btn.attrs['aria-expanded']], [true, 'false']);
+  // One that was refused says it didn't run, and keeps nothing; one run as root says so.
+  const refused = commandRow(look('$ cat project/server.key', { ok: false, outcome: undefined, tail: 'Not run: project/server.key is a key file', kept: null, look: null }));
+  assert.equal(textOf(refused.kids[0]), 'Spark 3$ cat project/server.key' + 'didn’t run');
+  assert.equal(refused.kids[1].kids.length, 1, 'no look line and no record when it did not run');
+  assert.equal(textOf(commandRow(look('$ apt list --installed', { root: true })).kids[0].kids[0]), 'Spark 3, as root');
+  // The live stream copies the five fields onto the step it draws.
+  assert.match(APP, /outcome: ev\.outcome, where: ev\.where, line: ev\.line, tail: ev\.tail, root: ev\.root, kept: ev\.kept, look: ev\.look \}\];/);
+});
