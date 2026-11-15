@@ -367,6 +367,84 @@ test('after a look, what it printed is outside text: a change it names, or a wor
   assert.deepEqual(dawn.tools.map(t => [t.name, t.outcome || null]), [['host_look', null], ['save_workflow', 'needs-ok']]);
 });
 
+// What the owner sees of a look (design A 2.10, step 5; 21-work-shown.mjs): the chat's tool event, and the step saved in
+// message.tools, carry where, line, tail, root and kept, built by code and masked; a tool that runs no command keeps
+// its event as it was. Spark 4 has no helper yet here (the self-test's test sets one up after these).
+const lookRows = async (words, calls) => {
+  script([{ match: `^${words}$`, calls }]);
+  const chat = await newChat();
+  try { return { chat, ...(await say(chat, words)) }; } finally { noScript(); }
+};
+const noType = ({ type, ...step }) => step;
+const wellFormed = s => !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]|�/.test(s);
+
+test('a look\'s tool event carries where, line, tail, root and kept; one that did not run, or was refused, says why; a tool that runs no command keeps its event as it was', { timeout: 120000 * SLOW }, async () => {
+  const r = await lookRows('show me the look rows', [
+    { name: 'host_look', arguments: { spark: 'spark3', command: 'cat docs/plain.txt' } },
+    { name: 'running_models', arguments: {} },
+    { name: 'host_look', arguments: { spark: 'spark4', command: 'cat docs/plain.txt' } },
+    { name: 'host_look', arguments: { spark: 'Spark 3', command: 'cat project/server.key' } }]);
+  const [look3, models, look4, refused] = r.message.tools;
+  assert.deepEqual(r.message.tools.map(t => t.name), ['host_look', 'running_models', 'host_look', 'host_look']);
+  // Each event is the step saved in the chat, as it was emitted.
+  assert.deepEqual(r.tools.map(noType).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    [...r.message.tools].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+  // It ran on Spark 3: the line, the last line it printed and its exit, and the record that keeps all of it.
+  const { ms, ...ran } = look3;
+  assert.ok(Number.isFinite(ms));
+  assert.match(ran.kept || '', /^j_[0-9a-f]{12}$/);
+  assert.deepEqual(ran, { name: 'host_look', title: 'Look on a Spark', ok: true, change: false,
+    where: 'Spark 3', line: '$ cat docs/plain.txt', tail: 'hello from spark 3\nexit 0', root: false, kept: ran.kept });
+  const rec = records().find(y => y.id === ran.kept);
+  assert.equal(rec.k, 'cmd');
+  assert.equal(recordText(rec), '$ cat docs/plain.txt\nhello from spark 3\n');
+  // Spark 4 has no helper: nothing ran, and the tail says why; nothing is kept.
+  assert.deepEqual([look4.ok, look4.where, look4.line, look4.root, look4.kept], [true, 'Spark 4', '$ cat docs/plain.txt', false, null]);
+  assert.equal(look4.tail, 'The root helper isn’t set up on Spark 4 yet (the owner’s one-time command hasn’t run there), so nothing ran there.');
+  // A refused look (asked for by the Spark's name): the refusal is its tail.
+  assert.deepEqual([refused.ok, refused.where, refused.line, refused.root, refused.kept], [false, 'Spark 3', '$ cat project/server.key', false, null]);
+  assert.match(refused.tail, /^Not run: project\/server\.key is a key file or holds keys, and a look never reads keys back\./);
+  // A tool that runs no command: the event and the saved step have exactly the fields they had.
+  assert.deepEqual(Object.keys(r.tools.find(t => t.name === 'running_models')).sort(), ['change', 'ms', 'name', 'ok', 'title', 'type']);
+  assert.deepEqual(Object.keys(models).sort(), ['change', 'ms', 'name', 'ok', 'title']);
+});
+
+test('a key in a look\'s command or in what it printed is masked in the event, in the chat file and when the chat is read again', { timeout: 120000 * SLOW }, async () => {
+  const inCommand = 'cmdsecretvalue0123456789', printed = 'hf_abcdefghijklmnopqrstuvwxyz0123456789';
+  const r = await lookRows('mask the look rows', [
+    { name: 'host_look', arguments: { spark: 'spark3', command: `echo done # token=${inCommand}` } },
+    { name: 'host_look', arguments: { spark: 'spark3', command: "printf 'first\\nHF_TOKEN=hf_%s\\n' abcdefghijklmnopqrstuvwxyz0123456789" } }]);
+  const [a, b] = r.message.tools;
+  assert.equal(a.line, '$ echo done # token=[hidden]');
+  assert.equal(a.tail, 'done\nexit 0');
+  assert.equal(b.tail, 'HF_TOKEN=[hidden]\nexit 0');
+  // (the command printed the key from two pieces: what the command says is not a key, what it printed is)
+  assert.equal(b.line, "$ printf 'first\\nHF_TOKEN=hf_%s\\n' abcdefghijklmnopqrstuvwxyz0123456789");
+  const none = (where, text) => { for (const s of [inCommand, printed]) assert.ok(!text.includes(s), `${where} holds ${s}`); };
+  none('the events', JSON.stringify(r.tools));
+  none('the reply', JSON.stringify(r.message));
+  const file = await waitFor(() => { const t = readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8'); return t.includes(r.chat) && t.includes(JSON.stringify(b.tail).slice(1, -1)) && t; }, { what: 'the chat saved' });
+  none('chats.json', file);
+  const again = await api(`/chats/${r.chat}`);
+  none('the chat read again', again.text);
+  assert.deepEqual(again.json.messages.at(-1).tools.map(t => [t.line, t.tail, t.kept]), [[a.line, a.tail, a.kept], [b.line, b.tail, b.kept]]);
+});
+
+test('a look\'s line and tail are cut to 200 characters, never inside one: the line keeps its start, the tail the end of the last line', { timeout: 120000 * SLOW }, async () => {
+  const face = '😀'.repeat(300);
+  const r = await lookRows('cut the look rows', [{ name: 'host_look', arguments: { spark: 'spark3', command: `seq 1 3000; echo ${face}` } }]);
+  const [t] = r.message.tools;
+  assert.equal(t.ok, true);
+  assert.equal(t.line, `$ seq 1 3000; echo ${'😀'.repeat(180)}…`);
+  assert.equal(Array.from(t.line).length, 200);
+  // (the output is over 6,000 characters, cut for the brain; the record keeps it whole)
+  assert.equal(t.tail, `…${'😀'.repeat(199)}\nexit 0`);
+  assert.ok(wellFormed(t.line) && wellFormed(t.tail));
+  assert.ok(recordText(records().find(y => y.id === t.kept)).endsWith(`\n3000\n${face}\n`));
+  const again = (await api(`/chats/${r.chat}`)).json.messages.at(-1).tools[0];
+  assert.deepEqual([again.line, again.tail], [t.line, t.tail]);
+});
+
 test('self_test proves the walls again on every Spark that has the helper, and a failed proof is named and stops every look there', { timeout: 600000 * SLOW }, async () => {
   // Spark 4: set up by the one-time command, with a stand-in that lets attempt 3 through the run wall.
   rehearse(T.fleet.root, 'spark4', { prove: false, knobs: { 'let-through': '3 run\n' } });

@@ -464,8 +464,10 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
             out = `[error] ${maskSecrets(e.message || String(e))}`;
           }
           journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+          const shown = commandShown(c, ok, out);
           if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
           const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
+          Object.assign(step, shown);
           steps[i] = step;
           emit({ type: 'tool', ...step });
           return { role: 'tool', tool_call_id: calls[i].id || `call_${round}_${i}`, content: out };
