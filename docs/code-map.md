@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 65 parts in `service/src/`, joined in name order into `service/server.mjs` (17117 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 65 parts in `service/src/`, joined in name order into `service/server.mjs` (17118 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -454,10 +454,10 @@ The owner's list of what should be running on each Spark: every model a change s
 
 ### `20-digest.mjs`: the digest: a long tool result cut by code into its numbered lines that matter (G5)
 
-A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the text is seen as lines (textLines: a newline, written or escaped in JSON, ends a line; a line past 300 characters goes on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at most, each with the line before and after it), then the first 5 and the last 15, then each run of 10 or more lines the same, …
+A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the text is seen as lines (textLines: a newline ends a line, and in JSON an escaped one too; a line past 300 characters goes on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at most, each with the line before and after it), then the first 5 and the last 15, then each run of 10 or more lines the same, …
 
 - **Area:** record. **Rules:** R59. **Tests:** digest.test.mjs, work.test.mjs
-- **Lines:** 116
+- **Lines:** 117
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

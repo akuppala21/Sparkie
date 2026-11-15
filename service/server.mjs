@@ -8513,7 +8513,7 @@ action({
 // Owns: none        Timers: none        Wakes: none
 // A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters
 // (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the
-// text is seen as lines (textLines: a newline, written or escaped in JSON, ends a line; a line past 300 characters goes
+// text is seen as lines (textLines: a newline ends a line, and in JSON an escaped one too; a line past 300 characters goes
 // on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at
 // most, each with the line before and after it), then the first 5 and the last 15, then each run of 10 or more lines
 // the same, folded to one; failures first when room is short, within a recall answer's size (memorySizes).
@@ -8529,7 +8529,8 @@ action({
 // comes back.
 const DIGEST_AT = 12000, DIGEST_WIDE = 300, DIGEST_FIRST = 5, DIGEST_LAST = 15, DIGEST_FAILS = 20, DIGEST_RUN = 10;
 const DIGEST_READ_LINES = 200, DIGEST_READ_CHARS = 8000;
-// A newline in the text, or one escaped in JSON (\n not after an escaped backslash).
+// A newline in the text; in JSON (a text that starts with { or [, as a tool's result does), also one escaped there (\n
+// not after an escaped backslash). A command's output or a log is plain text: a backslash and an n there are two letters.
 const DIGEST_LINE_END = /\n|(?<=(?:^|[^\\])(?:\\\\)*)\\n/;
 // A line that says something failed: an error word, or an exit code that isn't 0.
 const DIGEST_FAIL = /\b(?:errors?|fail(?:ed|ure|ures|ing|s)?|fatal|exception|traceback|panic(?:ked)?|killed|oom|out of memory|denied|refused|cannot|can[’']t|could not|couldn[’']t|unable|timed? ?out|abort(?:ed|ing)?|segfault|segmentation fault)\b|\bexit(?:ed)?(?: with)?(?: code| status)?[ =:]*[1-9]\d*\b|\b(?:exit|return) (?:code|status)\b/i;
@@ -8538,7 +8539,7 @@ const digestFails = line => DIGEST_FAIL.test(line) || START_FAILURES.some(f => f
 // goes on in the next, cut after a space or a comma when one is in its second half, never inside a character.
 function textLines(text) {
   const out = [];
-  for (const raw of String(text).split(DIGEST_LINE_END)) {
+  for (const raw of String(text).split(/^\s*[{[]/.test(text) ? DIGEST_LINE_END : '\n')) {
     if (raw.length <= DIGEST_WIDE) { out.push(raw); continue; }
     for (let i = 0; i < raw.length;) {
       let j = Math.min(raw.length, i + DIGEST_WIDE);

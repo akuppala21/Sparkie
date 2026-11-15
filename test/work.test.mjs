@@ -322,7 +322,8 @@ test('recall {id, find} on a look\'s record: keys across the old cut points stay
   const found = await act({ find: 'HF_TOKEN' });
   assert.deepEqual(pieces(found.text), [], found.text);
   // (the two lines the command printed them on: the record's first line is the command, which names HF_TOKEN too)
-  const keyLines = [...(await act({ find: 'x HF_TOKEN' })).value.lines, ...(await act({ find: 'HF_TOKEN=[hidden] y' })).value.lines];
+  // (find takes the lines that hold every one of its words)
+  const keyLines = [...(await act({ find: 'xxxxxxxxxx HF_TOKEN' })).value.lines, ...(await act({ find: 'yyyyyyyyyy HF_TOKEN' })).value.lines];
   assert.equal(keyLines.length, 2, JSON.stringify(keyLines));
   assert.ok(keyLines.every(([n, t]) => Number.isInteger(n) && t.includes('HF_TOKEN=[hidden]')), JSON.stringify(keyLines));
   const middle = await act({ find: 'zircon middle' });
