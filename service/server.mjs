@@ -3999,6 +3999,8 @@ const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:
 // "Do not …" and "didn't …" are statements, not questions.
 const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
 // What asks for a change (base forms: "start gemma", "bring it up") …
+// A file's name, by its ending: one list for the gate's file words and the reading group's (R46).
+const FILE_ENDINGS = 'md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css';
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
   // "use qwen coder on spark 3" as an instruction (at the start, or after "please" / "let's" / "I want to").
@@ -4017,7 +4019,7 @@ const CHANGE_WORDS = [
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
   ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
-  ['file', /\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css))\b/gi],
+  ['file', new RegExp(String.raw`\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:${FILE_ENDINGS}))\b`, 'gi')],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
 ];
@@ -4033,15 +4035,15 @@ const CHANGE_FORMS = [
 // groups this request opened (21-guide.mjs); these words in the owner's request open them, in the order they come.
 // [group, what it holds (guide's description lists it), its words]
 const GROUP_WORDS = [
-  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?)\b/i],
+  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
-  ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*)\b/i],
-  ['past', 'what happened on the fleet: its events', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|history|events?|yesterday|last\s+(?:night|week)|earlier\s+today)\b/i],
-  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', /https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:md|txt|json|csv|ya?ml|log|py|sh|html|org|com|io|ai|dev|net))\b/i],
+  ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
+  ['past', 'what happened on the fleet: its events', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week)|earlier\s+today)\b/i],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
-  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress)\b/i],
-  ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:memory|memories|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
+  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
+  ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
   ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
@@ -9421,8 +9423,8 @@ async function editorUpgrade(req, socket, head) {
 // at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an
 // operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens
 // reading. A call to an action that wasn't offered runs through runAction like any other call, and opens its group; so
-// does guide {tools: "<group>"}. With more groups than fit, the oldest one opened by words closes. The groups last for
-// the request and its carry-on turns (kept on the chat's carry-on task). The agent door hides nothing.
+// does guide {tools: "<group>"}. With more groups than fit, the newest one the words opened gives way, so a request
+// keeps the groups it began with. The groups last for the request and its carry-on turns (kept on its carry-on task). The agent door hides nothing.
 // guide answers {tools} only, for now; the rest of it (rules, cards, words) comes later.
 const TOOL_CAP = 24;   // limit: tools sent to the brain in one round: the core and two groups
 const GROUP_SIZE = 6;  // limit: actions in one group (tools/check-docs.mjs holds it, and the core's)
@@ -9448,28 +9450,34 @@ function requestGroups(cap, kept = []) {
   for (const o of Array.isArray(kept) ? kept : []) openGroup(groups, o?.group, o?.by);
   return groups;
 }
-// Opens a group (true when it is open afterwards). Past the cap, the oldest group opened by words closes, else the oldest.
+// Opens a group (true when it is open afterwards). Past the cap the words' newest group gives way: a group the words
+// open after the ones that fit isn't opened, and one that state, a call or guide needs closes the newest group the
+// words opened (else the oldest), so a request keeps the groups it began with.
 function openGroup(groups, group, by) {
   if (!TOOL_GROUPS.has(group)) return false;
   if (groups.open.some(o => o.group === group)) return true;
   const most = groupsUnder(groups.cap);
-  if (most < 1) return false;
+  if (most < 1 || (by === 'words' && groups.open.length >= most)) return false;
   groups.open.push({ group, by: String(by || 'call') });
   while (groups.open.length > most) {
-    const words = groups.open.findIndex(o => o.by === 'words' && o.group !== group);
+    const words = groups.open.findLastIndex(o => o.by === 'words' && o.group !== group);
     groups.open.splice(words >= 0 ? words : groups.open.findIndex(o => o.group !== group), 1);
   }
   return true;
 }
-// The groups the owner's words open, in the order the words come. A saved workflow named by its title opens routines.
+// The groups the owner's words open, in the order the words come. A saved workflow named by any word of its name of four
+// letters or more ("run my coding thing" for "coding mode"), other than words most requests have, opens routines.
+const SAVED_COMMON = new Set(['mode', 'with', 'from', 'that', 'this', 'then', 'when', 'what', 'start', 'stop', 'model', 'models', 'spark', 'sparks', 'list', 'check', 'test', 'show']);
 function wordGroups(text) {
   const said = normQuotes(text), low = said.toLowerCase(), at = new Map();
   for (const [group, , re] of GROUP_WORDS) { const i = said.search(re); if (i >= 0) at.set(group, i); }
   let saved = [];
   try { saved = savedWorkflows(); } catch {}
   for (const w of saved) {
-    const title = String(w?.title || '').toLowerCase(), i = title.length >= 3 ? low.indexOf(title) : -1;
-    if (i >= 0 && !(at.get('routines') <= i)) at.set('routines', i);
+    for (const word of String(w?.title || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length >= 4 && !SAVED_COMMON.has(x))) {
+      const i = low.search(new RegExp(`\\b${word}\\b`));
+      if (i >= 0 && !(at.get('routines') <= i)) at.set('routines', i);
+    }
   }
   return [...at].sort((a, b) => a[1] - b[1]).map(([group]) => group);
 }

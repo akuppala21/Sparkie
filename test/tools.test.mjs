@@ -70,29 +70,60 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.ok(first.tools.includes('container_logs') && first.tools.includes('operation_log'));
   });
 
-  // One request for each group, whose words open it: the exact set offered, and the prompt lines that come with it.
-  const OPENED_BY = {
-    find: 'which models fit on spark 3?',
-    sparks: 'are spark 3 and 4 linked by a cable?',
-    dig: 'why did my job on spark 3 fail?',
-    past: 'what happened on the fleet yesterday?',
-    reading: 'show me the notes.md file in my shared folder',
-    routines: 'list my saved workflows',
-    control: 'cancel the operation that is running',
-    memory: 'what do you remember about me?',
-    checks: 'run the self-test please',
-  };
-  test('each group: words that open it, and exactly the core and that group offered; a line naming a tool comes only with it', { timeout: 300000 * SLOW }, async () => {
-    assert.deepEqual(sorted(Object.keys(OPENED_BY)), sorted(catalog.brain.groups.map(g => g.group)), 'a request for every group');
+  // Everyday requests, several for each group (most from the review's thirty, 2026-11-14): the groups each should be
+  // offered in round one, exactly, and the prompt lines that come with them. A longer request keeps the groups it began
+  // with. ([] is the core alone.)
+  const REQUESTS = [
+    ['what\'s running?'], ['anything need me?'], ['start qwen coder on spark 3'], ['how much memory is free on spark 3?'],
+    ['what\'s new in vllm this month?'], ['is it out of memory?'],
+    ['which models fit on spark 3?', 'find'], ['list my models', 'find'], ['where can I run gpt-oss-120b?', 'find'],
+    ['which model is best for coding, and where would it fit?', 'find'],
+    ['are spark 3 and 4 linked by a cable?', 'sparks'], ['how much disk space is left on spark 3?', 'sparks'],
+    ['why did my job on spark 3 fail?', 'dig'], ['what went wrong?', 'dig'], ['show me the log', 'dig'],
+    ['spark 4 went dark, what\'s up with it?', 'dig'],
+    ['what happened on the fleet yesterday?', 'past'], ['what changed while I was away?', 'past'],
+    ['show me the notes.md file in my shared folder', 'reading'], ['what\'s in my shared folder on spark 3?', 'reading'],
+    ['save this as notes.md on spark 3', 'reading'], ['save that as settings.toml on spark 3', 'reading'],
+    ['list my saved workflows', 'routines'], ['what workflows do I have?', 'routines'],
+    ['cancel the operation that is running', 'control'], ['cancel that', 'control'], ['stop the download', 'control'],
+    ['never mind, kill that start', 'control'], ['undo that', 'control'], ['never mind, put it back', 'control'],
+    ['roll back spark console', 'control'], ['go back to the previous version', 'control'],
+    ['what do you remember about me?', 'memory'], ['forget that I prefer gemma', 'memory'], ['what\'s in your memory?', 'memory'],
+    ['run the self-test please', 'checks'], ['test spark 3', 'checks'],
+    // (longer: more groups match than fit, and the ones it began with stay)
+    ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
+    ['why did it fail? check the logs and the config file', 'dig', 'find'],
+    ['cancel the gemma download, the plan was wrong and I want to test something else', 'control', 'sparks'],
+    ['which model fits in the free memory on spark 3, and what is the plan?', 'find', 'sparks'],
+    ['read the docs page for vllm and tell me which config flags changed in the last update', 'reading', 'find'],
+    ['undo that, then tell me why the build failed', 'control', 'dig'],
+  ];
+  test('everyday requests: each is offered exactly the core and the groups its words open; a line naming a tool comes only with it', { timeout: 600000 * SLOW }, async () => {
+    for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
-    await withScript([QUIET], async () => { for (const words of Object.values(OPENED_BY)) await say(await newChat(), words); });
+    await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
     const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/ };
-    for (const [group, words] of Object.entries(OPENED_BY)) {
+    for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);
-      assert.deepEqual(sorted(first.tools), coreAnd(group), `${group}: “${words}”`);
+      assert.deepEqual(sorted(first.tools), coreAnd(...groups), `“${words}”: ${groups.join(' + ') || 'the core'}`);
       for (const [tool, line] of Object.entries(LINES)) {
-        assert.equal(line.test(first.system), first.tools.includes(tool), `${group}: the line for ${tool}`);
+        assert.equal(line.test(first.system), first.tools.includes(tool), `“${words}”: the line for ${tool}`);
       }
+    }
+  });
+
+  test('a saved workflow named by any word of its name opens routines', { timeout: 120000 * SLOW }, async () => {
+    for (const title of ['coding mode', 'Night shift']) {
+      const r = await api('/actions/save_workflow', { method: 'POST', body: { title, steps: [{ action: 'should_be_running', args: {} }] } });
+      assert.equal(r.status, 200, r.text);
+    }
+    try {
+      const SAID = [['run coding mode', 'routines'], ['run my coding thing', 'routines'], ['switch to night mode', 'routines'], ['start qwen coder on spark 3']];
+      const from = requests().length;
+      await withScript([QUIET], async () => { for (const [words] of SAID) await say(await newChat(), words); });
+      for (const [words, ...groups] of SAID) assert.deepEqual(sorted(rounds(words, from)[0].tools), coreAnd(...groups), words);
+    } finally {
+      for (const name of ['coding mode', 'Night shift']) await api('/actions/forget_workflow', { method: 'POST', body: { name } });
     }
   });
 
@@ -119,12 +150,12 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.match(second.system, /read one or two good results with read_page/);
   });
 
-  test('a third group closes the oldest one opened by words', { timeout: 60000 * SLOW }, async () => {
+  test('a third group the words open gives way: the request keeps the groups it began with', { timeout: 60000 * SLOW }, async () => {
     const words = 'why did it fail, which models fit on spark 4, and what would the plan be?', from = requests().length;
     await withScript([QUIET], async () => say(await newChat(), words));
     const [first] = rounds(words, from);
-    // dig (why, fail) came first in the words, then find (models, fit), then sparks (plan): dig closed.
-    assert.deepEqual(sorted(first.tools), coreAnd('find', 'sparks'));
+    // dig (why, fail) came first in the words, then find (models, fit), then sparks (plan): sparks isn't opened.
+    assert.deepEqual(sorted(first.tools), coreAnd('dig', 'find'));
   });
 
   test('guide {tools} lists a group and opens it for the next round; guide {} lists every group', { timeout: 60000 * SLOW }, async () => {
@@ -283,7 +314,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
       await (await fetch(`${fleet.base}/chats/${chat}/messages`, { method: 'POST', headers, body: JSON.stringify({ text: words }) })).text();
       return requestsOf(fleet).find(x => x.words === words);
     };
-    // A setup with toolCap 18: the core and one group, the newer one the words opened.
+    // A setup with toolCap 18: the core and one group, the first one the words opened.
     const lower = await startMock({ watchMs: 60000, prepare: ({ stateDir }) => {
       const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
       for (const p of Object.values(m.presets)) p.toolCap = 18;
@@ -292,7 +323,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     try {
       const x = await ask(lower);
       assert.ok(x.tools.length <= 18, String(x.tools.length));
-      assert.deepEqual(sorted(x.tools), coreAnd('find'));
+      assert.deepEqual(sorted(x.tools), coreAnd('dig'));
     } finally { await lower.stop(); }
     // SPARK_CONSOLE_TOOL_CAP=all (test/eval.mjs --cap all): every action, every round, as before the groups.
     const all = await startMock({ watchMs: 60000, env: { SPARK_CONSOLE_TOOL_CAP: 'all' } });
