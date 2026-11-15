@@ -66,7 +66,8 @@ const KEY_SCRIPT = [
 ].join('\n');
 
 // The command's words, roughly as a shell splits them (quotes taken off, operators apart), for the key check only: which
-// words may be paths, which folders a program reads whole (grep -r, rg, find -exec, tar, …), and whether it says sudo.
+// words may be paths, which folders a program reads whole (grep -r, rg, find -exec, tar, …), and whether a command in it
+// is sudo (as a command word: a search for the word sudo is a look).
 function shellWords(text) {
   const out = [];
   let w = null, i = 0;
@@ -96,6 +97,7 @@ function lookWords(command) {
       else break;
     }
     const prog = base(cmd[k] || ''), args = cmd.slice(k + 1), plain = args.filter(a => !a.startsWith('-'));
+    if (prog === 'sudo') sudo = true;
     const recursive = args.some((a, i) => /^-[A-Za-z]*[rR]/.test(a) || ['--recursive', '--dereference-recursive', '--directories=recurse'].includes(a) || (a === '-d' && args[i + 1] === 'recurse'));
     const reads = ['grep', 'egrep', 'fgrep', 'zgrep'].includes(prog) && recursive ? plain.slice(1)
       : ['rg', 'rgrep', 'ag', 'ack', 'ack-grep'].includes(prog) ? plain.slice(1)
@@ -109,7 +111,6 @@ function lookWords(command) {
   for (const t of shellWords(command)) {
     if (t.op) { if (!['<', '>'].includes(t.op)) flush(); continue; }
     const w = home(t.w), value = /^-[^=]*=/.test(w) ? home(w.replace(/^-[^=]*=/, '')) : null;
-    if (base(w) === 'sudo') sudo = true;
     cmd.push(w);
     for (const p of [w.startsWith('-') ? null : w, value]) if (p && p !== '--') words.push(at(p));
   }

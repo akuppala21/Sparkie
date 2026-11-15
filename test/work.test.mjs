@@ -307,7 +307,13 @@ test('key files are never read back: by name, through a link, through *, and und
   await refused('grep -r BEGIN ~', 403, /^Not run: it would read every file under ~ on Spark 3, and keys are there\. Name a folder that holds none\.$/);
   await refused('cd project && grep -rn BEGIN', 403, /^Not run: it would read every file under project on Spark 3/);
   await refused('cat $HOME/.ssh/id_ed25519', 403, /^Not run: ~\/\.ssh\/id_ed25519 is a key file/);
-  await refused('sudo cat /etc/shadow', 400, /^Leave out sudo/);
+  // sudo is refused as a command, never as a word to look for.
+  for (const command of ['sudo cat /etc/shadow', 'sudo ls', 'true && sudo ls', 'env sudo ls', 'ls | sudo tee x', 'echo $(sudo id)']) await refused(command, 400, /^Leave out sudo/);
+  for (const command of ['grep sudo /var/log/auth.log', 'ls -l /usr/bin/sudo', 'journalctl -t sudo']) {
+    const r = await look({ on: 'spark3', command });
+    assert.equal(r.status, 200, `${command}: ${r.text}`);
+    assert.equal(r.json.ran, true, command);
+  }
   const ok = async (command, re) => {
     const r = await look({ on: 'spark3', command });
     assert.equal(r.status, 200, `${command}: ${r.text}`);
