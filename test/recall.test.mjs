@@ -5,7 +5,8 @@
 // after recall in the same turn needs the owner's words for 0.6 of the line, not a quarter. What it never does: the
 // owner's words (said) and other callers' arguments to anyone but the owner's own call; a command's output to a caller
 // that may not run commands; a retired line to an agent, an agent's chat or Telegram; an erased line from memory; a
-// kept key unhidden. SPARK_CONSOLE_MEMORY_OFF=past,count leaves out the retired lines and the count line. Memory,
+// kept key unhidden. A line past its last day (until) is past, with its end, never live; a fact said again shows the
+// line it took the place of. SPARK_CONSOLE_MEMORY_OFF=past,count leaves out the retired lines and the count line. Memory,
 // lessons, runs, the journal and a kept key are seeded before the console starts; Telegram is paired; the stand-in
 // brain is scripted.
 import { test, after } from 'node:test';
@@ -18,15 +19,18 @@ import { startMock } from './start-mock.mjs';
 const NOW = Date.now(), at = ms => new Date(ms).toISOString();
 const now = new Date(NOW), lastMonth = (d, h = 12, m = 0) => at(+new Date(now.getFullYear(), now.getMonth() - 1, d, h, m));
 const RECENT = at(NOW - 60000);
+// (Spark 2's own day, as memoryDay gives it: ten days ago, the last day of a line that has ended)
+const ENDED_DAY = (t => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10))(new Date(NOW - 10 * 86400000));
 // As the console says a date (20-recall.mjs recallDay), on the same machine.
 const day = iso => { const t = new Date(iso); return t.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(t.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) }); };
 const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
 const NAS = 'nas-Q7xv93Lp2mWd';
-const WIFI = 'a1f1a1f1', ETH = 'e7e7e7e7', KESTREL = 'c0de5e70', KESTREL_OLD = 'c0de5e71', KEPT = 'b0b0b0b0', LESSON = 'l_9a8b7c6d', CMD = 'j_c0de00000001';
+const WIFI = 'a1f1a1f1', ETH = 'e7e7e7e7', ENDED = 'e0d0e0d0', KESTREL = 'c0de5e70', KESTREL_OLD = 'c0de5e71', KEPT = 'b0b0b0b0', LESSON = 'l_9a8b7c6d', CMD = 'j_c0de00000001';
 const LINES = [
   { id: ETH, kind: 'fact', text: 'Spark 4 is on Ethernet now (fixed)', by: 'owner', at: RECENT, src: { via: 'sparkie', chat: 'c_g3' }, replaces: WIFI },
   { id: KESTREL, kind: 'preference', text: 'my coding setup is called kestrel', by: 'owner', at: RECENT, src: { via: 'api' } },
   { id: KEPT, kind: 'fact', text: `the NAS box answers to ${NAS}`, by: 'owner', at: RECENT, src: { via: 'api' } },
+  { id: ENDED, kind: 'fact', text: 'Spark 1 is lent to the lab', by: 'owner', at: lastMonth(2), until: ENDED_DAY, src: { via: 'api' } },
 ];
 const PAST = [
   { id: WIFI, kind: 'fact', text: 'Spark 4 is on Wi-Fi only', by: 'owner', at: lastMonth(14), src: { via: 'sparkie', chat: 'c_g3old' },
@@ -216,6 +220,29 @@ test('never: a retired line to an agent\'s key, an agent\'s chat or Telegram; th
   // The owner, in Spark Console, sees them.
   const mine = await ok({ kind: 'line', limit: 20 });
   assert.ok(mine.records.some(x => x.id === WIFI && x.retired) && mine.records.some(x => x.id === KESTREL_OLD && x.retired.why === 'forgotten'), JSON.stringify(mine));
+});
+
+test('a line past its last day is past with its end, to the owner only, never live; a fact said again shows the line it replaced', { timeout: 60000 * SLOW }, async () => {
+  const mine = await ok({ kind: 'line', limit: 20 }), ended = mine.records.filter(x => x.id === ENDED);
+  assert.deepEqual(ended.map(x => [x.until, x.retired?.why]), [[ENDED_DAY, 'expired']], JSON.stringify(mine));
+  assert.match(ended[0].shown, new RegExp(`^- \\[${ENDED}\\] \\(fact, ${lastMonth(2).slice(0, 10)}, until ${ENDED_DAY}, said by the owner\\) Spark 1 is lent to the lab \\(retired \\d{4}-\\d\\d-\\d\\d: expired\\)$`));
+  assert.equal((await ok({ id: ENDED })).record.retired.why, 'expired');
+  for (const k of [keys.look, keys.act]) {
+    for (const args of [{ kind: 'line', limit: 20 }, { about: 'lent to the lab' }]) {
+      const r = await call(k.token, 'recall', args);
+      assert.ok(!/e0d0e0d0|lent to the lab/.test(JSON.stringify(r.value.records.filter(x => x.actor !== k.name))), r.text);
+    }
+    assert.match((await call(k.token, 'recall', { id: ENDED })).text, /^\[not_found\] There’s no line e0d0e0d0 in memory/);
+  }
+  // Said again (the same names, 0.8 of the words): the new line takes the old one's place, and recall says which.
+  const act = (name, body) => api(`/actions/${name}`, { method: 'POST', body });
+  const first = (await act('remember', { text: 'the backup disk for spark 3 is the grey one', kind: 'fact' })).json.id;
+  const again = (await act('remember', { text: 'the backup disk for spark 3 is the grey one, labelled B', kind: 'fact' })).json;
+  assert.equal(again.replaced?.id, first, JSON.stringify(again));
+  const r = await ok({ about: 'backup disk', kind: 'line' });
+  assert.deepEqual(r.records.map(x => [x.id, x.replaces ?? null, x.retired?.why ?? null, x.retired?.by ?? null]), [[again.id, first, null, null], [first, null, 'replaced', again.id]], JSON.stringify(r));
+  const one = await ok({ id: again.id });
+  assert.deepEqual([one.replaced?.id, one.replaced?.text], [first, 'the backup disk for spark 3 is the grey one']);
 });
 
 test('never: a line erased for good, from any source in memory, for anyone', { timeout: 120000 * SLOW }, async () => {
