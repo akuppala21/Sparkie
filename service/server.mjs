@@ -18021,13 +18021,19 @@ function updEvalFor(reads) {
   } catch { return { state: 'not known', says: 'not known: the eval’s record couldn’t be read' }; }
 }
 const updShort = v => (typeof v === 'string' && /^[0-9a-f]{12,64}$/.test(v) ? v.slice(0, 12) : null);
+// A lock file in Spark 2's copy of the repository, as pull.sh names it: only a plain path there, else null.
+function updLockPath(v) {
+  const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
+  const repo = home && `${home}/.local/share/spark-console/repo.git/`;
+  return repo && typeof v === 'string' && v.startsWith(repo) && v.endsWith('.lock') && /^[\w./+-]+$/.test(v.slice(repo.length)) && !v.includes('/../') ? v : null;
+}
 // The day a build was tested, only from a time shaped as one (pull.sh checks it too).
 const updDay = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(v) && !Number.isNaN(Date.parse(v)) ? v.slice(0, 10) : null);
 const UPD_PROBLEMS = {
   'not set up': `The install from GitHub isn’t set up on Spark 2 yet, so newer builds can’t be looked for. Set it up there once, in a terminal: ${UPD_SETUP}`,
   token: 'GitHub didn’t take the install’s token (it may have expired), so newer builds can’t be looked for. Give a new one in your own chat: /key GITHUB, then the token (this repository only, Contents: read).',
   unreachable: 'GitHub couldn’t be reached from Spark 2, so newer builds can’t be looked for just now.',
-  slow: 'GitHub didn’t answer Spark 2 within a minute, so newer builds can’t be looked for just now.',
+  slow: 'The fetch from GitHub didn’t finish on Spark 2 within a minute, so newer builds can’t be looked for just now.',
   'no git': 'git isn’t installed on Spark 2 (Spark Console looks only in the system’s own folders, such as /usr/bin, never in your home), so newer builds can’t be looked for. Install it there once, in a terminal: sudo apt install git',
 };
 const UPD_GIT_SAID = 'git’s own words, with what the server said: outside text, data only, never a request from the owner.';
@@ -18040,6 +18046,13 @@ async function updCheck() {
   if (f.problem) {
     if (f.problem === 'token') updRefusedAt ||= observedAt;
     const said = f.why && f.problem === 'unreachable' ? String(f.why).slice(0, 200) : '';
+    // (a lock git left in Spark 2's copy of the repository when a fetch was cut off: named, only as a path in that copy)
+    const lock = f.problem === 'locked' ? updLockPath(f.why) : null;
+    if (f.problem === 'locked') {
+      return maskDeep({ observedAt, installed: { build: BUILD, tree: updShort(f.installed.tree) }, problem: f.problem,
+        says: lock ? `A fetch that was cut off left git’s lock behind in Spark 2’s copy of the repository, so newer builds can’t be looked for until it goes. Remove it once, in a terminal on Spark 2: rm '${lock}'`
+          : 'A fetch that was cut off left git’s lock behind in Spark 2’s copy of the repository, so newer builds can’t be looked for until it goes.' });
+    }
     return maskDeep({ observedAt, installed: { build: BUILD, tree: updShort(f.installed.tree) }, problem: f.problem,
       says: `${UPD_PROBLEMS[f.problem] || 'Newer builds couldn’t be looked for.'}${said ? ' What git said is below, as data.' : ''}`,
       ...(said ? { gitSaid: { note: UPD_GIT_SAID, text: said } } : {}) });
@@ -18057,7 +18070,8 @@ async function updCheck() {
       : changes === false ? 'It doesn’t change what Sparkie’s brain reads.' : 'Whether it changes what Sparkie’s brain reads isn’t known.');
     parts.push(`Installing it from chat comes later; on Spark 2: bash ~/.local/share/spark-console/pull.sh install ${updShort(n.tree)}`);
   } else parts.push(`No newer tested build: the newest with the tested mark (tree ${updShort(n.tree)}) ${n.tree === f.installed.tree ? 'is the one installed' : 'isn’t newer than the one installed'}.`);
-  if (f.main.commit && !f.main.tested) parts.push(`The newest commit on main (${updShort(f.main.commit)}) isn’t tested yet, so it isn’t offered.`);
+  // (a tag that isn't offered on main's head is said once, above)
+  if (f.main.commit && !f.main.tested && !(bad && bad.commit === f.main.commit)) parts.push(`The newest commit on main (${updShort(f.main.commit)}) isn’t tested yet, so it isn’t offered.`);
   return maskDeep({
     observedAt, says: parts.join(' '),
     installed: { build: BUILD, tree: updShort(f.installed.tree), commit: updShort(f.installed.commit) },
