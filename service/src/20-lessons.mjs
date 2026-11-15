@@ -112,16 +112,33 @@ function learnFrom(job, evidence) {
   } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
 }
 
+// Which known failures count toward passing a setup over (B3, decided 2026-11-14). The setup's own count. One whose
+// cause is outside the setup never does: every setup meets the same wall, and the setup would stay passed over after
+// that was put right. A lesson still records it (R48); a failure not listed here doesn't count.
+const PASS_OVER_FAILURES = [
+  // [failure, counts, why]
+  ['out-of-memory', true, 'the setup asks for more memory than its Sparks have'],
+  ['bad-flag', true, 'the engine refuses one of its settings'],
+  ['garbage', true, 'its engine or image answers only garbage'],
+  ['no-answer', true, 'its engine or chat template doesn’t answer'],
+  ['gated', false, 'a Hugging Face sign-in or license, the same for every setup'],
+  ['port-busy', false, 'another program holds the model port'],
+  ['image', false, 'the network, while the image downloads'],
+  ['memory-share', false, 'other work holds the memory'],
+  ['never-connected', false, 'the cable between the two Sparks'],
+];
 // B3 (design B 2.4; contract 5.10): a setup that failed twice the same known way with no success between (a proven
 // lesson) is passed over while what that lesson was true of is what this start would use: its image, its Sparks and its
 // start code (the start workflow's version). When one differs, it is tried again. The lesson the setup would leave is
 // worked out as a failure would write it (setupTried, lessonOf) and looked for among the kept ones. Lessons that can't
-// be read pass nothing over: a lesson never stops a start by itself.
+// be read pass nothing over: a lesson never stops a start by itself. Only failures of the setup's own count
+// (PASS_OVER_FAILURES).
 function failedTwice(m, how, placed, code) {
   try {
     const l = lessonOf({ type: 'deploy', status: 'failed', setupTried: setupTried(m, how, placed), workflowVersion: code });
     if (!l?.subject.model || !l.tried.how || !l.tried.flags || !l.tried.on) return null;
-    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && JSON.stringify(x.subject) === JSON.stringify(l.subject)
+    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && PASS_OVER_FAILURES.some(([id, counts]) => counts && id === x.failure)
+      && JSON.stringify(x.subject) === JSON.stringify(l.subject)
       && ['how', 'flags', 'image', 'on', 'code'].every(k => x.tried?.[k] === l.tried[k])) || null;
   } catch { return null; }
 }
