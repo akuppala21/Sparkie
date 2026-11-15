@@ -2,7 +2,7 @@
 // Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
 // Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
 //   (writers: checkRoute)
-// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s, not on the stand-in fleet)        Wakes: none
+// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s)        Wakes: none
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -94,6 +94,7 @@ let tcpApiOff = existsSync(API_LOCKED);
 // known. Only read: turning it on or off is the owner's (deploy/open-to-internet.sh).
 let funnelOn = null;
 function checkRoute() {
+  lookLinger();
   const child = spawn('tailscale', ['serve', 'status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
@@ -113,10 +114,11 @@ function checkRoute() {
     tcpApiOff = out.includes(`unix:${API_SOCKET}`);
     if (tcpApiOff) try { writeFileSync(API_LOCKED, `${new Date().toISOString()}\n`, { mode: 0o600 }); } catch {}
   });
+  child.on('close', noteFunnel);
   child.on('error', () => {});
 }
 // (it only reads; on the stand-in fleet test/mock/bin/tailscale answers it, from the test's serve.json or with nothing)
-checkRoute(); setInterval(checkRoute, 60000);
+checkRoute(); setInterval(checkRoute, ROUTE_MS);
 const sparkAddresses = () => new Set(NODES.flatMap(n => [n.ip, n.host]).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x || '')));
 // Every tailnet address (IPv4 and IPv6) of the Sparks and of this machine, from tailscale status. They're all signed in
 // as the owner, so Tailscale would vouch for anything running on them as the owner: requests from them can't act as a
@@ -126,6 +128,7 @@ function refreshBlocked() {
   const child = spawn('tailscale', ['status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', d => { out += d; });
+  child.on('close', code => noteTailnet(code, out));
   child.on('close', () => {
     try {
       const st = JSON.parse(out), v4 = sparkAddresses();
@@ -141,5 +144,5 @@ function refreshBlocked() {
   // Without the tailscale command, the Sparks' IPv4 addresses from the config still count.
   child.on('error', () => { blockedAddresses ||= new Set([...sparkAddresses(), ...LOCAL_IPS]); });
 }
-if (!ALL_LOCAL) { setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, 60000); }
+setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, ROUTE_MS);
 

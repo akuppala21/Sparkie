@@ -8,7 +8,10 @@
 // timer, an unlisted event or job type, a part outside its band, brackets it can't read). Each test file's “Covers:”
 // comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't have, a stale
 // table. `docs/status.md` (`tools/status.mjs`): a row per rule and contract requirement; built, partly from tests that
-// hold part of an acceptance test (`// T2 (part): …`), and a part mark that says no part fails.
+// hold part of an acceptance test (`// T2 (part): …`), and a part mark that says no part fails. The meaning diff
+// (`tools/meaning.mjs`): between two made-up trees, by id, exactly the contract requirements, acceptance tests, section
+// words, Rule paragraphs and glossary meanings whose words changed, and rule files added or removed; never a re-wrap, a
+// text moved, a Where line or a pointer fixed; the command's output and exit, and a commit as a tree.
 //
 // The documents match the code: tools/check-docs.mjs, the same code tools/make.mjs runs. File reads only, no server.
 // First on this tree; then on a small made-up tree that passes, with one fault added at a time, so each check is
@@ -24,6 +27,7 @@ import { checkDocs, rulesIndex, coversOf, coversTable, describe as say } from '.
 import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
 import { codeMap } from '../tools/code-map.mjs';
 import { checkStatus, statusTable } from '../tools/status.mjs';
+import { meaningDiff, treeAt } from '../tools/meaning.mjs';
 
 test('this tree: the documents match the code', () => {
   const problems = checkDocs(REPO);
@@ -373,4 +377,115 @@ describe('status', () => {
     assert.deepEqual(statusProblems(extra).map(say), []);
   });
   test('a part mark with no words after it', () => statusFails({ 'test/change.test.mjs': "// T1 (part):\ntest('a choice is used once, alone, and only by whoever was asked', () => {});\n" }, /^marks part of T1 with no words after “\(part\):”/));
+});
+
+// The meaning diff (tools/meaning.mjs, `node tools/check-docs.mjs --meaning <base>`): the texts whose meaning is the
+// owner's, by id, that differ between two trees. A made-up pair of trees, then the command itself.
+const meaningRule = (n, rule, where = '- `16-actions.mjs` (`runAction`)', today = 'Nothing marked.', checked = '- `change.test.mjs`') =>
+  `# R${n}\n\n## Rule\n\n${rule}\n\n## Why\n\nOne way in.\n\n## Today\n\n${today}\n\n## Where\n\n${where}\n\n## Checked by\n\n${checked}\n`;
+const meaningContract = (reqs, tests = '| T1 | "what do you remember?" | It lists every line. | 5.1, 5.3 |\n| T2 | "forget my old address" | It retires the line. | 5.1 |') =>
+  `# Contract\n\nChanges to this contract need the owner's OK.\n\n## 5. Memory\n\nWhat Sparkie keeps.\n\n${reqs}\n\n## 11. Acceptance tests\n\n| # | Request | Must | Rules |\n|---|---|---|---|\n${tests}\n`;
+const REQ = {
+  '5.1': '- 5.1 **Every line.** Memory keeps every line the owner says, and a line is only retired,\n  never erased, unless the owner asks.',
+  '5.2': '- 5.2 **The owner\'s words.** Sparkie does not believe a line an agent saved.',
+  '5.3': '- 5.3 **Shown in chat.** Memory is shown in chat when asked.',
+};
+const glossary = rows => `# Words\n\nMeanings are the owner's.\n\n| Word | What it means | Name in code | Don't say |\n|---|---|---|---|\n${rows.join('\n')}\n`;
+const HUB = '| hub | The Spark that runs the console and the brain | `brainSparks` | portal host |';
+const BOX = '| box | A throwaway container one command runs in | none yet | sandbox |';
+const MEANING_BASE = {
+  'service/src/16-actions.mjs': 'async function runAction(name) {}\nasync function startModel(args) {}\nfunction jobEnded(row) {}\n',
+  'docs/contract.md': meaningContract([REQ['5.1'], REQ['5.2'], REQ['5.3']].join('\n')),
+  'docs/rules/R01.md': meaningRule(1, '**R1.** Every change goes through `runAction`.'),
+  'docs/rules/R02.md': meaningRule(2, '**R2.** One change per Spark: claim before the job exists,\nalways release.'),
+  'docs/rules/R03.md': meaningRule(3, '**R3.** A stop is confirmed by Docker.'),
+  'docs/rules/R04.md': meaningRule(4, '**R4.** Docker is the truth.'),
+  'docs/glossary.md': glossary([HUB, BOX]),
+};
+function writeFiles(files) {
+  const root = mkdtempSync(join(tmpdir(), 'meaning-'));
+  for (const [f, text] of Object.entries(files)) {
+    if (text == null) continue;
+    mkdirSync(dirname(join(root, f)), { recursive: true });
+    writeFileSync(join(root, f), text);
+  }
+  return root;
+}
+// The ids that differ from MEANING_BASE once `head` is laid over it, each with how it changed.
+function meaningOf(head, base = {}) {
+  const a = writeFiles({ ...MEANING_BASE, ...base }), b = writeFiles({ ...MEANING_BASE, ...base, ...head });
+  try { return meaningDiff(a, b); } finally { for (const r of [a, b]) rmSync(r, { recursive: true, force: true }); }
+}
+const ids = items => items.map(i => `${i.id} ${i.change}`);
+
+describe('the meaning diff', () => {
+  test('the same trees: nothing', () => assert.deepEqual(meaningOf({}), []));
+  test('a Rule paragraph gains a word, a requirement loses a “not”, a glossary meaning changes, a rule only re-wrapped, a Where line, a rule file added and one removed: exactly the right ids', () => {
+    const items = meaningOf({
+      'docs/contract.md': meaningContract([
+        REQ['5.3'],                                                                    // moved above the other two
+        '- 5.1 **Every line.** Memory keeps every line the owner says, and a line is only\n  retired, never erased, unless the owner asks.',   // wrapped again
+        REQ['5.2'].replace('does not believe', 'does believe'),
+      ].join('\n')),
+      'docs/rules/R01.md': meaningRule(1, '**R1.** Every change goes through `runAction` first.'),
+      'docs/rules/R02.md': meaningRule(2, '**R2.** One change per Spark: claim\nbefore the job exists, always release.'),
+      'docs/rules/R03.md': meaningRule(3, '**R3.** A stop is confirmed by Docker.', '- `16-actions.mjs` (`runAction`, `startModel`)', 'A stop on a dark Spark waits.', '- `stop.test.mjs`'),
+      'docs/rules/R04.md': null,
+      'docs/rules/R05.md': meaningRule(5, '**R5.** Every Spark has one plug.'),
+      'docs/glossary.md': glossary([BOX.replace('one command runs in', 'one command or a whole task runs in'), HUB]),
+    });
+    assert.deepEqual(ids(items), ['5.2 changed', 'R1 changed', 'R5 added', 'R4 removed', 'box changed']);
+    const [req, rule, added, removed, word] = items;
+    assert.deepEqual([req.kind, req.old, req.new], ['requirement', REQ['5.2'], REQ['5.2'].replace('does not believe', 'does believe')]);
+    assert.deepEqual([rule.kind, rule.old, rule.new], ['rule', '**R1.** Every change goes through `runAction`.', '**R1.** Every change goes through `runAction` first.']);
+    assert.deepEqual([added.old, added.new, removed.old, removed.new], [null, '**R5.** Every Spark has one plug.', '**R4.** Docker is the truth.', null]);
+    assert.deepEqual([word.kind, word.file, word.old, word.new], ['word', 'docs/glossary.md', 'A throwaway container one command runs in', 'A throwaway container one command or a whole task runs in']);
+  });
+  test('an acceptance test reworded, and a section’s own words; a paragraph moved within its section is no change', () => {
+    const contract = meaningContract([REQ['5.1'], REQ['5.2'], REQ['5.3']].join('\n'), '| T1 | "what do you remember?" | It lists every line. | 5.1, 5.3 |\n| T2 | "forget my old address" | It erases the line. | 5.1 |');
+    assert.deepEqual(ids(meaningOf({ 'docs/contract.md': contract })), ['T2 changed']);
+    const prose = MEANING_BASE['docs/contract.md'].replace('What Sparkie keeps.', 'What Sparkie keeps, and for how long.');
+    assert.deepEqual(meaningOf({ 'docs/contract.md': prose }).map(i => [i.id, i.what, i.old, i.new]), [['§5', 'contract text outside the numbered rules', 'What Sparkie keeps.', 'What Sparkie keeps, and for how long.']]);
+    const moved = MEANING_BASE['docs/contract.md'].replace("Changes to this contract need the owner's OK.\n\n", '').replace('## 5. Memory\n\n', "## 5. Memory\n\nChanges to this contract need the owner's OK.\n\n");
+    assert.deepEqual(ids(meaningOf({ 'docs/contract.md': moved })), ['§0 changed', '§5 changed'], 'moved to another section: it left one and came into the other');
+    const within = MEANING_BASE['docs/contract.md'].replace('## 5. Memory\n\nWhat Sparkie keeps.\n\n', '## 5. Memory\n\n').replace(`${REQ['5.3']}\n`, `${REQ['5.3']}\n\nWhat Sparkie keeps.\n`);
+    assert.deepEqual(ids(meaningOf({ 'docs/contract.md': within })), []);
+  });
+  test('a pointer fixed is no change (a typo, or a name the code renamed); a pointer pointed at another name, or a number in backticks, is', () => {
+    const rule = text => ({ 'docs/rules/R01.md': meaningRule(1, `**R1.** ${text}`) });
+    assert.deepEqual(meaningOf(rule('Every change goes through `runAction`.'), rule('Every change goes through `runActon`.')), [], 'a typo fixed');
+    const renamed = { 'service/src/16-actions.mjs': MEANING_BASE['service/src/16-actions.mjs'].replace('jobEnded', 'jobFinished'), ...rule('A job that ends is told once (`jobFinished`).') };
+    assert.deepEqual(meaningOf(renamed, rule('A job that ends is told once (`jobEnded`).')), [], 'a rename followed');
+    assert.deepEqual(ids(meaningOf(rule('Every change goes through `startModel`.'), rule('Every change goes through `runAction`.'))), ['R1 changed']);
+    assert.deepEqual(ids(meaningOf(rule('At most `16` tools a round.'), rule('At most `24` tools a round.'))), ['R1 changed']);
+    assert.deepEqual(ids(meaningOf(rule('Every change goes through `runAction`, and `startModel`.'), rule('Every change goes through `runAction`.'))), ['R1 changed']);
+  });
+  test('the command: the ids with their old and new text, exit 1; the same trees, exit 0; a commit as a tree', () => {
+    const a = writeFiles(MEANING_BASE), b = writeFiles({ ...MEANING_BASE, 'docs/rules/R01.md': meaningRule(1, '**R1.** Every change goes through `runAction` first.') });
+    const repo = mkdtempSync(join(tmpdir(), 'meaning-git-'));
+    try {
+      const run = (...args) => spawnSync(process.execPath, [join(REPO, 'tools', 'check-docs.mjs'), '--meaning', ...args], { encoding: 'utf8' });
+      const json = run(a, b, '--json');
+      assert.equal(json.status, 1, json.stderr);
+      assert.deepEqual(JSON.parse(json.stdout), [{ id: 'R1', kind: 'rule', what: 'Rule paragraph', change: 'changed', old: '**R1.** Every change goes through `runAction`.', new: '**R1.** Every change goes through `runAction` first.', file: 'docs/rules/' }]);
+      const text = run(a, b);
+      assert.equal(text.status, 1, text.stderr);
+      assert.match(text.stdout, /^R1, Rule paragraph \(docs\/rules\/\): reworded\n {2}was: \*\*R1\.\*\* Every change goes through `runAction`\.\n {2}now: \*\*R1\.\*\* Every change goes through `runAction` first\.$/m);
+      const same = run(a, a);
+      assert.equal(same.status, 0, same.stderr);
+      assert.match(same.stdout, /^No meaning text differs/);
+      assert.equal(run('--json').status, 2);
+      assert.equal(run('no-such-commit', a).status, 2);
+      // Two commits of a repository, each written out by git archive.
+      const git = (...args) => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+      for (const [f, t] of Object.entries(MEANING_BASE)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), t); }
+      git('init', '-q'); git('add', '-A'); git('commit', '-q', '-m', 'base');
+      writeFileSync(join(repo, 'docs/glossary.md'), glossary([HUB.replace('and the brain', 'the brain and the journal'), BOX]));
+      git('commit', '-q', '-am', 'head');
+      const trees = [treeAt('HEAD~1', repo), treeAt('HEAD', repo)];
+      try { assert.deepEqual(ids(meaningDiff(trees[0].root, trees[1].root)), ['hub changed']); } finally { for (const t of trees) t.done(); }
+    } finally {
+      for (const r of [a, b, repo]) rmSync(r, { recursive: true, force: true });
+    }
+  });
 });
