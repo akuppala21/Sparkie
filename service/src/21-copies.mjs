@@ -8,7 +8,8 @@
 // folder 0700, files 0600, the bytes, the mode and the path of each kept, so a restore is exact. At most 16 MB a file
 // and 128 MB a command; a file past a limit, unreadable or not a plain file, and what a named link points to, is "not
 // kept", with why. The set's name is made by code. One fixed Python program does it all on the Spark, as the owner, in
-// one of four modes: copy (the set and its manifest; the ways-in fingerprints too), after (the fingerprints once the
+// one of four modes: copy (the set and its manifest; the ways-in fingerprints too; then older sets pruned,
+// 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
 // O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
@@ -19,7 +20,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, re, secrets, stat, subprocess, sys, time
+import base64, glob, hashlib, json, os, re, secrets, shutil, stat, subprocess, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -185,6 +186,7 @@ def put(path, data):
     finally:
         os.close(fd)
 
+` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
         raw = read(os.path.join(sd, 'manifest.json'), 64 << 20)
@@ -262,6 +264,12 @@ if A['mode'] == 'copy':
     man['at'] = time.time()
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
+    # (the older sets on this Spark, now that this one is open: a problem there never stops the change)
+    if A.get('prune'):
+        try:
+            OUT['pruned'] = prune(os.path.dirname(sd))
+        except OSError as x:
+            OUT['pruneProblem'] = x.strerror or 'error'
     OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
                notKept=[dict(e, path=show(e['path'])) for e in man['notKept']], ways=ways_now())
     done()
@@ -288,6 +296,7 @@ if A['mode'] == 'restore':
     except (OSError, OverflowError, ValueError):
         after = None
     only = None if A.get('only') is None else set(whole(p) or p for p in A['only'])
+    pruned_answer(sd, man, after, only)
     restored, same, missed = [], [], []
     for e in man['notKept']:
         if only is None or e['path'] in only:

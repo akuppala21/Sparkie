@@ -9045,6 +9045,9 @@ action({
       : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
+// When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
+// (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
+const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
@@ -9052,7 +9055,7 @@ action({
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
     // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone)?.at || '');
+    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
     if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
@@ -15530,6 +15533,142 @@ action({
       next: `wait_operation {"id":"${job.id}"}` };
   },
 });
+/* ───────── pruning the copies on a Spark (A8) ───────── */
+// Area: features        Rules: R61        Tests: prune.test.mjs, runner.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The copies program's pruning (21-copies.mjs joins this text into it): when a new set opens on a Spark, older sets
+// there go: any older than COPIES_DAYS, all but the newest COPIES_SETS (the new one counts), then the oldest until the
+// copies on that Spark hold COPIES_BYTES. Never the new set, a set the console names (runnerKeep: the newest set of a chat
+// that can still undo it), nor one whose unit systemd says still runs or can't tell. A set's age is its folder's
+// modification time, which only this program writes (both walls hide the folder). What goes leaves its manifest, its
+// after-look and a pruned.json, so an undo can say "pruned" file by file (pruned_answer); that mark goes too after
+// COPIES_MARK_DAYS, past the journal's two months undo reads. One look at the copies folder (os.scandir), sizes only of
+// the sets left, and at most COPIES_PRUNE_MOST removed in one go, so a folder someone made long costs one listing. No
+// link is followed.
+const COPIES_DAYS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_DAYS) || 7;
+const COPIES_SETS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_SETS) || 20;
+const COPIES_BYTES = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_BYTES) || 2 * 2 ** 30;
+const COPIES_PRUNE_MOST = 200, COPIES_MARK_DAYS = 62;
+const COPIES_PRUNE_PY = String.raw`
+SETNAME = re.compile(r'^s[0-9a-z]{8,24}$')
+
+def tree_size(top):
+    # the bytes of the plain files under a set, never through a link
+    n = 0
+    for dp, dns, fns in os.walk(top, followlinks=False):
+        for x in fns:
+            try:
+                st = os.lstat(os.path.join(dp, x))
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                n += st.st_size
+    return n
+
+def prune(base):
+    # Older sets go when a new one opens (A8): older than the days given, all but the newest sets given (the new one
+    # counts), then the oldest until the copies on this Spark hold the bytes given. Never the new set, one the console
+    # names (keep: the newest set of a chat that can still undo it), nor one whose unit systemd says still runs or can't
+    # tell. What goes leaves its manifest and a pruned.json behind, so an undo can say "pruned" file by file; such a
+    # mark goes too once it is older than the journal's window. One look at the folder, sizes only of what is left, and
+    # at most the given number removed in one go.
+    P = A['prune']
+    now, sets, marks = time.time(), [], []
+    with os.scandir(base) as it:
+        for d in it:
+            if d.name == A['set'] or not SETNAME.match(d.name):
+                continue
+            try:
+                st = d.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+                continue
+            (marks if os.path.lexists(os.path.join(base, d.name, 'pruned.json')) else sets).append((st.st_mtime, d.name))
+    keep = set(P.get('keep') or [])
+    for t, n in sets:
+        unit = (P.get('units') or {}).get(n)
+        if unit and unit_live(unit) not in (3, 4):
+            keep.add(n)
+    sets.sort(reverse=True)
+    gone, rest = [], []
+    for i, (t, n) in enumerate(sets):
+        if n in keep:
+            rest.append((t, n))
+        elif now - t > P['days'] * 86400:
+            gone.append((n, 'older than %d days' % P['days']))
+        elif i + 2 > P['sets']:
+            gone.append((n, 'past the newest %d sets on this Spark' % P['sets']))
+        else:
+            rest.append((t, n))
+    total, sizes = tree_size(os.path.join(base, A['set'])), {}
+    for t, n in rest:
+        sizes[n] = tree_size(os.path.join(base, n))
+        total += sizes[n]
+    for t, n in reversed(rest):
+        if total <= P['bytes']:
+            break
+        if n not in keep:
+            gone.append((n, 'past the %s the copies on this Spark keep' % (('%g GB' % (P['bytes'] / 2 ** 30)) if P['bytes'] >= 2 ** 30 else ('%g MB' % round(P['bytes'] / 2 ** 20, 1)))))
+            total -= sizes[n]
+    out = []
+    for n, why in gone[:P['most']]:
+        sd = os.path.join(base, n)
+        info = {'set': n, 'why': why, 'files': 0, 'bytes': 0, 'paths': []}
+        try:
+            man = json.loads(read(os.path.join(sd, 'manifest.json'), 64 << 20))
+            kept = [e for e in man.get('entries', []) if e.get('kind') == 'file' and not e.get('way')]
+            info.update(files=len(kept), bytes=sum(e.get('size', 0) for e in kept), paths=[show(e['path']) for e in kept[:20]])
+            mark = True
+        except (OSError, OverflowError, ValueError, AttributeError):
+            mark = False
+        for x in os.listdir(sd):
+            # (the manifest and the after-look stay: what the set held, and whether its change was cut off)
+            if mark and x in ('manifest.json', 'after.json'):
+                continue
+            q = os.path.join(sd, x)
+            if stat.S_ISDIR(os.lstat(q).st_mode):
+                shutil.rmtree(q)
+            else:
+                os.unlink(q)
+        if mark:
+            put(os.path.join(sd, 'pruned.json'), json.dumps({'at': now, 'why': why}).encode())
+        else:
+            os.rmdir(sd)
+        out.append(info)
+    for t, n in marks[:P['most']]:
+        if now - t > P['marks'] * 86400:
+            shutil.rmtree(os.path.join(base, n))
+    return out
+
+
+def pruned_answer(sd, man, after, only):
+    # a set pruned since: its copies are gone and only its manifest is left, so each file says so (and the answer ends)
+    try:
+        gone = json.loads(read(os.path.join(sd, 'pruned.json'), 1 << 20))
+    except (OSError, OverflowError, ValueError):
+        gone = None
+    if gone is not None:
+        when = time.strftime('%Y-%m-%d', time.localtime(gone.get('at', 0)))
+        missed, same = [], []
+        for e in man['notKept']:
+            if only is None or e['path'] in only:
+                missed.append({'path': e['path'], 'why': 'never kept: ' + e['why']})
+        for e in sorted(man['entries'], key=lambda e: e['path']):
+            p = e['path']
+            if only is not None and p not in only:
+                continue
+            before = {'absent': 'absent', 'link': 'link:' + e.get('target', ''), 'dir': 'dir:%o' % e.get('mode', 0), 'file': 'file:%o:%s' % (e.get('mode', 0), e.get('sha', ''))}[e['kind']]
+            if fp(p) == before:
+                same.append(p)
+            elif e['kind'] == 'absent':
+                missed.append({'path': p, 'why': 'it was not there before the change: left as it is'})
+            else:
+                missed.append({'path': p, 'why': 'pruned: its copy was removed on %s (%s)' % (when, gone.get('why', 'pruned'))})
+        OUT.update(restored=[], same=[show(p) for p in same], notRestored=[dict(e, path=show(e['path'])) for e in missed], cutOff=after is None, pruned={'at': when, 'why': gone.get('why', 'pruned')})
+        done()
+`;
 /* ───────── the copies a change makes first, and putting them back (A7b) ───────── */
 // Area: features        Rules: R61        Tests: runner.test.mjs
 // Owns: none
@@ -15540,7 +15679,8 @@ action({
 // folder 0700, files 0600, the bytes, the mode and the path of each kept, so a restore is exact. At most 16 MB a file
 // and 128 MB a command; a file past a limit, unreadable or not a plain file, and what a named link points to, is "not
 // kept", with why. The set's name is made by code. One fixed Python program does it all on the Spark, as the owner, in
-// one of four modes: copy (the set and its manifest; the ways-in fingerprints too), after (the fingerprints once the
+// one of four modes: copy (the set and its manifest; the ways-in fingerprints too; then older sets pruned,
+// 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
 // O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
@@ -15551,7 +15691,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, re, secrets, stat, subprocess, sys, time
+import base64, glob, hashlib, json, os, re, secrets, shutil, stat, subprocess, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -15717,6 +15857,7 @@ def put(path, data):
     finally:
         os.close(fd)
 
+` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
         raw = read(os.path.join(sd, 'manifest.json'), 64 << 20)
@@ -15794,6 +15935,12 @@ if A['mode'] == 'copy':
     man['at'] = time.time()
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
+    # (the older sets on this Spark, now that this one is open: a problem there never stops the change)
+    if A.get('prune'):
+        try:
+            OUT['pruned'] = prune(os.path.dirname(sd))
+        except OSError as x:
+            OUT['pruneProblem'] = x.strerror or 'error'
     OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
                notKept=[dict(e, path=show(e['path'])) for e in man['notKept']], ways=ways_now())
     done()
@@ -15820,6 +15967,7 @@ if A['mode'] == 'restore':
     except (OSError, OverflowError, ValueError):
         after = None
     only = None if A.get('only') is None else set(whole(p) or p for p in A['only'])
+    pruned_answer(sd, man, after, only)
     restored, same, missed = [], [], []
     for e in man['notKept']:
         if only is None or e['path'] in only:
@@ -17703,7 +17851,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds, workdir: dir, ...(dir === RUNNER_DIR ? { workmake: true } : {}) });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds,
+      workdir: dir, ...(dir === RUNNER_DIR ? { workmake: true } : {}),
+      prune: { days: COPIES_DAYS, sets: COPIES_SETS, bytes: COPIES_BYTES, most: COPIES_PRUNE_MOST, marks: COPIES_MARK_DAYS, ...runnerKeep() } });
+    runnerPruned(node, copied, ctx);
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -17817,9 +17968,10 @@ function runnerHold(r) {
   return true;
 }
 
-// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
-function runnerLatest(conv) {
-  const undone = new Set(), never = new Set(), starts = [];
+// The runner's lines in the journal's two newest months: the sets an undo put back, the commands the helper never
+// started, every start line, and each start's end line.
+function runnerScan() {
+  const undone = new Set(), never = new Set(), starts = [], ends = new Map();
   for (const f of journalFiles().slice(0, 2)) {
     for (const line of jLinesOf(f)) {
       if (!line.includes('"set":"') || !line.includes('"k":"cmd"')) continue;
@@ -17828,11 +17980,47 @@ function runnerLatest(conv) {
       // (an undo that ended well; one that failed may be asked for again; a command the helper never started)
       if (r.act === 'undo_last_change' && r.end && r.ok) undone.add(r.set);
       else if (r.act === 'run' && r.end && r.ran === false) never.add(r.id);
-      else if (r.start && r.act === 'run' && r.chat === conv && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      else if (r.start && r.act === 'run' && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      if (r.act === 'run' && r.end) ends.set(r.id, r);
     }
   }
-  const best = starts.filter(r => !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
+  return { undone, never, starts, ends };
+}
+// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
+function runnerLatest(conv, scan = runnerScan()) {
+  const { undone, never, starts } = scan;
+  const best = starts.filter(r => r.chat === conv && !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
   return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id, unit: /^sw-run-[0-9a-f]{24}$/.test(best.unit || '') ? best.unit : null } : null;
+}
+// What pruning never takes (A8): the newest set of each chat that can still undo it, as runnerUndo would find it (newer
+// than that chat's last model change not undone); and every set whose change may still run (no end line, or one that
+// neither says it finished nor that it never started), which the Spark keeps while systemd says its unit runs or can't
+// tell (a set with no unit of its own name is kept).
+function runnerKeep() {
+  const scan = runnerScan(), keep = [], units = {};
+  let revisions = [];
+  try { revisions = desired().revisions || []; } catch {}
+  for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
+    if (last && last.at > since) keep.push(last.set);
+  }
+  for (const r of scan.starts) {
+    const end = scan.ends.get(r.id);
+    if (scan.never.has(r.id) || ['ran', 'ended', 'cut'].includes(end?.outcome)) continue;
+    if (/^sw-run-[0-9a-f]{24}$/.test(r.unit || '')) units[r.set] = r.unit;
+    else keep.push(r.set);
+  }
+  return { keep, units };
+}
+// What a new set's opening pruned on that Spark: one journal line names each set that went, why, and what it held (the
+// owner's files' paths, in its text): their copies are gone for good.
+function runnerPruned(node, copied, ctx) {
+  if (copied.pruneProblem) console.error(`Pruning the copies on ${sparkName(node)}: ${copied.pruneProblem}`);
+  const gone = Array.isArray(copied.pruned) ? copied.pruned : [];
+  if (!gone.length) return;
+  journal('cmd', { act: 'prune', where: 'host', class: 'prune', via: ctx.via || null, actor: ctx.actor || null, chat: ctx.chat || null, args: { spark: node.id }, ok: true,
+    outcome: 'pruned', sub: jSub(node.id), pruned: gone.map(p => ({ set: p.set, why: p.why, files: p.files, bytes: p.bytes })) },
+  gone.map(p => `${p.set} (${p.why}): ${p.files} file${p.files === 1 ? '' : 's'}, ${sizeWords(p.bytes)}${(p.paths || []).map(x => `\n  ${x}`).join('')}${p.files > (p.paths || []).length ? `\n  and ${p.files - p.paths.length} more` : ''}`).join('\n'));
 }
 const runnerSparkOf = r => (r.args && typeof r.args === 'object' ? r.args.spark : null) || (r.sub || []).find(x => nodeById(x)) || null;
 // undo_last_change for files (20-desired.mjs): the chat's newest set, when it is newer than the chat's last model
@@ -17859,13 +18047,14 @@ async function runnerUndo(viewer, ctx, since = '') {
     if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
     // (not beside the change's own unit while it still runs: a cut-off change may)
     const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true, unit: last.unit, slack: RUNNER_CUT_SLACK });
-    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome: r.notRestored.length ? 'partly' : 'restored', set: last.set,
+    const outcome = r.pruned ? 'pruned' : r.notRestored.length ? 'partly' : 'restored';
+    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome, set: last.set,
       restored: r.restored.length, notRestored: r.notRestored.length, ms: Date.now() - t0 });
     const said = p => maskSecrets(String(p)).slice(0, 300);
     return {
-      outcome: r.notRestored.length ? 'partly' : 'restored', spark: node.id, set: last.set,
+      outcome, spark: node.id, set: last.set, ...(r.pruned ? { pruned: r.pruned } : {}),
       restored: r.restored.map(said), alreadyAsBefore: r.same.map(said), notRestored: r.notRestored.map(x => ({ path: said(x.path), why: x.why })),
-      note: `${r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
+      note: `${r.pruned ? `Nothing was put back on ${at}: the copies of that change were pruned on ${r.pruned.at} (${r.pruned.why}).` : r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
     };
   } catch (e) {
     if (rid) journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: false, outcome: 'failed', err: jErr(e), ms: Date.now() - t0 });
