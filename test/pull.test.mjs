@@ -817,7 +817,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(x.status, 0, x.stderr);
     writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
     r = await new Promise(resolve => {
-      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       p.stdout.on('data', d => { stdout += d; });
       p.stderr.on('data', d => { stdout += d; });
@@ -840,7 +840,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(x.status, 0, x.stderr);
     writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
     const r = await new Promise(resolve => {
-      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';
       p.stdout.on('data', d => { out += d; });
       p.stderr.on('data', d => { out += d; });
