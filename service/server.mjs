@@ -4964,7 +4964,7 @@ function pasteCard(client, baseUrl) {
 
 action({
   name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length.',
+  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length. asleep: the Sparks Spark Console powered off, with what was on their disks then and since when (looking never wakes one).',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => {
     const inv = await recentInventory();
@@ -4974,6 +4974,7 @@ action({
         architecture: m.architecture || null, quantization: m.dtype || null, contextLength: m.contextLength || null, draftOnly: m.role === 'draft' })),
       stillDownloading: inv.incomplete.filter(x => x.reason === 'downloading').map(x => ({ repo: x.repo, spark: x.node })),
       offline: inv.sparks.filter(sp => !sp.online).map(sp => sp.id),
+      asleep: asleepView(),
     };
   },
 });
@@ -5088,16 +5089,16 @@ async function estimateFit(name, viewer, inv) {
 
 action({
   name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. Next: deploy_plan or cluster_plan for the exact dry run.',
+  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. asleep: Sparks Spark Console powered off whose disk held it then (a start wakes one; looking never does). Next: deploy_plan or cluster_plan for the exact dry run.',
   input: { type: 'object', properties: { model: modelArg }, required: ['model'], additionalProperties: false },
   run: async ({ model }, viewer) => {
     const inv = await recentInventory(), m = libraryModel(inv, model);
-    if (!m) return estimateFit(model, viewer, inv);
+    if (!m) return { ...(await estimateFit(model, viewer, inv)), asleep: asleepView([String(model)]) };
     const r = await plansFor(m.name, viewer, inv, new Map());
     const sparks = r.sparks.map(fitView), pairs = r.pairs.map(pairView);
     const one = sparks.find(s => s.fitsNow) || sparks.find(s => s.canRun), two = pairs.find(p => p.canRun);
     return {
-      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs,
+      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs, asleep: asleepView([m.name, m.repo].filter(Boolean)),
       pairsNote: 'Only pairs whose cable passed the connection test are listed (linked_sparks).',
       next: one ? `deploy_plan {"model":"${m.name}","spark":"${one.spark}"}` : two ? `cluster_plan {"model":"${m.name}","sparks":${JSON.stringify(two.sparks)}}` : 'Nothing can run it right now; see blockers.',
     };
@@ -5899,6 +5900,8 @@ async function startModel(args, viewer, ctx) {
   const parkedAt = !args.spark && !args.sparks ? parkedFor(args.model) : null;
   if (parkedAt) args = { ...args, model: parkedAt.model, ...(parkedAt.sparks ? { sparks: parkedAt.sparks } : { spark: parkedAt.spark }) };
   const { model, spark, sparks, setup, allowStop = [], confirmOutside = false } = args;
+  // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
+  const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
   for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
   if (!ctx.poweredOn) {
@@ -5916,9 +5919,9 @@ async function startModel(args, viewer, ctx) {
     if (e.status === 404 && off.length) throw new HttpError(404, `${e.message} ${sparksWords(off)} ${off.length > 1 ? 'are' : 'is'} powered off by Spark Console, so what’s on ${off.length > 1 ? 'their disks' : 'its disk'} can’t be seen now: turn ${off.length > 1 ? 'them' : 'it'} on to look there.`);
     throw e;
   }
-  // Not on any Spark that is on, with a Spark Spark Console powered off: its files may be there (the models' home is
-  // Spark 3), so that Spark is turned on first, before anything is downloaded or stopped.
-  // (those whose record lists the model first; a call turns on only those that may hold it)
+  // Not on any Spark that is on, with a Spark Spark Console powered off whose record lists it (or has no list): its files
+  // are there, so that one Spark is turned on first, before anything is downloaded or stopped (wakeOne, D5). One whose
+  // record doesn't list it isn't woken here: the download goes to a Spark that is on, or, when none has room, below.
   if (!found.lib && !found.choices && !ctx.poweredOn) {
     const first = powerFirst(args, viewer, ctx, 'all', wakeNames(model, found));
     if (first) return first;
@@ -5943,7 +5946,7 @@ async function startModel(args, viewer, ctx) {
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -5956,11 +5959,11 @@ async function startModel(args, viewer, ctx) {
       ], 'question', { ownerOnly: true });
     }
     // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.`);
+    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -5993,8 +5996,8 @@ async function startModel(args, viewer, ctx) {
     ]);
   }
   const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
-  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any'); if (first) return first; }
-  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.`);
+  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
+  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
   mustUse(viewer, pick.nodes);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
@@ -6270,7 +6273,7 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -10776,7 +10779,7 @@ const IDLE_GPU_PERCENT = 5, IDLE_LOAD = 2;
 const POWER_WHY = { idle: 'idle', asked: 'asked', start: 'a start needed it', outside: 'turned on outside Spark Console' };
 
 // power.json: { idleMinutes, changedAt, changedBy, off: { spark4: { at, why: 'idle'|'asked', by, parked: ['spark4/sc-…'],
-// plugCut, problem } } }. A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
+// plugCut, problem, models, memTotal, diskFree } } } (the last three from its look just before it went off, D5). A lookup takes a file that can't be read as the defaults; whatever saves reads it strictly
 // (R20), so a read error writes nothing.
 function powerState(strict = false) {
   let v = null;
@@ -10829,6 +10832,50 @@ function offFor(off, names, listedOnly) {
   const st = powerState(), listed = off.filter(id => offHolds(st.off[id], names) === true);
   if (listed.length) return listed;
   return listedOnly ? off.filter(id => offHolds(st.off[id], names) === null) : off;
+}
+// Which one of the Sparks it powered off a start that names none wakes (D5, design D 2.6), chosen from their records
+// alone; once it is on, the start is placed again from the live look. In list order: one whose record lists the model
+// (with its linked partner when its memory alone can't hold it and that one is off too). Without room, or for a call (a
+// call never copies or downloads): else one with no list, which may hold anything. With room (a start that fits on no
+// Spark that is on): else the first whose record's free disk holds the model with the usual floor (its size and a
+// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; a record with no numbers (an older build) last. A
+// Spark that is off with no record is never woken here. [] when none fits; then why goes into `why`, for the answer.
+function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, why = null } = {}) {
+  const st = powerState(), order = NODES.map(n => n.id);
+  const recs = off.filter(id => st.off[id]).sort((a, b) => order.indexOf(a) - order.indexOf(b)), rec = id => st.off[id];
+  const listed = recs.filter(id => offHolds(rec(id), names) === true);
+  if (listed.length) {
+    const id = listed[0], need = needBytes ?? sizeBytes, mem = rec(id).memTotal;
+    const pair = Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need
+      ? (lastCheck?.pairs || []).find(p => p.fastLink === 'full' && [p.a, p.b].includes(id)) : null;
+    const partner = pair ? (pair.a === id ? pair.b : pair.a) : null;
+    return partner && recs.includes(partner) ? [id, partner] : [id];
+  }
+  const unknown = recs.filter(id => offHolds(rec(id), names) === null);
+  if ((!room || call) && unknown.length) return [unknown[0]];
+  const numbers = recs.filter(id => Number.isFinite(rec(id).diskFree) && Number.isFinite(rec(id).memTotal));
+  const holdsIt = r => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === 1 && v.sizeGB != null && v.needGB != null)
+    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9)
+    : !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes)));
+  if (room && !call) {
+    const fits = numbers.find(id => holdsIt(rec(id)));
+    if (fits) return [fits];
+    const older = recs.filter(id => !numbers.includes(id));
+    if (older.length) return [older[0]];
+  }
+  if (why && recs.length) {
+    const said = recs.map(id => (call || !room || !numbers.includes(id) ? `${sparkWord(id)}’s record doesn’t list it`
+      : `${sparkWord(id)} had ${gbOf(rec(id).diskFree)} GB of disk free and ${gbOf(rec(id).memTotal)} GB of memory when it went off (${atWords(rec(id).at)})`));
+    why.push(`${sparksWords(recs)} ${recs.length > 1 ? 'were' : 'was'} powered off by Spark Console and ${recs.length > 1 ? 'weren’t' : 'wasn’t'} turned on for it: ${said.join('; ')}.`);
+  }
+  return [];
+}
+// What a read says of the Sparks Spark Console powered off (D5: a read never wakes one), from their records: since when,
+// and what was on each one's disk then. With names, only those whose record lists the model, or has no list.
+function asleepView(names = null) {
+  return Object.entries(powerState().off).filter(([id, r]) => nodeById(id) && (!names || offHolds(r, names) !== false)).map(([id, r]) => ({
+    spark: id, since: r.at || null, ...(Array.isArray(r.models) ? { modelsThen: r.models } : {}), diskFreeGBThen: gbOf(r.diskFree), memoryTotalGBThen: gbOf(r.memTotal),
+    words: `${sparkWord(id)} is asleep since ${atWords(r.at)}${Array.isArray(r.models) ? `; ${r.models.length} model${r.models.length === 1 ? '' : 's'} on its disk then` : ''}. A look doesn’t wake it.` }));
 }
 
 // What a Spark Spark Console powered off shows: when, why, what it parked, and how to turn it on. Built by code from its
@@ -11131,7 +11178,8 @@ async function powerOffJob(j, ids, ctx, why) {
   // (a record that can't be written: nothing is shut down, what was parked is put back, and the records written go)
   try {
     for (const id of up) offRecord(id, { at, why, by, parked: entries.filter(x => (x.sparks || [x.spark]).includes(id)).map(keyOf), plugCut: false, problem: null,
-      ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}) });
+      ...(inv.sparks.find(x => x.id === id)?.online ? { models: (inv.sparks.find(x => x.id === id).models || []).slice(0, 300) } : {}),
+      ...(inv.sparks.find(x => x.id === id)?.online ? { memTotal: inv.sparks.find(x => x.id === id).memTotal, diskFree: inv.sparks.find(x => x.id === id).diskFree } : {}) });
   } catch (e) {
     for (const id of up) try { offRecord(id, null); } catch {}
     await unpark(j, stopped, pairHeads);
@@ -11342,14 +11390,16 @@ action({
 // fits on the Sparks that are on): the Spark is turned on first, inside one operation, and the start follows. What else
 // was parked there stays parked (it comes back on its next call), so it can't crowd out what was asked for. null when
 // no Spark needs turning on.
-// mode: 'named' turns on only the Sparks the start names; 'any' every one Spark Console powered off when the start names
-// none; 'all' those whose files may hold the model (`names`, by their records: offFor), named or not. A call (which never
-// downloads) turns on only Sparks whose record lists the model, or has no list.
-function powerFirst(args, viewer, ctx, mode = 'named', names = null) {
+// mode: 'named' turns on only the Sparks the start names; 'all' one whose files hold the model (`names`, by the
+// records: wakeOne), named or not; 'any', when the start names none, one with room for it (`size`: sizeBytes,
+// needBytes or versions, and `why`, which says why none was when none was). A call (which never downloads) turns on only
+// a Spark whose record lists the model, or has no list.
+function powerFirst(args, viewer, ctx, mode = 'named', names = null, size = null) {
   const off = Object.keys(powerState().off).filter(id => nodeById(id) && canUse(viewer, id) && switchablePlug(id) && !brainSparks().includes(id));
   if (!off.length) return null;
-  const named = [args.spark, ...(args.sparks || [])].filter(Boolean);
-  const need = mode === 'all' ? offFor(off, names || [String(args.model)], ctx.via === 'gateway') : named.length ? named.filter(id => off.includes(id)) : mode === 'any' ? off : [];
+  const named = [args.spark, ...(args.sparks || [])].filter(Boolean), call = ctx.via === 'gateway';
+  const need = mode === 'all' ? wakeOne(off, names || [String(args.model)], { call }) : named.length ? named.filter(id => off.includes(id))
+    : mode === 'any' ? wakeOne(off, names || [String(args.model)], { room: true, call, ...(size || {}) }) : [];
   return need.length ? powerThenStart(viewer, ctx, need, args) : null;
 }
 // (the workflow the start runs, so this operation is recorded under it: across two Sparks when it will be, F11)
