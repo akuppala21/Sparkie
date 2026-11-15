@@ -92,7 +92,7 @@ describe('Telegram', { concurrency: 1 }, () => {
       const bad = await confirmed('PUT', '/telegram', { token: REFUSED });
       is(bad, 400, 'a token Telegram refuses');
       assert.match(bad.json.error, /didn’t accept that token/);
-      assert.equal(existsSync(T.fleet.secretsFile), false, 'nothing stored');
+      assert.deepEqual(JSON.parse(readFileSync(T.fleet.secretsFile, 'utf8')), { auth: { serial: 1 } }, 'nothing stored (only the number the passkey above gave the state, R23)');
       is(await confirmed('PUT', '/telegram', { token: 'not a token' }), 400);
     });
 

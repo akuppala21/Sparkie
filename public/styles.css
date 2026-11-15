@@ -901,6 +901,9 @@ fieldset.field > legend { padding: 0; margin-bottom: 6px; }
 .banner.signin-note { margin: 0; }
 /* Signing in from the internet: the other ways in, and a device's code to let it in */
 .signin-other { display: flex; flex-wrap: wrap; gap: 8px; }
+.putback-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.putback-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; }
+.putback h3 { font-size: 14px; margin: 12px 0 4px; }
 .device-code {
   justify-self: center; padding: 10px 18px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--bg-sunken); font: 650 26px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.12em;
