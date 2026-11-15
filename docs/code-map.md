@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 79 parts in `service/src/`, joined in name order into `service/server.mjs` (19993 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 79 parts in `service/src/`, joined in name order into `service/server.mjs` (19992 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -863,10 +863,10 @@ test/eval.mjs runs the eval's cases on a stand-in console with the real brain an
 
 ### `21-copies-prune.mjs`: pruning the copies on a Spark (A8)
 
-The copies program's pruning (21-copies.mjs joins this text into it): when a new set opens on a Spark, older sets there go: any older than COPIES_DAYS, all but the newest COPIES_SETS (the new one counts), then the oldest until the copies on that Spark hold COPIES_BYTES. Never the new set, a set the console names (runnerKeep: the newest set of a chat that can still undo it), nor one whose unit systemd says still runs or can't tell. A set's age is its folder's modification time, which only this program writes (both walls hide the folder). What goes leaves its manifest and a pruned.json, so an …
+The copies program's pruning (21-copies.mjs joins this text into it): when a new set opens on a Spark, older sets there go: any older than COPIES_DAYS, all but the newest COPIES_SETS (the new one counts), then the oldest until the copies on that Spark hold COPIES_BYTES. Never the new set, a set the console names (runnerKeep: the newest set of a chat that can still undo it), nor one whose unit systemd says still runs or can't tell. A set's age is its folder's modification time, which only this program writes (both walls hide the folder). What goes leaves its manifest, its after-look and a …
 
 - **Area:** features. **Rules:** R61. **Tests:** prune.test.mjs, runner.test.mjs
-- **Lines:** 137
+- **Lines:** 136
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
