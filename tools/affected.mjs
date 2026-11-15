@@ -9,8 +9,8 @@
 // brings it back beside its lock as <name>.affected-map.json. The pick never decides an install: that still needs the
 // whole suite on the exact build (R29). A wrong pick costs time, not safety.
 //
-//   node tools/affected.mjs pick [base]        the test files this folder's change needs against base (main when
-//                                              not given): one per line, or the one word all; why on stderr
+//   node tools/affected.mjs pick [--landing] [base]   the test files this folder's change needs against base (main
+//                                              when not given): one per line, or the one word all; why on stderr
 //   node tools/affected.mjs build <coverage folder> [--tree <hash>] [--out <file>]
 //   node tools/affected.mjs missed <a whole run's log> [ref]    the files that failed there but the pick for the change
 //                                              since the last tested build would not have run, printed and kept in
@@ -19,7 +19,11 @@
 // The pick is the files that ran the changed functions, every changed test file, and always the short check. It is
 // all whenever 2.4 says so: no map for the base or a commit before it, a part added or removed, a changed line
 // outside any function, a function most test files run, more than 8 parts changed, or any of the paths in ALWAYS.
-// Documents alone pick the documents test alone. Maps are read from test/affected-map.json and from the runner's
+// Documents alone pick the documents test alone. That strict pick is for GitHub's quick job and Sparkie's own changes.
+// --landing is the pick tools/land.mjs uses: nearly every step touches a core part, and the whole suite runs after
+// every landing anyway, so the core parts use the map like any other and service/config.json adds only the short
+// check; still all with no map, a part added or removed, a line outside any function, more than 8 parts, or a path
+// every test depends on (LANDING_ALWAYS, LANDING_ALWAYS_PARTS). Maps are read from test/affected-map.json and from the runner's
 // results folders (SPARK_TEST_OUT, and every spark-test-runs* folder beside this one); the newest commit of base
 // whose tree has one is the base the change is measured from.
 import { spawnSync } from 'node:child_process';
@@ -35,6 +39,10 @@ export const ALWAYS_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', 
   '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `${p}.mjs`);
 export const ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^service\/config\.json$/, /^deploy\//,
   /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//, /^\.github\//];
+// What every test depends on: all, even in a landing.
+export const LANDING_ALWAYS_PARTS = ['03-identity', '03-secrets', '22-passkey', '22-sessions', '25-backup-and-start'].map(p => `${p}.mjs`);
+export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^deploy\//, /^test\/lib\.mjs$/,
+  /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//];
 // Everything starts and answers, sign-in works, the installer can still read the service.
 export const SHORT_CHECK = ['build', 'fleet', 'api', 'door', 'passkey', 'internet', 'sparkie', 'install', 'go-back'].map(n => `test/${n}.test.mjs`);
 export const DOCS_TEST = 'test/docs.test.mjs';
@@ -184,6 +192,15 @@ function parsePatch(text) {
 // object's key), and a line that only closes it.
 const DECL = /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\b|^\s*(?:export\s+)?(?:const|let|var)\s+[\w$]+\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)|^\s*(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?[\w$]+\s*\([^)]*\)\s*\{\s*$|^\s*[\w$]+\s*:\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)/;
 const CLOSE = /^\s*\}\s*[;,]?\s*$/;
+// In a landing only: a hunk of comments and blank lines changes nothing that runs, and one that only adds whole
+// functions at the top level (a declaration at the margin, its body indented, its closing brace) runs only when a
+// changed caller calls it. Both are still all in the plain pick (2.4: a changed line outside any function).
+const COMMENT = /^\s*(?:\/\/|\/\*|\*\/|\*(?:\s|$)|$)/;
+function onlyNewFunctions(add) {
+  const code = add.filter(l => !COMMENT.test(l));
+  return code.length > 0 && /^\S/.test(code[0]) && DECL.test(code[0])
+    && code.every(l => /^\s/.test(l) || DECL.test(l) || CLOSE.test(l)) && (CLOSE.test(code.at(-1)) || /;\s*$/.test(code.at(-1)));
+}
 const span = f => f.el - f.sl;
 const smallest = fs => fs.reduce((a, f) => (!a || span(f) < span(a) ? f : a), null);
 
@@ -216,33 +233,37 @@ const list = xs => (xs.length > 3 ? `${xs.slice(0, 3).join(', ')} and ${xs.lengt
 
 // The pick for changes measured from the map's own tree. oldText(path) gives a part as it was there. missed: every
 // map's missed entries (a file that failed once though not picked for these functions).
-export function choose({ map, changes, oldText, missed = [] }) {
+export function choose({ map, changes, oldText, missed = [], landing = false }) {
   const all = why => ({ all: true, files: null, fns: [], why });
+  const always = landing ? LANDING_ALWAYS : ALWAYS, alwaysParts = landing ? LANDING_ALWAYS_PARTS : ALWAYS_PARTS;
   const byPart = fnsByPart(map), owners = new Map(), tests = new Set(), parts = new Set();
-  let docs = false, generated = false;
+  let docs = false, generated = false, config = false, added = 0;
   for (const c of changes) {
     const part = PART.exec(c.path)?.[1];
-    if (ALWAYS.some(r => r.test(c.path))) return all(`${c.path} is on the list that always runs everything`);
+    if (always.some(r => r.test(c.path))) return all(`${c.path} is on the list that always runs everything`);
     if (part) {
       if (c.status !== 'M') return all(`a part was ${c.status === 'A' ? 'added' : 'removed'}: ${part}`);
-      if (ALWAYS_PARTS.includes(part)) return all(`${part} is on the list that always runs everything`);
+      if (alwaysParts.includes(part)) return all(`${part} is on the list that always runs everything`);
       parts.add(part);
       const old = oldText(c.path).split('\n'), fns = byPart.get(part) || [];
       for (const h of c.hunks) {
+        if (landing && [...old.slice(h.s - 1, h.s - 1 + h.n), ...h.add].every(l => COMMENT.test(l))) continue;
         const f = ownerOf(fns, old, h);
+        if (!f && landing && h.n === 0 && onlyNewFunctions(h.add)) { added++; continue; }
         if (!f) return all(`a changed line outside any function: ${part} line ${h.s}`);
         owners.set(f.key, f);
       }
     } else if (isTest(c.path)) { if (c.status !== 'D') tests.add(c.path); }
     else if (isDoc(c.path)) docs = true;
     else if (c.path === 'service/server.mjs') generated = true;
+    else if (landing && c.path === 'service/config.json') config = true;
     else return all(`${c.path} is not in the map (it holds the service's parts only)`);
   }
   if (generated && !parts.size) return all('service/server.mjs changed but none of its parts did');
   if (parts.size > MAX_PARTS) return all(`${parts.size} parts changed (more than ${MAX_PARTS})`);
   const picked = new Set(SHORT_CHECK);
   for (const f of owners.values()) {
-    if (f.tests.length > map.tests.length * MOST) return all(`${f.part} ${f.name} is run by ${f.tests.length} of ${map.tests.length} test files`);
+    if (!landing && f.tests.length > map.tests.length * MOST) return all(`${f.part} ${f.name} is run by ${f.tests.length} of ${map.tests.length} test files`);
     for (const i of f.tests) if (map.tests[i]) picked.add(map.tests[i]);
   }
   const plain = new Set([...owners.keys()].map(plainKey));
@@ -251,16 +272,18 @@ export function choose({ map, changes, oldText, missed = [] }) {
   if (docs) picked.add(DOCS_TEST);
   const said = [
     owners.size && `${owners.size} function${owners.size === 1 ? '' : 's'} in ${list([...parts].sort())}`,
+    added && `${added} new function${added === 1 ? '' : 's'} (run by the changed callers' tests)`,
     tests.size && `${tests.size} changed test file${tests.size === 1 ? '' : 's'}`,
     again.length && `${again.length} once missed by the pick`,
     docs && 'the documents',
+    config && 'service/config.json',
     'the short check',
   ].filter(Boolean);
   return { all: false, files: [...picked].sort(), fns: [...owners.keys()].sort(), why: said.join('; ') };
 }
 
 // The pick for this folder (to null) or a commit, against base.
-export function pick({ top = gitTop(), base = 'main', to = null, maps = findMaps(top) } = {}) {
+export function pick({ top = gitTop(), base = 'main', to = null, maps = findMaps(top), landing = false } = {}) {
   const baseCommit = commitOf(top, base);
   if (!baseCommit) throw new Error(`No commit called ${base} here.`);
   const own = changesBetween(top, baseCommit, to);
@@ -271,7 +294,7 @@ export function pick({ top = gitTop(), base = 'main', to = null, maps = findMaps
   const r = choose({
     map: tested.map, changes: changesBetween(top, tested.commit, to),
     oldText: p => git(top, ['show', `${tested.commit}:${p}`]),
-    missed: maps.flatMap(m => (Array.isArray(m.map.missed) ? m.map.missed : [])),
+    missed: maps.flatMap(m => (Array.isArray(m.map.missed) ? m.map.missed : [])), landing,
   });
   const from = `from ${short(tested.commit)}, the last tested build${tested.behind ? ` (${tested.behind} commit${tested.behind === 1 ? '' : 's'} before ${base})` : ''}`;
   if (!r.all && !to) r.files = r.files.filter(f => existsSync(join(top, f)));
@@ -285,14 +308,14 @@ export const failedIn = log => [...String(log).matchAll(/^\s*[\d.]+\s+FAIL\s+(te
 
 // A whole run of ref failed: the failed files the pick for the change since the last tested build would not have run.
 // Printed by the caller; kept in that build's map (missed), so the next pick adds them for those functions.
-export function noteMissed({ top = gitTop(), failed, ref = 'HEAD', maps = findMaps(top), at = new Date().toISOString() }) {
+export function noteMissed({ top = gitTop(), failed, ref = 'HEAD', maps = findMaps(top), at = new Date().toISOString(), landing = false }) {
   const commit = commitOf(top, ref);
   const tested = commit && lastTested(top, commit, maps);
   if (!tested || !failed.length) return { missed: [], why: tested ? 'nothing failed' : 'no tested build before it to compare with' };
   if (tested.commit === commit || git(top, ['rev-parse', `${commit}^{tree}`]).trim() === tested.map.tree) {
     return { missed: [], why: 'this tree passed before: nothing changed to have picked from' };
   }
-  const r = pick({ top, base: tested.commit, to: commit, maps });
+  const r = pick({ top, base: tested.commit, to: commit, maps, landing });
   if (r.all) return { missed: [], why: `the pick was everything: ${r.why}` };
   const missed = [...new Set(failed)].filter(f => !r.files.includes(f)).sort();
   const fns = r.fns.map(plainKey);
@@ -312,7 +335,8 @@ if (isMain()) {
   const opt = name => { const i = rest.indexOf(name); return i >= 0 ? rest.splice(i, 2)[1] : null; };
   try {
     if (cmd === 'pick') {
-      const r = pick({ base: rest[0] || 'main' });
+      const landing = rest[0] === '--landing';
+      const r = pick({ base: rest[landing ? 1 : 0] || 'main', landing });
       console.log(r.all ? 'all' : r.files.join('\n'));
       console.error(r.all ? `All: ${r.why}.` : `Picked ${r.files.length} test file${r.files.length === 1 ? '' : 's'}: ${r.why}.`);
     } else if (cmd === 'build' && rest[0]) {
@@ -326,7 +350,7 @@ if (isMain()) {
       for (const f of r.missed) console.log(`missed by the pick: ${f}`);
       console.error(r.missed.length ? `Kept in ${basename(r.tested.file)}: the next pick adds them for ${list(r.fns)}.` : `Nothing missed by the pick: ${r.why}.`);
     } else {
-      console.error('Use: node tools/affected.mjs pick [base] | build <coverage folder> [--tree <hash>] [--out <file>] | missed <log> [ref]');
+      console.error('Use: node tools/affected.mjs pick [--landing] [base] | build <coverage folder> [--tree <hash>] [--out <file>] | missed <log> [ref]');
       process.exit(2);
     }
   } catch (e) { console.error(e.message); process.exit(1); }

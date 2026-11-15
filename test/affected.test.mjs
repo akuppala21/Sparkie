@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pick, buildMap, findMaps, noteMissed, failedIn, ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
+import { pick, buildMap, findMaps, noteMissed, failedIn, ALWAYS_PARTS, LANDING_ALWAYS_PARTS, SHORT_CHECK, DOCS_TEST } from '../tools/affected.mjs';
 import { EACH_FILE } from './lock.mjs';
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@test' };
@@ -77,6 +77,7 @@ before(() => {
     '31-beta.mjs:three@1-3': TESTS.slice(0, 9).map(at),                 // most test files run it
     '31-beta.mjs:(anonymous)@4-6': [at('test/c.test.mjs')],
     ...Object.fromEntries(OTHER_PARTS.map(p => [`${p}:f${p.slice(0, 2)}${p.length}@1-3`, [at('test/d.test.mjs')]])),
+    ...Object.fromEntries(ALWAYS_PARTS.map(p => [`${p}:f${p.slice(0, 2)}${p.length}@1-3`, [at('test/c.test.mjs')]])),
   };
   mkdirSync(join(base, 'spark-test-runs'));
   mapFile = join(base, 'spark-test-runs', 'whole-1.affected-map.json');
@@ -162,6 +163,54 @@ describe('pick', () => {
     assert.deepEqual(pickNow(() => appendFileSync(join(top, 'test/c.test.mjs'), '// more\n')).files, withShort('test/c.test.mjs'));
     assert.deepEqual(pickNow(() => put(top, 'test/e.test.mjs', '// new\n')).files, withShort('test/e.test.mjs'));
     assert.deepEqual(pickNow(() => rmSync(join(top, 'test/c.test.mjs'))).files, withShort());
+  });
+});
+
+describe('the landing pick (--landing, what tools/land.mjs uses)', () => {
+  const landing = { landing: true };
+  test('the core parts use the map and the short check; so does a function most test files run', () => {
+    for (const p of ALWAYS_PARTS.filter(p => !LANDING_ALWAYS_PARTS.includes(p))) {
+      const change = () => edit(top, `service/src/${p}`, 'return 1', 'return 2');
+      assert.equal(pickNow(change).all, true, p);
+      const r = pickNow(change, landing);
+      assert.equal(r.all, false, `${p}: ${r.why}`);
+      assert.deepEqual(r.files, withShort('test/c.test.mjs'), p);
+    }
+    const most = pickNow(() => edit(top, 'service/src/31-beta.mjs', 'return 3', 'return 4'), landing);
+    assert.deepEqual(most.files, withShort(...TESTS.slice(0, 9)));
+  });
+
+  test('comments alone, and a whole new function at the top level, add nothing; new top-level code is still all', () => {
+    const comment = () => edit(top, 'service/src/30-alpha.mjs', '// alpha\n', '// alpha, said better\n// over two lines\n');
+    assert.equal(pickNow(comment).all, true);
+    assert.deepEqual(pickNow(comment, landing).files, withShort());
+    const fresh = () => edit(top, 'service/src/30-alpha.mjs', '}\n\nfunction two', '}\n\n// A new one.\nfunction added(x) {\n  return x;\n}\n\nfunction two');
+    assert.equal(pickNow(fresh).all, true);
+    const r = pickNow(fresh, landing);
+    assert.deepEqual(r.files, withShort());
+    assert.match(r.why, /^1 new function \(run by the changed callers' tests\)/);
+    // A new function and a call of it at the top level: that call runs in every test.
+    const called = () => edit(top, 'service/src/30-alpha.mjs', '}\n\nfunction two', '}\n\nfunction added(x) {\n  return x;\n}\nadded(1);\n\nfunction two');
+    assert.match(pickNow(called, landing).why, /^a changed line outside any function: 30-alpha\.mjs line \d+/);
+    // A comment beside code in the same hunk is code.
+    assert.equal(pickNow(() => edit(top, 'service/src/30-alpha.mjs', 'const TABLE = { a: 1 };', '// a table\nconst TABLE = { a: 2 };'), landing).all, true);
+  });
+
+  test('service/config.json adds only the short check; what every test depends on still answers all', () => {
+    const config = pickNow(() => appendFileSync(join(top, 'service/config.json'), '# changed\n'), landing);
+    assert.deepEqual([config.all, config.files], [false, withShort()]);
+    assert.match(config.why, /^service\/config\.json; the short check/);
+    for (const f of [...ALWAYS_PATHS.filter(f => f !== 'service/config.json'), ...LANDING_ALWAYS_PARTS.map(p => `service/src/${p}`)]) {
+      const r = pickNow(() => appendFileSync(join(top, f), '// changed\n'), landing);
+      assert.equal(r.all, true, f);
+      assert.match(r.why, /is on the list that always runs everything|is not in the map/, f);
+    }
+    // And the rest of 2.4's list holds: no map, a part added, a line outside any function, more than eight parts.
+    const alpha = () => edit(top, 'service/src/30-alpha.mjs', 'x + 1', 'x + 2');
+    assert.equal(pickNow(alpha, { ...landing, maps: [] }).all, true);
+    assert.equal(pickNow(() => put(top, 'service/src/50-new.mjs', SMALL('fresh')), landing).all, true);
+    assert.equal(pickNow(() => edit(top, 'service/src/30-alpha.mjs', 'a: 1', 'a: 2'), landing).all, true);
+    assert.equal(pickNow(() => { for (const p of OTHER_PARTS) edit(top, `service/src/${p}`, 'return 1', 'return 9'); }, landing).all, true);
   });
 });
 
