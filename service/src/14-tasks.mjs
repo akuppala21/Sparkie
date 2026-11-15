@@ -53,7 +53,7 @@ const taskLimits = t => ({
 function taskOver(t, now = Date.now()) {
   const { hours, turns } = taskLimits(t);
   if ((Number(t?.continuations) || 0) >= turns) return 'turns';
-  if (!(now - Date.parse(t?.at) <= hours * 3600000)) return 'hours';
+  if (!((t?.parked ? Math.min(now, Date.parse(t.parked)) : now) - Date.parse(t?.at) <= hours * 3600000)) return 'hours';
   if ((Number(t?.steps) || 0) >= TASK_STEPS) return 'steps';
   return null;
 }
@@ -74,6 +74,8 @@ function tasksAfterRestart() {
       // (a record from before these limits: a request that may long be done, taken off with no word)
       if (!Number.isInteger(t.hours)) { conv.task = null; changed = true; continue; }
       if (taskGone(t)) { endTask(conv, false); changed = true; continue; }
+      // (one waiting at a button keeps waiting: the restart changes nothing there)
+      if (t.parked) continue;
       if (!t.carry && !resultSince(conv)) {
         conv.messages.push({ role: 'assistant', content: 'Spark Console restarted while this request was being carried on. What it had started may have been cut off by the restart: look again before going on.',
           createdAt: new Date().toISOString(), notice: true, operation: 'restart' });
@@ -112,15 +114,20 @@ function taskStopped(conv, t, which, reply = null) {
 const CARRY_ON = /^\s*(?:ok(?:ay)?[\s,]+)?(?:please\s+)?(?:carry\s+on|go\s+on|continue|keep\s+going)(?:\s+please)?\s*[.!]*\s*$/i;
 function taskAgain(conv, text) {
   const t = conv?.task;
-  if (!t?.stopped || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
+  if (!(t?.stopped || t?.parked) || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
+  // (parked at a button: this turn carries it on, so Sparkie asks again; its budget stays)
+  if (!t.stopped) { taskUnpark(t); return t; }
   Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
   delete t.carry;
+  delete t.parked;
   return t;
 }
-// The needs-you lines (openProblems): one for each task stopped at a limit, until the owner writes in its chat. No words
+// The needs-you lines (openProblems): one for each task stopped at a limit or parked at a button, until the owner writes in
+// its chat or answers. No words
 // of the request: agents read this list too (fleet_status).
 function tasksNeeds(add) {
   for (const c of chatData().conversations) {
+    if (c.task?.parked && !c.task.stopped) add(`task:${c.id}`, 'Sparkie is waiting for your answer to a question in one of your chats before it carries on with your request. Press a button there, say “carry on” to be asked again, or anything else to leave it.');
     if (c.task?.stopped === 'full') add(`task:${c.id}`, 'Sparkie stopped carrying on with one of your requests: its chat is full. Start a new chat and ask again there.');
     else if (c.task?.stopped) add(`task:${c.id}`, `Sparkie stopped carrying on with one of your requests at its limit (${c.task.stopped === 'steps' ? `${TASK_STEPS} commands` : c.task.stopped}). Say “carry on” in that chat to go on, or anything else to leave it.`);
   }
@@ -147,4 +154,34 @@ function taskRetry(conv, t, { carried, answered }) {
 function taskRetryLines(conv) {
   const m = conv.messages, last = m.at(-1), line = m.at(-2);
   if (last?.role === 'assistant' && last.error && !String(last.content || '').trim() && !last.tools?.length && line?.role === 'user' && line.auto) m.splice(-2, 2);
+}
+
+/* E6c: a task waits at a button */
+// A reply that offered a button the owner answers (a change asked about, an owner-only question) parks its task
+// (contract 4.8), and a request with a next step whose first change came back as a button is made a task parked there
+// (keepTask): it does not carry on by itself, its hours stop, and one needs-you line stands (tasksNeeds). Its
+// owner-only questions went to the paired Telegram chat as asks when approvals from there are on (tgAsk); the needs
+// line goes there by itself when the needs-me line is on (needsMeTick). A press that runs the button wakes it with the
+// hours it waited given back (taskAnswered); "No" ends it (endTask); "carry on" makes Sparkie ask again (taskAgain).
+const taskAsked = asked => (asked || []).some(q => (q.choices || []).some(c => c.choice && pendingChoices.get(c.choice)?.action));
+function taskPark(t) {
+  if (!t || t.parked) return;
+  t.parked = new Date().toISOString();
+  delete t.carry;
+}
+// (the hours a parked task waited are given back: its hours run from a later start)
+function taskUnpark(t) {
+  if (!t?.parked) return;
+  const waited = Math.max(0, Date.now() - Date.parse(t.parked));
+  if (Number.isFinite(waited) && Number.isFinite(Date.parse(t.at))) t.at = new Date(Date.parse(t.at) + waited).toISOString();
+  delete t.parked;
+}
+// A button pressed in a parked task's chat that runs something: the task carries on after it.
+function taskAnswered(conv) {
+  const t = conv?.task;
+  if (!t?.parked) return;
+  taskUnpark(t);
+  t.answered = true;
+  saveChats();
+  wakeWork(conv.id);
 }

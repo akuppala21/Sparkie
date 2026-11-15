@@ -175,6 +175,8 @@ async function runChoice(viewer, conv, id, by) {
   conv.messages.push(message);
   conv.updatedAt = message.createdAt;
   saveChats();
+  // (a press that ran what a parked task asked about wakes it: taskAnswered, 14-tasks.mjs)
+  if (c.action && !asked) taskAnswered(conv);
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
@@ -237,7 +239,7 @@ function wakeWork(id) {
     const conv = chatData().conversations.find(c => c.id === id);
     // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
     // (or a carry-on turn that couldn't start is tried again: taskRetry, 14-tasks.mjs)
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry || conv.task.retries)) return;
+    if (!conv?.task || conv.task.parked || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry || conv.task.answered || conv.task.retries)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -247,13 +249,14 @@ async function continueTask(id) {
   // (a request made on Telegram whose carrying on doesn't happen still gets its results there)
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
-  if (!t || chatBusy(id)) return;
+  if (!t || t.parked || chatBusy(id)) return;
   // (its way in gone meanwhile, another Telegram pairing among them: it ends, and nothing of it is told there, 14-tasks.mjs)
   if (taskGone(t)) { endTask(conv, false); saveChats(); return; }
   // (a try the brain never answered gives way to this one: taskRetry, 14-tasks.mjs)
   if (t.retries) taskRetryLines(conv);
-  const carried = Boolean(t.carry);
+  const carried = Boolean(t.carry), answered = Boolean(t.answered) && !resultSince(conv);
   delete t.carry;
+  delete t.answered;
   // (its own limits: the hours and turns its words gave it, and its steps in all; the one reached is said, 14-tasks.mjs)
   { const over = taskOver(t); if (over) { taskStopped(conv, t, over); return stop(); } }
   // (a full chat: no turn can come there, so it stops, said in a line of its own)
@@ -265,15 +268,15 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : answered ? 'The owner answered your question (above).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
     // (it couldn't start: four answers already coming, this chat answering, no brain set up; tried again, not counted)
-    if ([409, 429].includes(e.status) && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried }); return; }
+    if ([409, 429].includes(e.status) && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried, answered }); return; }
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
   }
   // (the brain never answered: nothing said, nothing run; tried again, not counted)
-  if (message?.error && !String(message.content || '').trim() && !message.tools?.length && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried }); return; }
+  if (message?.error && !String(message.content || '').trim() && !message.tools?.length && conv.task === t) { t.continuations -= 1; taskRetry(conv, t, { carried, answered }); return; }
   if (t.retries) { delete t.retries; saveChats(); }
   // (on Telegram a task's reply goes out only when nothing of it is left running or owed, and then past the hourly limit)
   if (t.channel === 'telegram' && !(conv.task === t && (t.carry || chatRunning(conv.id) || taskJobsOwed(t)))) await tellCarry(conv.id, message, true);
@@ -482,7 +485,9 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, works, spent, asked, failed }) {
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
-  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
+  // owner's press runs it and wakes the rest, contract 4.8)
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
@@ -501,10 +506,12 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a turn a budget ended that would have carried on but for the task's own limit: its reply carries the mark,
   // 14-tasks.mjs)
   if (!agent && task && conv.task === task && !carry && ['steps', 'output'].includes(spent) && taskOver(task)) taskStopped(conv, task, taskOver(task), conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
-  // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no question of it waiting,
+  // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
+  if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) taskPark(conv.task);
+  // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
   // nothing started in it, nothing of its chat still running, no job of it still to end): the request is done, and its
   // record goes, so neither a restart nor a later result takes it up again. A turn that failed is no such end.
-  if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !(asked || []).some(q => (q.choices || []).some(c => c.choice))
+  if (!agent && task && conv.task === task && !failed && !task.carry && !task.stopped && !task.parked
     && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv) && !taskJobsOwed(task)) conv.task = null;
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on

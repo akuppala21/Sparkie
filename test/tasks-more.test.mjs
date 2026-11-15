@@ -1,17 +1,20 @@
-// Covers: Long tasks (design E 2.1 as cut, step 6; R50), second piece (E6b): a job's end wakes the task it was started
-// for, as an operation's result does, and the task waits for it (the carry-on turn after the start owes the job's end);
-// a task that reaches its limit of carry-on turns stops, its last reply says how to go on and carries the mark, and it
-// stands as one needs-you line until the owner writes there; "go on", as that reply says, gives it a fresh budget of the
-// same size. A carry-on turn the brain never answers, or one that can't start while four answers are coming, isn't
-// counted and is tried again (the failed try's lines give way to the next one's). Started on Telegram, its last reply
-// and the stop line reach the phone even past the six results an hour, and the replies in between don't. The brain
-// here has a context of 1,000 tokens, so one long lookup ends a reply at the output budget and a task carries on in a
-// fresh turn 1.5 seconds later.
+// Covers: Long tasks (design E 2.1 as cut, step 6; R50), second and third pieces (E6b, E6c): a job's end wakes the task
+// it was started for, as an operation's result does, and the task waits for it (the carry-on turn after the start owes
+// the job's end); a task that reaches its limit of carry-on turns stops, its last reply says how to go on and carries
+// the mark, and it stands as one needs-you line until the owner writes there; "go on", as that reply says, gives it a
+// fresh budget of the same size. A carry-on turn the brain never answers, or one that can't start while four answers
+// are coming, isn't counted and is tried again (the failed try's lines give way to the next one's). Started on
+// Telegram, its last reply and the stop line reach the phone even past the six results an hour, and the replies in
+// between don't. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
+// stop, one needs-you line; a press that runs the button wakes it with that time given back. The brain here has a
+// context of 1,000 tokens, so one long lookup ends a reply at the output budget and a task carries on in a fresh turn
+// 1.5 seconds later.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { startMock } from './start-mock.mjs';
 
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
 // (Telegram paired, with its usual limits: six results and carry-on lines an hour)
@@ -114,6 +117,73 @@ test('a carry-on turn the brain never answers, or one that can’t start while f
     await Promise.all(slow);
     await waitFor(async () => { const x = await chatMessages(chat2); return x.at(-1).role === 'assistant' && x.at(-2)?.auto; }, { timeout: 120000 * SLOW, what: 'the carry-on turn once an answer was free' });
   } finally { rmSync(hung, { force: true }); noScript(); }
+});
+
+// E6c (contract 4.8): a reply that offered a button parks its task.
+const WAITING = 'Sparkie is waiting for your answer to a question in one of your chats before it carries on with your request. Press a button there, say “carry on” to be asked again, or anything else to leave it.';
+test('a task waits at a button: no carry-on turn by itself, its hours stop, one needs line; a press that runs the button wakes it, with the time it waited given back', { timeout: 300000 * SLOW }, async () => {
+  const saved = await api('/actions/save_workflow', { method: 'POST', body: { title: 'list check', steps: [{ action: 'should_be_running', args: {} }] } });
+  assert.equal(saved.status, 200, saved.text);
+  // (not every word of its name is in these words, so the saved workflow is a button)
+  const words = 'run the list one, then tell me what it says', chat = await newChat();
+  // (its carry-on turns read on, so the task is still there to look at after the first; /stop ends it)
+  script([{ match: `^${esc(words)}$`, rounds: [[{ name: 'run_workflow', arguments: { name: 'list check' } }], [LONG]] }, { match: CARRIED, rounds: [[LONG]] }, { match: FINISHED, rounds: [[LONG]] }]);
+  try {
+    const r = await say(chat, words);
+    assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['run_workflow', 'needs-ok'], ['workflows', null]], r.text);
+    const parked = taskOf(chat);
+    assert.ok(parked?.parked, JSON.stringify(parked));
+    await sleep(7000 * SLOW);
+    assert.equal(await autos(chat), 0, 'no carry-on turn while it waits');
+    assert.deepEqual((await needs()).filter(l => l === WAITING), [WAITING]);
+    const yes = r.message.choices.find(c => c.label.startsWith('Run'));
+    assert.ok(yes, JSON.stringify(r.message.choices));
+    const pressed = await choose(chat, yes.id);
+    assert.equal(pressed.status, 200, pressed.text);
+    await waitFor(async () => (await autos(chat)) >= 1 && (await chatMessages(chat)).at(-1).role === 'assistant', { timeout: 120000 * SLOW, what: 'the carry-on turn after the press' });
+    const t = taskOf(chat);
+    assert.ok(t, 'it carries on');
+    assert.equal(t.parked ?? null, null);
+    assert.ok(Date.parse(t.at) - Date.parse(parked.at) >= 7000, `the hours it waited are given back: ${parked.at} → ${t.at}`);
+    assert.deepEqual((await needs()).filter(l => l === WAITING), []);
+  } finally { noScript(); await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: '/stop' } }); }
+});
+
+// The coordinator's ruling (contract 4.8 for the first step too): with no eval on record every change Sparkie makes is a
+// button, and a request with a next step still carries on once the owner presses it.
+test('with no eval on record, a request with a next step whose first change is a button is a task parked there: the press runs it, the carry-on turn reports, and nothing else changed without a button', { timeout: 300000 * SLOW }, async () => {
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', words = `restart ${RADIX} on spark 4, then tell me how it went`;
+  // (its brain up a minute already, so the first reply finds it answering)
+  const F = await startMock({ watchMs: 60000, evalOnRecord: false, env: { SPARK_CONSOLE_CONTINUE_MS: '1500' }, prepare: ({ root }) => writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60)) });
+  try {
+    writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'restart_model', arguments: { spark: 'spark4', container: RADIX } }] }, { match: FINISHED, calls: [] }]));
+    const post = async (path, body) => { const r = await fetch(`${F.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify(body) }); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {} return { status: r.status, text, json }; };
+    const messages = async id => (await (await fetch(`${F.base}/chats/${id}`)).json()).messages;
+    const ops = async () => (await post('/actions/recent_operations', { limit: 50 })).json.operations;
+    const taskIn = id => JSON.parse(readFileSync(join(F.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === id)?.task ?? null;
+    const chat = (await post('/chats', {})).json.id;
+    const asked = await post(`/chats/${chat}/messages`, { text: words });
+    assert.equal(asked.status, 200, asked.text);
+    const done = asked.text.split('\n\n').map(x => x.trim()).filter(x => x.startsWith('data:')).map(x => JSON.parse(x.slice(5))).find(e => e.type === 'done').message;
+    assert.deepEqual(done.tools.map(t => [t.name, t.outcome]), [['restart_model', 'needs-ok']], done.content);
+    const buttons = done.choices.filter(c => c.label !== 'No');
+    assert.equal(buttons.length, 1, JSON.stringify(done.choices));
+    const t = taskIn(chat);
+    assert.deepEqual([t?.request, Boolean(t?.parked)], [words, true], JSON.stringify(t));
+    assert.deepEqual((await post('/actions/fleet_status', {})).json.needsOwner.filter(l => l === WAITING), [WAITING]);
+    assert.equal((await ops()).length, 0, 'nothing ran before the press');
+    // The owner presses it: the restart runs, its result comes, and the carry-on turn reports.
+    const pressed = await post(`/chats/${chat}/choose`, { choice: buttons[0].id });
+    assert.equal(pressed.status, 200, pressed.text);
+    assert.equal(pressed.json.outcome, 'started', pressed.text);
+    const m = await waitFor(async () => { const x = await messages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 180000 * SLOW, what: 'the carry-on turn after the restart' });
+    const at = m.findIndex(y => y.auto);
+    assert.match(m[at].content, new RegExp(FINISHED));
+    assert.ok(m.slice(0, at).some(y => y.notice && y.operation && y.status === 'completed'), 'after the restart’s result');
+    assert.deepEqual(m[at + 1].tools ?? [], [], 'the report changed nothing');
+    assert.deepEqual((await ops()).map(o => o.type), ['restart-model'], 'one change: the one pressed');
+    await waitFor(() => taskIn(chat) === null, { timeout: 15000 * SLOW, what: 'the done request off the record' });
+  } finally { await F.stop(); }
 });
 
 // The paired Telegram chat (stand-in Bot API).
