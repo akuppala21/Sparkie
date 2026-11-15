@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+# Stand-in visudo for rehearsals of the root helper's one-time command (deploy/root-for-sparkie.sh;
+# test/root-helper.test.mjs). Outside a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails. Every call is
+# one JSON line in <rehearsal>/calls.log, with the checked file's text after its arguments. It answers only -cf <file>:
+# "parsed OK", or a syntax error when <rehearsal>/standin/visudo-fails exists. It installs nothing.
+import json, os, sys
+
+R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
+if not R.startswith('/') or not os.path.isdir(R):
+    sys.stderr.write('visudo: this stand-in only answers inside a rehearsal of the root helper\n')
+    sys.exit(1)
+args = sys.argv[1:]
+text = None
+if len(args) == 2 and args[0] == '-cf':
+    try:
+        with open(args[1]) as f:
+            text = f.read()
+    except OSError:
+        pass
+with open(os.path.join(R, 'calls.log'), 'a') as f:
+    f.write(json.dumps(['visudo'] + args + ([text] if text is not None else [])) + '\n')
+if text is None:
+    sys.stderr.write('visudo: the stand-in only answers -cf <file>\n')
+    sys.exit(1)
+if os.path.exists(os.path.join(R, 'standin', 'visudo-fails')):
+    print(f'{args[1]}:1:23: syntax error')
+    sys.exit(1)
+print(f'{args[1]}: parsed OK')
