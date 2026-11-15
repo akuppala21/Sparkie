@@ -18,7 +18,8 @@
 // Spark Console off. Anything that could lock the owner out isn't something an agent can even ask for.
 const HEADROOM = 8 * 2 ** 30;
 const SETTINGS_FILE = `${STATE_DIR}/agent-settings.json`;
-// The owner's two switches (Access → Agents): pause every agent's changes; restart crashed models by themselves.
+// The owner's two switches (the account menu's Agents and Telegram): pause every agent's changes; restart crashed models
+// by themselves.
 function agentSettings() {
   const v = readJson(SETTINGS_FILE);
   // Unreadable (not just missing): treat it as paused, never as "go ahead".

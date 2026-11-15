@@ -6,7 +6,7 @@
 // stand-in brain was sent, Telegram's calls): only the secrets file holds it. A later turn and the owner's own later
 // message carry it hidden; a tool that prints it, as is or in base64, comes back hidden. GITHUB is kept only when the
 // stand-in GitHub takes it (`pull.sh setup`'s own fetch; a stand-in git refuses any other token); a heartbeat address
-// starts the beat at once. A member's, an agent's, a bad name's or a key-shaped name's `/key` keeps nothing; so does a
+// starts the beat at once. An agent's, a bad name's or a key-shaped name's `/key` keeps nothing; so does a
 // key typed where the name goes, with words after it, and a key with words or quotes round it. On
 // Telegram the message is deleted, and a delete that fails tells the owner to delete it. An error that quotes a kept key
 // hides it; after a restart the state copy holds none, and a tool result still comes back hidden. A value typed in plain
@@ -199,17 +199,12 @@ describe('keys given once', { concurrency: 1 }, () => {
     for (const t of [V.bad, V.bad.toUpperCase(), 'Ab3Ab3Ab3Ab3', 'AB3AB3AB3AB3']) nowhereAtAll(t);
   });
 
-  test('a member\'s /key and an agent\'s keep nothing, and the value reaches neither the chat file nor the brain', async () => {
-    const asMember = { 'tailscale-user-login': MEMBER };
-    const chat = await newChat(asMember);
-    await say(chat, `/key MEMBER_KEY ${V.member}`, asMember);
-    assert.equal(requests().at(-1).lastUser.endsWith('/key [hidden]'), true, requests().at(-1).lastUser);
+  test('an agent\'s /key keeps nothing, and the value reaches neither the chat file nor the brain', async () => {
     const agent = await createKey('keys-agent');
     const a = await call(agent.token, 'ask_sparkie', { message: `/key AGENT_KEY ${V.agent}` });
     assert.equal(a.isError, false, a.text);
     assert.match(requests().at(-1).lastUser, /\/key \[hidden\]$/);
     assert.deepEqual(Object.keys(secretsOf().keys).sort(), ['HF_TOKEN']);
-    nowhereAtAll(V.member);
     nowhereAtAll(V.agent);
   });
 

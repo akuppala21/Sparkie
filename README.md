@@ -23,7 +23,7 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
 | see how it fits together | `docs/architecture.md`, `docs/code-map.md`, `docs/registry.md` |
 | know what it keeps on Spark 2, and where | `docs/state.md`, `docs/state-outside.md` |
 | use it from your own agents and scripts | `docs/agent-door.md` |
-| share it with people | `docs/sharing.md` |
+| use it from your phone, or from anywhere | `docs/sharing.md` |
 | add models and the setups people published | `docs/recipes.md` |
 | serve one model across Sparks | `docs/multi-spark.md` |
 | run the tests | `test/README.md` |
