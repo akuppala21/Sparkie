@@ -6627,6 +6627,92 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
+/* ───────── a saved workflow's run, kept on disk so a restart of Spark Console finishes it (D6f) ───────── */
+// Area: core        Rules: R57        Tests: workloads-restart.test.mjs
+// Owns: saved-runs.json (writers: savedRunKeep, savedRunDone, savedRunsRecover)
+// Timers: none        Wakes: none
+// Design D 2.3: "after a console restart, code stops in reverse order what this run started". A run keeps a small record
+// of itself in saved-runs.json (R20: writePrivate and readKept; names, Spark ids and the chat id, no secret), rewritten as
+// it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
+// (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
+// (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
+// known only once its operation has ended), and the Sparks it keeps awake. The record goes when the run ends, however it
+// ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
+// no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
+// same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
+// keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
+// and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
+// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
+// copy ignores it (COPY_IGNORES).
+const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
+const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
+const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
+// Merges `fields` into run j's record. A record that can't be written is said once in the run's log: then a restart
+// would leave what it started running, as before this record existed.
+function savedRunKeep(j, fields) {
+  try {
+    const f = savedRunsNow();
+    f.runs[j.id] = { ...(f.runs[j.id] || { operation: j.id, since: j.createdAt }), ...fields };
+    writePrivate(SAVED_RUNS_FILE, f);
+  } catch (e) {
+    if (j.runRecordLost) return;
+    j.runRecordLost = true;
+    note(j, `Couldn’t keep a note of what this run starts (${savedRunWords(e)}); a restart of Spark Console now would leave it running.`);
+  }
+}
+function savedRunDone(j) {
+  try {
+    const f = savedRunsNow();
+    if (!f.runs[j.id]) return;
+    delete f.runs[j.id];
+    if (Object.keys(f.runs).length) writePrivate(SAVED_RUNS_FILE, f); else unlinkSync(SAVED_RUNS_FILE);
+  } catch {}
+}
+// What a step that answered `started` is still bringing up, while its own operation runs.
+function savedRunPending(action, args, out, keep) {
+  if (out?.outcome !== 'started' || !out.operation) return [];
+  const id = v => sparkIdOf(v) || String(v);
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  return [];
+}
+// An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
+// steps' (its actor, since the run began).
+function savedRunCutOff(e) {
+  let runs = [];
+  try { runs = Object.values(savedRunsNow().runs); } catch { return false; }
+  return runs.some(r => r?.operation === e.id || (r?.title && e.actor === `${r.title} (saved workflow)` && String(e.at) >= String(r.since || '~')));
+}
+async function savedRunsRecover() {
+  let f;
+  try { f = savedRunsNow(); } catch (e) { console.error(`The note of saved workflows under way can't be read: ${e.message}`); return; }
+  const cut = Object.values(f.runs).filter(r => r && typeof r === 'object' && typeof r.operation === 'string' && !jobs.has(r.operation));
+  if (!cut.length) return;
+  for (const r of cut) {
+    const title = String(r.title || 'a saved workflow').slice(0, 80);
+    const items = [...(Array.isArray(r.started) ? r.started : []), ...(Array.isArray(r.pending) ? r.pending : [])]
+      .filter(x => x && ['model', 'app', 'job'].includes(x.kind) && nodeById(x.spark) && NAME_RE.test(String(x.container || '')));
+    let words;
+    try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }
+    const awake = (Array.isArray(r.awake) ? r.awake : []).filter(id => nodeById(id));
+    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || 'Nothing it had started was still running.'}`
+      + `${awake.length ? ` ${awake.map(id => sparkName(nodeById(id))).join(' and ')}, which it had turned on, ${awake.length > 1 ? 'are' : 'is'} no longer held awake for it.` : ''} Nothing was run again: ask for it again if it’s still wanted.`;
+    fleetEvent({ type: 'notice', text });
+    const conv = /^sc_[0-9a-f]{16}$/.test(String(r.chat || '')) ? chatData().conversations.find(c => c.id === r.chat && c.login === accessList().owner) : null;
+    if (conv) {
+      const at = new Date().toISOString();
+      conv.messages.push({ role: 'assistant', content: maskSecrets(text), createdAt: at, notice: true });
+      conv.updatedAt = at;
+      saveChats();
+      if (conv.channel === 'telegram') tell('result', text).catch(() => {});
+    }
+  }
+  try {
+    const now = savedRunsNow();
+    for (const r of cut) delete now.runs[r.operation];
+    if (Object.keys(now.runs).length) writePrivate(SAVED_RUNS_FILE, now); else unlinkSync(SAVED_RUNS_FILE);
+  } catch (e) { console.error(`The note of saved workflows under way couldn't be cleared: ${e.message}`); }
+}
 /* ───────── "save that as …": a saved workflow from the changes a request made (D6e) ───────── */
 // Area: core        Rules: R35, R43        Tests: workloads-save.test.mjs
 // Owns: none
@@ -6774,7 +6860,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+        : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
@@ -6784,6 +6870,15 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+async function stopAppStarted(viewer, x, c) {
+  try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
+    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
+    return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+  }
 }
 // The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
 // error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
@@ -6833,6 +6928,7 @@ async function placeStep(j, n, args, viewer, title) {
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
+    savedRunKeep(j, { awake: [...j.keptAwake.keys()] });
     try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
     note(j, `Step ${n}: ${at} is on`);
   }
@@ -7229,6 +7325,8 @@ action({
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
+      savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
         for (const [i, st] of w.steps.entries()) {
           cancelCheck(j);
@@ -7242,17 +7340,19 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
+          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedBy(st.action, args, out, st.keep === true));
+          savedRunKeep(j, { started: ran, pending: [] });
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
@@ -7556,8 +7656,11 @@ setTimeout(() => {
     fleetEvent({ type: 'operation', id: e.id, operation: e.operation, status: 'interrupted', model: e.model || null, spark: e.spark || null, ...(e.sparks ? { sparks: e.sparks } : {}) });
     // (the self-test's own: its clean-up after the restart says what it stopped, 21-selftest.mjs)
     if (selfTestCutOff(e)) continue;
+    // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
+    if (savedRunCutOff(e)) continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
+  savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
 }, 0);
 function fleetEvent(e) {
   const x = { at: new Date().toISOString(), ...e };
@@ -10487,10 +10590,10 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json and sessions.json, which no
-// copy carries (so a sign-in alone sends none).
+// healing, power and Telegram keep; the watchdog's counts; a crash record; what a saved workflow under way started; and
+// cloud.json and sessions.json, which no copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
-  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json']);
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json', 'saved-runs.json']);
 // What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
 // to it alone makes no copy due. (A counter put back from an older copy is lower than the passkey's own: accepted.)
 const COPY_USE_FIELDS = { 'passkeys.json': ['signCount', 'lastUsedAt'], 'agents.json': ['lastUsedAt', 'lastAction'] };
