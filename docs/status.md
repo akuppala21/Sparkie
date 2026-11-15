@@ -17,10 +17,10 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R1](rules/R01.md) | partly | `test/change.test.mjs` (“Spark 2 (where Sparkie runs) is never used”, “spark2 (Sparkie's): a start there is refused even when named”); `test/apps.test.mjs`; `test/hub.test.mjs` (“a model on disk with no Spark named never lands on the console's Spark”, “a download with no Spark named never goes to the console's Spark”); `test/clear-spark2.test.mjs` (“--check lists the units, containers, ports and folders it was given”) | falls short today: its file says where |
 | [R2](rules/R02.md) | partly | `test/change.test.mjs` (“memory: 8 GB stays free”, “a GPU app or job holds its Spark’s GPU”); `test/apps.test.mjs` (“any workload”) | falls short today: its file says where |
 | [R3](rules/R03.md) | partly | `test/abilities.test.mjs`; `test/clear-spark2.test.mjs` (“the script holds no command that breaks it”) | review; falls short today: its file says where |
-| [R4](rules/R04.md) | no test yet |  | test: each new route as nobody, a member, cross-site, through Funnel, from a Spark’s address |
+| [R4](rules/R04.md) | built | `test/no-editor.test.mjs` | test: each new route as nobody, a member, cross-site, through Funnel, from a Spark’s address |
 | [R5](rules/R05.md) | built | `test/internet.test.mjs` (“a Tailscale identity it brings counts for nothing”); `test/fleet.test.mjs` (“requests from the Sparks themselves”) |  |
 | [R6](rules/R06.md) | built | `test/passkey.test.mjs` (“a confirmation is for exactly one change”, “the change can be named with or without /console/api”) |  |
-| [R7](rules/R07.md) | partly | `test/door.test.mjs` (“secret masking”); `test/detail.test.mjs`; `test/faults.test.mjs`; `test/sparkie-more.test.mjs` (“a key in the model's error is hidden in the saved chat”, “a key in a line Sparkie offers to remember”, “a key in a failed operation's error is hidden”); `test/heal.test.mjs` (“a restart that fails with a key in its error”) | falls short today: its file says where |
+| [R7](rules/R07.md) | partly | `test/door.test.mjs` (“secret masking”); `test/detail.test.mjs`; `test/faults.test.mjs`; `test/sparkie-more.test.mjs` (“a key in the model's error is hidden in the saved chat”, “a key in a line Sparkie offers to remember”, “a key in a failed operation's error is hidden”); `test/heal.test.mjs` (“a restart that fails with a key in its error”); `test/app-keys.test.mjs` (“a kept key a tool prints, as is or in base64, comes back hidden”) | falls short today: its file says where |
 | [R8](rules/R08.md) | partly | `test/change.test.mjs` (“containers Spark Console didn't start, Sparkie's model, protected names”, “a console container labelled spark.protect=true is protected too”); `test/clear-spark2.test.mjs` (“the script holds no command that breaks it”) | falls short today: its file says where |
 | [R9](rules/R09.md) | built | `test/pause.test.mjs` (“after three of their operations fail in a row”, “after 3 changes in an hour”, “the owner's own failed work”); `test/ask.test.mjs` (“removed while Sparkie is answering it”, “made look-only while Sparkie is answering it”, “an operation it started keeps running”, “an undo it asked for keeps running”) |  |
 | [R10](rules/R10.md) | no test yet |  | grep: ssh is spawned only in `02-ssh.mjs`; falls short today: its file says where |
@@ -30,7 +30,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R14](rules/R14.md) | partly | `test/brain.test.mjs` | test (to add): a stale stop list changes nothing |
 | [R15](rules/R15.md) | partly | `test/workflows.test.mjs` (“a model that loads but can't answer a test prompt fails”, “a stop is done when the container really isn't running”) | falls short today: its file says where |
 | [R16](rules/R16.md) | partly | `test/desired.test.mjs` (“cancelling: the owner's cancel puts back what the start stopped”); `test/heal.test.mjs` (“one Spark Console stopped itself”); `test/change.test.mjs` (“a start over a running copy of the same model”); `test/across.test.mjs` (“parts that never connect stop early”) | falls short today: its file says where |
-| [R17](rules/R17.md) | no test yet |  | review; test (to add): a start across a cable that is not full is refused |
+| [R17](rules/R17.md) | partly | `test/validate.test.mjs` (“a cached copy whose chat template links outside its folder isn't started”, “weight files linked straight out of a cached copy”, “a weight file linked out to a folder or a device”) | review; test (to add): a start across a cable that is not full is refused |
 | [R18](rules/R18.md) | partly | `test/workflows.test.mjs` (“a version that didn't pass the tests doesn't run at all”) | review; falls short today: its file says where |
 | [R19](rules/R19.md) | partly | `test/heal.test.mjs` (“a second crash in the hour is healed”); `test/heal-more.test.mjs` (“a Spark that goes down again within 30 minutes”); `test/heal-displaced.test.mjs`; `test/heal-newer.test.mjs`; `test/heal-status.test.mjs`; `test/power.test.mjs`; `test/brain.test.mjs`; `test/docker-down.test.mjs`; `test/selftest.test.mjs` (“self-healing brings it back”, “a third self-test within the hour”); `test/selftest-cleanup.test.mjs` (“on a Spark turned on ten minutes ago the drill isn't run”) | falls short today: its file says where |
 | [R20](rules/R20.md) | partly | `test/state.test.mjs` (“the chat keeps answering”, “a throw while a turn is being set up frees the chat”, “a state file that isn't JSON”, “access.json that can't be read”, “a state file that can't be read when an operation finishes is never saved over”, “says whether agents are paused”, “new operations get 503 while a running one finishes”) | falls short today: its file says where |
@@ -44,11 +44,11 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R28](rules/R28.md) | partly | `test/build.test.mjs` (“service/server.mjs is exactly service/src/*.mjs joined”); `test/docs.test.mjs` (“every part has its header, and each header matches its code”, “headers”) | falls short today: its file says where |
 | [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs`; `test/affected.test.mjs`; `test/land.test.mjs`; `test/pull.test.mjs` | falls short today: its file says where |
 | [R30](rules/R30.md) | partly | `test/fleet.test.mjs` (“/health”); `test/install.test.mjs`; `test/pull.test.mjs`; `test/door.test.mjs` (“search_huggingface on the stand-in fleet”) | falls short today: its file says where |
-| [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”) |  |
-| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs` | falls short today: its file says where |
+| [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”); `test/no-editor.test.mjs` (“the service has no editor route”) |  |
+| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs`; `test/app-keys.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
-| [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/change.test.mjs` |  |
+| [R35](rules/R35.md) | partly | `test/steps.test.mjs`; `test/change.test.mjs` | falls short today: its file says where |
 | [R36](rules/R36.md) | built | `test/paste.test.mjs` |  |
 | [R37](rules/R37.md) | built | `test/files.test.mjs` |  |
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
@@ -63,6 +63,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”) | falls short today: its file says where |
+| [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “a member's /key and an agent's”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -176,7 +177,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.12 | no test yet |  | T46: no test holds it yet |
 | 9.13 | no test yet |  | T75, T101: no test holds them yet |
 | 9.14 | no test yet |  | T76, T102: no test holds them yet |
-| 9.15 | no test yet |  | T77, T96, T98, T132: no test holds them yet |
+| 9.15 | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name and answered by code, the brain is”, “Telegram: the message that held the key is deleted and the key kept”) | holds part of T132: “the key kept by name; its value in no chat, journal, error or tool result.”, “from Telegram, the message is deleted and the key kept by name.”; T77, T96, T98: no test holds them yet |
 | 9.16 | no test yet |  | no acceptance test lists it |
 | 9.17 | no test yet |  | no acceptance test lists it |
 | 9.18 | no test yet |  | T89: no test holds it yet |
