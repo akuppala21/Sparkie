@@ -89,6 +89,8 @@ const RUN = (on, command = 'cat docs/plain.txt') => ({ name: 'run', arguments: {
 const SEQ = on => RUN(on, 'seq 1 20000');
 const GUIDE = { name: 'guide', arguments: { tools: 'past' } };
 const calls = r => r.message.tools.map(t => [t.name, t.ok]);
+// (the error results the stand-in brain was sent for these words, to say why when a count is off)
+const errors = words => JSON.stringify(requests(words).flatMap(x => x.results.map(y => y.content)).filter(c => c.startsWith('[error]')));
 // (each request the stand-in brain got for these words: its round, and whether it was offered tools)
 const rounds = words => requests(words).map(x => [x.round, x.tools.length > 0]);
 const offeredThen = n => [...Array(n).keys()].map(i => [i, true]).concat([[n, false]]);
@@ -100,7 +102,7 @@ test('a brain that runs commands again and again stops at 12, twice its 6 rounds
   const chat = await newChat(), before = looks();
   const r = await saying([{ match: '^look again and again$', rounds: [FOUR, FOUR, THREE, THREE, FOUR, FOUR, FOUR] }], chat, 'look again and again');
   // 4, 4 and 3 ran; in the fourth round the twelfth ran and the two after it were not handed over.
-  assert.deepEqual(calls(r), [...Array(12).fill(['run', true]), ['run', false], ['run', false]]);
+  assert.deepEqual(calls(r), [...Array(12).fill(['run', true]), ['run', false], ['run', false]], errors('look again and again'));
   assert.equal(looks() - before, 12, 'twelve commands reached the helper, no more');
   assert.deepEqual(rounds('look again and again'), offeredThen(4), 'the round after the twelfth offered no tools, and was the last');
   const last = requests('look again and again').at(-1).results.map(x => x.content);
@@ -128,7 +130,7 @@ test('past 39,321 characters of tool output a result is cut to a notice naming t
   // What was shown fits; the result that was cut would not have; each cut result is kept whole in its record.
   const mine = records().slice(from).filter(x => x.k === 'tool' && x.chat === chat), texts = new Map(mine.map(x => [x.id, recordText(x)]));
   assert.equal(mine.length, r.message.tools.length);
-  const ids = new Set(cut.map(m => m[2])), shown = [...texts].filter(([id]) => !ids.has(id)).reduce((n, [, t]) => n + t.length, 0);
+  const ids = new Set(cut.map(m => m[2])), alt = `(?:${cut.map(m => m[2]).join('|')})`, shown = [...texts].filter(([id]) => !ids.has(id)).reduce((n, [, t]) => n + t.length, 0);
   assert.ok(shown <= 39321, String(shown));
   for (const m of cut) {
     const t = texts.get(m[2]);
@@ -137,7 +139,7 @@ test('past 39,321 characters of tool output a result is cut to a notice naming t
     assert.match(t, /^\{"look":"It ran as a look[\s\S]*"output":"1\\n2\\n3\\n/);
   }
   assert.ok(shown + Math.max(...cut.map(m => texts.get(m[2]).length)) > 39321);
-  assert.match(r.text, new RegExp(`\\n\\nStopped here: one message may read 39,321 characters of tool results, so (?:1 result wasn’t|${cut.length} results weren’t) read \\(kept whole in Spark Console’s record: ${cut.map(m => m[2]).join('|')}(?:, j_[0-9a-f]{12})*\\)\\.\\nSay “go on” to carry on\\.$`));
+  assert.match(r.text, new RegExp(`\\n\\nStopped here: one message may read 39,321 characters of tool results, so (?:1 result wasn’t|${cut.length} results weren’t) read \\(kept whole in Spark Console’s record: ${alt}(?:, ${alt})*\\)\\.\\nSay “go on” to carry on\\.$`));
 });
 
 test('three refused calls in a row put the tools away and the answer says what was refused and why; a call that works between resets the count', { timeout: 300000 * SLOW }, async () => {
@@ -145,14 +147,14 @@ test('three refused calls in a row put the tools away and the answer says what w
   let before = looks();
   const r = await saying([{ match: '^try what is refused$', rounds: [[RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [BOGUS], [RUN('spark3')], [RUN('spark4')]] }], await newChat(), 'try what is refused');
   // run's own check, a Spark with no helper (it answers, and runs nothing), and an input the gate refuses.
-  assert.deepEqual(calls(r), [['run', false], ['run', true], ['stop_model', false]]);
+  assert.deepEqual(calls(r), [['run', false], ['run', true], ['stop_model', false]], errors('try what is refused'));
   assert.deepEqual(rounds('try what is refused'), offeredThen(3));
   assert.equal(looks(), before, 'nothing was run after them');
   assert.match(r.text, /\n\nStopped asking: 3 calls in a row were refused, so the tools were put away for this message\.\n- run: Leave out sudo: a look already reads what root can read \(keys aside\), and it changes nothing\.\n- run: Commands on Spark 2, the hub, come with a later build \(its set-up waits for the lock-out net\), so nothing ran there\.\n- stop_model: Unknown argument: bogus\. stop_model takes [^\n]+\.\nSay what to change, or “go on” to try again\.$/);
   // Two refused, one that works, two refused, a lookup: every round runs.
   before = looks();
   const s = await saying([{ match: '^refused, then not$', rounds: [[RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [RUN('spark3')], [RUN('spark3', 'sudo ls')], [RUN('spark2', 'ls')], [GUIDE]] }], await newChat(), 'refused, then not');
-  assert.deepEqual(calls(s), [['run', false], ['run', true], ['run', true], ['run', false], ['run', true], ['guide', true]]);
+  assert.deepEqual(calls(s), [['run', false], ['run', true], ['run', true], ['run', false], ['run', true], ['guide', true]], errors('refused, then not'));
   assert.deepEqual(rounds('refused, then not'), offeredThen(6));
   assert.equal(looks() - before, 1);
   assert.doesNotMatch(s.text, /Stopped/);
@@ -188,7 +190,7 @@ test('a setup\'s own budgets apply and change the tested mark; its ask block can
   let both;
   try { both = await Promise.all([say(a, 'chat a looks'), say(b, 'chat b looks')]); } finally { noScript(); }
   for (const x of both) {
-    assert.deepEqual(calls(x), Array(3).fill(['run', true]));
+    assert.deepEqual(calls(x), Array(3).fill(['run', true]), errors('chat a looks') + errors('chat b looks'));
     assert.match(x.text, /Stopped here: one message may run 3 commands, and 3 ran\.\nSay “go on” to carry on\.$/);
   }
   assert.equal(looks() - before, 6);
