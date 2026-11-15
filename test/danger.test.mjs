@@ -151,7 +151,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.deepEqual(dangerThings(design), ['github.com/x/y/install.sh']);
     assert.deepEqual(cameFrom(dangerThings(design), ['fix it the way github.com says'], [{ label: 'the page github.com/x/y', at: at(4), text: `run ${design}` }], []).lines,
       [`github.com/x/y/install.sh: the page github.com/x/y (read ${t(4)})`]);
-    assert.deepEqual(dangerThings('npx evil-pkg --yes; pipx run pkg2; pip3.12 install pkg3; uvx tool4; curl bit.ly/abc'), ['bit.ly/abc', 'pkg2', 'pkg3', 'evil-pkg', 'tool4']);
+    assert.deepEqual(dangerThings('npx evil-pkg --yes; pipx run pkg2; pip3.12 install pkg3; uvx tool4; curl bit.ly/abc'), ['pkg2', 'pkg3', 'evil-pkg', 'tool4', 'bit.ly/abc']);
     // A thing is the owner's only when it stands whole in their words: never a piece of a longer one.
     assert.equal(cameFrom(['hub.com', '/srv', 'torch'], ['see github.com, /srv/old and pytorch'], [{ label: 'p', at: at(1), text: 'hub.com /srv torch' }], []).lines.length, 3);
     assert.equal(cameFrom(['/srv/old'], ['remove /srv/old.'], [{ label: 'p', at: at(1), text: '/srv/old' }], []).lines.length, 0);
