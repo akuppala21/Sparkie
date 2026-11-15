@@ -42,7 +42,8 @@ export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_
   'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
   'search_web', 'read_page', 'guide', 'recall'];
 export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
-  'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test'];
+  'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test',
+  'power_off', 'power_on', 'power_settings'];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
 // Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), beside every
 // read action (a key that only looks) or every action (one that can act).

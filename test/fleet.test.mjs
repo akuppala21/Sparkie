@@ -5,9 +5,6 @@
 // JSON; `/v1`: `sparkie`, Sparkie's own model id and no model are answered, any other model → 404 naming `sparkie`;
 // `/status` without the removed `model`/`cluster`/ray/codex fields; `internet` is null (not known) while Tailscale's
 // answer doesn't name the main address (and `/status` says not known), true or false once it does.
-//
-// The service as a whole on the stand-in fleet: /health and its build id, the watcher (workloads, fleet_events, Sparks
-// going offline and coming back), requests from the Sparks' own addresses, and oversized bodies.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, statSync } from 'node:fs';

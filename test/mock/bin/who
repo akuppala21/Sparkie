@@ -1,0 +1,5 @@
+#!/bin/bash
+# Stand-in who for a test Spark: the sessions in ~/.mock/who (lines like "owner pts/0 2026-11-13 10:00 (100.64.0.9)"),
+# none otherwise (never this machine's own).
+cat "$HOME/.mock/who" 2>/dev/null
+exit 0

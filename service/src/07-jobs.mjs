@@ -70,7 +70,8 @@ function runJob(job, fn) {
     // Three failed operations in a row pause agents (R9). The owner's own never count: the page, self-healing, a saved
     // workflow's steps, a /v1 start, POST /actions (api), and what Sparkie started in the owner's own chat (runAction
     // marks that job ownersOwn). Anything else, and any new via, counts as an agent.
-    if (job.via && !job.ownersOwn && !['page', 'watcher', 'workflow', 'gateway', 'api'].includes(job.via)) {
+    // (a start that a power-on operation runs for its asker, 21-power.mjs, fails that operation too: counted there, once)
+    if (job.via && !job.ownersOwn && !job.partOf && !['page', 'watcher', 'workflow', 'gateway', 'api'].includes(job.via)) {
       agentFailuresInARow = [...agentFailuresInARow.filter(t => Date.now() - t < 3600000), Date.now()];
       if (agentFailuresInARow.length >= 3) tripBreaker('three of their operations failed in a row');
     }
@@ -106,7 +107,8 @@ function copyModel(job, name, from, to, total, store = 'models') {
     let done = 0, errText = '', closed = 0, failed = false;
     const abort = () => { errText += '\n(cancelled)'; src.kill('SIGKILL'); dst.kill('SIGKILL'); };
     if (job.abort?.signal.aborted) abort(); else job.abort?.signal.addEventListener('abort', abort, { once: true });
-    src.stdout.on('data', chunk => { done += chunk.length; job.progress = { done, total }; });
+    // (the Spark it copies from is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
+    src.stdout.on('data', chunk => { done += chunk.length; job.progress = { done, total }; sparkCalls.set(from.id, Date.now()); });
     src.stdout.pipe(dst.stdin);
     for (const p of [src, dst]) {
       p.stderr.on('data', d => { errText = (errText + d).slice(-4000); });

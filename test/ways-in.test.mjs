@@ -1,4 +1,4 @@
-// The ways in, watched ahead (ledger 5b, addition 6; R47; 20-ways-in.mjs). Spark Console reads, and only reads, what can
+// Covers: The ways in, watched ahead (ledger 5b, addition 6; R47; 20-ways-in.mjs). Spark Console reads, and only reads, what can
 // close a way in with no warning, on looks it already takes, and puts each on the needs-you list with what stops, when
 // and what to do: a Tailscale key, Spark 2's own and a compute Spark's, within 14 days of expiring or expired; linger off
 // for its user on Spark 2; Funnel off while its record says it was on. An answer it can't read is "couldn't check",

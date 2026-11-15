@@ -14,6 +14,8 @@
 //   sizes    each document within its limit in bytes, and no line over 400 characters
 //   shape    each rule file and each card has its fixed headings; AGENTS.md's task table and docs/how/ agree;
 //            docs/rules.md is what docs/rules/ makes
+//   covers   every test file starts with its "// Covers:" comment, not empty, read like a document (paths, names, line
+//            pointers, counts); test/covers.md is what those comments make
 //   groups   where the parts define GROUP_WORDS (R46): every action has one group (core, or one of those); the core
 //            holds at most 12 actions and a group at most 6
 // Dated records are never checked: docs/history/, docs/design-2026-11-13/ and docs/review-astra/.
@@ -28,7 +30,7 @@ const KB = 1024;
 // docs/review-astra/ holds a review with an outside reviewer (its evidence quotes line numbers and old names on purpose).
 const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//, /^docs\/review-astra\//];
 // Written by tools: never edited by hand. tools/make.mjs rebuilds them; build.test.mjs and this checker compare them.
-const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md', 'docs/status.md'];
+const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md', 'docs/status.md', 'test/covers.md'];
 // Not the app's documents: the agent bar (a separate trial harness that names its own run outputs) and anything inside
 // the stand-in fleet.
 const NOT_DOCS = [/^agentbar\//, /^test\/mock\//];
@@ -36,7 +38,7 @@ const NOT_DOCS = [/^agentbar\//, /^test\/mock\//];
 const PATHS_ONLY = ['REVIEW-GUIDE.md'];
 
 // Limits in bytes (docs/design-2026-11-13/f-structure.md, 2.1). A third number is a ceiling for a document that is over
-// its limit today: it may only shrink, and the second wave cuts it (the contract made flat; the two READMEs cut down).
+// its limit today: it may only shrink, and the second wave cuts it.
 const LIMITS = [
   [/^AGENTS\.md$/, 8 * KB],
   [/^docs\/architecture\.md$/, 24 * KB],
@@ -45,14 +47,14 @@ const LIMITS = [
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
   [/^docs\/contract\.md$/, 120 * KB],
-  [/^README\.md$/, 4 * KB, 15 * KB],
-  [/^test\/README\.md$/, 12 * KB, 48 * KB],
+  [/^README\.md$/, 4 * KB],
+  [/^test\/README\.md$/, 12 * KB],
   [/^docs\/agent-door\.md$/, 16 * KB, 17 * KB],
   [/./, 16 * KB],
 ];
 const LINE_MAX = 400;
 // Documents with longer lines today (a table moved whole, rows written before the limit): a ceiling, never raised.
-const LONG_LINES = { 'test/README.md': 3256, 'docs/agent-door.md': 1395, 'docs/state.md': 1148 };
+const LONG_LINES = { 'docs/agent-door.md': 1395, 'docs/state.md': 1148 };
 
 // Names a document may quote that belong to other software, not to this code.
 const NOT_OURS = {
@@ -109,7 +111,12 @@ function readTree(root) {
   const actions = new Set(Object.values(parts).flatMap(t => [...t.matchAll(/^\s*name: '([a-z_]+)', title: '[^']+', kind: '(?:read|change)'/gm)].map(m => m[1])));
   const code = all.filter(f => new RegExp(`^${TOP}/`).test(f) && !/^docs\//.test(f) && !f.endsWith('.md') && !SELF.includes(f));
   const words = new Set();
-  for (const f of code) { let t = ''; try { t = read(root, f); } catch { continue; } for (const m of t.matchAll(/[A-Za-z_$][\w$]*/g)) words.add(m[0]); }
+  for (const f of code) {
+    let t = '';
+    try { t = read(root, f); } catch { continue; }
+    if (/^test\/[^/]+\.test\.mjs$/.test(f)) t = t.split('\n').slice(coversLines(t)).join('\n');   // a name a Covers comment gives must be in the code, not only there
+    for (const m of t.matchAll(/[A-Za-z_$][\w$]*/g)) words.add(m[0]);
+  }
   const tests = all.filter(f => /^test\/[^/]+\.test\.mjs$/.test(f) && !SELF.includes(f));
   const rules = existsSync(join(root, 'docs/rules')) ? readdirSync(join(root, 'docs/rules')).filter(f => /^R\d\d\.md$/.test(f)).sort() : [];
   const contract = existsSync(join(root, 'docs/contract.md')) ? read(root, 'docs/contract.md') : '';
@@ -329,6 +336,60 @@ export function rulesIndex(root = ROOT) {
   ].join('\n');
 }
 
+// What a test file covers: the comment at its very top, "// Covers: …", running on over the lines below it that start
+// with "// " and a word, up to a line that is "//" alone or code. The words, joined, or null when the file has none.
+export function coversOf(text) {
+  const end = coversLines(text);
+  if (!end) return null;
+  return text.split('\n').slice(0, end).map(l => l.slice(2)).join(' ').replace(/^\s*Covers:/, '').replace(/\s+/g, ' ').trim();
+}
+// How many lines it takes (0: the file has none).
+function coversLines(text) {
+  const lines = text.split('\n');
+  if (!/^\/\/ Covers:/.test(lines[0])) return 0;
+  let end = 1;
+  while (end < lines.length && /^\/\/ \S/.test(lines[end])) end++;
+  return end;
+}
+
+const COVERS = 'test/covers.md';
+const testFiles = root => (existsSync(join(root, 'test')) ? readdirSync(join(root, 'test')).filter(f => /\.test\.mjs$/.test(f)).sort() : []);
+
+// test/covers.md: one row per test file, its "Covers:" comment. Generated; tools/make.mjs writes it.
+export function coversTable(root = ROOT) {
+  const rows = testFiles(root).map(f => `| \`${f}\` | ${(coversOf(read(root, `test/${f}`)) || '(no “Covers:” comment yet)').replace(/\|/g, '\\|')} |`);
+  return [
+    '# What each test file covers',
+    '',
+    'Written by `node tools/make.mjs` from the comment at the top of each test file (`// Covers: …`); don’t edit it by',
+    'hand. To change a row, change that comment; a new test file needs only its comment. How to run the tests, and how',
+    'the stand-in fleet works: `test/README.md`.',
+    '',
+    '| File | What it covers |',
+    '|---|---|',
+    ...rows,
+    '',
+  ].join('\n');
+}
+
+// Every test file says what it covers at its top, and the table is what those comments make. A tree that keeps no
+// table (test/covers.md) has none to check. The comment is read like a document: its paths, names, line pointers and
+// counts are checked as they were in test/README.md's table (its ids already are, as the test file's comments).
+function checkCovers(tree, out) {
+  if (!existsSync(join(tree.root, COVERS))) return;
+  for (const f of testFiles(tree.root)) {
+    const file = `test/${f}`, covers = coversOf(read(tree.root, file));
+    const say = message => out.push({ check: 'covers', file, line: 1, message });
+    if (covers == null) { say(`has no “Covers:” comment at its top: start the file with “// Covers: ” and what it covers (${COVERS} is made from it)`); continue; }
+    if (!covers) { say('has a “Covers:” comment with nothing after it: say what the file covers'); continue; }
+    checkPaths(tree, file, covers, out);
+    checkNames(tree, file, covers, out);
+    checkLinePointers(file, covers, out);
+    checkCounts(file, covers, out);
+  }
+  if (read(tree.root, COVERS) !== coversTable(tree.root)) out.push({ check: 'covers', file: COVERS, line: 1, message: 'is not what the test files’ “Covers:” comments make: run node tools/make.mjs' });
+}
+
 export function checkDocs(root = ROOT) {
   const tree = readTree(root), out = [];
   for (const f of tree.docs) {
@@ -345,6 +406,7 @@ export function checkDocs(root = ROOT) {
   for (const f of tree.tests) checkIds(tree, f, read(root, f), out, { code: true });
   checkShape(tree, out);
   checkGroups(tree, out);
+  checkCovers(tree, out);
   return out;
 }
 
