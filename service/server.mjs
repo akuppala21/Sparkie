@@ -1992,7 +1992,9 @@ async function recordVerified(job, { model, engine, image, args: rawArgs = [], e
   const list = verifiedList(), now = new Date().toISOString(), found = list.find(v => v.key === key);
   const entry = found || { key, model: model.name, repo: model.repo || null, title: model.manifest?.title || model.repo || model.name, engine, image, args, env, sparks, ...(file ? { file } : {}), firstAt: now, runs: 0 };
   Object.assign(entry, { nodes, lastAt: now, by: viewer?.login || null, runs: entry.runs + 1, sizeBytes: model.sizeBytes || entry.sizeBytes || null,
-    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}) });
+    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}),
+    // (a run whose context was cut to fit keeps the free memory then, so a later start can try the full context: B3)
+    ...(job?.contextCut ? { contextCut: job.contextCut } : {}) });
   if (measured) {
     entry.measured = { ...measured, at: now, nodes };
     if (!entry.best || measured.decodeTokS > entry.best.decodeTokS) entry.best = entry.measured;
@@ -5901,22 +5903,39 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
 }
 
 // The setup to run it with: the fastest run that worked here before, else the best one-click setup, else defaults.
-function bestHow(m, sparks, viewer, library) {
+// over(how): true passes that one over (B3, bestHowNow); free: the least free memory on its Sparks now (fullContext).
+function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) {
   const runs = verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === sparks && (v.source !== 'seen' || v.approved === true))
     .sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
   const setups = recipeCatalog().models.flatMap(r => r.setups || []).filter(s => s.deployable !== false && s.sparks === sparks && m.repo && sameRepo(s.repo, m.repo) && s.source?.kind !== 'forum')
     .sort((a, b) => (CREDIBILITY[a.credibility] ?? 3) - (CREDIBILITY[b.credibility] ?? 3) || (b.perf?.decodeTokS || 0) - (a.perf?.decodeTokS || 0));
   const tryHow = body => { try { const how = resolveHow(body, viewer, m.name, sparks, library); return how && !dig.remoteCode(how.args) ? how : null; } catch { return null; } };
+  const ok = how => Boolean(how) && !over?.(how);
   // Ordinary runs first; then the brain's proven run, made ordinary (its draft model and stretched context are Spark
   // 2's); then Recipes' one-click setups. The brain runs on one Spark; across two, the same engine and settings split
   // the model over the cable (the start adds its own two-Spark flags), which beats the engine's defaults: those
   // couldn't start the brain's hybrid Qwen at all (2026-11-08).
-  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = tryHow({ verified: v.key }); if (how) return how; }
+  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = fullContext(tryHow({ verified: v.key }), v, free); if (ok(how)) return how; }
   const brainRuns = sparks === 1 ? runs : verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === 1 && (v.source !== 'seen' || v.approved === true)
     && ['sglang', 'vllm'].includes(v.engine)).sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
-  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (how) return how; }
-  for (const s of setups) { const how = tryHow({ setup: s.id }); if (how) return how; }
+  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (ok(how)) return how; }
+  for (const s of setups) { const how = tryHow({ setup: s.id }); if (ok(how)) return how; }
   return null;
+}
+// A run that worked only once its context was cut to fit (out of memory: startWithFixes notes the free memory then, and
+// recordVerified keeps it as contextCut) isn't locked into the shorter context: when its Sparks have more free memory
+// now, by the 8 GB kept free and more, it goes first with its full context (its setup's own, or the engine's). If that
+// runs out of memory, the start cuts it again, and the new figure is kept.
+function fullContext(how, v, free) {
+  const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
+  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+}
+// The least free memory on these Sparks right now, or null when one can't be read.
+async function freeOn(ids) {
+  const mem = await Promise.all(ids.map(id => memNow(nodeById(id)).catch(() => null)));
+  return mem.every(x => Number.isFinite(x?.available)) ? Math.min(...mem.map(x => x.available)) : null;
 }
 
 // Starts the model where placed; if it fails, stops the new parts and starts again what it stopped.
@@ -6014,6 +6033,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
+  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -6030,6 +6050,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      // (the context first cut to fit: the free memory then goes with the run that works, recordVerified's contextCut)
+      if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
         if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
@@ -6240,12 +6262,16 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ]);
     }
-    const how = setup ? resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library) : bestHow(m, placed.two ? 2 : 1, viewer, inv.library);
+    // (a setup that failed twice the same known way is passed over, and the result says so: B3, 20-lessons.mjs)
+    const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library), passed: [] } : bestHowNow(m, placed, viewer, inv, (across || ctx).workflowVersion, args.tryPassedOver === true);
+    const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
+    if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
-    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
+    for (const line of passedOver) note(job, line);
+    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };
   }
   // Not on disk yet: download the best version that fits now, then start it, in one operation. Never for a call at the
@@ -6296,7 +6322,9 @@ async function startModel(args, viewer, ctx) {
     }
     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
     await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
-    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
+    const best = bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true), how = best.how;
+    if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
+    for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
     const release = claimSparks(placed.nodes, `starting ${v.repo}`);
     try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
@@ -6582,7 +6610,20 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  lessonOf,
+  lessonsKept,
+  PASS_OVER_FAILURES,
+  failedTwice,
+  bestHowNow,
+  passedWords,
+  passedOverLines,
+  askedByOwner,
+  passedOverAsk,
+  fullContext,
+  freeOn,
+  memNow,
+];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -8688,7 +8729,7 @@ async function tgKeys(m) {
   return true;
 }
 /* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
-// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs
 // Owns: lessons.json (writers: recordLesson)
 // Timers: none        Wakes: none
 // A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
@@ -8701,8 +8742,9 @@ async function tgKeys(m) {
 // failure of an app leaves none. The same failure of the same setup again adds to its count: two or more of the same
 // known failure with no success between make it proven, while an unknown one stays seen. A later success of the same
 // setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
-// its proven run (verified.json). Nothing reads lessons to change what a start does yet: passing over a setup that
-// failed twice is B3, cards for the brain B4.
+// its proven run (verified.json). A start reads them before it picks a setup (B3): one that failed twice the same known
+// way is passed over while its image, Sparks and start code are what the start would use (failedTwice, bestHowNow).
+// Cards for the brain are B4.
 const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
 // (a cap, never reached in use: the newest are kept)
 const LESSONS_MAX = 500;
@@ -8798,6 +8840,76 @@ function learnFrom(job, evidence) {
     const l = lessonOf(job);
     if (l) recordLesson(l, job.status === 'completed', evidence);
   } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
+}
+
+// Which known failures count toward passing a setup over (B3, decided 2026-11-14). The setup's own count. One whose
+// cause is outside the setup never does: every setup meets the same wall, and the setup would stay passed over after
+// that was put right. A lesson still records it (R48); a failure not listed here doesn't count.
+const PASS_OVER_FAILURES = [
+  // [failure, counts, why]
+  ['out-of-memory', true, 'the setup asks for more memory than its Sparks have'],
+  ['bad-flag', true, 'the engine refuses one of its settings'],
+  ['garbage', true, 'its engine or image answers only garbage'],
+  ['no-answer', true, 'its engine or chat template doesn’t answer'],
+  ['gated', false, 'a Hugging Face sign-in or license, the same for every setup'],
+  ['port-busy', false, 'another program holds the model port'],
+  ['image', false, 'the network, while the image downloads'],
+  ['memory-share', false, 'other work holds the memory'],
+  ['never-connected', false, 'the cable between the two Sparks'],
+];
+// B3 (design B 2.4; contract 5.10): a setup that failed twice the same known way with no success between (a proven
+// lesson) is passed over while what that lesson was true of is what this start would use: its image, its Sparks and its
+// start code (the start workflow's version). When one differs, it is tried again. The lesson the setup would leave is
+// worked out as a failure would write it (setupTried, lessonOf) and looked for among the kept ones. Lessons that can't
+// be read pass nothing over: a lesson never stops a start by itself. Only failures of the setup's own count
+// (PASS_OVER_FAILURES).
+function failedTwice(m, how, placed, code) {
+  try {
+    const l = lessonOf({ type: 'deploy', status: 'failed', setupTried: setupTried(m, how, placed), workflowVersion: code });
+    if (!l?.subject.model || !l.tried.how || !l.tried.flags || !l.tried.on) return null;
+    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && PASS_OVER_FAILURES.some(([id, counts]) => counts && id === x.failure)
+      && JSON.stringify(x.subject) === JSON.stringify(l.subject)
+      && ['how', 'flags', 'image', 'on', 'code'].every(k => x.tried?.[k] === l.tried[k])) || null;
+  } catch { return null; }
+}
+// The setup a start runs with: bestHow's, each one that failed twice passed over while another is left. { how, passed:
+// [{ how, lesson }], only }: only when every setup there is failed twice, and how is then the best of them. again (the
+// yes to passedOverAsk): nothing is passed over, and what failed twice is still said. free: the least free memory on its
+// Sparks now, for a context that was cut to fit (fullContext).
+function bestHowNow(m, placed, viewer, inv, code, again = false) {
+  const passed = [], over = how => { const lesson = failedTwice(m, how, placed, code); if (lesson) passed.push({ how, lesson }); return Boolean(lesson) && !again; };
+  const free = Math.min(...placed.nodes.map(id => Number(inv.sparks.find(s => s.id === id)?.memAvailable) || NaN));
+  const how = bestHow(m, placed.two ? 2 : 1, viewer, inv.library, { over, free });
+  if (how || !over(null)) return { how, passed };
+  return { how: passed[0].how, passed, only: true };
+}
+// A setup that failed twice, in the owner's words: what it is, and how it failed.
+const passedWords = ({ how, lesson: l }) => ({
+  what: how?.setupId ? `recipe setup ${how.setupId}` : how?.fromBrain ? 'the brain’s proven setup' : how ? 'a run that worked here before' : 'its own setup (its spark.json, or the engine’s defaults)',
+  failed: `failed ${l.failed} times the same way on ${String(l.tried?.on || '').split('+').map(id => sparkName(nodeById(id) || { id })).join(' + ')} (${START_FAILURES.find(f => f.id === l.failure)?.title || l.failure}), last on ${String(l.lastAt).slice(0, 10)}` });
+// What the start's result and its operation's log say: each setup passed over, and the one tried again though it failed
+// twice, with why.
+function passedOverLines(best, args) {
+  return best.passed.map(p => {
+    const { what, failed } = passedWords(p), id = p.lesson.id;
+    if (p.how === best.how) return `Tried again ${args.tryPassedOver === true ? 'as asked' : 'at the owner’s own request'}, though ${what} ${failed}${best.only ? ': it is the only setup there is' : ''} (lesson ${id}).`;
+    return `Passed over ${what}: it ${failed}, with the image, Sparks and start code this start would use (lesson ${id}). ${p.how?.setupId ? `To try it anyway, ask for setup ${p.how.setupId}.` : 'It is tried again when its image, its Sparks or its start code change.'}`;
+  });
+}
+// The owner's own request: their own call (POST /actions), the page's own controls (the self-test too), or the yes to
+// passedOverAsk. A button pressed for another question isn't one.
+const askedByOwner = (viewer, ctx, args) => args.tryPassedOver === true || (viewer.role === 'owner' && (ctx.via === 'api' || (ctx.via === 'page' && !ctx.button)));
+// When every setup there is failed twice (design B 2.4): the owner's own request runs the best of them, and says so;
+// self-healing and a call to the model address leave it, saying why; Sparkie or an agent gets a question whose yes runs
+// it. null: run it.
+function passedOverAsk(viewer, ctx, args, m, placed, best) {
+  if (askedByOwner(viewer, ctx, args)) return null;
+  const title = m.repo || m.name, { what, failed } = passedWords(best.passed[0]);
+  if (ctx.via === 'watcher' || ctx.via === 'gateway') throw new HttpError(409, `${title}’s only setup here, ${what}, ${failed}, so it isn’t tried again by itself; the owner can ask for it.`);
+  return question(viewer, ctx, `${title}’s only setup here, ${what}, ${failed}, with the same image, Sparks and start code. Try it again anyway?`, [
+    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
+      ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
+    { label: 'No, leave it', call: null }]);
 }
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
