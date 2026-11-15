@@ -133,11 +133,13 @@ async function runChoice(viewer, conv, id, by) {
   if (!c || c.who !== sparkieWho(viewer, conv.id)) {
     const shown = conv.messages.flatMap(m => m.choices || []).find(x => x.id === id);
     if (shown) { for (const m of conv.messages) for (const x of m.choices || []) if (x.group === shown.group && x.state === 'open') x.state = 'gone'; saveChats(); }
-    throw new HttpError(409, 'That button has expired. Ask Sparkie again.');
+    throw new HttpError(409, dangerGone(id) || 'That button has expired. Ask Sparkie again.');
   }
   // (or an ask this console sent to the paired Telegram chat, pressed there while approvals from it are on, A10a)
   const fromTelegram = Boolean(c.ownerOnly && by.approved && by.via === 'telegram' && tgAskOpen(String(id), c));
   if (c.ownerOnly && by.via !== 'page' && !fromTelegram) throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
+  // A dangerous ask (20-danger.mjs): still open, its pair with the press, what it runs unchanged; a refusal runs nothing.
+  if (c.danger) await dangerPress(String(id), c, by);
   for (const [k, x] of pendingChoices) if (x.group === c.group) pendingChoices.delete(k);
   for (const m of conv.messages) for (const x of m.choices || []) {
     if (x.id === id) x.state = 'picked';
