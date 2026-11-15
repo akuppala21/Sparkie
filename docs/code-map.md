@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21238 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21239 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -731,10 +731,10 @@ The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the ne
 
 ### `20-shape.mjs`: the sorter's plain shape: what a command run at once must look like (R63)
 
-sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null. The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain redirections (> >> < &> to a plain path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a cd as the last command; the …
+sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null. The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain redirections (> >> < &> to a path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a cd as the last command; the /proc …
 
 - **Area:** safety. **Rules:** R63. **Tests:** sort.test.mjs
-- **Lines:** 55
+- **Lines:** 56
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

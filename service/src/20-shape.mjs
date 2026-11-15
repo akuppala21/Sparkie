@@ -5,7 +5,7 @@
 // sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null.
 // The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as
 // a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain
-// redirections (> >> < &> to a plain path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set
+// redirections (> >> < &> to a path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set
 // before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a
 // cd as the last command; the /proc status files. 20-sort.mjs asks a change that is not of the shape (a doubt), and a
 // look only for a {…}: the tables' lock-out and risky answers stand. New spellings fall outside the shape and are
@@ -35,7 +35,8 @@ function sortShape(items, ctx) {
       for (const d of cmd.redirs) {
         if (/^<</.test(d.op)) { if (!/^(?:cat|tee)$/.test(prog)) no('it hands a program here-text'); continue; }
         if (/^[<>]&$/.test(d.op) && /^[12]$/.test(d.w.text) && !d.w.unknown) continue;
-        if (!SHAPE_REDIR.test(d.op) || (d.fd != null && !/^[012]$/.test(d.fd)) || !d.w.plain || d.w.glob || d.w.brace) no(`it has the redirection ${sortQ(`${d.fd ?? ''}${d.op}${d.w.text}`)}`);
+        // (its path is a word like the others below: quoted is a name, a pattern only where it is placed)
+        if (!SHAPE_REDIR.test(d.op) || (d.fd != null && !/^[012]$/.test(d.fd))) no(`it has the redirection ${sortQ(`${d.fd ?? ''}${d.op}${d.w.text}`)}`);
       }
       for (const w of [...cmd.assigns, ...cmd.words, ...cmd.redirs.map(d => d.w)]) {
         const bad = sortShapeWord(w, cmd, ctx);

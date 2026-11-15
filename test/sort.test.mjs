@@ -364,7 +364,7 @@ const ROWS = [
   ['rsync -b --suffix=ig /tmp/x ~/.gitconf', 'risky'], ["perl -pi'rc' -e 1 .bash", 'lockout'], ["ruby -pi'rc' -e 1 .bash", 'lockout'],
   ['zip -r ~/backup ~/work', 'change'], ['ssh-keygen -t ed25519', 'lockout'], ["tar -I 'xz --files' -cf /tmp/x.txz ~/work", 'risky'],
   ["tar -I 'xz --files0' -cf /tmp/x.txz ~/work", 'risky'], ['tar -I zstd -xf ~/dl/model.tar.zst -C ~/models', 'change'],
-  ["rm -rf 'proj/{a,b}'", 'change'], ["echo new > 'proj/{a,b}.log'", 'risky'], ["rm -rf '~/models'", 'change'], ["rm 'proj/[ab].log'", 'change'],
+  ["rm -rf 'proj/{a,b}'", 'change'], ["echo new > 'proj/{a,b}.log'", 'change'], ["rm -rf '~/models'", 'change'], ["rm 'proj/[ab].log'", 'change'],
   ['cp /tmp/x.conf /etc/systemd/system/ss*.d/', 'lockout', ROOT], ['cp /tmp/x.conf /etc/systemd/system/ssh.service.?/', 'lockout', ROOT],
   ['cp /tmp/x.conf /etc/systemd/system/*.d/', 'lockout', ROOT], ['nvidia-smi -f dmon -c 3', 'risky', ROOT], ['nvidia-smi dmon -c 5', 'change', ROOT],
   ['systemctl stop network-manager', 'lockout', ROOT], ['systemctl stop dhcpcd', 'lockout', ROOT], ['systemctl restart nginx', 'change', ROOT],
@@ -467,6 +467,8 @@ const ROWS = [
   ['hf download org/model --cache-dir ~/.ssh', 'lockout'], ['git lfs pull', 'lockout'], ['curl -x http://10.0.0.1:3128 https://e.com', 'risky'],
   ['curl --resolve e.com:443:10.0.0.1 https://e.com', 'risky'], ['wget -i /tmp/urls.txt -P /tmp/d', 'risky'], ['curl -i https://e.com', 'change'],
   ['mkdir -m 777 ~/.ssh', 'lockout'], ['hf download $X', 'risky'], ['hf download org/{a,b}', 'risky'],
+  // (a redirection's path is a word like the others: quoted is a name, a pattern where it is placed)
+  ['echo new > p2/[^a]digit.txt', 'change'], ["echo new > 'p4/{a,b}.log'", 'change'], ['echo new > p4/{a,b}.log', 'risky'], ['cat < /tmp/x*', 'look'],
   // The sixth read's residue: 65 at once that should not be. 58 are asked now; 7 stay at once and are the wall's (A7b): a
   // reader through a key folder, a key file a tool keeps, a copy of the whole home, what the next terminal runs.
   ['chmod {777,.}', 'risky'], ['chmod {777,~}', 'risky'], ['chown {nobody,.}', 'risky'], ['chgrp {nogroup,.}', 'risky'], ['chattr {+i,.}', 'risky'],
