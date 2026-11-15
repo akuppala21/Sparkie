@@ -34,7 +34,7 @@ writeFileSync(join(dir, 'sort.mjs'), [
   'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null, ladder: [], sortOpts: null }, knownOffline = () => hooks.offline;',
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
   // (run's ladder and the runner's sorter options, 21-ladder.mjs and 21-runner.mjs: stood in, so a test sees what reaches them)
-  'const runnerSortOpts = () => hooks.sortOpts || {}, workChange = async (n, c, s) => { hooks.ladder.push(c); return { ladder: s.class }; };',
+  'const RUNNER_DIR = "~/work", runnerSortOpts = () => hooks.sortOpts || {}, workChange = async (n, c, s) => { hooks.ladder.push(c); return { ladder: s.class }; };',
   ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shell|sort|tools)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   'export { sortCommand, ACTIONS, hooks };',

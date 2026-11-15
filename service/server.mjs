@@ -13724,14 +13724,18 @@ function noteTailnet(code, out) {
   let st = null;
   try { st = code === 0 ? JSON.parse(out) : null; } catch {}
   if (!st || typeof st !== 'object' || !st.Self || typeof st.Self !== 'object') { waysIn.keysMiss = true; return; }
-  const peers = Object.values(st.Peer && typeof st.Peer === 'object' ? st.Peer : {}).filter(p => p && typeof p === 'object'), keys = {};
+  const peers = Object.values(st.Peer && typeof st.Peer === 'object' ? st.Peer : {}).filter(p => p && typeof p === 'object'), keys = {}, ssh = {};
   for (const n of NODES) {
     const p = n.host === 'local' ? st.Self : peers.find(x => Array.isArray(x.TailscaleIPs) && x.TailscaleIPs.some(ip => ip && (ip === n.ip || ip === n.host)));
     if (!p) continue;
     const t = Date.parse(typeof p.KeyExpiry === 'string' ? p.KeyExpiry : ''), name = [String(p.DNSName || '').split('.')[0], p.HostName].find(x => /^[a-z0-9][a-z0-9-]{0,62}$/i.test(x || ''));
     keys[n.id] = { expires: Number.isFinite(t) ? t : null, expired: p.Expired === true, machine: name || null };
+    // (whether that Spark advertises Tailscale SSH: its entry carries host keys for it; the ladder asks while one does,
+    // 21-ladder.mjs. "Off" only for this machine or a peer that is online now; an offline one, or a Spark not in the
+    // answer, is null or no entry here: "can't tell", never "off".)
+    ssh[n.id] = Array.isArray(p.sshHostKeys) && p.sshHostKeys.length > 0 ? true : p === st.Self || p.Online === true ? false : null;
   }
-  Object.assign(waysIn, { keys, keysAt: Date.now(), keysMiss: false });
+  Object.assign(waysIn, { keys, ssh, keysAt: Date.now(), keysMiss: false });
 }
 
 // Linger for the console's own user on Spark 2, read as the installer reads it. One look at a time.
@@ -15301,6 +15305,9 @@ def manifest(sd):
     return json.loads(raw)
 
 if A['mode'] == 'copy':
+    # (the work folder a change starts in, made here, as the owner, before the unit: a real folder of this account)
+    if A.get('workdir'):
+        folder(whole(A['workdir']), True)
     sd = setdir(True)
     man = {'set': A['set'], 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
     total, seen = 0, set()
@@ -15869,21 +15876,23 @@ action({
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the
 // brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At
-// once, through the runner (21-runner.mjs: copies first, inside the run wall): a plain change when hostClear holds.
-// Otherwise asked: one button for the owner with the exact command, built here, on the page and in the paired Telegram
-// chat; a risky change of a dangerous kind (a delete it cannot see, the brain's names) is the dangerous ask (20-danger.mjs).
-// The owner's press runs it, sorted again then; the hash of each script it runs is taken when it is asked and taken
-// again at the press, and a script that changed between voids the press and asks again. What a request read from
-// outside (its records, for the dangerous ask's "came from") and what its changes wrote (passed to the sorter as
-// opts.written, so a command that runs one is asked) are kept with the turn's ctx and its task (14-chats.mjs).
+// once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
+// hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
+// placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
+// with the exact command, built here, on the page and in the paired Telegram chat; a risky change of a dangerous kind
+// (a delete it cannot see, the brain's names) is the dangerous ask (20-danger.mjs). The owner's press runs it, sorted
+// again then; the hash of each script it runs is taken when it is asked and taken again at the press, and a script that
+// changed between voids the press and asks again. What a request read from outside (its records, for the dangerous
+// ask's "came from") and what its changes wrote (passed to the sorter as opts.written, so a command that runs one is
+// asked) are kept with the turn's ctx and its task (14-chats.mjs).
 const WORK_READS = 40, WORK_WRITTEN = 1024, WORK_SCRIPTS = 8, WORK_ASK_MS = 15 * 60000;
 // The request's reads and writes, from its task: what turnRequest puts on ctx.
 const workTask = task => ({ reads: Array.isArray(task?.reads) ? task.reads.slice(-WORK_READS) : [],
-  written: Array.isArray(task?.written) ? task.written.slice(-WORK_WRITTEN) : [] });
+  written: Array.isArray(task?.written) ? task.written.slice(0, WORK_WRITTEN + 1) : [] });
 // …and back onto the task at the turn's end (keepTask).
 function workKeep(task, ctx) {
   if (Array.isArray(ctx?.reads) && ctx.reads.length) task.reads = ctx.reads.slice(-WORK_READS);
-  if (Array.isArray(ctx?.written) && ctx.written.length) task.written = ctx.written.slice(-WORK_WRITTEN);
+  if (Array.isArray(ctx?.written) && ctx.written.length) task.written = ctx.written.slice(0, WORK_WRITTEN + 1);
 }
 // One read from outside, by its journal record: a label built by code (the tool's title and its Spark), never its words.
 function workRead(ctx, id, title, args) {
@@ -15895,10 +15904,10 @@ function workRead(ctx, id, title, args) {
   if (ctx.reads.length > WORK_READS) ctx.reads.splice(0, ctx.reads.length - WORK_READS);
 }
 // What a change that ran wrote, as the sorter placed it, for the commands after it in this request.
+// (never trimmed: kept past 1,024, where the sorter doubts, so the commands after it are asked)
 function workWrote(ctx, sorted) {
   if (!Array.isArray(ctx?.written)) return;
-  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && !ctx.written.includes(p)) ctx.written.push(p);
-  if (ctx.written.length > WORK_WRITTEN) ctx.written.splice(0, ctx.written.length - WORK_WRITTEN);
+  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
 }
 
 // Whether a change runs at once (design A 2.5): why not, or null when it may. 1, the owner (their chats, Telegram, the
@@ -15909,6 +15918,12 @@ function hostClear(node, sorted, viewer, ctx) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${sorted.why}`;
+  const reached = runnerProtected(sorted);
+  if (reached.length) return `it changes ${reached.join(', ')}, which a change gets only after your yes`;
+  // (no change runs at once while a Spark offers a shell with no key: Tailscale SSH, from the tailnet's own answer)
+  const ts = workTailnetSsh();
+  if (ts.on.length) return `Tailscale SSH is on for ${ts.on.join(', ')}, so a command could reach a shell there with no key`;
+  if (ts.unknown.length) return `whether Tailscale SSH is on for ${ts.unknown.join(', ')} couldn’t be told`;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
@@ -15916,6 +15931,18 @@ function hostClear(node, sorted, viewer, ctx) {
     if (ctx.readOutside) return 'Sparkie read text from outside first';
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
+}
+
+// Tailscale SSH on the fleet, from the tailnet's own answer (noteTailnet, 20-ways-in.mjs): the Sparks that advertise it,
+// and those it can't tell for (an answer that couldn't be read or is older than three looks; a Spark missing from it,
+// or offline).
+function workTailnetSsh() {
+  const fresh = !waysIn.keysMiss && waysIn.keysAt > 0 && Date.now() - waysIn.keysAt <= LOOK_STALE_MS, on = [], unknown = [];
+  for (const n of NODES) {
+    const v = fresh ? waysIn.ssh?.[n.id] : undefined;
+    if (v === true) on.push(sparkName(n)); else if (v !== false) unknown.push(sparkName(n));
+  }
+  return { on, unknown };
 }
 
 // The scripts a command runs, hashed on the Spark now: {path: SHA-256, or null when it isn't a plain file there}.
@@ -15942,13 +15969,13 @@ function workLabel(node, command, sorted, why, ctx, hashes) {
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...scripts].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const hashes = await workScripts(node, sorted.scripts);
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx), { hashes, at: Date.now() });
-  const call = { action: 'run', args: { on: node.id, command } };
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
@@ -15958,7 +15985,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why) {
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
-async function workChange(node, command, sorted, viewer, ctx) {
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
@@ -15972,17 +15999,21 @@ async function workChange(node, command, sorted, viewer, ctx) {
       const now = await workScripts(node, sorted.scripts);
       if (Object.keys(was.hashes).some(p => was.hashes[p] !== now[p])) {
         workAsks.delete(key);
-        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void');
+        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir);
       }
     }
     workAsks.delete(key);
-    return runChange(node, command, viewer, ctx, { asked: true });
+    return runChange(node, command, viewer, ctx, { asked: true, dir });
   }
   const why = hostClear(node, sorted, viewer, ctx);
-  // (at once; or the owner's own call with no chat to show a button in, the API: the runner answers it, and refuses
-  // anything but a plain change in its own words)
-  if (!why || (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey)) return runChange(node, command, viewer, ctx);
-  return workAsk(node, command, sorted, viewer, ctx, why);
+  if (!why) return runChange(node, command, viewer, ctx, { dir });
+  // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
+  // won't run unasked gets its own words; any other reason is said.
+  if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
+    if (sorted.class !== 'change' || runnerProtected(sorted).length) return runChange(node, command, viewer, ctx, { dir });
+    throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
+  }
+  return workAsk(node, command, sorted, viewer, ctx, why, dir);
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
 // Area: features        Rules: R41, R56        Tests: power-wake-pair.test.mjs, power-wake.test.mjs
@@ -17115,9 +17146,10 @@ const RUNNER_WAYS = ['~/.ssh/authorized_keys', '~/.ssh/authorized_keys2', '~/.ss
   '/etc/nftables.conf', '/etc/iptables', '/etc/default/tailscaled', '/var/lib/tailscale'];
 // What the sorter is told about where it runs (run, 21-work.mjs, and the runner itself): that Spark's own
 // user's home, which paths are placed against.
-// What this request's earlier changes wrote goes in too (written), so a command that runs one of them is asked (A7c).
-const runnerSortOpts = (node, ctx = {}) => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir: '~', home: `/home/${node.user || CONFIG.user}`,
-  ...(Array.isArray(ctx.written) && ctx.written.length ? { written: ctx.written.slice(-1024) } : {}),
+// What this request's earlier changes wrote goes in too (written, every path, never trimmed: past 1,024 the sorter
+// doubts, so the command is asked), so a command that runs one of them is asked; and where it starts (dir) (A7c).
+const runnerSortOpts = (node, ctx = {}, dir = '~') => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir, home: `/home/${node.user || CONFIG.user}`,
+  ...(Array.isArray(ctx.written) && ctx.written.length ? { written: ctx.written } : {}),
   hosts: Object.fromEntries(NODES.flatMap(n => [[n.id, n.host === 'local' ? 'hub' : 'compute'], ...(n.host && n.host !== 'local' ? [[n.host, 'compute']] : [])])),
   brain: [MAIN?.container, MAIN?.served, MAIN?.model].filter(x => typeof x === 'string') });
 // Whatever its caller says, the runner refuses: Spark 2, a Spark holding the brain, root (sudo or su in it, or the root
@@ -17157,15 +17189,32 @@ const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
 // not even 1 GB is free. Not live yet: the helper's run verb takes no cap (it asks for 8 GB), so the room check stays
 // today's 8 GB until it does.
+// Where a change starts unless its caller says (A7c): a work folder, so a read-only top of the home costs an everyday
+// change nothing. The console makes it, as the owner, in the copies' own call before the unit (21-copies.mjs).
+const RUNNER_DIR = '~/work';
+// The folders a change gets read-only (the helper's --protect, as ~/…): the model store, the Hugging Face cache and
+// the jobs' shared folder. A change the sorter places in one is asked (21-ladder.mjs), and after the yes runs without
+// that one. Each goes only when it is a real folder there now (helperScript).
+const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
+// What the pinned helper takes (21-work.mjs, HELPER_SHA256): --protect as ~/…, and --memory. Each is off until the
+// helper that takes it is pinned here, with its hash in the same commit.
+const HELPER_TAKES = { homeProtect: false, memory: false };
+// The protect folders a sorted command reaches: one of its places is in one, or holds one (rm -r ~/.cache).
+const runnerProtected = sorted => RUNNER_PROTECT.filter(d => [...(sorted?.placed || []), ...(sorted?.wide || [])]
+  .some(p => typeof p === 'string' && (p === d || p.startsWith(`${d}/`) || d.startsWith(`${p.replace(/\/+$/, '')}/`))));
 function runnerMemoryCap(available) {
   const room = Math.floor((Number(available) - KEEP_FREE) / 2 ** 30);
   return Number.isFinite(room) && room >= 1 ? Math.min(8, room) : null;
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false } = {}) {
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
-  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx));
+  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+  // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
+  const reached = runnerProtected(sorted);
+  if (reached.length && !asked) throw new HttpError(409, `It changes ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
+  const protect = HELPER_TAKES.homeProtect ? RUNNER_PROTECT.filter(d => !reached.includes(d)) : [];
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
@@ -17173,7 +17222,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds, ...(dir === RUNNER_DIR ? { workdir: dir } : {}) });
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -17188,11 +17237,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         notKept: lost.slice(0, 50).map(said) };
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600) }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -18809,9 +18858,12 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // single-quoted word. It answers with lines that begin with the call's id: "console none" (no helper there), "console
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null }) {
+// For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
+// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [] }) {
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
-  const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir "$HOME" -- ${q(command)}` : `${verb} --id "$id"`;
+  const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
+  const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' && /^~(?:\/[\w.@+-]+)*$/.test(dir) ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
     "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
@@ -18821,6 +18873,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
+    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
+    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
@@ -18934,10 +18988,10 @@ async function runCommand(input, viewer, ctx = {}) {
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
-      const opts = runnerSortOpts(node, ctx), sorted = sortCommand(command, opts);
+      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
       // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
       // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx);
+      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir);
     }
   }
   const rid = journalId(), rec = { outcome: 'refused' };
@@ -18990,6 +19044,7 @@ action({
   input: { type: 'object', properties: {
     on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
     command: { type: 'string', maxLength: 2000, pattern: '^[^\\x00]*$', description: 'One shell command.' },
+    dir: { type: 'string', maxLength: 300, pattern: '^~(/[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });

@@ -33,14 +33,18 @@ function noteTailnet(code, out) {
   let st = null;
   try { st = code === 0 ? JSON.parse(out) : null; } catch {}
   if (!st || typeof st !== 'object' || !st.Self || typeof st.Self !== 'object') { waysIn.keysMiss = true; return; }
-  const peers = Object.values(st.Peer && typeof st.Peer === 'object' ? st.Peer : {}).filter(p => p && typeof p === 'object'), keys = {};
+  const peers = Object.values(st.Peer && typeof st.Peer === 'object' ? st.Peer : {}).filter(p => p && typeof p === 'object'), keys = {}, ssh = {};
   for (const n of NODES) {
     const p = n.host === 'local' ? st.Self : peers.find(x => Array.isArray(x.TailscaleIPs) && x.TailscaleIPs.some(ip => ip && (ip === n.ip || ip === n.host)));
     if (!p) continue;
     const t = Date.parse(typeof p.KeyExpiry === 'string' ? p.KeyExpiry : ''), name = [String(p.DNSName || '').split('.')[0], p.HostName].find(x => /^[a-z0-9][a-z0-9-]{0,62}$/i.test(x || ''));
     keys[n.id] = { expires: Number.isFinite(t) ? t : null, expired: p.Expired === true, machine: name || null };
+    // (whether that Spark advertises Tailscale SSH: its entry carries host keys for it; the ladder asks while one does,
+    // 21-ladder.mjs. "Off" only for this machine or a peer that is online now; an offline one, or a Spark not in the
+    // answer, is null or no entry here: "can't tell", never "off".)
+    ssh[n.id] = Array.isArray(p.sshHostKeys) && p.sshHostKeys.length > 0 ? true : p === st.Self || p.Online === true ? false : null;
   }
-  Object.assign(waysIn, { keys, keysAt: Date.now(), keysMiss: false });
+  Object.assign(waysIn, { keys, ssh, keysAt: Date.now(), keysMiss: false });
 }
 
 // Linger for the console's own user on Spark 2, read as the installer reads it. One look at a time.

@@ -57,7 +57,7 @@ test('every program the call to the root helper and the copies run is on PATH_PR
   const far = { id: 'spark3', host: '100.0.0.3' }, hub = { id: 'spark2', host: 'local' }, texts = [];
   for (const node of [far, hub]) {
     texts.push(own.helperScript(node, 'look', { id: 'abcdefgh1234', command: 'cat x', seconds: 30, words: ['x'], walks: ['y'] }));
-    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30 }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~/work', protect: ['~/models', '~/.cache/huggingface'] }));
     texts.push(own.helperScript(node, 'prove', { id: 'abcdefgh1234' }));
   }
   // Each exact form, by a command that is that form (every row of the table is reached).

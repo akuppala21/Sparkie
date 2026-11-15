@@ -11,7 +11,7 @@
 // Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
@@ -19,7 +19,8 @@ import { rehearse } from './rehearsal.mjs';
 const SECONDS = 6;
 const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const keys = {};
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS) },
+// (the tailnet is read every second here, so a test that changes what it says is seen soon)
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
@@ -37,11 +38,12 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS) },
 });
 
 const H3 = () => join(T.fleet.root, 'spark3'), at3 = p => join(H3(), p), text = p => readFileSync(at3(p), 'utf8');
-const run = (command, on = 'spark3') => api('/actions/run', { method: 'POST', body: { on, command } });
+// (most changes here start in ~, as written; the work folder's own test leaves dir out)
+const run = (command, on = 'spark3', dir = '~') => api('/actions/run', { method: 'POST', body: { on, command, ...(dir ? { dir } : {}) } });
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
-const RUN = command => ({ name: 'run', arguments: { on: 'spark3', command } });
+const RUN = (command, dir = '~') => ({ name: 'run', arguments: { on: 'spark3', command, ...(dir ? { dir } : {}) } });
 // One owner's message in a chat, the stand-in brain calling these rounds of tools; its tool steps and its buttons.
 async function turn(chat, words, rounds) {
   script([{ match: `^${words}$`, rounds }]);
@@ -123,7 +125,7 @@ test('a risky delete is the dangerous ask, and it names what came from what the 
 });
 
 test('an agent\'s change is a button for the owner; not done, the lock-out class and Spark 2 are refused, with their own words on the line', { timeout: 120000 * SLOW }, async () => {
-  const a = await call(keys.act.token, 'run', { on: 'spark3', command: 'touch notes/agent.txt' });
+  const a = await call(keys.act.token, 'run', { on: 'spark3', command: 'touch notes/agent.txt', dir: '~' });
   assert.equal(a.isError, false, a.text);
   assert.equal(a.value.outcome, 'question', a.text);
   assert.match(a.value.note, /^Only the owner can answer this one, from Spark Console, and nothing was done\./);
@@ -209,4 +211,68 @@ test('the unit\'s memory cap, worked out from what is free beyond the 8 GB kept:
   const cap = new Function('KEEP_FREE', `${fn}\nreturn runnerMemoryCap;`)(8 * 2 ** 30);
   const G = 2 ** 30;
   assert.deepEqual([7 * G, 8.5 * G, 9 * G, 12.5 * G, 16 * G, 100 * G].map(cap), [null, null, 1, 4, 8, 8]);
+});
+
+test('a change starts in the work folder, ~/work, which the console makes first (owner only); dir ~ starts it in the home', { timeout: 60000 * SLOW }, async () => {
+  rmSync(at3('work'), { recursive: true, force: true });
+  const r = await run('echo w > here.txt', 'spark3', null);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(text('work/here.txt'), 'w\n');
+  assert.ok(!existsSync(at3('here.txt')));
+  assert.equal(statSync(at3('work')).mode & 0o777, 0o700);
+  const held = unit => readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', unit, 'dir'), 'utf8');
+  const unitOf = command => lines(join(T.fleet.journalDir, readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).sort().at(-1)))
+    .filter(x => x.k === 'cmd' && x.start && x.args?.command === command).at(-1)?.unit;
+  assert.equal(held(unitOf('echo w > here.txt')), join(H3(), 'work'), 'the unit was handed ~/work');
+  const h = await run('echo h > notes/home.txt', 'spark3', '~');
+  assert.equal(h.status, 200, h.text);
+  assert.equal(held(unitOf('echo h > notes/home.txt')), H3());
+});
+
+test('a change the sorter places in the model store is asked, and runs after the yes; until the helper takes ~/ for --protect none is passed', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('models/m1'), { recursive: true });
+  const chat = await newChat();
+  const r = await turn(chat, 'fix the model settings on spark 3', [[RUN('touch ~/models/m1/spark.json')]]);
+  const [asked] = sentBack('fix the model settings on spark 3');
+  assert.match(asked?.question || '', /\nAsked because it changes ~\/models, which a change gets only after your yes\.\n/, JSON.stringify(asked));
+  assert.ok(!existsSync(at3('models/m1/spark.json')));
+  const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(existsSync(at3('models/m1/spark.json')), p.text);
+  // (the owner's own call is refused, in the runner's words: no button to show there)
+  const d = await run('touch ~/models/m1/other.json');
+  assert.equal(d.status, 409, d.text);
+  assert.match(d.json.error, /^It changes ~\/models, which a change gets only after the owner’s yes, so nothing ran\.$/);
+  // (HELPER_TAKES.homeProtect: off until the helper that takes --protect '~/…' is pinned; then the unit gets them)
+  assert.match(readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8'), /^const HELPER_TAKES = \{ homeProtect: false, memory: false \};$/m);
+});
+
+test('no change runs at once while a Spark advertises Tailscale SSH, or while that can\'t be told (a Spark missing, offline, or the answer unread)', { timeout: 120000 * SLOW }, async () => {
+  const status = join(T.fleet.dir, 'status.json');
+  const peer = (n, extra = {}) => ({ [`nodekey:${n}`]: { HostName: `akspark${n}`, TailscaleIPs: [`100.64.0.${n}`], Online: true, ...extra } });
+  const tailnet = peers => JSON.stringify({ BackendState: 'Running', Self: { HostName: 'akspark2', TailscaleIPs: ['100.64.0.2'] }, Peer: Object.assign({}, ...peers) });
+  const asks = async (n, re) => {
+    await sleep(2500);
+    const chat = await newChat(), words = `fix the notes ${n} on spark 3`;
+    const r = await turn(chat, words, [[RUN(`echo ${n} > notes/ts${n}.txt`)]]);
+    const [asked] = sentBack(words);
+    assert.match(asked?.question || '', re, JSON.stringify(asked));
+    assert.ok(!existsSync(at3(`notes/ts${n}.txt`)), 'nothing ran');
+    await choose(chat, r.choices.find(c => c.label === 'No').id);
+  };
+  try {
+    writeFileSync(status, tailnet([peer(1), peer(3, { sshHostKeys: ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandInHostKey'] }), peer(4)]));
+    await asks(1, /\nAsked because Tailscale SSH is on for Spark 3, so a command could reach a shell there with no key\.\n/);
+    writeFileSync(status, tailnet([peer(1), peer(3)]));
+    await asks(2, /\nAsked because whether Tailscale SSH is on for Spark 4 couldn’t be told\.\n/);
+    writeFileSync(status, tailnet([peer(1), peer(3), peer(4, { Online: false })]));
+    await asks(3, /\nAsked because whether Tailscale SSH is on for Spark 4 couldn’t be told\.\n/);
+    writeFileSync(status, 'not json');
+    await asks(4, /\nAsked because whether Tailscale SSH is on for Spark 1, Spark 2, Spark 3, Spark 4 couldn’t be told\.\n/);
+  } finally { rmSync(status, { force: true }); }
+  await sleep(2500);
+  const chat = await newChat();
+  const r = await turn(chat, 'fix the notes 5 on spark 3', [[RUN('echo 5 > notes/ts5.txt')]]);
+  assert.deepEqual(r.choices, [], 'at once again');
+  assert.equal(text('notes/ts5.txt'), '5\n');
 });

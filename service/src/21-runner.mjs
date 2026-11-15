@@ -28,9 +28,10 @@ const RUNNER_WAYS = ['~/.ssh/authorized_keys', '~/.ssh/authorized_keys2', '~/.ss
   '/etc/nftables.conf', '/etc/iptables', '/etc/default/tailscaled', '/var/lib/tailscale'];
 // What the sorter is told about where it runs (run, 21-work.mjs, and the runner itself): that Spark's own
 // user's home, which paths are placed against.
-// What this request's earlier changes wrote goes in too (written), so a command that runs one of them is asked (A7c).
-const runnerSortOpts = (node, ctx = {}) => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir: '~', home: `/home/${node.user || CONFIG.user}`,
-  ...(Array.isArray(ctx.written) && ctx.written.length ? { written: ctx.written.slice(-1024) } : {}),
+// What this request's earlier changes wrote goes in too (written, every path, never trimmed: past 1,024 the sorter
+// doubts, so the command is asked), so a command that runs one of them is asked; and where it starts (dir) (A7c).
+const runnerSortOpts = (node, ctx = {}, dir = '~') => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir, home: `/home/${node.user || CONFIG.user}`,
+  ...(Array.isArray(ctx.written) && ctx.written.length ? { written: ctx.written } : {}),
   hosts: Object.fromEntries(NODES.flatMap(n => [[n.id, n.host === 'local' ? 'hub' : 'compute'], ...(n.host && n.host !== 'local' ? [[n.host, 'compute']] : [])])),
   brain: [MAIN?.container, MAIN?.served, MAIN?.model].filter(x => typeof x === 'string') });
 // Whatever its caller says, the runner refuses: Spark 2, a Spark holding the brain, root (sudo or su in it, or the root
@@ -70,15 +71,32 @@ const RUNNER_STOP_S = 6;
 // The unit's memory cap, worked out from what is free beyond the 8 GB kept (R2): at least 1 GB, at most 8; null when
 // not even 1 GB is free. Not live yet: the helper's run verb takes no cap (it asks for 8 GB), so the room check stays
 // today's 8 GB until it does.
+// Where a change starts unless its caller says (A7c): a work folder, so a read-only top of the home costs an everyday
+// change nothing. The console makes it, as the owner, in the copies' own call before the unit (21-copies.mjs).
+const RUNNER_DIR = '~/work';
+// The folders a change gets read-only (the helper's --protect, as ~/…): the model store, the Hugging Face cache and
+// the jobs' shared folder. A change the sorter places in one is asked (21-ladder.mjs), and after the yes runs without
+// that one. Each goes only when it is a real folder there now (helperScript).
+const RUNNER_PROTECT = ['~/models', '~/.cache/huggingface', '~/.local/share/spark-portal/workspaces/shared'];
+// What the pinned helper takes (21-work.mjs, HELPER_SHA256): --protect as ~/…, and --memory. Each is off until the
+// helper that takes it is pinned here, with its hash in the same commit.
+const HELPER_TAKES = { homeProtect: false, memory: false };
+// The protect folders a sorted command reaches: one of its places is in one, or holds one (rm -r ~/.cache).
+const runnerProtected = sorted => RUNNER_PROTECT.filter(d => [...(sorted?.placed || []), ...(sorted?.wide || [])]
+  .some(p => typeof p === 'string' && (p === d || p.startsWith(`${d}/`) || d.startsWith(`${p.replace(/\/+$/, '')}/`))));
 function runnerMemoryCap(available) {
   const room = Math.floor((Number(available) - KEEP_FREE) / 2 ** 30);
   return Number.isFinite(room) && room >= 1 ? Math.min(8, room) : null;
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false } = {}) {
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
-  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx));
+  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+  // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
+  const reached = runnerProtected(sorted);
+  if (reached.length && !asked) throw new HttpError(409, `It changes ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
+  const protect = HELPER_TAKES.homeProtect ? RUNNER_PROTECT.filter(d => !reached.includes(d)) : [];
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
@@ -86,7 +104,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds, ...(dir === RUNNER_DIR ? { workdir: dir } : {}) });
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -101,11 +119,11 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         notKept: lost.slice(0, 50).map(said) };
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600) }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };

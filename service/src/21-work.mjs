@@ -143,9 +143,12 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // single-quoted word. It answers with lines that begin with the call's id: "console none" (no helper there), "console
 // unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
 // key check); otherwise the helper's own.
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null }) {
+// For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
+// protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [] }) {
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
-  const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir "$HOME" -- ${q(command)}` : `${verb} --id "$id"`;
+  const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
+  const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' && /^~(?:\/[\w.@+-]+)*$/.test(dir) ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
     "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
@@ -155,6 +158,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
     // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
+    // (a protect folder that isn't a real folder there now is left out: the helper refuses one)
+    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
@@ -268,10 +273,10 @@ async function runCommand(input, viewer, ctx = {}) {
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
-      const opts = runnerSortOpts(node, ctx), sorted = sortCommand(command, opts);
+      const dir = input.dir || RUNNER_DIR, opts = runnerSortOpts(node, ctx, dir), sorted = sortCommand(command, opts);
       // (sudo: a line whose rest only reads is told to leave it out, below; one whose rest is a change is root, the
       // ladder's to refuse, design A 2.8)
-      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx);
+      if (sorted.class !== 'look' && !(sudo && ['look', 'notdone'].includes(sortCommand(command.replace(/\bsudo(?:\s+-[A-Za-z]+)*\s+/g, ''), opts).class))) return workChange(node, command, sorted, viewer, ctx, dir);
     }
   }
   const rid = journalId(), rec = { outcome: 'refused' };
@@ -324,6 +329,7 @@ action({
   input: { type: 'object', properties: {
     on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
     command: { type: 'string', maxLength: 2000, pattern: '^[^\\x00]*$', description: 'One shell command.' },
+    dir: { type: 'string', maxLength: 300, pattern: '^~(/[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });

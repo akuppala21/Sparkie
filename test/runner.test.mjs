@@ -87,7 +87,8 @@ const BEFORE = () => at3('.local/share/spark-console/before');
 const sets = () => (existsSync(BEFORE()) ? readdirSync(BEFORE()).sort() : []);
 const manifestOf = set => JSON.parse(readFileSync(join(BEFORE(), set, 'manifest.json'), 'utf8'));
 const copyOf = (set, p) => { const e = manifestOf(set).entries.find(x => x.path === real(p)); return e && { ...e, bytes: e.kind === 'file' ? readFileSync(join(BEFORE(), set, 'files', String(e.n))) : null }; };
-const run = (command, on = 'spark3') => api('/actions/run', { method: 'POST', body: { on, command } });
+// (a change starts in ~ here, as these tests were written: the default is ~/work, A7c)
+const run = (command, on = 'spark3') => api('/actions/run', { method: 'POST', body: { on, command, dir: '~' } });
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
 const files = dir => (existsSync(dir) ? readdirSync(dir).sort() : []);
 // The journal's records about commands (its lines of kind cmd), and all its text.
@@ -110,7 +111,7 @@ const units = () => lines(join(H3(), '.rehearsal', 'calls.log')).filter(c => c[0
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
 async function inChat(chat, words, name, args = {}) {
-  script([{ match: `^${words}$`, calls: [{ name, arguments: args }] }]);
+  script([{ match: `^${words}$`, calls: [{ name, arguments: name === 'run' ? { dir: '~', ...args } : args }] }]);
   let r;
   try { r = await say(chat, words); } finally { noScript(); }
   const sent = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').at(-1)?.results?.[0]?.content;
@@ -551,7 +552,7 @@ test('a Spark that holds the brain is never run on: with Sparkie\'s model on Spa
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   } });
   later.push(F);
-  const r = await fetch(`${F.base}/actions/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify({ on: 'spark3', command: 'touch notes/brain.txt' }) });
+  const r = await fetch(`${F.base}/actions/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify({ on: 'spark3', command: 'touch notes/brain.txt', dir: '~' }) });
   const j = await r.json();
   assert.equal(r.status, 403, JSON.stringify(j));
   assert.equal(j.error, 'Spark 3 holds the brain, so the runner changes nothing there.');
@@ -568,7 +569,7 @@ const copyTo = from => ({ dir, stateDir }) => {
 test('the start line is on disk before the unit runs: a console stopped between them tells the owner once, after its restart, what was running and where, that its end is unknown, and never runs it again', { timeout: 240000 * SLOW }, async () => {
   const chat = await newChat();
   const command = `touch notes/cut-started && sleep 30 # HF_TOKEN=${KEY2}`;
-  script([{ match: '^try the long one on spark 3$', calls: [{ name: 'run', arguments: { on: 'spark3', command } }] }]);
+  script([{ match: '^try the long one on spark 3$', calls: [{ name: 'run', arguments: { on: 'spark3', command, dir: '~' } }] }]);
   say(chat, 'try the long one on spark 3').catch(() => {});
   await waitFor(() => existsSync(at3('notes/cut-started')), { every: 100, what: 'the unit to start' });
   const start = records().find(r => r.start && r.act === 'run' && r.chat === chat);

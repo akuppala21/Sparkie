@@ -6,21 +6,23 @@
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the
 // brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At
-// once, through the runner (21-runner.mjs: copies first, inside the run wall): a plain change when hostClear holds.
-// Otherwise asked: one button for the owner with the exact command, built here, on the page and in the paired Telegram
-// chat; a risky change of a dangerous kind (a delete it cannot see, the brain's names) is the dangerous ask (20-danger.mjs).
-// The owner's press runs it, sorted again then; the hash of each script it runs is taken when it is asked and taken
-// again at the press, and a script that changed between voids the press and asks again. What a request read from
-// outside (its records, for the dangerous ask's "came from") and what its changes wrote (passed to the sorter as
-// opts.written, so a command that runs one is asked) are kept with the turn's ctx and its task (14-chats.mjs).
+// once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
+// hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
+// placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
+// with the exact command, built here, on the page and in the paired Telegram chat; a risky change of a dangerous kind
+// (a delete it cannot see, the brain's names) is the dangerous ask (20-danger.mjs). The owner's press runs it, sorted
+// again then; the hash of each script it runs is taken when it is asked and taken again at the press, and a script that
+// changed between voids the press and asks again. What a request read from outside (its records, for the dangerous
+// ask's "came from") and what its changes wrote (passed to the sorter as opts.written, so a command that runs one is
+// asked) are kept with the turn's ctx and its task (14-chats.mjs).
 const WORK_READS = 40, WORK_WRITTEN = 1024, WORK_SCRIPTS = 8, WORK_ASK_MS = 15 * 60000;
 // The request's reads and writes, from its task: what turnRequest puts on ctx.
 const workTask = task => ({ reads: Array.isArray(task?.reads) ? task.reads.slice(-WORK_READS) : [],
-  written: Array.isArray(task?.written) ? task.written.slice(-WORK_WRITTEN) : [] });
+  written: Array.isArray(task?.written) ? task.written.slice(0, WORK_WRITTEN + 1) : [] });
 // …and back onto the task at the turn's end (keepTask).
 function workKeep(task, ctx) {
   if (Array.isArray(ctx?.reads) && ctx.reads.length) task.reads = ctx.reads.slice(-WORK_READS);
-  if (Array.isArray(ctx?.written) && ctx.written.length) task.written = ctx.written.slice(-WORK_WRITTEN);
+  if (Array.isArray(ctx?.written) && ctx.written.length) task.written = ctx.written.slice(0, WORK_WRITTEN + 1);
 }
 // One read from outside, by its journal record: a label built by code (the tool's title and its Spark), never its words.
 function workRead(ctx, id, title, args) {
@@ -32,10 +34,10 @@ function workRead(ctx, id, title, args) {
   if (ctx.reads.length > WORK_READS) ctx.reads.splice(0, ctx.reads.length - WORK_READS);
 }
 // What a change that ran wrote, as the sorter placed it, for the commands after it in this request.
+// (never trimmed: kept past 1,024, where the sorter doubts, so the commands after it are asked)
 function workWrote(ctx, sorted) {
   if (!Array.isArray(ctx?.written)) return;
-  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && !ctx.written.includes(p)) ctx.written.push(p);
-  if (ctx.written.length > WORK_WRITTEN) ctx.written.splice(0, ctx.written.length - WORK_WRITTEN);
+  for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])]) if (typeof p === 'string' && ctx.written.length <= WORK_WRITTEN && !ctx.written.includes(p)) ctx.written.push(p);
 }
 
 // Whether a change runs at once (design A 2.5): why not, or null when it may. 1, the owner (their chats, Telegram, the
@@ -46,6 +48,12 @@ function hostClear(node, sorted, viewer, ctx) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${sorted.why}`;
+  const reached = runnerProtected(sorted);
+  if (reached.length) return `it changes ${reached.join(', ')}, which a change gets only after your yes`;
+  // (no change runs at once while a Spark offers a shell with no key: Tailscale SSH, from the tailnet's own answer)
+  const ts = workTailnetSsh();
+  if (ts.on.length) return `Tailscale SSH is on for ${ts.on.join(', ')}, so a command could reach a shell there with no key`;
+  if (ts.unknown.length) return `whether Tailscale SSH is on for ${ts.unknown.join(', ')} couldn’t be told`;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
@@ -53,6 +61,18 @@ function hostClear(node, sorted, viewer, ctx) {
     if (ctx.readOutside) return 'Sparkie read text from outside first';
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
+}
+
+// Tailscale SSH on the fleet, from the tailnet's own answer (noteTailnet, 20-ways-in.mjs): the Sparks that advertise it,
+// and those it can't tell for (an answer that couldn't be read or is older than three looks; a Spark missing from it,
+// or offline).
+function workTailnetSsh() {
+  const fresh = !waysIn.keysMiss && waysIn.keysAt > 0 && Date.now() - waysIn.keysAt <= LOOK_STALE_MS, on = [], unknown = [];
+  for (const n of NODES) {
+    const v = fresh ? waysIn.ssh?.[n.id] : undefined;
+    if (v === true) on.push(sparkName(n)); else if (v !== false) unknown.push(sparkName(n));
+  }
+  return { on, unknown };
 }
 
 // The scripts a command runs, hashed on the Spark now: {path: SHA-256, or null when it isn't a plain file there}.
@@ -79,13 +99,13 @@ function workLabel(node, command, sorted, why, ctx, hashes) {
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...scripts].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const hashes = await workScripts(node, sorted.scripts);
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx), { hashes, at: Date.now() });
-  const call = { action: 'run', args: { on: node.id, command } };
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
@@ -95,7 +115,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why) {
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
-async function workChange(node, command, sorted, viewer, ctx) {
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
@@ -109,15 +129,19 @@ async function workChange(node, command, sorted, viewer, ctx) {
       const now = await workScripts(node, sorted.scripts);
       if (Object.keys(was.hashes).some(p => was.hashes[p] !== now[p])) {
         workAsks.delete(key);
-        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void');
+        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir);
       }
     }
     workAsks.delete(key);
-    return runChange(node, command, viewer, ctx, { asked: true });
+    return runChange(node, command, viewer, ctx, { asked: true, dir });
   }
   const why = hostClear(node, sorted, viewer, ctx);
-  // (at once; or the owner's own call with no chat to show a button in, the API: the runner answers it, and refuses
-  // anything but a plain change in its own words)
-  if (!why || (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey)) return runChange(node, command, viewer, ctx);
-  return workAsk(node, command, sorted, viewer, ctx, why);
+  if (!why) return runChange(node, command, viewer, ctx, { dir });
+  // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
+  // won't run unasked gets its own words; any other reason is said.
+  if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
+    if (sorted.class !== 'change' || runnerProtected(sorted).length) return runChange(node, command, viewer, ctx, { dir });
+    throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
+  }
+  return workAsk(node, command, sorted, viewer, ctx, why, dir);
 }

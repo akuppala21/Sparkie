@@ -195,6 +195,9 @@ def manifest(sd):
     return json.loads(raw)
 
 if A['mode'] == 'copy':
+    # (the work folder a change starts in, made here, as the owner, before the unit: a real folder of this account)
+    if A.get('workdir'):
+        folder(whole(A['workdir']), True)
     sd = setdir(True)
     man = {'set': A['set'], 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
     total, seen = 0, set()
