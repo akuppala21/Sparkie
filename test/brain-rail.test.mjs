@@ -324,7 +324,11 @@ for (const [what, lockAt] of [['no lock for this build', join(TMP, 'none.json')]
 // The mark holds a turn in the paired Telegram chat too (its prompt and tools differ from the page's): a change to only
 // that is another mark, and a Telegram turn on a build with that mark is a button until an eval for it is kept.
 test('the mark holds what a Telegram turn is sent: only its prompt or its tools changed is another mark, and a Telegram turn is then a button', { timeout: 300000 * SLOW }, async t => {
-  const sent = await brainSent(T.fleet), reads = brainReadsOf(sent), tg = sent.catalog.telegram;
+  // (on a fresh stand-in fleet, as test/lock.mjs measures it: the lock's own mark for this tree, before and now)
+  const fresh = await startMock({ evalOnRecord: false });
+  let sent;
+  try { sent = await brainSent(fresh); } finally { await fresh.stop(); }
+  const reads = brainReadsOf(sent), tg = sent.catalog.telegram;
   assert.match(tg.system, /writing from Telegram/);
   assert.notEqual(tg.system, sent.system);
   const pageOnly = brainReadsOf({ ...sent, catalog: { ...sent.catalog, telegram: undefined } });
@@ -390,7 +394,7 @@ test('no eval on record: self-healing restarts a crashed model, and the owner’
     const head = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
     const seen = async () => ((await (await fetch(`${fleet.base}/actions/workloads`, { method: 'POST', headers: head, body: JSON.stringify({ spark: 'spark4' }) })).json()).workloads || []).some(w => w.name === name && w.running);
     const events = () => { try { return readFileSync(join(fleet.stateDir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
-    const containers = join(fleet.root, 'spark4', '.mock', 'containers'), stateOf4 = () => readFileSync(containers, 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+    const containers = join(fleet.root, 'spark4', '.mock', 'containers');
     const shown = await (await fetch(`${fleet.base}/actions/sparkie_setup`, { method: 'POST', headers: head, body: '{}' })).json();
     assert.match(shown.changes, /^Sparkie asks before every change, one button each: /);
     // (the watcher has to have seen it running: its first look is 15 s after the start)
@@ -398,8 +402,9 @@ test('no eval on record: self-healing restarts a crashed model, and the owner’
     const since = new Date().toISOString();
     writeFileSync(containers, readFileSync(containers, 'utf8').replace(new RegExp(`^${name}\\|running\\|[^|]*\\|`, 'm'), `${name}|exited|Exited (1) just now|`));
     rmSync(join(fleet.root, 'spark4', '.mock', `up-${name}`), { force: true });
-    await waitFor(() => events().some(e => e.at >= since && e.container === name && e.type === 'healing'), { timeout: 90000, every: 1000, what: 'self-healing' });
-    await waitFor(() => stateOf4() === 'running', { timeout: 90000, every: 1000, what: `${name} running again` });
+    const healing = await waitFor(() => events().find(e => e.at >= since && e.container === name && e.type === 'healing'), { timeout: 90000, every: 1000, what: 'self-healing' });
+    assert.match(healing.operation, /^[0-9a-f]{12}$/, JSON.stringify(healing));
+    assert.ok(auditLines(fleet).some(l => l.via === 'watcher' && l.action === 'restart_model' && l.ok === true && l.operation === healing.operation), 'the restart ran as self-healing, not a question');
     const test = await (await fetch(`${fleet.base}/actions/self_test`, { method: 'POST', headers: head, body: '{}' })).json();
     assert.equal(test.outcome, 'started', JSON.stringify(test));
   } finally { await fleet.stop(); }
