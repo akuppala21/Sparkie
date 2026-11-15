@@ -76,13 +76,14 @@ function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
   return budgetCut(turn, out, jid);
 }
 // The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
-// by its record (journalTool keeps it whole), and the next round is the last. (Kept apart: how a long result is cut may
-// change, design G step 5.)
+// by its record (journalTool keeps it whole; on Telegram and in an agent's chat it says, as digestOut does, that only
+// the owner reads it back), and the next round is the last. (Kept apart: how a long result is cut may change, design G
+// step 5.)
 function budgetCut(turn, out, jid) {
   if (!turn.unread.length && turn.outChars + out.length <= turn.TOOL_OUTPUT) { turn.outChars += out.length; return out; }
   turn.unread.push(jid);
   turn.spent ||= 'output';
-  return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${jid ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : 'It wasn’t kept: the record couldn’t be written.'} Answer now with what you have.`;
+  return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${!jid ? 'It wasn’t kept: the record couldn’t be written.' : jOwnCall(turn.viewer, turn.ctx) ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : `It is kept whole in record ${jid}, which only the owner reads back.`} Answer now with what you have.`;
 }
 // A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
 // results weren't read and where they are kept, or which calls were refused and why; then that the task carries on in
