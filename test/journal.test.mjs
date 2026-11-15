@@ -55,7 +55,8 @@ const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GEMMA = 'sc-gemma-3-12b-it';
 // at a line's beginning, and the shortened pieces (256 characters) fall inside keys.
 const KEYS = Array.from({ length: 80 }, (_, i) => `hf_${(`${i}`.padStart(3, '0') + 'k'.repeat(10) + Array.from({ length: 33 }, (_, j) => 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'[(i * 31 + j * 17 + j * j) % 55]).join(''))}`);
 const leaks = text => KEYS.flatMap(k => Array.from({ length: k.length - 11 }, (_, i) => k.slice(i, i + 12))).filter(f => text.includes(f));
-// A key's pieces of 12 characters: none may be in the journal, whole or cut.
+// A key's pieces of 12 characters: none may be in the journal, whole or cut. (Each key below follows a dash: a key
+// glued to a word is masked nowhere.)
 const piecesOf = key => Array.from({ length: key.length - 11 }, (_, i) => key.slice(i, i + 12));
 const SUBKEY = 'hf_Zq7Wm2Xr9Tb4Lk8Hs3Fd6Gp1Nc5Vy0Uj', EVKEY = 'hf_Pa4Ke8Rt2Wq6Yz0Bn3Mx7Lc1Vg5Hd9Js';
 let failedOp = null, refusedId = null;
@@ -90,7 +91,7 @@ test('a failed start: its log (keys hidden, also across two pieces), its attempt
     assert.ok((text.match(/\[hidden\]/g) || []).length >= 40, text);
     assert.deepEqual(leaks(everything()), [], 'no piece of any key, whole or split');
     // A key across the cut of a name the record is about (its model, cut at 120 characters): masked before the cut.
-    const named = await call(keys.look.token, 'where_it_fits', { model: `${'m'.repeat(105)}${SUBKEY}` });
+    const named = await call(keys.look.token, 'where_it_fits', { model: `${'m'.repeat(104)}-${SUBKEY}` });
     assert.equal(named.isError, true, named.text);
     const about = await waitFor(() => records().find(r => r.act === 'where_it_fits' && (r.sub || []).some(n => n.startsWith('mmmm'))), { what: 'the look\'s record' });
     assert.ok(about.sub.some(n => n.includes('[hidden]')), JSON.stringify(about.sub));
@@ -205,7 +206,7 @@ const copyTo = (from, events = []) => ({ dir, stateDir }) => {
 // An operation a restart cut off, whose notice (“A restart of Spark Console cut off deploy <model>…”) holds a key across
 // the 600 characters an event's text keeps: it is masked before the cut.
 const CUT_PREFIX = 'A restart of Spark Console cut off deploy ';
-const CUT_OP = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'fedcba987654', operation: 'deploy', status: 'started', model: `${'m'.repeat(585 - CUT_PREFIX.length)}${EVKEY}`, spark: 'spark3' };
+const CUT_OP = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'fedcba987654', operation: 'deploy', status: 'started', model: `${'m'.repeat(584 - CUT_PREFIX.length)}-${EVKEY}`, spark: 'spark3' };
 const env = { SPARK_CONSOLE_JOURNAL_MAX_BYTES: '2048', SPARK_CONSOLE_JOURNAL_NEEDS_BYTES: '1' };
 // Part of acceptance test T123: killed while a file write changes a Spark, after the restart one "cut off" notice, and
 // it is never run again.
