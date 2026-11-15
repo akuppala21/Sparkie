@@ -124,6 +124,7 @@ async function adoptRunning() {
       const m = await mainStatus();
       if (m.healthy) await recordVerified(job, { model: { name: MAIN.model, repo: repoOf(MAIN.model), manifest: { title: MAIN.title } }, engine: MAIN.engine, image: MAIN.image,
         args: (MAIN.args || []).map(String), env: MAIN.env || {}, nodes: [MAIN.node], host: '127.0.0.1', port: MAIN.port, onlyIfNew: true, brain: true });
+      if (m.healthy) checkBrainSoon('start', { ifNone: true });
     }
     const inv = await inventory(null);
     for (const sp of inv.sparks.filter(x => x.online)) {

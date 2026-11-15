@@ -296,6 +296,7 @@ async function switchMain(job, target, keep) {
   ROUTES.chat = { kind: 'main' };
   saveRoutes();
   note(job, `${kept.title} is now ${ASSISTANT_NAME}’s model`);
+  if (checkBrainSoon('switch')) note(job, 'Checking how it calls tools now, after the switch; sparkie_setup shows the result.');
 }
 
 async function stopMain(job, m = MAIN) {
