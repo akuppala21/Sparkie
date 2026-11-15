@@ -78,6 +78,8 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
+  // In one of the owner's own chats it is also asked in the paired Telegram chat (20-tg-approve.mjs, A10a).
+  if (ownerOnly && ctx.conv) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),
