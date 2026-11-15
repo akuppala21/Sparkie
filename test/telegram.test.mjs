@@ -3,7 +3,8 @@
 // tools); strangers, wrong codes, groups and bots get silence and never burn the code; the paired chat talks to Sparkie
 // (typing, plain text, previews off, split under 4,096, `/new`, `/status`), a change reports once as a fixed line,
 // buttons press as `telegram`, one turn at a time; forwarded, photo, old and token-shaped messages aren't read; going
-// back a build, memory and saved workflows wait in the console with the passkey; pause, injection, masking;
+// back a build, saved workflows and a memory erase wait in the console with the passkey (memory said there is kept,
+// marked as said on Telegram); pause, injection, masking;
 // unreachable, 409, a secrets file that can't be read (read again by itself, answered once it's back, no restart),
 // brain down (the line names `/restart sparkie`), revoked token, disconnect and `/unpair`; the owner's words there
 // (`/help`, `/pause` with no file path, `/restart sparkie`, `/stop` while Sparkie answers) answered by code, and
@@ -175,10 +176,11 @@ describe('Telegram', { concurrency: 1 }, () => {
       assert.equal(msgs.at(-2).content, 'what\'s running');
       const asked = requests().findLast(x => x.words === 'what\'s running');
       assert.match(asked.system, /writing from Telegram/);
-      for (const t of ['remember', 'forget_memory', 'save_workflow', 'forget_workflow']) assert.ok(!asked.tools.includes(t), `${t} offered`);
+      for (const t of ['save_workflow', 'forget_workflow']) assert.ok(!asked.tools.includes(t), `${t} offered`);
+      assert.ok(asked.tools.includes('remember'), 'remember not offered');
       // Telegram is offered what the page is for the same words (R46), less the page-only tools: here the core, start_model
       // in it.
-      const pageOnly = ['remember', 'forget_memory', 'save_workflow', 'forget_workflow'];
+      const pageOnly = ['save_workflow', 'forget_workflow'];
       await say(await newChat(), 'what\'s running');
       const onPage = requests().findLast(x => x.words === 'what\'s running' && !/writing from Telegram/.test(x.system));
       assert.deepEqual([...asked.tools].sort(), onPage.tools.filter(t => !pageOnly.includes(t)).sort());
@@ -382,7 +384,7 @@ describe('Telegram', { concurrency: 1 }, () => {
       assert.equal(auditLines().filter(l => l.action === 'rollback').length, rollbacks);
     });
 
-    test('memory and saved workflows: not offered on Telegram, and a model that calls them anyway gets an owner-only button', { timeout: 90000 * SLOW }, async () => {
+    test('saved workflows: not offered on Telegram, and a model that calls one anyway gets an owner-only button; memory said there is kept, marked as said on Telegram', { timeout: 90000 * SLOW }, async () => {
       script([{ match: '^remember that spark 3 is the coding box$', calls: [{ name: 'remember', arguments: { text: 'Spark 3 is the coding box', kind: 'fact' }, offered: false }] },
         { match: '^save my routine$', calls: [{ name: 'save_workflow', arguments: { title: 'coding mode', steps: [{ action: 'stop_model', args: { spark: 'spark3', container: 'x' } }] }, offered: false }] }]);
       try {
@@ -392,13 +394,15 @@ describe('Telegram', { concurrency: 1 }, () => {
         await sentAfter(from, 1);
         await tgSay('save my routine');
         await sentAfter(from, 2);
-        assert.equal(existsSync(memoryFile) ? readFileSync(memoryFile, 'utf8') : null, before, 'memory unchanged');
-        for (const action of ['remember', 'save_workflow']) {
+        assert.notEqual(existsSync(memoryFile) ? readFileSync(memoryFile, 'utf8') : null, before, 'memory changed');
+        const kept = JSON.parse(readFileSync(memoryFile, 'utf8')).entries.filter(e => e.text === 'Spark 3 is the coding box');
+        assert.deepEqual(kept.map(e => [e.by, e.src.via, e.src.channel]), [['owner', 'sparkie', 'telegram']]);
+        for (const [action, outcome] of [['remember', 'remembered'], ['save_workflow', 'question']]) {
           const line = auditLines().findLast(l => l.action === action);
-          assert.deepEqual([line?.outcome, line?.channel], ['question', 'telegram'], action);
+          assert.deepEqual([line?.outcome, line?.channel], [outcome, 'telegram'], action);
         }
         const asked = requests().findLast(x => x.words === 'save my routine');
-        assert.ok(!asked.tools.includes('remember') && !asked.tools.includes('save_workflow'));
+        assert.ok(asked.tools.includes('remember') && !asked.tools.includes('save_workflow'));
       } finally { noScript(); }
     });
 

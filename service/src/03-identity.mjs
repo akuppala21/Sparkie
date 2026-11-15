@@ -169,7 +169,7 @@ function mustUse(viewer) {
 
 // This machine's own addresses, so the portal host's entry runs commands locally instead of over SSH.
 const LOCAL_IPS = new Set();
-spawn('bash', ['-c', 'tailscale ip 2>/dev/null; hostname -I 2>/dev/null']).stdout
+spawn('bash', ['-c', 'tailscale ip 2>/dev/null; hostname -I 2>/dev/null']).on('error', () => {}).stdout
   .on('data', d => String(d).split(/\s+/).filter(Boolean).forEach(ip => LOCAL_IPS.add(ip)));
 
 let nodesAt = 0;

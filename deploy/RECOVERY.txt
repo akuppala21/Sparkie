@@ -17,6 +17,7 @@ SSH, Tailscale, the firewall, users or any model.
      curl -s --unix-socket ~/.local/state/spark-console/api.sock http://localhost/health
 
 5. Install the newest tested build from GitHub (once pull.sh setup has run). check names it; install takes its tree.
+   When Spark Console doesn't answer, install asks here before it goes on without a way back: answer y.
      bash ~/.local/share/spark-console/pull.sh check
 
 6. An update from GitHub that was cut off puts the build from before back by itself within 30 minutes. To do it now:

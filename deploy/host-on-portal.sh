@@ -56,6 +56,7 @@ RECOVERY_FILES=(go-back.sh RECOVERY.txt)
 # pull.sh (the install from GitHub) and update-guard.sh (its way back) go there too, but only once the build they came
 # with is kept: they judge the next.
 RECOVERY_FILES+=(pull.sh update-guard.sh)
+RECOVERY_FILES+=(REBUILD.txt)   # bringing Spark 2 back after its disk is lost (also on GitHub)
 # server.mjs is built from service/src/*.mjs (tools/build-server.mjs): install only one that matches its parts.
 cat "$HERE"/service/src/[0-9][0-9]-*.mjs | cmp -s - "$HERE/service/server.mjs" || { echo "service/server.mjs doesn't match service/src: run node tools/build-server.mjs, then node test/lock.mjs." >&2; exit 1; }
 # Which workflow versions passed the whole test suite (test/lock.mjs writes it). Without it every workflow is off.
@@ -240,11 +241,24 @@ else
   echo "  Note: couldn't read how much disk space is free, so that wasn't checked."
 fi
 # An update from GitHub whose way back is still armed (update-guard.sh) would put this install back when its timer
-# fires. An install made outside that update (another process group: from the Mac, or by hand) disarms it first (R30).
-GUARD="$HOME/.local/share/spark-console/update-guard" ME_PGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
-if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]] && [ "$(sed -n 's/^pgid=//p' "$GUARD/guard")" != "$ME_PGID" ]; then
-  echo "  An update from GitHub left its way back armed; this install takes over, so it is disarmed first."
-  bash "$GUARD/update-guard.sh" disarm >/dev/null 2>&1 || echo "  NOTE: couldn't disarm it; to put that update's build back by hand: bash $GUARD/update-guard.sh put-back hand"
+# fires. Made inside that update (its pull.sh's process group, on this boot): left alone. Made while that pull.sh still
+# runs: refused. Any other install (from the Mac, or by hand) first puts the build from before that update back, so
+# however it ends a confirmed build is what it goes back to (R30).
+GUARD="$HOME/.local/share/spark-console/update-guard"
+ME_PGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || ME_PGID=''
+ME_BOOT=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || ME_BOOT=''
+if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]]; then
+  G_PGID=$(sed -n 's/^pgid=//p' "$GUARD/guard"); G_BOOT=$(sed -n 's/^boot=//p' "$GUARD/guard")
+  if [ "$G_PGID" != "$ME_PGID" ] || [ "$G_BOOT" != "$ME_BOOT" ]; then
+    if [ "$G_BOOT" = "$ME_BOOT" ] && [[ "$G_PGID" =~ ^[0-9]+$ ]] && kill -0 -- "-$G_PGID" 2>/dev/null \
+        && { ps -o args= -p "$G_PGID" 2>/dev/null || true; } | grep -q 'pull\.sh'; then
+      fail "An update from GitHub is still running (its pull.sh, process group $G_PGID). Let it finish, then run this again. Nothing was changed."
+    fi
+    echo "  An update from GitHub left its way back armed; this install takes over, so it is disarmed first."
+    echo "  (The build from before that update is put back first: if this install isn't kept, that confirmed build returns.)"
+    bash "$GUARD/update-guard.sh" put-back hand "an install made outside it took over" \
+      || echo "  NOTE: that build from before didn't come back answering, or its copy wasn't whole; this install goes on."
+  fi
 fi
 
 # From here on, however this script ends: a snapshot that wasn't finished is removed (it would hide the good ones from
@@ -358,6 +372,7 @@ PHASE=changing
 # snapshot (files only) and RECOVERY.txt lists the by-hand steps. Both work with Spark Console down.
 mkdir -p "$HOME/.local/share/spark-console"
 cp "$IN/go-back.sh" "$IN/RECOVERY.txt" "$HOME/.local/share/spark-console/"
+[ ! -f "$IN/REBUILD.txt" ] || cp "$IN/REBUILD.txt" "$HOME/.local/share/spark-console/"
 chmod 700 "$HOME/.local/share/spark-console/go-back.sh"
 
 echo "Installing the UI in ~/spark-console …"

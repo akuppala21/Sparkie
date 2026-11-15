@@ -61,7 +61,9 @@ covers, is in `test/README.md`.
     it); `.mock/no-sudo` makes it ask for a password (refused), `.mock/poweroff-refused` lets `-l` say yes but refuses the
     shutdown itself, `.mock/poweroff-hangs` keeps the Spark answering. `bin/who` gives the sessions in `.mock/who` (none
     otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more power-off looks answer, then fails
-    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one.
+    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one, and with
+    `.mock/curl-first` there adds each call's first argument to it (the console's say `-q`, R53). `.mock/off-path-<name>`
+    makes the status round's look count that program as missing from the fixed path.
   - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,

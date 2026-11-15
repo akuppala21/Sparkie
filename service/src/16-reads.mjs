@@ -25,8 +25,8 @@ async function mustLibraryModel(name) {
 // A deploy's steps in plain terms: what stops (and why), what's copied or pulled, and how it starts.
 const planSteps = (steps, spark) => steps.map(s => (s.kind === 'stop' ? { do: 'stop', spark, container: s.container, why: s.reason, gpuGB: Math.round((s.gpuMiB || 0) / 1024), mustStop: Boolean(s.required) }
   : s.kind === 'copy' ? { do: 'copy', from: s.from, sizeGB: gbOf(s.bytes) }
-    : s.kind === 'pull' ? { do: 'download image', image: s.image }
-      : { do: 'start', engine: s.engine, image: s.image, port: s.port }));
+    : s.kind === 'pull' ? { do: 'download image', image: plainImage(s.image) }
+      : { do: 'start', engine: s.engine, image: plainImage(s.image), port: s.port }));
 // "canRun": it can run there once what's in wouldStop stops. "fitsNow": without stopping anything.
 function fitView(f) {
   if (f.error) return { spark: f.node, canRun: false, fitsNow: false, blockers: [f.error] };
@@ -338,7 +338,7 @@ action({
     const p = await plan(m.name, spark, viewer, inv), f = fitOf(p), v = fitView(f);
     return {
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, spark, engine: p.model.engine, canRun: v.canRun, fitsNow: v.fitsNow, wouldStop: v.wouldStop,
-      steps: planSteps(p.steps, spark), warnings: p.warnings, ...(v.blockers ? { blockers: v.blockers } : {}),
+      steps: planSteps(p.steps, spark), warnings: [...p.warnings, ...(m.settingsNotPlain ? [PLAIN_NOTE] : [])], ...(v.blockers ? { blockers: v.blockers } : {}),
       memory: { neededGB: gbOf(p.memory.need), freeGB: gbOf(p.memory.available), totalGB: gbOf(p.memory.total) }, sparkieRunsHere: p.sparkieHere, endpoint: p.endpoint,
       next: ctx.canChange ? `start_model {"model":"${m.name}","spark":"${spark}"} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it (asking Sparkie, or with POST /deploy), or allows this agent to change things.',
     };
@@ -359,7 +359,7 @@ action({
     return {
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, sparks: cp.nodes, answers: cp.head, link, linkTestedAt: lastCheck?.checkedAt || null,
       canRun: cp.fits && link === 'full', fitsNow: cp.fits && link === 'full' && cp.members.every(x => !x.stop.length), memoryEachGB: gbOf(cp.each), endpoint: cp.endpoint, blockers,
-      each: cp.members.map(x => ({ spark: x.node, fits: x.fits, wouldStop: x.stop.map(c => ({ spark: x.node, container: c })), copyFirst: x.copy, steps: planSteps(x.steps, x.node), warnings: x.warnings, memoryFreeGB: gbOf(x.memory.available) })),
+      each: cp.members.map(x => ({ spark: x.node, fits: x.fits, wouldStop: x.stop.map(c => ({ spark: x.node, container: c })), copyFirst: x.copy, steps: planSteps(x.steps, x.node), warnings: [...x.warnings, ...(m.settingsNotPlain ? [PLAIN_NOTE] : [])], memoryFreeGB: gbOf(x.memory.available) })),
       next: ctx.canChange ? `start_model {"model":"${m.name}","sparks":${JSON.stringify(sparks)}} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it (asking Sparkie, or with POST /deploy/cluster), or allows this agent to change things.',
     };
   },
@@ -523,7 +523,7 @@ function abilities() {
       `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. The owner does those by hand.`,
       'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.',
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
-      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}.`,
+      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
