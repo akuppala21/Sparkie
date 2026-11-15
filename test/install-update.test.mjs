@@ -66,7 +66,8 @@ mark(c2, READS_B);
 // pull.sh would (HOME/install-result names it: kept by default), and writes down how it was started.
 let HOME, STATE;
 const installed = c => writeFileSync(join(HOME, 'spark-console-service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(c), tree: c.tree, commit: c.commit, brainReads: READS_A }));
-const ENV = { SPARK_CONSOLE_REPO_URL: GH };
+// (a third dangerous ask inside ten minutes is sent a minute late: not here, as in danger.test.mjs)
+const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_DANGER_LATE_MS: '1' };
 useFleet({ watchMs: 60000, env: ENV, prepare: ({ dir, stateDir }) => {
   HOME = join(dir, 'home');
   STATE = stateDir;

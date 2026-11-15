@@ -185,7 +185,8 @@ function updResultLook() {
   const asked = readJson(UPD_ASKED_FILE);
   if (!asked) return;
   const res = readJson(UPD_RESULT_FILE), at = Date.parse(asked.at || '');
-  const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= at;
+  // (pull.sh writes its time to the second: a result in the second the yes was pressed is this install's)
+  const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= Math.floor(at / 1000) * 1000;
   if (!done && Date.now() - at < UPD_WAIT_MS) return;
   try { unlinkSync(UPD_ASKED_FILE); } catch {}
   const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 400)) : '';
