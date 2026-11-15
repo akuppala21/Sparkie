@@ -14,6 +14,8 @@
 #   sudo -n /usr/local/sbin/spark-console-root keep --id <id>     keeps what a change inside the net did
 #   sudo -n /usr/local/sbin/spark-console-root putback --id <id>  puts it back now, on the console's word
 #   sudo -n /usr/local/sbin/spark-console-root stop --id <id>     ends the look or change this helper started for that id
+#   sudo -n /usr/local/sbin/spark-console-root state --id <id>    says whether that call's unit never started, runs (or
+#                                                                 may still start), or has ended
 #   sudo -n /usr/local/sbin/spark-console-root root ...      always refused: the put-back net is a later step
 #
 # What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
@@ -111,6 +113,7 @@ ID=''
 
 refuse() {
   if [ -n "$ID" ]; then printf '%s refused: %s\n' "$ID" "$1"; else printf 'refused: %s\n' "$1"; fi
+  [ "${CALL_MARK-}" != begun ] || mark never   # (a look's or change's call that ends here never starts its unit)
   exit 125
 }
 say() { printf '%s %s\n' "$ID" "$*"; }
@@ -565,8 +568,32 @@ run_prefix() {   # the run wall's command start: its own process tree, then down
 # The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call. A call that is
 # killed outright (no trap runs) leaves its folder; the next call removes any older than the longest unit can run.
 H=''
+CALLS=$HOLD/.calls CALL_MARK=''
+mark() {   # $1 begun, handed, never or ended, $2 the call's pid or the unit's exit code: what state --id reads
+  mkdir -p -m 0700 -- "$R$CALLS" 2> /dev/null
+  printf '%s %s\n' "$1" "${2-}" > "$R$CALLS/$ID.new" && mv -f -- "$R$CALLS/$ID.new" "$R$CALLS/$ID"
+}
+do_state() {   # what became of a look's or change's call by its id: firm, from the helper's own marks
+  local m p
+  only_id
+  read -r m p < "$R$CALLS/$ID" 2> /dev/null || m=''
+  case "$m" in
+    '') say "state unknown: no call with this id has begun here (since the Spark started)" ;;
+    never) say "state never: it never started, and its call has ended, so it cannot start now" ;;
+    ended) say "state ended: it ran and has ended" ;;
+    begun|handed)
+      if [[ $p =~ ^[1-9][0-9]*$ ]] && kill -0 "$p" 2> /dev/null; then say "state running: it runs, or may still start"
+      elif [ "$m" = handed ] && case "$(systemctl show --property=ActiveState --value "sw-run-$ID.service" 2> /dev/null)$(systemctl show --property=ActiveState --value "sw-look-$ID.service" 2> /dev/null)" in
+             *active*|*activating*|*deactivating*) true ;; *) false ;; esac; then say "state running: it runs, or may still start"
+      elif [ "$m" = handed ]; then say "state ended: its call is gone and nothing of it runs"
+      else say "state never: it never started, and its call has ended, so it cannot start now"; fi ;;
+  esac
+  exit 0
+}
 sweep_held() {
   local d n
+  # (the marks state --id reads go once older than the longest a call can take)
+  find "$R$CALLS" -maxdepth 1 -type f -mmin +$((RUN_MAX / 60 + 10)) -delete 2> /dev/null
   for d in "$R$HOLD"/*/; do
     d=${d%/} n=${d##*/}
     [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
@@ -642,6 +669,10 @@ do_check() {
 
 do_unit() {
   local max got input=/dev/null unit start rc=0 p real
+  # (what state --id answers: this call has begun; an id is never used twice)
+  [ ! -e "$R$CALLS/$ID" ] || refuse "this id was used already"
+  CALL_MARK=begun
+  mark begun "$$"
   [[ $SHA =~ ^[0-9a-f]{64}$ ]] || refuse "--sha256 must be 64 hex digits, a-f and 0-9"
   [[ $SECS =~ ^[1-9][0-9]{0,5}$ ]] || refuse "--seconds must be a whole number of seconds"
   if [ "$VERB" = look ]; then
@@ -693,7 +724,7 @@ do_unit() {
   hold_folder
   # A hang-up or an interrupt (the caller's connection dropped) still removes the held folder; what the unit has
   # already opened stays readable to it.
-  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; rm -rf -- "$H"; exit 129' HUP INT TERM
   printf '%s' "${CMD[0]}" > "$H/command"
   read -r got _ < <(sha256sum -- "$H/command")
   if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
@@ -721,8 +752,17 @@ do_unit() {
     disk_watch "$unit" &
     watch=$!
   fi
+  # Handed to systemd from here: a dropped connection no longer ends this call; it waits until the unit is gone, so
+  # state --id can say "ended" only when nothing of it runs (and nothing can start it).
+  CALL_MARK=handed
+  mark handed "$$"
+  trap '' HUP PIPE INT TERM
   systemd-run "--unit=$unit" "--description=Spark Console $VERB $ID sha256 $SHA" --wait --pipe --collect --quiet \
     "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" < "$input" || rc=$?
+  while case "$(systemctl show --property=ActiveState --value "$unit.service" 2> /dev/null)" in
+          active|activating|deactivating|reloading|refreshing) true ;; *) false ;; esac; do sleep 1; done
+  mark ended "$rc"
+  CALL_MARK=ended
   if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
   if [ -e "$H/disk-low" ]; then tail+=("stopped: the disk's free space fell under $((DISK_FLOOR / 1000000000)) GB"); fi
   rm -rf -- "$H"
@@ -816,7 +856,7 @@ UNIT
 net_arm() {
   local other p f s n
   # (a hang-up while arming takes the half-made guard away; once armed, the guard stays and the timer does the rest)
-  trap 'net_unmake; rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; net_unmake; rm -rf -- "$H"; exit 129' HUP INT TERM
   mkdir -p -m 0755 -- "$R${GUARD%/*}" && mkdir -p -m 0700 -- "$R$GUARD" || net_refuse "the net could not be armed: no $GUARD, so nothing ran"
   exec 7> "$R$GUARD/.arming" || net_refuse "the net could not be armed: no lock, so nothing ran"
   flock -w 10 7 || net_refuse "another guard is being armed on this Spark, so nothing ran"
@@ -857,7 +897,7 @@ net_arm() {
   [ "$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null)" = active ] \
     || net_refuse "the net could not be armed: its timer is not waiting, so nothing ran"
   exec 7>&-
-  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
+  trap 'mark never; rm -rf -- "$H"; exit 129' HUP INT TERM
   say "net armed: the ways in go back at $(guard_at "$G") unless they are kept"
 }
 net_words() {   # $1 what guard.py's differs said, $2 when the timer fires: what goes back by itself, what does not, and
@@ -2546,9 +2586,9 @@ main() {
   init
   parse "$@"
   case "$VERB" in
-    check|prove|look|run|keep|putback|stop) ;;
+    check|prove|look|run|keep|putback|stop|state) ;;
     root) refuse "root needs the put-back net, which is not built yet: root is refused on every Spark" ;;
-    *) refuse "no such verb: check, prove, look, run, keep, putback, stop or root" ;;
+    *) refuse "no such verb: check, prove, look, run, keep, putback, stop, state or root" ;;
   esac
   caller
   case "$VERB" in
@@ -2557,6 +2597,7 @@ main() {
     look|run) do_unit ;;
     keep) do_keep ;;
     putback) do_putback ;;
+    state) do_state ;;
     stop) do_stop ;;
   esac
 }

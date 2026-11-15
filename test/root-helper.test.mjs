@@ -1015,7 +1015,7 @@ describe('the lock-out net (R60)', () => {
     const s = netted();
     const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
     const again = net(s, 'true', { id: r.id });
-    refused(again, `another guard is open on this Spark (${r.id}): it is kept or goes back first, so nothing ran`);
+    refused(again, 'this id was used already');   // (refused before the net is looked at: a call's id is used once, A13b's state)
     assert.ok(timerWaits(s, r.id), 'its timer still waits');
     for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
     assert.ok(existsSync(join(G(s, r.id), 'pending')));
@@ -1041,7 +1041,8 @@ describe('the lock-out net (R60)', () => {
       chmodSync(join(ssh, 'authorized_keys'), 0o600);
       const was = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'passkeys.json')].map(f => { const x = statSync(f); return [x.mode & 0o7777, x.uid, x.gid]; });
       const r = net(s, `R="$SPARK_CONSOLE_REHEARSAL"; ${cmd}`);
-      assert.match(r.stdout, new RegExp(`net open: ${named.length} of the ways in differ \\(${named.join(' ').replace(/[.]/g, '\\.')}\\) and go back at `), `${what}: ${r.stdout}`);
+      const list = named.join(' ').replace(/[.]/g, '\\.');
+      assert.match(r.stdout, new RegExp(named.length === 1 ? `net open: 1 of the ways in differs \\(${list}\\) and goes back at ` : `net open: ${named.length} of the ways in differ \\(${list}\\) and go back at `), `${what}: ${r.stdout}`);
       const f = fire(s, r.id);
       assert.equal(f.status, 0, `${what}: ${f.stdout}${f.stderr}`);
       assert.ok(!lstatSync(ssh).isSymbolicLink() && lstatSync(ssh).isDirectory(), what);
@@ -1354,6 +1355,7 @@ describe('the lock-out net (R60)', () => {
     s.put('var/lib/tailscale/tailscaled.state', 'state-one');
     s.put('home/owner/.local/state/spark-console/passkeys.json', '{}');
     s.put('standin/ts-prefs', '{"RunSSH":false}');
+    s.put('etc/hosts', '127.0.0.1 localhost\n');
     const env = binOf(s, { tailscale: '[ "$1 $2" = "debug prefs" ] && cat "$SPARK_CONSOLE_REHEARSAL/standin/ts-prefs"' });
     const R = '"$SPARK_CONSOLE_REHEARSAL"';
     const r = netIn(s, env, [`printf '{"RunSSH":true}' > ${R}/standin/ts-prefs`, `printf state-two > ${R}/var/lib/tailscale/tailscaled.state`,
@@ -1577,6 +1579,36 @@ describe('what bounds a plain change (R63)', () => {
     symlinkSync(join(s.R, 'home/owner/models'), join(s.R, 'home/owner/models-link'));
     refused(change(s, 'true', { extra: ['--protect', '~/models-link'] }), '--protect must name a folder that is there, with no link in its path');
     assert.equal(change(s, 'true', { extra: Array(8).fill(['--protect', '~/models']).flat() }).status, 0);
+  });
+
+  test('state --id: never (its call ended without starting it), running (or may still start), ended; unknown for an id never seen; an id is never used twice', async () => {
+    const s = proven();
+    const st = id => run(s, ['state', '--id', id]).stdout;
+    assert.equal(st('neverseen01'), 'neverseen01 state unknown: no call with this id has begun here (since the Spark started)\n');
+    const bad = change(s, 'true', { hash: '0'.repeat(64) });
+    refused(bad, "the command's bytes do not have the SHA-256 it was given");
+    assert.equal(st(bad.id), `${bad.id} state never: it never started, and its call has ended, so it cannot start now\n`);
+    const id = newId(), cmd = 'for i in $(seq 200); do [ -e "$SPARK_CONSOLE_REHEARSAL/go-on" ] && exit 0; sleep 0.1; done; exit 3';
+    const child = spawn(join(s.R, 'usr/local/sbin/spark-console-root'), ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '60', '--dir', s.work, '--', cmd], { env: s.env, stdio: 'ignore' });
+    const ended = new Promise(res => child.on('exit', res));
+    let seen = '';
+    for (let i = 0; i < 100 && !seen.includes(' state running'); i++) { await new Promise(res => setTimeout(res, 100)); seen = st(id); }
+    assert.equal(seen, `${id} state running: it runs, or may still start\n`);
+    writeFileSync(join(s.R, 'go-on'), '');
+    assert.equal(await ended, 0);
+    assert.equal(st(id), `${id} state ended: it ran and has ended\n`);
+    refused(change(s, 'true', { id }), 'this id was used already');
+    // A call hung up before it handed its unit to systemd (here while it arms the net): never.
+    s.put('standin/guard-sleep', '20');
+    const nid = newId();
+    const c2 = spawn(join(s.R, 'usr/local/sbin/spark-console-root'), ['run', '--id', nid, '--sha256', sha('true'), '--seconds', '300', '--dir', s.work, '--net', '--', 'true'],
+      { env: s.env, detached: true, stdio: 'ignore' });
+    const pending = join(s.R, 'var/lib/spark-console/guard', nid, 'pending');
+    for (let i = 0; i < 200 && !existsSync(pending); i++) await new Promise(res => setTimeout(res, 50));
+    const gone = new Promise(res => c2.on('exit', res));
+    process.kill(-c2.pid, 'SIGTERM');
+    assert.equal(await gone, 129);
+    assert.equal(st(nid), `${nid} state never: it never started, and its call has ended, so it cannot start now\n`);
   });
 
   test('the disk floor: under 50 GB free a change does not start; one whose disk falls under it is ended, and says so', () => {
