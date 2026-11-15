@@ -8,7 +8,8 @@
 // never asked on Telegram; pressed on the page with the passkey it is kept and changes run at once; "No" drops it. Against
 // an agent's key, a stranger, a forged seal, another build, a record's own score, two at once, a replayed or stale press,
 // an agent's press and a restart; the ask names the brain from the console's own record, never the poster's words. A
-// kept record is never replaced (the same at and build: already kept), at is only the runner's form, and an entry
+// kept record is never replaced (the same record again: already kept; another with its at and build is kept beside it,
+// and of two at one moment the one that missed the bar decides), at is only the runner's form, and an entry
 // counts only under the key computed from the brain serving. What never counts: a partial run; a run that missed the bar (also when its own score
 // says it met it); another mark; another case set; a memory-set run; one with a memory addition off; one missing those
 // fields; a case id or expect that isn't the lock's; a record written into the file by hand; another key (a changed
@@ -259,11 +260,11 @@ describe('the rail', { concurrency: 1 }, () => {
     const fail = await record({}, { passed: i => i >= 3 });
     assert.equal((await keep(fail)).status, 201);
     await aButton('the newest full run missed the bar');
-    // (a one-case record carrying the failing run's own at and build, no passkey: already kept, nothing written)
+    // (the same record posted again: already kept, nothing written)
     const before = readFileSync(PROFILES(), 'utf8');
-    const same = await keep(await record({ at: fail.at }, { cases: LOCK().evalSet.cases.slice(0, 1), runs: 1 }));
+    const same = await keep(fail);
     assert.deepEqual([same.status, same.json.stored], [200, false], same.text);
-    assert.match(same.json.says, /^Already kept: /);
+    assert.match(same.json.says, /^Already kept: this same result is on record/);
     assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing written');
     await aButton('the failing run still decides', /didn’t meet the bar/);
     // (only the runner's own form of when it ran: "9" would sort above every date as text and stay "the newest")
@@ -274,6 +275,49 @@ describe('the rail', { concurrency: 1 }, () => {
     }
     await yes(await record());
     await atOnce('the owner’s newer pass decides');
+  });
+
+  // (review of the fix pass, 1: "already kept" is the same record, never only the same at and build)
+  const oneCase = at => record({ at }, { cases: LOCK().evalSet.cases.slice(0, 1), runs: 1 });
+  test('a one-case record that took a failing run’s at and build first doesn’t keep that run off: it is kept beside it, and it takes the pass away', { timeout: 180000 * SLOW }, async () => {
+    await yes(await record());
+    await atOnce('an older pass on record');
+    const fail = await record({}, { passed: i => i >= 3 });
+    assert.equal((await keep(await oneCase(fail.at))).status, 201, 'the one-case record, first');
+    const r = await keep(fail);
+    assert.deepEqual([r.status, r.json.stored], [201, true], r.text);
+    await aButton('the failing run decides', /didn’t meet the bar/);
+  });
+
+  test('a one-case record that took a waiting pass’s at and build doesn’t keep the pass off: pressed with the passkey, it is kept and decides', { timeout: 180000 * SLOW }, async () => {
+    const pass = await record();
+    assert.equal((await keep(pass)).status, 202, 'the pass waits');
+    assert.equal((await keep(await oneCase(pass.at))).status, 201, 'the one-case record');
+    const w = await waiting(), p = await press(w, w.keep);
+    assert.equal(p.status, 200, p.text);
+    assert.doesNotMatch(p.json.note || '', /Already kept/, p.text);
+    const slot = profiles()[(await shown()).brainCheck.inUse.key].evals[`${pass.reads}:${pass.set}`];
+    assert.ok(slot.some(x => x.at === pass.at && x.keptWith === 'passkey' && x.score.full), 'the pass is on record');
+    await atOnce('the pass decides');
+  });
+
+  test('a failing full run carrying a kept pass’s own at and build is kept beside it and takes the pass away', { timeout: 180000 * SLOW }, async () => {
+    const pass = await record();
+    await yes(pass);
+    await atOnce('the pass');
+    const r = await keep(await record({ at: pass.at }, { passed: i => i >= 3 }));
+    assert.deepEqual([r.status, r.json.stored], [201, true], r.text);
+    await aButton('of two full runs at one moment, the one that missed the bar decides', /didn’t meet the bar/);
+  });
+
+  test('a passing run posted with a failing full run’s own at and build, kept with the passkey, gives nothing back: of two at one moment the one that missed the bar decides', { timeout: 180000 * SLOW }, async () => {
+    const fail = await record({}, { passed: i => i >= 3 });
+    assert.equal((await kept(fail)).stored, true);
+    await aButton('the failing run');
+    await yes(await record({ at: fail.at }));
+    await aButton('still the failing run', /didn’t meet the bar/);
+    await yes(await record());
+    await atOnce('a newer pass');
   });
 
   test('the brain’s key comes from the brain, not the file: brain A’s entry copied under brain B’s key counts for nothing', { timeout: 180000 * SLOW }, async t => {

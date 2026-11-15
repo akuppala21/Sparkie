@@ -14458,14 +14458,22 @@ function storeBrainEval(r, viewer = null) {
   const out = keepEvalRecord(p, { ...rec, keptWith: unlocks ? 'no passkey set up' : 'owner' }, now.setup);
   return { ...out, says: `${out.says}${out.stored ? why : ''}` };
 }
+// Two kept records are the same result when every field kept of them is, whatever was added when each was kept.
+const evalCanon = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x));
+const evalSame = (a, b) => { const of = ({ keptAt, keptWith, seal, ...x } = {}) => evalCanon(x); return Boolean(a) && of(a) === of(b); };
+// Which of two records comes first: the newer; at one moment, a full run before a partial one, and one that missed the
+// bar before one that met it, so no record wins by taking another's time (score: the recount, or the stored score).
+const evalOrder = (a, b, score = x => x?.score || {}) => String(b?.at).localeCompare(String(a?.at)) || (score(b).full === true) - (score(a).full === true)
+  || (score(a).met === false ? -1 : 0) - (score(b).met === false ? -1 : 0);
 // Keeps one record in the profile p, sealed (21-brain-rail.mjs: the rail counts only a sealed record): the store above,
 // and the owner's yes to a waiting result.
 function keepEvalRecord(p, rec, setupId) {
   const slot = `${rec.reads}:${rec.set}`, set = evalSetToday();
   // (the brain's own key, never only the file's; and a kept record is never replaced: R52)
   if (!MAIN || p.key !== brainKey(MAIN)) throw new HttpError(409, 'Kept nothing: the brain check on record isn’t this brain’s.');
-  if ((p.evals?.[slot] || []).some(x => x?.at === rec.at && x?.build === rec.build)) {
-    return { stored: false, slot, kept: p.evals[slot].length, setup: setupId, says: 'Already kept: a result of this build from that moment is on record, and a kept result is never replaced. Nothing changed.' };
+  // ("already kept" only for the same record again: another with its `at` and build is kept beside it, evalOrder)
+  if ((p.evals?.[slot] || []).some(x => evalSame(x, rec))) {
+    return { stored: false, slot, kept: p.evals[slot].length, setup: setupId, says: 'Already kept: this same result is on record, and a kept result is never replaced. Nothing changed.' };
   }
   const sealKey = evalSealKey(true);
   if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
@@ -14489,7 +14497,7 @@ function keepEvalRecord(p, rec, setupId) {
 function brainEvalView(p) {
   try {
     const reads = brainReadsNow(), set = evalSetToday(), all = Object.entries(p?.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v))
-      .flatMap(([, v]) => v).filter(x => x && typeof x === 'object').sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      .flatMap(([, v]) => v).filter(x => x && typeof x === 'object').sort((a, b) => evalOrder(a, b));
     const run = 'Run node test/eval.mjs on the real brain, then keep its result with node test/eval.mjs --store <its results file>.';
     if (!reads) return { state: 'not known', says: 'What this build’s brain reads isn’t known (there is no lock for this build), so no eval on record can count for it.', results: all.length };
     if (!set) return { state: 'not known', says: `Today’s case set isn’t known (no test/eval/cases.json beside this build), so no eval on record can count for it.`, results: all.length };
@@ -14525,7 +14533,8 @@ function brainEvalView(p) {
 // A record counts only as the rail recounts it from the record itself, every time: well-shaped, sealed by this console
 // (an HMAC over the record and its profile's key, with a key kept beside the secrets file, never in the state folder
 // or a copy of it), the main case set (test/eval/cases.json) with every memory addition on, the same case ids and expects
-// as the lock's, no cap, the brain's own key. The newest full one decides; a partial run neither gives nor takes.
+// as the lock's, no cap, the brain's own key. The newest full one decides (of two at one moment, one that missed the
+// bar: evalOrder); a partial run neither gives nor takes.
 const EVAL_MAIN_SET = 'test/eval/cases.json';
 const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'))}/eval-seal.json` : null) : `${homedir()}/.config/spark-console/eval-seal.json`;
 
@@ -14618,7 +14627,7 @@ async function brainRail() {
     if (!p || p.key !== key) return no('no brain check is on record for this exact setup (model, engine, image, flags, limits, what it runs)');
     if (p.outcome !== 'checked') return no('the brain check on record says not checked');
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
-    const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => evalOrder(a, b, evalScore));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
     if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
