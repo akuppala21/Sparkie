@@ -324,7 +324,7 @@ describe('the rail', { concurrency: 1 }, () => {
     await atOnce('a newer passing full run');
     for (let i = 0; i < 6; i++) await kept(await record({}, { cases: two, runs: 1 }));
     await atOnce('six newer partial runs push nothing out');
-    const slot = Object.values(profiles()).find(p => p.setup.id === 'aphex').evals[`${LOCK().brainReads}:${LOCK().evalSet.version}`];
+    const slot = profiles()[(await shown()).brainCheck.inUse.key].evals[`${LOCK().brainReads}:${LOCK().evalSet.version}`];
     assert.ok(slot.filter(x => x.score.full).length >= 3, 'the full runs are kept beside five partial ones');
   });
 
@@ -356,7 +356,8 @@ describe('the rail', { concurrency: 1 }, () => {
       await aButton(what);
     }
     // Written into the file by hand: no seal.
-    const file = JSON.parse(readFileSync(PROFILES(), 'utf8')), p = Object.values(file.profiles).find(x => x.setup.id === 'aphex'), slot = `${LOCK().brainReads}:${LOCK().evalSet.version}`;
+    const serving = (await shown()).brainCheck.inUse.key;
+    const file = JSON.parse(readFileSync(PROFILES(), 'utf8')), p = file.profiles[serving], slot = `${LOCK().brainReads}:${LOCK().evalSet.version}`;
     const valid = x => x.score.full && x.score.met && evalMain(x) && x.cases.every((c, i) => c.id === cases[i][0] && c.expect === cases[i][1]);
     const { seal, ...unsealed } = p.evals[slot].find(valid);
     p.evals[slot].unshift({ ...unsealed, at: new Date(tick += 1000).toISOString() });
@@ -389,7 +390,7 @@ describe('the rail', { concurrency: 1 }, () => {
     const was = readFileSync(PROFILES(), 'utf8'), m = JSON.parse(readFileSync(join(T.fleet.stateDir, 'main.json'), 'utf8')), s = m.presets.aphex;
     const narrow = createHash('sha256').update(JSON.stringify({ model: s.model.replace('--', '/'), draft: s.draft ? s.draft.replace('--', '/') : null, engine: s.engine, image: s.image, imageId: s.imageId || null,
       flags: s.args.map(String), env: s.env || {}, ropeScaling: s.ropeScaling || null, asked: { thinking: Boolean(s.thinking), maxTokens: s.maxTokens || 4096, sampling: s.sampling || null, templateKwargs: s.templateKwargs || null } })).digest('hex').slice(0, 16);
-    const p = Object.values(JSON.parse(was).profiles).find(x => x.setup.id === 'aphex'), slot = `${LOCK().brainReads}:${LOCK().evalSet.version}`;
+    const p = JSON.parse(was).profiles[(await shown()).brainCheck.inUse.key], slot = `${LOCK().brainReads}:${LOCK().evalSet.version}`;
     const { seal, keptWith, ...old } = p.evals[slot].find(x => x.score.full && x.score.met);
     writeFileSync(PROFILES(), JSON.stringify({ profiles: { [narrow]: { ...p, key: narrow, evals: { [slot]: [old] } } } }), { mode: 0o600 });
     await aButton('the narrow key of before');
