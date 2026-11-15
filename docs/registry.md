@@ -47,6 +47,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
+| `recall` | read | `20-journal` | past | — | — | yes | outside |
 | `memory` | read | `20-memory` | memory | — | — | yes | inside |
 | `remember` | change | `20-memory` | core | remember | yes | no | — |
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
@@ -83,8 +84,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
-| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |

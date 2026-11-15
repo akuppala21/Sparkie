@@ -19,7 +19,7 @@ something the next phase builds (`docs/design-2026-11-13/README.md`).
 | run; write_file | The next phase's two command tools: `run {on, command}` runs one command on a Spark or the box, sorted by code into a look, a change or a risky one; write_file writes one file there, copied first. Not built yet (milestone 2) | none yet; `run` in `02-ssh.mjs` is already the function that sends a command to a Spark | exec, shell |
 | box | A throwaway container that one command runs in, on a compute Spark (`on: "box"`). Not built yet (milestone 5) | none yet | sandbox, workspace |
 | memory line | One line of the owner's own words that Sparkie keeps across chats | `memory.json`, `remember`, `forget_memory`, `memoryPrompt` | memory for lessons or the journal |
-| journal | The raw record of everything said, called, run and seen; never rewritten. Not built yet (milestone 2) | none yet | log; memory |
+| journal | The raw record of everything said, called, run and seen; never rewritten (R43). `recall` reads it | `journal`, `JOURNAL_DIR` | log; memory |
 | lesson | A fact code drew from the console's own runs, such as a setup that failed twice. Not built yet (milestone 3); today a memory line may have the kind lesson | `MEMORY_KINDS` (today) | skill, learned fix |
 | asleep | Powered down or paused on purpose; wakes by itself when needed. For a Spark or the brain. Not built yet (milestone 6). Dark is different: off without being asked | `darkPeriods` (dark) | off, resting |
 | held | On the should-run list, not running, and not coming back by itself until the owner presses Bring back | `desiredNow`, `watchHeld` | paused |

@@ -107,6 +107,8 @@ local.listen(CONFIG.port, '127.0.0.1', () => {
   try { noteUpdate(); } catch (e) { console.error(`The update record: ${e.message}`); }
   // Telegram's loop starts only here, so a second copy (which stops at EADDRINUSE above) never polls (R32).
   try { tgAfterRestart(); } catch (e) { console.error(`Telegram after the restart: ${e.message}`); }
+  // Changes a restart cut off before their end was written (20-journal.mjs): only here, so a second copy never marks them.
+  journalAfterRestart();
   tgLoop().catch(e => console.error(`Telegram: ${e.message}`));
   // The needs-me line's tick (20-tell.mjs): started here, like the loop, so a second copy never sends.
   setInterval(needsMeTick, NEEDS_MS).unref?.();

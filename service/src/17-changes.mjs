@@ -96,7 +96,7 @@ function changeLabel(name, input) {
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”`;
-  if (name === 'forget_memory') return `Forget: “${String(memoryEntries().find(e => e.id === input.id)?.text || 'that line').slice(0, 200)}”`;
+  if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;

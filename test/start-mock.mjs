@@ -144,7 +144,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   const ports = await freePorts(6);
   if (firstPort && attempt === 1) ports[0] = firstPort;
   const [port, modelPort, benchPort, editorPort, servePort, telegramPort] = ports;
-  const secretsFile = join(dir, 'secrets', 'secrets.json');
+  const secretsFile = join(dir, 'secrets', 'secrets.json'), journalDir = join(dir, 'journal');
   copyFleet(root, benchPort);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   writeFileSync(join(stateDir, 'access.json'), readFileSync(join(MOCK, 'access.json')), { mode: 0o600 });
@@ -166,8 +166,9 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
     PATH: `${join(MOCK, 'bin')}:${process.env.PATH}`,
     MOCK_ROOT: root, MOCK_DIR: dir, MOCK_KEEP: keep ? '1' : '0', MOCK_MODEL_PORT: String(modelPort), MOCK_BENCH_PORT: String(benchPort), MOCK_SERVE_PORT: String(servePort),
     ...(editor ? { MOCK_EDITOR_PORT: String(editorPort) } : {}),
-    // Every start keeps its secrets (recovery codes, Telegram's token) in its own folder, never the developer's home.
-    SPARK_CONSOLE_SECRETS_FILE: secretsFile,
+    // Every start keeps its secrets (recovery codes, Telegram's token) and its journal in its own folder, never the
+    // developer's home.
+    SPARK_CONSOLE_SECRETS_FILE: secretsFile, SPARK_CONSOLE_JOURNAL_DIR: journalDir,
     ...(telegram ? { MOCK_TELEGRAM_PORT: String(telegramPort), SPARK_CONSOLE_TELEGRAM_API: `http://127.0.0.1:${telegramPort}`,
       SPARK_CONSOLE_TELEGRAM_POLL_MS: '1000', SPARK_CONSOLE_TELEGRAM_RETRY_MS: '200' } : {}),
     SPARK_CONSOLE_ALL_LOCAL: '1', SPARK_CONSOLE_DEV_LOGIN: OWNER,
@@ -242,7 +243,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   return {
     base, mcp: `${base}/mcp`, origin: cfg.origin, port, socket, dir, root, stateDir, offlineFile, log,
     modelPort, benchPort, servePort, editorPort: editor ? editorPort : null, pid: guard.pid, keep, logText, stop, env,
-    telegramPort: telegram ? telegramPort : null, secretsFile,
+    telegramPort: telegram ? telegramPort : null, secretsFile, journalDir,
     servicePid: () => pids()['server.mjs'] || null, serviceExit: () => /^server\.mjs (\S+)$/m.exec(exits())?.[1] ?? null,
   };
 }
