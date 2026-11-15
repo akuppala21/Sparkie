@@ -70,15 +70,16 @@ const handler = async (req, res) => {
     const funnel = Boolean(req.headers['tailscale-funnel-request']);
     const tailnetLogin = !funnel && LOGIN_RE.test(String(req.headers['tailscale-user-login'] || '')) ? String(req.headers['tailscale-user-login']).slice(0, 200) : null;
     if (req.method === 'GET' && path === '/whoami') {
-      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in.
-      const signin = !viewer && !tailnetLogin && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
+      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in. While
+      // state put back waits for the owner (R23), neither a passkey nor a recovery code signs in from here.
+      const signin = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
       // code that can be read. Yes or no only, never how many. The sign-in page shows "Use a recovery code" from it (F18).
-      const recovery = !viewer && !tailnetLogin && Boolean(accessList().owner) && recoveryView().left > 0;
+      const recovery = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && recoveryView().left > 0;
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
       return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
-        via: funnel ? 'internet' : 'tailnet' });
+        via: funnel ? 'internet' : 'tailnet', ...(!viewer && putBackHeld() ? { held: PUTBACK_LINE } : {}) });
     }
     // Signing a device in (a passkey, or a code the owner lets in), and signing out.
     if (SIGNIN_ROUTES.includes(path)) return await signinRoute(req, res, path, viewer);
@@ -116,6 +117,7 @@ const handler = async (req, res) => {
         // How this device is signed in when it isn't through Tailscale (4.10).
         session: viewer.session || null,
         ...(owner ? { passkeys: (() => { try { return passkeys().length; } catch { return -1; } })() } : {}),
+        ...(owner && putBackHeld() ? { putBack: true } : {}),
       });
     }
     if (req.method === 'GET' && path === '/status') return send(res, 200, await statusFor(viewer, url.searchParams.get('fresh') === '1' && owner));
@@ -133,6 +135,8 @@ const handler = async (req, res) => {
       ownerOnly();
       // Letting a device in, turning one away, and the signed-in devices (4.10).
       if (/^\/auth\/(device|sessions)(\/|$)/.test(path)) { if ((await sessionRoute(req, res, path, viewer)) !== false) return; throw new HttpError(404, 'Not found.'); }
+      // State put back from a copy: the list of what came back, and "Keep these" (22-putback.mjs).
+      if (path === '/auth/putback' || path === '/auth/putback/keep') return await putBackRoute(req, res, path, viewer);
       // Recovery codes (22-sessions.mjs): how many are left; making new ones needs the passkey (the gate above). From a
       // device signed in over the internet they're made only once a passkey exists, so a stolen cookie can't mint its own.
       if (path === '/auth/recovery') {
@@ -177,6 +181,7 @@ const handler = async (req, res) => {
         const name = clean(b.name, 60) || 'Passkey';
         keys.push({ ...k, name, createdAt: new Date().toISOString(), lastUsedAt: null });
         savePasskeys(keys);
+        putBackSeed();
         audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'passkey-added', args: { name, domain: k.rpId, ...(viewer.session ? { device: viewer.session.name } : {}) }, ok: true });
         // From a device signed in over the internet: on its record (it may add one without another only once), and said.
         if (viewer.session) {
@@ -190,6 +195,7 @@ const handler = async (req, res) => {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
         savePasskeys(keys.filter(x => x !== k));
+        putBackRemoved('passkey', k.id, k.name);
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
         return send(res, 200, { ok: true });
@@ -223,6 +229,7 @@ const handler = async (req, res) => {
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
         const next = setAgentSettings(change);
+        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
@@ -238,6 +245,7 @@ const handler = async (req, res) => {
         const token = `sck_${randomBytes(32).toString('base64url')}`;
         const key = { id: randomBytes(6).toString('hex'), name, login: viewer.login, hash: keyHash(token).toString('hex'), scopes: ['fleet:read'], internet: false, createdAt: new Date().toISOString(), lastUsedAt: null, lastAction: null };
         writePrivate(AGENTS_FILE, { keys: [...keys, key] });
+        putBackSeed();
         audit({ via: 'page', actor: 'owner', action: 'agent-added', args: { agent: name }, ok: true });
         return send(res, 201, { ...agentView(key), token, url: mcpUrl() });
       }
@@ -251,9 +259,13 @@ const handler = async (req, res) => {
         }
         const keys = agentKeys(), key = keys.find(k => k.id === agentId);
         if (!key) throw new HttpError(404, 'That agent was removed.');
+        const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
         writePrivate(AGENTS_FILE, { keys });
+        // A right taken away counts as a removal (R23): a state put back from before takes it away again.
+        const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
+        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
@@ -267,6 +279,7 @@ const handler = async (req, res) => {
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
         writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
+        putBackRemoved('agent', gone.id, gone.name);
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
         return send(res, 200, { ok: true });
@@ -499,7 +512,7 @@ const handler = async (req, res) => {
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
     // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
-    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const kept = storeBrainEval(await readBody(req)); return send(res, kept.stored ? 201 : 200, kept); }
+    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, { ...viewer, from: clientAddress(req) }); return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');

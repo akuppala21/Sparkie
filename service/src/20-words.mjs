@@ -61,6 +61,7 @@ function pauseWord(via) {
   setAgentSettings({ halted: true, autoPaused: false });
   // (an open dangerous ask closes: 20-danger.mjs)
   dangerPaused();
+  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)

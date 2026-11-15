@@ -75,16 +75,18 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `access.json` | `03-identity` | none | yes | no |
 | `access.json.good` | `03-identity` | `ownAccess`; a copy of the last good access.json; `ownAccess` is called by `accessList`, `openProblems` | yes | no |
 | `added-models.json` | `10-recipes` | `addModel` | yes | yes |
-| `agent-settings.json` | `17-changes` | `setAgentSettings`; `setAgentSettings` is called by `tripBreaker`, `pauseWord`, `handler` | yes | no |
-| `agents.json` | `20-mcp` | `top level`, `handler` (24-handler); the top-level one is the last-use timer | yes | no |
+| `agent-settings.json` | `17-changes` | `setAgentSettings`; `setAgentSettings` is called by `tripBreaker`, `pauseWord`, `putBackAtStart`, `handler` | yes | no |
+| `agents.json` | `20-mcp` | `top level`, `putBackAtStart` (22-putback), `handler` (24-handler); the top-level one is the last-use timer | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
+| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoved`, `putBackSeed`, `putBackRoute` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
-| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `storeBrainEval` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
+| `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
 | `found-setups.json` | `10-recipes` | `digModel` (11-setups); `digModel` is called by `addList`, `startDig` | yes | yes |
 | `funnel-seen.json` | `20-ways-in` | `noteFunnel`; deploy/open-to-internet.sh --undo removes it; `noteFunnel` is called by `checkRoute` | yes | no |
@@ -96,7 +98,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
-| `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
+| `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `putBackAtStart`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
 | `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `placeStep`, `run_workflow`; `savedRunDone` is called by `run_workflow` | yes | yes |
@@ -166,7 +168,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
 | `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updInstallRun` (21-updates), `updResultLook` (21-updates), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `savedRunsRecover` (18-run-record), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `runChange` (21-runner), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `updInstallRun` (21-updates), `updResultLook` (21-updates), `counterNote` (22-passkey), `putBackAtStart` (22-putback), `putBackRoute` (22-putback), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
 
 | Operation | Started by |
 |---|---|
