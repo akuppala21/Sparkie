@@ -44,7 +44,9 @@ flowchart TD
   JOBS["Jobs and per-Spark claims (07-jobs)"]
   SSH["spawnOn and run (02-ssh): ssh, or local bash on Spark 2"]
   FLEET["Sparks: Docker containers, model servers on port 8000, apps kept running on their own ports, model files, worker.py"]
-  SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, inventory on demand and from the heal loops"]
+  SENSE["Sensing: status 30 s, watcher 60 s, cables 10 min, plugs 15 s, inventory on demand and from the heal loops"]
+  PLUGS["Plug controller on Spark 2 (deploy/plugs.sh): Tapo plugs over Matter"]
+  POWER["Power (21-power): power_off, power_on, power_settings, the idle loop; power.json"]
   HEAL["Healing: maybeHeal, healPass every 60 s (bringBack, watchBrain, keepBrain)"]
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
   STATE["State files in ~/.local/state/spark-console"]
@@ -56,7 +58,7 @@ flowchart TD
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
   APPS -->|"OpenAI-style calls"| LISTEN
-  INSTALL -->|"files, lock, config, restart. Keeps the update only if /health names the build, the same process still answers 40 s later, the owner is the owner on the socket, /mcp and /v1/models answer, one chat turn calls a tool and answers, and Telegram polls again if it did before; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
+  INSTALL -->|"files, lock, config, restart. Keeps the update only if its checks hold 40 s later as one process (R30); on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
   DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
@@ -120,7 +122,11 @@ flowchart TD
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
-  STATE -->|"desired list, heal tries, the brain's left-down mark"| HEAL
+  STATE -->|"desired list, heal tries, the brain's left-down mark; parked or powered off: never healed"| HEAL
+  SENSE -->|"wall power, read only"| PLUGS
+  JOBS -->|"power jobs only: switchPlug, never Spark 2’s plug (R41)"| PLUGS
+  JOBS -->|"a power-off: shutDownSpark"| SSH
+  POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
   STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
@@ -179,8 +185,7 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
   whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
   tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
-  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard
-  changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard and the power work changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
   the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
@@ -239,3 +244,4 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
   (`chatReply` sets `link.detached`, on purpose, which nothing reads); a route that answers 500 is printed and counted
   (`recordFault`); other statuses are not; model `sparkie` at `/v1` is the bare model, with no tools, prompt or
   memory; `/health` says little through Funnel.
+- **Power is tested on stand-ins, not the real controller (R41).** Its Today says what to check live.

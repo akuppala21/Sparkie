@@ -68,6 +68,9 @@ test('across Spark 3 and Spark 4, a model whose only proven setup is the brain\'
     const args = readFileSync(join(T.fleet.root, spark, '.mock', 'last-run-args'), 'utf8').split('\n');
     const after = flag => args[args.indexOf(flag) + 1];
     assert.ok(args.includes('sglang.launch_server'), `${spark}: SGLang, the brain's engine`);
+    // (its /metrics on where it answers, the first part, and never twice: the idle power-off reads it, 21-power.mjs)
+    assert.ok(args.filter(x => x === '--enable-metrics').length <= 1, `${spark}: --enable-metrics at most once`);
+    if (rank === '0') assert.equal(args.filter(x => x === '--enable-metrics').length, 1, `${spark}: the part that answers has its /metrics on`);
     assert.equal(args.find(a => a.startsWith('lmsysorg/sglang')), 'lmsysorg/sglang:v0.5.23', `${spark}: the brain's image`);
     assert.equal(after('--tp'), '2', `${spark}: split in two`);
     assert.equal(after('--node-rank'), rank);

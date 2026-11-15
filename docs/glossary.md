@@ -21,7 +21,9 @@ something the next phase builds (`docs/design-2026-11-13/README.md`).
 | memory line | One line of the owner's own words that Sparkie keeps across chats | `memory.json`, `remember`, `forget_memory`, `memoryPrompt` | memory for lessons or the journal |
 | journal | The raw record of everything said, called, run and seen; never rewritten (R43). `recall` reads it | `journal`, `JOURNAL_DIR` | log; memory |
 | lesson | A fact code drew from the console's own runs, such as a setup that failed twice. Not built yet (milestone 3); today a memory line may have the kind lesson | `MEMORY_KINDS` (today) | skill, learned fix |
-| asleep | Powered down or paused on purpose; wakes by itself when needed. For a Spark or the brain. Not built yet (milestone 6). Dark is different: off without being asked | `darkPeriods` (dark) | off, resting |
+| asleep | Powered off or paused on purpose; wakes by itself when needed. A compute Spark: the idle power-off or `power_off`, turned on again by a start or a call (R41). The brain: not built yet. Dark is different: off without being asked | `power.json` (`off`), `consoleOff`; `darkPeriods` (dark) | off, resting |
+| parked | Stopped by Spark Console so its Spark could be powered off: still on the should-run list, back once that Spark is on | `parked` in `desired.json`, `parkDesired` | held (that waits for the owner) |
+| wall power | What a Spark draws at the wall, read from its smart plug. Not the GPU’s power | `wall`, `wallFor`, `plugs.json` | power, for either alone |
 | held | On the should-run list, not running, and not coming back by itself until the owner presses Bring back | `desiredNow`, `watchHeld` | paused |
 | paused | Agents' changes are stopped, by the owner or by the breaker; reads keep working | `agent-settings.json` (`halted`), `pausedCheck`, `tripBreaker` | paused for anything else |
 | tested; validated | Tested: the whole suite passed on this exact tree and `node test/lock.mjs` wrote the lock. Validated: one real run of that workflow version passed on the Sparks | `service/workflows.lock.json`; `validations.json`, `recordWorkflowRun` | verified (a proven run, `verified.json`) |

@@ -11,7 +11,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
 - Keep every rule in `docs/rules/` (one line each in `docs/rules.md`); don't add to the gaps a rule's "Today" notes.
-- Nothing starts a model or workload on Spark 2 (the brain's Spark).
+- Nothing starts a model or workload on Spark 2 (the brain's Spark) or powers it off (R41).
 - Today no action changes SSH, Tailscale, the firewall or users (R3, contract 8.3), and you don't while working here.
   Milestone 2 lets Sparkie change them when the owner asks, asked first, inside the put-back net; until then, add no
   path to them.

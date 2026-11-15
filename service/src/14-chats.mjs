@@ -58,6 +58,7 @@ const NEVER_CHANGES = 'SSH, Tailscale, firewalls, users, keys, sudo or who has a
 const TOOL_LINES = [
   [['forget_memory'], 'forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees.'],
   [['workflows'], 'The workflows tool lists every workflow: when to use each, its inputs and its known problems.'],
+  [['power_off', 'power_on', 'power_settings'], 'To shut a Spark down or turn it on, call power_off or power_on with the Sparks the owner named (never for a model: that’s stop_model or start_model); power_settings sets how many idle minutes before Spark Console powers a Spark off by itself (0 turns that off). Spark 2 runs Spark Console and you, and is never powered off from here.'],
   [['read_page'], 'What you know from training may be out of date. For anything new or version-specific (new models, releases, engine versions and flags, error messages), look it up with search_web first and read one or two good results with read_page, then answer and say where the answer came from.'],
 ];
 // offered: the tools this round offers (null: every action).
@@ -151,12 +152,14 @@ async function runChoice(viewer, conv, id, by) {
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting',
-  'self-test': 'The self-test with' };
+  'power-off': 'Powering off', 'power-on': 'Turning on', 'self-test': 'The self-test with' };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
   if (!conv) return;
   const where = (job.nodes || [job.node]).filter(Boolean).map(id => sparkName(nodeById(id) || { id })).join(' + ');
-  const what = `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`.replace(/\s+/g, ' ').trim();
+  // (turning a Spark on or off names the Spark, and the model a start turned it on for, 21-power.mjs)
+  const what = (/^power-/.test(job.type) ? `${OP_WORDS[job.type]} ${where}${job.model ? ` for ${job.model}` : ''}`
+    : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
     : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
@@ -175,7 +178,8 @@ function postResult(job) {
 // is", "download … and start it"): one asking for two kinds of change, or with a next step. A one-step request ends
 // with its operation's result, as before (no extra turn on the brain).
 const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|it\s+is)|when\s+(?:it'?s|that'?s)\s+(?:done|up|running|finished)|and\s+(?:then\s+)?(?:start|run|test|benchmark|measure|tell|let\s+me\s+know|report|check|wire|set\s+up|switch))\b/i;
-const multiStep = text => NEXT_STEP.test(normQuotes(text)) || changeIntent(text).asked.length > 1;
+// ("shut down Spark 4" is one request: its words also read as a stop, 21-power.mjs)
+const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
 const chatBusy = id => replying.has(id) || [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
