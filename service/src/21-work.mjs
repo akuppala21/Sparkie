@@ -145,14 +145,16 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false, stdin = null }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
+  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument)
+  const input = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input != null ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -168,7 +170,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : input != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${input}SPARKIE_INPUT\nexit $?`
+        : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and

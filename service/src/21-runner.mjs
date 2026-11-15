@@ -138,15 +138,17 @@ async function runnerTopDirs(node, sorted) {
   const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
   return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
 }
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
-  // (the sorter's own answer for the very command that runs: no caller hands it one)
-  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+// as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
+// result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null } = {}) {
+  // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
+  const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
+  const wide = runnerWiden(node, as ? '' : command, widen), outside = runnerOutside(sorted, as?.sortAs ?? command, dir, topDirs ?? await runnerTopDirs(node, sorted));
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark or the home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && outside.length > 0;
@@ -179,7 +181,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         notKept: lost.slice(0, 50).map(said) };
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha,
       ...(open ? { outside: outside.slice(0, 4) } : wide.fleet || wide.gpu ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
@@ -200,7 +202,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(as?.stdin ? { stdin: as.stdin } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -234,7 +236,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
-      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${command}\n${text}` });
+      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
     return {
       spark: node.id, ran: true, change: true, outcome: 'change', where: at, root: false, observedAt: new Date().toISOString(), exit: a.exit ?? null,
@@ -246,6 +248,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
+      ...(as?.result || {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };

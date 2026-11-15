@@ -4723,7 +4723,7 @@ const GROUP_WORDS = [
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
-  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file, write a file on a Spark', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them, compare models on one', /\b(?:workflows?|routines?|pipelines?|workloads?|compar\w*|whatever\s+is\s+best|keep\s+the\s+winner)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
@@ -16697,7 +16697,7 @@ function workWrote(ctx, sorted) {
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
 // fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null) {
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
@@ -16705,7 +16705,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
   const outside = runnerOutside(sorted, command, dir, topDirs);
   if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
-  const wide = runnerWiden(node, command, widen);
+  const wide = runnerWiden(node, file ? '' : command, widen);
   if (wide.fleet) return 'it reaches another Spark or your home network';
   if (wide.gpu) return 'it uses the GPU';
   // (no change runs at once while a Spark offers a shell with no key: Tailscale SSH, from the tailnet's own answer)
@@ -16796,34 +16796,39 @@ const workKey = (node, command, ctx, dir = RUNNER_DIR) => createHash('sha256').u
 
 // The button's words, built by code: the exact command, the Spark, why it is asked, what put-back covers, what it
 // would run outside the wall or widen after the yes, what Sparkie read before proposing it, each script's hash.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, widen = {}, topDirs = []) {
-  const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {}, bases = [dir], odd = [], names = [] } = scripts;
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null) {
+  const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {}, bases = [dir], odd = [], names = [] } = spec ? {} : scripts;
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen);
-  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
+  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, spec ? '' : command, widen);
+  // (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7)
+  return [...(spec ? spec.lines(at) : [`Run this on ${at}?`, `$ ${command}`]), `Asked because ${why}.`,
     ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
-  if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
-  const scripts = await workScripts(node, sorted.scripts, dir, command);
+  if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
+  // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
+  const scripts = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
-  workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
-  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
+  workAsks.set(workKey(node, spec?.key ?? command, ctx, dir), { sums: scripts.sums, at: Date.now() });
+  const call = spec ? { action: 'write_file', args: spec.args }
+    : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
-    return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
+    return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command: spec ? spec.lines(sparkName(node)).slice(1).join('\n') : command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
-async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
+// spec (write_file, 21-write.mjs): its own call, key and lines for the button, and what the runner runs in its place
+// (as); command is then the plain write the sorter was handed.
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
@@ -16834,30 +16839,30 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   const topDirs = await runnerTopDirs(node, sorted);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
   if (ctx.button && ctx.ownerConfirmed) {
-    const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
+    const key = workKey(node, spec?.key ?? command, ctx, dir), was = workAsks.get(key);
     if (was && Object.keys(was.sums).length) {
-      const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
+      const now = spec ? spec.sums : (await workScripts(node, sorted.scripts, dir, command)).sums;
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) {
         workAsks.delete(key);
-        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs);
+        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${spec ? 'the file changed' : 'a script it runs changed'} after you were asked, so that yes was void`, dir, widen, topDirs, spec);
       }
     }
     workAsks.delete(key);
-    return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
+    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node), Boolean(spec));
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
-    const w = runnerWiden(node, command, widen);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+    const w = runnerWiden(node, spec ? '' : command, widen);
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
-  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
+  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec);
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
 // Area: features        Rules: R41, R56        Tests: power-wake-pair.test.mjs, power-wake.test.mjs
@@ -18104,15 +18109,17 @@ async function runnerTopDirs(node, sorted) {
   const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
   return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
 }
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
-  // (the sorter's own answer for the very command that runs: no caller hands it one)
-  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+// as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
+// result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null } = {}) {
+  // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
+  const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
+  const wide = runnerWiden(node, as ? '' : command, widen), outside = runnerOutside(sorted, as?.sortAs ?? command, dir, topDirs ?? await runnerTopDirs(node, sorted));
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark or the home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && outside.length > 0;
@@ -18145,7 +18152,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         notKept: lost.slice(0, 50).map(said) };
     }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha,
       ...(open ? { outside: outside.slice(0, 4) } : wide.fleet || wide.gpu ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
@@ -18166,7 +18173,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(as?.stdin ? { stdin: as.stdin } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -18200,7 +18207,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
-      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${command}\n${text}` });
+      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
     return {
       spark: node.id, ran: true, change: true, outcome: 'change', where: at, root: false, observedAt: new Date().toISOString(), exit: a.exit ?? null,
@@ -18212,6 +18219,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
+      ...(as?.result || {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
@@ -19662,6 +19670,8 @@ const SHOWN_SIZE = 200;
 // (a look never does: it runs as a throw-away account with root's read rights, R42).
 const SHOWN_CALLS = {
   run: args => ({ spark: args.on, command: args.command, root: false }),
+  // (write_file, A7d: the path, and the lines it replaces; its bytes go on the record, not the line)
+  write_file: args => ({ spark: args.on, command: typeof args.path === 'string' ? `write_file ${args.path}${Number.isInteger(args.from) ? ` (lines ${args.from} to ${args.to})` : ''}` : null, root: false }),
 };
 const shownText = s => maskSecrets(lookClean(String(s)));
 const shownFirst = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('')}…` : s; };
@@ -19843,14 +19853,16 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, fleet = false, gpu = false, stdin = null }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
+  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument)
+  const input = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input != null ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -19866,7 +19878,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : input != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${input}SPARKIE_INPUT\nexit $?`
+        : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
@@ -20064,6 +20077,120 @@ async function selfTestWalls() {
   if (!per.some(p => p.set)) return null;
   return { result: per.some(p => p.bad) ? 'failed' : 'worked', words: `${per.map(p => `${p.at}: ${p.words}`).join('. ')}.` };
 }
+/* ───────── write_file: one text file on a compute Spark, through run's ladder (A7d) ───────── */
+// Area: features        Rules: R68, R61        Tests: write.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to =
+// from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the
+// sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so
+// the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies
+// it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the
+// bytes on the helper's input (--stdin), never on a command line. That program writes beside the file and moves the new
+// one into place (one move), with the old file's mode, and only while the file is as it was read here (its SHA-256, or
+// not there): one changed in between is left as it is, and said. The button shows the path and the lines that change,
+// old and new (design A 2.14, row 7), and a press after the file changed since the ask is void and asked again.
+const WRITE_MAX = 128 * 1024, WRITE_READ = 256 * 1024, WRITE_SHOWN = 30, WRITE_LINE = 200;
+
+// Where the change starts and the path from there: ~/… and a whole path from the home; anything else from ~/work, as
+// run starts there.
+function writePlace(path) {
+  const p = String(path);
+  if (p === '~' || p.startsWith('~/')) return { dir: '~', rel: p.slice(2) || '.', shown: p };
+  if (p.startsWith('/')) return { dir: '~', rel: p, shown: p };
+  return { dir: RUNNER_DIR, rel: p.replace(/^(?:\.\/)+/, ''), shown: `${RUNNER_DIR}/${p.replace(/^(?:\.\/)+/, '')}` };
+}
+
+// The file as it is now, read by code as the owner (never through a link): a plain file's size, SHA-256 and, up to
+// 256 KB, its bytes; or a link, something else, or nothing there.
+async function writeOld(node, place) {
+  const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then printf 'file %s %s\\n' "$(stat -c %s -- "$p")" "$(sha256sum < "$p" | cut -d' ' -f1)"; head -c ${WRITE_READ + 1} -- "$p" | base64 -w0; echo; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `The file on ${sparkName(node)} couldn’t be read, so nothing was asked or written.`);
+  const [head = '', b64 = ''] = String(r.out).split('\n'), m = /^file (\d+) ([0-9a-f]{64})$/.exec(head.trim());
+  if (m) return { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null };
+  return { kind: ['link', 'other'].includes(head.trim()) ? head.trim() : 'none' };
+}
+
+// Code's own program for the unit: the bytes come on its input. It writes only while the file is as it was read here.
+function writeProgram(rel, old, from, to) {
+  const same = old.kind === 'file' ? `[ -f "$p" ] && [ ! -L "$p" ] && [ "$(sha256sum < "$p" | cut -d' ' -f1)" = ${old.sha} ]` : '[ ! -e "$p" ] && [ ! -L "$p" ]';
+  const body = Number.isInteger(from) ? `{ head -n ${from - 1} -- "$p"; cat; tail -n +${to + 1} -- "$p"; }` : 'cat';
+  return [`p=${q(rel)}`,
+    `${same} || { echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }`,
+    't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
+    `${body} > "$t" || { rm -f -- "$t"; exit 1; }`,
+    'if [ -f "$p" ]; then chmod --reference="$p" -- "$t" 2>/dev/null; else chmod 0644 -- "$t"; fi',
+    'mv -fT -- "$t" "$p" || { rm -f -- "$t"; exit 1; }'].join('\n');
+}
+
+// A text's lines, without the empty one after its last line break.
+const writeSplit = s => { const l = String(s).split('\n'); if (l.at(-1) === '') l.pop(); return l; };
+// The button's first lines: what is written where, and the lines that change, old and new (masked, each cut to 200).
+function writeShown(at, place, old, text, from, to, keyFile) {
+  const one = (sign, l) => `${sign} ${Array.from(maskSecrets(l)).slice(0, WRITE_LINE).join('')}`;
+  const shown = (sign, list) => [...list.slice(0, WRITE_SHOWN).map(l => one(sign, l)), ...(list.length > WRITE_SHOWN ? [`${sign} … and ${list.length - WRITE_SHOWN} more`] : [])];
+  const head = `Write this file on ${at}?`;
+  if (keyFile) return [head, `${place.shown}: a key file, so its old text isn’t shown`, ...shown('+', writeSplit(text))];
+  if (old.kind === 'file' && !old.bytes) return [head, `${place.shown} (${sizeWords(old.size)} now: its old text isn’t shown)`, ...shown('+', writeSplit(text))];
+  const was = old.kind === 'file' ? writeSplit(old.bytes.toString('utf8')) : [], now = writeSplit(text);
+  if (Number.isInteger(from)) {
+    const gone = was.slice(from - 1, to);
+    return [head, `${place.shown}: ${gone.length ? `lines ${from} to ${to} replaced` : `new lines before line ${from}`} (${was.length} line${was.length === 1 ? '' : 's'} now)`, ...shown('-', gone), ...shown('+', now)];
+  }
+  if (old.kind !== 'file') return [head, `${place.shown}: a new file, ${now.length} line${now.length === 1 ? '' : 's'}`, ...shown('+', now)];
+  let a = 0;
+  while (a < was.length && a < now.length && was[a] === now[a]) a++;
+  let b = 0;
+  while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b]) b++;
+  const gone = was.slice(a, was.length - b), added = now.slice(a, now.length - b);
+  return [head, `${place.shown}: ${gone.length || added.length ? `from line ${a + 1}, ${gone.length} line${gone.length === 1 ? '' : 's'} out, ${added.length} in` : 'the same lines'} (${was.length} line${was.length === 1 ? '' : 's'} now)`, ...shown('-', gone), ...shown('+', added)];
+}
+
+async function writeFile(input, viewer, ctx = {}) {
+  whoMayLook(viewer, ctx);
+  const node = sparkOf(viewer, input.on), text = String(input.text), { from, to } = input;
+  if ((from === undefined) !== (to === undefined)) throw new HttpError(400, 'from and to go together: lines from to to are replaced (to = from - 1 puts the text before line from). Nothing was written.');
+  if (Number.isInteger(from) && to < from - 1) throw new HttpError(400, `to (${to}) is before from - 1: there are no lines to replace there. Nothing was written.`);
+  if (Buffer.byteLength(text) > WRITE_MAX) throw new HttpError(400, 'The text is over 128 KB, the most write_file writes. Nothing was written.');
+  // (what is written is shown on its button: nothing a mask would hide)
+  if (maskSecrets(text) !== text) throw new HttpError(400, 'The text holds something shaped like a key or password, so it isn’t written or shown on a button: give the key by its name. Nothing was written.');
+  const place = writePlace(input.path), sortAs = `cat > ${q(place.rel)}`, sorted = sortCommand(sortAs, runnerSortOpts(node, ctx, place.dir));
+  // (Spark 2, a brain Spark, root, a pause, not done, the lock-out class: refused before the file is read, as for run)
+  runnerNever(node, sorted, ctx);
+  if (['notdone', 'lockout'].includes(sorted.class)) return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
+  const old = await writeOld(node, place);
+  if (Number.isInteger(from)) {
+    if (old.kind !== 'file' || !old.bytes) throw new HttpError(400, `Lines ${from} to ${to} need ${place.shown} there as a plain text file of at most 256 KB, and it isn’t. Nothing was written.`);
+    const n = writeSplit(old.bytes.toString('utf8')).length;
+    if (to > n) throw new HttpError(400, `${place.shown} has ${n} line${n === 1 ? '' : 's'}, so lines ${from} to ${to} aren’t all there. Nothing was written.`);
+  }
+  const bytes = Buffer.from(Number.isInteger(from) && text && !text.endsWith('\n') ? `${text}\n` : text);
+  const keyFile = keyWord(place.rel), lines = at => writeShown(at, place, old, bytes.toString('utf8'), from, to, keyFile);
+  const span = Number.isInteger(from) ? ` (lines ${from} to ${to})` : '';
+  const spec = {
+    key: `write_file\n${place.shown}\n${from ?? ''}-${to ?? ''}\n${createHash('sha256').update(bytes).digest('hex')}`,
+    args: { on: node.id, path: input.path, text, ...(Number.isInteger(from) ? { from, to } : {}) },
+    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind },
+    lines, run: writeProgram(place.rel, old, from, to),
+    as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,
+      result: { wrote: { path: place.shown, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) } } },
+  };
+  return workChange(node, sortAs, sorted, viewer, ctx, place.dir, {}, spec);
+}
+
+action({
+  name: 'write_file', title: 'Write a file on a Spark', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'reading',
+  description: 'Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on Spark 2, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; no key or password in the text (give a key by its name).',
+  input: { type: 'object', properties: {
+    on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
+    path: { type: 'string', maxLength: 1024, pattern: '^[^\\x00-\\x1f]+$', description: 'The file: ~/…, a whole path, or a path from ~/work.' },
+    text: { type: 'string', maxLength: WRITE_MAX, pattern: '^[^\\x00]*$', description: 'The whole file, or the lines that go in place of from to to.' },
+    from: { type: 'integer', minimum: 1, maximum: 1000000, description: 'The first line replaced; with to.' },
+    to: { type: 'integer', minimum: 0, maximum: 1000000, description: 'The last line replaced; from - 1 to put the text before line from.' },
+  }, required: ['on', 'path', 'text'], additionalProperties: false },
+  run: (input, viewer, ctx) => writeFile(input, viewer, ctx),
+});
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
 // Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)

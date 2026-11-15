@@ -19,6 +19,8 @@ const SHOWN_SIZE = 200;
 // (a look never does: it runs as a throw-away account with root's read rights, R42).
 const SHOWN_CALLS = {
   run: args => ({ spark: args.on, command: args.command, root: false }),
+  // (write_file, A7d: the path, and the lines it replaces; its bytes go on the record, not the line)
+  write_file: args => ({ spark: args.on, command: typeof args.path === 'string' ? `write_file ${args.path}${Number.isInteger(args.from) ? ` (lines ${args.from} to ${args.to})` : ''}` : null, root: false }),
 };
 const shownText = s => maskSecrets(lookClean(String(s)));
 const shownFirst = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('')}…` : s; };

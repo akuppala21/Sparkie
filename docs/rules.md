@@ -65,3 +65,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and its walls).
 - [R63](rules/R63.md): What bounds a plain change.
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
+- [R68](rules/R68.md): What `write_file` does (A7d): one text file on a compute Spark, the whole file or its lines `from` to `to` (as `cat -n` numbered them; `to` = `from` - 1 puts the text before line …

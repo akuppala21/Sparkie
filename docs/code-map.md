@@ -3,11 +3,11 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 87 parts in `service/src/`, joined in name order into `service/server.mjs` (21737 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (21864 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
-30 lookups and 20 changes. The same list is what Sparkie, the agent door (`/mcp`) and `POST /console/api/actions/<name>` offer.
+31 lookups and 20 changes. The same list is what Sparkie, the agent door (`/mcp`) and `POST /console/api/actions/<name>` offer.
 
 | Action | Kind | What it is | Part |
 |---|---|---|---|
@@ -61,6 +61,7 @@ The service is 87 parts in `service/src/`, joined in name order into `service/se
 | `search_web` | read | Search the web | `21-web.mjs` |
 | `read_page` | read | Read a web page | `21-web.mjs` |
 | `run` | read | Run a command on a Spark | `21-work.mjs` |
+| `write_file` | read | Write a file on a Spark | `21-write.mjs` |
 
 ## Every part
 
@@ -75,7 +76,7 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`, `hfEachFile`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-op-energy`, `20-places`, `20-programs`, `20-recall`, `20-sort`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies-prune`, `21-copies`, `21-door`, `21-guard`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-op-energy`, `20-places`, `20-programs`, `20-recall`, `20-sort`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies-prune`, `21-copies`, `21-door`, `21-guard`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
@@ -88,7 +89,7 @@ Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data
 - **Wakes:** none
 - **Functions:** `spawnOn`, `knownOffline`, `noteReach`, `run`, `fields`, `b64json`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `PATH_FIRST`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
-- **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-actions`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-memory`, `20-places`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies`, `21-guard`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `24-handler`, `25-backup-and-start`
+- **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-actions`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-memory`, `20-places`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies`, `21-guard`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `24-handler`, `25-backup-and-start`
 
 ### `03-identity.mjs`: who's asking
 
@@ -240,7 +241,7 @@ Each Spark's status comes from the portal's own worker.py (now shipped with the 
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`
 - **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `PATH_PROGRAMS`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
-- **Used by:** `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-copies`, `21-door`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Used by:** `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-copies`, `21-door`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-ask.mjs`: how the brain is asked and read: its setup's ask block (B9, R50)
 
@@ -318,7 +319,7 @@ Every workflow is a named action with typed inputs, so a model can pick up which
 - **Wakes:** none
 - **Functions:** `action`, `gbOfGiB`, `sparkIdOf`, `sparkList`, `sparkOf`, `checkValue`, `checkInput`, `liveSchema`, `normQuotes`, `sparkNames`, `tokensOf`, `changeIntent`, `pageOnlyLabel`, `pickContainer`, `tracesToRequest`, `planOf`, `modelCandidates`, `namesModel`, `sparkieCheck`, `powerSparksSaid`, `tripBreaker`, `firmModel`, `requestLine`, `runAction`, `recent`, `recentInventory`, `recentMain`, `onDiskAs`, `libraryModel`, `mainArg`, `wordStart`, `filePattern`, `sizeWords`, `filePath`, `sharedFolder`
 - **Uses:** `01-setup` (`NODES`, `HttpError`, `q`), `02-ssh` (`run`), `05-library` (`inventory`, `plan`), `07-jobs` (`agentFailuresInARow`, `jobs`), `10-recipes` (`recipeCatalog`), `11-setups` (`squash`, `sameRepo`), `12-status` (`sparkName`, `statusCache`, `sparkFor`, `sparkFiles`), `13-main-model` (`mainStatus`, `MAIN`), `17-changes` (`question`, `changeLabel`, `pendingChoices`, `resolveModelName`, `agentSettings`, `setAgentSettings`, `propose`), `18-saved-from` (`fromRequest`), `18-saved-yes` (`savedImagesLabel`), `18-workflows` (`stepWords`, `findSaved`, `savedWorkflows`, `stepArgs`, `workflowFor`, `workflowStatus`, `offMessage`, `unvalidatedMessage`, `workflowVersion`, `workflowById`), `19-watcher` (`knowledge`, `fleetEvent`), `20-journal` (`journalLooks`, `journalLook`, `journalFirst`, `journalCalled`), `20-mcp` (`audit`, `maskSecrets`, `agentKeys`), `20-memory-tg` (`tgOwnMemory`), `20-memory` (`memoryClear`), `20-tell` (`tellAwait`), `21-apps` (`appNamed`), `21-brain-rail` (`EVAL_YES`, `evalYes`, `brainRail`), `21-power` (`powerSettingsClear`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
-- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `15-routes`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-needs`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-door`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
+- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `15-routes`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-needs`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-door`, `21-guide`, `21-ladder`, `21-power`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-putback`, `22-sessions`, `24-handler`
 
 ### `16-reads.mjs`: reads: the lookups, what people, Sparkie and agents can look up
 
@@ -570,7 +571,7 @@ Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above
 - **Wakes:** none
 - **Functions:** `keyHash`, `agentKeys`, `consoleOrigin`, `mcpUrl`, `agentView`, `keyViewer`, `agentFor`, `agentInstructions`, `askSparkie`, `audit`, `mcpDoor`, `hidePrivateKeys`, `keyName`, `randomish`, `hideKeys`, `maskSecrets`, `secretName`, `maskDeep`
 - **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `API_MOUNT`, `sleep`, `VERSION`), `03-identity` (`readJson`, `writePrivate`, `viewerForLogin`, `sameOrigin`, `overLimit`), `03-secrets` (`keptHidden`), `07-jobs` (`note`), `09-verified` (`answers`), `14-chats` (`chatData`, `replying`, `saveChats`, `runChoice`, `sparkieTurn`, `turns`), `16-actions` (`checkInput`, `ACTIONS`, `liveSchema`, `action`, `runAction`), `17-changes` (`pendingChoices`), `20-keys` (`keysHidden`), `22-putback` (`putBackHeld`, `PUTBACK_LINE`), `23-http` (`selfOrigin`, `send`, `readBody`, `isFault`, `recordFault`), `24-handler` (`clientAddress`)
-- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies`, `21-door`, `21-ladder`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`
+- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies`, `21-door`, `21-ladder`, `21-runner`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `21-write`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`
 
 ### `20-memory-names.mjs`: what Sparkie's memory lines are about, the index of them, and the picker
 
@@ -766,7 +767,7 @@ sortCommand(command, {at, root, dir, home, hosts, brain, written}) says what one
 - **Wakes:** none
 - **Functions:** `raise`, `sortFresh`, `sortMerge`, `sortAssign`, `sortIsCd`, `sortOneCd`, `sortList`, `sortKeep`, `sortCmd`, `sortWroteIn`, `sortRuns`, `sortGone`, `sortOpen`, `sortInline`, `sortKnown`, `sortProgram`, `sortReads`, `sortSetuid`, `sortFile`, `sortAt`, `sortCommand`
 - **Uses:** `01-setup` (`CONFIG`), `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortNested`, `sortTouch`, `sortUp`, `sortBefore`, `sortPaths`, `sortWrote`, `sortCands`, `sortNames`, `sortBraces`, `SORT_PLACED`, `SORT_PATH`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shape` (`sortShape`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `20-tables` (`SORT_WRAP`, `SORT_READS`, `SORT_FILES`, `SORT_PROGS`, `sortWrap`, `SORT_LOCK_READS`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
-- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-shape`, `20-tables`, `20-tools`, `21-runner`, `21-work`
+- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-shape`, `20-tables`, `20-tools`, `21-runner`, `21-work`, `21-write`
 
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
 
@@ -997,13 +998,13 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when hostClear holds, which …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
-- **Lines:** 210
+- **Lines:** 215
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workKey`, `workLabel`, `workAsk`, `workChange`
 - **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`question`), `20-danger` (`dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-brain-rail` (`brainRail`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerOutside`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`), `21-work` (`whoMayLook`)
-- **Used by:** `14-chats`, `14-rounds`, `21-runner`, `21-work`
+- **Used by:** `14-chats`, `14-rounds`, `21-runner`, `21-work`, `21-write`
 
 ### `21-power-pair.mjs`: a start wakes both Sparks a model across two needs (R56)
 
@@ -1037,13 +1038,13 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13) for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the sorter placed (21-copies.mjs) and the fingerprints of the ways in (a command that removes or overwrites files stops here, with nothing run, when one was not kept); the journal's start line, synced to disk, which names the set and the manifest's SHA-256 …
 
 - **Area:** features. **Rules:** R61, R13, R43. **Tests:** runner.test.mjs
-- **Lines:** 396
+- **Lines:** 399
 - **Owns:** none
 - **Timers:** holdTick (every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end)
 - **Wakes:** none
 - **Functions:** `runnerSortOpts`, `runnerRefuses`, `runnerNever`, `runnerWaysDiff`, `runnerWiden`, `runnerNote`, `runnerProtected`, `runnerOutside`, `runnerMemoryCap`, `runnerTopDirs`, `runChange`, `runnerHoldClaim`, `runnerRunState`, `runnerHold`, `runnerScan`, `runnerLatest`, `runnerFinished`, `runnerKeep`, `runnerPruned`, `runnerSparkOf`, `runnerUndo`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `NODES`, `HttpError`, `q`, `nodeById`), `02-ssh` (`run`, `fields`), `05-library` (`KEEP_FREE`, `memNow`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `16-actions` (`tripBreaker`, `sizeWords`), `17-changes` (`brainSparks`, `agentSettings`, `putBack`), `19-watcher` (`fleetEvent`), `20-desired` (`desired`, `undoSince`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `J_MAX`, `jErr`, `journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-copies-prune` (`COPIES_DAYS`, `COPIES_SETS`, `COPIES_BYTES`, `COPIES_PRUNE_MOST`, `COPIES_MARK_DAYS`), `21-copies` (`copiesSetName`, `copiesOn`), `21-ladder` (`workWrote`), `21-work` (`helperCall`, `helperAnswer`, `needsOwner`, `wallsFailed`, `lookClean`, `forBrain`, `LOOK_SLACK`)
-- **Used by:** `20-desired`, `20-journal`, `21-ladder`, `21-work`
+- **Used by:** `20-desired`, `20-journal`, `21-ladder`, `21-work`, `21-write`
 
 ### `21-selftest.mjs`: the self-test: the fleet proved on its real hardware (design D 2.9)
 
@@ -1105,7 +1106,7 @@ When Sparkie doesn't know something (a new model, an error message, an engine fl
 The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root (whether it ran as root), kept (the journal record that holds the whole command and output, when it ran) and look (the result's own line saying it ran as a look: nothing changed, nothing sent), and putBack (true when a change's ways-in check put back …
 
 - **Area:** features. **Rules:** R42. **Tests:** work.test.mjs, page.test.mjs
-- **Lines:** 55
+- **Lines:** 57
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1118,14 +1119,28 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the runner's run wall with the copy first (root, Spark 2 and the net are later …
 
 - **Area:** features. **Rules:** R42, R43, R61. **Tests:** work.test.mjs, ladder.test.mjs
-- **Lines:** 368
+- **Lines:** 371
 - **Actions:** `run`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperCall`, `helperAnswer`, `ownerCommand`, `mayRun`, `needsOwner`, `whoMayLook`, `lookClean`, `forBrain`, `runCommand`, `selfTestWalls`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `HttpError`, `CONFIG`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`), `20-sort` (`sortCommand`), `21-ladder` (`workChange`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`)
-- **Used by:** `16-reads`, `20-recall`, `20-sort`, `21-guard`, `21-ladder`, `21-runner`, `21-selftest`, `21-work-shown`
+- **Used by:** `16-reads`, `20-recall`, `20-sort`, `21-guard`, `21-ladder`, `21-runner`, `21-selftest`, `21-work-shown`, `21-write`
+
+### `21-write.mjs`: write_file: one text file on a compute Spark, through run's ladder (A7d)
+
+write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the bytes on the helper's …
+
+- **Area:** features. **Rules:** R68, R61. **Tests:** write.test.mjs
+- **Lines:** 114
+- **Actions:** `write_file`
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `writePlace`, `writeOld`, `writeProgram`, `writeSplit`, `writeShown`, `writeFile`
+- **Uses:** `01-setup` (`q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-ladder` (`workChange`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`whoMayLook`, `keyWord`)
+- **Used by:** no other part
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
 
