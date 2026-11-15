@@ -23,6 +23,8 @@ map's "Where new things go", row "An event type or a job type".
   `journalOp`). A new kind of journal record: `JOURNAL_KINDS` (`20-journal.mjs`, also `recall`'s list), one call of
   `journal` where it happens, outside every function a workflow's `code()` lists (a line inside one changes its
   version), and `jView` if `recall` should show a new field. Give it long text as something iterable, never whole.
+- A job type's Sparks go on the job as `node` (and `nodes`, for more than one) when `newJob` makes it: its end line's
+  energy (`wh`, `20-op-energy.mjs`) is for those Sparks; with neither it says “it ran on no Spark” (R43).
 
 ## Never
 
