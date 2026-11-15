@@ -19,7 +19,8 @@ const log = entry => { try { appendFileSync(`${DIR}/telegram-calls.jsonl`, `${JS
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const ok = (res, result) => json(res, 200, { ok: true, result });
 const fail = (res, status, description, extra = {}) => json(res, status, { ok: false, error_code: status, description, ...extra });
-const readBody = req => new Promise(resolve => { let b = ''; req.on('data', d => { b += d; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve(null); } }); });
+// (decoded as one stream: a character whose bytes arrive in two pieces stays whole)
+const readBody = req => new Promise(resolve => { let b = ''; req.setEncoding('utf8'); req.on('data', d => { b += d; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve(null); } }); });
 
 http.createServer(async (req, res) => {
   const body = await readBody(req);
