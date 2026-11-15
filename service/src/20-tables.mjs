@@ -73,10 +73,10 @@ function sortWrap(args, ctx, r, x, name) {
     if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
-    // (env -u takes a name away, as unset does; env -i or a lone - empties the environment, where the run wall keeps
-    // git's hooks off: asked)
+    // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
+    // wall keeps git's hooks off: asked)
     if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
-    if (name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) raise(r, 'risky', 'env empties the environment, where the run wall keeps git’s hooks and settings off: asked.');
+    if ((name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) || (name === 'exec' && /^-[^-]*c/.test(t))) raise(r, 'risky', `${sortQ(name)} empties the environment, where the run wall keeps git’s hooks and settings off: asked.`);
     if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;

@@ -23,7 +23,7 @@ UNITS="$HOME/.config/systemd/user"
 NAME=spark-console-update-guard
 # The files beside pull.sh at the fixed path that an install replaces or adds (each put back as it was, or removed if
 # it wasn't there).
-BY_HAND=(go-back.sh RECOVERY.txt pull.sh update-guard.sh watchdog.sh install-mark)
+BY_HAND=(go-back.sh RECOVERY.txt REBUILD.txt pull.sh update-guard.sh watchdog.sh install-mark)
 WATCHDOG_UNITS=(spark-console-watchdog.service spark-console-watchdog.timer)
 # The timer's length (a test may shorten it, only with SPARK_CONSOLE_ALL_LOCAL=1).
 GUARD_S=1800

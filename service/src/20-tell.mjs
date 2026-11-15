@@ -53,7 +53,13 @@ const tellClean = (text, token) => {
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
-async function tell(why, text, { buttons = null, to = null } = {}) {
+// pre: an exact command, sent whole in a fixed-width block after text, then tail (20-danger.mjs): one message, never cut;
+// too long for one, and nothing is sent.
+const tellBlock = (head, code, tail) => {
+  const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
+  return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
+};
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '' } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -63,7 +69,7 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   if (later && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = tellParts(tellClean(text, b.token));
+  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);
@@ -71,9 +77,9 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
   let ok = true;
   for (const [i, p] of parts.entries()) {
     tellSends.push(Date.now());
-    ok = (await tgSend(b, p, { silent, buttons: i === parts.length - 1 ? buttons : null })) && ok;
+    ok = (await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities })) && ok;
   }
-  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + p.length, 0) }, ok });
+  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok });
   return ok;
 }
 

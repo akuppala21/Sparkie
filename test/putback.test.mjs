@@ -264,7 +264,7 @@ describe('restore.sh --with-state over the state as it is, then a start', { conc
     writeFileSync(join(snap, 'restore.sh'), script, { mode: 0o700 });
     writeFileSync(join(bin, 'systemctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     writeFileSync(join(bin, 'curl'), '#!/bin/sh\necho \'{"ok":true}\'\n', { mode: 0o755 });
-    const r = spawnSync('bash', [join(snap, 'restore.sh'), '--with-state'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
+    const r = spawnSync('bash', [join(snap, 'restore.sh'), '--with-state', '--stand-in'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
     writeFileSync(join(dir, 'secrets', 'secrets.json'), kept, { mode: 0o600 });
@@ -404,7 +404,8 @@ describe('go-back.sh and an update’s way back never trip the hold', () => {
     return { h, snap, live, bin };
   }
   // (SPARK_CONSOLE_ALL_LOCAL keeps the stand-ins first on the PATH, as on the stand-in fleet)
-  const run = (x, ...args) => spawnSync('bash', [join(x.snap, 'restore.sh'), ...args], { env: { ...process.env, HOME: x.h, PATH: `${x.bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
+  // (--stand-in: the stand-ins' PATH, as the stand-in fleet's tests say it, R53)
+  const run = (x, ...args) => spawnSync('bash', [join(x.snap, 'restore.sh'), ...args, '--stand-in'], { env: { ...process.env, HOME: x.h, PATH: `${x.bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
 
   test('restore.sh without --with-state (what go-back.sh runs) leaves the state, and its number, as they are', () => {
     const x = home();
