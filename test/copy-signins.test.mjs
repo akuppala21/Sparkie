@@ -1,7 +1,9 @@
 // Covers: No sign-in travels with the state (E2b; contract 6.25; design E 2.5): a copy of the state holds no
-// `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); state put back
+// `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); nor does it hold
+// `saved-runs.json` (a saved workflow's run under way: a start from the copy would stop what runs then, R57); state put back
 // from a copy onto a fresh Spark Console signs no device in (the old cookie gets 401) while the owner's access and
-// passkey are as the copy had them (the passkey signs in from the internet again); `restore.sh --with-state` puts an
+// passkey are as the copy had them (the passkey signs in from the internet again once the owner, on the tailnet, has
+// kept what came back: E2c, the copy has a number and the new disk none); `restore.sh --with-state` puts an
 // install snapshot's state back but never its `sessions.json`, also when the snapshot holds one.
 //
 // One stand-in fleet looks every 3 s (the hourly look, made short), with Sparks 3 and 4 on; a second starts from the
@@ -15,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { request, waitFor, sleep, SLOW } from './lib.mjs';
 import { startMock, serviceConfig, REPO } from './start-mock.mjs';
-import { Authenticator } from './authenticator.mjs';
+import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
 const ORIGIN = serviceConfig().origin, KEY = new Authenticator(new URL(ORIGIN).hostname.split('.').slice(1).join('.'), ORIGIN);
 const FUNNEL = { 'tailscale-funnel-request': '?1' };
@@ -86,6 +88,20 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
     assert.equal((await record(F)).at, r1.at, 'no copy');
   });
 
+  test('a copy holds no saved-runs.json (a saved workflow’s run under way when it was made)', { timeout: 300000 * SLOW }, async () => {
+    const r0 = await quiet(F), runs = join(F.stateDir, 'saved-runs.json');
+    // (written while the service runs: it reads the record only at its start)
+    writeFileSync(runs, JSON.stringify({ runs: { 'op-copy-test': { operation: 'op-copy-test', since: new Date().toISOString(), title: 'a run under way', steps: 2, step: 1,
+      started: [{ kind: 'model', spark: 'spark4', container: 'sc-RadixArk--Qwen3.8-27B-NVFP4' }] } } }), { mode: 0o600 });
+    try {
+      writeFileSync(join(F.stateDir, 'test-change-2.json'), JSON.stringify({ at: new Date().toISOString() }), { mode: 0o600 });
+      const c = await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r0.at && x; }, { timeout: 30000 * SLOW, what: 'a copy after a change' });
+      const names = listed(copyFile(F, c));
+      assert.ok(names.includes('./test-change-2.json'), names.join(' '));
+      assert.ok(!names.some(n => /(^|\/)saved-runs\.json$/.test(n)), `no saved-runs.json in the copy: ${names.join(' ')}`);
+    } finally { rmSync(runs, { force: true }); }
+  });
+
   test('state put back from that copy onto a fresh Spark Console signs no device in; the owner’s access and passkey are as the copy had them', { timeout: 300000 * SLOW }, async () => {
     assert.ok(copy && cookie, 'the copy and the cookie from the test before');
     const file = copyFile(F, copy), had = name => JSON.parse(execFileSync('tar', ['-xzOf', file, `./${name}`], { encoding: 'utf8' }));
@@ -100,6 +116,15 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
       assert.equal(boot.status, 200, boot.text);
       assert.equal(boot.json.viewer.role, 'owner', 'the owner is the owner on the tailnet');
       assert.deepEqual((await ask(G, '/auth/passkeys')).json.keys.map(k => k.id).sort(), had('passkeys.json').keys.map(k => k.id).sort());
+      // (E2c, contract 6.25) Not before the owner has looked at what came back, on the tailnet, and kept it: the copy
+      // carries the number its first passkey gave it, and this disk's secrets file has none, so the start held.
+      const held = await net(G, '/auth/signin/begin', { method: 'POST', body: {} });
+      assert.equal(held.status, 403, held.text);
+      assert.equal(held.json.error, 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.');
+      const c = await ask(G, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/auth/putback/keep', body: {} } });
+      assert.equal(c.status, 200, c.text);
+      const kept = await ask(G, '/auth/putback/keep', { method: 'POST', body: {}, headers: { 'x-spark-passkey': passkeyHeader(KEY.sign(c.json)) } });
+      assert.equal(kept.status, 200, kept.text);
       // The passkey that came back signs a browser in from the internet again.
       const again = await signIn(G);
       assert.ok(again);
@@ -134,13 +159,14 @@ describe('restore.sh --with-state', () => {
   }
   const run = ({ h, snap, bin }) => spawnSync('bash', [join(snap, 'restore.sh'), '--with-state'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
 
-  test('the snapshot’s state comes back but never its sessions.json: who is signed in stays as it is now', () => {
+  // (E2c, contract 6.25: until then the devices signed in at the time stayed signed in)
+  test('the snapshot’s state comes back but never its sessions.json, and every device signs in again', () => {
     const now = JSON.stringify({ sessions: [{ id: 'signedinnow1', hash: 'b'.repeat(64) }] });
     const x = home({ liveSessions: now });
     try {
       const r = run(x);
       assert.equal(r.status, 0, r.stdout + r.stderr);
-      assert.equal(readFileSync(join(x.live, 'sessions.json'), 'utf8'), now, 'the sessions of now stay');
+      assert.ok(!existsSync(join(x.live, 'sessions.json')), 'no device stays signed in');
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'passkeys.json'), 'utf8')), { keys: [{ id: 'from-the-snapshot' }] }, 'the rest is put back');
       assert.deepEqual(JSON.parse(readFileSync(join(x.live, 'memory.json'), 'utf8')), { entries: ['from the snapshot'] });
     } finally { rmSync(x.h, { recursive: true, force: true }); }

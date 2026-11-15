@@ -2566,6 +2566,15 @@ PAGES.sparkie = function sparkiePage(view, r) {
   // Sparkie's buttons under a message: the open ones to press (in the owner's chats), and the one picked as a quiet line.
   function choiceRow(m) {
     const list = m.choices || [];
+    // A dangerous ask (R54): its yes takes the two digits shown with it, in the same press; closed, its buttons stay, grey.
+    if (m.danger) {
+      const open = owner() ? list.filter(x => x.state === 'open') : [], gone = list.filter(x => x.state === 'gone');
+      const pair = h('input', { type: 'text', inputmode: 'numeric', maxlength: '2', autocomplete: 'off', placeholder: '00', 'aria-label': 'The two digits from the ask', style: { width: '3.5em' } });
+      return h('div', { class: 'msg-choices' }, list.filter(x => x.state === 'picked').map(x => h('p', { class: 'choice-picked' }, icon('check'), x.label)),
+        open.length ? h('div', { class: 'btn-row' }, open.some(x => x.pair) ? pair : null,
+          open.map(x => h('button', { class: 'btn sm', type: 'button', onclick: e => choose(x, e.currentTarget, x.pair ? pair.value.trim() : null) }, x.label))) : null,
+        !open.length && gone.length ? h('div', { class: 'btn-row' }, gone.map(x => h('button', { class: 'btn sm', type: 'button', disabled: true }, x.label))) : null);
+    }
     const picked = list.filter(x => x.state === 'picked'), open = owner() ? list.filter(x => x.state === 'open') : [];
     if (!picked.length && !open.length) return null;
     return h('div', { class: 'msg-choices' },
@@ -2577,6 +2586,20 @@ PAGES.sparkie = function sparkiePage(view, r) {
     const mine = m.role === 'user';
     // Spark Console's own notes in the conversation (what a button did, or how an operation ended): quieter, and not
     // Sparkie's words.
+    // A dangerous ask: lines built by code, shown as written; the exact command in its own block; then its digits.
+    if (m.danger) {
+      const d = m.danger, end = m.pair ? `To run it: press ${d.yes}, then type ${m.pair}.` : m.opensAt ? `This ask opens at ${fmt.time(m.opensAt)}: read it meanwhile.` : null;
+      return h('div', { class: 'msg notice' },
+        h('div', { class: 'msg-avatar bad', 'aria-hidden': 'true' }, icon('alert')),
+        h('div', { style: { 'min-width': '0' } },
+          h('div', { class: 'msg-meta' }, h('strong', {}, 'Spark Console'), h('span', {}, fmt.time(m.createdAt))),
+          h('div', { class: 'msg-body' }, (d.lines || []).map((l, i) => h('p', { style: { margin: '0 0 4px', ...(i ? {} : { 'font-weight': '600' }) } }, l)),
+            d.long ? h('p', { style: { margin: '0 0 4px' } }, 'Long: read all of it before you answer.') : null,
+            // (framed, under a label of the page's own, so a line inside the command never reads as one of the ask's)
+            d.code != null ? h('div', { class: 'danger-cmd' }, h('p', {}, 'The exact command:'), h('pre', {}, d.code)) : null,
+            end ? h('p', { style: { margin: '0' } }, end) : null),
+          choiceRow(m)));
+    }
     if (m.notice) {
       const bad = ['failed', 'interrupted'].includes(m.status) || /^Couldn’t /.test(m.content || '');
       return h('div', { class: 'msg notice' },
@@ -2615,7 +2638,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   }
 
   // Pressing one of Sparkie's buttons: what it offered runs, and the conversation shows what happened.
-  async function choose(x, btn) {
+  async function choose(x, btn, pair = null) {
     const conv = c.conv;
     if (!conv || c.sending) return;
     // One press at a time: that message's buttons wait while it runs.
@@ -2623,7 +2646,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
     for (const b of all) b.disabled = true;
     btn.setAttribute('aria-busy', 'true');
     try {
-      const r = await capi(`chats/${conv.id}/choose`, 'POST', { choice: x.id });
+      const r = await capi(`chats/${conv.id}/choose`, 'POST', { choice: x.id, ...(pair !== null ? { pair } : {}) });
       if (c.conv?.id === conv.id && !c.sending) { c.conv = withMessages(c.conv, r); drawMessages(); }
       if (r.operation) followNewJobs();
       // Followed even without an operation id: a press that took too long still posts its result here.
@@ -3450,6 +3473,8 @@ function outsidePage(who) {
   // With no passkey on file the Tailscale steps show, with the recovery code beside them when whoami says one would work
   // (who.recovery, F18).
   async function openSignIn() {
+    // (state put back from a copy: nothing signs in from here until the owner has looked on the tailnet)
+    if (who.held) return dialog({ title: 'Sign in', description: who.held, cancel: null });
     if (!who.signin) return openTailscaleSignIn();
     let other = null, dlg = null;
     const pick = what => { if (dlg?.querySelector('[aria-busy]')) return; other = what; dlg?.close(); };
@@ -3586,6 +3611,31 @@ const offerUpdate = () => toast('Spark Console has been updated', {
   timeout: 0, id: 'update',
 });
 
+// State put back from a copy (contract 6.25): what came back, for the owner on the tailnet to look at once. A passkey
+// or agent key removed here stops working at once; "Keep these" lets the rest work from the internet again.
+async function putBackList() {
+  let l;
+  try { l = await capi('auth/putback'); } catch (e) { failToast(e); return; }
+  if (!l.held) return;
+  const when = t => (t ? fmt.when(t) : 'never');
+  const row = (text, sub, remove) => h('li', { class: 'putback-row' }, h('div', {}, h('div', {}, text), h('div', { class: 'muted' }, sub)),
+    h('button', { class: 'btn sm', type: 'button', onclick: async e => { e.target.disabled = true; try { await remove(); e.target.closest('li').remove(); } catch (err) { e.target.disabled = false; failToast(err); } } }, 'Remove'));
+  const body = h('div', { class: 'putback' },
+    h('p', {}, `Every device was signed out${l.parked ? `, and ${l.parked === 1 ? 'a task was' : `${l.parked} tasks were`} parked` : ''}. Remove anything here you had removed, then keep the rest.`),
+    l.removedAgain.length ? h('p', { class: 'muted' }, `Removed again (you had removed them since): ${l.removedAgain.map(x => `${x.kind} “${x.name}”`).join(', ')}.`) : null,
+    h('h3', {}, 'Passkeys'),
+    l.passkeys.length ? h('ul', { class: 'putback-list' }, ...l.passkeys.map(k => row(k.name, `Added ${when(k.addedAt)} · last used ${when(k.lastUsedAt)}`, () => capi(`auth/passkeys/${encodeURIComponent(k.id)}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    h('h3', {}, 'Agent keys'),
+    l.agentKeys.length ? h('ul', { class: 'putback-list' }, ...l.agentKeys.map(k => row(k.name, `${k.canChange ? 'Can start and stop models' : 'Can only look'}${k.fromAnywhere ? ', from anywhere' : ', on your tailnet only'}`, () => capi(`agents/${k.id}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    h('p', { class: 'muted' }, `${l.agentsPaused ? 'Agents’ changes are paused. ' : ''}${l.lastUse} ${l.namesAreData}`));
+  const ok = await dialog({
+    title: 'Spark Console’s state was put back from a copy', description: 'Until you keep what came back, sign-in from the internet is refused and agents can’t change anything.',
+    body, confirm: 'Keep these', cancel: 'Later', wide: true,
+    onConfirm: () => capi('auth/putback/keep', 'POST'),
+  });
+  if (ok) { toast('Kept. Sign-in from the internet and agents work again.'); refreshBoot(); }
+}
+
 async function start() {
   // tailscale serve can't send frame-ancestors, so inside another page Spark Console shows nothing (clickjacking).
   if (window.top !== window.self) {
@@ -3630,6 +3680,7 @@ async function start() {
     else { loadStatus(); connectLive(); checkForUpdate().then(offer => offer && offerUpdate()); }
   });
   render();
+  if (state.boot.putBack) putBackList();
   loadMain();
   loadConsoleChats();
   await loadStatus();

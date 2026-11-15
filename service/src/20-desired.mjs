@@ -31,10 +31,10 @@ function desiredAfter(job) {
   const d = desired(true), before = d.running.map(x => ({ ...x }));
   // Bringing back what's already on the list (a restart, self-healing) changes nothing on it: no revision, so it never
   // stands in the way of undoing the owner's last change there. One parked while its Spark was powered off
-  // (21-power.mjs) runs again, so its mark goes (no revision either).
+  // (21-power.mjs), or put back by a run's clean-up (desiredPutBack), runs again, so its mark goes (no revision either).
   if (!stopped.length && started.every(k => d.running.some(x => keyOf(x) === k))) {
-    const parked = d.running.filter(x => x.parked && started.includes(keyOf(x)));
-    for (const x of parked) delete x.parked;
+    const parked = d.running.filter(x => (x.parked || x.putBack) && started.includes(keyOf(x)));
+    for (const x of parked) { delete x.parked; delete x.putBack; }
     let save = parked.length > 0;
     // (The owner's own start of one that's on the list makes it the newest wish for its Sparks. Self-healing brings
     // back only the newest model wanted on a Spark, displacedBy in 20-heal.mjs, so its date moves; still no revision.)
@@ -101,15 +101,17 @@ function parkDesired(keys, on) {
   if (hit.length) writePrivate(DESIRED_FILE, d);
   return hit.map(keyOf);
 }
-// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again
-// (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it was then, so the list is what it was before the run. Read
+// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again, and its
+// stop took it off (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it stood just before that stop, so the list
+// is what it was before the run. It carries putBack (when), so self-healing leaves it alone as it leaves a parked one
+// (the stop is the run's, not a crash: the workloads review, C4); the mark goes when it next runs (desiredAfter). Read
 // with readKept itself, so a file that can't be read is never saved over; no revision (what should run hasn't changed
 // since before the run). The keys it put back.
 function desiredPutBack(entries) {
   const d = readKept(DESIRED_FILE);
   if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
   const back = entries.filter(x => x && typeof x === 'object' && !d.running.some(y => keyOf(y) === keyOf(x)));
-  if (back.length) { d.running.push(...back.map(x => ({ ...x }))); writePrivate(DESIRED_FILE, d); }
+  if (back.length) { const at = new Date().toISOString(); d.running.push(...back.map(x => ({ ...x, putBack: at }))); writePrivate(DESIRED_FILE, d); }
   return back.map(keyOf);
 }
 // Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
@@ -236,12 +238,18 @@ action({
       : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
+// When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
+// (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
+const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
+    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
+    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
+    if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
     // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).

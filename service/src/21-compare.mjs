@@ -1,5 +1,5 @@
 /* ───────── compare_models: a saved workload run with each candidate model, and the winner kept (D8) ───────── */
-// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs
+// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs, compare-brain.test.mjs
 // Owns: none (saved-workflows.json's `compared` and `best`, through writeSaved in 18-workflows.mjs)
 // Timers: none        Wakes: none
 // "Run my workload on whatever is best, keep the winner" (contract 9.27, T141; design D 2.5's first block, as cut).
@@ -11,11 +11,16 @@
 // answers more than one call at once; nothing starts, stops or wakes for it. Each candidate's job made from its image
 // gets the compare's own name suffix (compareStep), so it is a new container with that candidate's settings, and the
 // number of items in SPARK_SAMPLE beside D7's SPARK_MODEL_NAME and SPARK_MODEL_URL: its job learns the candidate from
-// its settings, never from an {input} in it. Refused before anything starts, by name (compareWontReach), a workflow a
-// candidate's run would not reach: a job step with an {input} in it (asked on every run, D6c: a run's input is on no
-// button), a job step that names its own SPARK_MODEL_NAME or SPARK_MODEL_URL (D7 keeps a step's own settings, so every
-// candidate's job would ask that one model), and a keep_running step with no image that names a job Spark Console made
-// (run again by name, it keeps the settings it was made with).
+// its settings, never from an {input} in it, and only the {model} step's model is handed on (run_workflow). A
+// candidate's run stops nothing to make room (noStops: the owner's models stay as they were), and it is the owner's own
+// unless an agent asked (ownersOwn: one that fails doesn't count toward pausing agents). Refused before anything
+// starts, by name (compareWontReach), a workflow a candidate's run would not reach: a job step with an {input} in it
+// (asked on every run, D6c: a run's input is on no button), a job step that names its own SPARK_MODEL_NAME or
+// SPARK_MODEL_URL (D7 keeps a step's own settings, so every candidate's job would ask that one model), a keep_running
+// step with no image that names a job Spark Console made (run again by name, it keeps the settings it was made with),
+// a workflow with no job made from an image (nothing to score), and one that starts no {model} before its last job
+// (every candidate's job would ask the same model). A run with no model given runs the brain's view when the brain is
+// the one kept (run_workflow), and a job made for another model is refused in those words (jobModelEnv).
 // The score: `result.json` in the folder of the run's last job (jobs/<container> on the Spark it ran on), read by code
 // through the worker (no link followed), only when it is at most 4 KB, JSON, and written after that job began; only
 // `score` (0 to 1), `ok` (true or false) and `items` (a whole number) are taken, as numbers, and nothing else of the
@@ -43,6 +48,18 @@ function compareBrainView(w) {
 // Why a candidate's run of saved workflow w would not reach its job (see above), or null. A job made before is known
 // from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken.
 async function compareWontReach(w) {
+  const wont = await compareStepWont(w);
+  if (wont) return wont;
+  // (with no job made from an image nothing is scored, and the last candidate stays running; with no start of {model}
+  // before the last job every candidate's job asks the same model)
+  const last = w.steps.map((st, i) => (jobFromImage(st.action, stepArgs(st)) ? i : -1)).filter(i => i >= 0).pop();
+  if (last === undefined) return `“${w.title}” runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
+  if (!w.steps.slice(0, last).some(st => ['start_model', 'restart_model'].includes(st.action) && placeholders(st.args).includes('model'))) {
+    return `“${w.title}” starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
+  }
+  return null;
+}
+async function compareStepWont(w) {
   for (const [i, st] of w.steps.entries()) {
     const a = stepArgs(st), n = `Step ${i + 1} of “${w.title}”`, job = jobFromImage(st.action, a);
     if (job && placeholders(st.args).length) return `${n} is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`;
@@ -129,6 +146,9 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
     const c = { ...ctx, conv: null, onQuestion: null, request: `comparing models for ${w.title}: ${model}`, compare: { tag: `${tag}${i + 1}`, sample, ...(brain ? { workflow: compareBrainView(w) } : {}) } };
     let out;
     try { out = await ACTIONS.get('run_workflow').run({ name: w.title, inputs }, viewer, c); } catch (e) { results.push({ model, result: 'failed', why: compareWords(e) }); note(j, `${model}: failed: ${compareWords(e)}`); continue; }
+    // (the owner asked for the compare, so its candidate runs are the owner's own, as runAction marks a run Sparkie
+    // starts in the owner's chat: one that fails doesn't count toward pausing agents; an agent's compare's runs do)
+    if (!savedStepAgent(viewer, ctx).agent && jobs.has(out.operation)) jobs.get(out.operation).ownersOwn = true;
     const run = await compareWait(j, out.operation, until);
     const seconds = Math.round((Date.parse(run?.finishedAt) - Date.parse(run?.createdAt)) / 1000) || 0;
     const r = run?.status === 'completed' ? { model, result: 'ran', seconds, ...(await compareScore(run)) }
@@ -173,7 +193,7 @@ function compareKeep(w, keep, viewer, ctx) {
 
 action({
   name: 'compare_models', title: 'Compare models on a saved workload', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model. Runs it once for each candidate, one after another: each starts what it needs; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL, handed to it: the step names neither) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and is made from its image (not a job run again by name), and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
+  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model, start {model} before its job, and run a job made from its image. Runs it once for each candidate, one after another: each starts what it needs, stopping nothing to make room; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL, handed to it: the step names neither) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and is made from its image (not a job run again by name), and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
   input: { type: 'object', properties: {
     workflow: { type: 'string', minLength: 2, maxLength: 80, description: 'The saved workflow’s name, from workflows (saved); it declares an input called model.' },
     candidates: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][^\\n\\r\\x00-\\x1f]{0,199}$' }, description: 'The models to try, as start_model takes them; "sparkie" is Sparkie’s own model.' },

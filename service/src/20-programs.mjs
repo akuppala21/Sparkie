@@ -32,6 +32,7 @@ function sortShell(args, ctx, r, x, name) {
     if (file.fetches) ctx.fetched = true; else if (file.unknown) unsure(`${sortQ(name)} runs a file named by a $ or a command.`);
     return sortRuns(file.text || '<( … )', ctx, r, `${sortQ(name)} runs the file ${sortQ(file.text || 'a command makes')}.`);
   }
+  if (x.opaque) unsure(`${sortQ(name)} reads text with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`);
   if (typeof x.stdin === 'string') return inline(x.stdin);
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} commands an earlier part makes, which can’t be shown before they run.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the commands it reads from its input, which the sorter can’t see.`);
@@ -57,6 +58,7 @@ function sortInterp(args, ctx, r, x, name) {
   if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
+  if (x.opaque) unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`);
   if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} code an earlier part makes, which can’t be shown before it runs.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the code it reads from its input, which the sorter does not read.`);
@@ -137,7 +139,7 @@ const SORT_HANDLERS = {
     for (const f of [...files, ...libs]) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the program in ${sortQ(f.text)}, or loads code, which the sorter does not read.`);
     const progs = files.length || inline.length ? inline : [o.plain[0]];
     // (gawk -i inplace rewrites each file it reads)
-    if (libs.some(l => /^inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
+    if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
       if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
       if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
@@ -214,7 +216,7 @@ const SORT_HANDLERS = {
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
   set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
-  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text === '-' ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
+  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]+$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text.startsWith('-') ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
   pushd(a, ctx) { sortCd(null, ctx); ctx.cdTo = [null]; },
   // (crontab -l only lists; anything else is a job that runs by itself)
   crontab: (a, ctx, r) => (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' ')) ? raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.') : raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.')),
@@ -238,7 +240,7 @@ const SORT_HANDLERS = {
       if (/^\/dev\/(?!null$|zero$|std(?:out|err)$)/.test(sortNorm(m[2]))) sortGone(ctx, r, `dd writes ${sortQ(m[2])}, a disk or a device, directly.`);
       sortTouch({ ...w, text: m[2] }, ctx, r);
     }
-    const odd = a.find(w => !/^(?:if|of|bs|ibs|obs|cbs|count|skip|seek|iseek|oseek|conv|iflag|oflag|status)=/.test(w.text));
+    const odd = a.find(w => w.unknown || !/^(?:if|of|bs|ibs|obs|cbs|count|skip|seek|iseek|oseek|conv|iflag|oflag|status)=/.test(w.text));
     if (odd) unsure(`The sorter doesn’t know dd’s word ${sortQ(odd.text || '$…')}.`);
   },
   tar(a, ctx, r) {

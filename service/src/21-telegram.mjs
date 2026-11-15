@@ -95,8 +95,8 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
   throw new TgError('unreachable');
 }
 // One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once.
-async function tgSend(b, text, { silent = false, buttons = null } = {}) {
-  const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}),
+async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
+  const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
   for (let i = 0, waited = false; i < 3; i++) {
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
@@ -209,6 +209,9 @@ async function tgUpdate(u) {
   if (typeof m.text !== 'string' || !m.text.trim()) return tell('system', 'I only read text here.');
   const text = m.text.slice(0, 4000).trim();
   if (TG_TOKEN_IN.test(text)) return tell('system', 'That looks like a bot token. Revoke it in @BotFather and paste the new one in Spark Console.');
+  // The two digits of a dangerous ask pressed here, or why not; never sent on to Sparkie (20-danger.mjs).
+  const pair = dangerTypedHere(text);
+  if (pair) return pair;
   // The owner's words (R34) are answered by code before the one-turn check, so they work while Sparkie answers. Never
   // resume or /undo update here (R32): /undo update goes to Sparkie, whose undo_update waits for the page.
   const word = ownerWord(text);
@@ -266,6 +269,8 @@ function tgForget() {
   const st = tgSaved();
   delete st.conv; delete st.answering;
   tgSave();
+  // (a task started from Telegram ends with it: its carry-on turns would go on with Telegram's rights)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Disconnecting Telegram: its tasks weren’t ended (${e.message}).`); }
   let removed = false;
   try {
     const now = secretsRead();
@@ -327,6 +332,10 @@ async function tgPress(cq) {
   if (ask?.answer) return tell('system', ask.answer);
   const conv = ask ? ask.conv : /^[a-f0-9]{10}$/.test(choice) ? chatData().conversations.find(c => c.channel === 'telegram' && c.login === accessList().owner && c.messages.some(m => (m.choices || []).some(x => x.id === choice))) : null;
   if (!conv) return tell('system', 'That button has expired. Ask again.');
+  return tgRun(conv, choice, ask);
+}
+// A press that may run, or a dangerous ask's right pair (20-danger.mjs): one at a time, answered with a fixed line.
+async function tgRun(conv, choice, ask) {
   if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Press it again when I’m done.');
   tg.busy = true;
   try {
@@ -340,7 +349,8 @@ async function tgPress(cq) {
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
     return await tell('system', 'Done.');
   } catch (e) {
-    return tell('system', e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
+    // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
+    return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
 }
 // /status: from Spark Console's own record, no brain.
