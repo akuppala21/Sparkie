@@ -100,10 +100,23 @@ function takeChallenge(id, viewer, purpose) {
   return c;
 }
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
-const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path) || /^\/deploy(\/cluster)?$/.test(path) || path === '/stop' || /^\/chats\/[^/]+(\/choose)?$/.test(path)
-  || /^\/nodes\/[^/]+\/files$/.test(path) || path === '/workflows/validate' || path === '/rollback' || /^\/telegram(\/(pair|needs))?$/.test(path) || path === '/heartbeat';
-// Each kind of request keeps its own size limit when the passkey check reads it first.
-const bodyLimit = path => (path.startsWith('/agents') ? 4000 : path.startsWith('/telegram') || path === '/heartbeat' ? 2000 : path.startsWith('/auth') ? 50000 : /\/files$/.test(path) ? 400000 : 1e5);
+// The routes whose request may need the passkey: one a line, in name order.
+const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path)
+  || /^\/chats\/[^/]+(\/choose)?$/.test(path)
+  || /^\/deploy(\/cluster)?$/.test(path)
+  || path === '/heartbeat'
+  || /^\/nodes\/[^/]+\/files$/.test(path)
+  || path === '/rollback'
+  || path === '/stop'
+  || /^\/telegram(\/(pair|needs))?$/.test(path)
+  || path === '/workflows/validate';
+// Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
+// first that fits gives the limit.)
+const bodyLimit = path => (path.startsWith('/agents') ? 4000
+  : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
+  : path.startsWith('/auth') ? 50000
+  : /\/files$/.test(path) ? 400000
+  : 1e5);
 // A deploy's stop list names something Spark Console didn't start (known to the watcher as not ours, or not known).
 function stopsOutside(stop) {
   if (!Array.isArray(stop)) return false;

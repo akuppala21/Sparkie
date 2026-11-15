@@ -96,7 +96,13 @@ test('a start that fails a known way leaves one lesson with the typed fields; th
     assert.deepEqual(again[0].evidence, [opRecord(x.operation).id, opRecord(line.operation).id]);
     assert.ok(again[0].lastAt > l[0].lastAt);
     const text = fileText();
-    for (const words of ['IGNORE', 'privileged', 'GatedRepoError', '401', 'BLUE-HERON', 'gemma 3 12b it', 'please', 'Hugging Face']) assert.ok(!text.includes(words), `“${words}” is in lessons.json`);
+    // "401" can sit by chance inside a random id, a hash, a version or a time. Those values are taken out first, so
+    // the check reads everything else a lesson holds: any "401" left was copied from the log.
+    const chance = lessons().flatMap(x => [x.id, ...(x.evidence || []), x.tried?.flags, x.tried?.image, x.tried?.code, x.firstAt, x.lastAt])
+      .filter(v => v != null).map(String).sort((a, b) => b.length - a.length);
+    const rest = chance.reduce((s, v) => s.split(v).join(''), text);
+    assert.ok(rest.length > 100 && rest.includes('"gated"') && rest.includes(GEMMA), 'what is left is still the lessons');
+    for (const words of ['IGNORE', 'privileged', 'GatedRepoError', '401', 'BLUE-HERON', 'gemma 3 12b it', 'please', 'Hugging Face']) assert.ok(!(words === '401' ? rest : text).includes(words), `“${words}” is in lessons.json`);
     if (r.text?.trim()) assert.ok(!text.includes(r.text.trim().slice(0, 40)), 'the brain\'s reply');
     assert.deepEqual(piecesOf(KEY).filter(p => text.includes(p)), [], 'no piece of the key the error named');
   } finally { rmSync(mock('spark4', `logs-sc-${GEMMA}`), { force: true }); rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }

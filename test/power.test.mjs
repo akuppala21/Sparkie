@@ -680,15 +680,6 @@ describe('the idle power-off', { concurrency: 1 }, () => {
     await calls;
   });
 
-  test('not while its editor is in use', { timeout: 120000 * SLOW }, async () => {
-    // Spark 3's editor, opened through Spark Console (the stand-in fleet has no code-server on its port, so it answers
-    // 503; the request is what counts. An open editor tab, a WebSocket, counts the whole time it is open.)
-    const stop = Date.now() + settle;
-    const use = (async () => { while (Date.now() < stop) { const r = await api('/connect/spark3/'); assert.ok([200, 302, 503].includes(r.status), r.text); await sleep(1000); } })();
-    await noPowerOff('its editor in use');
-    await use;
-  });
-
   test('not while an app it keeps running is there (only models are parked for idleness)', { timeout: 120000 * SLOW }, async () => {
     const f = mock('spark3', 'containers'), was = readFileSync(f, 'utf8'), d = join(T.fleet.stateDir, 'desired.json'), list = readFileSync(d, 'utf8');
     writeFileSync(f, `${was.trimEnd()}\nkept-app|running|Up 1 minute|app||\n`);

@@ -2,11 +2,12 @@
 // for Telegram (the service reaches it through SPARK_CONSOLE_TELEGRAM_API, honoured only under ALL_LOCAL). Without the
 // port (a bare `node --test`) it does nothing.
 //   /bot<token>/getMe, getUpdates (long polling with Telegram's offset rules; a second open poll gets 409),
-//   sendMessage (400 over 4,096 characters), sendChatAction, answerCallbackQuery, deleteWebhook.
+//   sendMessage (400 over 4,096 characters), sendChatAction, answerCallbackQuery, deleteWebhook, deleteMessage.
 // Every call is appended to $MOCK_DIR/telegram-calls.jsonl. A test drives it with:
 //   POST /__push  { message } or { callback_query } (or a list): queued as updates, each given the next update_id
 //   POST /__mode  { refuse, inUse, down, slowDown }  refuse: 401 on everything; inUse: 409 on getUpdates;
-//                 down: 502 on everything; slowDown: N sendMessage calls answer 429 with retry_after 1
+//                 down: 502 on everything; slowDown: N sendMessage calls answer 429 with retry_after 1;
+//                 noDelete: deleteMessage answers 400, as Telegram does for a message it can't delete
 import http from 'node:http';
 import { appendFileSync } from 'node:fs';
 
@@ -19,7 +20,8 @@ const log = entry => { try { appendFileSync(`${DIR}/telegram-calls.jsonl`, `${JS
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const ok = (res, result) => json(res, 200, { ok: true, result });
 const fail = (res, status, description, extra = {}) => json(res, status, { ok: false, error_code: status, description, ...extra });
-const readBody = req => new Promise(resolve => { let b = ''; req.on('data', d => { b += d; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve(null); } }); });
+// (decoded as one stream: a character whose bytes arrive in two pieces stays whole)
+const readBody = req => new Promise(resolve => { let b = ''; req.setEncoding('utf8'); req.on('data', d => { b += d; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve(null); } }); });
 
 http.createServer(async (req, res) => {
   const body = await readBody(req);
@@ -66,5 +68,6 @@ http.createServer(async (req, res) => {
     return ok(res, { message_id: messageId++, chat: { id: body.chat_id, type: 'private' }, date: Math.floor(Date.now() / 1000), text: body.text });
   }
   if (method === 'sendChatAction' || method === 'answerCallbackQuery') return ok(res, true);
+  if (method === 'deleteMessage') return mode.noDelete ? fail(res, 400, 'Bad Request: message can\'t be deleted') : ok(res, true);
   return fail(res, 404, 'Not Found: method not found');
 }).listen(PORT, '127.0.0.1', () => console.log(`mock telegram on 127.0.0.1:${PORT}`));
