@@ -1,8 +1,7 @@
 // Stand-in code-server on 127.0.0.1:$MOCK_EDITOR_PORT: a page with relative links, a redirect to /login, a cookie with
 // Path=/, a POST that echoes its body, and a WebSocket that echoes raw bytes back.
-// Note: the service takes its editor ports from service/config.json (editorPorts, default spark2 → 8801), so it only
-// reaches this stand-in when config.json points there. Started by test/start-mock.mjs ({ editor: true }); without a
-// port (e.g. picked up by a bare `node --test`) it does nothing.
+// Spark Console has no editor any more (E10c) and the stand-in fleet doesn't start this: only start-mock.test.mjs runs
+// it, for its body reading. Without a port (e.g. picked up by a bare `node --test`) it does nothing.
 import http from 'node:http';
 import crypto from 'node:crypto';
 

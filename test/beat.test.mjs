@@ -232,23 +232,33 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     assert.ok(!(await needs()).some(l => BEAT_LINE.test(l)), 'the line is gone');
   });
 
-  test('an address the owner types into a chat is kept nowhere: the saved chat, its answer and its title have [hidden] in its place', { timeout: 60000 * SLOW }, async () => {
+  test('an address the owner types into a chat is kept as the heartbeat\'s address and nowhere else: code answers, the chat holds [key HEARTBEAT kept] in its place, and the brain is never sent it', { timeout: 60000 * SLOW }, async () => {
     const chat = await newChat(), from = brainRecord().length;
     await say(chat, `${TYPED} ${ADDRESS}, keep it to yourself`);
     await say(chat, 'thanks');
     const msgs = await chatMessages(chat);
-    assert.equal(msgs[0].content, `${TYPED} [hidden], keep it to yourself`);
+    assert.equal(msgs[0].content, `${TYPED} [key HEARTBEAT kept], keep it to yourself`);
     assert.ok(!JSON.stringify(msgs).includes(ID), JSON.stringify(msgs));
-    // (the stand-in brain answers with the words it was given, so its answer as saved is hidden too)
-    assert.ok(msgs.some(m => m.role === 'assistant' && m.content.includes(`${TYPED} [hidden]`)), JSON.stringify(msgs));
+    // (the answer is code's: the address was taken at the door, R51)
+    assert.match(msgs[1].content, /^Kept the heartbeat’s address/);
     const title = (await api('/chats')).json.chats.find(c => c.id === chat)?.title;
     assert.ok(title && !title.includes(ID), title);
     assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(ID), 'chats.json, which the daily copy carries');
-    // What the brain was sent: the turn it was typed in, as typed (the gate and the brain read that turn's words whole,
-    // 14-chats.mjs); the next turn, whose history is the saved chat, holds none of it.
-    const sent = brainRecord().slice(from), typed = sent.filter(e => JSON.stringify(e).includes(ID)), next = sent.filter(e => e.words === 'thanks');
-    assert.ok(typed.length >= 1 && typed.every(e => e.words.startsWith(TYPED)), JSON.stringify(typed.map(e => e.words)));
+    // What the brain was sent: never the address (the turn it was typed in asked no brain, R51); the next turn, whose
+    // history is the saved chat, holds none of it.
+    const sent = brainRecord().slice(from), next = sent.filter(e => e.words === 'thanks');
+    assert.deepEqual(brainRecord().filter(e => JSON.stringify(e).includes(ID)).map(e => e.words), [], 'a record in the brain’s log holds the address');
     assert.ok(next.length >= 1 && next.every(e => !JSON.stringify(e).includes(ID) && e.messages >= 4), JSON.stringify(next.map(e => [e.words, e.messages])));
+    // Kept as the heartbeat's address, and nowhere else: the secrets file holds it; the chat file, the journal, the
+    // audit, the events and the brain's log hold neither the address nor its ID alone.
+    assert.equal(secrets().heartbeat.url, ADDRESS);
+    assert.ok(readFileSync(T.fleet.secretsFile, 'utf8').includes(ID));
+    const journal = readdirSync(T.fleet.journalDir).map(f => join(T.fleet.journalDir, f));
+    assert.ok(journal.length > 0, 'the journal has files');
+    for (const f of [join(T.fleet.stateDir, 'chats.json'), join(T.fleet.stateDir, 'audit.jsonl'), BRAIN_RECORD(), ...journal]) assert.ok(existsSync(f), f);
+    for (const f of [join(T.fleet.stateDir, 'chats.json'), join(T.fleet.stateDir, 'audit.jsonl'), join(T.fleet.stateDir, 'events.jsonl'), BRAIN_RECORD(), ...journal]) {
+      for (const [what, t] of [['the address', ADDRESS], ['its ID', ID]]) assert.ok(!existsSync(f) || !readFileSync(f, 'utf8').includes(t), `${what} in ${f}`);
+    }
   });
 
   test('the address is in no chat, audit line, event, log, state file, answer or tool result', { timeout: 60000 * SLOW }, async () => {

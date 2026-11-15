@@ -774,14 +774,14 @@ action({
 // Every minute (one round at a time; never while agents' changes are paused, an operation runs on that Spark, or a
 // validation run goes): a Spark (never Spark 2) with a switchable plug is idle when nothing changes there, nothing runs
 // there but Spark Console's own models and kept apps, its GPU is under 5% and its load low, nothing answers Sparkie's
-// chats or apps there, no call reached its models, no editor is open to it and no app door request reached it. Idle for
+// chats or apps there, no call reached its models and no app door request reached it. Idle for
 // the owner's minutes without a break (counted from this process's start: a restart or an install starts the count
 // again), it is powered off through power_off (why: idle), with both Sparks of a model across two together. A Spark it
 // powered off that answers again (turned on another way) has its record cleared and what was parked brought back.
 const idleSince = new Map();
 let powerTicking = false;
 const lastJobOn = id => Math.max(0, ...[...jobs.values()].filter(j => (j.nodes || [j.node]).includes(id)).map(j => Date.parse(j.finishedAt || j.createdAt) || 0));
-const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, editorUse.get(id)?.at || 0, lastJobOn(id),
+const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, lastJobOn(id),
   ...[...doorTickets.values()].filter(t => t.spark === id).map(t => t.lastAt || 0),
   ...[...inUse].filter(([k]) => k.startsWith(`${id}/`)).map(([, u]) => u.at || 0));
 // May this Spark be shut down? Every reason it may not, in words; [] means it may sleep (d-fleet-workloads 2.6). The idle
@@ -799,7 +799,6 @@ function sparkNeeded(id, { recentUse = true, unseen = true } = {}) {
   if (!fresh) why.push('no fresh status');
   if (busySparks.has(id) || [...jobs.values()].some(j => j.status === 'running' && (j.nodes || [j.node]).includes(id))) why.push('an operation');
   if (routedSparks().has(id)) why.push('it answers Sparkie’s chats or apps');
-  if ((editorUse.get(id)?.open || 0) > 0) why.push('an editor is open');
   if ([...doorTickets.values()].some(t => t.spark === id && t.sockets?.size)) why.push('an app is open through the app door');
   const s = knowledge.sparks[id];
   if (!s?.watchedAt || Date.now() - Date.parse(s.watchedAt) > Math.max(3 * WATCH_EVERY, 180000)) why.push('not watched lately');

@@ -107,9 +107,6 @@ if [ "$MODE" = switch ]; then
   check ":8443/console/ still works" 200 "$(code "$URL/console/")"
   check "Spark Console's service" 200 "$(code "$URL/console/api/bootstrap")"
   check "the portal's API is gone" 404 "$(code "$URL/api/bootstrap")"
-  # Spark 3's VS Code comes through a tunnel on Spark 2 that should run without the portal.
-  vs=$(code "$URL/console/api/connect/spark3/")
-  case "$vs" in 200|302) echo "  ok: VS Code for Spark 3 still opens ($vs)" ;; *) echo "  CHECK: VS Code for Spark 3 answered $vs"; problems=1 ;; esac
 else
   check "the portal answers at :8443/" 200 "$(code "$URL/api/bootstrap")"
   check ":8443/console/ still works" 200 "$(code "$URL/console/")"
