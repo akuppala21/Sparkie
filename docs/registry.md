@@ -83,9 +83,11 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
 | `found-setups.json` | `10-recipes` | `digModel` (11-setups); `digModel` is called by `addList`, `startDig` | yes | yes |
+| `funnel-seen.json` | `20-ways-in` | `noteFunnel`; deploy/open-to-internet.sh --undo removes it; `noteFunnel` is called by `checkRoute` | yes | no |
 | `heal-tries.json` | `18-workflows` | `saveHealTries`; `saveHealTries` is called by `maybeHeal`, `healMark` | yes | no |
 | `knowledge.json` | `19-watcher` | `saveKnowledge`; `saveKnowledge` is called by `watchSpark`, `noteSparkStates`, `watchFleet` | yes | no |
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
+| `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
@@ -128,7 +130,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `tgLoop` | `21-telegram` | the long poll, one at a time, with a pause after a failure |
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |
 | `checkRoute` | `23-http` | every 60 s |
-| `refreshBlocked` | `23-http` | every 60 s, not on the stand-in fleet |
+| `refreshBlocked` | `23-http` | every 60 s |
 | `backupIfDue` | `25-backup-and-start` | 10 minutes after start, then hourly |
 | `needsMeTick` | `25-backup-and-start` | every 60 s |
 | `tick` | `25-backup-and-start` | every 0.5 s while a stop waits for running operations, 60 s at most |
