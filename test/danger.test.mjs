@@ -4,7 +4,7 @@
 // two presses at once; the paired chat's press, its next message, and what never answers it; one at a time, a third
 // inside ten minutes sent a minute late, its 15 minutes; No, /stop, /pause, /lock, a new pairing and a restart; an
 // agent's ask and an agent's own call; who may approve, long and over 3,500 characters, forged lines and invisible
-// characters; no action on main reaches it; a task parked at one is not carried on by the loop's budgets.
+// characters; only the named raisers reach it; a task parked at one is not carried on by the loop's budgets.
 //
 // The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). Nothing on main raises one, so these tests do: with
 // STATE_DIR/.test-danger.json present (stand-in fleet only), the next owner-only question becomes a dangerous ask with
@@ -613,14 +613,17 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(!/innerHTML/.test(app), 'no HTML from text');
   });
 
-  test('no action on main reaches it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
-    // (run's ladder is the one raiser A7c added, 21-ladder.mjs: the parts that call dangerAsk are exactly these two)
-    const src = join(REPO, 'service', 'src'), raisers = [];
+  test('only the named raisers reach it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+    // the parts that may raise a dangerous ask, each a step that was read as one
+    const RAISERS = [
+      '20-danger.mjs',
+      '21-ladder.mjs', // a risky change of a dangerous kind (A7c)
+    ];
+    const src = join(REPO, 'service', 'src');
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {
       const text = readFileSync(join(src, f), 'utf8');
-      if (f !== '20-danger.mjs' && /\bdangerAsk\(/.test(text)) raisers.push(f);
+      if (!RAISERS.includes(f)) assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
     }
-    assert.deepEqual(raisers, ['21-ladder.mjs'], `${raisers.join(', ')} raise a dangerous ask`);
     assert.match(readFileSync(join(src, '20-danger.mjs'), 'utf8'), /function dangerForTest\(viewer, ctx, choices\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
     const chat = await newChat(), r = await say(chat, WORDS);
     assert.ok(!(await chatMessages(chat)).some(m => m.danger));
