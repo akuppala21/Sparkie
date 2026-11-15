@@ -2,6 +2,8 @@
 //
 //   node tools/check-docs.mjs     prints each problem and exits 1 if there is any (tools/make.mjs runs it last)
 //   node tools/check-docs.mjs --meaning <base> [<head>]   the meaning diff instead (tools/meaning.mjs, check 13)
+//   node tools/check-docs.mjs --sizes      every document's bytes, limit and free bytes, the fullest first (a report:
+//                                          it exits 0 even when one is over; the plain run fails on that)
 //
 // test/docs.test.mjs runs the same code on the real tree, and on small made-up trees, one fault each.
 // What it checks, in every hand-written document (any *.md outside the dated records and the generated files):
@@ -45,6 +47,7 @@ const LIMITS = [
   [/^docs\/architecture\.md$/, 24 * KB],
   [/^docs\/glossary\.md$/, 8 * KB],
   [/^docs\/state\.md$/, 24 * KB],
+  [/^docs\/state-outside\.md$/, 16 * KB],
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
   [/^docs\/contract\.md$/, 120 * KB],
@@ -55,7 +58,8 @@ const LIMITS = [
 ];
 const LINE_MAX = 400;
 // Documents with longer lines today (a table moved whole, rows written before the limit): a ceiling, never raised.
-const LONG_LINES = { 'docs/agent-door.md': 1395, 'docs/state.md': 1148 };
+// (docs/state-outside.md: rows moved whole out of docs/state.md, 2026-11-14)
+const LONG_LINES = { 'docs/agent-door.md': 1395, 'docs/state.md': 1148, 'docs/state-outside.md': 1064 };
 
 // Names a document may quote that belong to other software, not to this code.
 const NOT_OURS = {
@@ -247,9 +251,11 @@ function checkCounts(file, text, out) {
   }
 }
 
+// A document's limit, and its ceiling when it is over the limit today (max: the one that holds now).
+const limitOf = file => { const [, limit, today] = LIMITS.find(([re]) => re.test(file)); return { limit, today, max: today ?? limit }; };
+
 function checkSize(file, text, out) {
-  const [, limit, today] = LIMITS.find(([re]) => re.test(file));
-  const bytes = Buffer.byteLength(text), max = today ?? limit;
+  const { limit, today, max } = limitOf(file), bytes = Buffer.byteLength(text);
   if (bytes > max) out.push({ check: 'sizes', file, line: 1, message: `is ${bytes} bytes, over its ${today ? `ceiling of ${max} (the limit is ${limit}; it may only shrink)` : `limit of ${max}`}` });
   const lineMax = LONG_LINES[file] ?? LINE_MAX;
   text.split('\n').forEach((l, i) => {
@@ -413,9 +419,25 @@ export function checkDocs(root = ROOT) {
 
 export const describe = p => `${p.file}:${p.line}: ${p.message} [${p.check}]`;
 
+// Every document the size check reads, with its bytes, its limit (its ceiling where it has one) and what is free under
+// it, the fullest first: what is filling up before a landing stops on it (--sizes).
+export function sizesReport(root = ROOT) {
+  return readTree(root).docs.filter(f => !PATHS_ONLY.includes(f)).map(f => {
+    const bytes = Buffer.byteLength(read(root, f)), { max } = limitOf(f);
+    return { file: f, bytes, limit: max, free: max - bytes };
+  }).sort((a, b) => a.free - b.free || a.file.localeCompare(b.file));
+}
+export function sizesText(rows) {
+  const w = Math.max(8, ...rows.map(r => r.file.length));
+  const line = (a, b, c, d) => `${a.padEnd(w)}  ${String(b).padStart(7)}  ${String(c).padStart(7)}  ${String(d).padStart(7)}`;
+  return [line('Document', 'Bytes', 'Limit', 'Free'), ...rows.map(r => line(r.file, r.bytes, r.limit, r.free))].join('\n');
+}
+
 const meaning = process.argv.indexOf('--meaning');
 if (process.argv[1] === fileURLToPath(import.meta.url) && meaning > 0) {
   import('./meaning.mjs').then(m => process.exit(m.meaningCli(process.argv.slice(meaning + 1))));
+} else if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes('--sizes')) {
+  console.log(sizesText(sizesReport()));
 } else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const problems = checkDocs();
   for (const p of problems) console.error(describe(p));
