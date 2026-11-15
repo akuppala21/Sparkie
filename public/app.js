@@ -3024,12 +3024,12 @@ function agentsTab(view, bind) {
   put(view, agentsBox, telegramBox, backup);
   bind(() => redraw(telegramBox, telegramPanel()));
   loadTelegram();
-  // Spark Console copies its own state (people, keys, chats) to another Spark once a day.
+  // Spark Console copies its own state (people, keys, chats) to another Spark while one is on.
   capi('health').then(x => {
     const b = x?.lastBackup;
     if (!b || !backup.isConnected) return;
     backup.textContent = b.ok ? `Spark Console’s settings were last backed up ${fmt.when(b.at)} to ${nodeName(b.to)}.`
-      : `The last backup of Spark Console’s settings didn’t work (${fmt.when(b.at)}${b.error ? `: ${b.error}` : ''}). ${b.good ? `The last good one is from ${fmt.when(b.good.at)}, on ${nodeName(b.good.to)}.` : 'There is no good one yet.'} It tries again every hour.`;
+      : `The last backup of Spark Console’s settings didn’t work (${fmt.when(b.at)}${b.error ? `: ${b.error}` : ''}). ${b.good ? `The last good one is from ${fmt.when(b.good.at)}, on ${nodeName(b.good.to)}.` : 'There is no good one yet.'} It tries again when another Spark is on.`;
   }).catch(() => {});
   bind(() => {
     const a = state.agents, titleOf = name => a?.actions?.find(x => x.name === name)?.title || name;
@@ -3087,6 +3087,12 @@ async function telegramNeedsMe(box) {
   try { state.telegram = await capi('telegram/needs', 'PUT', { on }); } catch (e) { if (box.isConnected) box.checked = !on; failToast(e); }
   runLive();
 }
+// Approve from Telegram (A10a): on needs the passkey; off never does. /lock in the paired chat turns it off too.
+async function telegramApprove(box) {
+  const on = box.checked;
+  try { state.telegram = await capi('telegram/approve', 'PUT', { on }); } catch (e) { if (box.isConnected) box.checked = !on; failToast(e); }
+  runLive();
+}
 function watchPairing() {
   if (telegramPoll || !state.telegram?.code) return;
   telegramPoll = setTimeout(async () => { telegramPoll = null; if (document.querySelector('.agents-drawer')) { await loadTelegram(); watchPairing(); } }, 4000);
@@ -3113,6 +3119,8 @@ function telegramPanel() {
       // The needs-me line (H5): off until switched on here, with the passkey; off never needs it.
       h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.needsMe), onchange: e => telegramNeedsMe(e.target) }),
         'Tell me on Telegram when something new needs me (at most 3 a day)'));
+    put(body, h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.approve), onchange: e => telegramApprove(e.target) }),
+      'Let me approve changes from Telegram (at most 3 an hour, 10 a day; /lock there turns this off)'));
   } else if (t.code) {
     watchPairing();
     put(body, note(`Open this on the device with your Telegram and press Start. It works once, until ${fmt.when(t.code.expiresAt)}.`),

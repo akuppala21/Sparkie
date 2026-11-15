@@ -134,7 +134,9 @@ async function runChoice(viewer, conv, id, by) {
     if (shown) { for (const m of conv.messages) for (const x of m.choices || []) if (x.group === shown.group && x.state === 'open') x.state = 'gone'; saveChats(); }
     throw new HttpError(409, 'That button has expired. Ask Sparkie again.');
   }
-  if (c.ownerOnly && by.via !== 'page') throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
+  // (or an ask this console sent to the paired Telegram chat, pressed there while approvals from it are on, A10a)
+  const fromTelegram = Boolean(c.ownerOnly && by.approved && by.via === 'telegram' && tgAskOpen(String(id), c));
+  if (c.ownerOnly && by.via !== 'page' && !fromTelegram) throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
   for (const [k, x] of pendingChoices) if (x.group === c.group) pendingChoices.delete(k);
   for (const m of conv.messages) for (const x of m.choices || []) {
     if (x.id === id) x.state = 'picked';
@@ -144,10 +146,11 @@ async function runChoice(viewer, conv, id, by) {
   if (!c.action) {
     content = 'Okay, left as it is.';
   } else {
-    // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
-    // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
+    // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
+    // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
+    // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -157,6 +160,8 @@ async function runChoice(viewer, conv, id, by) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
     }
+    // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
+    if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
   const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
@@ -177,6 +182,7 @@ const OP_WORDS = {
   stop: 'Stopping',
   'stop-model': 'Stopping',
   undo: 'Undoing the last change',
+  'workflow-run': 'The saved workflow',
 };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
@@ -186,8 +192,8 @@ function postResult(job) {
   const what = (/^power-/.test(job.type) ? `${OP_WORDS[job.type]} ${where}${job.model ? ` for ${job.model}` : ''}`
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
-  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
-    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
+  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
+    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';

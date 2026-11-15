@@ -222,7 +222,7 @@ action({
     const done = await waitJob(id, ctx.via === 'page' ? 120000 : 40000);
     return done?.status === 'running'
       ? { outcome: 'cancelling', operation: id, status: 'running', note: 'It’s stopping and putting back what it did; that can take a few minutes.' }
-      : { outcome: 'cancelled', operation: id, status: done?.status, note: 'What it had done was put back.' };
+      : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
 action({
