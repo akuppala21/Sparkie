@@ -40,11 +40,21 @@ NEED_SYSTEMD=248
 LOOK_MAX=60        # seconds a look may take
 RUN_MAX=7200       # seconds a change may take (120 minutes)
 STDIN_MAX=16777216 # bytes of input (--stdin)
-PROTECT_MAX=4
+PROTECT_MAX=8
 # Memberships that are root by another name: the run wall leaves them out (--open keeps them).
-ROOTY=' docker lxd libvirt disk sudo '
+ROOTY=' docker lxd libvirt disk sudo adm systemd-journal '
 # Fixed limits of each wall.
 LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
+# What else bounds a plain change (docs/rules/R63.md; the wall analyst's "what a sorter miss can cost"): a small share of
+# the processors and the disk's traffic when anything else wants them, no swap, and a disk floor: a change does not
+# start, and is ended, while the home's disk has less than 50 GB free.
+RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000
+# The ranges a plain change cannot reach: private, link-local, unique-local and the tailnet (the resolver on the
+# loopback stays open). --fleet, the caller's choice for a change that was asked, lifts them.
+LAN_RANGES='10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10'
+# The top of the owner's home is read-only for a plain change: nothing made, removed or renamed directly in it, every
+# dot name read-only but these download caches, ~/bin read-only; the other folders there stay writable.
+HOME_CACHES='.cache .npm .cargo/registry .cargo/git'
 # What must be there in the owner's home before a change runs: a start file, or a folder that something outside the
 # walls reads, that is not there could be made from inside the run wall. The one-time command makes the missing ones.
 # (The start files are bash's: a change is refused unless the owner's login shell is bash, sh or dash.)
@@ -129,7 +139,7 @@ init() {
 }
 
 # --- the call ---------------------------------------------------------------------------------------------------------
-VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 PROTECT=() CMD=() BAD='' ID_IN=''
+VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 PROTECT=() CMD=() BAD='' ID_IN=''
 parse() {
   VERB=${1-}
   [ $# -gt 0 ] && shift
@@ -145,10 +155,10 @@ parse() {
           case "$1" in --id) ID_IN=$2 ;; --sha256) SHA=$2 ;; --seconds) SECS=$2 ;; --dir) DIR=$2 ;; --memory) MEM=$2 ;; esac
         fi
         shift 2 ;;
-      --open|--stdin|--net)
+      --open|--stdin|--net|--fleet|--gpu)
         if [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break; fi
         seen+="$1 "
-        case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; esac
+        case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; --fleet) FLEET=1 ;; --gpu) GPU=1 ;; esac
         shift ;;
       --) shift; CMD=("$@"); break ;;
       *) BAD="not understood: an option this helper does not know, or a command without -- before it"; break ;;
@@ -297,7 +307,14 @@ hide_home() {
       if safe_path "$p"; then BACK+=("$p"); fi
     done
   else hide "$h/.ssh"; fi
-  for p in .gnupg .aws .kube .ngc .config/gh .config/code-server .config/spark-console .local/share/spark-console \
+  # (the start files, environment.d and the owner's units are hidden, not just read-only: a token set there would be read,
+  # and the walls' own bash reads none of them; and the folders where tools keep their keys)
+  for p in .profile .bashrc .bash_profile .bash_login .bash_logout .bash_aliases .zshenv .zprofile .zshrc .zlogin \
+           .zlogout .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
+           .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d \
+           .kaggle .config/rclone .config/gcloud .ollama .claude .claude.json .codex .gemini .config/github-copilot \
+           .config/anthropic .openai .azure .wandb .vault-token .terraform.d \
+           .gnupg .aws .kube .ngc .config/gh .config/code-server .config/spark-console .local/share/spark-console \
            .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc .git-credentials \
            .docker .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf \
            .bash_history .zsh_history .sh_history .python_history .node_repl_history .psql_history .mysql_history \
@@ -342,13 +359,18 @@ lists() {
   while read -r f kind _; do
     [ "$kind" = file ] && hide "$f"
   done < <(tail -n +2 -- "$R/proc/swaps" 2>/dev/null)
-  # The read-only list (the run wall): the owner's start files, what the owner's service manager reads, Spark
-  # Console's caches, set-up scripts, page, code and source, the editor's programs, the helper and its line. With
-  # --open, .ssh too (otherwise it is hidden, and what is put back is read-only).
-  for p in .profile .bashrc .bash_profile .bash_login .bash_logout .bash_aliases .zshenv .zprofile .zshrc .zlogin \
-           .zlogout .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
-           .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d .cache/spark-console .local/opt \
-           .local/share/code-server spark-console spark-console-service spark-console-src; do
+  # The read-only list (the run wall): Spark Console's caches, set-up scripts, page, code and source, the editor's
+  # programs, the helper and its line (the start files and the service manager's folders are hidden). With --open, .ssh
+  # too (otherwise it is hidden, and what is put back is read-only).
+  # (with --open the hidden list is dropped: the start files and the service manager's folders are read-only then)
+  if [ "$OPEN" = 1 ]; then
+    for p in .profile .bashrc .bash_profile .bash_login .bash_logout .bash_aliases .zshenv .zprofile .zshrc .zlogin \
+             .zlogout .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
+             .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d; do
+      ro "$OWNER_HOME/$p"
+    done
+  fi
+  for p in .cache/spark-console .local/opt .local/share/code-server spark-console spark-console-service spark-console-src; do
     ro "$OWNER_HOME/$p"
   done
   [ "$OPEN" = 1 ] && ro "$OWNER_HOME/.ssh"
@@ -417,7 +439,13 @@ wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-
             -p TemporaryFileSystem=/dev/shm:ro -p ReadOnlyPaths=/)
   else
     PROPS+=(-p NoNewPrivileges=yes -p PrivateTmp=yes)
-    [ "$OPEN" = 1 ] || PROPS+=(-p IPAddressDeny=localhost -p IPAddressAllow=127.0.0.53)
+    if [ "$OPEN" = 0 ]; then
+      # (R63: no port off the loopback but the resolver, nor the home network or the tailnet unless --fleet; no device
+      # unless --gpu; its own /dev/shm and IPC)
+      if [ "$FLEET" = 1 ]; then PROPS+=(-p IPAddressDeny=localhost); else PROPS+=(-p "IPAddressDeny=localhost $LAN_RANGES"); fi
+      PROPS+=(-p IPAddressAllow=127.0.0.53 -p PrivateIPC=yes -p TemporaryFileSystem=/dev/shm)
+      [ "$GPU" = 1 ] || PROPS+=(-p PrivateDevices=yes)
+    fi
   fi
   if [ "$wall" = look ] || [ "$OPEN" = 0 ]; then
     for p in "${TMPFS[@]}"; do PROPS+=(-p "TemporaryFileSystem=$p:ro"); done
@@ -427,8 +455,16 @@ wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-
   fi
   if [ "$wall" = run ]; then
     for p in "${RO[@]}" "${PROTECT[@]}"; do PROPS+=(-p "ReadOnlyPaths=$p"); done
+    # The top of the home read-only for a plain change (R63), but its plain folders and the download caches.
+    local rw=()
+    if [ "$OPEN" = 0 ]; then
+      PROPS+=(-p "ReadOnlyPaths=$OWNER_HOME")
+      mapfile -t rw < <(home_writable)
+      for p in "${rw[@]}"; do PROPS+=(-p "ReadWritePaths=$p"); done
+    fi
     # Each folder above a held path in the owner's home is bound onto itself: a mount point cannot be renamed or
     # replaced, so a change cannot move a held path out of the way and make a new one. What is inside stays writable.
+    # (In a plain change only where it can still write: under the top's writable folders; the rest is read-only.)
     local held=() place=() all=() l under
     mapfile -t all < <(places)
     # (a held place that is a read-only or --protect folder, or lies under one, is read-only already: binding it onto
@@ -450,13 +486,73 @@ wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-
       done
     done
     if [ "$OPEN" = 0 ]; then mapfile -t held < <({ pins "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${PROTECT[@]}" "${place[@]}"
-                                                    for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u)
+                                                    for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u \
+                                                  | while IFS= read -r p; do inside_any "$p" "${rw[@]}" && printf '%s\n' "$p"; done)
     else mapfile -t held < <({ pins "${RO[@]}" "${PROTECT[@]}" "${place[@]}"; for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u); fi
     for p in "${held[@]}"; do PROPS+=(-p "BindPaths=$p"); done
   fi
   PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
   if [ "$wall" = look ]; then PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$LOOK_MEMORY" -p "TasksMax=$LOOK_TASKS")
-  else PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=${MEM:-$RUN_MEMORY}" -p "TasksMax=$RUN_TASKS"); fi
+  else PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=${MEM:-$RUN_MEMORY}" -p MemorySwapMax=0
+                -p "CPUWeight=$RUN_CPU" -p "IOWeight=$RUN_IO" -p "TasksMax=$RUN_TASKS"); fi
+}
+disk_free() {   # bytes free on the owner's home's disk, or nothing
+  df --output=avail -B1 -- "$R$OWNER_HOME" 2> /dev/null | tail -n 1 | tr -dc '0-9'
+}
+disk_problem() {   # a change does not start while the disk has less than the floor free (R63)
+  local a
+  a=$(disk_free)
+  if [ -z "$a" ]; then printf "the disk's free space could not be read, so no change starts"
+  elif (( a < DISK_FLOOR )); then printf 'the disk has %s GB free; a change needs %s GB free' "$((a / 1000000000))" "$((DISK_FLOOR / 1000000000))"; fi
+}
+disk_watch() {   # $1 the change's unit: every 5 s while it runs; under the floor it is ended, and noted
+  local a
+  while sleep 5; do
+    a=$(disk_free)
+    if [ -n "$a" ] && (( a < DISK_FLOOR )); then
+      : > "$H/disk-low"
+      systemctl stop "$1.service" > /dev/null 2>&1
+      return
+    fi
+  done
+}
+home_back() {   # $1 the home's "mode uid gid" before the change: put back right after it, as root, and said (R63)
+  local now m u g said=''
+  [ -n "$1" ] || return 0
+  now=$(stat -c '%a %u %g' -- "$R$OWNER_HOME" 2> /dev/null) || return 0
+  if [ "$now" != "$1" ]; then
+    read -r m u g <<< "$1"
+    chown -h -- "$u:$g" "$R$OWNER_HOME" 2> /dev/null
+    chmod -- "$m" "$R$OWNER_HOME" 2> /dev/null
+    said="the home's mode and owner were put back ($m, not ${now%% *})"
+  fi
+  if command -v getfacl > /dev/null 2>&1 && [ -n "$(getfacl -cps -- "$R$OWNER_HOME" 2> /dev/null)" ]; then
+    setfacl -b -- "$R$OWNER_HOME" 2> /dev/null && said="${said:+$said; }the home's added access rules were taken away"
+  fi
+  printf '%s' "$said"
+}
+inside_any() {   # $1 a path, then folders: is it strictly inside one of them? (each writable folder is a mount point
+  local p=$1 l      # itself, which cannot be moved: only what is inside it needs a pin)
+  shift
+  for l in "$@"; do case "$p" in "$l"/?*) return 0 ;; esac; done
+  return 1
+}
+under_any() {   # $1 a path, then folders: is it one of them, or under one?
+  local p=$1 l
+  shift
+  for l in "$@"; do case "$p/" in "$l"/*) return 0 ;; esac; done
+  return 1
+}
+home_writable() {   # the folders at the top of the owner's home a plain change may still write in: each plain folder
+  # there (not ~/bin) and each download cache, each the real folder and on no list
+  local d p n
+  for d in "$R$OWNER_HOME"/* $(for n in $HOME_CACHES; do printf '%s ' "$R$OWNER_HOME/$n"; done); do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ "${d##*/}" != bin ] || continue
+    p=${d#"$R"}
+    safe_path "$p" && real_here "$p" || continue
+    under_any "$p" "${RO[@]}" "${PROTECT[@]}" "${TMPFS[@]}" "${GONE[@]}" && continue
+    printf '%s\n' "$p"
+  done
 }
 run_prefix() {   # the run wall's command start: its own process tree, then down to the owner's account
   PRE=()
@@ -504,7 +600,7 @@ START
 }
 
 # --- verbs -----------------------------------------------------------------------------------------------------------
-only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET" = 000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#CMD[@]} -eq 0 ] \
+only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU" = 00000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#CMD[@]} -eq 0 ] \
   || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
@@ -555,6 +651,7 @@ do_unit() {
     [ ${#PROTECT[@]} -eq 0 ] || refuse "--protect is for run: a look is read-only everywhere"
     [ "$NET" = 0 ] || refuse "a look changes nothing, so it never takes --net"
     [ -z "$MEM" ] || refuse "--memory is for run: a look's memory is fixed"
+    [ "$FLEET$GPU" = 00 ] || refuse "--fleet and --gpu are for run: a look reaches no network and no device"
     (( 10#$SECS <= max )) || refuse "a look is held to $LOOK_MAX seconds"
   else
     max=$RUN_MAX
@@ -565,6 +662,13 @@ do_unit() {
     # (--memory: the change's own cap, 1G to 8G; the wall's own, RUN_MEMORY, is the most)
     [ -z "$MEM" ] || [[ $MEM =~ ^[1-8]G$ ]] || refuse "--memory must be 1G to 8G (the run wall's own cap is $RUN_MEMORY)"
     [ ${#PROTECT[@]} -le $PROTECT_MAX ] || refuse "at most $PROTECT_MAX --protect folders"
+    # (~/<path>: a folder in the owner's home, from /etc/passwd; the same checks follow, on the path it names)
+    for p in "${!PROTECT[@]}"; do
+      case "${PROTECT[$p]}" in
+        '~/'?*) PROTECT[$p]="$OWNER_HOME/${PROTECT[$p]#'~/'}" ;;
+        '~'*) refuse "--protect takes a whole path, or ~/ and a folder in the owner's home" ;;
+      esac
+    done
     for p in "${PROTECT[@]}"; do
       safe_path "$p" || refuse "--protect must name a whole path that can stand in a setting"
       real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
@@ -581,6 +685,7 @@ do_unit() {
   lists
   if [ "$VERB" = run ]; then
     p=$(held_problem)
+    [ -n "$p" ] || p=$(disk_problem)
   else
     p=$(look_problem)
   fi
@@ -609,12 +714,24 @@ do_unit() {
   [ "$VERB" = run ] && run_prefix
   unit="sw-$VERB-$ID"
   start=$SECONDS
+  # (a change: the home's own mode and owner noted, to be put back after it; the disk watched while it runs, R63)
+  local home_was='' watch='' tail=() l
+  if [ "$VERB" = run ]; then
+    home_was=$(stat -c '%a %u %g' -- "$R$OWNER_HOME" 2>/dev/null) || home_was=''
+    disk_watch "$unit" &
+    watch=$!
+  fi
   systemd-run "--unit=$unit" "--description=Spark Console $VERB $ID sha256 $SHA" --wait --pipe --collect --quiet \
     "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" < "$input" || rc=$?
+  if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
+  if [ -e "$H/disk-low" ]; then tail+=("stopped: the disk's free space fell under $((DISK_FLOOR / 1000000000)) GB"); fi
   rm -rf -- "$H"
+  if [ "$VERB" = run ]; then l=$(home_back "$home_was"); [ -z "$l" ] || tail+=("$l"); fi
   # (inside the net its own line comes first, after the line break that ends what the command printed)
   local nl=$'\n'
-  if [ "$NET" = 1 ]; then printf '\n'; net_after; nl=''; fi
+  if [ "$NET" = 1 ] || [ ${#tail[@]} -gt 0 ]; then printf '\n'; nl=''; fi
+  for l in "${tail[@]}"; do say "$l"; done
+  if [ "$NET" = 1 ]; then net_after; fi
   if [ "$rc" -ne 0 ] && (( SECONDS - start >= 10#$SECS )); then printf '%s%s end time\n' "$nl" "$ID"
   else printf '%s%s end %s\n' "$nl" "$ID" "$rc"; fi
   exit "$rc"
@@ -1388,20 +1505,23 @@ NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale
        'root with no net' 'moving a folder above a held one, and making a new one in its place'
        "stopping or changing the net's timer" "writing the net's copies or restore.sh" "taking away the net's pending mark"
        'making keep count' "swapping a job's own output folder for a link" 'ending a unit through the helper'
-       'more memory than the change was given (--memory)')
-LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18 20'
-RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20 21'
-OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20'
+       'more memory, swap or share than the change was given' "a connection to this Spark's own address or the tailnet"
+       'a file or segment left in /dev/shm or IPC' "the home's own mode" "the owner's start files"
+       'a name made at the top of the home or in a dot folder')
+LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18 20 25 26'
+RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20 22 25 26'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
-AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14 run:19 look:15 run:15 look:16 run:16 look:17 run:17 look:18 run:18'
+AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14 run:19 run:23 run:24 look:15 run:15 look:16 run:16 look:17 run:17 look:18 run:18'
 # The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
 # use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
 # targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
 # read-only list (5), sudo with the helper's own line (8), its own key (10), its own folders' right to be renamed (14),
-# its own job folder's (19), and the helper's stop, which only the owner's sudo line reaches (20).
+# its own job folder's (19), the helper's stop, which only the owner's sudo line reaches (20), the owner's start files
+# (25), and a name made at the top of the home and in a dot folder (26). 22 (its own address, the tailnet) may be absent.
 # Attempt 2 must reach its own program on the loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be
 # absent, for the reason the proof states.
-MUST_WORK='1 4 5 6 7 8 10 14 19 20'
+MUST_WORK='1 4 5 6 7 8 10 14 19 20 25 26'
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -1413,7 +1533,7 @@ declare -A GOT=() DETAIL=()
 take() {   # $1 where the lines came from (outside, look, run, after); $2 the lines
   local from=$1 tag n how res rest
   while read -r tag n how res rest; do
-    [[ $n =~ ^(1[0-24-9]|2[01]|[1-9])$ ]] || continue
+    [[ $n =~ ^(1[0-24-9]|2[0-6]|[1-9])$ ]] || continue
     rest=${rest//[![:print:]]/}
     case "$tag:$how:$res" in
       P:outside:works|P:outside:not-there) GOT[outside:$n]=$res; DETAIL[outside:$n]=${rest:0:200} ;;
@@ -1496,6 +1616,7 @@ do_prove() {
   printf '%s' "$pid" > "$H/target"
   printf '%s\n' "${RO[@]}" "$p" > "$H/readonly"
   proof_guards up   # (named in ./guards for the check from outside afterwards)
+  stat -c '%a' -- "$R$OWNER_HOME" > "$H/home-mode"   # (attempt 24's check afterwards)
   seal
   take outside "$(plain_unit owner outside 120 outside $OUTSIDE_ATTEMPTS)"
   real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
@@ -1637,10 +1758,11 @@ GUARD = '/var/lib/spark-console/guard'                  # the net's guards (15 t
 GPU = ['/dev/nvidia0', '/dev/nvidiactl', '/dev/nvidia-uvm', '/dev/nvidia-uvm-tools', '/dev/nvidia-modeset']
 DISKS = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'vfat', 'exfat', 'f2fs', 'ntfs3', 'zfs'}
 SHARED = ['/tmp', '/var/tmp', '/dev/shm']
-LEFT = {(5, 'look'), (12, 'look'), (12, 'run')}
+LEFT = {(5, 'look'), (12, 'look'), (12, 'run'), (23, 'run'), (24, 'run')}
 # Why an attempt outside the walls found nothing to try. Only these three may be absent; the helper fails the proof for
 # any other attempt that does not work outside.
-REASONS = {3: 'none of the Docker, Tailscale or Spark Console sockets answers on this Spark',
+REASONS = {22: "nothing answers on this Spark's own address (port 22) or Tailscale's (100.100.100.100:53)",
+           3: 'none of the Docker, Tailscale or Spark Console sockets answers on this Spark',
            9: 'no user manager or system bus answers here for the owner',
            11: 'this Spark shows no disk device or GPU node'}
 CLEAN = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}
@@ -1985,15 +2107,86 @@ def a20(c):  # ending a unit through the helper's stop: the owner's sudo line re
     return got
 
 
-def a21(c):  # more memory than the change was given: its unit's memory.max must be the 2G the helper set (--memory)
+def cgroup_file(name):   # this unit's own cgroup file, or None
     try:
         with open('/proc/self/cgroup') as f:
             path = f.read().strip().split('::', 1)[1]
-        with open(f'/sys/fs/cgroup{path}/memory.max') as f:
-            cap = f.read().strip()
+        with open(f'/sys/fs/cgroup{path}/{name}') as f:
+            return f.read().strip()
     except (OSError, IndexError):
-        return ['its memory cap could not be read']
-    return [] if cap == str(2 << 30) else [f'memory.max is {cap}']
+        return None
+
+
+def a21(c):  # more memory, swap or share than given: the 2G of --memory, no swap, a weight of 20 (a file not there is no
+    got = []  # answer for the swap and the weights: their controller may be off; memory's must be there)
+    mem = cgroup_file('memory.max')
+    if mem != str(2 << 30):
+        got.append(f'memory.max is {mem}' if mem else 'its memory cap could not be read')
+    for name, want in (('memory.swap.max', '0'), ('cpu.weight', '20')):
+        v = cgroup_file(name)
+        if v is not None and v != want:
+            got.append(f'{name} is {v}')
+    io = cgroup_file('io.weight')
+    if io is not None and 'default 20' not in io:
+        got.append(f'io.weight is {io}')
+    return got
+
+
+def a22(c):  # a connection to this Spark's own address (its ssh) or to Tailscale's own (the tailnet), from the run wall
+    got = []
+    own = c.fx.get('own')
+    for addr, port in ([(own, 22)] if own else []) + [('100.100.100.100', 53)]:
+        if tcp(addr, port):
+            got.append(f'{addr}:{port}')
+    return got
+
+
+def shm_key(how):
+    return int(hashlib.sha256(f'{ID}-{how}'.encode()).hexdigest()[:7], 16)
+
+
+def a23(c):  # a file left in /dev/shm and a SysV segment left in IPC: both looked for from outside afterwards
+    try:
+        write(f'/dev/shm/.spark-console-proof-{ID}-run-{c.how}', b'left')
+    except OSError:
+        pass
+    try:
+        ctypes.CDLL(None, use_errno=True).shmget(shm_key(c.how), 4096, 0o1600)
+    except (OSError, AttributeError):
+        pass
+    return []
+
+
+def a24(c):  # the home's own mode: opened to all (sshd would then refuse the owner's key); looked at afterwards
+    try:
+        os.chmod(HOME, 0o777)
+    except OSError:
+        pass
+    return []
+
+
+def a25(c):  # the owner's start files, read (a token set there)
+    got = []
+    for name in ('.bashrc', '.profile'):
+        try:
+            with open(f'{HOME}/{name}', 'rb') as f:
+                f.read(1)
+            got.append(name)
+        except OSError:
+            pass
+    return got
+
+
+def a26(c):  # a name made at the top of the home, and in a dot folder (outside: made and taken away again)
+    got = []
+    for p in (f'{HOME}/.sparkie-proof-{ID}-top-{c.how}', f'{HOME}/.config/.sparkie-proof-{ID}-{c.how}'):
+        try:
+            os.close(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+            got.append(p.replace(HOME, '~', 1))
+            os.unlink(p)
+        except OSError:
+            pass
+    return got
 
 
 def a12(c):  # something left behind: a program put in the background, looked for from outside afterwards
@@ -2053,7 +2246,7 @@ def a18(c):  # making keep count (or putting back): through the helper, or by wr
 
 
 ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12, 14: a14,
-            15: a15, 16: a16, 17: a17, 18: a18, 19: a19, 20: a20, 21: a21}
+            15: a15, 16: a16, 17: a17, 18: a18, 19: a19, 20: a20, 21: a21, 22: a22, 23: a23, 24: a24, 25: a25, 26: a26}
 
 
 def what(hits, n=0):
@@ -2254,6 +2447,34 @@ def after():
     out('V', 12, 'outside', 'works' if control else 'not-there', 'saw the program outside the walls' if control else 'saw no program outside the walls')
     for w in ('look', 'run'):
         out('V', 12, w, 'through' if left[w] else 'blocked', f'{left[w]} still running' if left[w] else '-')
+    # 23 and 24 (the run wall): nothing left in the real /dev/shm or IPC; the home's own mode as it was (put back if not).
+    left23 = []
+    for how in ('direct', 'child'):
+        q = f'/dev/shm/.spark-console-proof-{ID}-run-{how}'
+        if os.path.lexists(q):
+            left23.append(q)
+            try:
+                os.unlink(q)
+            except OSError:
+                pass
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            sid = libc.shmget(shm_key(how), 0, 0)
+            if sid >= 0:
+                left23.append(f'a SysV segment ({how})')
+                libc.shmctl(sid, 0, None)
+        except (OSError, AttributeError):
+            pass
+    out('V', 23, 'run', 'through' if left23 else 'blocked', what(left23))
+    try:
+        with open(os.path.join(HERE, 'home-mode')) as f:
+            home_was = int(f.read().strip(), 8)
+        home_now = stat.S_IMODE(os.stat(HOME).st_mode)
+        if home_was is not None and home_now != home_was:
+            os.chmod(HOME, home_was)
+        out('V', 24, 'run', 'blocked' if home_was is None or home_now == home_was else 'through', f'{home_now:o}')
+    except (OSError, ValueError):
+        out('V', 24, 'run', 'through', "the home's mode could not be read")
     # The net's guards (15 to 18): each wall's still waiting, its restore.sh as written, nothing added, pending there,
     # never kept. A guard the helper could not make is not named, and its attempts are then not reported.
     try:

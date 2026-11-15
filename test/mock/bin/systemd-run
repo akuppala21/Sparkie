@@ -56,7 +56,7 @@ if refuse is not None and unit.startswith(refuse.strip()):
     sys.stderr.write('Failed to start transient service unit: Invalid argument\n')
     sys.exit(1)
 
-LEFT = {(5, 'look'), (12, 'look'), (12, 'run')}
+LEFT = {(5, 'look'), (12, 'look'), (12, 'run'), (23, 'run'), (24, 'run')}
 through = set()
 for line in (knob('let-through') or '').splitlines():
     w = line.split()
@@ -109,6 +109,8 @@ if unit.startswith('sw-prove-'):
         say('V', 12, 'outside', 'works', 'stand-in')
         for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+        for n in (23, 24):
+            say('V', n, 'run', 'through' if (n, 'run', 'after') in through else 'blocked', 'stand-in')
         for n in (15, 16, 17, 18):
             for wall in ('look', 'run'):
                 say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')

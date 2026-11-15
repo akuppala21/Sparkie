@@ -88,6 +88,9 @@ elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-')
 elif args[:1] == ['stop'] and len(args) == 2:
     ended(args[1])
     set_unit(args[1], active='inactive')
+    if args[1].startswith('sw-run-'):   # (a command can see it was ended: <rehearsal>/standin/stopped/<unit>)
+        os.makedirs(os.path.join(R, 'standin', 'stopped'), exist_ok=True)
+        open(os.path.join(R, 'standin', 'stopped', args[1]), 'w').close()
 elif args[:1] == ['kill']:
     ended(args[-1])
 elif args[:1] and args[0].startswith('--machine=') and 'is-active' in args:
