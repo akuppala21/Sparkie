@@ -12461,8 +12461,10 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
   const said = winner ? `${winner.model} won; keeping it for “${w.title}” waits for you in Spark Console.` : `Too close to call (within ${COMPARE_MARGIN}, or without a score): pick the one to keep for “${w.title}”.`;
   j.report = [...lines, said];
   if (!ctx.conv) { j.report.push(`To keep one: compare_models {"workflow": "${w.title}", "keep": "<model>"}.`); return; }
-  const q = question(viewer, { ...ctx, onQuestion: () => {} }, said, offer.slice(0, 4).map(r => ({ label: `Keep ${r.model} (${r.score !== undefined ? `score ${r.score}, ` : ''}${r.seconds} s)`, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } })), 'question', { ownerOnly: Boolean(ctx.channel) });
-  j.choices = sparkieMessageChoices(q);
+  // (the question as asked, with its choices' ids, for the buttons under the result in the chat)
+  let asked = null;
+  question(viewer, { ...ctx, onQuestion: q => { asked = q; } }, said, offer.slice(0, 4).map(r => ({ label: `Keep ${r.model} (${r.score !== undefined ? `score ${r.score}, ` : ''}${r.seconds} s)`, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } })), 'question', { ownerOnly: Boolean(ctx.channel) });
+  if (asked?.choices) j.choices = sparkieMessageChoices(asked);
 }
 // The owner's pick after a compare: keeps that candidate of the last compare of this workflow.
 function compareKeep(w, keep, viewer, ctx) {
