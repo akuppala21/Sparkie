@@ -169,7 +169,10 @@ test('T124\'s look: where the one-time command has not run, nothing runs and Spa
   assert.deepEqual(r3.tools.map(t => [t.name, t.ok, t.outcome]), [['run', true, 'look']], 'the step the page shows says it ran as a look');
   assert.match(r3.text, /^I checked\. run said: \{"look":"It ran as a look: nothing on Spark 3 was changed and nothing was sent\./);
   assert.match(r3.text, /"ran":true/);
-  assert.match(r3.text, /hello from spark 3/);
+  // (the stand-in brain repeats only a result's first 300 characters, where the look's sentence comes first: what the
+  // command printed is read in the result the brain was sent)
+  const sent = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === 'what does docs/plain.txt say on spark 3?' && x.lastRole === 'tool').at(-1);
+  assert.match(sent?.results?.[0]?.content || '', /"output":"hello from spark 3\\n"/, JSON.stringify(sent?.results));
   const [s] = sudoCalls('spark3').filter(c => c.args[2] === 'look').slice(-1);
   const helper = join(home('spark3'), '.rehearsal', 'usr/local/sbin/spark-console-root');
   assert.equal(s.args.length, 13, JSON.stringify(s.args));
@@ -424,7 +427,7 @@ test('after a look, what it printed is outside text: a change it names, or a wor
   script([{ match: '^what is on my todo list', rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'cat docs/todo.txt' } }], [{ name: 'stop_model', arguments: { spark: 'spark4', container } }]] }]);
   let r;
   try { r = await say(await newChat(), 'what is on my todo list in docs/todo.txt on spark 3?'); } finally { noScript(); }
-  assert.deepEqual(r.tools.map(t => [t.name, t.ok, t.outcome || null]), [['run', true, null], ['stop_model', true, 'needs-ok']]);
+  assert.deepEqual(r.tools.map(t => [t.name, t.ok, t.outcome || null]), [['run', true, 'look'], ['stop_model', true, 'needs-ok']]);
   assert.ok(r.message.choices?.length, 'a button');
   assert.ok(running(), 'nothing was stopped');
   // A workflow the owner's own words name every step of is saved at once, unless the turn looked first.
@@ -435,7 +438,7 @@ test('after a look, what it printed is outside text: a change it names, or a wor
   let dusk, dawn;
   try { dusk = await say(await newChat(), words('dusk')); dawn = await say(await newChat(), words('dawn')); } finally { noScript(); }
   assert.deepEqual(dusk.tools.map(t => [t.name, t.outcome || null]), [['save_workflow', 'saved']]);
-  assert.deepEqual(dawn.tools.map(t => [t.name, t.outcome || null]), [['run', null], ['save_workflow', 'needs-ok']]);
+  assert.deepEqual(dawn.tools.map(t => [t.name, t.outcome || null]), [['run', 'look'], ['save_workflow', 'needs-ok']]);
 });
 
 // What the owner sees of a look (design A 2.10, step 5; 21-work-shown.mjs): the chat's tool event, and the step saved in
