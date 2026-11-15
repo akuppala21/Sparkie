@@ -16,6 +16,7 @@ const tilde = p => String(p).replace(homedir(), '~');
 function openProblems() {
   const out = [], add = (key, text) => out.push({ key, text });
   const hereNode = NODES.find(n => n.host === 'local'), here = hereNode ? sparkName(hereNode) : 'the Spark that runs Spark Console';
+  // (In this order, which is the order they are said in: a new source goes at the end of its group, not of the list.)
   const sources = [
     // Lock-out: who may sign in, and the other ways in.
     () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy and who has access can’t be changed. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
