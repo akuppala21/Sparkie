@@ -4,7 +4,7 @@
 // of its words there, to the brain, in the reply or on a button. An agent that may change things, through ask_sparkie,
 // gets none of them either, nor does its own direct call. In a chat an agent started, the owner typing there gets no
 // retired line from recall or memory {past}, and the agent reads none back. A value kept as a key is hidden in the
-// memory block of the system prompt and in the picks. Memory, its history and a kept key are seeded before the console
+// memory block of the system prompt, in the picks and in a lesson card made before it was kept. Memory, its history and a kept key are seeded before the console
 // starts; Telegram is paired; the stand-in brain is scripted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,9 +30,14 @@ const PAST = [
   { id: DOOR, kind: 'fact', text: 'my door code is 4471', by: 'owner', at: at(300), src: { via: 'api' }, gone: { at: at(250), why: 'forgotten', who: 'owner', src: { via: 'api' } } },
   { id: WIFI, kind: 'fact', text: 'Spark 4 is on the quartz Wi-Fi only', by: 'owner', at: at(400), src: { via: 'api' }, gone: { at: at(198), why: 'replaced', by: ETH, who: 'owner', src: { via: 'api' } } },
 ];
+// A lesson whose image tag is given as a key only later, after its card was made (B4's cards are kept in memory).
+const TAG = 'cardkey-Zq81mPx2';
+const LESSON = { id: 'l_10000001', kind: 'start', subject: { model: 'gemma-3-12b-it', engine: 'vllm', sparks: 1 }, tried: { how: 'own', flags: 'a1b2c3d4e5f6', image: `vllm/vllm-openai:${TAG}`, on: 'spark4', code: 'abcdefabcdef' },
+  failure: 'gated', state: 'seen', failed: 1, evidence: [], firstAt: at(48), lastAt: at(48) };
 function seed({ dir, stateDir }) {
   writeFileSync(join(stateDir, 'memory.json'), JSON.stringify({ entries: LINES }), { mode: 0o600 });
   writeFileSync(join(stateDir, 'memory-past.json'), JSON.stringify({ past: PAST }), { mode: 0o600 });
+  writeFileSync(join(stateDir, 'lessons.json'), JSON.stringify({ lessons: [LESSON] }), { mode: 0o600 });
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() },
     keys: { NAS: { value: NAS, at: at(1) } } }), { mode: 0o600 });
@@ -133,7 +138,7 @@ test('a chat an agent started, the owner typing in it: recall and memory {past} 
     assert.ok(!JSON.stringify(back).includes('4471'), JSON.stringify(back).slice(0, 600));
   } finally { script([]); }
   // (the owner's own page chat still reads the history)
-  script([{ match: '^reads owner asks on the page what was forgotten$', calls: [{ name: 'memory', arguments: { past: true } }] }]);
+  script([{ match: '^reads owner asks on the page what was forgotten$', calls: [{ name: 'recall', arguments: { id: DOOR } }] }]);
   try {
     await say(await newChat(), 'reads owner asks on the page what was forgotten');
     assert.match(await resultsFor('reads owner asks on the page what was forgotten'), /my door code is 4471/);
@@ -150,5 +155,17 @@ test('a kept key in a memory line is hidden in what the brain is sent: the syste
     assert.ok(x.system.includes('the NAS box answers to [hidden]'), x.system.slice(-600));
     assert.ok(String(x.lastUser).includes('Spark 4 mounts the NAS share from [hidden]'), String(x.lastUser).slice(0, 2500));
     assert.ok(!x.system.includes(NAS) && !String(x.lastUser).includes(NAS), 'the kept key went to the brain');
+  } finally { script([]); }
+});
+
+test('a value given as a key after a lesson card was made is hidden in the card the brain is sent', { timeout: 120000 * SLOW }, async () => {
+  const words = 'reads asks why gemma-3-12b-it keeps failing on spark 4';
+  script([{ match: '^reads asks why gemma-3-12b-it', calls: [] }]);
+  const turn = async () => { const from = requests().length; await say(await newChat(), words); return String(requests().slice(from).find(q => q.words === words).lastUser); };
+  try {
+    assert.ok((await turn()).includes(`(image vllm/vllm-openai:${TAG})`), 'the card was made, the tag not yet a key');
+    assert.match((await say(await newChat(), `/key CARD_TAG ${TAG}`)).text, /^Kept your key CARD_TAG\./);
+    const after = await turn();
+    assert.ok(after.includes('(image vllm/vllm-openai:[hidden])') && !after.includes(TAG), after.slice(0, 2500));
   } finally { script([]); }
 });

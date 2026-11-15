@@ -1,5 +1,5 @@
 /* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
-// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs, lesson-cards.test.mjs
 // Owns: lessons.json (writers: recordLesson)
 // Timers: none        Wakes: none
 // A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
@@ -14,7 +14,9 @@
 // setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
 // its proven run (verified.json). A start reads them before it picks a setup (B3): one that failed twice the same known
 // way is passed over while its image, Sparks and start code are what the start would use (failedTwice, bestHowNow).
-// Cards for the brain are B4.
+// The brain is shown lessons as one-line cards, built here from their typed fields (lessonCard), up to six about the
+// owner's words in the record block, never the system prompt (B4: picked in 20-memory-names.mjs); a failed result names
+// the lesson already on record for the same failure (lessonSeenBefore, in postResult).
 const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
 // (a cap, never reached in use: the newest are kept)
 const LESSONS_MAX = 500;
@@ -180,4 +182,47 @@ function passedOverAsk(viewer, ctx, args, m, placed, best) {
     { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
       ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
     { label: 'No, leave it', call: null }]);
+}
+
+/* cards (B4): a lesson as the brain is shown it, and a failed result's "seen before" */
+// A lesson as one line of what happened, built by code from its typed fields only, each checked again as it is read, so
+// a damaged or hand-edited lessons.json can't put a line break, the record block's own markers, words or a key in front
+// of the brain: its id, its dates, how sure, what was tried and the known way it failed. What happened, never what to
+// do. null for anything this code didn't write.
+const LESSON_APP_FAILS = { image: 'its image didn’t download', docker: 'Docker wouldn’t start it', 'stopped-at-once': 'it stopped right after starting' };
+const lessonDay = v => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) ? v.slice(0, 10) : null);
+function lessonTried(l) {
+  const on = lSparks(l.tried?.on), where = on ? ` on ${on.split('+').map(id => sparkName(nodeById(id))).join(' + ')}` : '', image = lValue(l.tried?.image, L_IMAGE);
+  if (l.kind === 'app') {
+    const name = lValue(l.subject?.container, L_CONTAINER);
+    return name ? `the app ${name}${image ? ` (image ${image})` : ''}${where}` : null;
+  }
+  const model = lValue(l.subject?.model, L_MODEL), engine = Object.hasOwn(ENGINES, String(l.subject?.engine)) ? l.subject.engine : null;
+  const n = Number.isInteger(l.subject?.sparks) && l.subject.sparks > 0 && l.subject.sparks < 9 ? l.subject.sparks : null;
+  const how = lValue(l.tried?.how, L_HOW), setup = how?.startsWith('setup:') ? `recipe setup ${how.slice(6)}` : how === 'proven' ? 'a run that worked here before' : how === 'own' ? 'its own setup (its spark.json, or the engine’s defaults)' : 'a setup';
+  if (!model) return null;
+  const about = [engine, n ? `${n} Spark${n === 1 ? '' : 's'}` : null].filter(Boolean).join(', ');
+  return `a start of ${model}${about ? ` (${about})` : ''} with ${setup}${where}${image ? ` (image ${image})` : ''}`;
+}
+const lessonFailWords = l => (l.kind === 'app' ? LESSON_APP_FAILS[l.failure] : START_FAILURES.find(f => f.id === l.failure)?.title) || 'a way Spark Console doesn’t know';
+function lessonCard(l) {
+  if (!l || !/^l_[0-9a-f]{8}$/.test(String(l.id)) || !['start', 'app'].includes(l.kind)) return null;
+  const tried = lessonTried(l);
+  if (!tried) return null;
+  const n = Number.isInteger(l.failed) && l.failed > 0 && l.failed < 1e6 ? l.failed : 1, first = lessonDay(l.firstAt), last = lessonDay(l.lastAt);
+  const when = first && last && first !== last ? `${first} to ${last}` : last || first || 'when not known';
+  return maskSecrets(`- [${l.id}] (lesson, ${when}, ${l.state === 'proven' ? 'proven' : 'seen'}) ${tried.charAt(0).toUpperCase()}${tried.slice(1)} failed ${n} time${n === 1 ? '' : 's'}: ${lessonFailWords(l)}.`);
+}
+// A failed operation's result (postResult): the lesson already on record for this same known failure of this same setup
+// (learnFrom counts this one after the result is posted), named and said from its typed fields; null when there is none.
+function lessonSeenBefore(job) {
+  try {
+    const l = job.status === 'failed' ? lessonOf(job) : null;
+    if (!l?.failure || l.failure === 'unknown') return null;
+    const old = lessonsKept().find(x => x.kind === l.kind && JSON.stringify(x.subject) === JSON.stringify(l.subject) && x.tried?.how === l.tried.how
+      && x.tried?.flags === l.tried.flags && x.failure === l.failure), tried = old && /^l_[0-9a-f]{8}$/.test(String(old.id)) ? lessonTried(old) : null;
+    if (!tried) return null;
+    const n = Number.isInteger(old.failed) && old.failed > 0 && old.failed < 1e6 ? old.failed : 1, first = lessonDay(old.firstAt), last = lessonDay(old.lastAt);
+    return maskSecrets(`Seen before: ${tried} failed this same way ${n} time${n === 1 ? '' : 's'} before (${first && last && first !== last ? `${first} to ${last}` : last || first || 'when not known'}; lesson ${old.id}).`);
+  } catch { return null; }
 }

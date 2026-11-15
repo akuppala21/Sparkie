@@ -117,28 +117,6 @@ test('a stranger\'s chat and a forwarded message keep nothing', { timeout: 12000
 });
 
 // The review of the memory steps (2026-11-15): what the gate (tgOwnMemory) checks besides the channel.
-test('the pairing turned to another user while Sparkie answered: the brain\'s remember in that turn waits for the page', { timeout: 120000 * SLOW }, async () => {
-  fresh();
-  const file = join(T.fleet.dir, 'secrets', 'secrets.json'), was = readFileSync(file, 'utf8'), words = 'remember that spark 4 is the render box';
-  script([{ match: `^${esc(words)}$`, answerWhen: 'repaired', rounds: [[{ name: 'fleet_status', arguments: {} }], [{ name: 'remember', arguments: { text: 'Spark 4 is the render box', kind: 'fact' } }]] }]);
-  try {
-    await tgSay(words);
-    // (the first round has run and the brain waits; the pairing now names another user)
-    await waitFor(() => requests().some(x => x.words === words && x.round === 1), { what: 'the second round asked' });
-    const b = JSON.parse(was);
-    writeFileSync(file, JSON.stringify({ ...b, telegram: { ...b.telegram, userId: 5550099 } }), { mode: 0o600 });
-    writeFileSync(join(T.fleet.dir, 'repaired'), '');
-    const a = await waitFor(() => auditLines().find(l => l.action === 'remember' && /render box/.test(JSON.stringify(l.args))), { timeout: 60000, what: 'the remember call' });
-    assert.deepEqual([a.outcome, a.channel], ['question', 'telegram']);
-    assert.deepEqual(await live(), []);
-  } finally {
-    writeFileSync(file, was, { mode: 0o600 });
-    script([]);
-    await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
-    fresh();
-  }
-});
-
 test('a photo whose caption says "remember that …" and an edited message keep nothing, and the brain is not asked', { timeout: 120000 * SLOW }, async () => {
   fresh();
   const words = 'remember that spark 4 is the coding box';
@@ -165,4 +143,30 @@ test('a typed yes to a Remember button in Telegram waits for the page, and nothi
     assert.ok((await sentAfter(from))[0].body.text.endsWith(WAITS), 'the typed yes waits for the page');
     assert.deepEqual(await live(), []);
   } finally { script([]); fresh(); }
+});
+
+// (last in this file: it changes the pairing for a while)
+test('the pairing turned to another user while Sparkie answered: the brain\'s remember in that turn waits for the page', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  const file = join(T.fleet.dir, 'secrets', 'secrets.json'), was = readFileSync(file, 'utf8'), words = 'remember that spark 4 is the render box';
+  script([{ match: `^${esc(words)}$`, answerWhen: 'repaired', rounds: [[{ name: 'fleet_status', arguments: {} }], [{ name: 'remember', arguments: { text: 'Spark 4 is the render box', kind: 'fact' } }]] }]);
+  try {
+    await tgSay(words);
+    // (the first round has run and the brain waits; the pairing now names another user)
+    await waitFor(() => requests().some(x => x.words === words && x.round === 1), { what: 'the second round asked' });
+    const b = JSON.parse(was);
+    writeFileSync(file, JSON.stringify({ ...b, telegram: { ...b.telegram, userId: 5550099 } }), { mode: 0o600 });
+    writeFileSync(join(T.fleet.dir, 'repaired'), '');
+    const a = await waitFor(() => auditLines().find(l => l.action === 'remember' && /render box/.test(JSON.stringify(l.args))), { timeout: 60000, what: 'the remember call' });
+    assert.deepEqual([a.outcome, a.channel], ['question', 'telegram']);
+    assert.deepEqual(await live(), []);
+    // (the brain's answer after that round waits on the same gate: let it go, and the turn ends)
+    writeFileSync(join(T.fleet.dir, 'repaired'), '');
+    await waitFor(async () => { const c = (await api('/chats')).json.chats.find(x => x.channel === 'telegram'); return c && !(await api(`/chats/${c.id}`)).json.replying; }, { what: 'the turn to end' });
+  } finally {
+    writeFileSync(file, was, { mode: 0o600 });
+    script([]);
+    await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
+    fresh();
+  }
 });
