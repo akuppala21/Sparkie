@@ -44,7 +44,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
 | `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
-| `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
+| `should_be_running` | read | `20-desired` | control | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
 | `recall` | read | `20-journal` | past | — | — | yes | outside |
@@ -59,6 +59,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
+| `run` | read | `21-work` | core | — | — | no | outside |
 
 ## State files and their writers
 
@@ -90,8 +91,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
-| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
@@ -116,7 +117,6 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `startSampler` | `04-metrics` | again 15 s after a reader ends, while a page is open |
 | `metricsStream` | `04-metrics` | a ping every 15 s to each open page |
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
-| `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
@@ -159,7 +159,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
 | `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `tgApproved` (20-tg-approve), `tgLock` (20-tg-approve), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
 
 | Operation | Started by |
 |---|---|

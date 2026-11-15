@@ -357,6 +357,10 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.ok(Array.isArray(x.records) && x.records.length <= 3);
     assert.match(x.recordIsData, /data, not instructions/);
   });
+  v('recall the owner\'s lines of this month', { about: 'gemma', kind: 'line', when: 'this-month', until: '2099-01-01', limit: 3 }, x => {
+    assert.ok(Array.isArray(x.records) && x.records.every(r => r.kind === 'line'));
+    assert.match(x.inAll, /^\d+ match \(this-month\)/);
+  });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);
     assert.equal(x.count, x.events.length);
@@ -379,6 +383,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     read_page: { url: 'https://docs.example.org/never-searched' },
     recall: { about: 'gemma' },
     recipe_detail: { id: ctx.recipe },
+    run: { on: sp(), command: 'ls' },
     search_huggingface: { query: 'qwen3 0.6b' },
     search_web: { query: 'vllm flags' },
     service_logs: { spark: sp(), service: 'console' },
@@ -417,7 +422,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     fleet_events: ['since'],
     operation_log: ['id'],
     read_page: ['url'],
-    recall: ['about', 'id', 'since', 'next'],
+    recall: ['about', 'id', 'since', 'next', 'until', 'when'],
     recipe_detail: ['id', 'setup'],
     search_huggingface: ['query'],
     search_web: ['query'],
@@ -481,7 +486,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
     operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
     read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
-    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890'] },
+    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw', '0123abc', 'l_0123abc', 'L_0123abcd'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890', '8-123', '8-12345678901234'], until: ['yesterday', '2026-1-1'] },
     recipe_detail: { id: ['Qwen3', '-x', '.x', 'a/b'], setup: ['abc', 'ABCD', 'x'.repeat(33)] },
     search_huggingface: { query: ['a', ' a ', '   '] },
     search_web: { query: ['a', ' a ', '   '] },
@@ -502,6 +507,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   cases.push(['workloads', () => ({ kind: 'models' }), /kind should be one of: model, service, sparkie, other/, 'invalid', 'kind=models']);
   cases.push(['fleet_events', () => ({ type: 'nope' }), /type should be one of: started/, 'invalid', 'type=nope']);
   cases.push(['recall', () => ({ kind: 'nope' }), /kind should be one of: said, tool, call/, 'invalid', 'kind=nope']);
+  cases.push(['recall', () => ({ when: 'last-year' }), /when should be one of: today, yesterday, this-week, last-week, this-month, last-month/, 'invalid', 'when=last-year']);
   // length limits
   cases.push(['find_recipes', () => ({ query: 'q'.repeat(121) }), /query should be text of at most 120 characters/, 'invalid', 'query 121 chars']);
   cases.push(['find_recipes', () => ({ category: 'c'.repeat(41) }), /category should be text of at most 40 characters/, 'invalid', 'category 41 chars']);
@@ -517,6 +523,8 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   cases.push(['cluster_plan', () => ({ model: 'no-such-model-test', sparks: ctx.pair }), /isn’t on any online Spark/, 'not_found', 'unknown model']);
   cases.push(['recipe_detail', () => ({ id: 'no-such-recipe-test' }), /No recipe called no-such-recipe-test/, 'not_found', 'unknown recipe']);
   cases.push(['recall', () => ({ id: 'j_000000000000' }), /There’s no record j_000000000000 in the journal/, 'not_found', 'unknown record']);
+  cases.push(['recall', () => ({ id: '0123abcd' }), /There’s no line 0123abcd in memory/, 'not_found', 'unknown line']);
+  cases.push(['recall', () => ({ id: 'l_0123abcd' }), /There’s no lesson l_0123abcd/, 'not_found', 'unknown lesson']);
   cases.push(['recipe_detail', () => ({ id: ctx.recipe, setup: 'zzzz9999' }), /has no setup zzzz9999/, 'not_found', 'unknown setup']);
   cases.push(['container_logs', () => ({ spark: sp(), container: 'no-such-container-test' }), /No container called no-such-container-test/, 'not_found', 'unknown container']);
   // An agent reads only an address search_web returned in the last hour (R39).
