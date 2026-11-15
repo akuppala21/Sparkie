@@ -313,8 +313,7 @@ action({
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
     return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
-      ...(images.length || fromInputs.length ? { images: yes ? `Your yes to this save covers ${images.join(', ')}: a run of exactly these steps starts ${images.length > 1 ? 'them' : 'it'} without asking again.${fromInputs.length ? ` ${fromInputs.join(', ')} comes from an input, so a run asks for it.` : ''}`
-        : `A run asks before it starts ${[...images, ...fromInputs].join(', ')}: this save isn’t the owner’s own yes to ${images.length + fromInputs.length > 1 ? 'them' : 'it'}${images.length && !fromInputs.length ? '' : ' (an image from an input is always asked)'}.` } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+      ...(images.length || fromInputs.length ? { images: savedImagesWords(images, fromInputs, yes) } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({

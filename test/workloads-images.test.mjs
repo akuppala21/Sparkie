@@ -1,12 +1,13 @@
-// Covers: The owner's yes to a saved workflow covers the images its steps start (D6c): the owner's save names them, and a
-// run of exactly those steps starts them with no question; Sparkie's save of one is a button that lists the image, and
-// the owner's press is the yes. Asked as before: a step changed after the save (another tag, another digest), an image from an
-// input, a workflow an agent saved, an agent's run of the owner's workflow. With the images running, D6a's chain end to
-// end: a new job placed where its /in file is, and the next one, naming no Spark, on the Spark the run's last step ran on.
+// Covers: The owner's yes to a saved workflow covers the images its steps start (D6c): the yes is Sparkie's save button,
+// which lists each step with its image, pressed by the owner on the page; a run of exactly those steps starts them with
+// no question. Asked as before: the same steps saved with no button (the owner's POST /actions), a step changed after
+// the save (another tag, another digest), an image from an input, a workflow an agent saved, an agent's run of the
+// owner's workflow. With the images running, D6a's chain end to end: a new job placed where its /in file is, and the
+// next one, naming no Spark, on the Spark the run's last step ran on, where it reads the first one's folder.
 //
-// The stand-in fleet: on Spark 4 a job runs its command at once, to its end (~/.mock/jobs-run). A new image's job in a
-// saved step is a question for the owner without the yes (keep_running, R38), so a run that meets one fails with "needs
-// an answer first".
+// The stand-in fleet: on Sparks 3 and 4 a job runs its command at once, to its end (~/.mock/jobs-run). A new image's job
+// in a saved step is a question for the owner without the yes (keep_running, R38), so a run that meets one fails with
+// "needs an answer first".
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
@@ -41,53 +42,75 @@ function editStep(id, image) {
   writeFileSync(savedFile(), JSON.stringify(f));
 }
 
+const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const saved = async name => (await act('workflows', {})).json.saved.find(w => w.name === name) || null;
+// The owner's yes: Sparkie's save button (its label lists each step with its image), pressed on the page.
+async function ownerSaves(title, steps, inputs) {
+  const words = `make a workflow called ${title}`;
+  writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'save_workflow', arguments: { title, steps, ...(inputs ? { inputs } : {}) } }] }]));
+  try {
+    const chat = await newChat(), r = await say(chat, words);
+    assert.deepEqual(r.message.tools.map(x => [x.name, x.outcome ?? null]), [['save_workflow', 'needs-ok']], JSON.stringify(r.message.tools));
+    const label = r.message.choices?.[0]?.label || '';
+    for (const st of steps) assert.ok(label.includes(`image ${st.args.image}`), `the button names ${st.args.image}: ${label}`);
+    const p = await choose(chat, r.message.choices[0].id);
+    assert.equal(p.status, 200, p.text);
+    return saved(title.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+  } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+}
+
 describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
-  test('the owner\'s save names its image, and a run of it starts that image with no question', { timeout: 180000 * SLOW }, async () => {
-    const s = await act('save_workflow', { title: 'approved job', steps: [job('wl-i1')] });
-    assert.equal(s.status, 200, s.text);
-    assert.equal(s.json.images, 'Your yes to this save covers python:3.12-slim: a run of exactly these steps starts it without asking again.');
-    assert.deepEqual(s.json.workflow.imagesApproved, [IMAGE]);
+  test('the owner\'s press of the save button, which names the image, is the yes: a run starts that image with no question; the same steps saved with no button are asked', { timeout: 240000 * SLOW }, async () => {
+    const w = await ownerSaves('approved job', [job('wl-i1')]);
+    assert.deepEqual(w?.imagesApproved, [IMAGE], JSON.stringify(w));
     const run = await ownerRun('approved job');
     assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
     assert.ok(run.log.some(l => String(l).endsWith('Step 1: python:3.12-slim was approved when “approved job” was saved')), run.log.join('\n'));
     assert.equal(stateOf('wl-i1'), 'exited');
+    // The owner's POST /actions shows nobody the image: no yes.
+    const s = await act('save_workflow', { title: 'api job', steps: [job('wl-i7')] });
+    assert.equal(s.status, 200, s.text);
+    assert.equal(s.json.images, 'A run asks before it starts python:3.12-slim: only your yes to a save’s button, which lists its steps, covers the images it names.');
+    assert.equal(s.json.workflow.imagesApproved, undefined);
+    const asked = await ownerRun('api job');
+    assert.equal(asked.status, 'failed');
+    assert.match(asked.error, ASKED);
   });
 
-  test('a step changed after the save, to another tag or another digest, is asked again', { timeout: 240000 * SLOW }, async () => {
-    // The tag: the approved step now names python:3.13-slim.
-    editStep('approved-job', 'python:3.13-slim');
-    const tag = await ownerRun('approved job');
+  test('a step changed after the yes, to another tag or another digest, is asked again', { timeout: 300000 * SLOW }, async () => {
+    await ownerSaves('tag job', [job('wl-i8')]);
+    editStep('tag-job', 'python:3.13-slim');
+    const tag = await ownerRun('tag job');
     assert.equal(tag.status, 'failed');
     assert.match(tag.error, ASKED);
-    // A digest: approved as saved, then another digest.
-    await act('save_workflow', { title: 'pinned job', steps: [job('wl-i2', DIGEST_A)] });
-    const first = await ownerRun('pinned job');
-    assert.equal(first.status, 'completed', `${first.error}\n${first.log.join('\n')}`);
-    editStep('pinned-job', DIGEST_B);
-    const other = await ownerRun('pinned job');
+    // A digest: one approved as pressed runs; the same approved, then changed to another digest, is asked.
+    await ownerSaves('pinned job', [job('wl-i2', DIGEST_A)]);
+    const pinned = await ownerRun('pinned job');
+    assert.equal(pinned.status, 'completed', `${pinned.error}\n${pinned.log.join('\n')}`);
+    await ownerSaves('repinned job', [job('wl-i9', DIGEST_A)]);
+    editStep('repinned-job', DIGEST_B);
+    const other = await ownerRun('repinned job');
     assert.equal(other.status, 'failed');
     assert.match(other.error, ASKED);
   });
 
-  test('an image from an input is asked, and the save says so', { timeout: 180000 * SLOW }, async () => {
-    const s = await act('save_workflow', { title: 'any image', inputs: { img: 'the image' }, steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-i3', image: '{img}', once: true, command: ['sh', '-c', 'echo x'] } }] });
-    assert.equal(s.status, 200, s.text);
-    assert.equal(s.json.images, 'A run asks before it starts {img}: this save isn’t the owner’s own yes to it (an image from an input is always asked).');
-    assert.equal(s.json.workflow.imagesApproved, undefined);
+  test('an image from an input is asked, even after the owner\'s yes', { timeout: 180000 * SLOW }, async () => {
+    const w = await ownerSaves('any image', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-i3', image: '{img}', once: true, command: ['sh', '-c', 'echo x'] } }], { img: 'the image' });
+    assert.equal(w?.imagesApproved, undefined, JSON.stringify(w));
     const run = await ownerRun('any image', { img: IMAGE });
     assert.equal(run.status, 'failed');
     assert.match(run.error, ASKED);
   });
 
-  test('a workflow an agent saved is asked, even when the owner runs it; an agent\'s run of the owner\'s workflow is asked', { timeout: 180000 * SLOW }, async () => {
+  test('a workflow an agent saved is asked, even when the owner runs it; an agent\'s run of the owner\'s workflow is asked', { timeout: 240000 * SLOW }, async () => {
     const s = await call(keys.act.token, 'save_workflow', { title: 'agent job', steps: [job('wl-i4')] });
     assert.equal(s.isError, false, s.text);
-    assert.equal(s.value.images, 'A run asks before it starts python:3.12-slim: this save isn’t the owner’s own yes to it.');
+    assert.match(s.value.images, /^A run asks before it starts python:3\.12-slim/);
     const run = await ownerRun('agent job');
     assert.equal(run.status, 'failed');
     assert.match(run.error, ASKED);
     // The owner's approved workflow, run by an agent.
-    await act('save_workflow', { title: 'owner job', steps: [job('wl-i5')] });
+    await ownerSaves('owner job', [job('wl-i5')]);
     const r = await call(keys.act.token, 'run_workflow', { name: 'owner job' });
     assert.equal(r.isError, false, r.text);
     const agentRun = await opEnd(r.value.operation, 'the agent\'s run');
@@ -96,28 +119,14 @@ describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
     assert.equal(stateOf('wl-i5'), undefined, 'nothing started');
   });
 
-  test('Sparkie\'s save of a new image is a button that lists the image; the owner\'s press is the yes', { timeout: 240000 * SLOW }, async t => {
-    const words = 'make a workflow called chat job that runs wl-i6 on spark 4 once';
-    writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: `^${words}$`, calls: [{ name: 'save_workflow', arguments: { title: 'chat job', steps: [job('wl-i6')] } }] }]));
-    t.after(() => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }));
-    const chat = await newChat(), r = await say(chat, words);
-    assert.deepEqual(r.message.tools.map(x => [x.name, x.outcome ?? null]), [['save_workflow', 'needs-ok']], JSON.stringify(r.message.tools));
-    assert.match(r.message.choices?.[0]?.label || '', /^Save the workflow “chat job”: 1\. Keep an app running \(.*image python:3\.12-slim.*\)$/);
-    const p = await choose(chat, r.message.choices[0].id);
-    assert.equal(p.status, 200, p.text);
-    const ok = await ownerRun('chat job');
-    assert.equal(ok.status, 'completed', `${ok.error}\n${ok.log.join('\n')}`);
-    assert.equal(stateOf('wl-i6'), 'exited');
-  });
   // D6a's chain, end to end now that the images run: a new job placed where its /in file is, and the next one, which
   // names no Spark and no file, placed on the Spark the run's last step ran on (not Spark 3, first in list order), where
   // it reads the first one's folder. (The stand-in runs a job's command in its /out folder: ../wl-c1 is /in/jobs/wl-c1.)
-  test('a chain of new jobs with no Spark named: the second goes where the first ran, and reads its files', { timeout: 180000 * SLOW }, async () => {
-    const s = await act('save_workflow', { title: 'chain', steps: [
+  test('a chain of new jobs with no Spark named: the second goes where the first ran, and reads its files', { timeout: 240000 * SLOW }, async () => {
+    await ownerSaves('chain', [
       { action: 'keep_running', args: { container: 'wl-c1', image: IMAGE, once: true, command: ['sh', '-c', 'echo first > out.txt', '/in/numbers.csv'] } },
       { action: 'keep_running', args: { container: 'wl-c2', image: IMAGE, once: true, command: ['sh', '-c', 'cat ../wl-c1/out.txt > read.txt'] } },
-    ] });
-    assert.equal(s.status, 200, s.text);
+    ]);
     const run = await ownerRun('chain');
     assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
     const log = run.log.map(l => String(l).slice(10));
