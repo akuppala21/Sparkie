@@ -263,7 +263,10 @@ function noteSparkStates(nodes) {
     const flipped = s.online !== undefined && s.online !== online;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
+    // (planned: a sleep Spark Console put it to, or a wake from one (its record still there, a power operation on it, or a
+    // power-on since it went dark), never an outage: crash restarts aren't held back after it, maybeHeal, D4)
+    const wake = online && flipped && (consoleOff(n.id) || powerOpOn([n.id]) || plannedWake(n.id));
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null, ...(wake ? { planned: true } : {}) } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked', planned: true } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
@@ -297,6 +300,11 @@ setTimeout(() => { watchFleet(); setInterval(watchFleet, WATCH_EVERY).unref(); }
 // saw there stays in the record as it was (healing, the passkey gate and the intent gate read it), but no view calls
 // it running now (F16). Called only at run time, never at load.
 const sparkOff = id => knowledge.sparks[id]?.online === false;
+// A Spark Spark Console turned on since it last went dark (a spark-powered-on after its last spark-offline): a planned wake.
+function plannedWake(id) {
+  const dark = Math.max(0, ...events.filter(e => e.type === 'spark-offline' && e.spark === id).map(e => Date.parse(e.at) || 0));
+  return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
+}
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
@@ -304,8 +312,8 @@ function fleetNotes(viewer) {
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
-    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
-    if (off) return `${sparkName(n)}: ${off.words}`;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
+    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;

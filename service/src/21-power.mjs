@@ -150,8 +150,9 @@ function powerMark(id) {
   const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+  // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words };
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
