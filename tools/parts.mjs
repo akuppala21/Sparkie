@@ -533,7 +533,7 @@ export function checkParts(root = ROOT, tree = readParts(root)) {
   // (one problem per type, at the first place it is sent, naming every place)
   const firsts = xs => [...new Map(xs.map(x => [x.type, xs.filter(y => y.type === x.type)])).values()];
   const places = xs => [...new Set(xs.map(x => `${x.who} in ${x.part}`))].join(', ');
-  for (const es of firsts(tree.events.filter(e => listed && !listed.includes(e.type)))) say(es[0].part, es[0].line, `sends the event type “${es[0].type}” (${places(es)}), which EVENT_TYPES doesn’t list: add it there (16-actions.mjs) and to describeEvent (19-watcher.mjs)`);
+  for (const es of firsts(tree.events.filter(e => listed && !listed.includes(e.type)))) say(es[0].part, es[0].line, `sends the event type “${es[0].type}” (${places(es)}), which EVENT_TYPES doesn’t list: add it there (16-reads.mjs) and to describeEvent (19-watcher.mjs)`);
   const r13 = existsSync(join(root, 'docs/rules/R13.md')) ? readFileSync(join(root, 'docs/rules/R13.md'), 'utf8') : '';
   for (const os of firsts(tree.ops.filter(o => !r13.includes(`\`${o.type}\``)))) say(os[0].part, os[0].line, `starts operations of type “${os[0].type}” (${places(os)}), which docs/rules/R13.md doesn’t name: name it there, in backticks, saying whether it takes a claim`);
   return out;

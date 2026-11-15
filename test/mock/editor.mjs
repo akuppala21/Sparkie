@@ -12,7 +12,8 @@ const server = http.createServer((req, res) => {
   if (req.url === '/') { res.writeHead(302, { location: '/login?to=%2F' }); return res.end(); }
   if (req.url.startsWith('/login')) { res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': ['code-server-session=abc123; Path=/; HttpOnly'] }); return res.end('<html><body><a href="./workbench">open</a> stand-in code-server login</body></html>'); }
   if (req.url.startsWith('/?folder=') || req.url.startsWith('/workbench')) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(`<html>workbench for ${req.url} cookie=${req.headers.cookie || 'none'} host=${req.headers.host}</html>`); }
-  if (req.method === 'POST') { let b = ''; req.on('data', d => { b += d; }); req.on('end', () => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(`got ${b.length} bytes`); }); return; }
+  // (decoded as one stream: a character whose bytes arrive in two pieces is counted once)
+  if (req.method === 'POST') { let b = ''; req.setEncoding('utf8'); req.on('data', d => { b += d; }); req.on('end', () => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(`got ${b.length} bytes`); }); return; }
   res.writeHead(404); res.end();
 });
 server.on('upgrade', (req, socket) => {

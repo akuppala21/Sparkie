@@ -6,7 +6,7 @@
 // place. Two more fleets: a brain that answers 4 at once (apps get 3; the 4th gets 429 saying one place stays) and one
 // whose setup doesn't say (no cap).
 //
-// Using Sparkie from an app (round two, item 4; service/src/16-actions.mjs pasteCard, 15-routes.mjs gateway). The owner
+// Using Sparkie from an app (round two, item 4; service/src/16-reads.mjs pasteCard, 15-routes.mjs gateway). The owner
 // chose one generic card: running_models {client} adds it, built by code from the console's own setup; Sparkie only
 // hears it's there and Spark Console puts the block under the answer exactly as built. Codex and Claude Code get a plain
 // "not yet". The /v1 address keeps one place on Sparkie's model for the owner's chat: apps get at most its

@@ -8,7 +8,13 @@
 // heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the
 // needs-me line at the end of this part. Every send is plain text with link previews off and secrets hidden, and is on
 // the record (its kind and size, never its text).
-const TELL_WHY = new Set(['reply', 'result', 'carry', 'system', 'needs']);
+const TELL_WHY = new Set([
+  'carry',
+  'needs',
+  'reply',
+  'result',
+  'system',
+]);
 // A result or carry-on line long after the owner's last message there arrives silently.
 const TELL_QUIET_MS = Number(process.env.SPARK_CONSOLE_TELL_QUIET_MS || 30 * 60000);
 const TELL_PART = 4000;
@@ -71,8 +77,19 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
 
 // An operation's result on Telegram: a fixed line from its type, name, Spark and status. No error text, log line,
 // endpoint or address (the page's chat keeps the full notice).
-const TELL_OPS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting', 'self-test': 'The self-test with',
-  'power-off': 'Powering off', 'power-on': 'Turning on' };
+const TELL_OPS = {
+  deploy: 'Starting',
+  'deploy-cluster': 'Starting',
+  'power-off': 'Powering off',
+  'power-on': 'Turning on',
+  restart: 'Restarting',
+  'restart-model': 'Restarting',
+  'self-test': 'The self-test with',
+  'start-model': 'Starting',
+  stop: 'Stopping',
+  'stop-model': 'Stopping',
+  undo: 'Undoing the last change',
+};
 const tellName = s => String(s || '').replace(/[^A-Za-z0-9._/:-]/g, '').slice(0, 60);
 function tellWhat(job) {
   const name = tellName(job.model || job.container);
