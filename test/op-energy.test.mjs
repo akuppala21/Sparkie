@@ -130,6 +130,7 @@ test('recall: an agent sees the number and the reason as the owner does (operati
   for (const [id, field] of [[oneSpark, 'wh'], [noPlug, 'noWh']]) {
     assert.ok(id, 'the operation ran above');
     const kept = (await opRecord(id))[field];
+    assert.equal(typeof kept, field === 'wh' ? 'number' : 'string', `the end line's ${field}`);
     const agent = await call(keys.look.token, 'recall', { about: id, kind: 'op' });
     assert.equal(agent.isError, false, agent.text);
     const owner = (await act('recall', { about: id, kind: 'op' })).json;
