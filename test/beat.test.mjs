@@ -9,7 +9,8 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, cpSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, REPO, MEMBER, SERVICE_FILE, useFleet, api, sleep, waitFor, auditLines, eventLines, createKey, call, newChat, say, SLOW } from './lib.mjs';
 import { serviceConfig } from './start-mock.mjs';
@@ -18,8 +19,9 @@ import { Authenticator, passkeyHeader } from './authenticator.mjs';
 const MAIN_ORIGIN = serviceConfig().origin, TAILNET = new URL(MAIN_ORIGIN).hostname.split('.').slice(1).join('.');
 const KEY = new Authenticator(TAILNET, MAIN_ORIGIN);
 const ID = '3f1c9a2e-5b7d-4e8f-9a1b-2c3d4e5f6a7b', ADDRESS = `https://hc-ping.com/${ID}`;
-// How often it beats here (5 minutes for real), and how long beats fail before the needs-you line (an hour for real).
-const EVERY = 1500, LATE = 4500;
+// How often it beats here (5 minutes for real), how long beats fail before the needs-you line (an hour for real), and
+// how long after a start the first beat waits (a minute for real).
+const EVERY = 1500, LATE = 4500, FIRST = 5000;
 
 // A stand-in for hc-ping.com: it keeps each request as it arrived (method, path, the headers in order and as written,
 // the body) and answers as the test sets it.
@@ -40,12 +42,13 @@ function standIn() {
     answer: (s, l = null) => { status = s; location = l; },
   })));
 }
-// HC is the check's host; ELSEWHERE is where a redirect points and where a second copy would beat.
-const HC = await standIn(), ELSEWHERE = await standIn();
-after(() => { for (const s of [HC, ELSEWHERE]) { s.server.closeAllConnections?.(); s.server.close(); } });
+// HC is the check's host; ELSEWHERE is where a redirect points and where a second copy would beat; RESTARTED is what
+// consoles started beside this one beat.
+const HC = await standIn(), ELSEWHERE = await standIn(), RESTARTED = await standIn();
+after(() => { for (const s of [HC, ELSEWHERE, RESTARTED]) { s.server.closeAllConnections?.(); s.server.close(); } });
 
 let look;
-useFleet({ env: { SPARK_CONSOLE_BEAT_API: HC.base, SPARK_CONSOLE_BEAT_MS: String(EVERY), SPARK_CONSOLE_BEAT_LATE_MS: String(LATE) } },
+useFleet({ env: { SPARK_CONSOLE_BEAT_API: HC.base, SPARK_CONSOLE_BEAT_MS: String(EVERY), SPARK_CONSOLE_BEAT_LATE_MS: String(LATE), SPARK_CONSOLE_BEAT_FIRST_MS: String(FIRST) } },
   async () => { look = (await createKey('beat-look')).token; });
 
 const is = (r, status, what = '') => assert.equal(r.status, status, `${what} → ${r.status} ${r.text}`);
@@ -76,6 +79,26 @@ function filesHolding(text) {
   };
   walk(T.fleet.dir);
   return found;
+}
+
+// Another console, as systemd starts one after a crash: its own port, sockets, copy of the state and of the secrets file
+// (so the saved address), beating `to`. Back once it answers, so its listen callback has run.
+async function anotherConsole(to) {
+  const dir = mkdtempSync(join(tmpdir(), 'sct-beat-'));
+  cpSync(T.fleet.stateDir, join(dir, 'state'), { recursive: true, filter: f => !f.endsWith('.sock') });
+  mkdirSync(join(dir, 'secrets'), { mode: 0o700 });
+  copyFileSync(T.fleet.secretsFile, join(dir, 'secrets', 'secrets.json'));
+  const port = await new Promise(resolve => { const s = http.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+  const at = Date.now(), p = spawn(process.execPath, [SERVICE_FILE], { cwd: REPO, stdio: 'ignore', env: { ...T.fleet.env, PORT: String(port),
+    SPARK_CONSOLE_STATE_DIR: join(dir, 'state'), SPARK_CONSOLE_SOCKET: join(dir, 'api.sock'), SPARK_CONSOLE_SECRETS_FILE: join(dir, 'secrets', 'secrets.json'), SPARK_CONSOLE_BEAT_API: to.base } });
+  let exited = false;
+  const gone = new Promise(resolve => p.on('exit', () => { exited = true; resolve(); }));
+  const kill = async () => { if (!exited) p.kill('SIGKILL'); await gone; rmSync(dir, { recursive: true, force: true }); };
+  try {
+    await waitFor(async () => { if (exited) throw new Error('the other console stopped'); return fetch(`http://127.0.0.1:${port}/console/api/health`, { signal: AbortSignal.timeout(1000) }).then(r => r.ok, () => false); },
+      { timeout: 30000, every: 100, what: 'the other console to answer' });
+  } catch (e) { await kill(); throw e; }
+  return { at, kill };
 }
 
 describe('the outside heartbeat', { concurrency: 1 }, () => {
@@ -145,6 +168,26 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     assert.ok(Date.parse(v.lastOkAt) > Date.now() - EVERY * 4 * SLOW);
     assert.ok(auditLines().some(l => l.action === 'heartbeat-saved' && l.via === 'page'));
     assert.deepEqual(ELSEWHERE.got, []);
+  });
+
+  test('a console that dies within the wait after each start never beats, start after start; one left running beats first after the wait, then each interval', { timeout: 120000 * SLOW }, async () => {
+    assert.equal(secrets().heartbeat?.url, ADDRESS, 'an address is saved');
+    // (as systemd restarts one that dies a few seconds in: listening, then killed, three times)
+    for (let i = 0; i < 3; i++) {
+      const c = await anotherConsole(RESTARTED);
+      await sleep(300);
+      await c.kill();
+    }
+    await sleep(500);
+    assert.deepEqual(RESTARTED.got, [], 'a console killed within the wait beat, so the check would stay green while it is down');
+    const c = await anotherConsole(RESTARTED);
+    try {
+      await waitFor(() => RESTARTED.got.length >= 3, { timeout: FIRST + EVERY * 8, every: 100, what: 'three beats from the console left running' });
+      assert.ok(RESTARTED.got[0].at - c.at >= FIRST, `its first beat came ${RESTARTED.got[0].at - c.at} ms after it was started, within the ${FIRST} ms wait`);
+      const gaps = RESTARTED.got.slice(1).map((g, i) => g.at - RESTARTED.got[i].at);
+      for (const gap of gaps) assert.ok(gap >= EVERY * 0.6 && gap <= EVERY * 4 * SLOW, `beats ${gaps.join(', ')} ms apart, every ${EVERY} ms asked`);
+      for (const g of RESTARTED.got) assert.deepEqual([g.method, g.url, g.body], ['GET', `/${ID}`, '']);
+    } finally { await c.kill(); }
   });
 
   test('a second copy (its port in use) exits and never beats, even when its exit is held for two intervals', { timeout: 60000 * SLOW }, async () => {

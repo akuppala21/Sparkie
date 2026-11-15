@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 40 parts in `service/src/`, joined in name order into `service/server.mjs` (11944 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 40 parts in `service/src/`, joined in name order into `service/server.mjs` (11951 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -321,9 +321,9 @@ Every minute the console looks at every container on every Spark (models, servic
 Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>) on the passkey page, Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot) when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing changed. The request carries nothing: no body, no query, no cookie, one fixed User-Agent. The host is fixed; what the owner saves only names the check, and a redirect is never followed. The address is a secret (whoever holds it can beat in Spark 2's …
 
 - **Area:** safety. **Rules:** R32. **Tests:** beat.test.mjs
-- **Lines:** 97
+- **Lines:** 104
 - **Owns:** none
-- **Timers:** beatOnce (every 5 minutes, started in the listen callback and again when an address is saved)
+- **Timers:** beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that, and from a beat at once when an address is saved)
 - **Wakes:** none
 - **Functions:** `beatEnv`, `beatAddress`, `beatOnce`, `beatStart`, `beatLate`, `beatView`, `heartbeatRoute`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `03-secrets` (`secretsRead`, `secretsWrite`, `SECRETS_FILE`), `16-actions` (`action`), `20-mcp` (`audit`), `22-passkey` (`passkeys`), `23-http` (`send`, `readBody`)
@@ -577,5 +577,5 @@ People, passkeys, agent keys, chats, recipes that worked and the fleet's record 
 - **Timers:** backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 - **Wakes:** none
 - **Functions:** `dayOf`, `backupLate`, `backupTargets`, `sendCopy`, `backupState`, `backupIfDue`, `refuseUpgrade`, `openSockets`
-- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `CONFIG`, `NODES`, `nodeById`, `VERSION`, `BUILD`), `02-ssh` (`knownOffline`, `spawnOn`, `run`), `03-identity` (`readKept`, `writePrivate`), `04-metrics` (`stopSamplers`), `07-jobs` (`draining`, `jobs`), `12-status` (`sparkName`), `17-changes` (`brainSparks`), `18-workflows` (`noteUpdate`), `19-watcher` (`fleetEvent`), `20-beat` (`beatStart`), `20-tell` (`needsMeTick`, `NEEDS_MS`), `21-door` (`doorHandler`, `doorUpgrade`, `DOOR_SOCKET`), `21-editor` (`editorUpgrade`), `21-telegram` (`tgAfterRestart`, `tgLoop`, `tgStop`), `23-http` (`tcpApiOff`, `API_SOCKET`, `recordFault`, `recordCrash`), `24-handler` (`handler`)
+- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `CONFIG`, `NODES`, `nodeById`, `VERSION`, `BUILD`), `02-ssh` (`knownOffline`, `spawnOn`, `run`), `03-identity` (`readKept`, `writePrivate`), `04-metrics` (`stopSamplers`), `07-jobs` (`draining`, `jobs`), `12-status` (`sparkName`), `17-changes` (`brainSparks`), `18-workflows` (`noteUpdate`), `19-watcher` (`fleetEvent`), `20-beat` (`beatStart`, `BEAT_FIRST_MS`), `20-tell` (`needsMeTick`, `NEEDS_MS`), `21-door` (`doorHandler`, `doorUpgrade`, `DOOR_SOCKET`), `21-editor` (`editorUpgrade`), `21-telegram` (`tgAfterRestart`, `tgLoop`, `tgStop`), `23-http` (`tcpApiOff`, `API_SOCKET`, `recordFault`, `recordCrash`), `24-handler` (`handler`)
 - **Used by:** `02-ssh`, `03-identity`, `08-cluster`, `09-verified`, `13-main-model`, `15-routes`, `20-needs`, `21-door`, `24-handler`
