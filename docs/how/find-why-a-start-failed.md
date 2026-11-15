@@ -35,6 +35,9 @@ Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFail
 
 - R15: done means it answers a test prompt. R16: a failure puts back exactly what the start stopped; fixes retry 3
   times at most. R2: 8 GB stays free. R14: the job plans again and aborts on an unapproved stop.
+- R17: an error that says a file of a Hugging Face cache copy “links outside the model’s folder” was a start stopped
+  before anything ran: that file is a link out of the copy, and only a weight file leading to a plain file may be one.
+  Put the real file in place of the link (`hfMounts`, `01-setup.mjs`).
 
 ## Tests
 
