@@ -27,6 +27,10 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
 - The valid-argument tables: `door.test.mjs` (“read tools, valid arguments”) and `VALID` in `test/fuzz.test.mjs`
   (door tests want string, integer, boolean or array properties and the Spark enum on any "spark" property).
 - `NOT_A_STEP` (`18-workflows.mjs`) if it must not be a step of a saved workflow.
+- A change that writes a file or runs a command on a Spark is written down first: `journalFirstFor` (`20-journal.mjs`,
+  R43). `runAction` then writes its start line, synced, before it runs, and refuses it (`JOURNAL_REFUSED`) when the
+  line can't be written. Code outside `runAction` (the command runner) calls `journal` with `{ start: true }`, runs
+  nothing when it gives back null, and ends with `{ id, end: true }` and the output as the text.
 - Run `node tools/make.mjs`: the code map and `docs/registry.md` list the new action.
 
 ## Never
@@ -41,6 +45,7 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
 - R25: a change from Sparkie runs at once only when the owner's own words ask for it and name its target.
 - R29: every action is in `TOOLS` or `CHANGE_TOOLS`.
 - R7: results to agents pass `maskDeep`.
+- R43: a change that writes or runs on a Spark has its start line on disk before it runs.
 
 ## Tests
 

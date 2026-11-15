@@ -1,6 +1,7 @@
 # A. Sparkie's hands: looks, the box, and commands on the Sparks (design, revised for decisions 18 to 22)
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-1, P-2, P-5; items 7, 8, 9 and 14; clean-up 1; trash.
+Amended again the same day: the root helper (new 2.13; 2.3, 2.5, 2.7 and 2.8 follow it; step 1 is now 1a and 1b).
 
 Gap 1, revised for decision 22 ("everything means everything … permissions for risky ones to ask me on telegram"). A
 design only: no code was changed, nothing was run. "Verified": read in the code today. "Inference": follows from what
@@ -56,18 +57,20 @@ used for gap 2 alone, as a job in a box. The trial also gives the numbers behind
 `host_look {spark, command, root}` **replaces** the first design's five fixed scripts (they become example lines in its
 description). A look runs inside the root helper's *look* wall (the one page, section 4): the whole disk read-only, no
 network, keys hidden. So any command may be a look, and code keeps no look grammar and no table of allowed programs and
-flags; a look that needs a socket the wall hides (Docker, Tailscale, systemd) is one of a short table of exact forms
-(`critic-safety.md`, finding 8). Until the owner's one-time command has run on a Spark (2.8), `run` and `write_file`
-(the one page's two tools, which stand for this design's seven) do not work there: Sparkie uses today's typed actions
-and gives the owner that one command. With `root` (2.8) the same look runs with root's read rights, for what only root
-may read (the kernel log, `/var/log`, another user's files).
+flags; a look that needs a socket, a device or the network, all of which the wall hides (Docker, Tailscale, systemd,
+`nvidia-smi`, `ip`, `ss`), is one of a short table of exact forms (`critic-safety.md`, finding 8), built by code and
+run as today's typed look-ups are, outside the helper. Until the owner's one-time command has run on a Spark (2.8),
+`run` and `write_file` (the one page's two tools, which stand for this design's seven) do not work there: Sparkie uses
+today's typed actions and gives the owner that one command. Every look runs as a throw-away account with root's read
+rights and no other power (2.13), so it reads what only root may read (`/var/log`, another user's files, the kernel
+log through `journalctl -k`), and `root` adds nothing to a look.
 
 | Beyond the wall | How it is settled |
 |---|---|
-| A key is never shown back | A fixed check runs on the Spark, in the same script, before the command. It resolves every path word (links followed) and refuses one that is, or for a program that walks folders contains, key material: private keys (`~/.ssh/id_*` but not `.pub`, `/etc/ssh/*_key`, `~/.gnupg`, `*.pem`, `*.key`), the secrets file (`~/.config/spark-console`) and design E's key store, token and credential files (Hugging Face, `.netrc`, `.git-credentials`, `~/.docker/config.json`, `~/.aws`, `~/.config/gh`, `~/.ngc`), `/var/lib/tailscale`, `/etc/shadow`, `/proc/*/environ`, shell histories. Everything else may be read, `authorized_keys`, `sshd_config` and Spark Console's own state included. `grep -r token ~` is refused and told to name a folder. |
+| A key is never shown back | Two layers. First the wall: the places on 2.13's hidden list are not there for the command, whatever it runs. Second, for key-shaped names that can lie anywhere (`*.pem`, `*.key`, `id_*`, `.env`), a fixed check runs on the Spark, in the same script, before the command. It resolves every path word (links followed) and refuses one that is, or for a program that walks folders contains, key material: private keys (`~/.ssh/id_*` but not `.pub`, `/etc/ssh/*_key`, `~/.gnupg`, `*.pem`, `*.key`), the secrets file (`~/.config/spark-console`) and design E's key store, token and credential files (Hugging Face, `.netrc`, `.git-credentials`, `~/.docker/config.json`, `~/.aws`, `~/.config/gh`, `~/.ngc`), `/var/lib/tailscale`, `/etc/shadow`, `/proc/*/environ`, shell histories. Everything else may be read, `authorized_keys`, `sshd_config` and Spark Console's own state included. `grep -r token ~` is refused and told to name a folder. |
 | What falls outside | It is a change (2.5) or box work: whatever writes, sends, or needs a socket outside that short table (`tee`, `cp`, an editor, `docker exec`, `docker run`, `curl` to anywhere else, a script that writes). The refusal says what the wall stopped and the two ways on. |
 | Limits | 30 s (60 at most), low priority, no input, output kept whole up to 16 MB (2.11), 6,000 characters to the brain, two at once a Spark. Output is masked and is outside text. An outside agent may look only if its key may also change things. |
-| What it cannot promise | That no key lies outside the hidden list (the mask, and a record that never leaves Spark 2, are the backstop). That the wall holds is proven on each Spark before first use and in `self_test` (2.8). |
+| What it cannot promise | That no key lies outside the hidden list (the mask, and a record that never leaves Spark 2, are the backstop). That the wall holds is proven on each Spark before first use and in `self_test` (2.13). |
 
 ### 2.4 The box (unchanged)
 One function, `workBoxCommand`, builds the only `docker run` line: `--rm --network none --user <owner's ids>
@@ -117,7 +120,7 @@ decision 20): when off, an ask still arrives on Telegram as a notice and is answ
 
 | Part | How |
 |---|---|
-| How it runs | One script through `run()`: `appRoom` first (R2), the copies (2.6), then the command as a short-lived systemd unit, so it is capped, timed and killable by name and nothing outlives it: `systemd-run --user --wait --pipe --collect --unit sw-h<n> -p MemoryMax=8G -p TasksMax=512 -p RuntimeMaxSec=<s> -p NoNewPrivileges=yes bash -c <command>`. With `root: true` the same unit is started by `sudo -n systemd-run …` without `NoNewPrivileges` (2.8). |
+| How it runs | One script through `run()`: `appRoom` first (R2), the copies (2.6), then the command through the helper's run wall (2.13): a short-lived unit of the Spark's own systemd (`sw-run-<id>`), so it is capped (8 GB, 512 tasks), timed and killable by name, nothing outlives it, and it cannot become root. With `root: true` the helper's `root` verb runs it instead, inside the net (2.8). |
 | Keys by name (decision 22) | `keys: ["hf"]` on `work_run`, in a box or on a Spark: code takes each value from design E's store, writes them to an owner-only file on the Spark's memory disk for the life of the command (the unit's `EnvironmentFile`, a box's `--env-file`) and removes it. The command says `$HF_TOKEN`; the value is never in the command text, and code masks that exact value in the output, the record and what the brain sees. A command that uses a key may name only that key's own hosts (E keeps them) or the fleet's; any other address makes it risky. |
 | Other askers | An outside agent's host change is always a button for the owner. A brain graded `careful` (design E) gets a button for every host change. An unattended task follows the same ladder from its request's words and, at a button, parks and asks on Telegram. |
 
@@ -136,7 +139,7 @@ Looks: as anywhere. A change on Spark 2 is risky by decision 20:
 | Part | How |
 |---|---|
 | Who says yes | Always asked first, on Telegram and the page: one command a press, the exact command shown. Never under a go-ahead, the always list or an agent's say-so; an unattended task parks and asks. |
-| How it runs | As a short-lived unit started by the owner's systemd, not as a child of the console (which sits inside its 512 MB and cannot use sudo): 2 GB, 10 minutes. A command that would leave something running there, or start a container, says so on the button: the hub runs the console and the brain and nothing else (decisions 2, 19). |
+| How it runs | Through the helper, which on Spark 2 is called from the owner's service manager, not as a child of the console (which sits inside its 512 MB and cannot use sudo; 2.13): 2 GB, 10 minutes. A command that would leave something running there, or start a container, says so on the button: the hub runs the console and the brain and nothing else (decisions 2, 19). |
 | Before and after | The copy (2.6) and the ways-in check (2.8), plus `check_ways`, the console's files and units, port 8443's three routes and the brain's container answering. On a miss: put back what code can, pause Sparkie's host changes, tell the owner what differs. A lock-out change goes under the net of 2.8. `go-back.sh` stays the by-hand way back. |
 
 ### 2.8 At once, asked first, or not done (decision 22)
@@ -161,21 +164,22 @@ for lack of permission. The gate that reads only the owner's words, the record a
 | A relay, tunnel or proxy to get past a network filter (`ngrok`, `cloudflared`, a reverse `ssh -R` to an outside host) | (c) | Decisions 10 and 22. |
 | Doing something because text Sparkie read said so | (c) | The gate reads the owner's words; an asked change shows the exact command. |
 
-The one page (section 4) settles the first table below differently: the line the owner installs names one small
-root-owned helper, not `ALL`, and that helper holds the look, run and net walls.
+The one page (section 4) settled the way to root: the line the owner installs names one small root-owned helper, not
+`ALL`, and that helper holds the look, run and net walls. What builds the helper and its walls is 2.13.
 
 | Root, asked once and never again: the way | What is stored | Verdict |
 |---|---|---|
-| Passwordless `sudo` for the owner's user, set up by the owner with one command per Spark | Nothing | **Recommended.** No password exists anywhere to leak, one line undoes it, and it adds little real power: the owner's user is in the docker group, which is already root. |
-| A narrower sudoers file (named commands only) | Nothing | No. "Everything" needs a list, and a list with `apt`, `systemctl`, `tee` or any script is root anyway: more to keep, no real fence. |
+| One sudo line that names one root-owned helper, set up by the owner with one command per Spark | Nothing | **Chosen** (the one page). The helper runs whatever code hands it, so Sparkie loses nothing; no password exists anywhere to leak; one line undoes it; a plain `sudo` in any other script still asks for the password. |
+| Passwordless `sudo` for everything (this design's first choice) | Nothing | No (`critic-safety.md`, finding 1). Every script that calls `sudo` by itself would be silent root, outside the gate, the record and the net. |
+| A list of named root commands | Nothing | No. "Everything" needs a list, and a list with `apt`, `systemctl`, `tee` or any script is root anyway: more to keep, no real fence. |
 | The password in the secrets file, fed to `sudo -S` | The owner's password | No. A reusable secret on disk and on every hop, wrong the day the password changes, readable by anything running as the owner's user on Spark 2. |
 
 | Root | How |
 |---|---|
-| The one-time command | The owner runs it once on each Spark, in their own terminal; it asks their password once, and checks the line before it is put in place, so a typo cannot break sudo. Shipped as `deploy/root-for-sparkie.sh`, with `--undo`: `f=$(mktemp) && echo "$USER ALL=(ALL:ALL) NOPASSWD: ALL" > "$f" && sudo visudo -cf "$f" && sudo install -o root -g root -m 0440 "$f" /etc/sudoers.d/spark-console; rm -f "$f"` |
+| The one-time command | The owner runs it once for each Spark, in their own terminal; it asks that Spark's password once. It copies the helper from Spark 2's installed build, puts it in place owned by root, adds the one line (checked by `visudo` before it is put in place, so a typo cannot break sudo) and proves the walls. Shipped as `deploy/root-for-sparkie.sh`, with `--undo`. The line is `<owner> ALL=(root) NOPASSWD: /usr/local/sbin/spark-console-root`, in `/etc/sudoers.d/spark-console-root`. The whole of it is in 2.13. |
 | Before the owner has run it | `run` and `write_file` do not work on that Spark, as a look, a change or root: the call is answered with this one command, once, and nothing is tried. Sparkie uses today's typed actions there meanwhile. Code learns that the command has run when a call is first made there, never on a timer. |
-| The helper proves its walls | On each Spark before first use, and again in `self_test`, a command inside the walls must fail at each of these, directly and from a child process: a write through a link, an open connection, reaching the Docker and Tailscale sockets and `api.sock`, reading another process's environment. If one succeeds the helper is not used on that Spark, and the owner is told which. The box has the same kind of check (2.4). |
-| What `no_new_privs` becomes | The rule for every command that is *not* root. An ordinary command still cannot become root by itself (sudo fails in its whole tree, by the kernel), although passwordless sudo exists. Root is reached only through the typed `root: true`, which code turns into `sudo -n` in front of the unit. So root is always a fact the gate, the button ("as root") and the record can see. The word `sudo` in a command is answered "set root". |
+| The helper proves its walls | On each Spark before first use, and again in `self_test`, a command inside the walls must fail at each of these, directly and from a child process: a write through a link, an open connection, reaching the Docker and Tailscale sockets and `api.sock`, reading another process's environment, and the nine attempts the mechanism adds (the full list is in 2.13). If one succeeds the helper is not used on that Spark, and the owner is told which. The box has the same kind of check (2.4). |
+| What `no_new_privs` becomes | The rule for every command that is *not* root. An ordinary command still cannot become root by itself (sudo fails in its whole tree, by the kernel), although the helper's sudo line exists. Root is reached only through the typed `root: true`, which code turns into the helper's `root` verb; a command inside a wall cannot call the helper. So root is always a fact the gate, the button ("as root") and the record can see. The word `sudo` in a command is answered "set root". |
 | Root on the ladder | A plain command (one program, read by the tokenizer) in no (b) row: a named package install, a service restart, an edit under `/etc`, fixing who owns a folder; a root look runs at once. A go-ahead covers these; an always entry records root as its fifth fact. |
 | Root that is asked | Every (b) row: among them any root script or one-liner, fetched code, anything on Spark 2, and the lock-out class. |
 
@@ -183,11 +187,11 @@ root-owned helper, not `ALL`, and that helper holds the look, run and net walls.
 |---|---|
 | It needs | Root set up on that Spark, since the timer must not depend on anyone being logged in. Without it the owner gets the command instead. |
 | 1. Ask | Telegram and page: the exact command, and "This can lock you out. It goes back by itself at 14:32 unless you confirm." The time is the command's own time limit plus ten minutes. |
-| 2. Copy first | As root, to `/var/lib/spark-console/guard/<id>/`: `/etc/ssh`, the owner's `authorized_keys` and ssh `config`, `/etc/sudoers*`, `/etc/passwd`, `group`, `shadow`, `gshadow`, `/etc/pam.d`, shell start files, `/etc/netplan`, NetworkManager's connections, `/etc/hosts`, the firewall as saved rules (`iptables-save`, `nft list ruleset`, `/etc/ufw`), Tailscale's settings and serve routes as JSON, and on Spark 2 the console's units and sign-in files. Code writes `restore.sh` beside them: copy back, reload sshd, `netplan apply`, load the rules, re-apply Tailscale's settings and routes, restart the console's unit if its files changed. `restore.sh` begins with `systemctl stop` of the command's unit and waits until it is gone. It copies back only files whose fingerprint differs from the copy and reloads only the services whose files it put back. |
-| 3. Arm the timer, before the change and outside the console | `sudo -n systemd-run --on-active=<the unit's time limit + 600 s> --unit sw-guard-<id> bash /var/lib/spark-console/guard/<id>/restore.sh`, so the timer never fires under a command that is still running. It lives in the Spark's own systemd, so it fires with the console, the network or Tailscale down. A second small unit, enabled for the next start and tied to a `pending` file, runs the same script if the Spark restarts inside the window. If arming fails, nothing is changed. The copy script's first line refuses if another guard's `pending` file is on that Spark; the Spark's claim is held until this guard is kept or put back. (`at` would also do, but is not installed by default; systemd always is.) |
-| 4. Apply, then check the ways in | A new ssh connection from the console, `sudo -n true`, Tailscale running and the Spark's address answering; on Spark 2 also `check_ways`, port 8443's routes and Telegram's poll. On a miss `restore.sh` runs now if the Spark can be reached; if not, the timer does it. |
+| 2. Copy first | By the helper, as root (the copy list and `restore.sh` are the helper's own text, since its line allows nothing else to be root; 2.13), to `/var/lib/spark-console/guard/<id>/`: `/etc/ssh`, the owner's `authorized_keys` and ssh `config`, `/etc/sudoers*`, `/etc/passwd`, `group`, `shadow`, `gshadow`, `/etc/pam.d`, shell start files, `/etc/netplan`, NetworkManager's connections, `/etc/hosts`, the firewall as saved rules (`iptables-save`, `nft list ruleset`, `/etc/ufw`), Tailscale's settings and serve routes as JSON, and on Spark 2 the console's units and sign-in files. Code writes `restore.sh` beside them: copy back, reload sshd, `netplan apply`, load the rules, re-apply Tailscale's settings and routes, restart the console's unit if its files changed. `restore.sh` begins with `systemctl stop` of the command's unit and waits until it is gone. It copies back only files whose fingerprint differs from the copy and reloads only the services whose files it put back. |
+| 3. Arm the timer, before the change and outside the console | The helper, in the same call that then runs the command: `systemd-run --on-active=<the unit's time limit + 600 s> --unit sw-guard-<id> bash /var/lib/spark-console/guard/<id>/restore.sh`, so the timer never fires under a command that is still running. It lives in the Spark's own systemd, so it fires with the console, the network or Tailscale down. A second small unit, enabled for the next start and tied to a `pending` file, runs the same script if the Spark restarts inside the window. If arming fails, nothing is changed. The copy script's first line refuses if another guard's `pending` file is on that Spark; the Spark's claim is held until this guard is kept or put back. (`at` would also do, but is not installed by default; systemd always is.) |
+| 4. Apply, then check the ways in | A new ssh connection from the console, the helper still answering (`check`), Tailscale running and the Spark's address answering; on Spark 2 also `check_ways`, port 8443's routes and Telegram's poll. On a miss `restore.sh` runs now if the Spark can be reached; if not, the timer does it. |
 | 5. Ask the owner to confirm | "Changed. Check you can still get in (open a new terminal). It goes back at 14:32." Answers: "I can still get in: keep it", "Put it back now". Only the owner's press (Telegram or page) counts; Sparkie cannot answer it, and `/stop` does not stop the timer. Where the one page asks for a fresh visit (the hub, and any sign-in change): for a sign-in change the visit must sign in afresh with a passkey that existed before the change, and a standing session does not count; for a route change it is a new connection through that route. The link carries the guard's id and counts only after the change is live. |
-| 6. Kept, or put back | Kept: `sudo -n systemctl stop sw-guard-<id>.timer`, the `pending` file removed, the copies kept 7 days. Kept counts only when the timer was still waiting and its stop succeeded. If a result file exists, the answer is "already put back at 14:32". Not confirmed: the timer puts it back and leaves a result file; the owner is told as soon as the console can read it. |
+| 6. Kept, or put back | Kept: the helper's `keep` stops `sw-guard-<id>.timer`, the `pending` file removed, the copies kept 7 days. Kept counts only when the timer was still waiting and its stop succeeded. If a result file exists, the answer is "already put back at 14:32". Not confirmed: the timer puts it back and leaves a result file; the owner is told as soon as the console can read it. |
 | What cannot be put back this way | A Tailscale logout (it needs a browser sign-in); a deleted user's home; a Spark that will not start; anything changed outside the Spark (the tailnet's own rules, the router). Code knows `tailscale logout` and `userdel -r` and says so on the button. |
 | When the console is cut off | A confirm counts only if the console can still reach the Spark to stop the timer. A change that cuts the console off goes back even if the owner can get in another way. |
 | When Spark 2 has no internet | Telegram cannot reach the owner: the ask and the confirm are on the page. If the page is cut off too, nobody can confirm, and the change goes back. That is the net doing its job. |
@@ -244,6 +248,161 @@ If the start line cannot be written, the change does not run and the owner is to
 | Needs from E | The key store: `keyValue(name)` for code only, each key's names and hosts, and a key taken out of a message before anything else sees it. One task is one queue item that parks at a button and asks on Telegram. `workBusy(spark)` before a Spark is powered off. A carry-on turn counts as a message for the brain's sleep. The profile holds `workSteps`, `contextTokens` and the `careful` grade. |
 | Needs from B and C | B: `journal('cmd', …)`. C: code, never the brain, fills a box from a tar stream and reads it back. |
 
+### 2.13 The root helper: what builds the walls, and how it reaches a Spark (step 1)
+Added 2026-11-14 to close the build map's first "unclear" item. Every setting below was read in its own manual
+(systemd, sudo, util-linux, the kernel's manual pages); a number in brackets is the systemd version that manual says
+the setting arrived in (no number: older than the manual's notes). Nothing was run and no Spark was looked at.
+NVIDIA's pages say DGX OS 7 is Ubuntu 24.04, which ships systemd 255; the helper checks for itself and refuses on
+less than it needs.
+
+**In short.** One shell script owned by root, `/usr/local/sbin/spark-console-root`, allowed by one sudo line. It
+installs nothing, keeps no password and never stays running. For each command it asks the Spark's own systemd for a
+short-lived unit with a fixed list of settings. systemd builds the wall before the command starts, and the kernel
+holds it for the command and everything the command starts. The helper runs no wall it has not proven on that Spark.
+
+| Wall, and the helper's verb | Runs as | May read | May write | May reach |
+|---|---|---|---|---|
+| **Look**: `look` | An account made for that one command and gone after it, with root's read rights and no other power of root | Everything but the hidden list | Nothing that stays. The whole tree is read-only; `/tmp` is its own empty folder, removed at the end | Nothing: no network, no socket, no device. It can list other programs, as `ps` does, but not touch them or read their environment |
+| **Run**: `run`, a change as the owner's user | The owner's user, without the group memberships that are root by another name (`docker`, `lxd`, `libvirt`, `disk`, `sudo`) | What the owner can, but the hidden list | What the owner can, but the read-only list | The internet and the other Sparks. No local-only port on its own Spark (its loopback), no socket under `/run`, no program outside itself |
+| **Net**: `root`, a root command | root | Everything | Everything but the helper, its sudo line and the net's own copies | Everything. It runs only when the helper armed the put-back timer in the same call (2.8) |
+
+- **How the caller says which wall.** Code, never the brain, builds one line:
+  `sudo -n /usr/local/sbin/spark-console-root <verb> --id <id> --sha256 <hash> --seconds <n> --dir <folder> -- '<command>'`.
+  The sorter of 2.8 picks the verb; the command is one single-quoted word (`q()`). `run` also takes `--open`,
+  `--protect <folder>` (one more read-only folder: a models folder, the shared folder) and `--stdin` (a file's text,
+  for `write_file`). `check` says what the Spark has and whether the proof is current; `prove` runs the proof.
+  Inside a look `~` is still the owner's home.
+- **Outside the run wall, when asked.** A command that names something the run wall hides (Docker, Tailscale, the
+  owner's services, a local port, Spark Console's own files, another program of the owner's) is risky and asked
+  (2.8). After the yes it runs with `run --open`: the same unit, limits, id and hash, still unable to become root,
+  with nothing hidden and no membership left out. The ask and the record say "outside the wall" and why. A look
+  never takes `--open`.
+
+| What it gives | The setting | Look | Run |
+|---|---|---|---|
+| An account that owns nothing. By the kernel's own rules it cannot signal another program, read another program's environment or its `/proc/<pid>/root`, or open a socket that is not open to all | `DynamicUser=yes` (232). It also forces `NoNewPrivileges`, `ProtectSystem=strict` and `ProtectHome=read-only` | yes | |
+| Root's read rights and nothing else of root | `AmbientCapabilities=CAP_DAC_READ_SEARCH` (229), and `CapabilityBoundingSet=` the same | yes | |
+| The one other thing that right allows, opening a file by its handle and so round the hiding, is closed | `SystemCallFilter=~open_by_handle_at` (187), `SystemCallErrorNumber=EPERM` (209), `SystemCallArchitectures=native` (209) | yes | |
+| Nothing written stays | `ProtectSystem=strict` (forced by the account above); `ProtectKernelTunables=yes` and `ProtectControlGroups=yes` (232); `PrivateTmp=yes`; `PrivateIPC=yes` (248); an empty read-only folder over `/dev/shm` | yes | `PrivateTmp=yes` only |
+| No network, and no socket that has no file | `PrivateNetwork=yes` | yes | |
+| No disk device and no GPU (a read-only tree does not stop a write to a device) | `PrivateDevices=yes` (209) | yes | |
+| The hidden list | `TemporaryFileSystem=<folder>:ro` (238): an empty folder over the real one, with the named safe files put back by `BindReadOnlyPaths=` (233); `InaccessiblePaths=` (231) for a single file. `/run`, where a Spark keeps its sockets, is covered whole | yes | yes; name look-up is put back (`/run/systemd/resolve`, and the resolver's own loopback address by `IPAddressAllow=`) |
+| The read-only list | `ReadOnlyPaths=` (231) | the whole tree | yes |
+| No local-only port on its own Spark: the plug controller, the console's local port, a notebook left open | `IPAddressDeny=localhost` (235) | no network at all | yes |
+| It sees, and can signal, only itself and what it starts. Without this the hiding means nothing: `/proc/<pid>/root` of any other program of the owner's shows the Spark unhidden | The unit's command is `unshare --pid --fork --kill-child --mount-proc`, then `setpriv --reuid --regid --groups --inh-caps=-all --bounding-set=-all` down to the owner's user, then the command | not needed: its account owns no program | yes |
+| It cannot become root: `sudo`, the helper and set-user-id programs give it nothing | `NoNewPrivileges=yes` (187) | forced | yes |
+| It ends on time, with everything it started | `systemd-run --wait --pipe --collect` (232, 235, 236), `RuntimeMaxSec=` (229), `TimeoutStopSec=5`, `MemoryMax=` (231), `TasksMax=` (227) | yes | yes |
+
+- **What a Spark must have, and what happens without it.** systemd 248 or newer, as the Spark's first process;
+  control groups in the one-tree form (`cgroup2`); an `unshare` that knows `--kill-child` and `--mount-proc` and a
+  `setpriv` that knows `--groups` and `--bounding-set` (the helper reads their own help text). `check` names what is
+  missing and every verb refuses: the helper never runs with a wall down. If systemd refuses a setting, no unit
+  starts. systemd's manual also says several of these settings are skipped without an error on a kernel that lacks
+  what they need, so the helper trusts no setting: it trusts the proof.
+- **Not used, on purpose.** `PrivatePIDs=` does the "sees only itself" row in one setting, but arrived in systemd
+  257. `RestrictNamespaces=` has no effect on arm64, which the Sparks are (its manual says so). The command's text
+  is never put on the unit's command line: systemd expands `${…}` there, and the switch that turns that off
+  (`--expand-environment=no`) arrived only in 254.
+- **The hidden list** (one list for both walls, in the helper's own text, so only the owner's command can shorten
+  it). In every home folder: `.ssh` but for `authorized_keys`, `known_hosts`, `config` and `*.pub`; `.gnupg`; the
+  token files of 2.3; shell histories; Spark Console's secrets folder, its sign-in files and its sockets
+  (`api.sock`, the door's); and `~/.local/share/spark-console` (old texts, state copies, snapshots). On the system:
+  `/run`; `/root`; `/etc/shadow*` and `/etc/gshadow*`; the host keys in `/etc/ssh`; `/etc/ssl/private`;
+  `/etc/netplan` and NetworkManager's connections; `/var/lib/tailscale`; Docker's and containerd's data folders;
+  `/var/lib/spark-console`; `/var/backups`; swap files. A path that is not on a Spark is skipped.
+- **The read-only list** (run wall). In the owner's home: the shell start files, `.config/systemd`,
+  `.config/environment.d`, `.config/autostart`, and what is left of `.ssh`. Spark Console's code and its source.
+  The helper and its line.
+- **What the walls cannot promise.** A key in a file nobody listed (2.3). A file a walled change may write that the
+  owner later runs outside the wall (a project script, something on the owner's `PATH`). A start file that does not
+  exist yet can be made; the plain ways-in check of 2.8 puts it back. A socket that has no file can be reached from
+  the run wall; the proof lists any that listen on the Spark. A walled change can call another Spark's open ports
+  and the console's own door, as any program on the tailnet can; the console's sign-in is what stands there. A disk
+  mounted while a look runs is not read-only to it. Inside a look `>/dev/stderr` cannot be reopened (`>&2` works).
+
+**What the helper refuses.** It starts no unit when: the Spark lacks what a wall needs; the proof has not passed for
+this helper on this systemd and kernel; its own file, or a folder above it, can be written by anyone but root; it was
+not called through `sudo` by an ordinary account; the command's bytes do not have the hash it was given; a look asks
+for `--open`, for input or for more than 60 s; a change asks for more than 120 minutes, or a root command for more
+than 30; `root` is called and the net cannot be armed (always, until step 13 builds the net). It takes nothing from
+the environment (`sudo` clears it). Its own answers are single lines that begin with the call's id, a random word
+code chose for that call, so a command's output cannot forge one.
+
+| | How |
+|---|---|
+| The text that was approved is the text that runs (P-5) | The ask keeps the command's exact bytes and their SHA-256. The press hands the helper those bytes and that hash. The helper writes the bytes to a root-owned file in a memory folder (`/run/spark-console/<id>/command`, shown read-only inside the wall), hashes that file, refuses on a difference, and runs that file with `bash`. The same hash is in the journal's start line and in the unit's description, so the Spark's own log names what ran. A script the command names (`bash fix.sh`) is held the same way (`--held <path> <hash>`, built with step 7): the helper copies it once, checks the copy, and shows that copy in place of the file inside the wall. A file changed after the ask runs nothing; a file changed after the copy changes nothing. |
+| Where the journal's start line sits (P-2) | Sort and gate; then the start line, written and synced (the id, the Spark, the wall, the hash, the unit's name, who allowed it); only then the script that calls the helper; then the end line. No start line, no call. The id is in the unit's name (`sw-run-<id>`, `sw-root-<id>`), so after a cut-off the Spark's own log says whether that command started and how it ended. A look (`sw-look-<id>`) writes one line, when it ends. |
+| What it adds to a call | No second connection: the script that calls the helper first compares the helper's SHA-256 with the ones this build knows. `sudo` and the unit add about 0.1 to 0.2 s (inference; each step's record measures it). |
+
+**How it reaches a Spark, and becomes root's.**
+
+| Part | How |
+|---|---|
+| The command, as the owner sees it | `ssh -t <you>@<Spark 2> 'bash ~/spark-console-src/deploy/root-for-sparkie.sh 3'`: one line for each Spark, which Sparkie gives the first time `run` or `write_file` is tried there. `--check 3` changes nothing and says what is there; `--undo 3` removes it. Spark 2 itself is `--hub 2`, and comes last. Run from the Mac's copy of the repository, the script does one thing: it runs Spark 2's own copy of itself over ssh, so what is installed is always the installed build's. |
+| What it copies | Two files, always from Spark 2's installed copy and never from the Mac: the helper (`deploy/spark-console-root`) and a short set-up script. They go to `~/.cache/spark-console/` on that Spark; then the set-up script runs there in a terminal, so `sudo` can ask that Spark's password, once. |
+| Where it lands, and who owns it | The set-up script checks the copy's SHA-256 against the one Spark 2 sent, then `sudo install -o root -g root -m 0755` to `/usr/local/sbin/spark-console-root`. It refuses if `/usr`, `/usr/local` or `/usr/local/sbin` can be written by anyone but root. |
+| The one line | `<owner> ALL=(root) NOPASSWD: /usr/local/sbin/spark-console-root`, written to a temporary file, checked with `visudo -cf`, then installed as `/etc/sudoers.d/spark-console-root` (root, 0440). It names one file and no other command. (sudo's manual: with no arguments listed the user may give any; the helper checks them itself.) Power's line stays its own file. |
+| Then | It runs `prove` and prints each wall's result. If the proof fails it removes the line and the helper again and says which attempt got through: nothing half set up is left. |
+| A later update | Only this command, run again. A build that ships a changed helper says so in its update note. From then on the console finds that the Spark's copy is not one it knows, and answers with the one command, as before set-up. Sparkie cannot do it by writing a file: the helper and its line are root's, the look and run walls cannot write them, the net wall holds them read-only, and a command that names either is answered with the one command, not run. **Owner's call:** whether Sparkie may ever replace the helper itself, as a dangerous ask that shows the difference. Default: no. |
+| `--undo` | Removes the line, then the helper, then the proof's mark; `sudo` asks the password. The copies under `/var/lib/spark-console` stay. A put-back timer already armed still fires. |
+
+**The proof of its walls.** Each attempt is made outside the wall first, as the owner's user, where it must work or
+the thing must be absent ("not there"); then inside, directly and from a child process, where it must fail. Attempts
+1 to 4 are step 1's own; 5 to 13 are what this mechanism makes necessary.
+
+| # | The attempt | Look | Run | Why it is here |
+|---|---|---|---|---|
+| 1 | A write through a link: a link in a writable place that points at a read-only or hidden file | yes | yes | step 1 |
+| 2 | An open connection: to an outside address, to another Spark, to its own address and to its own loopback | all four | the loopback | step 1 |
+| 3 | The Docker socket, the Tailscale socket, `api.sock` and the door's socket, each by its path and by a second path the proof makes to it | yes | yes | step 1 |
+| 4 | Another process's environment (`/proc/<pid>/environ`) | yes | yes | step 1 |
+| 5 | A write that stays: one file in every mounted disk, in `/tmp`, `/var/tmp` and `/dev/shm`, looked for from outside afterwards | yes | the read-only list | read-only is set mount by mount |
+| 6 | Round the hiding: a hidden file through `/proc/<pid>/root` and `/proc/<pid>/cwd` of a program outside the wall | yes | yes | hiding is by path, and another program's view has other paths |
+| 7 | A signal to a program outside the wall (one the proof starts for this, and ends) | yes | yes | a signal is neither a write nor a connection |
+| 8 | More rights: `sudo -n true`, the helper itself, any capability beyond the one a look is given | yes | yes | root is only ever the typed kind (2.8) |
+| 9 | Starting something outside the wall: the owner's service manager (`systemctl --user`), the system bus, `systemd-run` | yes | yes | systemd's manual: `NoNewPrivileges` does not cover what another service starts on request |
+| 10 | A hidden key file: by path, through a link, by `*`, and by its file handle | yes | the first three | the read right allows opening by handle |
+| 11 | A disk device and the GPU | yes | | read-only is about files and folders; a device is neither |
+| 12 | Something left behind: a child put in the background is gone when the command ends | yes | yes | "nothing outlives it" (2.5) |
+| 13 | Root with no net: `root` when no timer can be armed | | | the one page, section 7, item 2 |
+
+- **When it runs.** At the end of the one-time command. By the console before the helper's first use on a Spark, and
+  whenever `check` says the proof is out of date. In `self_test`, on every Spark that is on. A pass writes a
+  root-owned mark, `/var/lib/spark-console/proved`: the helper's SHA-256, systemd's version and the kernel's. No
+  verb runs without a mark that matches now, so an update of the Spark's software means a new proof before the next
+  command, with no timer and no password. One unit a wall carries all its attempts: about a second (inference).
+- **When it fails.** No mark is written, so all three walls refuse on that Spark, also the ones that passed. `run`
+  and `write_file` there answer "the wall proof failed on Spark 3: <the attempt>", and typed actions still work.
+  The owner is told once, on the page and on Telegram; it is a needs-you line; `self_test` fails. It is tried again
+  by `self_test` or by the owner's command, never by a timer.
+
+**Spark 2** (so that step 11 has nothing to undo). The file, the lists and the line are the same on every Spark. A
+path that is not there is skipped, so the helper never asks whether it is the hub: what only the hub has (`api.sock`,
+the door's socket, the sign-in files, the console's local port, the plug controller on 127.0.0.1:5580) is on the
+lists everywhere. Three things differ, none in the helper:
+1. **How it is called.** The console's own unit forbids new privileges, so `sudo` fails in every child of the
+   console. On Spark 2 code starts the call from the owner's service manager: `systemd-run --user --quiet --wait
+   --pipe --collect sudo -n /usr/local/sbin/spark-console-root …` (the console starts its roll-back the same way).
+   One function, `helperCall(node, …)`, holds the difference.
+2. **The proof there also shows** that a plain `sudo -n` from a child of the console fails, and that the call
+   through the service manager works (section 7 of the one page, item 1).
+3. **The one-time command there** needs `--hub` and is run last, after the net has been tried on a compute Spark.
+
+Step 11 then adds console code only: always asked, 10 minutes, the net armed for every command there (`run --net`,
+which step 13 adds to the helper), `check_ways` after.
+
+**The helper will change after step 1a**, and each change means the one command again on a Spark that already has
+it: step 7 (`--held`), step 13 (the net: `--net`, `root`, `keep`, `putback`), step 12 (root's copy of named files),
+step 14 (keys by name). So the owner is asked for the command when milestone 2 is whole; before that only to try
+looks, on one compute Spark.
+
+**Not verified; needs a real Spark, or one real run as root on a throw-away Ubuntu 24.04 arm64 machine before the
+owner is asked.** That a unit with these settings starts at all on DGX OS (covering `/run` whole, the folder over
+`/dev/shm`, the throw-away account with `--pipe`); that the address filter works there (it needs the kernel's eBPF
+for control groups); name look-up inside the run wall; `sudo -n` with no terminal, over ssh and from the service
+manager; that no other kernel guard (AppArmor) stops root's `unshare`; where Docker keeps its data; the time a call
+adds. The proof is what decides each of these on the Spark itself.
+
 ## 3. Rules kept, and rules that must change
 Kept as written: R2 (`appRoom` before every command, a memory cap on each), R10, R12, R20 and R22 (`work.json`,
 `allowed.json`, `changes.json`: one writer each), R27, R28. One new rule, **R41 "Sparkie's hands"** (2.2 to 2.10), and:
@@ -269,7 +428,8 @@ Step 1 builds the root helper before the first look: without it `run` and `write
 
 | # | Step | Files | The test that fails without it |
 |---|---|---|---|
-| 1 | The root helper, its one-time command and the proof of its walls; then `host_look` inside the look wall | `deploy/root-for-sparkie.sh` (the helper and the one line that allows it); `21-work.mjs` (the key check, the wall proof); stubs in `test/mock/bin` | On a Spark where the one-time command has not run, a look and a change each answer with that one command and run nothing, and the typed actions still work there. The wall proof fails the helper when any of these succeeds, directly or from a child process: a write through a link, an open connection, the Docker or Tailscale socket or `api.sock`, another process's environment; `self_test` runs the same proof. A look that tries to write or send changes nothing. A key file is refused directly, through a link, through `*`, and under `grep -r`; `authorized_keys` is readable. Works on Spark 2; masked, cut for the brain, recorded whole. A chat turn with no work makes no `run()` call. |
+| 1a | The root helper, its one-time command and the proof of its walls (2.13). No action: nothing calls it yet | `deploy/spark-console-root` (new: `check`, `prove`, `look`, `run` with `--open`, `--protect` and `--stdin`; `root` always refuses); `deploy/root-for-sparkie.sh` (new, with `--check`, `--undo`, `--hub`); stand-ins `systemd-run`, `systemctl`, `unshare`, `setpriv` and `visudo` in `test/mock/bin` (not `sudo`: the power work owns it); `test/root-helper.test.mjs` (new); `docs/rules/R42.md` (new: the helper's part). Run by anyone but root the helper is a rehearsal: it takes its folders from under one test folder and calls the stand-ins, and refuses without that folder; run as root it has no test switch | The wall proof fails the helper when any attempt of 2.13's list succeeds, directly or from a child process (the four first: a write through a link, an open connection, the Docker or Tailscale socket or `api.sock`, another process's environment): with the stand-in told to let one attempt through, each in turn, `prove` names it, writes no mark, and `look` and `run` then refuse. For hostile commands (quotes, `$`, `%`, new lines, a folder with spaces) the unit asked for carries exactly the fixed settings of its wall and the command's bytes arrive unchanged; one changed byte starts no unit. A Spark with systemd 247, or an `unshare` without `--kill-child`, is refused by name. A mark from another systemd version is out of date. `root` refuses. The helper refuses when another account can write its file. The one-time command puts the line in only after `visudo` passes; a failed proof leaves neither file; a second run changes nothing; `--undo` removes both; Spark 2 is refused without `--hub`. |
+| 1b | `run` as a look on any Spark (this design's `host_look`), inside the look wall | `21-work.mjs` (new part: `helperCall`, the look, the "run this one command first" answer, the known-helper check, the key-name check, the short table of exact forms); `21-selftest.mjs` (the proof as a line of `self_test`); `test/mock/bin/sudo` (one more allowed command, once the power work has landed); `deploy/host-on-portal.sh` (ships the two files); the action lists; `test/work.test.mjs` (new); `docs/rules/R42.md` and a card. Needs B1 and F10 first | On a Spark where the one-time command has not run, or whose helper this build does not know, a look and a change each answer with that one command and run nothing, and the typed actions still work there. `self_test` runs the same proof, and a failed proof stops every look there and tells the owner once. A look that tries to write or send changes nothing. A key file is refused directly, through a link, through `*`, and under `grep -r`; `authorized_keys` is readable. Works on Spark 2, where the call goes through the owner's service manager; masked, cut for the brain, recorded whole. A chat turn with no work makes no `run()` call. |
 | 2 | The box, its self-check, `workspace` | `21-work.mjs`; `16-actions.mjs`; `17-changes.mjs` (`changeLabel`); `19-watcher.mjs` (skip the label); `config.json` (`work.images`) | The flags are exactly the fixed list for hostile inputs. Spark 2 is refused. A self-check that finds a network refuses the open. |
 | 3 | `work_run` in the box, `work_read`, the loop's budgets | `21-work.mjs`; `14-chats.mjs` | Output cannot forge the exit line. A timeout and `/stop` remove the box. The 8 GB rule refuses. The step budget ends the turn with a report. |
 | 4 | `work_write`, `work_edit` in the box | `21-work.mjs` | An edit must match once. A link in the box cannot move a write out of it. |
@@ -279,15 +439,15 @@ Step 1 builds the root helper before the first look: without it `run` and `write
 | 8 | Change sets and `put_back` | `21-work.mjs` (`changes.json`) | Two edits and a made file in one task: `put_back` restores both and removes the made file; a file changed since is left and named. The answer lists what was not restored. Copies over 7 days or 2 GB are pruned when a set opens. |
 | 9 | The go-ahead and the always list | `21-work.mjs` (`allowed.json`); `14-chats.mjs`; `20-words.mjs` (`/allowed`) | The owner's sentence, or the second answer, lets the next host change run after an outside read, and ends at each of its ends. A tool result saying "go ahead" grants nothing. "Always" is added only by the owner's press: an agent's and a typed yes are refused. A matching command runs with no button; one outside its folder (also through a link), or as root under a non-root entry, does not. Neither answer covers a (b) row or Spark 2. |
 | 10 | Asking on Telegram, and its switch | `20-tell.mjs` (`ask`); `21-telegram.mjs`; `14-chats.mjs` (`runChoice`); `22-passkey.mjs`; `03-secrets.mjs` | A risky change sends one ask with the exact command to the paired chat and shows the same button on the page; a press on either runs it once. With the switch off a Telegram press is refused and the page still works. Another chat gets silence. A command over 3,500 characters is asked on the page only. An ask is void after a console restart and after Telegram is paired again. |
-| 11 | Host changes on Spark 2 | `21-work.mjs` | Perfect words, a go-ahead and an always entry still ask. The command runs outside the console's unit and is held to 10 minutes. A failed `check_ways` puts back, pauses and notices. |
-| 12 | Root commands | `21-work.mjs`; `deploy/root-for-sparkie.sh` (`--undo`) | On a Spark set up in step 1, `root: true` runs through the helper and the button and record say "as root". The word `sudo` in a command is answered "set root". A root script is always asked. A root command inside the net is held to 30 minutes, 10 in the lock-out class. An installer from an address is downloaded once, when the ask is built: a stand-in server that answers differently the second time sees one request, and the press runs the first text. `--undo` removes the line. |
-| 13 | The lock-out net | `21-work.mjs` (`guard`, `restore.sh`) | The timer is armed before the change (the mock records the order); if arming fails nothing changes. A failed check restores at once. No confirm: the stand-in timer fires, the files are back, the owner is told. A confirm stops the timer. Sparkie's own call cannot confirm, and `/stop` does not stop the timer. A restart inside the window restores at start. `tailscale logout` says it cannot be put back. The timer recorded is the unit's time limit plus 600 s, for a 30 s command and a 20-minute one; a lock-out command asked with `minutes: 30` is held to 10. A put-back stops the command's unit before the first copy back, and 5 s later the restored bytes are still there, also when the limit and the timer end together and for a child the command left behind. With a guard open, also after a console restart, a second root command on that Spark answers "waiting for your confirm" and runs nothing. "Keep it" after the stand-in timer fired answers "already put back". An expiry where nothing differs reloads nothing. A sign-in change is not kept by a standing session, nor by a link opened before the change was live. |
+| 11 | Host changes on Spark 2 | `21-work.mjs` (console code only: the helper is the same file on every Spark, 2.13) | Perfect words, a go-ahead and an always entry still ask. The call reaches the helper through the owner's service manager, so the command runs outside the console's unit; it runs inside the net and is held to 10 minutes. A failed `check_ways` puts back, pauses and notices. |
+| 12 | Root commands | `21-work.mjs`; `deploy/spark-console-root` (the `root` verb's copy of named files; `--undo` was built in step 1a) | On a Spark set up in step 1, `root: true` runs through the helper's `root` verb, with the net armed in the same call, and the button and record say "as root". A command that names the helper or its line is answered with the owner's one command and runs nothing. The word `sudo` in a command is answered "set root". A root script is always asked. A root command inside the net is held to 30 minutes, 10 in the lock-out class. An installer from an address is downloaded once, when the ask is built: a stand-in server that answers differently the second time sees one request, and the press runs the first text. After `--undo`, `root: true` answers with the one command again. |
+| 13 | The lock-out net | `21-work.mjs` (`guard`); `deploy/spark-console-root` (the copy list, `restore.sh`, `--net`, `keep`, `putback`: 2.13) | The timer is armed before the change (the mock records the order); if arming fails nothing changes. A failed check restores at once. No confirm: the stand-in timer fires, the files are back, the owner is told. A confirm stops the timer. Sparkie's own call cannot confirm, and `/stop` does not stop the timer. A restart inside the window restores at start. `tailscale logout` says it cannot be put back. The timer recorded is the unit's time limit plus 600 s, for a 30 s command and a 20-minute one; a lock-out command asked with `minutes: 30` is held to 10. A put-back stops the command's unit before the first copy back, and 5 s later the restored bytes are still there, also when the limit and the timer end together and for a child the command left behind. With a guard open, also after a console restart, a second root command on that Spark answers "waiting for your confirm" and runs nothing. "Keep it" after the stand-in timer fired answers "already put back". An expiry where nothing differs reloads nothing. A sign-in change is not kept by a standing session, nor by a link opened before the change was live. |
 | 14 | Keys by name | `21-work.mjs`; design E's store | The value is in no command text, output, record or tool result (searched for exactly). An address outside the key's hosts makes the command risky. The file on the memory disk is gone after the command. A made-up key is searched for, and not found, in error fields, in the state copy and after a restart. |
 | 15 | Eval cases; the trial's contestant; a job may read a box; code fills a box (C) | `test/eval/cases.json`; `agentbar/`; `21-apps.mjs` | `agentbar --dry` still fails every untouched task. A job with `work` has one more mount, read-only. |
 | 16 | Internet for a box, through a gate | later | — |
 
 After steps 1, 2, 7, 11, 12 and 13, check each on a real Spark as the owner would: step 1's wall proof once on each
-Spark; step 13 first on a compute Spark with a harmless change (a comment in `sshd_config`), once confirmed and once
+Spark (the one-time command runs it and prints each wall's result); step 13 first on a compute Spark with a harmless change (a comment in `sshd_config`), once confirmed and once
 left to go back by itself.
 
 ## 5. Risks, and open questions
@@ -295,14 +455,14 @@ left to go back by itself.
 |---|---|
 | **Text Sparkie read steers a root command, and the owner taps yes without reading.** The largest risk left. | Risky kinds are asked every time, one command a press, never under a standing answer. The button is built by code: the exact command, "as root", whether it can be put back, and "Sparkie read outside text before proposing this". Root scripts and fetched code always show their text and address. Files are copied first; lock-out changes go back unless confirmed; everything is recorded. None of this helps if the tap is a reflex: the fewer asks, the more each one is read, which is why the ladder keeps ordinary work off the button. |
 | **A lost or borrowed phone.** In the paired Telegram chat it is the owner: it can ask, approve and confirm. | Telegram's own passcode lock; unpairing or the "Approve from Telegram" switch, from the page, with no passkey needed to turn it off; asks expire in 15 minutes; changes to who may approve are confirmed on the page, so a phone cannot pair itself deeper or remove the owner's passkeys; the record shows every press. |
-| Passwordless sudo makes anything running as the owner's user root | Already true through Docker. Ordinary commands of Sparkie's run with `no_new_privs`, so root is only ever the typed, visible kind. |
+| The helper is a door to root for anything running as the owner's user on that Spark (the one page, section 9, item 4) | Already true through Docker. A plain `sudo` in any other script still asks for the password. Sparkie's own commands run inside a wall that cannot call the helper, so root is only ever the typed, visible kind. |
 | The net cannot put back everything | A Tailscale logout, a deleted home, a Spark that will not start, anything outside the Spark. The button says so before; physical access is the last way in. |
 | Under a go-ahead or an always entry, outside text can shape an ordinary command | Never a risky one, never on Spark 2; the copy first, the ways-in check, the limits and the record. |
 | A saved key leaves the house | A command given a key may name only that key's hosts; its exact value is masked everywhere; a script that hides the address is "unseen" and asked as root, but not as the owner's user: that gap stays. |
-| Not verified, needs a real Spark | The helper's wall proof; the box's self-check; `systemd-run` user units and `sudo -n systemd-run` over ssh; `restore.sh` for Tailscale's settings and the firewall; whether a memory cap bounds what the GPU takes. |
+| Not verified, needs a real Spark | The helper's wall proof, and that its units start at all on DGX OS (the list at the end of 2.13); the box's self-check; `sudo -n` of the helper over ssh and from the owner's service manager; `restore.sh` for Tailscale's settings and the firewall; whether a memory cap bounds what the GPU takes. |
 
-Defaults chosen without asking (decision 16): no engine; looks replace the fixed scripts; passwordless sudo, never a
-stored password; a confirm window of the command's time limit plus ten minutes; Telegram approvals on once paired,
+Defaults chosen without asking (decision 16): no engine; looks replace the fixed scripts; root through one helper (the
+one page), never a stored password; a confirm window of the command's time limit plus ten minutes; Telegram approvals on once paired,
 with the page switch; a go-ahead lasts one task; always entries are per Spark and per kind; an always-allowed kind
 also runs from Telegram and unattended.
 
@@ -316,7 +476,7 @@ Questions (a wrong guess could lock the owner out or delete data):
 ## 6. Left out on purpose
 - **An engine**, a second loop, sub-agents, a compactor, a to-do tool (`NOTES.md` and a fresh turn do that work).
 - **A lasting shell.** Each command starts clean, so nothing is left running; what must keep running is `keep_running`.
-- **A stored password**, a narrower sudoers list, and root that a command can reach by itself.
+- **A stored password**, `sudo` for everything, a list of allowed root commands, and root that a command can reach by itself.
 - **A fleet-wide or free-text "always"**, a go-ahead from memory, and a standing answer for anything risky.
 - **A look grammar and a list of allowed programs**: inside the helper's look wall any command may be a look (2.3).
 - **Putting back packages, containers' insides and databases**; a trash beyond the 7-day copies.

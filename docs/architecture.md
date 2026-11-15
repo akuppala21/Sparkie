@@ -140,7 +140,7 @@ printed and counted in memory, an uncaught error writes `last-crash.json` just b
 `funnelOn` (`/health`'s `internet`) and `doorOn` (R40) stay null, not known, until an answer names the main address:
 right after a boot tailscaled answers with nothing loaded. `checkRoute` also runs on the stand-in fleet, where
 `test/mock/bin/tailscale` answers it); `watchHeld` (60 s); the agent last-use write (60 s); `adoptRunning` (once, 60 s
-after start); the cut-off-operation report at start (and the journal's, `journalAfterRestart`, R43), and
+after start); the cut-off-operation report at start (and the journal's, R43), and
 `selfTestRecover` (5 s after start: stops what a cut-off self-test started); the daily copy’s clock (`backupIfDue`: 10
 minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started in the local port's listen callback beside the Telegram loop: reads
@@ -203,11 +203,11 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a checkout of a `tested/` tag holds one, and the installer refuses a build without it. Any edit
-  to a part changes the build; a `worker.py` edit changes every workflow version but not the build. After an install
-  `/health` names the workflows whose version waits for a validation run (the hub guard, 2026-11-14, changed
-  `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the
-  restart; one `find_setups` covers that one.
+  whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
+  tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard
+  changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
+  the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.

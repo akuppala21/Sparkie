@@ -70,6 +70,7 @@ test('its folder is outside the state folder (0700, files 0600); a look writes o
   for (const f of readdirSync(T.fleet.journalDir)) assert.equal(statSync(join(T.fleet.journalDir, f)).mode & 0o777, 0o600, f);
 });
 
+// T120: a failed start's log, keys hidden, is still there after a restart (with the tests after it).
 test('a failed start: its log (keys hidden, also across two pieces), its attempt and the operation, with the events', { timeout: 300000 * SLOW }, async () => {
   writeFileSync(mock('spark4', `logs-${GEMMA}`), `${KEYS.join('\n')}\n`);
   try {
