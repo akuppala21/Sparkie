@@ -407,11 +407,13 @@ describe('the main service', { concurrency: 1 }, () => {
     });
 
     test('mended, the copy still matches it; a new break gives a new notice', { timeout: 60000 * SLOW }, async () => {
-      writeFileSync(file('access.json'), good);
+      // Mended by hand, with one thing changed, so the copy can only match by following it.
+      writeFileSync(file('access.json'), JSON.stringify({ ...JSON.parse(good), userName: 'Mended by hand' }, null, 2));
       // (the service reads the file again: the access change removed above used to make it read; fleet_status reads it)
       await ownerOn(fleet, '/actions/fleet_status', { method: 'POST', body: {} });
       const copy = JSON.parse(readFileSync(file('access.json.good'), 'utf8'));
       assert.deepEqual(copy, JSON.parse(readFileSync(file('access.json'), 'utf8')));
+      assert.equal(copy.userName, 'Mended by hand');
       assert.equal(statSync(file('access.json.good')).mode & 0o777, 0o600);
       writeFileSync(file('access.json'), CUT);
       await ownerOn(fleet, '/actions/fleet_status', { method: 'POST', body: {} });

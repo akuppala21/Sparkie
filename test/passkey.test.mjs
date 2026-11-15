@@ -346,6 +346,7 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     const other = await newAgent(), before = await agentIds();
     const swaps = [
       ['another body', ['POST', '/agents', { name: 'asked-for' }], ['POST', '/agents', { name: 'sent-instead' }]],
+      ['another method', ['POST', `/agents/${other}`, { act: true }], ['PUT', `/agents/${other}`, { act: true }]],
       ['another agent', ['PUT', `/agents/${agent}`, { act: true }], ['PUT', `/agents/${other}`, { act: true }]],
       ['act false → true', ['PUT', `/agents/${agent}`, { act: false }], ['PUT', `/agents/${agent}`, { act: true }]],
       ['pausing → resuming', ['PUT', '/agents/settings', { halted: true }], ['PUT', '/agents/settings', { halted: false }]],
@@ -359,7 +360,8 @@ describe('once a passkey is set up, changes to who has access need it', () => {
       const r = await main(p2, { method: m2, body: b2, headers: { 'x-spark-passkey': h } });
       is(r, 409, what);
       // The asked-for change, with the same answer, is refused now too: it was spent.
-      if (!free(p1, b1)) is(await main(p1, { method: m1, body: b1, headers: { 'x-spark-passkey': h } }), 409, `${what}: the original after the mismatch`);
+      // (POST /agents/<id> is no route, so its original isn't sent again)
+      if (!free(p1, b1) && what !== 'another method') is(await main(p1, { method: m1, body: b1, headers: { 'x-spark-passkey': h } }), 409, `${what}: the original after the mismatch`);
     }
     assert.deepEqual(await agentIds(), before);
     assert.ok(!(await canAct(other)) && !(await canAct(agent)));

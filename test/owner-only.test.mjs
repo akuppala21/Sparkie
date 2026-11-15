@@ -133,8 +133,8 @@ describe('nobody else gets in', () => {
   test('every route: 401 for everyone who isn’t the owner, whatever they bring', { timeout: 300000 * SLOW }, async () => {
     for (const [who, headers] of Object.entries(NOT_OWNER())) {
       for (const path of ROUTES) {
-        for (const method of ['GET', 'POST']) {
-          const r = await api(path, { method, headers, ...(method === 'POST' ? { body: {} } : {}) });
+        for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+          const r = await api(path, { method, headers, ...(method === 'GET' ? {} : { body: {} }) });
           assert.equal(r.status, 401, `${who}: ${method} ${path} → ${r.status} ${r.text.slice(0, 200)}`);
         }
       }

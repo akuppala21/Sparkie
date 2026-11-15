@@ -285,6 +285,7 @@ describe('the app door', () => {
     assert.match(anon.text, /Sign in to Spark Console/);
     assert.deepEqual([...anon.text.matchAll(/href="([^"]+)"/g)].map(x => x[1]), [`${MAIN}/`]);
     assert.equal((await door('/', { headers: { 'tailscale-funnel-request': '?1' } })).status, 401, 'no ticket, no session');
+    await refused({ 'tailscale-user-login': 'stranger@test', 'x-forwarded-for': '100.100.8.8' }, [401, 401], 'someone else on the tailnet, with the owner’s ticket', { owners: true });
     await refused({ ...INTERNET, authorization: `Bearer ${keys.agent.token}` }, [401, 401], 'an agent key');
     await refused({ ...INTERNET, authorization: `Bearer ${TERMINAL}` }, [403, 401], 'a terminal signed in from the internet');
     await refused({ ...TAILNET, 'x-forwarded-for': '100.64.0.3' }, [403, 403], 'a program on Spark 3', { owners: true });
