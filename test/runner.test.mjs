@@ -4,13 +4,14 @@
 // of the home or planted among the copies), the journal's start line before the unit and its end line after, the run
 // wall's time limit and exit codes, one change per Spark, the ways-in check (put back, paused, told), keys masked, a
 // change a restart cut off, and undo_last_change putting a set back file by file.
-// The stand-in fleet, with the real root helper set up and proven under Spark 3's home (test/rehearsal.mjs), driven by
-// the stand-ins in test/mock/bin (sudo's rehearsal case; systemd-run, which ends a run unit at its time limit with
-// everything it started; systemctl, unshare, setpriv). They build no wall: a command runs unwalled, as the owner.
+// The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs: its home held by
+// the run wall, and the command started there), driven by the stand-ins in test/mock/bin (sudo's rehearsal case;
+// systemd-run, which ends a run unit at its time limit with everything it started; systemctl, unshare, setpriv). They
+// build no wall: a command runs unwalled, as the owner, and the unit's settings show what a wall would hold.
 // Linux only (GNU coreutils, bash 4 or newer): run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync, statSync,
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync,
   lstatSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
@@ -29,7 +30,7 @@ after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 const keys = {};
 useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS) },
   prepare: ({ root }) => {
-    rehearse(root, 'spark3');
+    rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3'), out = join(root, 'outside-spark3');
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('notes/a.txt', 'old a\n', 0o640);
@@ -48,7 +49,7 @@ useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: Str
     put('notes/q.txt', 'before q\n');
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
-    put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> ~/.ssh/authorized_keys\necho added\n", 0o755);
+    put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\necho added\n", 0o755);
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'target.txt'), 'outside\n');
     writeFileSync(join(out, 'f.txt'), 'outside f\n');
@@ -143,6 +144,9 @@ test('the copies come first: a file\'s bytes, mode and path before it is overwri
   const unit = units().find(x => x.includes(`--unit=${start.unit}`));
   assert.ok(unit, 'the run wall\'s unit');
   assert.ok(unit.includes(`RuntimeMaxSec=${SECONDS}`) && unit.includes('MemoryMax=8G'), JSON.stringify(unit));
+  // The copies are made by the console's own call, outside the unit; inside it their folder is an empty read-only one
+  // (the stand-ins build no wall: what the unit is asked to be is what shows it).
+  assert.ok(unit.includes('TemporaryFileSystem=/spark3/.local/share/spark-console:ro'), JSON.stringify(unit));
   // A removal: the copy holds the file.
   const gone = await run('rm notes/old.txt');
   assert.equal(gone.status, 200, gone.text);
@@ -314,7 +318,7 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
   const notices = () => lines(join(T.fleet.stateDir, 'events.jsonl')).filter(e => e.type === 'notice');
   const seen = notices().length;
   try {
-    const r = await run('bash ~/fix.sh');
+    const r = await run('bash fix.sh');
     assert.equal(r.status, 200, r.text);
     assert.equal(r.json.ran, true);
     assert.match(r.json.output, /^added\n/);
@@ -324,8 +328,8 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
     assert.equal((await api('/agents')).json.settings.halted, true);
     const told = notices().slice(seen).filter(e => /way in/.test(e.text));
     assert.equal(told.length, 1, JSON.stringify(told));
-    assert.equal(told[0].text, 'Agents’ changes were paused automatically: a change on Spark 3 ($ bash ~/fix.sh) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in Access → Agents.');
-    const [, end] = pair('bash ~/fix.sh');
+    assert.equal(told[0].text, 'Agents’ changes were paused automatically: a change on Spark 3 ($ bash fix.sh) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in Access → Agents.');
+    const [, end] = pair('bash fix.sh');
     assert.deepEqual(end.putBack, ['~/.ssh/authorized_keys']);
     // Paused: the next change doesn't run, whoever asks.
     const next = await run('touch notes/paused.txt');
