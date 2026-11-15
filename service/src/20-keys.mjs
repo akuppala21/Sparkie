@@ -107,12 +107,14 @@ async function keepBeat(value, via) {
 // by what became of it and the answer as a notice, the journal the words as kept, the audit the name. `after` is a line
 // to add (Telegram's delete). Gives the notice.
 async function giveKey(conv, given, via, channel = null, after = '') {
-  const r = await keepKey(given, via), mark = r.kept ? 'kept' : 'not kept';
+  const r = await keepKey(given, via), mark = r.kept ? 'kept' : 'not kept', left = r.kept ? hideKeptInChats(given.value) : null;
   // (a name is said back only when a key came after it: in "/key <the key>" with nothing after, the name is the key)
   const name = given.name && given.value ? given.name : null;
   const words = given.form ? `/key ${name ? `${name} ` : ''}[${mark}]` : given.text.replace(BEAT_SHAPE, `[key HEARTBEAT ${mark}]`);
   const at = new Date().toISOString();
-  const message = { role: 'assistant', content: maskSecrets(`${r.line}${after ? `\n${after}` : ''}`), createdAt: at, notice: true, word: true };
+  // (what code could not clean, said only when it is so: the owner's earlier words held the key)
+  const unclean = left?.said ? `It was in your earlier words too: hidden in the chats now, but the journal (never rewritten)${left.telegram ? ' and your earlier Telegram message still hold it; delete that message yourself.' : ' still holds it.'}` : '';
+  const message = { role: 'assistant', content: maskSecrets([r.line, unclean, after].filter(Boolean).join('\n')), createdAt: at, notice: true, word: true };
   // (a full chat still gets the answer; it just isn't saved there, as with the owner's words)
   if (conv.messages.length < LIMITS.messages - 1) {
     conv.messages.push({ role: 'user', content: maskSecrets(words), context: null, createdAt: at, key: true }, message);
@@ -122,6 +124,27 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   journalSaid(conv, words, null, channel, null);
   audit({ via, actor: channel === 'telegram' ? 'owner on Telegram' : 'owner', action: 'key-given', args: { name, kept: r.kept }, ok: r.kept });
   return message;
+}
+// A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
+// get every kept value hidden and are saved once if a message changed, so the daily copy stops carrying it. A chat
+// that never held one is left exactly as it was (nor is its time touched). Says whether one of the owner's own messages
+// held `value`, the key just given (then the journal's `said` record does too), and whether one of them was on Telegram.
+function hideKeptInChats(value) {
+  const owner = accessList().owner, left = { said: false, telegram: false };
+  let changed = false;
+  for (const c of chatData().conversations) {
+    if (c.login !== owner) continue;
+    for (const m of c.messages) {
+      if (typeof m.content !== 'string') continue;
+      const t = keptHidden(m.content);
+      if (t === m.content) continue;
+      if (m.role === 'user' && !m.auto && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
+      m.content = t;
+      changed = true;
+    }
+  }
+  if (changed) saveChats();
+  return left;
 }
 // The page (24-handler.mjs, the owner's own chat, before the owner's words): answered in the stream the page reads.
 async function answerKeys(res, conv, text, viewer) {
