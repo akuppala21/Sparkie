@@ -361,6 +361,11 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.ok(Array.isArray(x.records) && x.records.every(r => r.kind === 'line'));
     assert.match(x.inAll, /^\d+ match \(this-month\)/);
   });
+  v('check_update', {}, x => {
+    assert.ok(isTime(x.observedAt));
+    assert.equal(typeof x.says, 'string');
+    assert.match(x.installed.build, /^[0-9a-f]{12}$/);
+  });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);
     assert.equal(x.count, x.events.length);
@@ -422,7 +427,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     fleet_events: ['since'],
     operation_log: ['id'],
     read_page: ['url'],
-    recall: ['about', 'id', 'since', 'next', 'until', 'when'],
+    recall: ['about', 'id', 'since', 'next', 'until', 'when', 'find', 'lines'],
     recipe_detail: ['id', 'setup'],
     search_huggingface: ['query'],
     search_web: ['query'],
@@ -486,7 +491,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
     operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
     read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
-    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw', '0123abc', 'l_0123abc', 'L_0123abcd'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890', '8-123', '8-12345678901234'], until: ['yesterday', '2026-1-1'] },
+    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw', '0123abc', 'l_0123abc', 'L_0123abcd'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890', '8-123', '8-12345678901234'], until: ['yesterday', '2026-1-1'], find: ['a', ' a '], lines: ['0-', '1-2-3', 'a', '12345678', '-5'] },
     recipe_detail: { id: ['Qwen3', '-x', '.x', 'a/b'], setup: ['abc', 'ABCD', 'x'.repeat(33)] },
     search_huggingface: { query: ['a', ' a ', '   '] },
     search_web: { query: ['a', ' a ', '   '] },
@@ -525,6 +530,8 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   cases.push(['recall', () => ({ id: 'j_000000000000' }), /There’s no record j_000000000000 in the journal/, 'not_found', 'unknown record']);
   cases.push(['recall', () => ({ id: '0123abcd' }), /There’s no line 0123abcd in memory/, 'not_found', 'unknown line']);
   cases.push(['recall', () => ({ id: 'l_0123abcd' }), /There’s no lesson l_0123abcd/, 'not_found', 'unknown lesson']);
+  cases.push(['recall', () => ({ find: 'error' }), /find and lines need the id of a journal record/, 'invalid', 'find with no id']);
+  cases.push(['recall', () => ({ id: '0123abcd', lines: '1-5' }), /find and lines read a journal record/, 'invalid', 'lines of a memory line']);
   cases.push(['recipe_detail', () => ({ id: ctx.recipe, setup: 'zzzz9999' }), /has no setup zzzz9999/, 'not_found', 'unknown setup']);
   cases.push(['container_logs', () => ({ spark: sp(), container: 'no-such-container-test' }), /No container called no-such-container-test/, 'not_found', 'unknown container']);
   // An agent reads only an address search_web returned in the last hour (R39).
