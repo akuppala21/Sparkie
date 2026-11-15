@@ -11,7 +11,7 @@
 // Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
@@ -236,6 +236,23 @@ test('a change starts in the work folder, ~/work, which the console makes first 
   assert.match(readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8'), /^const RUNNER_SECONDS = Number\(ALL_LOCAL && process\.env\.SPARK_CONSOLE_RUN_SECONDS\) \|\| 30;$/m);
   const unit = lines(join(H3(), '.rehearsal', 'calls.log')).find(c => c[0] === 'systemd-run' && c.includes(`--unit=${unitOf('echo h > notes/home.txt')}`));
   assert.ok(unit?.includes(`RuntimeMaxSec=${SECONDS}`), JSON.stringify(unit));
+  // dir names ~/work, or a folder under ~ that is there; a link, or a folder that isn't there, is refused by the copies'
+  // program before any unit (only ~/work is made), and nothing ran.
+  const w = await run('echo k > kept.txt', 'spark3', '~/work');
+  assert.equal(w.status, 200, w.text);
+  assert.equal(held(unitOf('echo k > kept.txt')), join(H3(), 'work'));
+  const n = await run('echo n > n.txt', 'spark3', '~/notes');
+  assert.equal(n.status, 200, n.text);
+  assert.equal(text('notes/n.txt'), 'n\n');
+  symlinkSync('notes', at3('linked'));
+  const linked = await run('echo l > l.txt', 'spark3', '~/linked');
+  assert.equal(linked.status, 409, linked.text);
+  assert.equal(linked.json.error, 'The copies on Spark 3: ~/linked is not a folder of this account (a link, or not a folder).');
+  const gone = await run('echo g > g.txt', 'spark3', '~/not-there');
+  assert.equal(gone.status, 409, gone.text);
+  assert.equal(gone.json.error, 'The copies on Spark 3: ~/not-there is not there, and a change starts only in a folder that is (~/work alone is made when missing).');
+  assert.ok(!existsSync(at3('notes/l.txt')) && !existsSync(at3('not-there')), 'nothing ran, nothing made');
+  assert.equal(unitOf('echo l > l.txt'), undefined);
 });
 
 test('a change the sorter places in the model store is asked, and runs after the yes; until the helper takes ~/ for --protect none is passed', { timeout: 120000 * SLOW }, async () => {

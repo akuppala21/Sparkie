@@ -260,7 +260,7 @@ test('two looks at once on one Spark both run: their checks for a proof never st
 });
 
 test('every answer of a command that ran says, first, that it ran as a look: nothing changed and nothing sent', { timeout: 60000 * SLOW }, async () => {
-  for (const [command, output] of [["find ~/jobs/x -name '*.tmp' -delete 2>/dev/null; echo cleaned", 'cleaned\n'], ['ls docs', 'plain.txt\ntodo.txt\n']]) {
+  for (const [command, output] of [['ls ~/jobs/x 2>/dev/null; echo cleaned', 'cleaned\n'], ['ls docs', 'plain.txt\ntodo.txt\n']]) {
     const r = await look({ on: 'spark3', command });
     assert.equal(r.status, 200, r.text);
     assert.equal(Object.keys(r.json)[0], 'look', command);
@@ -268,6 +268,14 @@ test('every answer of a command that ran says, first, that it ran as a look: not
     assert.equal(r.json.outcome, 'look');
     assert.equal(r.json.output, output, command);
   }
+  // A command that deletes is a change, not a look (A7c): asked, and over the API, with no chat to ask in, refused in
+  // the runner's words; nothing ran and the files are there.
+  mkdirSync(join(home('spark3'), 'jobs', 'x'), { recursive: true });
+  writeFileSync(join(home('spark3'), 'jobs', 'x', 'old.tmp'), 'old\n');
+  const d = await look({ on: 'spark3', command: "find ~/jobs/x -name '*.tmp' -delete 2>/dev/null; echo cleaned" });
+  assert.equal(d.status, 409, d.text);
+  assert.equal(d.json.error, 'That is not a plain change (the sorter calls it risky), so the runner didn’t run it.');
+  assert.ok(existsSync(join(home('spark3'), 'jobs', 'x', 'old.tmp')), 'nothing ran');
 });
 
 test('what a look prints comes back masked, without escape codes, cut to the first 2,000 and last 3,500 characters, and is kept whole in its one record', { timeout: 60000 * SLOW }, async () => {
@@ -468,11 +476,27 @@ test('who may look: the owner; an agent only when its key may change things too;
   assert.match((await call(keys.act.token, 'recall', { id })).value.text, /^\$ cat docs\/plain\.txt\nhello from spark 3\n$/);
   assert.match((await api('/actions/recall', { method: 'POST', body: { id } })).json.text, /hello from spark 3/);
   // The one page's later inputs aren't there yet: refused as any action refuses an input it doesn't know.
-  for (const extra of [{ root: true }, { dir: '/tmp' }, { minutes: 5 }, { seconds: 10 }]) {
+  for (const extra of [{ root: true }, { minutes: 5 }, { seconds: 10 }]) {
     const r = await look({ on: 'spark3', command: 'ls', ...extra });
     assert.equal(r.status, 400, r.text);
     assert.match(r.json.error, new RegExp(`^Unknown argument: ${Object.keys(extra)[0]}\\. run takes on, command`));
   }
+  // dir (A7c): where a change starts, ~/work, ~ or a folder under ~. A whole path or one that climbs out is refused by its
+  // form; a look takes no dir but ~ (it starts there, where its key check reads its words). (A link, and a folder that
+  // isn't there, are refused by the copies' program before any unit: ladder.test, where this fleet's changes run.)
+  for (const dir of ['/tmp', '~/../x']) {
+    const r = await look({ on: 'spark3', command: 'touch x', dir });
+    assert.equal(r.status, 400, `${dir}: ${r.text}`);
+    assert.match(r.json.error, /^dir isn’t in the right form\. Where a change starts: ~\/work \(the default, made when missing\), ~, or a folder under ~ that is there\./);
+  }
+  const lookDir = await look({ on: 'spark3', command: 'ls', dir: '~/work' });
+  assert.equal(lookDir.status, 400, lookDir.text);
+  assert.equal(lookDir.json.error, 'A look starts in ~: name its paths from there (dir is where a change starts).');
+  assert.equal((await look({ on: 'spark3', command: 'ls docs', dir: '~' })).status, 200, 'a look with dir ~');
+  // (~/work is taken for a change: this one goes on to the runner, which refuses it on its own ground; nothing ran)
+  const work = await look({ on: 'spark3', command: "find ~/jobs/x -name '*.tmp' -delete", dir: '~/work' });
+  assert.equal(work.status, 409, work.text);
+  assert.equal(work.json.error, 'That is not a plain change (the sorter calls it risky), so the runner didn’t run it.');
   const saved = await api('/actions/save_workflow', { method: 'POST', body: { title: 'peek', steps: [{ action: 'run', args: { on: 'spark3', command: 'ls' } }] } });
   assert.equal(saved.status, 400, saved.text);
   assert.match(saved.json.error, /run can’t be a step in a saved workflow/);
@@ -575,17 +599,32 @@ test('a key in a look\'s command or in what it printed is masked in the event, i
 
 test('a look\'s line and tail are cut to 200 characters, never inside one: the line keeps its start, the tail the end of the last line', { timeout: 120000 * SLOW }, async () => {
   const face = '😀'.repeat(300);
-  const r = await lookRows('cut the look rows', [{ name: 'run', arguments: { on: 'spark3', command: `seq 1 3000; echo ${face}` } }]);
+  // The tail: a look whose command is plain ASCII and whose output ends in 300 of that sign (sed spells it from bytes).
+  const r = await lookRows('cut the look rows', [{ name: 'run', arguments: { on: 'spark3', command: "seq 1 3000; printf '%300s\\n' '' | sed 's/ /\\xf0\\x9f\\x98\\x80/g'" } }]);
   const [t] = r.message.tools;
   assert.equal(t.ok, true);
-  assert.equal(t.line, `$ seq 1 3000; echo ${'😀'.repeat(180)}…`);
-  assert.equal(Array.from(t.line).length, 200);
   // (the output is over 6,000 characters, cut for the brain; the record keeps it whole)
   assert.equal(t.tail, `…${'😀'.repeat(199)}\nexit 0`);
-  assert.ok(wellFormed(t.line) && wellFormed(t.tail));
+  assert.ok(wellFormed(t.tail));
   assert.ok(recordText(records().find(y => y.id === t.kept)).endsWith(`\n3000\n${face}\n`));
   const again = (await api(`/chats/${r.chat}`)).json.messages.at(-1).tools[0];
   assert.deepEqual([again.line, again.tail], [t.line, t.tail]);
+  // The line: the command with the signs in it, now asked (a sign that isn't plain ASCII, A7c); the line the ask and the
+  // journal show is its first 200 characters, cut never inside one.
+  const s = await lookRows('cut the line', [{ name: 'run', arguments: { on: 'spark3', command: `seq 1 3000; echo ${face}` } }]);
+  const [u] = s.message.tools;
+  assert.equal(u.ok, true);
+  assert.equal(u.line, `$ seq 1 3000; echo ${'😀'.repeat(180)}…`);
+  assert.equal(Array.from(u.line).length, 200);
+  assert.ok(wellFormed(u.line));
+  assert.equal(u.tail, 'Asked first, with a button: nothing ran yet.');
+  // (the ask's own text shows the command whole, what is shown is what runs; the journal's record keeps it whole too)
+  const said = records().filter(y => y.k === 'tool' && y.act === 'run' && String(y.args?.command || '').startsWith('seq 1 3000; echo ')).at(-1);
+  assert.equal(said?.args.command, `seq 1 3000; echo ${face}`, 'the journal keeps the whole command');
+  const sent = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === 'cut the line' && x.lastRole === 'tool').at(-1);
+  const asked = JSON.parse(sent.results[0].content);
+  assert.ok(asked.question.includes(`\n$ seq 1 3000; echo ${face}\n`), 'the ask shows it whole');
+  assert.deepEqual((await api(`/chats/${s.chat}`)).json.messages.at(-1).tools[0].line, u.line);
 });
 
 test('self_test proves the walls again on every Spark that has the helper, and a failed proof is named and stops every look there', { timeout: 600000 * SLOW }, async () => {

@@ -104,7 +104,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds, ...(dir === RUNNER_DIR ? { workdir: dir } : {}) });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds, workdir: dir, ...(dir === RUNNER_DIR ? { workmake: true } : {}) });
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;

@@ -614,11 +614,13 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
   });
 
   test('no action on main reaches it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
-    const src = join(REPO, 'service', 'src');
+    // (run's ladder is the one raiser A7c added, 21-ladder.mjs: the parts that call dangerAsk are exactly these two)
+    const src = join(REPO, 'service', 'src'), raisers = [];
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {
       const text = readFileSync(join(src, f), 'utf8');
-      if (f !== '20-danger.mjs') assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
+      if (f !== '20-danger.mjs' && /\bdangerAsk\(/.test(text)) raisers.push(f);
     }
+    assert.deepEqual(raisers, ['21-ladder.mjs'], `${raisers.join(', ')} raise a dangerous ask`);
     assert.match(readFileSync(join(src, '20-danger.mjs'), 'utf8'), /function dangerForTest\(viewer, ctx, choices\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
     const chat = await newChat(), r = await say(chat, WORDS);
     assert.ok(!(await chatMessages(chat)).some(m => m.danger));

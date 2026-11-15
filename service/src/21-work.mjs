@@ -287,6 +287,8 @@ async function runCommand(input, viewer, ctx = {}) {
     if (sudo) throw new HttpError(400, 'Leave out sudo: a look already reads what root can read (keys aside), and it changes nothing.');
     const key = words.find(keyWord);
     if (key) throw new HttpError(403, `Not run: ${key.slice(0, 200)} is a key file or holds keys, and a look never reads keys back. Everything else may be read.`);
+    // (dir is where a change starts; a look starts in ~, where its key check reads its words, so it takes no other)
+    if (input.dir !== undefined && input.dir !== '~') throw new HttpError(400, 'A look starts in ~: name its paths from there (dir is where a change starts).');
     if ((looking.get(node.id) || 0) >= LOOK_AT_ONCE) throw new HttpError(429, `Two looks are running on ${at} already. Try again when one has answered.`);
     looking.set(node.id, (looking.get(node.id) || 0) + 1);
     let r;
@@ -329,7 +331,7 @@ action({
   input: { type: 'object', properties: {
     on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
     command: { type: 'string', maxLength: 2000, pattern: '^[^\\x00]*$', description: 'One shell command.' },
-    dir: { type: 'string', maxLength: 300, pattern: '^~(/[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~.' },
+    dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });
