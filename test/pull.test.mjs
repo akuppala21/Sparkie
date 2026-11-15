@@ -1068,7 +1068,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? read(rc).slice(0, 300) : ''}`);
   });
 
-  // (the stand-in systemd itself: after the power cut above, the killed runner is for a moment ended but not reaped,
+  // (the stand-in systemd itself: after the restart case's power cut, the killed runner is for a moment ended, not reaped,
   // and kill -0 still finds it; a start that took it for running did nothing, 2026-11-15)
   test('the stand-in systemd: a runner that has ended but isn\'t reaped yet is stopped, so a start brings the console up', CASE, async () => {
     needs('kept');
