@@ -45,8 +45,8 @@ CONFIRM_S=600
 # On the stand-in fleet the incoming installer is told so by an argument (--stand-in), not by what it inherits.
 STAND_IN=''; [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || STAND_IN=--stand-in
 if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_CONFIRM_S:-}" =~ ^[0-9]+$ ]]; then CONFIRM_S=$SPARK_CONSOLE_UPDATE_CONFIRM_S; fi
-FETCH_S=60 FETCH_SLOW='' FETCH_ERR=''
-if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_FETCH_S:-}" =~ ^[0-9]+$ ]]; then FETCH_S=$SPARK_CONSOLE_FETCH_S; fi
+FETCH_S=60 FETCH_SETUP_S=300 FETCH_SLOW='' FETCH_ERR='' FETCH_LOCK=''
+if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_FETCH_S:-}" =~ ^[0-9]+$ ]]; then FETCH_S=$SPARK_CONSOLE_FETCH_S FETCH_SETUP_S=$SPARK_CONSOLE_FETCH_S; fi
 
 die() { echo "  STOP: $*" >&2; exit 1; }
 usage() {
@@ -111,13 +111,14 @@ url_for() {
   else echo "https://github.com/$1.git"; fi
 }
 # fetch <url> <basic credentials>: main and the tested/ tags, and nothing else. The token is in git's environment
-# (GIT_CONFIG_*), for github.com only. It gets FETCH_S seconds: timeout runs git in a process group of its own and ends
-# all of it (git's https helper too), so nothing waits on a network that doesn't answer (FETCH_SLOW=1 then). Where
-# there is no timeout (a Mac), there is no limit.
+# (GIT_CONFIG_*), for github.com only. It gets FETCH_S seconds, or the third argument's (setup's first fetch carries the
+# whole history): timeout runs git in a process group of its own and ends all of it (git's https helper too), so
+# nothing waits on a network for ever (FETCH_SLOW=1 then). Where there is no timeout (a Mac), there is no limit, and
+# the console's own limit can end git half way: a lock it leaves in the copy is named (FETCH_LOCK), never removed here.
 fetch() {
-  local err code=0 cut=()
-  ! command -v timeout >/dev/null 2>&1 || cut=(timeout "$FETCH_S")
-  FETCH_SLOW=''
+  local err code=0 cut=() limit=${3:-$FETCH_S} real
+  ! command -v timeout >/dev/null 2>&1 || cut=(timeout "$limit")
+  FETCH_SLOW='' FETCH_LOCK=''
   err=$(GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="Authorization: basic $2" \
     GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='' GIT_CONFIG_KEY_2=core.hooksPath GIT_CONFIG_VALUE_2=/dev/null \
     GIT_CONFIG_KEY_3=fetch.fsckObjects GIT_CONFIG_VALUE_3=true \
@@ -125,11 +126,19 @@ fetch() {
     || code=$?
   [ "$code" != 0 ] || return 0
   if [ "$code" = 124 ] && [ ${#cut[@]} -gt 0 ]; then
-    FETCH_SLOW=1 FETCH_ERR="no answer from $1 in $FETCH_S seconds"
-    echo "  Couldn't fetch from $1: no answer in $FETCH_S seconds." >&2
+    FETCH_SLOW=1 FETCH_ERR="the fetch from $1 didn't finish in $limit seconds"
+    echo "  Couldn't fetch from $1: it didn't finish in $limit seconds." >&2
     return 1
   fi
   FETCH_ERR=$err
+  # (git's own words for a lock left behind: "Unable to create '<path>.lock': File exists"; only a path in the copy)
+  FETCH_LOCK=$(printf '%s\n' "$err" | sed -n "s/.*Unable to create '\([^']*\.lock\)': File exists.*/\1/p" | head -n 1) || FETCH_LOCK=''
+  case "$FETCH_LOCK" in /*|'') ;; *) FETCH_LOCK="$REPO/${FETCH_LOCK#./}" ;; esac
+  FETCH_LOCK=${FETCH_LOCK//\/.\//\/}
+  # (git names it by the copy's real path: told as the path this script uses)
+  real=$(cd "$REPO" 2>/dev/null && pwd -P) || real=$REPO
+  case "$FETCH_LOCK" in "$real"/*) FETCH_LOCK="$REPO/${FETCH_LOCK#"$real"/}" ;; esac
+  case "$FETCH_LOCK" in "$REPO"/*) case "$FETCH_LOCK" in */../*) FETCH_LOCK='' ;; esac ;; *) FETCH_LOCK='' ;; esac
   echo "  Couldn't fetch from $1. git said: $(printf '%s' "$err" | tail -n 2 | tr '\n' ' ')" >&2
   return 1
 }
@@ -183,11 +192,11 @@ newest_tested() {
     case "$tags" in *" ${t:0:12} "*) echo "$c $t"; return 0 ;; esac
   done < <(g log --topo-order -n 5000 --format='%H %T' refs/heads/main)
 }
-# tag_check <commit> <tree> [lock-only]: tested/<tree> is that commit plus the lock and nothing else, and the lock names
-# that tree (its build 12 hex digits, its tree in full; its time, if any, a time) and, unless lock-only, the build that
-# code is. Sets TAG_COMMIT, TAG_BUILD and TAG_AT (the time it was tested, or -). On a miss it fails, with why in TAG_WHY
-# (only this script's words and checked ids: nothing from the repository's text). install refuses on a miss; check
-# (lock-only: it reads no code) doesn't offer it.
+# tag_check <commit> <tree>: tested/<tree> is that commit plus the lock and nothing else, and the lock names that tree
+# (its build 12 hex digits, its tree in full; its time, if any, a time) and the build that code is, worked out from the
+# three code files in git (read, never run or checked out). Sets TAG_COMMIT, TAG_BUILD and TAG_AT (the time it was
+# tested, or -). On a miss it fails, with why in TAG_WHY (only this script's words and checked ids: nothing from the
+# repository's text). install refuses on a miss; check doesn't offer it, so it names only what install would take.
 tag_check() {
   local c=$1 t=$2 want=${2:0:12} tab lockf fields ltree p
   TAG_WHY='' TAG_COMMIT='' TAG_BUILD='' TAG_AT=-
@@ -209,7 +218,6 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   read -r TAG_BUILD ltree TAG_AT <<<"$fields"
   [ "$ltree" != - ] || { TAG_WHY="The lock in tested/$want names no tree."; return 1; }
   [ "$ltree" = "$t" ] || { TAG_WHY="The lock in tested/$want is for tree ${ltree:0:12}, not this tree ($want)."; return 1; }
-  [ "${3:-}" != lock-only ] || return 0
   p=$(for p in server.mjs dig.mjs passkey.mjs; do g cat-file blob "$c:service/$p" || exit 1; done | sha12) \
     || { TAG_WHY="Tree $want has no service/server.mjs, dig.mjs or passkey.mjs."; return 1; }
   [ "$TAG_BUILD" = "$p" ] || { TAG_WHY="The lock in tested/$want is for build $TAG_BUILD, but this code is build $p."; return 1; }
@@ -278,7 +286,7 @@ setup() {
     mkdir -p "$SHARE"; chmod 700 "$SHARE" 2>/dev/null || true
     GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c init.defaultBranch=main init -q --bare "$REPO"
   fi
-  fetch "$url" "$auth" || die "GitHub didn't accept that token for $1, or couldn't be reached. Nothing was saved."
+  fetch "$url" "$auth" "$FETCH_SETUP_S" || die "GitHub didn't accept that token for $1, or couldn't be reached. Nothing was saved."
   # Into the secrets file beside Telegram's: read whole, written whole (a temporary file renamed over it, 0600). A file
   # that exists but can't be read is never written over.
   PULL_TOKEN="$token" python3 -I -c 'import json, os, sys, tempfile
@@ -312,10 +320,15 @@ check_facts() {
   read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
   [ "$head" != - ] || { echo "  main: not on GitHub yet."; return 0; }
   read -r nc nt <<<"$(newest_tested || true)"
-  if [ "$nc" = "$head" ]; then echo "  main: commit ${head:0:12}, tree ${ht:0:12}, tested."
+  # (a tested/ tag that isn't sound is said once, where it is: on main's head or on the newest tested commit)
+  local bad=''
+  [ -z "${nt:-}" ] || tag_check "$nc" "$nt" || bad=$TAG_WHY
+  if [ "$nc" = "$head" ] && [ -n "$bad" ]; then echo "  main: commit ${head:0:12}, tree ${ht:0:12}: its tested/ tag isn't offered: $bad"; return 0
+  elif [ "$nc" = "$head" ]; then echo "  main: commit ${head:0:12}, tree ${ht:0:12}, tested."
   else echo "  main: commit ${head:0:12}, tree ${ht:0:12}, not tested yet (no tested/${ht:0:12} tag)."; fi
   [ -n "${nt:-}" ] || { echo "  Nothing on main is tested yet."; return 0; }
-  tag_check "$nc" "$nt" lock-only || { echo "  The newest tree on main with a tested/ tag (${nt:0:12}) isn't offered: $TAG_WHY"; return 0; }
+  [ -z "$bad" ] || { echo "  The newest tree on main with a tested/ tag (${nt:0:12}) isn't offered: $bad"; return 0; }
+
   if [ "$nt" = "$it" ]; then echo "  The newest tested build on main (tree ${nt:0:12}) is the one installed."; return 0; fi
   echo "  Newest tested on main: tree ${nt:0:12}, commit ${nc:0:12}."
   if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; then
@@ -334,9 +347,10 @@ check() {
   ready; check_facts
 }
 # check --json: the same facts for the console (check_update, R58), one JSON object on stdout; a problem is one too:
-# "no git", "not set up", "token" (GitHub refused the token: it may have expired), "slow" (no answer in FETCH_S
-# seconds) or "unreachable". The newest tested tree is offered only when its tag passes install's own checks of the tag
-# and its lock (tag_check, lock-only); otherwise "badTag" says why and nothing is offered. From the lock only shaped values come out (a build
+# "no git", "not set up", "token" (GitHub refused the token: it may have expired), "slow" (not finished in FETCH_S
+# seconds), "locked" (a fetch cut off left git's lock in the copy: "lock" names it) or "unreachable". The newest tested
+# tree is offered only when its tag passes install's own checks (tag_check); otherwise "badTag" says why and nothing is
+# offered. From the lock only shaped values come out (a build
 # of 12 hex digits, a time, a hash of 64), never its text. Commit subjects and git's words ("why") are as written
 # on GitHub and by git: the reader treats them as outside text.
 check_json() {
@@ -366,6 +380,7 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   FETCH_ERR=''
   if ! fetch "$(url_for "$REPO_NAME")" "$AUTH" 2>/dev/null; then
     if [ -n "$FETCH_SLOW" ]; then out slow "$FETCH_ERR"; return 0; fi
+    if [ -n "$FETCH_LOCK" ]; then out locked "$FETCH_LOCK"; return 0; fi
     why=$(printf '%s\n' "$FETCH_ERR" | grep -E '^(fatal|remote):' | tail -n 1 | cut -c1-300 || true)
     [ -n "$why" ] || why=$(printf '%s' "$FETCH_ERR" | tail -n 1 | cut -c1-300)
     case "$FETCH_ERR" in
@@ -376,7 +391,7 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   fi
   read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
   read -r nc nt <<<"$(newest_tested || true)"
-  if [ -n "${nt:-}" ] && ! tag_check "$nc" "$nt" lock-only; then bad=$TAG_WHY
+  if [ -n "${nt:-}" ] && ! tag_check "$nc" "$nt"; then bad=$TAG_WHY
   elif [ -n "${nt:-}" ]; then
     nb=$TAG_BUILD nat=$TAG_AT
     nr=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | reads_of /dev/stdin || true)
