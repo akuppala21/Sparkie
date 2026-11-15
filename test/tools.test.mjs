@@ -82,12 +82,14 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     memory: 'what do you remember about me?',
     updates: 'is there a newer build of spark console?',
     checks: 'run the self-test please',
+    power: 'is spark 4 asleep?',
   };
   test('each group: words that open it, and exactly the core and that group offered; a line naming a tool comes only with it', { timeout: 300000 * SLOW }, async () => {
     assert.deepEqual(sorted(Object.keys(OPENED_BY)), sorted(catalog.brain.groups.map(g => g.group)), 'a request for every group');
     const from = requests().length;
     await withScript([QUIET], async () => { for (const words of Object.values(OPENED_BY)) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/ };
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/,
+      power_off: /To shut a Spark down or turn it on, call power_off/ };
     for (const [group, words] of Object.entries(OPENED_BY)) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(group), `${group}: “${words}”`);
