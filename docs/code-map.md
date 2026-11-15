@@ -788,7 +788,7 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. Today every command is a look: it runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing (changes, root and the net are later steps). helperCall is the one way the console calls the helper: one script over ssh (local bash on Spark 2) that first checks the Spark's helper is the one this …
 
-- **Area:** features. **Rules:** R42, R43. **Tests:** work.test.mjs, turn-budgets.test.mjs
+- **Area:** features. **Rules:** R42, R43. **Tests:** work.test.mjs
 - **Lines:** 332
 - **Actions:** `run`
 - **Owns:** none

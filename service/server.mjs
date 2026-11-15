@@ -14815,7 +14815,7 @@ function commandShown(c, ok, out) {
   return { where: node ? sparkName(node) : null, line, tail, root: root === true, kept, look };
 }
 /* ───────── run: a command on a Spark, through the root helper (today a look, in its look wall) ───────── */
-// Area: features        Rules: R42, R43        Tests: work.test.mjs, turn-budgets.test.mjs
+// Area: features        Rules: R42, R43        Tests: work.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. Today
