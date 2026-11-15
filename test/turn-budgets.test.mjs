@@ -10,7 +10,10 @@
 // fresh turn, within the carry-on's own limit of turns; a plain request, a task past that limit, and three refusals
 // wait for the owner's "go on". Lookups other than run are no work steps; a new message, and another chat answering at
 // once, start from nothing; a setup's own workSteps and contextTokens apply and change the tested mark, its context
-// flag sets the output budget without changing it, and its ask block cannot raise them.
+// flag sets the output budget without changing it, and its ask block cannot raise them. A brain not checked (no eval
+// kept for its setup) gets the careful limits, 8 rounds and 16 commands a message, whatever its setup says; one task
+// runs at most 120 commands over all its turns, and the turn that reaches them waits for the owner; a context flag
+// given twice counts by its last, for the output and for a digest's size (E5b).
 //
 // The stand-in fleet, with the real root helper as a rehearsal on Spark 3 and Spark 4 (as test/work.test.mjs sets it
 // up; its sudo stand-in, in a temporary folder first on the PATH, runs only the rehearsal's helper); Spark 2 has none.
@@ -73,6 +76,10 @@ useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_L
     m.presets['a3-262k'] = { ...base, title: 'Context 262,144', args: flag(base.args, '262144') };
     m.presets['a3-plain'] = { ...base, title: 'No context flag', args: flag(base.args, null) };
     m.presets['a3-nonsense'] = { ...base, title: 'Nonsense context', args: [...flag(base.args, null), '--ctx-size', 'lots'] };
+    // (E5b: more rounds than a brain not checked gets; 15 commands a message, for a task's 120; its context flag twice)
+    m.presets['a3-big'] = { ...base, title: 'Many rounds', toolRounds: 20 };
+    m.presets['a3-task'] = { ...base, title: 'Fifteen a message', workSteps: 15 };
+    m.presets['a3-twice'] = { ...base, title: 'Context given twice', args: [...base.args, '--context-length', '20000'] };
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   } });
 
@@ -272,4 +279,54 @@ test('a task whose every reply reaches the step budget carries on within the car
   assert.ok(replies[8].content.endsWith('\n\nStopped here: one message may run 3 commands, and 3 ran.\nSay “go on” to carry on.'), replies[8].content.slice(-200));
   assert.equal(looks() - before, 27);
   assert.deepEqual(budgetsIn(chat).map(x => x.carried), [...Array(8).fill(true), false]);
+});
+
+// E5b: the limits a turn gets are its brain's profile's: a setup with no eval kept for it is not checked, so it gets the
+// careful ones, at most 8 rounds and 16 commands a message, whatever it says.
+test('a brain not checked gets the careful limits: 8 rounds and 16 commands a message, whatever its setup says', { timeout: 400000 * SLOW }, async () => {
+  await use('a3-big');
+  const FOUR = [RUN('spark3'), RUN('spark3'), RUN('spark4'), RUN('spark4')], before = looks();
+  const r = await saying([{ match: '^look a lot, carefully$', rounds: Array(8).fill(FOUR) }], await newChat(), 'look a lot, carefully');
+  assert.deepEqual(calls(r), Array(16).fill(['run', true]), errors('look a lot, carefully'));
+  assert.equal(looks() - before, 16);
+  assert.ok(r.text.endsWith('\n\nStopped here: one message may run 16 commands, and 16 ran.\nSay “go on” to carry on.'), r.text.slice(-200));
+  await saying([{ match: '^guide me a lot$', rounds: Array(20).fill([GUIDE]) }], await newChat(), 'guide me a lot');
+  assert.deepEqual(rounds('guide me a lot'), offeredThen(8), 'eight rounds, not its twenty');
+});
+
+// Design A 2.10: one task runs at most 120 commands over all its turns; the reply that reaches them says so and waits
+// for the owner (whose next message is a new request, with its own).
+test('one task runs at most 120 commands over all its turns: the turn that reaches them says so, and nothing carries on', { timeout: 600000 * SLOW }, async () => {
+  await use('a3-task');
+  const FOUR = [RUN('spark3'), RUN('spark3'), RUN('spark4'), RUN('spark4')], words = 'a long task, then tell me', chat = await newChat(), before = looks();
+  script([{ match: `^${words}$`, rounds: Array(4).fill(FOUR) }, { match: CARRIED, rounds: Array(4).fill(FOUR) }]);
+  let m;
+  try {
+    await say(chat, words);
+    // The owner's reply and 7 carry-on turns: 8 turns of 15.
+    m = await waitFor(async () => { const x = await chatMessages(chat); return x.length >= 16 && x.at(-1).role === 'assistant' && x; }, { timeout: 500000, what: 'seven carry-on turns' });
+    await noCarryOn(chat, 16);
+  } finally { noScript(); }
+  const replies = m.filter(x => x.role === 'assistant');
+  assert.equal(replies.length, 8);
+  for (const x of replies.slice(0, 7)) assert.ok(x.content.endsWith('\n\nStopped here: one message may run 15 commands, and 15 ran; 1 more was asked for and not run.\nCarrying on with your request in a fresh turn.'), x.content.slice(-200));
+  assert.ok(replies[7].content.endsWith('\n\nStopped here: one task may run 120 commands, and this one has (15 in this message); 1 more was asked for and not run.\nSay “go on” to carry on.'), replies[7].content.slice(-200));
+  assert.equal(looks() - before, 120);
+  assert.deepEqual(budgetsIn(chat).map(x => [x.spent, x.carried]), [...Array(7).fill(['steps', true]), ['task', false]]);
+  const carried = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => new RegExp(CARRIED).test(x.words) && x.words.includes(words));
+  assert.ok(carried.some(x => x.results.some(y => y.content === '[error] Not run: one task may run 120 commands, and this one has. Answer now with what you found and what is left.')));
+});
+
+// R50: the output budget and memory's sizes read the context from the same flags, the last when one is given twice.
+test('a context flag given twice: the last one counts, for the output a message may read and for a digest’s size', { timeout: 300000 * SLOW }, async () => {
+  await use('a3-twice');
+  const hello = await newChat();
+  await say(hello, 'hello');
+  assert.deepEqual(budgetsIn(hello), [{ steps: 12, output: 24000 }], '40% of the last flag’s 20,000 tokens');
+  // (a digest keeps lines within a recall answer's size: 6,000 characters at 20,000 tokens and up, scaled below)
+  const r = await saying([{ match: '^read one long thing$', rounds: [[SEQ('spark3')]] }], await newChat(), 'read one long thing');
+  assert.deepEqual(calls(r), [['run', true]]);
+  const sent = requests('read one long thing')[1].results[0].content, d = JSON.parse(sent);
+  assert.deepEqual(Object.keys(d), ['digest', 'isData', 'lines', 'record', 'kept']);
+  assert.ok(JSON.stringify(d.kept).length <= 4000 && sent.length < 4800, `${JSON.stringify(d.kept).length} characters of kept lines, ${sent.length} in all`);
 });

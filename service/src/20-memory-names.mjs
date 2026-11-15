@@ -145,9 +145,9 @@ const memoryPicking = () => !(ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMO
 // The three sizes (design G 3.4), in characters: the block of lines in the system prompt (today's 4,000), the lines
 // picked for one message (1,500) and a recall answer (6,000, G3). A brain with a small context gets less: the block is
 // at most 4% of its tokens, at 3 characters a token (3,932 at 32,768 tokens), and the other two shrink with it.
+// (its context from the same flags as the output budget's, the last when one is given twice: contextFlag, 14-rounds.mjs)
 function memorySizes(setup = chatTarget()?.kind === 'main' ? MAIN : {}) {
-  const a = Array.isArray(setup?.args) ? setup.args : [], at = a.indexOf('--context-length');
-  const tokens = askOf(setup).tokenBudget || (at >= 0 ? Number(a[at + 1]) || 0 : 0);
+  const tokens = askOf(setup).tokenBudget || contextFlag(setup) || 0;
   const k = tokens > 0 ? Math.min(1, (tokens * 0.04 * 3) / MEMORY_CHARS) : 1;
   return { block: Math.floor(MEMORY_CHARS * k), picks: Math.floor(1500 * k), cards: Math.floor(900 * k), recall: Math.floor(6000 * k) };
 }

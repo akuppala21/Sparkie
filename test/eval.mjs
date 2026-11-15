@@ -297,17 +297,23 @@ const SERVING = STAND_IN ? null : await (async () => {
   if (!ran || !/^[0-9a-f]{16}$/.test(String(inUse.key))) console.error(`Spark Console at ${at} doesn't say what its brain runs (a build from before R52, or its model isn't up): this run's record can't be kept there.`);
   return { at, setup: inUse?.setup || null, key: inUse?.key || null, setupKey: inUse?.setupKey || null, ran };
 })();
-// A stand-in console runs what the serving brain runs: its container's image id and its weights' snapshot names.
+// A stand-in console runs what the serving brain runs: its container's image id and its weights' snapshot names (in
+// the cache, and in its container's arguments, where what it loaded is read: R52).
 function runAs(root, setup, ran) {
   if (!ran) return;
-  writeFileSync(join(root, 'spark2', '.mock', `imageid-${setup.container || 'sparkie-main'}`), ran.image);
+  const container = setup.container || 'sparkie-main';
+  writeFileSync(join(root, 'spark2', '.mock', `imageid-${container}`), ran.image);
   if (setup.store === 'models') return;
-  for (const [repo, snap] of [[setup.model, ran.model], [setup.draft, ran.draft]]) {
+  const paths = [];
+  for (const [repo, snap, flag] of [[setup.model, ran.model, '--model-path'], [setup.draft, ran.draft, '--speculative-draft-model-path']]) {
     const d = join(root, 'spark2', '.cache', 'huggingface', 'hub', `models--${repo}`);
-    if (!repo || !/^[\w.-]{1,100}$/.test(String(snap || '')) || !existsSync(join(d, 'refs', 'main'))) continue;
+    if (!repo || !/^[\w.-]{1,100}$/.test(String(snap || ''))) continue;
+    paths.push(flag, `/hf/models--${repo}/snapshots/${snap}`);
+    if (!existsSync(join(d, 'refs', 'main'))) continue;
     const now = readFileSync(join(d, 'refs', 'main'), 'utf8').trim();
     if (now !== snap) { renameSync(join(d, 'snapshots', now), join(d, 'snapshots', snap)); writeFileSync(join(d, 'refs', 'main'), snap); }
   }
+  writeFileSync(join(root, 'spark2', '.mock', `args-${container}`), `${JSON.stringify(['-m', 'sglang.launch_server', ...paths])}\n`);
 }
 
 const STARTED = new Date().toISOString(), MARK = await markOf();

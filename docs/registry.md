@@ -84,7 +84,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
-| `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed` | no | no |
+| `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
 | `found-setups.json` | `10-recipes` | `digModel` (11-setups); `digModel` is called by `addList`, `startDig` | yes | yes |
 | `funnel-seen.json` | `20-ways-in` | `noteFunnel`; deploy/open-to-internet.sh --undo removes it; `noteFunnel` is called by `checkRoute` | yes | no |
