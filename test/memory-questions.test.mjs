@@ -1,8 +1,8 @@
 // Covers: The memory questions (design G 3.7; build step 7, piece b): `test/eval/memory.json` and its held-out set
 // `test/eval/memory-held-out.json`, run by `test/eval.mjs` on the stand-in brain. With every memory switch on, every
 // question's checks of what the brain is sent (has, hasNot) hold and nothing is changed; for each switch (names, past,
-// time, count, said) every question that measures it fails those checks with that switch off, and the questions that
-// measure none still hold with every switch off; the run prints each case and each kind with its rounds and seconds.
+// time, count, said) every question that measures it fails those checks with that switch off (a lesson card follows
+// names), and the questions that measure none still hold with every switch off (an agent's chat gets no card); the run prints each case and each kind with its rounds and seconds.
 // The held-out set holds the same way, and none of its words is in another case file, a document, the service's code
 // or settings, or what a stand-in console's brain is sent (its system prompt, tools and their catalog).
 import { test, describe, after } from 'node:test';

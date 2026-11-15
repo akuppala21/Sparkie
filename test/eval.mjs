@@ -54,8 +54,11 @@
 //             and replaces; past: [{text, …, gone: {at?, why?, by?}}] (retired lines, memory-past.json); proven: [{model,
 //             engine, nodes, best: {decodeTokS}, runs?, at?}] (runs that worked, verified.json); newer: N made-up lines
 //             after the case's own, about nothing a question names, so memory is past its block; unreadable: true
-//             (memory.json can't be read). A date may also be "last-month" (its 15th) or "last-tuesday" (that day of last
-//             week, weeks starting on Monday as recall's)
+//             (memory.json can't be read); lessons: [{id: "l_…", kind, subject, tried, failure, failed, state, firstAt?,
+//             lastAt?}] (lessons.json, as Spark Console writes it). A date may also be "last-month" (its 15th) or
+//             "last-tuesday" (that day of last week, weeks starting on Monday as recall's)
+//   as        "agent": one of the owner's agents asks (a key made for it, ask_sparkie over the agent door), in its own
+//             chat; left out, the owner asks in a page chat
 //   has       words that must each be in a request the brain got for the case's turn (any round, any message; capitals
 //             or not); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
 //   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in
@@ -160,7 +163,9 @@ const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id a
   : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
     || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
     || !listOf(c.seed.proven, v => filled(v?.model) && filled(v?.engine) && Array.isArray(v.nodes) && (v.at === undefined || when(v.at)))
-    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], newer: N and unreadable'
+    || !listOf(c.seed.lessons, l => /^l_[0-9a-f]{8}$/.test(String(l?.id)) && [l.firstAt, l.lastAt].every(x => x === undefined || when(x)))
+    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], lessons: [{id: l_…, …}], newer: N and unreadable'
+    : c.as !== undefined && c.as !== 'agent' ? 'as: "agent" (one of the owner\'s agents asks), or left out (the owner)'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
 for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
 
@@ -182,6 +187,9 @@ function seedCase(c, stateDir) {
   const proven = (c.seed?.proven || []).map((v, i) => ({ key: `seeded-${c.id}-${i}`, model: v.model, repo: null, title: v.title || v.model, engine: v.engine, image: v.image || null,
     args: [], env: {}, sparks: v.nodes.length, nodes: v.nodes, firstAt: at(v.at), lastAt: at(v.at), runs: v.runs || 1, ...(v.best ? { best: v.best } : {}) }));
   if (proven.length) writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: proven }), { mode: 0o600 });
+  // (lessons as Spark Console writes them, lessons.json, newest first; firstAt and lastAt may be dates as above)
+  const lessons = (c.seed?.lessons || []).map(l => ({ ...l, firstAt: at(l.firstAt ?? l.lastAt), lastAt: at(l.lastAt ?? l.firstAt) })).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  if (lessons.length) writeFileSync(join(stateDir, 'lessons.json'), JSON.stringify({ lessons }), { mode: 0o600 });
   for (const r of c.seed?.journal || []) {
     const t = at(r.at), folder = join(dir, 'journal');
     mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -190,6 +198,18 @@ function seedCase(c, stateDir) {
 }
 // A made-up line for seed.newer: about a hallway clock, so no question's names or rare words are in it.
 const NEWER_LINE = n => `note ${n}: the hallway clock ran ${n} minutes fast after the storm, so the kitchen timer was set by hand again`;
+// A case one of the owner's agents asks (as: "agent"): ask_sparkie over the agent door with that agent's key, and its
+// answer as a turn's end (done, or error when it did not answer).
+async function askAsAgent(mcp, token, words) {
+  const res = await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask_sparkie', arguments: { message: words } } }) });
+  const text = await res.text();
+  let a = null;
+  try { a = JSON.parse(JSON.parse(text).result.content.find(x => x.type === 'text').text); } catch {}
+  return { status: res.status, text, chat: a?.conversation ?? null, done: a?.status === 'answered'
+    ? { type: 'done', message: { content: a.reply || '', tools: (a.looked || []).map(name => ({ name })), choices: a.choices || [] } }
+    : { type: 'error', message: { error: String(a?.error || a?.status || `HTTP ${res.status}: ${text.slice(0, 200)}`) } } };
+}
 // A turn's end, from its event stream: done or error.
 const turnEnd = text => text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
 
@@ -287,11 +307,13 @@ async function runCase(c) {
       }
     }
     link.reset();
-    const chat = JSON.parse((await api('/chats', {})).text).id;
+    // (as: "agent": one of the owner's agents asks, with a key of its own, over the agent door: its own chat)
+    const agentToken = c.as === 'agent' ? JSON.parse((await api('/agents', { name: `eval ${c.id}`.slice(0, 60) })).text).token : null;
+    const chat = agentToken ? null : JSON.parse((await api('/chats', {})).text).id;
     const t0 = Date.now();
-    const r = await api(`/chats/${chat}/messages`, { text: c.say });
+    const r = agentToken ? await askAsAgent(fleet.mcp, agentToken, c.say) : await api(`/chats/${chat}/messages`, { text: c.say });
     const ms = Date.now() - t0, rounds = link.rounds(), sent = link.seen().join('\n').toLowerCase();
-    const done = r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
+    const done = r.done || r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
     // The chat itself failed (the brain didn't answer, say): not a result, whatever the case expected.
     if (r.status !== 200 || !done || done.type === 'error' || done.message?.error) {
       const error = String(done?.message?.error || done?.message || done?.error || `HTTP ${r.status}: ${r.text.slice(0, 200)}`).slice(0, 300);
@@ -306,7 +328,7 @@ async function runCase(c) {
         engine: inUse?.engine || setup.engine || null, image: inUse?.image || setup.image || null, flags: (inUse?.flags || setup.args || []).map(String) };
     }
     const msg = done.message || {};
-    const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.chat === chat) : [];
+    const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.chat === (chat ?? r.chat)) : [];
     const changed = audit.filter(l => CHANGES.includes(l.action) && l.ok && l.outcome === 'started');
     const asked = (msg.choices || []).length > 0;
     const used = (msg.tools || []).map(t => t.name);
