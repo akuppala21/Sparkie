@@ -16,6 +16,8 @@ at a switch. A newer brain needs its setup, never an edit to the chat loop (R50)
   `tokenBudget` when its context is small (its own count of tokens ends the tool rounds there).
 - Its limits beside the block, never in it: `toolRounds`, `maxChanges`, `toolCap` (R46); `workSteps` and
   `contextTokens`, the loop's budgets (R50).
+- What it can do for a workload's job, `can` (`["chat"]` when not said): a job is handed the brain only when it can chat and
+  answers at least 2 calls at once (R57).
 - After the switch: `POST /main/check` (the brain check) and the brain eval (`docs/how/run-the-brain-eval.md`). A setup
   that sets any of the three fields above changes what the brain reads (the tested mark).
 
