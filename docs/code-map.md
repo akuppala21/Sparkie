@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 52 parts in `service/src/`, joined in name order into `service/server.mjs` (15014 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 53 parts in `service/src/`, joined in name order into `service/server.mjs` (15112 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -72,7 +72,7 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory`, `20-needs`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
@@ -489,21 +489,34 @@ Each memory line says what it is about (`about`, G2a): up to five names of thing
 - **Wakes:** none
 - **Functions:** `nameWords`, `buildNameBook`, `memoryNameBook`, `memoryNamesIn`, `memorySig`, `memoryNamed`, `memoryIndexOf`, `memoryIndexNow`, `memoryLinesAbout`, `withoutAbout`
 - **Uses:** `01-setup` (`NODES`), `03-identity` (`accessList`), `10-recipes` (`modelKey`, `recipeCatalog`), `13-main-model` (`repoOf`, `mainPresets`), `19-watcher` (`knowledge`), `20-mcp` (`agentKeys`), `20-memory` (`MEMORY_FILE`, `memoryEntries`)
-- **Used by:** `20-memory`
+- **Used by:** `20-memory-time`, `20-memory`
+
+### `20-memory-time.mjs`: memory's lines in time: an end date, a fact said again, the other lines about the same thing
+
+Design G's third addition (A3, step 4). The brain eval switches it off with `time` in SPARK_CONSOLE_MEMORY_OFF (test/eval.mjs): then memory is as the build before this one kept it, and an `until` given to remember is not kept. - `until`: the last day a line is true (YYYY-MM-DD, Spark 2's own day). After it the line is in no prompt and no pick; `memory {past: true}` shows it as past (why "expired"), and the next save of memory moves it to memory-past.json. It is never deleted. A day already gone when the line is saved is refused. Sparkie keeps a line with an end at once only when the owner's …
+
+- **Area:** record. **Rules:** R45. **Tests:** memory-time.test.mjs
+- **Lines:** 81
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `memoryOffFor`, `memoryLive`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`
+- **Uses:** `01-setup` (`HttpError`), `20-memory-names` (`nameWords`, `memoryNamed`, `memoryLinesAbout`), `20-memory` (`MEMORY_FILLER`)
+- **Used by:** `20-memory`, `21-selftest`
 
 ### `20-memory.mjs`: Sparkie's memory (v3.1, 2026-11-11)
 
 What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). Short lines in memory.json (no ceiling), put at the end of Sparkie's system prompt (so the prompt cache stays warm until it changes), and listed for agents by `memory`. Live state beats memory: the prompt says so. Only the owner's own words add or remove a line: either they say so ("remember…", "forget that…"), or they simply state it ("Spark 4 is on Ethernet now") …
 
 - **Area:** record. **Rules:** R20, R22, R25, R26, R45. **Tests:** sparkie-more.test.mjs, memory.test.mjs
-- **Lines:** 233
+- **Lines:** 250
 - **Actions:** `memory`, `remember`, `forget_memory`
 - **Owns:** memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `memoryEntries`, `memoryPast`, `saveMemory`, `memoryText`, `lineBy`, `lineSrc`, `retired`, `notTheOwners`, `memoryLine`, `memoryFit`, `memoryPrompt`, `memoryWithPast`, `eraseLine`, `saysForget`, `refusesRemember`, `memoryClear`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`), `02-ssh` (`run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`note`), `11-setups` (`squash`), `14-chats` (`chatData`), `16-actions` (`action`, `normQuotes`, `POLITE`, `NEGATOR`, `CALLED_OFF`, `QUESTION_START`, `INFO_START`, `HYPOTHETICAL`, `tokensOf`, `sparkNames`), `17-changes` (`changeLabel`, `question`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memoryNamed`, `memoryIndexOf`, `memorySig`, `withoutAbout`, `memoryIndexNow`, `memoryNamesIn`)
-- **Used by:** `14-chats`, `16-actions`, `17-changes`, `20-memory-names`
+- **Functions:** `memoryEntries`, `memoryPast`, `saveMemory`, `memoryText`, `lineBy`, `lineSrc`, `retired`, `notTheOwners`, `memoryLine`, `memoryFit`, `memoryPrompt`, `memoryWithPast`, `keepLine`, `eraseLine`, `saysForget`, `refusesRemember`, `memoryClear`
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`), `02-ssh` (`run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`note`), `11-setups` (`squash`), `14-chats` (`chatData`), `16-actions` (`action`, `normQuotes`, `POLITE`, `NEGATOR`, `CALLED_OFF`, `QUESTION_START`, `INFO_START`, `HYPOTHETICAL`, `tokensOf`, `sparkNames`), `17-changes` (`changeLabel`, `question`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memoryNamed`, `memoryIndexOf`, `memorySig`, `withoutAbout`, `memoryIndexNow`, `memoryNamesIn`), `20-memory-time` (`memoryExpire`, `memoryOffFor`, `memoryLive`, `memoryEnded`, `memoryExpired`, `memoryUntil`, `memorySaidAgain`, `memoryAlso`, `memorySaid`, `TIME_WORDS`)
+- **Used by:** `14-chats`, `16-actions`, `17-changes`, `20-memory-names`, `20-memory-time`
 
 ### `20-needs.mjs`: what is waiting on the owner (H4)
 
@@ -649,7 +662,7 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 - **Timers:** selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)
 - **Wakes:** none
 - **Functions:** `selfTestJobCommand`, `selfTestAddress`, `selfTestName`, `wordList`, `firstLine`, `selfTestPlace`, `healDrill`, `inAbout`, `drillHeldBack`, `selfTestJobParts`, `selfTestCtx`, `selfTestNeed`, `selfTestMine`, `selfTestModels`, `selfTestStopModel`, `selfTestStopApp`, `containerStates`, `selfTest`, `selfTestRecover`, `selfTestCutOff`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-tell` (`tell`), `21-apps` (`waitJobEnd`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-memory-time` (`lineWords`), `20-tell` (`tell`), `21-apps` (`waitJobEnd`)
 - **Used by:** `18-workflows`, `19-watcher`, `20-desired`
 
 ### `21-telegram.mjs`: Telegram: the owner talks to Sparkie from any phone or laptop

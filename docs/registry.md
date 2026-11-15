@@ -90,8 +90,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
-| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `keepLine`, `forget_memory`, `eraseLine` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
