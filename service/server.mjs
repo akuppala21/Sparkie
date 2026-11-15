@@ -7388,7 +7388,8 @@ function journalNote(job, line) {
   } catch {}
 }
 const START_JOBS = new Set(['deploy', 'deploy-cluster', 'start-model']);
-function* jOpText(job) { for (const l of job.log) yield `${l}\n`; if (job.error) yield `\nError:\n${job.error}\n`; }
+// (a long line or error goes in pieces too, as a command's output will)
+function* jOpText(job) { for (const l of job.log) yield* jSlices(`${l}\n`); if (job.error) yield* jSlices(`\nError:\n${job.error}\n`); }
 // An operation's end (runJob), with its log as the text; a failed start's last attempt first.
 function journalOp(job) {
   try {
