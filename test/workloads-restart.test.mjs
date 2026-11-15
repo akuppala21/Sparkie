@@ -2,7 +2,9 @@
 // in saved-runs.json as it goes, and at start-up what it started is stopped newest first under a failure's rules, one
 // notice says so (in the chat that asked too), the generic "start it again" line isn't given, nothing runs again and the
 // note is gone. Cut off while it waits on a job; cut off while step 2's own start runs (an app not yet on the list);
-// a workload with keep: true (that step's model stays); a restart with no run under way changes nothing.
+// a workload with keep: true (that step's model stays); a restart with no run under way changes nothing; cut off inside
+// a start step, the start's own line is given and the run's notice never says nothing was still running (the workloads
+// review, C5).
 //
 // The stand-in fleet as in workloads.test.mjs: Spark 3's model of Spark Console's is stopped first, so a restart_model
 // step there starts sc-gpt-oss-20b; on Spark 4 the owner has made a web app (wl-web, stopped again) and a job (wl-long)
@@ -126,5 +128,22 @@ describe('a restart in the middle of a saved workflow\'s run (D6f)', { concurren
     assert.equal(['spark3', 'spark4'].map(containers).join('\n---\n'), before, 'no container changed');
     assert.ok(!noticesSince(since).some(e => /saved workflow/.test(e.text)), JSON.stringify(noticesSince(since)));
     assert.ok(!existsSync(noteFile()));
+  });
+
+  // C5: the start's container is known only once its operation ends, so the run can't stop it; its own line says so.
+  test('cut off inside a start step: the start\'s own line is given, and the run\'s notice never says nothing was still running', { timeout: 300000 * SLOW }, async t => {
+    t.after(async () => { if (stateOf('spark3', GPT20) === 'running') await stopByHand('spark3', GPT20); });
+    assert.equal(stateOf('spark3', GPT20), 'exited');
+    await save('start and look', [{ action: 'start_model', args: { model: 'gpt-oss-20b', spark: 'spark3' } }, { action: 'should_be_running', args: {} }]);
+    const id = await runIt('start and look');
+    // (Docker has started the model's container; the start's own operation still waits for it to answer)
+    await waitFor(() => stateOf('spark3', GPT20) === 'running' && note()?.runs?.[id]?.starting || null, { timeout: 120000, what: 'the start under way', every: 100 });
+    const since = new Date().toISOString();
+    await restart();
+    const cut = await waitFor(() => noticesSince(since).find(e => /cut off the saved workflow “start and look”/.test(e.text)) || null, { timeout: 120000, what: 'the run’s notice' });
+    assert.equal(cut.text, 'A restart of Spark Console cut off the saved workflow “start and look” at step 1 of 2. The start at step 1 was still under way: its own line says what to check. Nothing was run again: ask for it again if it’s still wanted.');
+    const told = noticesSince(since).map(e => e.text);
+    assert.ok(told.some(x => /^A restart of Spark Console cut off (deploy|start-model|deploy-cluster) .*Check it’s running/.test(x)), JSON.stringify(told));
+    assert.ok(!told.some(x => /Nothing it had started was still running/.test(x)), JSON.stringify(told));
   });
 });
