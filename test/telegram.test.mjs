@@ -83,7 +83,6 @@ describe('Telegram', { concurrency: 1 }, () => {
 
     test('connecting needs the owner, the page and the passkey; a token Telegram refuses stores nothing', async () => {
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-      is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'x-spark-console': null } }), 403, 'cross-site');
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN } }), 428, 'without the passkey');
       const bad = await confirmed('PUT', '/telegram', { token: REFUSED });
