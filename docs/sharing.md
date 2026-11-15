@@ -69,11 +69,9 @@ agents) never needs it, and neither does resuming agents after they paused thems
   (say, your Mac's Touch ID and your phone), so losing one device never matters.
 - What it covers, honestly: the passkey stops other programs and agents from using your Tailscale identity to change
   who may act. It doesn't stop something that already has a shell on Spark 2 as you, and anything with your
-  Tailscale identity can still look, use VS Code, stop models and edit files.
+  Tailscale identity can still look, stop models and save files.
 - A passkey whose counter goes backwards (which can mean it was copied) still works; it's noted in Activity, so your
   only passkey can never lock you out.
-- Hidden files or folders (names starting with a dot, like `.vscode/tasks.json`, which could run code when someone
-  opens the folder) are never written from a terminal signed in from the internet.
 
 **If you're locked out of a passkey change** (lost every passkey, the Tailscale DNS name changed, or `passkeys.json`
 can't be read), start over from your Mac. SSH needs no passkey:

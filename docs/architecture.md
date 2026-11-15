@@ -75,7 +75,7 @@ flowchart TD
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
   PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
-  PGATE -->|"files, logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
+  PGATE -->|"logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
   PGATE -->|"access, agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
   PGATE -->|"POST /rollback"| ROLL
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
