@@ -17,7 +17,8 @@ function sortShell(args, ctx, r, x, name) {
     const t = args[k].text;
     if (t === '--' || t === '-') { input ||= t === '-'; k++; break; }
     if (/^--(?:norc|noprofile|posix|login|noediting|restricted|verbose)$/.test(t)) continue;
-    if (/^[-+][oO]$/.test(t)) { k++; continue; }
+    if (/^[-+]O$/.test(t)) unsure(`${sortQ(name)} ${sortQ(t)} sets a shell option (dotglob, nocaseglob) that changes what its globs match.`);
+    if (/^[-+]o$/.test(t)) { k++; continue; }
     if (!/^[-+]/.test(t)) break;
     if (/^--|[^euxvnfabhkmtBCHPETlrcs]/.test(t.slice(1))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`);
     if (t[0] === '-' && t.includes('c')) { code = args[k + 1] ?? unsure(`${sortQ(name)} -c with nothing after it.`); break; }
@@ -39,16 +40,17 @@ function sortShell(args, ctx, r, x, name) {
 // that hand it code (-c, -e), a file of code (php -f), and those after which its own options end. perl and ruby -i
 // take the rest of their letters as a backup's suffix (-pi.bak, even -pie), and change the files named after the code.
 const SORT_CODE = { python: ['c', '', ['c', 'm']], perl: ['eE', '', []], node: ['ep', '', ['e', 'p', 'eval', 'print']], ruby: ['e', '', []], php: ['rBRE', 'fF', ['r', 'f']], lua: ['e', '', []] };
-const sortSuffix = (w, takes) => { const t = w.text; for (let j = 1; j < t.length && !w.unknown && /^-[^-]/.test(t); j++) { if (t[j] === 'i') return { ...w, text: t.slice(0, j + 1) }; if (takes.includes(t[j])) break; } return w; };
+const sortSuffix = (w, takes) => { const t = w.text; for (let j = 1; j < t.length && !w.unknown && /^-[^-]/.test(t); j++) { if (t[j] === 'i') return { ...w, text: t.slice(0, j + 1), suffix: t.slice(j + 1) }; if (takes.includes(t[j])) break; } return w; };
 function sortInterp(args, ctx, r, x, name) {
   r.simple = false;
   if (args.length && args.every(a => /^(?:-V|-VV|--version|--help|-h)$/.test(a.text))) return;
   const key = { python2: 'python', python3: 'python', nodejs: 'node', luajit: 'lua' }[name] ?? name, [code, files, ends] = SORT_CODE[key] ?? ['', '', []];
-  const o = sortOpts(SORT_OPTS[`code:${key}`], key === 'perl' ? args.map(w => sortSuffix(w, 'eEIMmx0F')) : key === 'ruby' ? args.map(w => sortSuffix(w, 'eEIrF0')) : args, null, ends);
+  const cut = key === 'perl' ? args.map(w => sortSuffix(w, 'eEIMmx0F')) : key === 'ruby' ? args.map(w => sortSuffix(w, 'eEIrF0')) : args, bk = cut.find(w => w.suffix)?.suffix;
+  const o = sortOpts(SORT_OPTS[`code:${key}`], cut, null, ends);
   const fin = () => { if (o.unknown) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(o.unknown)}.`); };
   const codes = o.opts.filter(([n]) => n.length === 1 ? code.includes(n) : /^(?:eval|print)$/.test(n)).map(([, v]) => v);
   for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); }
-  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) sortTouch(w, ctx, r); return fin(); }
+  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, x); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
@@ -131,9 +133,11 @@ const SORT_HANDLERS = {
   unset(a, ctx, r) { sortSets(a.filter(w => !w.text.startsWith('-')), ctx, r, 'unset'); },
   test(a) { if (a.some(w => w.text === '-v') && a.some(w => /\[/.test(w.text) && !/^[[\]]$/.test(w.text))) unsure('test -v works out an index as arithmetic, running what is in it.'); },
   awk(a, ctx, r, x, name = 'awk') {
-    const o = sortOpts(SORT_OPTS.awk, a, null, []), files = o.all('f', 'file', 'E', 'i', 'include', 'l', 'load'), inline = o.all('e', 'source');
-    for (const f of files) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the program in ${sortQ(f.text)}, or loads code, which the sorter does not read.`);
+    const o = sortOpts(SORT_OPTS.awk, a, null, []), files = o.all('f', 'file', 'E'), libs = o.all('i', 'include', 'l', 'load'), inline = o.all('e', 'source');
+    for (const f of [...files, ...libs]) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the program in ${sortQ(f.text)}, or loads code, which the sorter does not read.`);
     const progs = files.length || inline.length ? inline : [o.plain[0]];
+    // (gawk -i inplace rewrites each file it reads)
+    if (libs.some(l => /^inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
       if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
       if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
@@ -150,7 +154,7 @@ const SORT_HANDLERS = {
         const [n, v] = [t.slice(2).split('=')[0], t.includes('=') ? t.slice(t.indexOf('=') + 1) : null], hits = LONG.filter(l => l.replace(/=$/, '').startsWith(n));
         if (hits.length !== 1) unsure(`The sorter doesn't know sed’s option ${sortQ(t)}.`);
         if (hits[0] === 'expression=') scripts.push(v != null ? { text: v } : a[++k]);
-        else if (hits[0] === 'file=') return sortRuns(v ?? a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
+        else if (hits[0] === 'file=') { const f = v ?? a[++k]?.text ?? null; scripts.push({ text: '', file: f }); sortRuns(f, ctx, r, 'sed runs a script file, which the sorter does not read.'); }
         else if (hits[0] === 'in-place') { inPlace = true; suffix = v ?? ''; }
         else if (hits[0] === 'line-length=' && v == null) k++;
         continue;
@@ -160,7 +164,7 @@ const SORT_HANDLERS = {
           const c = t[j];
           if (c === 'i') { inPlace = true; suffix = t.slice(j + 1); break; }
           if (c === 'e') { scripts.push(j < t.length - 1 ? { text: t.slice(j + 1) } : a[++k]); break; }
-          if (c === 'f') return sortRuns(j < t.length - 1 ? t.slice(j + 1) : a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
+          if (c === 'f') { const f = j < t.length - 1 ? t.slice(j + 1) : a[++k]?.text ?? null; scripts.push({ text: '', file: f }); sortRuns(f, ctx, r, 'sed runs a script file, which the sorter does not read.'); break; }
           if (c === 'l') { if (j === t.length - 1) k++; break; }
           if (!'nErsuz'.includes(c)) unsure(`The sorter doesn't know sed’s option ${sortQ(`-${c}`)}.`);
         }
@@ -216,7 +220,7 @@ const SORT_HANDLERS = {
   crontab: (a, ctx, r) => (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' ')) ? raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.') : raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.')),
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
-  'nvidia-smi': (a, ctx, r) => { for (const f of sortOpts(SORT_OPTS['nvidia-smi'], a).all('-f', '--filename')) sortTouch(f, ctx, r); return (!/^(?:dmon|pmon|topo|nvlink)$/.test(a.find(w => !w.text.startsWith('-'))?.text) && a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
+  'nvidia-smi': (a, ctx, r) => { for (const f of sortOpts(SORT_OPTS['nvidia-smi'], a).all('-f', '--filename')) sortTouch(f, ctx, r); return (!/^(?:dmon|pmon|topo|nvlink)$/.test(a[0]?.text ?? '') && a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
     ? raise(r, 'risky', 'nvidia-smi changes a GPU setting (the driver’s).') : raise(r, 'change', 'nvidia-smi here needs the GPU, which a look’s wall hides (nvidia-smi as the whole command is a look).')); },
   sysctl(a, ctx, r) {
     const t = a.map(w => w.text);
@@ -245,7 +249,7 @@ const SORT_HANDLERS = {
     for (const c of old?.text ?? '') { args.push({ ...old, text: `-${c}` }); if (TAR_SPEC.short.get(c)) args.push(rest[q++] ?? { text: '', subs: [] }); }
     const o = sortOpts(TAR_SPEC, [...args, ...rest.slice(q)]);
     const runs = o.all('I', 'F', 'use-compress-program', 'to-command', 'checkpoint-action', 'info-script', 'new-volume-script', 'rsh-command', 'rmt-command')
-      .filter((p, i, all) => !(o.all('I', 'use-compress-program').includes(p) && /^(?:gzip|pigz|unpigz|zstd|pzstd|unzstd|xz|pixz|bzip2|lbzip2|pbzip2|lz4|lzma|lzip|plzip|brotli)(?: -[\w-]+)*$/.test(p.text)));
+      .filter((p, i, all) => !(o.all('I', 'use-compress-program').includes(p) && /^(?:gzip|pigz|unpigz|zstd|pzstd|unzstd|xz|pixz|bzip2|lbzip2|pbzip2|lz4|lzma|lzip|plzip|brotli)(?: -[\w-]+)*$/.test(p.text) && !/ --?files/.test(p.text)));
     if (o.all('f', 'file').some(w => /^[^/]*:/.test(w.text)) && !o.has('force-local')) raise(r, 'risky', 'tar is handed host:file, which it reaches on another machine through ssh: asked.');
     const lists = o.has('T', 'X', 'g', 'files-from', 'exclude-from', 'listed-incremental', 'index-file', 'volno-file');
     const list = o.has('t', 'd', 'list', 'diff', 'compare'), write = o.has('x', 'c', 'r', 'u', 'A', 'extract', 'get', 'create', 'append', 'update', 'delete', 'concatenate', 'catenate');
@@ -293,7 +297,9 @@ const SORT_HANDLERS = {
     if (t.some(s => /^-\w*A/.test(s))) return raise(r, 'lockout', 'ssh-keygen -A makes the Spark’s own SSH host keys.');
     if (t.some(s => /^-\w*[lLyFBQ]/.test(s)) && !t.some(s => /^-\w*R/.test(s))) return;
     raise(r, 'change', 'ssh-keygen writes a key or known_hosts.');
-    for (const f of sortOpts(SORT_OPTS['ssh-keygen'], a).all('f')) { sortTouch(f, ctx, r); sortTouch({ ...f, text: `${f.text}.pub` }, ctx, r); }
+    const o = sortOpts(SORT_OPTS['ssh-keygen'], a), fs = o.all('f');
+    if (!fs.length && !o.has('R', 'H')) fs.push({ text: `~/.ssh/id_${o.all('t').at(-1)?.text ?? 'ed25519'}`, subs: [] });
+    for (const f of fs) { sortTouch(f, ctx, r); sortTouch({ ...f, text: `${f.text}.pub` }, ctx, r); }
   },
   userdel(a, ctx, r) { if (a.some(w => /^-\w*r|^--remove/.test(w.text))) { ctx.kinds.add('delete'); r.lasting = 'A deleted user’s home can’t be put back.'; } raise(r, 'lockout', 'userdel removes a user, a way in.'); },
   sudo(a, ctx, r, x) {

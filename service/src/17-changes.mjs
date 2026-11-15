@@ -105,6 +105,10 @@ function changeLabel(name, input) {
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
+  if (name === 'compare_models') {
+    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
+  }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
