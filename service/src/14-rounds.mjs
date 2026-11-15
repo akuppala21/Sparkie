@@ -49,16 +49,9 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
 function taskStepsKept({ conv, task, agent, works = 0 }) {
   if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = (Number.isInteger(task?.steps) ? task.steps : 0) + works;
 }
-// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
-// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
-// else 32,768.
-const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
-// The number after the last of those flags (an engine takes the last when one is given twice), or NaN. memorySizes reads
-// it too (20-memory-names.mjs).
-function contextFlag(setup) {
-  const args = Array.isArray(setup?.args) ? setup.args.map(String) : [], at = args.findLastIndex(a => BUDGET_CONTEXT_FLAG.test(a));
-  return at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
-}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
+// the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup
+// saying it); one from 1,000 to 1,048,576, or else 32,768.
 function budgetContext(setup) {
   const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576;
   if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);

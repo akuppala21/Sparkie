@@ -142,10 +142,18 @@ const pickWords = text => nameWords(text).filter(w => w.length >= 3 && !/^\d+$/.
 // The eval's switch (test/eval.mjs --memory-off names, on the stand-in fleet only): with it the picker is off and the
 // brain is sent what it was before the picker (memoryPrompt as it was, nothing picked).
 const memoryPicking = () => !(ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes('names'));
+// The number after a setup's serving flag for its context (--context-length for SGLang, --max-model-len for vLLM,
+// --ctx-size for llama.cpp), the last when one is given twice, as an engine reads it; NaN with none. Both the sizes
+// below and the loop's output budget (budgetContext, 14-rounds.mjs) read it.
+const CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+function contextFlag(setup) {
+  const args = Array.isArray(setup?.args) ? setup.args.map(String) : [], at = args.findLastIndex(a => CONTEXT_FLAG.test(a));
+  return at < 0 ? NaN : Number(CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+}
 // The three sizes (design G 3.4), in characters: the block of lines in the system prompt (today's 4,000), the lines
 // picked for one message (1,500) and a recall answer (6,000, G3). A brain with a small context gets less: the block is
 // at most 4% of its tokens, at 3 characters a token (3,932 at 32,768 tokens), and the other two shrink with it.
-// (its context from the same flags as the output budget's, the last when one is given twice: contextFlag, 14-rounds.mjs)
+// (its context from the same flags as the output budget's, budgetContext in 14-rounds.mjs)
 function memorySizes(setup = chatTarget()?.kind === 'main' ? MAIN : {}) {
   const tokens = askOf(setup).tokenBudget || contextFlag(setup) || 0;
   const k = tokens > 0 ? Math.min(1, (tokens * 0.04 * 3) / MEMORY_CHARS) : 1;

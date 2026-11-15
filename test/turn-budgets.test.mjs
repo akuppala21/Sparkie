@@ -13,7 +13,7 @@
 // flag sets the output budget without changing it, and its ask block cannot raise them. A brain not checked (no eval
 // kept for its setup) gets the careful limits, 8 rounds and 16 commands a message, whatever its setup says; one task
 // runs at most 120 commands over all its turns, and the turn that reaches them waits for the owner; a context flag
-// given twice counts by its last, for the output and for a digest's size (E5b).
+// given twice counts by its last, for the output and for memory's block (E5b).
 //
 // The stand-in fleet, with the real root helper as a rehearsal on Spark 3 and Spark 4 (as test/work.test.mjs sets it
 // up; its sudo stand-in, in a temporary folder first on the PATH, runs only the rehearsal's helper); Spark 2 has none.
@@ -318,16 +318,23 @@ test('one task runs at most 120 commands over all its turns: the turn that reach
 });
 
 // R50: the output budget and memory's sizes read the context from the same flags, the last when one is given twice.
-test('a context flag given twice: the last one counts, for the output a message may read and for a digest’s size', { timeout: 300000 * SLOW }, async () => {
+test('a context flag given twice: the last one counts, for the output a message may read and for memory’s block', { timeout: 300000 * SLOW }, async () => {
   await use('a3-twice');
   const hello = await newChat();
   await say(hello, 'hello');
   assert.deepEqual(budgetsIn(hello), [{ steps: 12, output: 18000 }], '40% of the last flag’s 15,000 tokens');
-  // (a digest keeps lines within a recall answer's size: 6,000 characters from 33,334 tokens up, 2,700 at 15,000; the
-  // stand-in brain logs 4,000 characters of a result, so the whole digest is in its log only at the smaller size)
-  const r = await saying([{ match: '^read one long thing$', rounds: [[SEQ('spark3')]] }], await newChat(), 'read one long thing');
-  assert.deepEqual(calls(r), [['run', true]]);
-  const sent = requests('read one long thing')[1].results[0].content, d = JSON.parse(sent);
-  assert.deepEqual(Object.keys(d), ['digest', 'isData', 'lines', 'record', 'kept']);
-  assert.ok(JSON.stringify(d.kept).length <= 3000 && sent.length < 4000, `${JSON.stringify(d.kept).length} characters of kept lines, ${sent.length} in all`);
+  // (memory's block in the system prompt is 4,000 characters from 33,334 tokens up, 1,800 at 15,000: 25 facts of about
+  // 100 characters fit the first and not the second, where they are only picked)
+  for (let i = 0; i < 25; i++) {
+    const r = await api('/actions/remember', { method: 'POST', body: { text: `Twice fact ${i}: a flag given twice counts by its last, as an engine reads it (number ${i}).`, kind: 'fact' } });
+    assert.equal(r.status, 200, r.text);
+  }
+  await say(await newChat(), 'hello again, twice');
+  const twice = requests('hello again, twice')[0].system;
+  assert.match(twice, /What the owner asked you to remember[\s\S]*More is remembered than fits here/);
+  assert.ok(!twice.includes('Twice fact 0:'), 'at its last flag’s 15,000 tokens the facts don’t fit the block');
+  await use('aphex');
+  await say(await newChat(), 'hello again, once');
+  const once = requests('hello again, once')[0].system;
+  for (let i = 0; i < 25; i++) assert.ok(once.includes(`Twice fact ${i}:`), `at 1,000,000 tokens fact ${i} is in the block`);
 });
