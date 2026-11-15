@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 64 parts in `service/src/`, joined in name order into `service/server.mjs` (16802 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 64 parts in `service/src/`, joined in name order into `service/server.mjs` (16846 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -271,12 +271,12 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
-- **Lines:** 517
+- **Lines:** 519
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `runChoice`, `postResult`, `multiStep`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `turnAnswer`, `turnFailed`, `chatReply`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `sleep`, `nodeById`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `budgetsOf`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-tell` (`tellResult`, `tellCarry`), `20-tg-approve` (`tgAskOpen`), `21-telegram` (`tgPaired`), `23-http` (`recordFault`)
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `sleep`, `nodeById`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `budgetsOf`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-lessons` (`lessonSeenBefore`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-memory-time` (`memoryTodayLine`), `20-tell` (`tellResult`, `tellCarry`), `20-tg-approve` (`tgAskOpen`), `21-telegram` (`tgPaired`), `23-http` (`recordFault`)
 - **Used by:** `07-jobs`, `10-recipes`, `14-rounds`, `16-reads`, `18-run-record`, `18-saved-from`, `20-journal`, `20-keys`, `20-mcp`, `20-memory`, `20-needs`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `22-passkey`, `24-handler`
 
 ### `14-rounds.mjs`: Sparkie’s rounds
@@ -562,20 +562,20 @@ Contract 4.10 and 5.5, the one page's section 8, ledger 5c clean-up 3: a line th
 Design G's third addition (A3, step 4). The brain eval switches it off with `time` in SPARK_CONSOLE_MEMORY_OFF (test/eval.mjs): then memory is as the build before this one kept it, and an `until` given to remember is not kept. - `until`: the last day a line is true (YYYY-MM-DD, Spark 2's own day). After it the line is in no prompt and no pick; `memory {past: true}` shows it as past (why "expired"), and the next save of memory moves it to memory-past.json. It is never deleted. A day already gone when the line is saved is refused. Sparkie keeps a line with an end at once only when the owner's …
 
 - **Area:** record. **Rules:** R45. **Tests:** memory-time.test.mjs
-- **Lines:** 78
+- **Lines:** 98
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `memoryOffFor`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`
+- **Functions:** `memoryOffFor`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineNumbers`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`, `memoryDayWords`, `memoryTodayLine`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `20-memory-names` (`memoryEnded`, `memoryLive`, `memoryDay`, `nameWords`, `memoryNamed`, `memoryLinesAbout`), `20-memory` (`MEMORY_FILLER`)
-- **Used by:** `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `21-selftest`
+- **Used by:** `14-chats`, `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `21-selftest`
 
 ### `20-memory.mjs`: Sparkie's memory (v3.1, 2026-11-11)
 
 What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). Short lines in memory.json (no ceiling), put at the end of Sparkie's system prompt (so the prompt cache stays warm until it changes), and listed for agents by `memory`. Live state beats memory: the prompt says so. Only the owner's own words add or remove a line: either they say so ("remember…", "forget that…"), or they simply state it ("Spark 4 is on Ethernet now") …
 
 - **Area:** record. **Rules:** R20, R22, R25, R26, R45. **Tests:** sparkie-more.test.mjs, memory.test.mjs
-- **Lines:** 255
+- **Lines:** 256
 - **Actions:** `memory`, `remember`, `forget_memory`
 - **Owns:** memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
 - **Timers:** none
@@ -693,12 +693,12 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the owner names: no GPU, a memory cap, named volumes only, its port opened on 127.0.0.1 and the Spark's tailnet address only, labelled spark.app=1 (never spark.console=1, so no model start ever counts it as one of its own). Self-healing brings a kept app …
 
 - **Area:** features. **Rules:** R1, R2, R7, R23, R38, R40. **Tests:** apps.test.mjs
-- **Lines:** 579
+- **Lines:** 600
 - **Actions:** `keep_running`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `appSecretName`, `imageRepo`, `appModelImage`, `appAnswers`, `appStates`, `appLook`, `appDiffers`, `commandWords`, `appCommand`, `devBox`, `appRoom`, `jobDir`, `appRunCommand`, `gpuAlone`, `jobFolder`, `jobEnded`, `waitJobEnd`, `appUp`, `appDone`, `appPutBack`, `appNamed`, `appNow`, `healApp`
+- **Functions:** `appSecretName`, `imageRepo`, `appModelImage`, `appAnswers`, `appStates`, `appLook`, `appDiffers`, `commandWords`, `appCommand`, `devBox`, `appRoom`, `jobDir`, `appRunCommand`, `gpuAlone`, `jobFolder`, `jobMountsReal`, `jobNotReal`, `jobEnded`, `waitJobEnd`, `appUp`, `appDone`, `appPutBack`, `appNamed`, `appNow`, `healApp`
 - **Uses:** `01-setup` (`CONFIG`, `q`, `HttpError`, `sleep`, `nodeById`, `isProtected`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`accessList`, `mustUse`), `05-library` (`memNow`, `KEEP_FREE`, `inventory`), `07-jobs` (`step`, `note`, `claimed`, `newJob`, `runJob`, `stopContainer`), `09-verified` (`answers`), `11-setups` (`squash`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`recent`, `tokensOf`, `sparkNames`, `normQuotes`, `runAction`, `action`, `sparkArg`, `sparkOf`), `17-changes` (`notBrainsSpark`, `changeLabel`, `question`, `pausedCheck`, `stoppedForSure`), `18-step-jobs` (`sleepUnless`), `18-workflows` (`consoleStopped`), `19-watcher` (`MODEL_IMAGES`, `fleetEvent`, `knowledge`, `events`, `sparkOff`), `20-desired` (`cancelCheck`, `keyOf`, `desired`, `forgetApp`, `keepApp`), `20-heal` (`skippedOnce`, `healSkip`, `cameBack`, `healCount`, `HEAL_WINDOW`, `HEAL_SETTLE_MS`, `healMark`, `healOwner`, `HEAL_OFFLINE_MS`), `20-mcp` (`SECRET_FLAG`, `maskSecrets`), `20-tell` (`tell`), `21-door` (`appLinks`, `linkWords`), `21-power` (`power`, `powerThenKeep`)
 - **Used by:** `16-actions`, `17-changes`, `18-step-jobs`, `19-watcher`, `20-desired`, `20-heal`, `21-selftest`
 
