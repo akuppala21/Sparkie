@@ -107,25 +107,21 @@ describe('the stand-in fleet: its start and its clean-up', { concurrency: 1, tim
 });
 
 // 2026-11-14: each piece of a body was decoded on its own, so a character cut between two pieces became replacement
-// marks: in what the Telegram stand-in recorded, and in what the editor stand-in counted.
+// marks: in what the Telegram stand-in recorded (and the editor stand-in, gone since E10e).
 describe('the stand-ins that read a request body', { timeout: 60000 * SLOW }, () => {
-  test('a character whose bytes arrive in two pieces is read whole: Telegram records the message as sent, the editor counts it once', async () => {
+  test('a character whose bytes arrive in two pieces is read whole: Telegram records the message as sent', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stand-ins-'));
     const freePort = async () => { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const { port } = s.address(); await new Promise(r => s.close(r)); return port; };
-    const tg = await freePort(), ed = await freePort();
-    const kids = [spawn(process.execPath, [join(REPO, 'test', 'mock', 'telegram.mjs')], { env: { ...process.env, MOCK_TELEGRAM_PORT: String(tg), MOCK_DIR: dir }, stdio: 'ignore' }),
-      spawn(process.execPath, [join(REPO, 'test', 'mock', 'editor.mjs')], { env: { ...process.env, MOCK_EDITOR_PORT: String(ed) }, stdio: 'ignore' })];
+    const tg = await freePort();
+    const kids = [spawn(process.execPath, [join(REPO, 'test', 'mock', 'telegram.mjs')], { env: { ...process.env, MOCK_TELEGRAM_PORT: String(tg), MOCK_DIR: dir }, stdio: 'ignore' })];
     try {
       await waitFor(() => fetch(`http://127.0.0.1:${tg}/__mode`, { method: 'POST', body: '{}' }).then(r => r.ok).catch(() => false), { what: 'the Telegram stand-in' });
-      await waitFor(() => fetch(`http://127.0.0.1:${ed}/login`).then(r => r.ok).catch(() => false), { what: 'the editor stand-in' });
       const text = 'Spark’s port 3000 ✓ — €5';
       const sent = await postInTwo(`http://127.0.0.1:${tg}/bot1234567:${'a'.repeat(35)}/sendMessage`, JSON.stringify({ chat_id: 42, text }));
       assert.equal(sent.status, 200, sent.text);
       assert.equal(JSON.parse(sent.text).result.text, text);
       const calls = readFileSync(join(dir, 'telegram-calls.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
       assert.equal(calls.at(-1).body.text, text);
-      const echoed = await postInTwo(`http://127.0.0.1:${ed}/upload`, text, { from: 8 });
-      assert.equal(echoed.text, `got ${text.length} bytes`);
     } finally {
       for (const k of kids) k.kill();
       rmSync(dir, { recursive: true, force: true });

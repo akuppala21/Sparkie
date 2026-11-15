@@ -7,7 +7,7 @@
 // gets 428 `confirm`; a confirmation works once, only for its exact method, path and body; refused for a wrong origin
 // or domain, a tampered or foreign signature, an unknown passkey, no UP/UV, after 3 minutes (the service's clock is
 // moved with `mock/clock.mjs`); a counter going backwards is noted, not refused. Pausing, removing an agent, and
-// resuming an automatic pause with exactly `{halted: false}` need none. Hidden files: the owner can. One pool of 150
+// resuming an automatic pause with exactly `{halted: false}` need none. One pool of 150
 // challenges, the oldest making way. Each route's body limit applies when the check reads it. An unreadable
 // `passkeys.json` lets nothing sensitive through but still lets a right be taken away.
 //
@@ -15,7 +15,7 @@
 // confirmation inline (X-Spark-Passkey: a one-time challenge for exactly that change, signed by one of the owner's
 // passkeys on the page). Passkeys are set up there too. Until one exists, nothing asks for one. There's no relay.
 // A software authenticator here (a P-256 or RSA key from node:crypto) answers like Touch ID would: "none" attestation,
-// user present and verified. Also: hidden files (only the owner), resuming an automatic pause without a passkey, and
+// user present and verified. Also: resuming an automatic pause without a passkey, and
 // every change to an agent's rights as an audit line.
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
 import { test, describe, before, after } from 'node:test';
@@ -122,7 +122,6 @@ const agentSettingsNow = async () => (await main('/agents')).json.settings;
 const canAct = async id => (await main('/agents')).json.keys.find(k => k.id === id).scopes.includes('fleet:act');
 const passkeyList = async () => { const r = await main('/auth/passkeys'); is(r, 200); return r.json.keys; };
 const agentName = () => `pk-${randomBytes(4).toString('hex')}`;
-const NO_FILE = { operation: 'delete', path: 'pk-nothing-here.txt' }; // deleting a workspace file that isn't there
 // Moves the service's clock (mock/clock.mjs) ahead of the real time.
 const setClock = async ms => { writeFileSync(join(T.fleet.dir, 'clock-offset'), String(ms)); await sleep(400); };
 // Lets every pending challenge expire: the service drops expired ones when it makes the next one (which stays).
@@ -484,16 +483,6 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     }
   });
 
-  test('workspace files: deleting needs the passkey; renaming, listing and new folders never do', async () => {
-    for (const body of [{ operation: 'rename', path: 'pk-nothing-here.txt', destination: 'pk-still-nothing.txt' }, { operation: 'list', path: '' }, { operation: 'mkdir', path: 'pk-visible-folder' }]) {
-      const r = await main('/nodes/spark3/files', { method: 'POST', body });
-      assert.ok(![403, 428].includes(r.status), `${body.operation} → ${r.status} ${r.text}`);
-    }
-    const asked = await main('/nodes/spark3/files', { method: 'POST', body: NO_FILE });
-    is(asked, 428, 'deleting a file');
-    assert.equal(asked.json.passkey, 'confirm');
-  });
-
   test('deleting a chat needs the passkey too, and the dialog names it', async () => {
     const chat = (await main('/chats', { method: 'POST', body: {} })).json.id;
     const asked = await main(`/chats/${chat}`, { method: 'DELETE' });
@@ -537,17 +526,6 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     for (const want of [/big\/two-spark-model/, /Spark 3/, /Spark 4/, /fast-tp2/, /stopping spark3\/old-model, spark4\/other/, /own code/]) assert.match(c.summary, want);
     const v = await beginConfirm(main, 'POST', '/deploy', { model: 'm/again', node: 'spark4', verified: true, stop: [], allowRemoteCode: true });
     for (const want of [/m\/again/, /Spark 4/, /the way it ran before/, /own code/]) assert.match(v.summary, want);
-  });
-});
-
-/* ───────── hidden files ───────── */
-describe('hidden files and folders (names starting with a dot): only the owner', () => {
-  test('the owner can, with no passkey asked', async () => {
-    const name = `.pk-hidden-${randomBytes(2).toString('hex')}`;
-    const m = await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'mkdir', path: name } });
-    assert.ok(![403, 428].includes(m.status) && !/Hidden files/.test(m.text), `mkdir ${name} → ${m.status} ${m.text}`);
-    const w = await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'write', path: `${name}/.envrc`, data: 'echo hi' } });
-    assert.ok(![403, 428].includes(w.status) && !/Hidden files/.test(w.text), `write ${name}/.envrc → ${w.status} ${w.text}`);
   });
 });
 
@@ -707,14 +685,6 @@ describe('request sizes: the passkey check reads each body with its route\'s lim
     is(await main('/auth/passkey/register', { method: 'POST', body: { pad: pad(55000) } }), 413, 'a 55 KB registration');
   });
 
-  test('workspace files: up to 400 000 bytes', async () => {
-    for (const headers of [{}]) {
-      const who = 'the owner';
-      assert.notEqual((await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: pad(300000) }, headers })).status, 413, `300 KB, ${who}`);
-      is(await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'write', path: pad(410000) }, headers }), 413, `410 KB, ${who}`);
-    }
-  });
-
   test('everything else that may need a passkey (/deploy): up to 100 000 bytes', async () => {
     is(await main('/deploy', { method: 'POST', body: { allowRemoteCode: false, pad: pad(90000) } }), 400, 'POST /deploy, 90 KB');
     is(await main('/deploy', { method: 'POST', body: { allowRemoteCode: true, pad: pad(110000) } }), 413, 'POST /deploy, 110 KB');
@@ -751,8 +721,6 @@ describe('an unreadable passkeys.json', () => {
     }
     is(await main('/auth/passkeys'), 500, 'GET /auth/passkeys');
     for (const purpose of ['confirm', 'register']) is(await main('/auth/passkey/begin', { method: 'POST', body: { purpose, method: 'POST', path: '/agents', body: {} } }), 500, `begin ${purpose}`);
-    // Listing workspace files doesn't depend on it (deleting one does: it needs the passkey).
-    assert.doesNotMatch((await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: '' } })).text, /passkeys\.json/, 'listing files');
     assert.deepEqual(await agentIds(), before);
     assert.deepEqual(await agentSettingsNow(), settings);
     assert.equal(await canAct(agent), false);

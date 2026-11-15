@@ -104,9 +104,6 @@ const handler = async (req, res) => {
     const ownerOnly = () => { if (!owner) throw new HttpError(403, 'Only the owner can do that.'); };
     // Changes to who has access need the owner's passkey (see "the owner's passkey").
     if (owner) await passkeyGate(req, path, viewer);
-    // Hidden files (they'd run code when a folder is opened): a terminal signed in from the internet doesn't write them
-    // (4.10): only a browser or the tailnet.
-    if (viewer.session?.kind === 'terminal') await refuseHiddenFiles(req, path);
     if (owner) await refreshNodes(req);
 
     if (req.method === 'GET' && path === '/bootstrap') {
@@ -276,10 +273,9 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files)$/);
+    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64}))$/);
     if (nodeMatch) {
       const node = sparkFor(viewer, nodeMatch[1]), what = nodeMatch[2];
-      if (what === 'files' && req.method === 'POST') return send(res, 200, await sparkFiles(viewer, node, await readBody(req, 400000)));
       ownerOnly();
       if (req.method !== 'GET') throw new HttpError(405, 'Not allowed.');
       if (what === 'workloads') return send(res, 200, await workerCall(node, { action: 'workloads' }, 40000));
@@ -350,7 +346,7 @@ const handler = async (req, res) => {
       if ([...jobs.values()].some(j => j.status === 'running' && j.node === node && ['deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, `Something is already changing on ${node}. Wait for it to finish.`);
       }
-      mustUse(viewer, [node]);
+      mustUse(viewer);
       const release = claimSparks([node], `deploying ${model}`);
       try {
         const wf = pageWorkflow(req, 'start_model', owner);
@@ -378,7 +374,7 @@ const handler = async (req, res) => {
       if ([...jobs.values()].some(j => j.status === 'running' && (nodes.includes(j.node) || (j.nodes || []).some(n => nodes.includes(n))) && ['deploy', 'stop', 'deploy-cluster', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, 'Something is already changing on one of those Sparks. Wait for it to finish.');
       }
-      mustUse(viewer, nodes);
+      mustUse(viewer);
       const release = claimSparks(nodes, `deploying ${model} across two Sparks`);
       try {
         const wf = pageWorkflow(req, 'start_model_across', owner);
@@ -396,7 +392,7 @@ const handler = async (req, res) => {
       const dep = (await inventory(null)).sparks.find(sp => sp.id === node)?.deployments.find(d => d.container === container);
       if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s deploys on ${node}.`);
       if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s model isn’t stopped here: the owner starts and stops it with /main/start and /main/stop.');
-      mustUse(viewer, dep.cluster ? dep.cluster.split('+') : [node]);
+      mustUse(viewer);
       const wf = pageWorkflow(req, 'stop_model', owner);
       if (owner) await cancelRunningOn(dep.cluster ? dep.cluster.split('+') : [node], 'the owner');
       const job = claimed(dep.cluster ? dep.cluster.split('+') : [node], `stopping ${container}`, () => newJob('stop', { node, container, by: viewer.login, ...wf }));
@@ -614,7 +610,7 @@ const handler = async (req, res) => {
       if ([...jobs.values()].some(j => j.status === 'running' && j.type === 'download' && sameRepo(j.repo, version.repo))) throw new HttpError(409, 'That download is already running.');
       const target = node ? nodeById(node) : nodeById((await downloadTargets(viewer)).defaultTarget);
       if (!target) throw new HttpError(409, 'No online Spark to download to.');
-      mustUse(viewer, [target.id]);
+      mustUse(viewer);
       const gb = option?.sizeGB || version.sizeGB;
       const job = newJob('download', { repo: version.repo, model: quant ? `${version.repo} (${quant})` : version.repo, node: target.id, by: viewer.login, total: gb ? Math.round(gb * 1e9) : null });
       return send(res, 202, publicJob(runJob(job, async j => { await downloadVersion(j, version.repo, target, quant); await refreshSetups(viewer, version.repo, { job: j }); })));
