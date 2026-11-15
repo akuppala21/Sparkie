@@ -76,3 +76,8 @@ covers, is in `test/README.md`.
     offset rules, 409 on a second poller, 4,096-character messages); `/__push` queues updates, `/__mode` makes it
     refuse (401), be in use (409), be down (502) or slow down (429); every call goes to `telegram-calls.jsonl`.
 - All tokens in the stand-ins (`hf_secret…`, `sk-abc…`, `nvapi-ABC…` and the like) are fake, to check masking.
+- What no test reaches: the real `worker.py` status code, real ssh, the Mac half of the installer, real systemd
+  and Tailscale's routes, and the locked TCP mode. `test/install.test.mjs` runs the installer's Spark 2 half,
+  `restore.sh` and the watchdog with a stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a
+  Linux run is the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14 or the
+  cable rule in R17.
