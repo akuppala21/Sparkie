@@ -30,6 +30,8 @@ GUARD_S=1800
 if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_GUARD_S:-}" =~ ^[0-9]+$ ]]; then GUARD_S=$SPARK_CONSOLE_UPDATE_GUARD_S; fi
 
 say() { echo "  $*"; }
+# systemctl for the user's manager, with this script's lock and pull.sh's left behind (nothing it starts holds them).
+sc() { systemctl --user "$@" 8>&- 9>&-; }
 # One at a time: a put-back by the timer and one by pull.sh, or a put-back and a disarm, never run together.
 lock() {
   mkdir -p "$SHARE"
@@ -37,9 +39,9 @@ lock() {
 }
 field() { sed -n "s/^$1=//p" "$G/guard" 2>/dev/null | head -n 1; }
 timer_off() {
-  systemctl --user disable --now "$NAME.timer" >/dev/null 2>&1
+  sc disable --now "$NAME.timer" >/dev/null 2>&1
   rm -f "$UNITS/$NAME.timer" "$UNITS/$NAME.service"
-  systemctl --user daemon-reload >/dev/null 2>&1
+  sc daemon-reload >/dev/null 2>&1
   return 0
 }
 socket_build() {
@@ -91,8 +93,8 @@ AccuracySec=1s
 [Install]
 WantedBy=timers.target
 EOF
-  if systemctl --user daemon-reload && systemctl --user enable --now "$NAME.timer" >/dev/null 2>&1 \
-      && systemctl --user is-active --quiet "$NAME.timer"; then
+  if sc daemon-reload && sc enable --now "$NAME.timer" >/dev/null 2>&1 \
+      && sc is-active --quiet "$NAME.timer"; then
     say "The way back is armed: unless the new build is confirmed within $((GUARD_S / 60)) minutes, the build from before goes back by itself."
     return 0
   fi
@@ -128,14 +130,14 @@ put_back() {
   if [ -n "$restart" ]; then
     say "Putting the build from before the update back (its page, its service and its unit; people, chats and settings stay) ..."
     # However this ends, the service is started again.
-    trap 'systemctl --user daemon-reload >/dev/null 2>&1; systemctl --user start spark-console-api >/dev/null 2>&1' EXIT
-    systemctl --user stop spark-console-api >/dev/null 2>&1
+    trap 'sc daemon-reload >/dev/null 2>&1; sc start spark-console-api >/dev/null 2>&1' EXIT
+    sc stop spark-console-api >/dev/null 2>&1
     for p in "ui:$HOME/spark-console" "service:$HOME/spark-console-service"; do
       if [ -d "$G/${p%%:*}" ]; then mkdir -p "${p#*:}"; find "${p#*:}" -mindepth 1 -delete; cp -a "$G/${p%%:*}/." "${p#*:}/"; fi
     done
     [ ! -f "$G/units/spark-console-api.service" ] || { mkdir -p "$UNITS"; cp -p "$G/units/spark-console-api.service" "$UNITS/"; }
-    systemctl --user daemon-reload >/dev/null 2>&1
-    systemctl --user restart spark-console-api >/dev/null 2>&1
+    sc daemon-reload >/dev/null 2>&1
+    sc restart spark-console-api >/dev/null 2>&1
   fi
   # The by-hand files, the watchdog and the source, as they were (no restart for these). A file that wasn't there goes.
   for f in "${BY_HAND[@]}"; do

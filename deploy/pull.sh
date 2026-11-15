@@ -351,10 +351,10 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
       case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
     fi
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
-    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" \
+    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" 9>&- \
       || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
     ARMED=yes
-    trap 'echo "  The install was interrupted." >&2; bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted"; result "not kept" "the install was interrupted; the build from before was put back" "$code_build"; exit 130' INT TERM HUP
+    trap 'echo "  The install was interrupted." >&2; bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted" 9>&-; result "not kept" "the install was interrupted; the build from before was put back" "$code_build"; exit 130' INT TERM HUP
   else
     echo "Spark Console isn't answering now, so there is no working build to go back to: the new build stays if it passes its own installer's checks."
   fi
@@ -415,7 +415,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
       echo "  Through the real address: the new build answers$([ -z "$pages" ] || echo ", and its page is served")."
     fi
   fi
-  if [ -z "$failed" ] && [ -n "$ARMED" ] && ! bash "$SHARE/update-guard/update-guard.sh" disarm; then
+  if [ -z "$failed" ] && [ -n "$ARMED" ] && ! bash "$SHARE/update-guard/update-guard.sh" disarm 9>&-; then
     failed='the way back had already put the build from before back'
   fi
   if [ -z "$failed" ]; then
@@ -429,7 +429,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     return 0
   fi
   echo "  Not kept: $failed." >&2
-  [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed"
+  [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed" 9>&-
   trap - INT TERM HUP
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"

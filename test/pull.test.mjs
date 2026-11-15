@@ -653,7 +653,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
       if (stage === 0 && out.includes('Installing tree')) { stage = 1; writeFileSync(down, ''); }
       if (stage === 1 && out.includes('Checking the new build through the real address')) stage = 2;
     } });
-    await waitFor(() => stage === 2, { timeout: 120000 * SLOW, what: 'its installer done, and pull.sh waiting on the real address' });
+    let ended = null;
+    done.then(r => { ended = r; });
+    await waitFor(() => stage === 2 || ended, { timeout: 120000 * SLOW, what: 'its installer done, and pull.sh waiting on the real address' });
+    assert.equal(ended, null, `pull.sh ended before the restart: ${ended?.out}`);
     // The power goes: pull.sh and everything it started stop at once, the console and the timer's wait included.
     process.kill(-child.pid, 'SIGKILL');
     await done;
