@@ -1,5 +1,5 @@
 // Covers: Memory's lines in time (design G step 4, A3; R45). A line may carry `until`, its last day: past it the line is
-// in no prompt and in neither the owner's nor Sparkie's live lines; `memory {past: true}` shows it as past (expired) and
+// in no prompt or pick and in neither the owner's nor Sparkie's live lines; `memory {past: true}` shows it as past (expired) and
 // the next save moves it to memory-past.json, never deleting it; a day already gone is refused at save, and Sparkie
 // keeps a line with an end at once only when the owner's words name a time (else a button that shows the end). A fact
 // said again (the same names and numbers, 0.8 of the old line's own words) leaves one live line and the result names
@@ -50,6 +50,23 @@ test('until: a line past its last day is in no prompt and no live list; it is sh
     assert.deepEqual(kept.map(p => [p.id, p.text, p.until, p.gone.why]), [[ENDED.id, ENDED.text, ENDED.until, 'expired']]);
     assert.deepEqual((await past()).map(p => [p.id, p.gone.why]), [[ENDED.id, 'expired']]);
     assert.deepEqual((await live()).map(e => e.text), [LIVE.text, 'Spark 2 runs the brain']);
+  } finally { fresh(); }
+});
+
+test('until: past its day a line is in no pick either, while a live line about the same Spark is picked', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  // (past the block's 4,000 characters, so the two Spark 4 lines, the oldest, are left out of the system prompt)
+  const filler = Array.from({ length: 60 }, (_, i) => ({ id: (0x10000000 + i).toString(16), kind: 'fact', by: 'owner', at: '2026-11-01T10:00:00.000Z',
+    text: `Rack note ${i}: the hall rack keeps its spare cables and labels in the top drawer, sorted by length` }));
+  const OLD = { id: 'e2e2e2e2', kind: 'fact', text: 'Spark 4 is busy with the GLM trial', by: 'owner', at: '2026-10-01T10:00:00.000Z', until: day(-3) };
+  const NOW = { id: 'f3f3f3f3', kind: 'fact', text: 'Spark 4 is free again after the GLM trial', by: 'owner', at: '2026-10-01T11:00:00.000Z', until: day(3) };
+  writeFileSync(state('memory.json'), JSON.stringify({ entries: [OLD, NOW, ...filler] }), { mode: 0o600 });
+  try {
+    const words = 'is Spark 4 free for a new model?', from = requestsOf().length;
+    await say(await newChat(), words);
+    const sent = requestsOf().slice(from).find(x => x.words === words);
+    assert.ok(String(sent.lastUser).includes(`[${NOW.id}]`), String(sent.lastUser).slice(0, 1500));
+    assert.ok(!String(sent.lastUser).includes(OLD.id) && !sent.system.includes(OLD.id), 'the ended line was sent');
   } finally { fresh(); }
 });
 
