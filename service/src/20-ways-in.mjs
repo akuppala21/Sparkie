@@ -1,5 +1,5 @@
 /* ───────── the ways in, watched ahead: Tailscale's keys, linger, Funnel (ledger 5b, addition 6) ───────── */
-// Area: safety        Rules: R47        Tests: ways-in.test.mjs
+// Area: safety        Rules: R49        Tests: ways-in.test.mjs
 // Owns: funnel-seen.json (writers: noteFunnel; deploy/open-to-internet.sh --undo removes it)
 // Timers: none        Wakes: none
 // The owner reaches Spark Console through ways in that can each close with no warning: a Tailscale key that expires
@@ -14,7 +14,7 @@
 // looks, is "couldn't check", never silence. A line's key is its kind and Spark (never a date), so the needs-me line
 // (20-tell.mjs) tells it once. Disk space is the status loop's line in 20-needs.mjs: the state folder and the journal sit
 // under the home folder whose free space worker.py reports. The GitHub token isn't watched here: its expiry is known only
-// by asking GitHub. (docs/rules/R47.md)
+// by asking GitHub. (docs/rules/R49.md)
 const KEY_SOON_MS = 14 * 86400000;
 // How often the route check and Tailscale's status are read: every 60 s (tests shorten it, only under ALL_LOCAL).
 const ROUTE_MS = ALL_LOCAL && Number(process.env.SPARK_CONSOLE_ROUTE_MS) > 0 ? Number(process.env.SPARK_CONSOLE_ROUTE_MS) : 60000;

@@ -12,7 +12,7 @@ map's "Where new things go", row "A read-only check".
   and goes on its part's `Timers:` line (R28).
 - A look at a way in on Spark 2 itself (Tailscale, linger, Funnel) needs no loop: it rides on `checkRoute` or
   `refreshBlocked` (`23-http.mjs`), keeps what it read in `20-ways-in.mjs`, and `waysInNeeds` puts it on the needs-you
-  list, with "couldn't check" for an answer it can't read (R47).
+  list, with "couldn't check" for an answer it can't read (R49).
 
 ## Also update
 
@@ -29,7 +29,7 @@ map's "Where new things go", row "A read-only check".
 - R10: every command on a Spark goes through `spawnOn`; `run` never rejects, so test `code`.
 - R24: sensing only reads; loops start on delayed timers, one round at a time.
 - R21: a look Docker didn't answer is not a look.
-- R47: the ways in, watched ahead.
+- R49: the ways in, watched ahead.
 
 ## Tests
 

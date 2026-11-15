@@ -6,7 +6,7 @@
 #
 #   bash spark-console/deploy/open-to-internet.sh           open it to the internet
 #   bash spark-console/deploy/open-to-internet.sh --undo    back to tailnet only (on purpose: Spark Console stops saying
-#                                                           Funnel is off, docs/rules/R47.md)
+#                                                           Funnel is off, docs/rules/R49.md)
 #
 # Only port 8443's Funnel switch changes: its routes stay as they are, the public Funnel on port 443 isn't touched, and
 # it never runs `tailscale serve --https=8443 off`. Tailscale on your devices keeps working as before either way.

@@ -52,7 +52,7 @@ covers, is in `test/README.md`.
     column and `--filter label=spark.gpu=1` keeps only those (A13). `curl` answers on the serve port once a console
     model on that Spark has run 4 seconds. `hf download` fills the Hugging Face cache. `tailscale ip` is 127.0.0.1 (or
     `.mock/tsip`), so model addresses reach the stand-in serve port; `tailscale serve status --json` (the console's route check) answers `$MOCK_DIR/serve.json`, or `{}` (nothing loaded, as right after a boot).
-    `tailscale status --json` (the console's look at the tailnet, R47) answers `$MOCK_DIR/status.json`, or Spark 2
+    `tailscale status --json` (the console's look at the tailnet, R49) answers `$MOCK_DIR/status.json`, or Spark 2
     running with a key that never expires; with `$MOCK_DIR/tailscale-hangs` every call hangs. `loginctl show-user`
     (the linger look) answers Spark 2's `.mock/linger` (yes when there is none; `fail` fails). Both keep every call,
     one line each, in `$MOCK_DIR/tailscale-calls` and `$MOCK_DIR/loginctl-calls`.
