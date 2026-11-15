@@ -4,7 +4,8 @@
 # It answers the helper's four questions and nothing else: the running systemd's version (from
 # <rehearsal>/standin/systemd-version, else 255.4-1ubuntu8.4), a unit's main process (4242; 0 with
 # <rehearsal>/standin/no-pid), whether a unit is active (yes; no with <rehearsal>/standin/target-dead), and stop (does
-# nothing).
+# nothing). And the one-time command's read of a unit's program (show --user), from <rehearsal>/standin/user-units,
+# one per line: "<unit> <program>" (nothing without it).
 import json, os, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -27,6 +28,14 @@ elif args[:2] == ['is-active', '--quiet'] and len(args) == 3:
     sys.exit(3 if os.path.exists(os.path.join(R, 'standin', 'target-dead')) else 0)
 elif args[:1] == ['stop'] and len(args) == 2:
     pass
+elif args[:4] == ['show', '--user', '--property=ExecStart', '--value'] and len(args) == 5:
+    try:
+        with open(os.path.join(R, 'standin', 'user-units')) as f:
+            units = dict(line.split(None, 1) for line in f.read().splitlines() if line.strip())
+    except OSError:
+        units = {}
+    if args[4] in units:
+        print(f'{{ path={units[args[4]].strip()} ; argv[]={units[args[4]].strip()} ; ignore_errors=no }}')
 else:
     sys.stderr.write('systemctl: the stand-in does not answer this\n')
     sys.exit(1)
