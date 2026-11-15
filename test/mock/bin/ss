@@ -1,2 +1,6 @@
 #!/bin/bash
+# Stand-in ss: nothing listens. A test gives what listens with ~/.mock/ss (ss's own lines, as ss -tlnpH prints them),
+# and ~/.mock/ss-fails makes it fail.
+[ -e "$HOME/.mock/ss-fails" ] && { echo "ss: cannot open netlink socket" >&2; exit 1; }
+[ -f "$HOME/.mock/ss" ] && cat "$HOME/.mock/ss"
 exit 0

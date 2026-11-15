@@ -23,7 +23,7 @@ const SECONDS = 6;
 const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const keys = {};
 // (the tailnet is read every second here, so a test that changes what it says is seen soon)
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000' },
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
@@ -246,7 +246,7 @@ test('a change starts in the work folder, ~/work, which the console makes first 
   assert.ok(wall.includes('ReadOnlyPaths=/spark3') && wall.includes('ReadWritePaths=/spark3/work'), JSON.stringify(wall));
   assert.ok(wall.includes('MemoryMax=4G') && r.json.memoryCap === '4 GB', JSON.stringify([r.json.memoryCap, wall]));
   // (a folder at the top of the home that is there is one of those writable folders: writing into it runs at once)
-  const into = await run('cp work/here.txt ~/notes/', 'spark3', '~');
+  const into = await run('cp work/here.txt notes/', 'spark3', '~');
   assert.equal(into.status, 200, into.text);
   assert.equal(text('notes/here.txt'), 'w\n');
   assert.ok(!existsSync(at3('here.txt')));
@@ -346,6 +346,34 @@ test('no change runs at once while a Spark advertises Tailscale SSH, or while th
   assert.equal(text('notes/ts5.txt'), '5\n');
 });
 
+test('no change runs at once while something on that Spark listens on every address, but sshd and what the console published; a look that fails is asked', { timeout: 120000 * SLOW }, async () => {
+  const listens = at3('.mock/ss'), fails = at3('.mock/ss-fails');
+  const asks = async (n, re) => {
+    const chat = await newChat(), words = `fix the port notes ${n} on spark 3`;
+    const r = await turn(chat, words, [[RUN(`echo ${n} > notes/port${n}.txt`)]]);
+    const [asked] = sentBack(words);
+    assert.match(asked?.question || '', re, JSON.stringify(asked));
+    assert.ok(!existsSync(at3(`notes/port${n}.txt`)), 'nothing ran');
+    await choose(chat, r.choices.find(c => c.label === 'No').id);
+  };
+  try {
+    writeFileSync(listens, 'LISTEN 0 128 0.0.0.0:8888 0.0.0.0:* users:(("jupyter-lab",pid=4242,fd=5))\n');
+    await asks(1, /\nAsked because port 8888 \(jupyter-lab\) listens on every address on Spark 3, which a change could reach\.\n/);
+    writeFileSync(listens, 'LISTEN 0 128 [::]:5432 [::]:*\n');
+    await asks(2, /\nAsked because port 5432 listens on every address on Spark 3, which a change could reach\.\n/);
+    // sshd, the console's own serve port, and what listens on the loopback alone: at once
+    writeFileSync(listens, `LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))\nLISTEN 0 128 *:${T.fleet.servePort} *:*\nLISTEN 0 128 127.0.0.1:9999 0.0.0.0:*\n`);
+    const ok = await turn(await newChat(), 'fix the port notes 3 on spark 3', [[RUN('echo 3 > notes/port3.txt')]]);
+    assert.deepEqual(ok.choices, [], 'at once');
+    assert.equal(text('notes/port3.txt'), '3\n');
+    rmSync(listens, { force: true });
+    writeFileSync(fails, '');
+    await asks(4, /\nAsked because whether something listens on every address on Spark 3 couldn’t be told\.\n/);
+  } finally { rmSync(listens, { force: true }); rmSync(fails, { force: true }); }
+  const back = await turn(await newChat(), 'fix the port notes 5 on spark 3', [[RUN('echo 5 > notes/port5.txt')]]);
+  assert.deepEqual(back.choices, [], 'at once again');
+});
+
 // The hold asks the root helper (state --id): after the console stopped waiting for a change (its own time-out) the
 // Spark stays held while the helper says the call runs, and its after-look waits for the helper's "ended".
 test('after a change the console stopped waiting for, its Spark is held while the root helper says it runs, and its after-look waits for its end', { timeout: 120000 * SLOW }, async () => {
@@ -363,7 +391,16 @@ test('after a change the console stopped waiting for, its Spark is held while th
   assert.match(beside.json.error, /^Something is already changing on Spark 3/);
   assert.ok(!existsSync(afterLook), 'no after-look while it may still run');
   await waitFor(() => existsSync(at3('notes/t-done')), { timeout: 40000, every: 500, what: 'the change to end' });
-  await waitFor(async () => (await run('touch notes/t-beside.txt', 'spark3', '~')).status === 200, { every: 1000, timeout: 15000, what: 'the Spark let go once the helper says it has ended' });
+  let last = null;
+  try {
+    await waitFor(async () => (last = await run('touch notes/t-beside.txt', 'spark3', '~')).status === 200, { every: 1000, timeout: 15000, what: 'the Spark let go once the helper says it has ended' });
+  } catch (e) {
+    // (what the helper's own mark of the call says, and whether that program still runs: so a failure says why)
+    const unit = startOf(command)?.unit || '', mark = join(H3(), '.rehearsal', 'run', 'spark-console', '.calls', unit.slice('sw-run-'.length));
+    const m = existsSync(mark) ? readFileSync(mark, 'utf8').trim() : '(no mark)', pid = /^\S+ (\d+)$/.exec(m)?.[1];
+    const st = pid && existsSync(`/proc/${pid}/stat`) ? readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ').slice(0, 3).join(' ') : '(gone)';
+    assert.fail(`${e.message}; the helper's mark: ${m}; its program: ${st}; live: ${existsSync(join(H3(), '.rehearsal', 'standin', 'live', unit))}; last: ${last?.status} ${last?.text?.slice(0, 200)}`);
+  }
   assert.ok(existsSync(afterLook), 'the after-look, once it ended');
 });
 
@@ -499,7 +536,7 @@ test('the root helper\'s own last lines (the disk floor ended it, the home put b
 // The rail (R52): Sparkie's own call makes a change at once only while an eval is on record for its brain. A fleet of
 // its own with none: the plain change the owner's words ask for is one button, nothing runs, and the press runs it.
 test('with no eval on record, a plain change Sparkie proposes is a button like any other, and the owner\'s own press runs it', { timeout: 240000 * SLOW }, async () => {
-  const fleet = await startMock({ evalOnRecord: false, env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000' },
+  const fleet = await startMock({ evalOnRecord: false, env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
     prepare: ({ root }) => {
       rehearse(root, 'spark3', { run: true });
       mkdirSync(join(root, 'spark3', 'notes'), { recursive: true });

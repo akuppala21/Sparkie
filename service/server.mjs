@@ -16696,7 +16696,7 @@ function workWrote(ctx, sorted) {
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
 // fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = []) {
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${sorted.why}`;
@@ -16711,6 +16711,11 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   const ts = workTailnetSsh();
   if (ts.on.length) return `Tailscale SSH is on for ${ts.on.join(', ')}, so a command could reach a shell there with no key`;
   if (ts.unknown.length) return `whether Tailscale SSH is on for ${ts.unknown.join(', ')} couldn’t be told`;
+  // (nor while a program there listens on every address, but sshd and what the console published: the wall closes
+  // ranges, not ports, and 127.0.0.53, the resolver it leaves open, reaches such a program)
+  if (!listeners?.ok) return `whether something listens on every address on ${sparkName(node)} couldn’t be told`;
+  const own = workOwnPorts(node), wideOpen = listeners.wide.filter(x => !own.has(x.port));
+  if (wideOpen.length) return `${wideOpen.slice(0, 3).map(x => `port ${x.port}${x.prog ? ` (${x.prog})` : ''}`).join(', ')} ${wideOpen.length === 1 ? 'listens' : 'listen'} on every address on ${sparkName(node)}, which a change could reach`;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
@@ -16718,6 +16723,30 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
     if (ctx.readOutside) return 'Sparkie read text from outside first';
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
   return null;
+}
+
+// What listens on every address on a Spark (the helper's read, fix 4): one look (ss -tlnp, the owner's own view, so a
+// program's name only for the owner's own), kept a short while like the tailnet's; a look that fails can't tell.
+const WORK_WIDE_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_WIDE_MS) || 60000;
+const workWideSeen = new Map();
+async function workListeners(node) {
+  const was = workWideSeen.get(node.id);
+  if (was && Date.now() - was.at <= WORK_WIDE_MS) return was;
+  const r = await run(node, 'ss -tlnpH', { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
+  const seen = { at: Date.now(), ok: r.code === 0, wide: [] };
+  for (const line of seen.ok ? String(r.out).split('\n') : []) {
+    const f = line.trim().split(/\s+/), m = /^(?:\*|0\.0\.0\.0|\[::\]|::|\[::ffff:0\.0\.0\.0\])(?:%\S+)?:(\d{1,5})$/.exec(f[3] || '');
+    if (m && !seen.wide.some(x => x.port === Number(m[1]))) seen.wide.push({ port: Number(m[1]), prog: /users:\(\("([^"]{1,40})"/.exec(line)?.[1] || null });
+  }
+  workWideSeen.set(node.id, seen);
+  return seen;
+}
+// The ports there that may listen wide: sshd's, and what the console itself published (its models' serve port, its
+// apps' ports, desired.json).
+function workOwnPorts(node) {
+  const own = new Set([22, Number(CONFIG.servePort)]);
+  try { for (const x of desired().running || []) if (x.spark === node.id && x.app && x.port) own.add(Number(String(x.port).split(':')[0])); } catch {}
+  return own;
 }
 
 // Tailscale SSH on the fleet, from the tailnet's own answer (noteTailnet, 20-ways-in.mjs): the Sparks that advertise it,
@@ -16815,7 +16844,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     workAsks.delete(key);
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs);
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
