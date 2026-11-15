@@ -768,20 +768,21 @@ class Ctx:
         self.mode, self.how = mode, how
         with open(f'{S}/fixtures.json') as f:
             self.fx = json.load(f)
-        self.port = None
-        for _ in range(50):
-            try:
-                with open(f'{S}/port') as f:
-                    self.port = int(f.read())
-                break
-            except (OSError, ValueError):
-                time.sleep(0.1)
         try:
             with open(os.path.join(HERE, 'target')) as f:
                 self.pid = int(f.read() or 0)
         except (OSError, ValueError):
             self.pid = 0
         # Without its own program outside the walls, attempts 2, 4, 6 and 7 would try nothing: fail, never "blocked".
+        # Its port is waited for only outside (the first unit after it starts); inside a wall it must be there already.
+        self.port = None
+        for _ in range(50 if self.pid and mode == 'outside' else 1):
+            try:
+                with open(f'{S}/port') as f:
+                    self.port = int(f.read())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.1)
         if not self.pid or not self.port:
             raise RuntimeError('the proof has no program outside the walls')
 
