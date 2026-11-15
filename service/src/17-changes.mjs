@@ -71,7 +71,9 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   const shown = choices.slice(0, 4).map(c => {
     if (!c.call && !ctx.conv) return { label: c.label, choice: null };
     const id = randomBytes(5).toString('hex');
-    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation });
+    // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
+    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
