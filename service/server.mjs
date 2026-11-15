@@ -7029,9 +7029,9 @@ function noteSparkStates(nodes) {
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
-    // (a Spark back on is a chance for the daily copy, if today's is still due: with idle Sparks powered off, one may be
-    // on only now and then)
-    if (flipped && online) try { backupIfDue(); } catch {}
+    // (a Spark back on gets the state's copy if the state changed: with idle Sparks powered off, one may be on only now
+    // and then, 20-state-copy.mjs)
+    if (flipped && online) try { copyOnWake(n.id); } catch {}
   }
 }
 function saveKnowledge() {
@@ -8655,11 +8655,8 @@ function openProblems() {
       const names = [...new Set(readdirSync(STATE_DIR).map(f => /^([\w.-]+?\.jsonl?)\.unreadable-[\w-]+$/.exec(f)?.[1]).filter(Boolean))];
       if (names.length) add('aside', `Spark Console set aside ${names.length === 1 ? 'a file' : `${names.length} files`} it couldn’t read (${names.slice(0, 4).join(', ')}). What ${names.length === 1 ? 'it' : 'they'} held is kept in ${tilde(STATE_DIR)} on ${here}, with “.unreadable-” in the name. Look there; moving the kept file out of that folder clears this line.`);
     },
-    () => {
-      if (!backupLate()) return;
-      const g = lastBackup.good;
-      add('copy', `Spark Console’s state ${g ? `hasn’t been copied to another Spark since ${String(g.at).slice(0, 10)}` : 'has never been copied to another Spark'}. It tries every hour and needs another Spark on. Until then, losing ${here}’s disk would lose what changed since.`);
-    },
+    // The state's copy: none newer than 7 days, with changes since (20-state-copy.mjs).
+    () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
@@ -8694,6 +8691,119 @@ function openProblems() {
 function needsLines(list = openProblems()) {
   const lines = list.map(p => p.text);
   return lines.length > NEEDS_MAX ? [...lines.slice(0, NEEDS_MAX - 1), `And ${lines.length - (NEEDS_MAX - 1)} more. Fix the ones above first.`] : lines;
+}
+/* ───────── when the state's copy goes: only while another Spark is awake anyway ───────── */
+// Area: safety        Rules: R23, R41        Tests: copy.test.mjs, state.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says
+// when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5,
+// contract 6.25):
+// - a compute Spark comes online (the status check sees it come back: by itself, by the owner's hand, or turned on by
+//   Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs);
+// - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one
+//   first, inside the power-off's operation (copyBeforeOff, from 21-power.mjs). It waits for a copy already under way
+//   and then for its own, each no longer than a copy may take (sendCopy: 3 minutes for the stream, 1 for the move). A
+//   copy that fails is on the record (backup.json's last try, and a line in the operation's log), and the power-off
+//   goes ahead;
+// - the hourly look (backupIfDue): it sends only while a Spark is on and the state changed.
+// A copy goes only to a Spark that is awake (copyAwake): never one Spark Console powered off or is powering off, nor
+// one the status check last saw off. Nothing here turns a Spark on.
+// "Changed" is one mark of the state folder (stateMark): each file's name, size and time, less what Spark Console
+// rewrites by itself as it watches and logs (COPY_IGNORES). The newest good copy keeps its mark (goodMark in
+// backup.json). No copy newer than 7 days, with changes since: one needs-you line (copyLateWords) and one notice
+// (copyLate), until a copy lands. Never before day 7: the owner takes up to a week of changes over waking a Spark.
+const COPY_LATE_MS = 7 * 86400000;
+// How long a power-off waits for a copy already under way before it looks again (a copy takes 4 minutes at most).
+const COPY_WAIT_MS = 5 * 60000;
+// Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
+// due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
+// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json, which no copy carries.
+const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json']);
+
+// The state folder as one mark: each file's name, size and time, in name order, less COPY_IGNORES, sockets, a save under
+// way (.tmp) and the copy from before a save (.prev). null when it can't be read: a copy is then due.
+function stateMark() {
+  try {
+    const h = createHash('sha256');
+    const walk = (dir, rel, depth) => {
+      for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+        const name = rel ? `${rel}/${e.name}` : e.name;
+        if (COPY_IGNORES.has(name) || /\.(sock|tmp|prev)$/.test(e.name)) continue;
+        if (e.isDirectory()) { if (depth < 4) walk(`${dir}/${e.name}`, name, depth + 1); continue; }
+        if (!e.isFile()) continue;
+        const s = statSync(`${dir}/${e.name}`);
+        h.update(`${name}\0${s.size}\0${s.mtimeMs}\n`);
+      }
+    };
+    walk(STATE_DIR, '', 0);
+    return h.digest('hex').slice(0, 16);
+  } catch { return null; }
+}
+// The state changed since the newest good copy (with none yet, or no mark kept with it: changed).
+const copyDue = () => BACKUP_ON && !(lastBackup?.good && lastBackup.goodMark && lastBackup.goodMark === stateMark());
+// What a try adds to backup.json (backupState): the state's mark at the newest good copy, and, while there has never been
+// a good copy, since when one has been tried, where the 7 days start.
+function keepMarks(rec, before, mark) {
+  rec.goodMark = rec.ok ? mark : before?.goodMark ?? null;
+  if (!rec.good) rec.since = before?.since || rec.at;
+}
+// Awake for a copy: not powered off by Spark Console, not being powered off now, and not seen off by the status check.
+const copyAwake = id => !consoleOff(id) && !sparkOff(id) && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
+
+// A Spark came online: if it may take a copy and the state changed, it gets one (another awake Spark if it fails).
+function copyOnWake(id) {
+  if (!copyDue() || !backupTargets(id).some(n => n.id === id)) return;
+  backupState(id).catch(e => console.error(`The copy of the state when ${id} came online: ${e.message}`));
+}
+
+// Inside a power-off (powerOffJob): the Sparks about to go down get the copy first if the state changed. Never throws;
+// says in the operation's log what happened when a copy was tried.
+async function copyBeforeOff(j, ids) {
+  if (!BACKUP_ON) return;
+  try {
+    for (const id of ids) {
+      for (let i = 0; i < 3 && copyDue(); i++) {
+        for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+        if (backingUp || !copyDue()) break;
+        const name = sparkName(nodeById(id) || { id }), before = lastBackup;
+        step(j, `Copying Spark Console’s state to ${name} first`);
+        await backupState(id);
+        const b = lastBackup;
+        // (another copy began first: wait for it, then look again)
+        if (b === before) continue;
+        const g = b.good, hold = g && sparkName(nodeById(g.to) || { id: g.to });
+        note(j, b.ok ? `Spark Console’s state was copied to ${hold} first`
+          : `Spark Console’s state couldn’t be copied first (${b.error}), so ${name} goes down without it. ${g ? `The newest copy is from ${String(g.at).slice(0, 10)}, on ${hold}.` : 'There is no good copy yet.'}`);
+        break;
+      }
+    }
+  } catch (e) { note(j, `The copy of Spark Console’s state before the power-off didn’t run (${String(e?.message || e).split('\n')[0].slice(0, 200)}); powering off anyway.`); }
+}
+
+// No copy newer than 7 days, with changes since (none ever: 7 days from the first try).
+function copyLateNow() {
+  if (!BACKUP_ON || !lastBackup) return false;
+  const from = Date.parse(lastBackup.good?.at || lastBackup.since || '');
+  return Number.isFinite(from) && Date.now() - from >= COPY_LATE_MS && copyDue();
+}
+// The words, for the needs-you list and the notice. Code-built: Spark names, days, and the last try's own fixed phrase.
+function copyLateWords(here) {
+  const b = lastBackup, g = b.good, hold = g && sparkName(nodeById(g.to) || { id: g.to });
+  const tried = b.ok === false && b.error && (!g || String(b.at) > String(g.at)) ? ` The last try, on ${String(b.at).slice(0, 10)}, didn’t work: ${b.error}.` : '';
+  return `${g ? `Spark Console’s state hasn’t been copied to another Spark for over 7 days (the newest copy is from ${String(g.at).slice(0, 10)}, on ${hold}), and it has changed since.`
+    : 'Spark Console’s state has never been copied to another Spark, and no copy has landed in over 7 days.'}${tried} A copy goes by itself the next time another Spark is on; none is turned on for it, so turn one on for a few minutes. Until then, losing ${here}’s disk would lose what changed.`;
+}
+// The notice (R23): once when the copy goes late, and not again until a copy lands (noticedOn: the day it went out).
+function copyLate() {
+  if (!copyLateNow()) return;
+  const from = dayOf(Date.parse(lastBackup.good?.at || lastBackup.since));
+  if (lastBackup.noticedOn && lastBackup.noticedOn > from) return;
+  lastBackup.noticedOn = dayOf(Date.now());
+  try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the copy’s record: ${e.message}`); }
+  const hub = NODES.find(n => n.host === 'local');
+  fleetEvent({ type: 'notice', text: copyLateWords(hub ? sparkName(hub) : 'the Spark that runs Spark Console') });
 }
 /* ───────── telling the owner on Telegram ───────── */
 // Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
@@ -10656,6 +10766,7 @@ async function powerOffJob(j, ids, ctx, why) {
   for (const id of up) if (!(await sudoReady(nodeById(id)))) throw new Error(setupWords(nodeById(id)));
   for (const id of up) { const unproven = await plugUnproven(id); if (unproven) throw new Error(unproven); }
   if (why === 'idle') for (const id of up) { const busy = await idleInUse(nodeById(id)); if (busy) throw new Error(`Not idle: ${busy}. Nothing was changed.`); }
+  await copyBeforeOff(j, up);   // (the state's copy first, if it changed: 20-state-copy.mjs)
   // Parking: Spark Console's models and kept apps there stop (both parts of a model across two Sparks), and stay on the
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));
@@ -13843,32 +13954,32 @@ const handler = async (req, res) => {
   }
 };
 
-/* ───────── a daily copy of the console's state on another Spark ───────── */
-// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, fleet.test.mjs, install.test.mjs
-// Owns: backup.json (writers: backupState)
-// Timers: backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop
-//   waits for running operations, 60 s at most)
+/* ───────── a copy of the console's state on another Spark ───────── */
+// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, copy.test.mjs, fleet.test.mjs,
+//   install.test.mjs
+// Owns: backup.json (writers: backupState, copyLate)
+// Timers: backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed),
+//   needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 // Wakes: none
-// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
-// Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
-// one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is
-// read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and
-// remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't
-// finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes one. backup.json
-// keeps the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today
-// (UTC): it is tried ten minutes after a start, then every hour. With no good copy today or yesterday, one notice a day
-// says so.
+// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one
+// is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark
+// or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as
+// <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move
+// it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or
+// one tar couldn't finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes
+// one. backup.json keeps the last try and the last good copy, so a restart forgets neither. When a copy goes, and to
+// which awake Spark, is 20-state-copy.mjs's: only when the state changed, and never by waking a Spark.
 // To restore: stop the service, then untar one into ~/.local/state/spark-console (docs/sharing.md).
 const BACKUP_FILE = `${STATE_DIR}/backup.json`;
 const BACKUP_ON = !ALL_LOCAL || Boolean(process.env.SPARK_CONSOLE_BACKUP_MS);
 let lastBackup = null, backingUp = false;
 try { const kept = readKept(BACKUP_FILE); if (kept && typeof kept === 'object' && !Array.isArray(kept)) lastBackup = kept; } catch {}
 const dayOf = t => new Date(t).toISOString().slice(0, 10);
-// A try was made and no good copy is from today or yesterday (UTC): the notice and the open-problems list say so.
-const backupLate = () => BACKUP_ON && Boolean(lastBackup) && !(lastBackup.good && String(lastBackup.good.at).slice(0, 10) >= dayOf(Date.now() - 86400000));
-function backupTargets() {
-  const first = CONFIG.backupTo || 'spark3', brain = brainSparks();
-  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n)).sort((a, b) => (b.id === first) - (a.id === first));
+// Awake Sparks only (copyAwake, 20-state-copy.mjs). first: one that just came online or is about to be powered off, tried
+// first.
+function backupTargets(first = null) {
+  const pick = first || CONFIG.backupTo || 'spark3', brain = brainSparks();
+  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n) && (n.id === first || copyAwake(n.id))).sort((a, b) => (b.id === pick) - (a.id === pick));
 }
 // One tar stream from this Spark to a file on another, in two steps: the stream is kept there as <name>.part and read
 // back; then, once both ends are known, it is moved into place or removed. True only when tar, the far side, the
@@ -13906,30 +14017,28 @@ function sendCopy(target, name) {
     dst.stdin.on('error', () => {});
   });
 }
-async function backupState() {
+async function backupState(first = null) {
   if (!BACKUP_ON || backingUp) return;
   backingUp = true;
   try {
-    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(), before = lastBackup;
+    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(first), before = lastBackup, mark = stateMark();
     let to = null;
     for (const t of targets) if (await sendCopy(t, file)) { to = t; break; }
     const at = new Date().toISOString();
     lastBackup = to ? { at, ok: true, to: to.id, file, good: { at, to: to.id, file }, noticedOn: before?.noticedOn || null }
       : { at, ok: false, error: targets.length ? `${targets.map(n => sparkName(n)).join(', ').replace(/, ([^,]*)$/, ' and $1')} didn’t take it` : 'no other Spark was reachable', good: before?.good || null, noticedOn: before?.noticedOn || null };
-    // No good copy today or yesterday: one notice a day, never one per try.
-    if (!to && backupLate() && lastBackup.noticedOn !== day) {
-      const g = lastBackup.good;
-      lastBackup.noticedOn = day;
-      fleetEvent({ type: 'notice', text: `Spark Console’s state ${g ? `was last copied to another Spark on ${String(g.at).slice(0, 10)} (${sparkName(nodeById(g.to) || { id: g.to })} holds it)` : 'has never been copied to another Spark'}. Today ${lastBackup.error}. It tries again every hour.` });
-    }
+    keepMarks(lastBackup, before, mark);
+    // None newer than 7 days, with changes since: one notice (20-state-copy.mjs).
+    copyLate();
     try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the daily copy’s record: ${e.message}`); }
   } finally { backingUp = false; }
 }
-// Due until one has worked today: ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS: how often it checks).
-// (also when a Spark comes back on, 19-watcher.mjs: with Sparks powered off when idle, an hourly try could keep missing
-// the times one is on)
+// The hourly look, ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS): a copy only when the state
+// changed and a Spark is awake. With none awake nothing is sent and none is woken (only the very first try is recorded,
+// so the 7 days have a start). A Spark coming online, and one about to be powered off, are 20-state-copy.mjs's.
 function backupIfDue() {
-  if (!BACKUP_ON || String(lastBackup?.good?.at).slice(0, 10) === dayOf(Date.now())) return;
+  if (!copyDue()) return;
+  if (lastBackup && !backupTargets().length) return copyLate();
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));
 }
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));

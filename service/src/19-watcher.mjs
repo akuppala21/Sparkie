@@ -267,9 +267,9 @@ function noteSparkStates(nodes) {
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
-    // (a Spark back on is a chance for the daily copy, if today's is still due: with idle Sparks powered off, one may be
-    // on only now and then)
-    if (flipped && online) try { backupIfDue(); } catch {}
+    // (a Spark back on gets the state's copy if the state changed: with idle Sparks powered off, one may be on only now
+    // and then, 20-state-copy.mjs)
+    if (flipped && online) try { copyOnWake(n.id); } catch {}
   }
 }
 function saveKnowledge() {
