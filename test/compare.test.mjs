@@ -18,7 +18,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, REPO, useFleet, api, newChat, say, choose, chatMessages, waitFor, SLOW } from './lib.mjs';
+import { T, REPO, useFleet, api, newChat, say, choose, chatMessages, agentSettings, waitFor, SLOW } from './lib.mjs';
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT = 'gpt-oss-20b', TEST = 'testorg--Qwen3.8-27B-abliterated-GGUF', IMAGE = 'python:3.12-slim';
 const SINCE = '2026-11-12T08:00:00.000Z';
@@ -203,5 +203,78 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
       assert.ok(!running('spark3').some(n => n.startsWith('sc-') || n.startsWith('cmp-')), running('spark3').join(', '));
     } finally { writeFileSync(jobsRun, ''); }
     assert.ok(existsSync(jobsRun));
+  });
+
+  // The model review (D): "a later run with no model uses it" is true or says why. A job's container keeps the settings
+  // it was made with, so a run that would hand it another model is refused in those words.
+  test('a run that would hand a job made for one model another one is refused in those words', { timeout: 240000 * SLOW }, async () => {
+    const r = await act('run_workflow', { name: 'scored work', inputs: { model: TEST, sample: 3 } });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    const run = await opEnd(r.json.operation, 'the run for another model');
+    assert.equal(run.status, 'failed', run.log.join('\n'));
+    assert.match(run.error, /^Step 2 \(keep_running\): cmp is there already on Spark 3, made to ask \S*gpt-oss-20b, and this run would hand it \S*testorg\S*\. A job keeps the settings it was made with/);
+    assert.ok(!running('spark3').some(n => n.startsWith('sc-')), running('spark3').join(', '));
+  });
+
+  // D3: in a compare's run only the {model} step's model is handed on, never a fixed helper's.
+  test('a second, fixed model step after the {model} start: each candidate’s job is handed its own candidate', { timeout: 420000 * SLOW }, async () => {
+    await ownerSaves('helper after', [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } },
+      { action: 'start_model', args: { model: 'RadixArk--Qwen3.8-27B-NVFP4', spark: 'spark4' } },
+      { action: 'keep_running', args: { spark: 'spark3', container: 'hlp', image: IMAGE, once: true, command: scoring({ gpt: 0.9, testorg: 0.6, Radix: 0.3 }) } }]);
+    const op = await compare({ workflow: 'helper after', candidates: [GPT, TEST], sample: 2 });
+    assert.equal(op.status, 'completed', `${op.error}\n${op.log.join('\n')}`);
+    assert.match(op.report[0], /^gpt-oss-20b: score 0\.9, 2 items, \d+ s$/);
+    assert.match(op.report[1], /^testorg--Qwen3\.8-27B-abliterated-GGUF: score 0\.6, 2 items, \d+ s$/);
+    assert.ok(running('spark4').includes(RADIX), 'the helper that ran before still runs');
+  });
+
+  test('a workflow that starts no {model} before its job, or runs no job, is refused by name before anything starts', { timeout: 120000 * SLOW }, async () => {
+    const before = running('spark3');
+    for (const [title, steps, said] of [
+      ['no start', [{ action: 'keep_running', args: { spark: 'spark3', container: 'nos', image: IMAGE, once: true, command: scoring({ gpt: 0.9 }) } }],
+        '“no start” starts no {model} before its job (step 1), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.'],
+      ['no job', [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } }],
+        '“no job” runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.'],
+    ]) {
+      const s = await act('save_workflow', { title, inputs: { model: 'the model' }, steps });
+      assert.equal(s.status, 200, s.text);
+      const r = await act('compare_models', { workflow: title, candidates: [GPT, TEST] });
+      assert.equal(r.status, 409, r.text);
+      assert.equal(r.json.error, said);
+    }
+    assert.deepEqual(running('spark3'), before, 'nothing started');
+  });
+
+  // The review's Later 2: the owner asked for the compare in their own chat, so its candidate runs are the owner's own.
+  test('three candidate runs that fail, in a compare the owner asked Sparkie for, don’t pause agents’ changes', { timeout: 420000 * SLOW }, async () => {
+    const MODELS = [GPT, 'gemma-3-12b-it', 'NVIDIA-Nemotron-Nano-9B-v2'];
+    await ownerSaves('bad work', [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } },
+      { action: 'keep_running', args: { spark: 'spark3', container: 'bad', image: IMAGE, once: true, command: ['sh', '-c', 'echo going badly; exit 3'] } }]);
+    const words = `compare ${MODELS.join(', ')} on bad work`;
+    script([{ match: `^${esc(words)}$`, calls: [{ name: 'compare_models', arguments: { workflow: 'bad work', candidates: MODELS, sample: 1 } }] }]);
+    try {
+      const r = await say(await newChat(), words);
+      assert.deepEqual(r.message.tools.map(x => [x.name, x.outcome ?? null]), [['compare_models', 'started']], JSON.stringify(r.message.tools));
+      const op = await waitFor(async () => (await act('recent_operations', { limit: 50 })).json.operations.find(o => o.type === 'compare' && o.model === 'bad work' && o.status !== 'running') || null, { timeout: 360000, what: 'the compare of bad work', every: 1000 });
+      const done = await opNow(op.id);
+      assert.equal(done.report.length, MODELS.length + 1, done.report.join('\n'));
+      MODELS.forEach((m, i) => assert.match(done.report[i], new RegExp(`^${esc(m)}: failed: Step 2 \\(keep_running\\) failed: bad-`)));
+      assert.equal((await api('/agents')).json.settings.halted, false, 'agents’ changes are not paused');
+    } finally { noScript(); await agentSettings({ halted: false }); }
+  });
+
+  // D1: a candidate's run stops nothing to make room, so the owner's own model on its Spark stays as it was.
+  test('the owner’s model on the Spark a candidate needs stays running and listed; the candidate is listed with why it wasn’t started', { timeout: 300000 * SLOW }, async () => {
+    const OWN = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF';
+    const r = await act('restart_model', { spark: 'spark3', container: OWN });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    assert.equal((await opEnd(r.json.operation, 'the owner’s model started')).status, 'completed');
+    assert.ok(running('spark3').includes(OWN) && (await api('/desired')).json.running.some(x => x.spark === 'spark3' && x.container === OWN));
+    const op = await compare({ workflow: 'scored work', candidates: [GPT], sample: 2 });
+    assert.equal(op.status, 'completed', `${op.error}\n${op.log.join('\n')}`);
+    assert.match(op.report[0], /^gpt-oss-20b: failed: Step 1 \(start_model\) failed: .*only fits if sc-testorg--Qwen3\.8-27B-abliterated-GGUF stops, and a compare never stops a model to make room/);
+    assert.equal(op.report[1], 'No candidate ended well, so nothing was kept.');
+    assert.ok(running('spark3').includes(OWN), 'the owner’s model still runs');
+    assert.ok((await api('/desired')).json.running.some(x => x.spark === 'spark3' && x.container === OWN), 'and is still listed');
   });
 });
