@@ -75,6 +75,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
 | add a self-test check | `docs/how/add-a-hardware-check.md` |
+| run something on a Spark through the root helper | `docs/how/call-the-root-helper.md` |
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
