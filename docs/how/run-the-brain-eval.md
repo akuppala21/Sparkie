@@ -23,13 +23,17 @@ The memory questions (design G 3.7): `--set memory` runs `test/eval/memory.json`
 `time`, `digest`, `count`, `said`): each case's stand-in console gets `SPARK_CONSOLE_MEMORY_OFF`, a feature reads its
 name there, and the record says which were on (`memorySwitches`). A case may also have `before` (earlier chats),
 `seed` (memory lines and journal records, with dates), `has` and `hasNot` (words in the brain's requests for the
-turn) and `standIn` (the stand-in brain's rules); `test/eval.mjs`'s header has their shapes.
+turn), `answerHas` and `answerHasNot` (words in the answer, graded apart), `kind` and `switch` (the addition it
+measures), and `standIn` (the stand-in brain's rules); `test/eval.mjs`'s header has their shapes. The run prints each
+case and each kind with its rounds and seconds. `--set memory-held-out` is the held-out set: run it beside, and never
+copy its words into a prompt, a tool text, a document or another case file, or tune memory by it.
 
 ## Also update
 
 - A new or edited case in `test/eval/cases.json` is a new case set: results on record for the old one stop counting.
 - A new memory addition reads its name in `SPARK_CONSOLE_MEMORY_OFF`, and the name is in `MEMORY_SWITCHES`
-  (`test/eval.mjs`).
+  (`test/eval.mjs`); a question that measures it (`switch`) fails on the stand-in with it off
+  (`memory-questions.test.mjs`).
 - `docs/rules/R47.md` when the record's fields change.
 
 ## Never
@@ -45,7 +49,7 @@ turn) and `standIn` (the stand-in brain's rules); `test/eval.mjs`'s header has t
 
 ## Tests
 
-- `brain-eval.test.mjs`, `brain-eval-memory.test.mjs`.
+- `brain-eval.test.mjs`, `brain-eval-memory.test.mjs`, `memory-questions.test.mjs`.
 
 ## Copy from
 

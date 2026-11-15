@@ -50,9 +50,20 @@
 //   before    messages sent first, each in a new chat of its own (or a list of messages: one chat, in that order)
 //   seed      {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …its fields}]}: lines in memory.json and
 //             records in the journal before the console starts; at is an ISO date, or "-20d", "-3h", "-15m" before the run
+//             (and for the memory questions, test/eval/memory.json): a line may also have until (a date, kept as its day)
+//             and replaces; past: [{text, …, gone: {at?, why?, by?}}] (retired lines, memory-past.json); proven: [{model,
+//             engine, nodes, best: {decodeTokS}, runs?, at?}] (runs that worked, verified.json); newer: N made-up lines
+//             after the case's own, about nothing a question names, so memory is past its block; unreadable: true
+//             (memory.json can't be read). A date may also be "last-month" (its 15th) or "last-tuesday" (that day of last
+//             week, weeks starting on Monday as recall's)
 //   has       words that must each be in a request the brain got for the case's turn (any round, any message; capitals
 //             or not); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
 //   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in
+//   answerHas words that must each be in the answer (exact names, numbers); answerHasNot: words that must not be. Kept
+//             apart from has and hasNot, so what the brain is sent is graded exactly; a run's record lists those that
+//             failed (answerMissing, answerUnwanted)
+//   kind      what the question is about, and switch: the memory addition it measures (--memory-off). The record keeps
+//             both, and the run prints each case and each kind with its rounds and seconds
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
 //                        POST /main/eval, to keep it in the profile of the brain serving now. Nothing else runs.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
@@ -121,40 +132,64 @@ if (!existsSync(CASES_FILE)) { console.error(`No case file at ${CASES_FILE}.`); 
 const CASES_BYTES = readFileSync(CASES_FILE);
 // The case file as the record names it: its path in this tree, or its name alone (no folder of this machine).
 const SET_FILE = (p => (p.startsWith('..') || isAbsolute(p) ? basename(CASES_FILE) : p))(relative(join(TEST_DIR, '..'), CASES_FILE));
-const SET = createHash('sha256').update(CASES_BYTES).digest('hex'), ALL = JSON.parse(CASES_BYTES).length;
-const cases = JSON.parse(CASES_BYTES).filter(c => !ONLY || ONLY.includes(c.id));
-// A seeded date: an ISO date, or "-20d", "-3h", "-15m" before now; null when it is neither.
+// A case file is a list of cases, or {about, cases}: the memory questions say what they are in their own file.
+const CASE_LIST = (j => (Array.isArray(j) ? j : j?.cases))(JSON.parse(CASES_BYTES));
+if (!Array.isArray(CASE_LIST)) { console.error(`${SET_FILE}: not a list of cases, nor {about, cases}.`); process.exit(1); }
+const SET = createHash('sha256').update(CASES_BYTES).digest('hex'), ALL = CASE_LIST.length;
+const cases = CASE_LIST.filter(c => !ONLY || ONLY.includes(c.id));
+// A seeded date: an ISO date, "-20d", "-3h", "-15m" before now, "last-month" (its 15th, at noon) or "last-tuesday" (that
+// day of last week, at 10:00), on this machine's calendar, which the stand-in console shares; null when it is none.
+const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 function when(at, now = Date.now()) {
   const m = /^-(\d{1,5})([dhm])$/.exec(String(at));
   if (m) return new Date(now - Number(m[1]) * { d: 86400000, h: 3600000, m: 60000 }[m[2]]).toISOString();
+  const d = new Date(now), last = /^last-([a-z]+)$/.exec(String(at))?.[1];
+  if (last === 'month') return new Date(d.getFullYear(), d.getMonth() - 1, 15, 12).toISOString();
+  if (WEEKDAYS.includes(last)) return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7) - 7 + WEEKDAYS.indexOf(last), 10).toISOString();
   const t = Date.parse(at);
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 // What is wrong with a case's fields, said as what they take; null when they fit. Checked before anything starts.
 const listOf = (v, ok) => v === undefined || (Array.isArray(v) && v.every(ok));
 const filled = w => typeof w === 'string' && Boolean(w.trim());
+const seedLineOk = l => filled(l?.text) && [l.at, l.until, l.gone?.at].every(x => x === undefined || when(x));
 const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id and say'
   : !listOf(c.before, b => filled(b) || (Array.isArray(b) && b.length > 0 && b.every(filled))) ? 'before: a list of messages (each a message, or a list of messages for one chat)'
-  : !listOf(c.has, filled) || !listOf(c.hasNot, filled) ? 'has and hasNot: lists of words'
-  : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, l => filled(l?.text) && (l.at === undefined || when(l.at)))
-    || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}'
+  : !listOf(c.has, filled) || !listOf(c.hasNot, filled) || !listOf(c.answerHas, filled) || !listOf(c.answerHasNot, filled) ? 'has, hasNot, answerHas and answerHasNot: lists of words'
+  : c.switch !== undefined && !MEMORY_SWITCHES.includes(c.switch) ? `switch: one of ${MEMORY_SWITCHES.join(', ')}`
+  : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
+    || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
+    || !listOf(c.seed.proven, v => filled(v?.model) && filled(v?.engine) && Array.isArray(v.nodes) && (v.at === undefined || when(v.at)))
+    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?, until?}], past, journal: [{k, at?, …}], proven: [{model, engine, nodes, …}], newer: N, unreadable}'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
-for (const c of JSON.parse(CASES_BYTES)) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
+for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
 
 // Before the console starts: the case's memory lines (memory.json, in the state folder), its journal records (the
 // journal folder beside it), and, with --stand-in, its rules for the stand-in brain (model-script.json).
 function seedCase(c, stateDir) {
   const dir = join(stateDir, '..'), now = Date.now(), at = x => when(x, now) || new Date(now).toISOString();
   if (c.standIn && STAND_IN) writeFileSync(join(dir, 'model-script.json'), JSON.stringify(c.standIn));
-  const lines = (c.seed?.memory || []).map((l, i) => ({ id: l.id || createHash('sha256').update(`${c.id}:${i}:${l.text}`).digest('hex').slice(0, 8),
-    kind: l.kind || 'fact', text: l.text, by: l.by || 'owner', at: at(l.at), src: { via: 'sparkie' } }));
-  if (lines.length) writeFileSync(join(stateDir, 'memory.json'), JSON.stringify({ entries: lines }), { mode: 0o600 });
+  // (a line's day, as memory keeps an end: this machine's date)
+  const day = x => { if (/^\d{4}-\d\d-\d\d$/.test(x)) return x; const t = new Date(at(x)); return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const line = (l, i, from = 'm') => ({ id: l.id || createHash('sha256').update(`${c.id}:${from}${i}:${l.text}`).digest('hex').slice(0, 8),
+    kind: l.kind || 'fact', text: l.text, by: l.by || 'owner', at: at(l.at), src: { via: 'sparkie' }, ...(l.until ? { until: day(l.until) } : {}), ...(l.replaces ? { replaces: l.replaces } : {}) });
+  // (newer: made-up lines about nothing a question names, after the case's own, so its own are the oldest)
+  const lines = [...(c.seed?.memory || []).map((l, i) => line(l, i)), ...Array.from({ length: c.seed?.newer || 0 }, (_, i) => line({ text: NEWER_LINE(i + 1), at: '-1d' }, i, 'n'))];
+  if (c.seed?.unreadable) mkdirSync(join(stateDir, 'memory.json'));
+  else if (lines.length) writeFileSync(join(stateDir, 'memory.json'), JSON.stringify({ entries: lines }), { mode: 0o600 });
+  const past = (c.seed?.past || []).map((l, i) => ({ ...line(l, i, 'p'), gone: { at: at(l.gone?.at), why: l.gone?.why || 'replaced', who: 'owner', ...(l.gone?.by ? { by: l.gone.by } : {}) } }));
+  if (past.length) writeFileSync(join(stateDir, 'memory-past.json'), JSON.stringify({ past }), { mode: 0o600 });
+  const proven = (c.seed?.proven || []).map((v, i) => ({ key: `seeded-${c.id}-${i}`, model: v.model, repo: null, title: v.title || v.model, engine: v.engine, image: v.image || null,
+    args: [], env: {}, sparks: v.nodes.length, nodes: v.nodes, firstAt: at(v.at), lastAt: at(v.at), runs: v.runs || 1, ...(v.best ? { best: v.best } : {}) }));
+  if (proven.length) writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: proven }), { mode: 0o600 });
   for (const r of c.seed?.journal || []) {
     const t = at(r.at), folder = join(dir, 'journal');
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     appendFileSync(join(folder, `journal-${t.slice(0, 7)}.jsonl`), `${JSON.stringify({ id: `j_${randomBytes(6).toString('hex')}`, ...r, at: t })}\n`, { mode: 0o600 });
   }
 }
+// A made-up line for seed.newer: about a hallway clock, so no question's names or rare words are in it.
+const NEWER_LINE = n => `note ${n}: the hallway clock ran ${n} minutes fast after the storm, so the kitchen timer was set by hand again`;
 // A turn's end, from its event stream: done or error.
 const turnEnd = text => text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
 
@@ -303,6 +338,14 @@ async function runCase(c) {
       changed: changed.map(l => ({ action: l.action, args: l.args ?? null })), asked, wrong: wrong.length, unverified: (msg.unverified || []).length };
     if (c.has) kept.missing = missing;
     if (c.hasNot) kept.unwanted = unwanted;
+    // What the answer says (answerHas, answerHasNot), graded apart from what the brain was sent.
+    const said = String(msg.content || '').toLowerCase();
+    if (c.answerHas) kept.answerMissing = c.answerHas.filter(w => !said.includes(w.toLowerCase()));
+    if (c.answerHasNot) kept.answerUnwanted = c.answerHasNot.filter(w => said.includes(w.toLowerCase()));
+    if (kept.answerMissing?.length || kept.answerUnwanted?.length) {
+      kept.passed = pass = false;
+      why = [why, kept.answerMissing?.length ? `the answer lacked ${JSON.stringify(kept.answerMissing)}` : '', kept.answerUnwanted?.length ? `the answer held ${JSON.stringify(kept.answerUnwanted)}` : ''].filter(Boolean).join('; ');
+    }
     return { pass, why, wrong: wrong.length, asked, ms, error: msg.error || null, kept };
   } finally { await fleet.stop(); link?.close(); }
 }
@@ -312,7 +355,7 @@ for (const c of cases) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) runs.push(await runCase(c));
   const passed = runs.filter(r => r.pass).length;
-  results.push({ id: c.id, expect: c.expect, passed, runs: RUNS, wrong: runs.reduce((t, r) => t + r.wrong, 0), asked: runs.filter(r => r.asked).length, why: runs.filter(r => !r.pass).map(r => r.why || r.error), broken: runs.filter(r => r.broken).length, p95ms: runs.map(r => r.ms).sort((a, b) => a - b)[Math.ceil(0.95 * runs.length) - 1], kept: runs.map(r => r.kept) });
+  results.push({ id: c.id, expect: c.expect, ...(c.kind ? { kind: c.kind } : {}), ...(c.switch ? { switch: c.switch } : {}), passed, runs: RUNS, wrong: runs.reduce((t, r) => t + r.wrong, 0), asked: runs.filter(r => r.asked).length, why: runs.filter(r => !r.pass).map(r => r.why || r.error), broken: runs.filter(r => r.broken).length, p95ms: runs.map(r => r.ms).sort((a, b) => a - b)[Math.ceil(0.95 * runs.length) - 1], kept: runs.map(r => r.kept) });
   const last = results[results.length - 1];
   console.log(`${last.passed === RUNS ? 'pass' : 'FAIL'}  ${c.id.padEnd(18)} ${last.passed}/${RUNS}${last.wrong ? `  WRONG CHANGES: ${last.wrong}` : ''}${last.why.length ? `  ${last.why[0]}` : ''}`);
 }
@@ -320,6 +363,17 @@ const broken = results.reduce((t, r) => t + r.broken, 0);
 if (broken) {
   console.error(`\n${broken} run(s) failed because the chat itself failed (see "the chat failed" above), so this isn't a score. Nothing was saved.`);
   process.exit(1);
+}
+// By case and by kind (the memory questions): runs passed, and a run's rounds and seconds (the mean of its runs).
+if (results.some(r => r.kind)) {
+  const mean = (xs, k) => (xs.length ? Math.round((xs.reduce((t, x) => t + (x?.[k] || 0), 0) / xs.length) * 10) / 10 : 0);
+  console.log('\nBy case: runs passed, rounds and seconds (the mean of its runs).');
+  for (const r of results) console.log(`  ${r.id.padEnd(30)} ${String(r.kind || '').padEnd(16)} ${String(r.switch || '').padEnd(7)} ${r.passed}/${RUNS}  ${mean(r.kept, 'rounds')} rounds  ${mean(r.kept, 'seconds')} s`);
+  console.log('By kind:');
+  for (const kind of [...new Set(results.map(r => r.kind || '(no kind)'))]) {
+    const of = results.filter(r => (r.kind || '(no kind)') === kind), runs = of.flatMap(r => r.kept);
+    console.log(`  ${kind.padEnd(16)} ${of.reduce((t, r) => t + r.passed, 0)}/${of.length * RUNS} runs passed  ${mean(runs, 'rounds')} rounds  ${mean(runs, 'seconds')} s`);
+  }
 }
 const once = results.reduce((t, r) => t + r.passed, 0) / (results.length * RUNS), all3 = results.filter(r => r.passed === RUNS).length / results.length;
 const wrong = results.reduce((t, r) => t + r.wrong, 0);
@@ -330,7 +384,7 @@ const FULL = results.length === ALL && RUNS >= 3, met = once >= 0.95 && all3 >= 
 const record = mask({ kind: 'spark-console-eval', at: new Date().toISOString(), startedAt: STARTED, build: MARK.build, reads: MARK.reads, ...(MARK.reads ? {} : { readsWhy: MARK.readsWhy }),
   set: SET, setFile: SET_FILE, setCases: ALL, cap: CAP, memorySwitches: { on: MEMORY_SWITCHES.filter(s => !OFF.includes(s)), off: OFF }, brain: BRAIN_SEEN, runs: RUNS, full: FULL,
   score: { passOnce: once, passAllRuns: all3, wrongChanges: wrong, askedOnClear, met: FULL ? met : null },
-  cases: results.map(r => ({ id: r.id, expect: r.expect, passed: r.passed, runs: r.kept })) });
+  cases: results.map(r => ({ id: r.id, expect: r.expect, ...(r.kind ? { kind: r.kind } : {}), ...(r.switch ? { switch: r.switch } : {}), passed: r.passed, runs: r.kept })) });
 const file = resolve(arg('out', join(TEST_DIR, 'eval', `results-${record.at.slice(0, 10)}-${MARK.build}${CAP ? `-cap-${CAP}` : ''}${SET_NAME ? `-${SET_NAME}` : ''}${OFF.length ? `-off-${OFF.join('+')}` : ''}${FULL ? '' : '-partial'}.json`)));
 writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
 console.log(`\n${(once * 100).toFixed(0)}% passed per run, ${(all3 * 100).toFixed(0)}% passed all ${RUNS} runs, ${wrong} wrong changes.`);
