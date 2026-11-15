@@ -6,8 +6,9 @@
 // across two wakes both and starts across both. After a wake a download's version is picked from the live look, so one
 // that fits on one Spark starts there though the status hasn't caught up. A model that fits on one Spark wakes one, and
 // the start a wake hands over to carries the start's version, so the same known failure with and without a wake makes
-// one lesson. A saved workflow's run wakes a Spark through power.wake, keeps it awake while it runs and lets it go at
-// its end (D6a).
+// one lesson. A start placed across two through a wake is a run of start_model_across, not of start_model. A workload
+// whose start goes through two wakes stops that model on both Sparks at its end, and when its job fails. A saved
+// workflow's run wakes a Spark through power.wake, keeps it awake while it runs and lets it go at its end (D6a).
 //
 // T141 (part): only the Sparks a start needs are woken: two for a model across two, one for one that fits on one.
 //
@@ -122,17 +123,39 @@ async function startNamingNone(model) {
   return { r, end, switched: commandsSince(before), ended: JSON.stringify({ answer: r.json, status: end?.status, error: end?.error }) };
 }
 
+// How many runs each start workflow has on record (validations.json), and which operation validated its version.
+const runsOf = () => { const f = join(T.fleet.stateDir, 'validations.json'), v = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {};
+  return Object.fromEntries(['start_model', 'start_model_across'].map(id => [id, { runs: v[id]?.runs || 0, operation: v[id]?.operation || null }])); };
+const countedAs = (was, now) => [now.start_model.runs - was.start_model.runs, now.start_model_across.runs - was.start_model_across.runs];
+// The containers of the big model (both its parts) running on a Spark, from the stand-in Docker's own list.
+const bigRunningOn = spark => readFileSync(join(T.fleet.root, spark, '.mock', 'containers'), 'utf8').split('\n')
+  .filter(l => l.startsWith(`sc-${BIG}`) && l.split('|')[1] === 'running').map(l => l.split('|')[0]);
+// A saved workflow: the big model started with no Spark named, then a job on Spark 3; run to its end.
+async function workload(title, job) {
+  const saved = await act('save_workflow', { title, steps: [{ action: 'start_model', args: { model: BIG } }, { action: 'keep_running', args: { spark: 'spark3', container: job } }] });
+  assert.equal(saved.status, 200, saved.text);
+  const before = plugs.commands.length, r = await act('run_workflow', { name: title });
+  assert.equal(r.json?.outcome, 'started', r.text);
+  return { run: await opEnd(r.json.operation, 400000), switched: commandsSince(before) };
+}
+
 describe('a start wakes the Sparks a model across two needs, and no more (R56)', { concurrency: 1 }, () => {
   test('both asleep, a model that needs two on both records and on the hub’s disk: both are woken at once (the partner on the compute cable, not Spark 2’s) and it starts across both', { timeout: 420000 * SLOW }, async () => {
     await sleepSpark('spark4');
     await sleepSpark('spark3');
     assert.ok(power().off.spark3.models.includes(BIG) && power().off.spark4.models.includes(BIG), 'both records list it');
+    const was = runsOf();
     const { r, end, switched, ended } = await startNamingNone(BIG);
     assert.deepEqual(r.json?.poweringOn, ['spark3', 'spark4'], ended);
     assert.equal(end?.status, 'completed', ended);
     assert.deepEqual(byNode(switched), [{ node: 2, command: 'on' }, { node: 3, command: 'on' }], 'Sparks 3 and 4, never Spark 2');
     const run = await acrossBoth();
     assert.deepEqual([...(run?.acrossSparks || [])].sort(), ['spark3', 'spark4'], JSON.stringify(run));
+    // (it ran start_model_across, so it is that workflow's run and its validation run, not start_model's)
+    const now = runsOf();
+    assert.deepEqual(countedAs(was, now), [0, 1], JSON.stringify({ was, now }));
+    assert.equal(now.start_model_across.operation, r.json.operation, 'the run that validated start_model_across');
+    assert.notEqual(now.start_model.operation, r.json.operation);
     await stopAllOn('spark3');
   });
 
@@ -140,13 +163,49 @@ describe('a start wakes the Sparks a model across two needs, and no more (R56)',
     rmSync(join(T.fleet.root, 'spark2', 'models', BIG), { recursive: true, force: true });
     await sleepSpark('spark4');
     await sleepSpark('spark3');
+    const was = runsOf();
     const { r, end, switched, ended } = await startNamingNone(BIG);
     assert.deepEqual(r.json?.poweringOn, ['spark3'], ended);
     assert.equal(end?.status, 'completed', ended);
     assert.deepEqual(switched, [{ node: 2, command: 'on' }, { node: 3, command: 'on' }], 'Spark 3, then its partner');
     const run = await acrossBoth();
     assert.deepEqual([...(run?.acrossSparks || [])].sort(), ['spark3', 'spark4'], JSON.stringify(run));
+    // (one run, of start_model_across: the power-on inside the first one hands up what the start ran, uncounted itself)
+    assert.deepEqual(countedAs(was, runsOf()), [0, 1], JSON.stringify({ was, now: runsOf() }));
     await stopAllOn('spark3');
+  });
+
+  // (a workload: a run with a job step stops what it started at its end; the start here goes through two wakes, a
+  // power-on inside a power-on, and only the start at the end of that chain ran the model)
+  test('a workload whose start names no Spark, with the model only on the sleeping Sparks: two wakes, and at its end the model is stopped on both, as its result says', { timeout: 600000 * SLOW }, async () => {
+    await wakeUp('spark3');
+    await done(await act('keep_running', { spark: 'spark3', container: 'wl-ok', image: IMAGE, once: true, command: ['sh', '-c', 'true'] }));
+    await sleepSpark('spark4');
+    await sleepSpark('spark3');
+    const { run, switched } = await workload('two wakes, then a job', 'wl-ok');
+    try {
+      assert.equal(run.status, 'completed', `${run.error}\n${(run.log || []).join('\n')}`);
+      assert.deepEqual(switched, [{ node: 2, command: 'on' }, { node: 3, command: 'on' }], 'Spark 3, then its partner');
+      assert.equal(run.cleanUp, `Stopped what this run had started: sc-${BIG} on Spark 3.`, (run.log || []).join('\n'));
+      assert.deepEqual([bigRunningOn('spark3'), bigRunningOn('spark4')], [[], []], 'neither part runs');
+    } finally { await stopAllOn('spark3'); }
+  });
+
+  test('the same workload whose job then fails: the run fails, and its clean-up stops the model on both Sparks', { timeout: 600000 * SLOW }, async () => {
+    await wakeUp('spark3');
+    const made = await act('keep_running', { spark: 'spark3', container: 'wl-bad', image: IMAGE, once: true, command: ['sh', '-c', 'echo going badly; exit 3'] });
+    assert.equal(made.json?.outcome, 'started', made.text);
+    await opEnd(made.json.operation);
+    await sleepSpark('spark4');
+    await sleepSpark('spark3');
+    const { run, switched } = await workload('two wakes, then a job that fails', 'wl-bad');
+    try {
+      assert.equal(run.status, 'failed', JSON.stringify({ status: run.status, error: run.error }));
+      assert.deepEqual(switched, [{ node: 2, command: 'on' }, { node: 3, command: 'on' }], 'Spark 3, then its partner');
+      assert.match(run.error, new RegExp(`^Step 2 \\(keep_running\\) failed: wl-bad on Spark 3 ended with an error \\(exit 3\\)\\. Stopped what this run had started: sc-${BIG} on Spark 3\\.`), run.error);
+      assert.equal(run.cleanUp, `Stopped what this run had started: sc-${BIG} on Spark 3.`, (run.log || []).join('\n'));
+      assert.deepEqual([bigRunningOn('spark3'), bigRunningOn('spark4')], [[], []], 'neither part runs');
+    } finally { await stopAllOn('spark3'); }
   });
 
   test('Spark 3 on with it, Spark 4 asleep, its record without it and too small for half of it: nothing is woken, and the answer says why', { timeout: 300000 * SLOW }, async () => {

@@ -720,7 +720,11 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
         await sleep(1000);
       }
       const done = jobs.get(out.operation);
-      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start: ${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
+      // (the workflow the start ran when Spark Console placed it across two: this operation, which the asker was given, is
+      // recorded under it, as runAction records such a start with no wake; a power-on inside this one hands it up, R56)
+      const ranAs = out.workflow ? { workflow: out.workflow, workflowVersion: out.workflowVersion } : done?.ranAs || null;
+      if (ranAs) { j.ranAs = ranAs; if (j.workflow) Object.assign(j, ranAs); }
+      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start:${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
       if (done.endpoint) j.endpoint = done.endpoint;
       note(j, `${what} started`);
       started = true;

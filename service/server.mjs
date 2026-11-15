@@ -6972,13 +6972,15 @@ function savedStepAgent(viewer, ctx) {
   return viewer?.agentKey || ctx.agent || agentId || ctx.via === 'agent' ? { agent: true, ...(agentId ? { agentId } : {}) } : {};
 }
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
-// models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
-// part. Nothing for a step that answered anything else (already, kept, a stop).
+// models are what its operation ran (ranHere) and every operation it handed over to, in turn (a power-on, a second
+// power-on inside it for a model across two whose files are only on sleeping Sparks, then the start, R56), each once,
+// by its first part. Nothing for a step that answered anything else (already, kept, a stop).
 function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
-  const op = jobs.get(out.operation), inner = op?.inner ? jobs.get(op.inner) : null, id = v => sparkIdOf(v) || String(v);
+  const id = v => sparkIdOf(v) || String(v), ops = [];
   if (action === 'start_model') {
-    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
+    for (let o = jobs.get(out.operation); o && !ops.includes(o) && ops.length < 5; o = o.inner ? jobs.get(o.inner) : null) ops.push(o);
+    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
   }
   if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
@@ -15436,7 +15438,11 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
         await sleep(1000);
       }
       const done = jobs.get(out.operation);
-      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start: ${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
+      // (the workflow the start ran when Spark Console placed it across two: this operation, which the asker was given, is
+      // recorded under it, as runAction records such a start with no wake; a power-on inside this one hands it up, R56)
+      const ranAs = out.workflow ? { workflow: out.workflow, workflowVersion: out.workflowVersion } : done?.ranAs || null;
+      if (ranAs) { j.ranAs = ranAs; if (j.workflow) Object.assign(j, ranAs); }
+      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start:${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
       if (done.endpoint) j.endpoint = done.endpoint;
       note(j, `${what} started`);
       started = true;
