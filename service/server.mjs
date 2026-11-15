@@ -3648,6 +3648,8 @@ async function runChoice(viewer, conv, id, by) {
   let asked = null, out, content;
   if (!c.action) {
     content = 'Okay, left as it is.';
+    // (a No ends the carrying on of the request it was asked in: review after the loop, Later 3)
+    endTask(conv);
   } else {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
     // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
@@ -3931,8 +3933,10 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
     chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
     ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
-    // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
-    noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
+    // "Don't stop anything" holds for this message and the next, unless this one asks to stop something; a carry-on turn
+    // keeps it, and that its request's replies read outside text, from the task (keepTask).
+    noStops: Boolean(task?.noStops) || intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
+    ...(task?.readOutside ? { readOutside: true } : {}),
     onQuestion: q => { asked.push(q); } };
   return { asked, ctx };
 }
@@ -3952,12 +3956,34 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
-  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx }) {
+  // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
+  if (task?.ended) return;
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
+  // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
+  // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
+  if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
+}
+// A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
+// turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
+function endTask(conv, tell = true) {
+  const task = conv?.task;
+  if (!task) return false;
+  task.ended = true;
+  conv.task = null;
+  if (tell && task.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
+  return true;
+}
+// The tasks started by a way in that is gone (tgForget: channel 'telegram'; endSession: the device's session id).
+function endTasksFrom({ channel = null, session = null }) {
+  let n = 0;
+  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false)) n++;
+  if (n) saveChats();
+  return n;
 }
 // The reply’s end when the rounds are done: the answer with keys hidden, its buttons, the numbers no tool said, a paste
 // card; saved in the chat, then the task kept, then told.
@@ -15308,6 +15334,61 @@ async function doorUpgrade(req, socket, head) {
     deny('403 Forbidden');
   }
 }
+/* ───────── the lock-out net: its calls to the root helper (dark: only tests call them) ───────── */
+// Area: features        Rules: R60, R42        Tests: root-helper.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The lock-out net (R60; design A 2.8, step A13a). The root helper's `run --net` copies the ways in, writes restore.sh
+// beside them and arms a timer in the Spark's own systemd before the change runs; when nothing differs afterwards it
+// disarms by itself, and otherwise what differs goes back when the timer fires unless `keep` stopped it. Nothing in the
+// console calls these yet (A13b turns the net on): guardScript builds the one script a call runs on a Spark, as
+// helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came back.
+// The guard's id is the call's own, and keep names it again.
+function guardScript(node, verb, { id, command = '', seconds = 60 }) {
+  const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
+  const call = verb === 'run'
+    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir "$HOME" -- ${q(command)}`
+    : 'keep --id "$id"';
+  return [
+    `id=${id}; h=${HELPER_AT}`,
+    "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
+    '[ -f "$h" ] || said none',
+    's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
+    `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
+    `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+  ].join('\n');
+}
+// What the helper said of the net: armed (and when it goes back), disarmed (nothing differed), open (what differs),
+// kept, already put back (and when), or refused (why); for run, the command's own end. Only lines that begin with the
+// call's id count: what the command printed is never read as the helper's.
+function guardAnswer(id, out) {
+  const own = String(out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1));
+  const find = p => own.find(l => l.startsWith(p))?.slice(p.length);
+  const end = own.map(l => /^end (\d{1,3}|time)$/.exec(l)).filter(Boolean).pop();
+  const said = find('console '), refused = find('refused: ');
+  return {
+    ...(said != null ? { said } : {}),
+    ...(refused != null ? { refused } : {}),
+    goesBackAt: /^the ways in go back at (\S+) /.exec(find('net armed: ') || '')?.[1] || null,
+    disarmed: find('net disarmed: ') != null,
+    open: find('net open: ') ?? null,
+    kept: find('kept: ') != null || find('kept already: ') != null,
+    putBackAt: find('already put back at ') ?? null,
+    ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
+  };
+}
+// One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
+// first; keep: id is the guard's own.
+function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60 } = {}) {
+  return new Promise(resolve => {
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds }), limit: Number(seconds) + 180 });
+    const chunks = [];
+    let bytes = 0;
+    child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
+    child.on('error', () => {});
+    child.on('close', code => resolve({ id, code, out: Buffer.concat(chunks).toString('utf8').slice(0, J_MAX) }));
+  });
+}
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
 // Area: features        Rules: R46        Tests: tools.test.mjs
 // Owns: none
@@ -17400,6 +17481,8 @@ function tgForget() {
   const st = tgSaved();
   delete st.conv; delete st.answering;
   tgSave();
+  // (a task started from Telegram ends with it: its carry-on turns would go on with Telegram's rights)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Disconnecting Telegram: its tasks weren’t ended (${e.message}).`); }
   let removed = false;
   try {
     const now = secretsRead();
@@ -18032,7 +18115,7 @@ function commandShown(c, ok, out) {
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '8b6ea139d806ea817f3688587d37826194ab74547726a09b415bd687f83d1eca';
+const HELPER_SHA256 = 'ac9f2e08c9b7e0a49bf5fe38a52dd84fc53c2bd4d777ad3bb77e9b2f06ad91ef';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
@@ -18699,6 +18782,8 @@ function holdForSession(viewer, closable) {
   closable.once?.('close', () => { sessionSockets.get(id)?.delete(closable); if (!sessionSockets.get(id)?.size) sessionSockets.delete(id); });
 }
 function endSession(id) {
+  // (and a task the device started: its carry-on turns would go on as that device, 14-chats.mjs)
+  try { endTasksFrom({ session: id }); } catch (e) { console.error(`Signing a device out: its tasks weren’t ended (${e.message}).`); }
   for (const c of sessionSockets.get(id) || []) { try { c.destroy ? c.destroy() : c.end(); } catch {} }
   sessionSockets.delete(id);
   for (const client of clients) if (client.viewer?.session?.id === id) { try { client.res.end(); } catch {} }
