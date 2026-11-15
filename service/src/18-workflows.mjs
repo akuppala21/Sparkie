@@ -23,7 +23,20 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  lessonOf,
+  lessonsKept,
+  PASS_OVER_FAILURES,
+  failedTwice,
+  bestHowNow,
+  passedWords,
+  passedOverLines,
+  askedByOwner,
+  passedOverAsk,
+  fullContext,
+  freeOn,
+  memNow,
+];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -153,7 +166,16 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
-const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file', 'self_test', 'power_settings']);
+const NOT_A_STEP = new Set([
+  'forget_memory',
+  'forget_workflow',
+  'power_settings',
+  'remember',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
   if (Array.isArray(v)) return v.map(x => fillIn(x, inputs));
@@ -330,6 +352,7 @@ action({
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
+          if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
       } catch (e) { record(false); throw e; }

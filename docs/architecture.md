@@ -27,14 +27,13 @@ flowchart TD
   APPS["Apps calling the model address /v1"]
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
-  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address"]
+  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address, named keys"]
   JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off Spark 2, rewritten or deleted"]
-  LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
+  LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP; every WebSocket upgrade refused"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
   PGATE["Page checks: cross-site, member limits, passkeyGate"]
   V1["/v1 gateway (sparkieApi)"]
-  EDITOR["Editor proxy to code-server on 127.0.0.1"]
   APPDOOR["App door (21-door, R40): door.sock behind Tailscale :10000 on the same name, its own handler; the owner only, one kept app per browser"]
   CHAT["Sparkie turn (sparkieTurn, 14-chats, 14-rounds)"]
   BRAIN["Chat-route model: the brain (sparkie-main on Spark 2) by default"]
@@ -64,7 +63,6 @@ flowchart TD
   DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
   ROLL -->|"puts back the newest whole snapshot not marked same (files, not state), restarts; ends with the unit started"| LISTEN
   LISTEN -->|"every request, /health aside"| GATE
-  LISTEN -->|"WebSocket upgrades skip the handler: editorUpgrade repeats the gate"| EDITOR
   PAGE -->|"an app's door link: GET /console/api/open/spark/app on :10000 reads the sign-in cookie (viewerFor) and gives a door ticket (its own cookie)"| APPDOOR
   APPDOOR -->|"each request and WebSocket: the Tailscale login, or the ticket's session as it is now; the app still on desired.json"| STATE
   APPDOOR -->|"HTTP and WebSockets to a kept app's port at its Spark's tailnet address (never the brain's Spark or a model's port); no console cookie or identity goes on, no console cookie comes back"| FLEET
@@ -72,10 +70,9 @@ flowchart TD
   GATE -->|"viewer: owner or member"| PGATE
   GATE -->|"access asks, sessions, passkey counts: written before or at sign-in"| STATE
   PGATE -->|"/v1, after JSON, same-origin and chat-permission checks"| V1
-  PGATE -->|"/connect/spark, owner only"| EDITOR
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
-  PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, editor restart, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
+  PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
   PGATE -->|"files, logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
   PGATE -->|"access, agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
   PGATE -->|"POST /rollback"| ROLL
@@ -199,7 +196,7 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 - **Not every change is a workflow.** Only five are. The other change actions, and the brain start, stop and switch,
   have no tested-and-validated gate.
 - **Many page buttons skip `runAction`** (branches of `handler` in `24-handler.mjs`): Deploy, Stop, brain start, stop
-  and switch, downloads, research, editor restart, Test the changes. No `railsFor`, pause or audit line, and members
+  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line, and members
   with run permission can use Deploy, Stop and download.
 - **Gates differ by door.** The passkey gate covers the owner’s page routes only; the intent gate only via `sparkie`.
   `POST /actions`, `/mcp` and `/v1` rely on `runAction` and each action’s rails.

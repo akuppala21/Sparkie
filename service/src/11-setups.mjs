@@ -428,7 +428,7 @@ fi` : inImage, { timeout: 6 * 3600000, signal: job.abort?.signal, onLine: line =
   done = true;
   await watch;
   cancelCheck(job);
-  if (r.out.includes('NO_HF_CLI')) throw new Error(`The Hugging Face CLI isn’t installed on ${host.id}, and no engine image there has its library either. Install it there with: pip install -U "huggingface_hub[cli]"`);
+  if (r.out.includes('NO_HF_CLI')) throw new Error(`${host.id} has nothing to download with: downloads go through the Hugging Face library inside an engine image (SGLang or vLLM), and there is none on ${host.id} yet. Pull one there (the image a recipe for that engine names), then try again.`);
   const used = /HF_IN_IMAGE (\S+)/.exec(r.out)?.[1];
   if (used && !r.code) note(job, `Downloaded with the Hugging Face library inside ${used} (${host.id} has no hf command)`);
   if (r.code) {

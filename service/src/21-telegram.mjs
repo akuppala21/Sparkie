@@ -8,7 +8,7 @@
 // so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired
 // with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as
 // the page. Everyone else gets silence. Going back a build, memory and saved workflows wait as an owner-only button in
-// Spark Console; access, keys, passkeys and devices have no path from here at all. (docs/architecture.md R32,
+// Spark Console; access, agent keys, passkeys and devices have no path from here at all. (docs/architecture.md R32,
 // docs/analysis-2026-11-11/09-telegram-design.md.)
 const TG_HOST = 'https://api.telegram.org';
 // Tests point it at a stand-in on this machine; under ALL_LOCAL without one, Telegram is off.
@@ -53,15 +53,15 @@ function tgSetState(state) {
   if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under Access → Agents.' });
 }
 const TG_WORDS = {
-  off: 'Not connected.',
-  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
-  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
-  ok: 'Working.',
-  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
-  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
-  unreachable: 'Can’t reach Telegram. Trying again by itself.',
-  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
   'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
+  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
+  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
+  off: 'Not connected.',
+  ok: 'Working.',
+  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
+  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
+  unreachable: 'Can’t reach Telegram. Trying again by itself.',
 };
 const tgProblem = () => ['token-refused', 'in-use', 'unreachable', 'secrets-unreadable', 'forget-failed'].includes(tg.state);
 // What the page (GET /telegram), /health and sparkie_setup show. Never the token; the pairing code only in the answer to
@@ -198,6 +198,8 @@ async function tgUpdate(u) {
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
+  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
+  if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot) return tell('system', 'Type it in your own words: forwarded messages aren’t read here.');

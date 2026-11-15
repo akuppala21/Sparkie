@@ -12,26 +12,26 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 
 | Action | Kind | Part | Group | Answers to | Page only | Step | Text |
 |---|---|---|---|---|---|---|---|
-| `fleet_status` | read | `16-actions` | core | — | — | yes | inside |
-| `running_models` | read | `16-actions` | core | — | — | yes | inside |
-| `models_on_disk` | read | `16-actions` | find | — | — | yes | inside |
-| `find_recipes` | read | `16-actions` | find | — | — | yes | outside |
-| `recipe_detail` | read | `16-actions` | find | — | — | yes | outside |
-| `search_huggingface` | read | `16-actions` | find | — | — | yes | outside |
-| `where_it_fits` | read | `16-actions` | find | — | — | yes | inside |
-| `deploy_plan` | read | `16-actions` | sparks | — | — | yes | inside |
-| `cluster_plan` | read | `16-actions` | sparks | — | — | yes | inside |
-| `linked_sparks` | read | `16-actions` | sparks | — | — | yes | inside |
-| `spark_detail` | read | `16-actions` | sparks | — | — | yes | outside |
-| `recent_operations` | read | `16-actions` | dig | — | — | yes | outside |
-| `operation_log` | read | `16-actions` | dig | — | — | yes | outside |
-| `container_logs` | read | `16-actions` | dig | — | — | yes | outside |
-| `spark_diagnostics` | read | `16-actions` | dig | — | — | yes | outside |
-| `service_logs` | read | `16-actions` | dig | — | — | yes | outside |
-| `files` | read | `16-actions` | reading | — | — | yes | outside |
-| `sparkie_setup` | read | `16-actions` | core | — | — | yes | inside |
-| `workloads` | read | `16-actions` | core | — | — | yes | outside |
-| `fleet_events` | read | `16-actions` | past | — | — | yes | outside |
+| `fleet_status` | read | `16-reads` | core | — | — | yes | inside |
+| `running_models` | read | `16-reads` | core | — | — | yes | inside |
+| `models_on_disk` | read | `16-reads` | find | — | — | yes | inside |
+| `find_recipes` | read | `16-reads` | find | — | — | yes | outside |
+| `recipe_detail` | read | `16-reads` | find | — | — | yes | outside |
+| `search_huggingface` | read | `16-reads` | find | — | — | yes | outside |
+| `where_it_fits` | read | `16-reads` | find | — | — | yes | inside |
+| `deploy_plan` | read | `16-reads` | sparks | — | — | yes | inside |
+| `cluster_plan` | read | `16-reads` | sparks | — | — | yes | inside |
+| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | inside |
+| `spark_detail` | read | `16-reads` | sparks | — | — | yes | outside |
+| `recent_operations` | read | `16-reads` | dig | — | — | yes | outside |
+| `operation_log` | read | `16-reads` | dig | — | — | yes | outside |
+| `container_logs` | read | `16-reads` | dig | — | — | yes | outside |
+| `spark_diagnostics` | read | `16-reads` | dig | — | — | yes | outside |
+| `service_logs` | read | `16-reads` | dig | — | — | yes | outside |
+| `files` | read | `16-reads` | reading | — | — | yes | outside |
+| `sparkie_setup` | read | `16-reads` | core | — | — | yes | inside |
+| `workloads` | read | `16-reads` | core | — | — | yes | outside |
+| `fleet_events` | read | `16-reads` | past | — | — | yes | outside |
 | `start_model` | change | `17-changes` | core | start | — | yes | — |
 | `stop_model` | change | `17-changes` | core | stop | — | yes | — |
 | `restart_model` | change | `17-changes` | core | restart, start | — | yes | — |
@@ -174,7 +174,6 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
 | `self-test` | `self_test` (21-selftest) |
-| `spark-action` | `handler` (24-handler) |
 | `start-model` | `startModel` (17-changes) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |
 | `undo` | `undo_last_change` (20-desired) |

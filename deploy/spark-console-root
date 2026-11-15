@@ -1,0 +1,1163 @@
+#!/bin/bash -p
+# Sparkie's root helper (docs/rules/R42.md; design: docs/design-2026-11-13/a-workspace.md, 2.13). The owner's one-time
+# command, deploy/root-for-sparkie.sh, puts it at /usr/local/sbin/spark-console-root (root, 0755) with one sudo line that
+# names this file and no other command. It installs nothing, keeps no password and never stays running: for each
+# command it asks the Spark's own systemd for a short-lived unit with a fixed list of settings (a wall), and the kernel
+# holds the wall for the command and everything the command starts. It runs no wall it has not proven on this Spark.
+#
+#   sudo -n /usr/local/sbin/spark-console-root check --id <id>
+#   sudo -n /usr/local/sbin/spark-console-root prove --id <id>
+#   sudo -n /usr/local/sbin/spark-console-root look --id <id> --sha256 <hash> --seconds <n> --dir <folder> -- '<command>'
+#   sudo -n /usr/local/sbin/spark-console-root run --id <id> --sha256 <hash> --seconds <n> --dir <folder>
+#        [--open] [--protect <folder>]... [--stdin] -- '<command>'
+#   sudo -n /usr/local/sbin/spark-console-root root ...      always refused: the put-back net is a later step
+#
+# What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
+# command's bytes and their SHA-256; the seconds; the folder; for run, --open, --protect and --stdin. Every other path,
+# name and setting is this file's own text, or read from the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
+# The command never goes on a unit's command line (systemd would expand ${...} there): it is written to a root-owned
+# file in /run/spark-console/<id>/, hashed there, and run from there by bash.
+#
+# Every answer of its own is one line that begins with the id (a refusal: "<id> refused: <why>", exit 125). A look or
+# run ends with a line break and then "<id> end <code>", or "<id> end time" when its time ran out: always the last line,
+# so nothing the command prints can come after it. Exit: the command's own code.
+#
+# Run as root (through sudo) it reads nothing from the environment and has no test switch of any kind. Run as anyone
+# else it is a rehearsal (test/root-helper.test.mjs): every system path is read under the folder SPARK_CONSOLE_REHEARSAL
+# names, it calls whatever is on PATH (the stand-ins in test/mock/bin), and without that folder it refuses.
+set -u
+umask 022
+
+HELPER=/usr/local/sbin/spark-console-root
+LINE=/etc/sudoers.d/spark-console-root
+HOLD=/run/spark-console
+MARK=/var/lib/spark-console/proved
+NEED_SYSTEMD=248
+LOOK_MAX=60        # seconds a look may take
+RUN_MAX=7200       # seconds a change may take (120 minutes)
+STDIN_MAX=16777216 # bytes of input (--stdin)
+PROTECT_MAX=4
+# Memberships that are root by another name: the run wall leaves them out (--open keeps them).
+ROOTY=' docker lxd libvirt disk sudo '
+# Fixed limits of each wall.
+LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
+# A path that may stand in a unit setting: no space, quote, %, $, backslash or colon; no . or .. part.
+SAFE='^(/[A-Za-z0-9._@+-]+)+$'
+
+R=''      # the folder every system path is read under: empty as root, the rehearsal's folder otherwise
+SUPER=0   # who must own the helper and the folders above it: root, or the rehearsal's own account
+ID=''
+
+refuse() {
+  if [ -n "$ID" ]; then printf '%s refused: %s\n' "$ID" "$1"; else printf 'refused: %s\n' "$1"; fi
+  exit 125
+}
+say() { printf '%s %s\n' "$ID" "$*"; }
+safe_path() {
+  [[ $1 =~ $SAFE ]] || return 1
+  case "$1/" in */./*|*/../*) return 1 ;; esac
+  [ "${#1}" -le 1024 ]
+}
+
+init() {
+  if [ "$EUID" -eq 0 ]; then
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    unset -v GLOBIGNORE CDPATH TMPDIR BASH_XTRACEFD PS4 SPARK_CONSOLE_REHEARSAL
+    R='' SUPER=0
+  else
+    R=${SPARK_CONSOLE_REHEARSAL-}
+    [[ $R == /* ]] && [ -d "$R" ] && [ ! -L "$R" ] \
+      || refuse "only root runs this, through sudo (a rehearsal names its folder in SPARK_CONSOLE_REHEARSAL)"
+    SUPER=$EUID
+  fi
+  export LC_ALL=C
+  local self
+  self=$(realpath -e -- "$0" 2>/dev/null) || self=''
+  [ "$self" = "$R$HELPER" ] || refuse "this is not the installed helper, $HELPER"
+}
+
+# --- the call ---------------------------------------------------------------------------------------------------------
+VERB='' SHA='' SECS='' DIR='' OPEN=0 STDIN=0 PROTECT=() CMD=() BAD='' ID_IN=''
+parse() {
+  VERB=${1-}
+  [ $# -gt 0 ] && shift
+  local seen=' '
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --id|--sha256|--seconds|--dir|--protect)
+        if [ $# -lt 2 ]; then BAD="$1 needs a value"; break; fi
+        if [ "$1" = --protect ]; then PROTECT+=("$2")
+        elif [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break
+        else
+          seen+="$1 "
+          case "$1" in --id) ID_IN=$2 ;; --sha256) SHA=$2 ;; --seconds) SECS=$2 ;; --dir) DIR=$2 ;; esac
+        fi
+        shift 2 ;;
+      --open|--stdin)
+        if [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break; fi
+        seen+="$1 "
+        if [ "$1" = --open ]; then OPEN=1; else STDIN=1; fi
+        shift ;;
+      --) shift; CMD=("$@"); break ;;
+      *) BAD="not understood: an option this helper does not know, or a command without -- before it"; break ;;
+    esac
+  done
+  if [[ $ID_IN =~ ^[a-z0-9]{8,40}$ ]]; then ID=$ID_IN; fi
+  [ -n "$ID" ] || refuse "no --id, or one that is not 8 to 40 of a-z and 0-9"
+  [ -z "$BAD" ] || refuse "$BAD"
+}
+
+# The owner: the account sudo says called (SUDO_UID and SUDO_USER, which sudo itself sets), checked against
+# /etc/passwd; its groups from /etc/group, with and without the ones that are root by another name.
+OWNER='' OWNER_UID='' OWNER_GID='' OWNER_HOME='' ALL_GIDS='' WALL_GIDS=''
+caller() {
+  local uid=${SUDO_UID-} name=${SUDO_USER-} line f pw puid pgid gecos home shell gname gid members
+  [[ $uid =~ ^[0-9]{1,10}$ && $name =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || refuse "not called through sudo by an account"
+  (( 10#$uid >= 1000 && 10#$uid != 65534 )) || refuse "called by an account that is not an ordinary one"
+  line=$(awk -F: -v n="$name" '$1 == n { print; exit }' "$R/etc/passwd" 2>/dev/null)
+  IFS=: read -r f pw puid pgid gecos home shell <<<"$line"
+  [ -n "$line" ] && [ "$puid" = "$uid" ] || refuse "the account sudo names is not in /etc/passwd with that number"
+  [[ $pgid =~ ^[0-9]{1,10}$ ]] && safe_path "$home" \
+    || refuse "the account's group or home folder cannot stand in a setting"
+  OWNER=$name OWNER_UID=$uid OWNER_GID=$pgid OWNER_HOME=$home
+  ALL_GIDS=$pgid WALL_GIDS=$pgid
+  while IFS=: read -r gname pw gid members || [ -n "$gname" ]; do
+    [[ $gid =~ ^[0-9]{1,10}$ ]] && [ "$gid" != "$pgid" ] && [[ ",$members," == *",$name,"* ]] || continue
+    ALL_GIDS+=",$gid"
+    [[ $ROOTY == *" $gname "* ]] || WALL_GIDS+=",$gid"
+  done < "$R/etc/group"
+}
+
+# --- what the Spark must have -----------------------------------------------------------------------------------------
+PROBLEMS=() SYSTEMD_VERSION='' KERNEL='' HELPER_SHA=''
+ST_SYSTEMD='' ST_PID1='' ST_CGROUP='' ST_UNSHARE='' ST_SETPRIV='' ST_PYTHON='' ST_FILES=''
+UNSHARE='' SETPRIV='' PY='' BASH_BIN=''
+lacking() {   # $1 the program's help text, then the options it must know: prints the missing ones
+  local help=$1 o out=''
+  shift
+  for o in "$@"; do [[ $help == *"$o"* ]] || out+=" $o"; done
+  printf '%s' "${out# }"
+}
+files_problem() {   # the first reason the helper could be changed by an account other than root, or nothing
+  local p st uid mode type shown
+  for p in "$R$HELPER" "$R/usr/local/sbin" "$R/usr/local" "$R/usr" "${R:-/}"; do
+    shown=${p#"$R"}
+    shown=${shown:-/}
+    st=$(stat -c '%u %a %F' -- "$p" 2>/dev/null) || { printf '%s is not there' "$shown"; return; }
+    read -r uid mode type <<<"$st"
+    if [ "$p" = "$R$HELPER" ] && [ "$type" != "regular file" ]; then printf '%s is not a plain file' "$shown"; return; fi
+    if [ "$p" != "$R$HELPER" ] && [ "$type" != directory ]; then printf '%s is not a folder' "$shown"; return; fi
+    [ "$uid" = "$SUPER" ] || { printf '%s is owned by another account than root' "$shown"; return; }
+    (( (8#$mode & 8#022) == 0 )) || { printf '%s can be written by its group or by everyone' "$shown"; return; }
+  done
+}
+prereqs() {
+  PROBLEMS=()
+  local major h miss
+  SYSTEMD_VERSION=$(systemctl show --property=Version --value 2>/dev/null | head -n 1)
+  major=${SYSTEMD_VERSION%%[!0-9]*}
+  if [ -z "$major" ]; then
+    ST_SYSTEMD='not answering'; PROBLEMS+=("systemd is not answering, so no wall can be built")
+  elif (( 10#$major < NEED_SYSTEMD )); then
+    ST_SYSTEMD="too old (needs $NEED_SYSTEMD or newer)"
+    PROBLEMS+=("systemd $major is too old: the walls need $NEED_SYSTEMD or newer")
+  else ST_SYSTEMD=ok; fi
+  if [ "$(head -c 64 -- "$R/proc/1/comm" 2>/dev/null)" = systemd ]; then ST_PID1=ok
+  else ST_PID1=no; PROBLEMS+=("systemd is not the first process"); fi
+  if [ -f "$R/sys/fs/cgroup/cgroup.controllers" ]; then ST_CGROUP=ok
+  else ST_CGROUP=no; PROBLEMS+=("control groups are not in the one-tree form (cgroup2)"); fi
+  UNSHARE=$(command -v unshare 2>/dev/null) || UNSHARE=''
+  h=''; [ -n "$UNSHARE" ] && h=$("$UNSHARE" --help 2>&1)
+  miss=$(lacking "$h" --pid --fork --kill-child --mount-proc)
+  if [ -z "$UNSHARE" ]; then ST_UNSHARE='not there'; PROBLEMS+=("unshare is not there")
+  elif [ -n "$miss" ]; then ST_UNSHARE="lacks $miss"; PROBLEMS+=("unshare does not know $miss")
+  else ST_UNSHARE=ok; fi
+  SETPRIV=$(command -v setpriv 2>/dev/null) || SETPRIV=''
+  h=''; [ -n "$SETPRIV" ] && h=$("$SETPRIV" --help 2>&1)
+  miss=$(lacking "$h" --reuid --regid --groups --inh-caps --bounding-set)
+  if [ -z "$SETPRIV" ]; then ST_SETPRIV='not there'; PROBLEMS+=("setpriv is not there")
+  elif [ -n "$miss" ]; then ST_SETPRIV="lacks $miss"; PROBLEMS+=("setpriv does not know $miss")
+  else ST_SETPRIV=ok; fi
+  PY=$(command -v python3 2>/dev/null) || PY=''
+  if [ -n "$PY" ] && "$PY" -I -S -c 'import ctypes, json, socket' >/dev/null 2>&1; then ST_PYTHON=ok
+  else ST_PYTHON='not there'; PROBLEMS+=("python3 (with ctypes) is not there, so the walls cannot be proven"); fi
+  BASH_BIN=$(command -v bash 2>/dev/null) || BASH_BIN=/bin/bash
+  ST_FILES=$(files_problem)
+  if [ -n "$ST_FILES" ]; then PROBLEMS+=("$ST_FILES"); else ST_FILES=ok; fi
+  KERNEL=$(head -n 1 -- "$R/proc/sys/kernel/osrelease" 2>/dev/null)
+  HELPER_SHA=''
+  [ -f "$R$HELPER" ] && read -r HELPER_SHA _ < <(sha256sum -- "$R$HELPER")
+  return 0
+}
+
+# --- the proof's mark: /var/lib/spark-console/proved, root's, written only by a proof that passed ---------------------
+mark_text() { printf 'helper %s\nsystemd %s\nkernel %s\n' "$HELPER_SHA" "$SYSTEMD_VERSION" "$KERNEL"; }
+proof_state() {
+  local m="$R$MARK" st uid mode have want a b
+  [ -e "$m" ] || { echo none; return; }
+  for a in "$m" "${m%/*}"; do
+    st=$(stat -c '%u %a' -- "$a" 2>/dev/null) || { echo "not trusted: it cannot be read"; return; }
+    read -r uid mode <<<"$st"
+    if [ "$uid" != "$SUPER" ] || (( (8#$mode & 8#022) != 0 )); then echo "not trusted: another account could write it"; return; fi
+  done
+  have=$(head -n 3 -- "$m" 2>/dev/null)
+  want=$(mark_text)
+  [ "$have" = "$want" ] && { echo current; return; }
+  read -r _ a < <(sed -n 1p <<<"$have"); [ "$a" = "$HELPER_SHA" ] || { echo "out of date: the helper changed"; return; }
+  read -r _ a < <(sed -n 2p <<<"$have"); [ "$a" = "$SYSTEMD_VERSION" ] || { echo "out of date: systemd changed"; return; }
+  read -r _ b < <(sed -n 3p <<<"$have"); [ "$b" = "$KERNEL" ] || { echo "out of date: the kernel changed"; return; }
+  echo "out of date"
+}
+
+# --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
+TMPFS=() GONE=() BACK=() RO=()
+hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
+  local p=$1
+  [ -e "$R$p" ] || return 0
+  safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
+  if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then TMPFS+=("$p"); else GONE+=("$p"); fi
+}
+hide_home() {
+  local h=$1 p
+  # .ssh is hidden, and its files that hold no private key are put back, read-only: plain files only, never a link.
+  if [ -d "$R$h/.ssh" ] && [ ! -L "$R$h/.ssh" ]; then
+    TMPFS+=("$h/.ssh")
+    for p in "$R$h/.ssh/authorized_keys" "$R$h/.ssh/known_hosts" "$R$h/.ssh/config" "$R$h"/.ssh/*.pub; do
+      [ -f "$p" ] && [ ! -L "$p" ] || continue
+      p=${p#"$R"}
+      if safe_path "$p"; then BACK+=("$p"); fi
+    done
+  else hide "$h/.ssh"; fi
+  for p in .gnupg .aws .kube .ngc .config/gh .config/spark-console .local/share/spark-console \
+           .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc .git-credentials \
+           .docker/config.json .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf \
+           .bash_history .zsh_history .sh_history .python_history .node_repl_history .psql_history .mysql_history \
+           .local/share/fish/fish_history \
+           .local/state/spark-console/api.sock .local/state/spark-console/door.sock \
+           .local/state/spark-console/sessions.json .local/state/spark-console/passkeys.json \
+           .local/state/spark-console/agents.json .local/state/spark-console/telegram.json \
+           .local/state/spark-console/access.json .local/state/spark-console/access.json.good; do
+    hide "$h/$p"
+  done
+}
+ro() { [ -e "$R$1" ] || return 0; safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"; RO+=("$1"); }
+lists() {
+  TMPFS=() GONE=() BACK=() RO=()
+  local name pw uid gid gecos home shell p f kind
+  while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
+    [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
+    [ -d "$R$home" ] || continue
+    safe_path "$home" || refuse "a home folder's name cannot stand in a setting"
+    hide_home "$home"
+  done < "$R/etc/passwd"
+  for p in /run /root /etc/ssl/private /etc/netplan /etc/NetworkManager/system-connections /var/lib/tailscale \
+           /var/lib/docker /var/lib/containerd /var/lib/spark-console /var/backups; do
+    hide "$p"
+  done
+  for f in "$R"/etc/shadow* "$R"/etc/gshadow* "$R"/etc/ssh/ssh_host_*_key; do
+    [ -e "$f" ] && hide "${f#"$R"}"
+  done
+  while read -r f kind _; do
+    [ "$kind" = file ] && hide "$f"
+  done < <(tail -n +2 -- "$R/proc/swaps" 2>/dev/null)
+  # The read-only list (the run wall): the owner's start files and service settings, Spark Console's code and source,
+  # the helper and its line. With --open, .ssh too (otherwise it is hidden, and what is put back is read-only).
+  for p in .profile .bashrc .bash_profile .bash_login .bash_logout .zshenv .zprofile .zshrc .zlogin .zlogout \
+           .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
+           spark-console-service spark-console-src; do
+    ro "$OWNER_HOME/$p"
+  done
+  [ "$OPEN" = 1 ] && ro "$OWNER_HOME/.ssh"
+  ro "$HELPER"
+  ro "$LINE"
+}
+
+# --- the walls -------------------------------------------------------------------------------------------------------
+PROPS=() PRE=()
+wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-only lists must be made first)
+  local wall=$1 secs=$2 p
+  PROPS=()
+  if [ "$wall" = look ]; then
+    PROPS+=(-p DynamicUser=yes
+            -p AmbientCapabilities=CAP_DAC_READ_SEARCH -p CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+            -p NoNewPrivileges=yes
+            -p SystemCallFilter=~open_by_handle_at -p SystemCallErrorNumber=EPERM -p SystemCallArchitectures=native
+            -p ProtectSystem=strict -p ProtectHome=read-only -p ProtectKernelTunables=yes -p ProtectControlGroups=yes
+            -p PrivateTmp=yes -p PrivateIPC=yes -p PrivateNetwork=yes -p PrivateDevices=yes
+            -p TemporaryFileSystem=/dev/shm:ro -p ReadOnlyPaths=/)
+  else
+    PROPS+=(-p NoNewPrivileges=yes -p PrivateTmp=yes)
+    [ "$OPEN" = 1 ] || PROPS+=(-p IPAddressDeny=localhost -p IPAddressAllow=127.0.0.53)
+  fi
+  if [ "$wall" = look ] || [ "$OPEN" = 0 ]; then
+    for p in "${TMPFS[@]}"; do PROPS+=(-p "TemporaryFileSystem=$p:ro"); done
+    for p in "${GONE[@]}"; do PROPS+=(-p "InaccessiblePaths=$p"); done
+    for p in "${BACK[@]}"; do PROPS+=(-p "BindReadOnlyPaths=$p"); done
+    if [ "$wall" = run ] && [ -d "$R/run/systemd/resolve" ]; then PROPS+=(-p BindReadOnlyPaths=/run/systemd/resolve); fi
+  fi
+  if [ "$wall" = run ]; then
+    for p in "${RO[@]}" "${PROTECT[@]}"; do PROPS+=(-p "ReadOnlyPaths=$p"); done
+  fi
+  PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
+  if [ "$wall" = look ]; then PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$LOOK_MEMORY" -p "TasksMax=$LOOK_TASKS")
+  else PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$RUN_MEMORY" -p "TasksMax=$RUN_TASKS"); fi
+}
+run_prefix() {   # the run wall's command start: its own process tree, then down to the owner's account
+  PRE=()
+  [ "$OPEN" = 1 ] || PRE+=("$UNSHARE" --pid --fork --kill-child --mount-proc)
+  if [ "$OPEN" = 1 ]; then PRE+=("$SETPRIV" "--reuid=$OWNER_UID" "--regid=$OWNER_GID" "--groups=$ALL_GIDS")
+  else PRE+=("$SETPRIV" "--reuid=$OWNER_UID" "--regid=$OWNER_GID" "--groups=$WALL_GIDS"); fi
+  PRE+=(--inh-caps=-all --bounding-set=-all)
+}
+
+# The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call. A call that is
+# killed outright (no trap runs) leaves its folder; the next call removes any older than the longest unit can run.
+H=''
+sweep_held() {
+  local d n
+  for d in "$R$HOLD"/*/; do
+    d=${d%/} n=${d##*/}
+    [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
+    if [ -n "$(find "$d" -maxdepth 0 -type d -mmin +$((RUN_MAX / 60 + 10)) 2>/dev/null)" ]; then rm -rf -- "$d"; fi
+  done
+}
+hold_folder() {
+  H="$R$HOLD/$ID"
+  mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
+  sweep_held
+  mkdir -m 0750 -- "$H" 2>/dev/null || refuse "this id was used already"
+  if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$H"; fi
+}
+seal() {   # every file in the held folder: root's, readable by the owner's group, written by nobody
+  chmod 0440 -- "$H"/*
+  if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$H"/*; fi
+}
+start_script() {
+  cat <<'START'
+#!/bin/bash
+# The fixed start of every command spark-console-root runs; nothing here comes from a caller. The folder, the home
+# and the account are in files the helper wrote beside it, and the command is the held file itself, run by bash.
+here=${BASH_SOURCE[0]%/*}
+IFS= read -r -d '' dir < "$here/dir"
+IFS= read -r -d '' HOME < "$here/home"
+IFS= read -r -d '' USER < "$here/user"
+export HOME USER LOGNAME="$USER"
+cd -- "$dir" || exit 125
+exec "$BASH" --noprofile --norc -- "$here/command"
+START
+}
+
+# --- verbs -----------------------------------------------------------------------------------------------------------
+only_id() { [ -z "$SHA$SECS$DIR" ] && [ "$OPEN$STDIN" = 00 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#CMD[@]} -eq 0 ] \
+  || refuse "$VERB takes --id and nothing else"; }
+
+do_check() {
+  local state why=''
+  prereqs
+  state=$(proof_state)
+  say "helper $HELPER_SHA"
+  say "systemd ${SYSTEMD_VERSION:-?} $ST_SYSTEMD"
+  say "first-process $ST_PID1"
+  say "cgroup2 $ST_CGROUP"
+  say "unshare $ST_UNSHARE"
+  say "setpriv $ST_SETPRIV"
+  say "python3 $ST_PYTHON"
+  say "files $ST_FILES"
+  say "kernel ${KERNEL:-?}"
+  say "proof $state"
+  if [ ${#PROBLEMS[@]} -gt 0 ]; then why=${PROBLEMS[0]}
+  elif [ "$state" != current ]; then why="the wall proof is $state on this Spark"; fi
+  if [ -z "$why" ]; then say "look ready"; say "run ready"; else say "look refuses: $why"; say "run refuses: $why"; fi
+  say "root refuses: the put-back net is not built yet"
+  exit 0
+}
+
+do_unit() {
+  local max got input=/dev/null unit start rc=0 p real
+  [[ $SHA =~ ^[0-9a-f]{64}$ ]] || refuse "--sha256 must be 64 hex digits, a-f and 0-9"
+  [[ $SECS =~ ^[1-9][0-9]{0,5}$ ]] || refuse "--seconds must be a whole number of seconds"
+  if [ "$VERB" = look ]; then
+    max=$LOOK_MAX
+    [ "$OPEN" = 0 ] || refuse "a look never takes --open"
+    [ "$STDIN" = 0 ] || refuse "a look takes no input"
+    [ ${#PROTECT[@]} -eq 0 ] || refuse "--protect is for run: a look is read-only everywhere"
+    (( 10#$SECS <= max )) || refuse "a look is held to $LOOK_MAX seconds"
+  else
+    max=$RUN_MAX
+    (( 10#$SECS <= max )) || refuse "a change is held to $((RUN_MAX / 60)) minutes"
+    [ ${#PROTECT[@]} -le $PROTECT_MAX ] || refuse "at most $PROTECT_MAX --protect folders"
+    for p in "${PROTECT[@]}"; do
+      safe_path "$p" || refuse "--protect must name a whole path that can stand in a setting"
+      real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
+      [ -d "$R$p" ] && [ "$real" = "$R$p" ] || refuse "--protect must name a folder that is there, with no link in its path"
+    done
+  fi
+  [[ $DIR == /* ]] && [ "${#DIR}" -le 4096 ] && [[ $DIR != *[[:cntrl:]]* ]] || refuse "--dir must be a whole path on one line"
+  [ ${#CMD[@]} -eq 1 ] || refuse "the command must be one word after --"
+  [ -n "${CMD[0]}" ] || refuse "the command is empty"
+  prereqs
+  [ ${#PROBLEMS[@]} -eq 0 ] || refuse "${PROBLEMS[0]}"
+  local state; state=$(proof_state)
+  [ "$state" = current ] || refuse "the wall proof is $state on this Spark: prove first"
+  lists
+  hold_folder
+  # A hang-up or an interrupt (the caller's connection dropped) still removes the held folder; what the unit has
+  # already opened stays readable to it.
+  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
+  printf '%s' "${CMD[0]}" > "$H/command"
+  read -r got _ < <(sha256sum -- "$H/command")
+  if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
+  printf '%s' "$DIR" > "$H/dir"
+  printf '%s' "$OWNER_HOME" > "$H/home"
+  printf '%s' "$OWNER" > "$H/user"
+  start_script > "$H/start"
+  if [ "$STDIN" = 1 ]; then
+    head -c $((STDIN_MAX + 1)) > "$H/stdin"
+    if (( $(stat -c %s -- "$H/stdin") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the input is over 16 MB"; fi
+    input="$H/stdin"
+  fi
+  seal
+  wall_props "$VERB" "$SECS"
+  PRE=()
+  [ "$VERB" = run ] && run_prefix
+  unit="sw-$VERB-$ID"
+  start=$SECONDS
+  systemd-run "--unit=$unit" "--description=Spark Console $VERB $ID sha256 $SHA" --wait --pipe --collect --quiet \
+    "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" < "$input" || rc=$?
+  rm -rf -- "$H"
+  if [ "$rc" -ne 0 ] && (( SECONDS - start >= 10#$SECS )); then printf '\n%s end time\n' "$ID"
+  else printf '\n%s end %s\n' "$ID" "$rc"; fi
+  exit "$rc"
+}
+
+# --- the proof of the walls (2.13): thirteen attempts; a mark only when every one is stopped ---------------------------
+NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale socket, api.sock or the door's socket"
+       "another program's environment" 'a write that stays' "round the hiding, through another program's /proc"
+       'a signal to a program outside the wall' 'more rights: sudo, the helper, a capability'
+       'starting something outside the wall' 'a hidden key file' 'a disk device or the GPU' 'something left behind'
+       'root with no net')
+LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12'
+RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11'
+# Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
+AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12'
+# The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
+# use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
+# targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
+# read-only list (5), sudo with the helper's own line (8), its own key (10). Attempt 2 must reach its own program on the
+# loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be absent, for the reason the proof states.
+MUST_WORK='1 4 5 6 7 8 10'
+plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
+  local who=$1 name=$2 secs=$3 as=()
+  shift 3
+  [ "$who" = owner ] && as=("--uid=$OWNER_UID" "--gid=$OWNER_GID")
+  systemd-run "--unit=sw-prove-$name-$ID" "--description=Spark Console wall proof $name $ID" --wait --pipe --collect \
+    --quiet "${as[@]}" -p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -- "$PY" -I -S "$HOLD/$ID/proof.py" "$@" < /dev/null
+}
+declare -A GOT=() DETAIL=()
+take() {   # $1 where the lines came from (outside, look, run, after); $2 the lines
+  local from=$1 tag n how res rest
+  while read -r tag n how res rest; do
+    [[ $n =~ ^(1[0-2]|[1-9])$ ]] || continue
+    rest=${rest//[![:print:]]/}
+    case "$tag:$how:$res" in
+      P:outside:works|P:outside:not-there) GOT[outside:$n]=$res; DETAIL[outside:$n]=${rest:0:200} ;;
+      P:direct:blocked|P:direct:through|P:direct:left|P:child:blocked|P:child:through|P:child:left)
+        GOT[$from:$n:$how]=$res; DETAIL[$from:$n:$how]=${rest:0:200} ;;
+      V:look:blocked|V:look:through|V:run:blocked|V:run:through|V:outside:works|V:outside:not-there)
+        GOT[after:$how:$n]=$res; DETAIL[after:$how:$n]=${rest:0:200} ;;
+    esac
+  done <<<"$2"
+}
+do_prove() {
+  local p real out_prep out_setup out_look out_run pid wall n how r failed='' first='' line control='' unitfail='' alive=no
+  prereqs
+  [ ${#PROBLEMS[@]} -eq 0 ] || refuse "${PROBLEMS[0]}"
+  OPEN=0 PROTECT=()
+  lists   # once before anything starts, so a name that cannot stand in a setting refuses here
+  mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
+  exec 9> "$R$HOLD/prove.lock" || refuse "cannot open the proof's lock"
+  flock -n 9 || refuse "another proof is running on this Spark"
+  hold_folder
+  trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; rm -rf -- "$H"; exit 129' HUP INT TERM
+  rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
+  proof_py > "$H/proof.py"
+  printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
+  printf '0' > "$H/target"
+  seal
+  # The proof's own --protect folder for the run wall: the same path proof.py calls P.
+  p="$OWNER_HOME/.cache/spark-console/proof-$ID-ro"
+  out_prep=$(plain_unit owner prep 60 prep)
+  out_setup=$(plain_unit root setup 60 setup)
+  systemd-run "--unit=sw-prove-target-$ID" "--description=Spark Console wall proof target $ID" --collect --quiet \
+    "--uid=$OWNER_UID" "--gid=$OWNER_GID" -p "WorkingDirectory=$OWNER_HOME/.local/share/spark-console/proof-$ID" \
+    -p "Environment=SPARK_PROOF_MARK=$ID" -p RuntimeMaxSec=300 -p TimeoutStopSec=5 \
+    -- "$PY" -I -S "$HOLD/$ID/proof.py" target < /dev/null > /dev/null || true
+  pid=$(systemctl show --property=MainPID --value "sw-prove-target-$ID.service" 2>/dev/null)
+  [[ $pid =~ ^[1-9][0-9]{0,9}$ ]] || pid=0
+  lists   # again, now that the proof's files are there (its key folder must be on the hidden list)
+  chmod u+w -- "$H/target"
+  printf '%s' "$pid" > "$H/target"
+  printf '%s\n' "${RO[@]}" "$p" > "$H/readonly"
+  seal
+  take outside "$(plain_unit owner outside 120 outside $OUTSIDE_ATTEMPTS)"
+  real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
+  if [ "$out_prep" = 'S ok' ] && [ "$out_setup" = 'S ok' ] && safe_path "$p" && [ -d "$R$p" ] && [ "$real" = "$R$p" ]; then
+    wall_props look 120
+    # shellcheck disable=SC2086
+    out_look=$(systemd-run "--unit=sw-prove-look-$ID" "--description=Spark Console wall proof look $ID" --wait --pipe \
+      --collect --quiet "${PROPS[@]}" -- "$PY" -I -S "$HOLD/$ID/proof.py" look $LOOK_ATTEMPTS < /dev/null)
+    take look "$out_look"
+    PROTECT=("$p")
+    wall_props run 120
+    run_prefix
+    # shellcheck disable=SC2086
+    out_run=$(systemd-run "--unit=sw-prove-run-$ID" "--description=Spark Console wall proof run $ID" --wait --pipe \
+      --collect --quiet "${PROPS[@]}" -- "${PRE[@]}" "$PY" -I -S "$HOLD/$ID/proof.py" run $RUN_ATTEMPTS < /dev/null)
+    take run "$out_run"
+    PROTECT=()
+  else
+    out_prep=${out_prep//[![:print:]]/ } out_setup=${out_setup//[![:print:]]/ }
+    failed="the proof could not make its own files on this Spark (as you: ${out_prep:0:120}; as root: ${out_setup:0:120})"
+  fi
+  take after "$(plain_unit owner post 60 post)"
+  take after "$(plain_unit root after 60 after)"
+  systemctl is-active --quiet "sw-prove-target-$ID.service" > /dev/null 2>&1 && alive=yes
+  systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1 || true
+  rm -rf -- "$H"
+
+  # The controls first: without them a "blocked" inside a wall would show nothing.
+  [ "$pid" != 0 ] || control="the proof's own program outside the walls did not start"
+  for n in $OUTSIDE_ATTEMPTS; do
+    r=${GOT[outside:$n]-}
+    if [ "$r" = works ]; then say "proof outside $n works: ${NAMES[$n]} (${DETAIL[outside:$n]})"
+    else say "proof outside $n not there: ${NAMES[$n]} (${DETAIL[outside:$n]:-not reported})"; fi
+    if [[ " $MUST_WORK " == *" $n "* ]] && [ "$r" != works ] && [ -z "$control" ]; then
+      control="attempt $n (${NAMES[$n]}) could not be shown working outside the walls, so stopping it inside would show nothing"
+    fi
+  done
+  if [ -z "$control" ] && { [ "${GOT[outside:2]-}" != works ] || [[ ${DETAIL[outside:2]-} != *"the loopback"* ]]; }; then
+    control="attempt 2 could not reach the proof's own program on the loopback outside the walls, so the run wall's loopback rule would be shown by nothing"
+  fi
+  for n in 5 12; do
+    if [ -z "$control" ] && [ "${GOT[after:outside:$n]-}" != works ]; then
+      control="the check from outside afterwards for attempt $n (${NAMES[$n]}) did not see what the proof left there on purpose"
+    fi
+  done
+  if [ -z "$control" ] && [ "$alive" != yes ]; then control="the proof's own program outside the walls stopped before the end"; fi
+  if [ -z "$control" ]; then say "proof controls work: each attempt was seen working outside the walls, or is not there"
+  else say "proof controls failed: $control"; fi
+  local list bad any key verdict how_said
+  for wall in look run; do
+    list=$LOOK_ATTEMPTS bad='' any=''
+    [ "$wall" = run ] && list=$RUN_ATTEMPTS
+    for key in "${!GOT[@]}"; do [[ $key == "$wall:"* ]] && any=1; done
+    for n in $list; do
+      line='' verdict=''
+      for how in direct child; do
+        r=${GOT[$wall:$n:$how]-}
+        how_said='directly'
+        [ "$how" = child ] && how_said='from a child process'
+        case "$r" in
+          blocked|left) ;;
+          through) verdict='got through'; line="${NAMES[$n]} (${DETAIL[$wall:$n:$how]}, $how_said)"; break ;;
+          *) verdict='was not reported'; line="${NAMES[$n]}"; break ;;
+        esac
+      done
+      if [ -z "$verdict" ] && [[ " $AFTER_CHECKS " == *" $wall:$n "* ]]; then
+        r=${GOT[after:$wall:$n]-}
+        case "$r" in
+          blocked) ;;
+          through) verdict='got through'; line="${NAMES[$n]} (${DETAIL[after:$wall:$n]}, seen from outside afterwards)" ;;
+          *) verdict='was not reported'; line="${NAMES[$n]} (the check from outside afterwards)" ;;
+        esac
+      fi
+      if [ -n "$verdict" ]; then
+        say "proof $wall $n $verdict: $line"
+        [ -n "$bad" ] || bad=$n
+        [ -n "$first" ] || first="attempt $n in the $wall wall $verdict (${NAMES[$n]})"
+      else say "proof $wall $n blocked: ${NAMES[$n]}"; fi
+    done
+    if [ -z "$any" ] && [ -z "$unitfail" ]; then
+      unitfail="the $wall wall's unit did not run (systemd refused it, or something it needs is missing on this Spark)"
+    fi
+    if [ -z "$bad" ]; then say "proof $wall passed"; else say "proof $wall failed"; fi
+  done
+  # 13: root with no net. The net (a put-back timer armed in the same call) is a later step, so root always refuses.
+  say "proof root 13 refused: ${NAMES[13]}"
+  [ -n "$failed" ] || failed=$control
+  [ -n "$failed" ] || failed=$unitfail
+  [ -n "$failed" ] || failed=$first
+  if [ -n "$failed" ]; then
+    say "proof failed: $failed. No mark was written, so the look and run walls refuse on this Spark."
+    exit 1
+  fi
+  mkdir -p -m 0755 -- "$R${MARK%/*}"
+  { mark_text; printf 'proved %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > "$R$MARK.new"
+  chmod 0644 -- "$R$MARK.new"
+  mv -f -- "$R$MARK.new" "$R$MARK"
+  say "proof passed: the mark is written for this helper, systemd ${SYSTEMD_VERSION} and kernel ${KERNEL}"
+  exit 0
+}
+
+# The attempts themselves: fixed Python, written to the held folder and run in the proof's units.
+proof_py() {
+  cat <<'PROOF'
+# The wall proof of spark-console-root (docs/rules/R42.md; design A 2.13). The helper writes this file to
+# /run/spark-console/<id>/proof.py and runs it in short-lived units; nothing in it comes from a caller.
+#   prep      as the owner: the proof's own files in the owner's home (a key, link targets, links, second paths)
+#   setup     as root: one empty folder anyone may write in, on every mounted disk (kept in ./stay)
+#   target    as the owner, in the background: a program outside the walls; its environment carries a mark, its
+#             folder is hidden, and it listens on the loopback
+#   outside   as the owner, with no wall: each attempt, where it must work or the thing must be absent
+#   look|run  inside that wall: each attempt directly and from a child process, where it must fail
+#   post      as the owner: the link targets are unchanged; the proof's files are removed
+#   after     as root: no write stayed, nothing was left running; the folders are removed
+# Lines: "S ok"; "P <n> outside works|not-there <what>"; "P <n> direct|child blocked|through|left <what>" (left: a
+# write or a program whose staying is checked from outside afterwards); "V <n> <wall> blocked|through <what>".
+import ctypes, glob, json, os, re, shutil, signal, socket, stat, subprocess, sys, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ID = os.path.basename(HERE)
+HELPER = '/usr/local/sbin/spark-console-root'
+with open(os.path.join(HERE, 'owner')) as f:
+    _uid, _gid, HOME = f.read().split('\n')[:3]
+UID, GID = int(_uid), int(_gid)
+S = f'{HOME}/.cache/spark-console/proof-{ID}'           # seen inside both walls
+H = f'{HOME}/.local/share/spark-console/proof-{ID}'     # on the hidden list (~/.local/share/spark-console)
+P = f'{HOME}/.cache/spark-console/proof-{ID}-ro'        # the run wall's --protect folder (the helper names it too)
+SHARE = f'{HOME}/.local/share/spark-console'
+KEY = b'SPARK-PROOF-KEY ' + ID.encode()
+SOCKETS = [('Docker', '/run/docker.sock'), ('Docker', '/var/run/docker.sock'),
+           ('Tailscale', '/run/tailscale/tailscaled.sock'), ('Tailscale', '/var/run/tailscale/tailscaled.sock'),
+           ('api.sock', f'{HOME}/.local/state/spark-console/api.sock'),
+           ("the door's socket", f'{HOME}/.local/state/spark-console/door.sock')]
+GPU = ['/dev/nvidia0', '/dev/nvidiactl', '/dev/nvidia-uvm', '/dev/nvidia-uvm-tools', '/dev/nvidia-modeset']
+DISKS = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'vfat', 'exfat', 'f2fs', 'ntfs3', 'zfs'}
+SHARED = ['/tmp', '/var/tmp', '/dev/shm']
+LEFT = {(5, 'look'), (12, 'look'), (12, 'run')}
+# Why an attempt outside the walls found nothing to try. Only these three may be absent; the helper fails the proof for
+# any other attempt that does not work outside.
+REASONS = {3: 'none of the Docker, Tailscale or Spark Console sockets answers on this Spark',
+           9: 'no user manager or system bus answers here for the owner',
+           11: 'this Spark shows no disk device or GPU node'}
+CLEAN = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}
+DEVNULL = subprocess.DEVNULL
+
+
+def out(*words):
+    print(' '.join(str(w) for w in words).replace('\n', ' '), flush=True)
+
+
+def write(path, data):
+    with open(path, 'wb') as f:
+        f.write(data)
+
+
+def readable(path):
+    try:
+        with open(path, 'rb') as f:
+            return KEY in f.read(4096)
+    except OSError:
+        return False
+
+
+def tcp(addr, port):
+    try:
+        with socket.create_connection((addr, port), timeout=3):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def unix(path):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2)
+    try:
+        s.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def quiet(cmd, env=CLEAN, timeout=10):
+    try:
+        return subprocess.run(cmd, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, env=env, timeout=timeout).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def lines_of(name):
+    try:
+        with open(os.path.join(HERE, name), 'rb') as f:
+            return [os.fsdecode(x) for x in re.split(b'[\0\n]', f.read()) if x]
+    except OSError:
+        return []
+
+
+class Handle(ctypes.Structure):
+    _fields_ = [('handle_bytes', ctypes.c_uint), ('handle_type', ctypes.c_int), ('f_handle', ctypes.c_ubyte * 128)]
+
+
+def handle_of(path):
+    h, mount = Handle(), ctypes.c_int()
+    h.handle_bytes = 128
+    if ctypes.CDLL(None, use_errno=True).name_to_handle_at(-100, os.fsencode(path), ctypes.byref(h), ctypes.byref(mount), 0) != 0:
+        return None
+    return {'type': h.handle_type, 'hex': bytes(h.f_handle[:h.handle_bytes]).hex()}
+
+
+def by_handle(saved):
+    if not saved:
+        return False
+    raw = bytes.fromhex(saved['hex'])
+    h = Handle()
+    h.handle_bytes, h.handle_type = len(raw), saved['type']
+    ctypes.memmove(h.f_handle, raw, len(raw))
+    try:
+        near = os.open(S, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return False
+    try:
+        fd = ctypes.CDLL(None, use_errno=True).open_by_handle_at(near, ctypes.byref(h), os.O_RDONLY)
+        if fd < 0:
+            return False
+        try:
+            return KEY in os.read(fd, 4096)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(near)
+
+
+def remove_dir(d):
+    # As root, in a folder others may write in: never follow a link, remove only what is directly inside.
+    try:
+        st = os.lstat(d)
+    except OSError:
+        return
+    if not stat.S_ISDIR(st.st_mode):
+        try:
+            os.unlink(d)
+        except OSError:
+            pass
+        return
+    try:
+        fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    try:
+        for name in os.listdir(fd):
+            try:
+                os.unlink(name, dir_fd=fd)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+    try:
+        os.rmdir(d)
+    except OSError:
+        pass
+
+
+class Ctx:
+    def __init__(self, mode, how):
+        self.mode, self.how = mode, how
+        with open(f'{S}/fixtures.json') as f:
+            self.fx = json.load(f)
+        try:
+            with open(os.path.join(HERE, 'target')) as f:
+                self.pid = int(f.read() or 0)
+        except (OSError, ValueError):
+            self.pid = 0
+        # Without its own program outside the walls, attempts 2, 4, 6 and 7 would try nothing: fail, never "blocked".
+        # Its port is waited for only outside (the first unit after it starts); inside a wall it must be there already.
+        self.port = None
+        for _ in range(50 if self.pid and mode == 'outside' else 1):
+            try:
+                with open(f'{S}/port') as f:
+                    self.port = int(f.read())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.1)
+        if not self.pid or not self.port:
+            raise RuntimeError('the proof has no program outside the walls')
+
+
+def a1(c):   # a write through a link, to a hidden file and to a read-only one
+    got = []
+    for w in (['look', 'run'] if c.mode == 'outside' else [c.mode]):
+        for link in (f'{S}/link-{w}', f'{S}/ro-{w}'):
+            if c.mode == 'outside':
+                if os.access(link, os.W_OK):
+                    got.append(os.path.basename(link))
+                continue
+            try:
+                fd = os.open(link, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                try:
+                    os.write(fd, b' changed')
+                finally:
+                    os.close(fd)
+                got.append(os.path.basename(link))
+            except OSError:
+                pass
+    return got
+
+
+def a2(c):   # an open connection, only to what is the owner's own: no host outside is ever contacted
+    tries = [('the loopback', '127.0.0.1', c.port)]
+    if c.mode != 'run':
+        tries.append(('the tailnet', '100.100.100.100', 53))   # answered by this Spark's own Tailscale
+        if c.fx.get('own'):
+            tries.append(('its own address', c.fx['own'], 22))
+    return [name for name, addr, port in tries if port and tcp(addr, port)]
+
+
+def a3(c):   # the Docker and Tailscale sockets, api.sock and the door's socket, by their paths and by a second path
+    got = []
+    for i, (name, path) in enumerate(SOCKETS):
+        if unix(path):
+            got.append(f'{name} by its path')
+        if unix(f'{S}/sock-{i}'):
+            got.append(f'{name} by a second path')
+    return got
+
+
+def a4(c):   # another program's environment
+    if not c.pid:
+        return []
+    for p in [f'/proc/{c.pid}/environ'] + glob.glob(f'/proc/{c.pid}/task/*/environ'):
+        try:
+            with open(p, 'rb') as f:
+                if b'SPARK_PROOF_MARK=' + ID.encode() in f.read():
+                    return [p.replace(str(c.pid), '<pid>')]
+        except OSError:
+            pass
+    return []
+
+
+def a5(c):   # a write that stays
+    stay = lines_of('stay')
+    if c.mode == 'outside':
+        # Also leaves one file in each of root's folders on the disks: the check afterwards must see it (a control).
+        left = []
+        for d in stay:
+            try:
+                os.close(os.open(f'{d}/.spark-console-proof-{ID}-outside', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                left.append(d)
+            except OSError:
+                pass
+        return left[:3] + [p for p in lines_of('readonly') if os.access(p, os.W_OK)][:3]
+    if c.mode == 'look':
+        wrote = []
+        for d in stay + SHARED:
+            try:
+                os.close(os.open(f'{d}/.spark-console-proof-{ID}-look-{c.how}', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                wrote.append(d)
+            except OSError:
+                pass
+        return wrote
+    got = [p for p in lines_of('readonly') if os.access(p, os.W_OK)]
+    try:
+        os.close(os.open(f'{P}/.spark-console-proof-{ID}-run-{c.how}', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        got.append(P)
+    except OSError:
+        pass
+    return got
+
+
+def a6(c):   # round the hiding, through another program's /proc
+    if not c.pid:
+        return []
+    return [q.replace(str(c.pid), '<pid>') for q in (f'/proc/{c.pid}/root{H}/key', f'/proc/{c.pid}/cwd/key') if readable(q)]
+
+
+def a7(c):   # a signal to a program outside the wall
+    if not c.pid:
+        return []
+    try:
+        os.kill(c.pid, 0 if c.mode == 'outside' else signal.SIGUSR1)
+        return ['a signal reached it']
+    except OSError:
+        return []
+
+
+def a8(c):   # more rights
+    got = []
+    if quiet(['sudo', '-n', 'true']):
+        got.append('sudo -n true')
+    if quiet(['sudo', '-n', HELPER, 'check', '--id', ID]):
+        got.append('sudo -n the helper')
+    if quiet([HELPER, 'check', '--id', ID]):
+        got.append('the helper itself')
+    if c.mode != 'outside':
+        allowed = (1 << 2) if c.mode == 'look' else 0   # CAP_DAC_READ_SEARCH, and only in a look
+        with open('/proc/self/status') as f:
+            for line in f:
+                k, _, v = line.partition(':')
+                if k in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb') and int(v, 16) & ~allowed:
+                    got.append(f'{k} {v.strip()}')
+    return got
+
+
+def a9(c):   # starting something outside the wall
+    env = dict(CLEAN, XDG_RUNTIME_DIR=f'/run/user/{UID}', HOME=HOME)
+    got = [p for p in (f'/run/user/{UID}/bus', f'/run/user/{UID}/systemd/private', '/run/dbus/system_bus_socket',
+                       '/run/systemd/private') if unix(p)]
+    if quiet(['systemctl', '--user', 'show-environment'], env):
+        got.append('systemctl --user')
+    if quiet(['systemd-run', '--user', '--wait', '--quiet', '--collect', 'true'], env):
+        got.append('systemd-run --user')
+    return got
+
+
+def a10(c):  # a hidden key file
+    got = []
+    if readable(f'{H}/key'):
+        got.append('by its path')
+    if readable(f'{S}/key-link'):
+        got.append('through a link')
+    if any(readable(p) for p in glob.glob(f'{SHARE}/proof-*/key')):
+        got.append('by *')
+    if c.mode == 'look' and by_handle(c.fx.get('handle')):
+        got.append('by its file handle')
+    return got
+
+
+def a11(c):  # a disk device and the GPU
+    try:
+        devs = ['/dev/' + n for n in sorted(os.listdir('/sys/class/block'))]
+    except OSError:
+        devs = []
+    devs += GPU + glob.glob('/dev/dri/*')
+    if c.mode == 'outside':
+        return [d for d in devs if os.path.exists(d)][:4]
+    got = []
+    for d in devs:
+        try:
+            os.close(os.open(d, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY))
+            got.append(d)
+        except OSError:
+            pass
+    return got
+
+
+def a12(c):  # something left behind: a program put in the background, looked for from outside afterwards
+    mark = f'{ID}-{c.mode}-{c.how}'
+    subprocess.Popen(['sleep', '300'], env=dict(CLEAN, SPARK_PROOF_LEFT=mark), stdin=DEVNULL, stdout=DEVNULL,
+                     stderr=DEVNULL, start_new_session=True)
+    return [mark]
+
+
+ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12}
+
+
+def what(hits, n=0):
+    return ', '.join(hits)[:200] if hits else REASONS.get(n, '-')
+
+
+def attempts(mode, nums):
+    for n in nums:
+        if mode == 'outside':
+            try:
+                hits = ATTEMPTS[n](Ctx(mode, 'outside'))
+                out('P', n, 'outside', 'works' if hits else 'not-there', what(hits, n))
+            except Exception as e:
+                out('P', n, 'outside', 'not-there', type(e).__name__)
+            continue
+        for how in ('direct', 'child'):
+            try:
+                if how == 'direct':
+                    hits = ATTEMPTS[n](Ctx(mode, how))
+                else:
+                    r = subprocess.run([sys.executable, '-I', '-S', os.path.abspath(__file__), 'one', mode, str(n)],
+                                       stdin=DEVNULL, stdout=subprocess.PIPE, stderr=DEVNULL, timeout=50)
+                    hits = json.loads(r.stdout.decode().strip().splitlines()[-1])
+            except Exception as e:
+                out('P', n, how, 'failed', type(e).__name__)
+                continue
+            word = 'left' if (n, mode) in LEFT else ('through' if hits else 'blocked')
+            out('P', n, how, word, what(hits))
+
+
+def prep():
+    os.umask(0o077)
+    made = not os.path.lexists(SHARE)
+    os.makedirs(f'{HOME}/.cache/spark-console', exist_ok=True)
+    os.makedirs(SHARE, exist_ok=True)
+    for old in glob.glob(f'{HOME}/.cache/spark-console/proof-*') + glob.glob(f'{SHARE}/proof-*'):
+        shutil.rmtree(old, ignore_errors=True)
+    for d in (S, H, P):
+        os.mkdir(d, 0o700)
+    write(f'{H}/key', KEY)
+    for w in ('look', 'run'):
+        write(f'{H}/target-{w}', b'unchanged')
+        write(f'{P}/target-{w}', b'unchanged')
+        os.symlink(f'{H}/target-{w}', f'{S}/link-{w}')
+        os.symlink(f'{P}/target-{w}', f'{S}/ro-{w}')
+    os.symlink(f'{H}/key', f'{S}/key-link')
+    for i, (_, path) in enumerate(SOCKETS):
+        os.symlink(path, f'{S}/sock-{i}')
+    own = None   # this Spark's own first address, as hostname -I lists them (no connection is made)
+    try:
+        listed = subprocess.run(['hostname', '-I'], stdin=DEVNULL, stdout=subprocess.PIPE, stderr=DEVNULL, env=CLEAN,
+                                timeout=10).stdout.decode().split()
+        own = next((a for a in listed if re.fullmatch(r'\d+\.\d+\.\d+\.\d+', a) and not a.startswith('127.')), None)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    handle = handle_of(f'{H}/key')
+    with open(f'{S}/fixtures.json', 'w') as f:
+        json.dump({'made_share': made, 'handle': handle, 'own': own}, f)
+    # Without a handle the look wall's file-handle filter would be tried by nothing.
+    out('S ok' if handle else 'S failed: no file handle for the proof key')
+
+
+def setup():
+    os.umask(0)
+    stay, seen = [], set()
+    with open('/proc/self/mountinfo') as f:
+        for line in f:
+            left, _, right = line.partition(' - ')
+            fields, kind = left.split(), right.split()
+            if len(fields) < 6 or not kind or kind[0] not in DISKS or 'ro' in fields[5].split(','):
+                continue
+            point = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), fields[4])
+            if point in seen:
+                continue
+            seen.add(point)
+            for old in glob.glob(os.path.join(glob.escape(point), '.spark-console-proof-*')):
+                remove_dir(old)
+            d = os.path.join(point, f'.spark-console-proof-{ID}')
+            try:
+                os.mkdir(d, 0o1777)
+                stay.append(d)
+            except OSError:
+                pass
+    fd = os.open(os.path.join(HERE, 'stay'), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, 'wb') as f:
+        f.write(b'\0'.join(os.fsencode(d) for d in stay))
+    # Without a folder on a disk, the look wall's read-only disks would be tried by nothing.
+    out('S ok' if stay else 'S failed: no folder could be made on any disk')
+
+
+def target():
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    s.listen(16)
+    s.settimeout(1)
+    write(f'{S}/port.new', str(s.getsockname()[1]).encode())
+    os.replace(f'{S}/port.new', f'{S}/port')
+    end = time.monotonic() + 300
+    while time.monotonic() < end:
+        try:
+            s.accept()[0].close()
+        except OSError:
+            pass
+
+
+def post():
+    for w in ('look', 'run'):
+        changed = []
+        for t in (f'{H}/target-{w}', f'{P}/target-{w}'):
+            try:
+                with open(t, 'rb') as f:
+                    if f.read() != b'unchanged':
+                        changed.append(os.path.basename(os.path.dirname(t)) + '/' + os.path.basename(t))
+            except OSError:
+                changed.append(os.path.basename(t) + ' is gone')
+        out('V', 1, w, 'through' if changed else 'blocked', what(changed))
+    made = glob.glob(f'{P}/.spark-console-proof-{ID}-run-*')
+    out('V', 5, 'run', 'through' if made else 'blocked', 'a file in the read-only folder' if made else '-')
+    try:
+        with open(f'{S}/fixtures.json') as f:
+            made_share = json.load(f).get('made_share')
+    except (OSError, ValueError):
+        made_share = False
+    for d in (S, H, P):
+        shutil.rmtree(d, ignore_errors=True)
+    if made_share:
+        try:
+            os.rmdir(SHARE)
+        except OSError:
+            pass
+
+
+def after():
+    stayed, seen = [], 0
+    for d in lines_of('stay'):
+        if not d.endswith(f'/.spark-console-proof-{ID}'):
+            continue
+        try:
+            names = os.listdir(d)
+            if any(n.startswith(f'.spark-console-proof-{ID}-look') for n in names):
+                stayed.append(os.path.dirname(d) or '/')
+            seen += f'.spark-console-proof-{ID}-outside' in names
+        except OSError:
+            pass
+        remove_dir(d)
+    out('V', 5, 'outside', 'works' if seen else 'not-there', f'saw {seen} written outside' if seen else 'saw nothing written outside')
+    for d in SHARED:
+        for how in ('direct', 'child'):
+            q = f'{d}/.spark-console-proof-{ID}-look-{how}'
+            if os.path.lexists(q):
+                stayed.append(d)
+                try:
+                    os.unlink(q)
+                except OSError:
+                    pass
+    out('V', 5, 'look', 'through' if stayed else 'blocked', what(sorted(set(stayed))))
+    left, control = {'look': 0, 'run': 0}, 0
+    for pid in os.listdir('/proc'):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f'/proc/{pid}/environ', 'rb') as f:
+                env = f.read()
+        except OSError:
+            continue
+        control += b'SPARK_PROOF_MARK=' + ID.encode() in env   # the proof's own program: the scan must see it
+        for w in left:
+            if f'SPARK_PROOF_LEFT={ID}-{w}-'.encode() in env:
+                left[w] += 1
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except OSError:
+                    pass
+    out('V', 12, 'outside', 'works' if control else 'not-there', 'saw the program outside the walls' if control else 'saw no program outside the walls')
+    for w in ('look', 'run'):
+        out('V', 12, w, 'through' if left[w] else 'blocked', f'{left[w]} still running' if left[w] else '-')
+
+
+if __name__ == '__main__':
+    mode = sys.argv[1]
+    if mode in ('outside', 'look', 'run'):
+        attempts(mode, [int(n) for n in sys.argv[2:]])
+    elif mode == 'one':
+        print(json.dumps(ATTEMPTS[int(sys.argv[3])](Ctx(sys.argv[2], 'child'))), flush=True)
+    else:
+        {'prep': prep, 'setup': setup, 'target': target, 'post': post, 'after': after}[mode]()
+PROOF
+}
+
+main() {
+  init
+  parse "$@"
+  case "$VERB" in
+    check|prove|look|run) ;;
+    root) refuse "root needs the put-back net, which is not built yet: root is refused on every Spark" ;;
+    *) refuse "no such verb: check, prove, look, run or root" ;;
+  esac
+  caller
+  case "$VERB" in
+    check) only_id; do_check ;;
+    prove) only_id; do_prove ;;
+    look|run) do_unit ;;
+  esac
+}
+
+# The whole file is read before anything runs (bash reads a script as it goes).
+main "$@"
+exit 125

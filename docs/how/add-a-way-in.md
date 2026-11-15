@@ -14,7 +14,7 @@ things go", row "A new way in".
 
 - Every place `via` is compared. Find them with
   `grep -nE "via (===|!==)|includes\((ctx\.|job\.)?via\)" service/src/*.mjs`; today they are in:
-  - `16-actions.mjs` (`runAction`, `planOf`, `sparkie_setup`)
+  - `16-actions.mjs` (`runAction`, `planOf`), `16-reads.mjs` (`sparkie_setup`)
   - `07-jobs.mjs` (`runJob`)
   - `17-changes.mjs` (`noStopWords`, `pausedCheck`, `question`, `redeemChoice`, `acrossGate`, `stop_model`)
   - `14-chats.mjs` (`runChoice`)
