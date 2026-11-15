@@ -101,28 +101,35 @@ function offFor(off, names, listedOnly) {
 // (with its linked partner when its memory alone can't hold it and that one is off too). Without room, or for a call (a
 // call never copies or downloads): else one with no list, which may hold anything. With room (a start that fits on no
 // Spark that is on): else the first whose record's free disk holds the model with the usual floor (its size and a
-// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; a record with no numbers (an older build) last. A
-// Spark that is off with no record is never woken here. [] when none fits; then why goes into `why`, for the answer.
-function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, why = null } = {}) {
+// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; else, for a model that may run across two
+// (`pairs`, or a recipe's version for two), the first that holds half of it, with its partner (R56); a record with no
+// numbers (an older build) last. A Spark that is off with no record is never woken here. [] when none fits; then why
+// goes into `why`, for the answer.
+function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, pairs = false, why = null } = {}) {
   const st = powerState(), order = NODES.map(n => n.id);
   const recs = off.filter(id => st.off[id]).sort((a, b) => order.indexOf(a) - order.indexOf(b)), rec = id => st.off[id];
+  // (its partner too when that one is asleep, on a cable between two compute Sparks: wakePartner, R56)
+  const withPartner = id => (recs.includes(wakePartner(id)) ? [id, wakePartner(id)] : [id]);
   const listed = recs.filter(id => offHolds(rec(id), names) === true);
   if (listed.length) {
     const id = listed[0], need = needBytes ?? sizeBytes, mem = rec(id).memTotal;
-    const pair = Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need
-      ? (lastCheck?.pairs || []).find(p => p.fastLink === 'full' && [p.a, p.b].includes(id)) : null;
-    const partner = pair ? (pair.a === id ? pair.b : pair.a) : null;
-    return partner && recs.includes(partner) ? [id, partner] : [id];
+    return pairs && Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need ? withPartner(id) : [id];
   }
   const unknown = recs.filter(id => offHolds(rec(id), names) === null);
   if ((!room || call) && unknown.length) return [unknown[0]];
   const numbers = recs.filter(id => Number.isFinite(rec(id).diskFree) && Number.isFinite(rec(id).memTotal));
-  const holdsIt = r => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === 1 && v.sizeGB != null && v.needGB != null)
-    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9)
-    : !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes)));
+  // (parts 2: half of a model across two Sparks, all its files there: a recipe's version for two, or a model on disk
+  // that may pair, by its own need)
+  const holdsIt = (r, parts = 1) => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === parts && v.sizeGB != null && v.needGB != null)
+    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9 / parts)
+    : parts === 1 ? !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes))
+      : pairs && Number.isFinite(sizeBytes) && r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes) / 2);
   if (room && !call) {
     const fits = numbers.find(id => holdsIt(rec(id)));
     if (fits) return [fits];
+    // (none holds it alone: the first that holds half, with its partner when that one is asleep too)
+    const half = numbers.find(id => wakePartner(id) && holdsIt(rec(id), 2));
+    if (half) return withPartner(half);
     const older = recs.filter(id => !numbers.includes(id));
     if (older.length) return [older[0]];
   }
@@ -693,8 +700,8 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
     let started = false;
     try {
       step(j, `Starting ${what}`);
-      // (no conversation: this operation posts the one result)
-      const out = await go({ ...ctx, poweredOn: true, conv: null, onQuestion: null });
+      // (no conversation: this operation posts the one result; poweredOn counts the wakes this start has had, R56)
+      const out = await go({ ...ctx, poweredOn: (ctx.poweredOn || 0) + 1, conv: null, onQuestion: null });
       if (['already', 'kept'].includes(out?.outcome)) { note(j, `${what} is running`); started = true; return; }
       if (!['started', 'already-starting'].includes(out?.outcome) || !out.operation) {
         throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on now, but starting ${what} needs a choice first: ${String(out?.question || out?.note || out?.outcome || 'ask again').slice(0, 300)} Ask again to choose.`);
@@ -702,6 +709,8 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
       // (its failure is this operation's: counted once, here, R9)
       const inner = jobs.get(out.operation);
       if (inner) inner.partOf = j.id;
+      // (and its own version, as runAction gives the operation it returns: its lesson has its start code, B2, R56)
+      if (inner && !inner.workflowVersion && (out.workflowVersion || ctx.workflowVersion)) inner.workflowVersion = out.workflowVersion || ctx.workflowVersion;
       j.inner = out.operation;
       for (;;) {
         const x = jobs.get(out.operation);
@@ -712,7 +721,11 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
         await sleep(1000);
       }
       const done = jobs.get(out.operation);
-      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start: ${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
+      // (the workflow the start ran when Spark Console placed it across two: this operation, which the asker was given, is
+      // recorded under it, as runAction records such a start with no wake; a power-on inside this one hands it up, R56)
+      const ranAs = out.workflow ? { workflow: out.workflow, workflowVersion: out.workflowVersion } : done?.ranAs || null;
+      if (ranAs) { j.ranAs = ranAs; if (j.workflow) Object.assign(j, ranAs); }
+      if (done?.status !== 'completed') throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on, but ${what} didn’t start:${String(done?.error || done?.status || 'it ended').split('\n')[0].slice(0, 400)}`);
       if (done.endpoint) j.endpoint = done.endpoint;
       note(j, `${what} started`);
       started = true;
