@@ -467,9 +467,11 @@ function fleet({ target = spark({ installed: false }) } = {}) {
     + 'if [ $n = 1 ] && [ ! -f "$R/etc/sudoers.d/spark-console-root" ]; then echo "sudo: a password is required" >&2; exit 1; fi\n'
     + 'rebase() { case "$1" in /usr/local/sbin/*|/etc/sudoers.d/*|/var/lib/spark-console/*) printf "%s" "$R$1" ;; *) printf "%s" "$1" ;; esac; }\n'
     + 'cmd=$1; shift; a=()\ncase "$cmd" in\n'
-    + '  install) while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; -m) a+=("$1" "$2"); shift 2 ;; *) a+=("$(rebase "$1")"); shift ;; esac; done; exec install "${a[@]}" ;;\n'
-    + '  cat|rm|sha256sum) for x in "$@"; do a+=("$(rebase "$x")"); done; exec "$cmd" "${a[@]}" ;;\n'
-    + '  visudo) exec visudo "$@" ;;\n'
+    + '  install) while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; -m) a+=("$1" "$2"); shift 2 ;; *) a+=("$(rebase "$1")"); shift ;; esac; done\n'
+    // $TEST_T/swap-copy: another program swaps the staged copy after it was checked, just before root copies it.
+    + '    for x in "${a[@]}"; do case "$x" in *.copy) [ -e "$TEST_T/swap-copy" ] && printf "#!/bin/bash\\necho swapped\\n" > "$x" ;; esac; done\n'
+    + '    exec install "${a[@]}" ;;\n'
+    + '  cat|rm|sha256sum|chmod|mv|tee|visudo) for x in "$@"; do a+=("$(rebase "$x")"); done; exec "$cmd" "${a[@]}" ;;\n'
     + '  /usr/local/sbin/spark-console-root) exec env SUDO_UID=1000 SUDO_USER=owner SUDO_GID=1000 "$R$cmd" "$@" ;;\n'
     + '  *) echo "sudo: these tests allow no $cmd" >&2; exit 1 ;;\nesac\n', { mode: 0o755 });
   const env = { PATH: `${bin}:${MOCKBIN}:/usr/bin:/bin`, HOME: join(T, 'spark2'), SPARK_CONSOLE_REHEARSAL: target.R, TEST_T: T };
@@ -489,33 +491,51 @@ function tree(dir) {
 }
 
 describe("the owner's one-time command", () => {
-  test('a compute Spark: its steps in order, the line checked before anything is put in place, then the proof', () => {
+  test('a compute Spark: its steps in order, everything staged and checked as root before it is put in place, then the proof', () => {
     const f = fleet();
     const r = f.cmd(['3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /^Spark 3 \(spark3\.test\):\n/);
+    assert.ok(r.stdout.includes(`the helper to install has SHA-256 ${sha(readFileSync(HELPER_SRC))}\n`), r.stdout);
     assert.match(r.stdout, /proof look passed\n[\s\S]*proof run passed\n[\s\S]*proof passed: the mark is written/);
     assert.match(r.stdout, /done: the helper is set up and its walls are proven on /);
+    // As root, in this order: the line written to a name sudo skips and checked there; the helper copied to a name
+    // nothing runs and hashed there; then both moved into place; then the proof. Nothing is installed or run from a
+    // file your account can write after the password.
+    const copy = join(f.T, 'spark3/.cache/spark-console/spark-console-root.copy');
+    const L = '/etc/sudoers.d/spark-console-root', Hl = '/usr/local/sbin/spark-console-root';
+    const order = ['-v', `cat ${L}`, `sha256sum ${Hl}`, `rm -f ${L}.new ${Hl}.new`, `tee ${L}.new`, `chmod 0440 ${L}.new`,
+      `visudo -cf ${L}.new`, `install -o root -g root -m 0755 ${copy} ${Hl}.new`, `sha256sum ${Hl}.new`, `mv -f ${Hl}.new ${Hl}`,
+      `mv -f ${L}.new ${L}`];
     const steps = sudoCalls(f);
-    const at = s => steps.findIndex(x => x.startsWith(s));
-    assert.ok(at('-v') === 0, steps.join('\n'));
-    assert.ok(at('visudo -cf ') > at('-v'));
-    assert.ok(at('install -o root -g root -m 0755 ') > at('visudo -cf '), 'the helper only after visudo passed');
-    assert.ok(at('install -o root -g root -m 0440 ') > at('install -o root -g root -m 0755 '), 'the line after the helper');
-    assert.ok(at('-n /usr/local/sbin/spark-console-root prove --id ') > at('install -o root -g root -m 0440 '), 'the proof last');
-    assert.match(steps[at('install -o root -g root -m 0755 ')], /\.cache\/spark-console\/spark-console-root\.copy \/usr\/local\/sbin\/spark-console-root$/);
-    assert.match(steps[at('install -o root -g root -m 0440 ')], / \/etc\/sudoers\.d\/spark-console-root$/);
+    assert.deepEqual(steps.slice(0, order.length), order, steps.join('\n'));
+    assert.match(steps[order.length], /^-n \/usr\/local\/sbin\/spark-console-root prove --id [0-9a-f]{16}$/);
     assert.equal(readFileSync(join(f.target.R, 'etc/sudoers.d/spark-console-root'), 'utf8'), LINE_TEXT());
     assert.deepEqual(calls(f.target).find(c => c[0] === 'visudo').slice(-1), [LINE_TEXT()], 'visudo checked exactly the one line');
     assert.ok(readFileSync(join(f.target.R, 'usr/local/sbin/spark-console-root')).equals(readFileSync(HELPER_SRC)), "the helper is Spark 2's build");
-    assert.ok(has(f, 'var/lib/spark-console/proved'));
-    assert.deepEqual(readdirSync(join(f.T, 'spark3/.cache/spark-console')).filter(n => !n.startsWith('proof-')), [], 'the copies are gone');
-    // Over ssh: the helper and the set-up script are copied, then the set-up script runs in a terminal.
+    assert.ok(has(f, 'var/lib/spark-console/proved') && !has(f, 'etc/sudoers.d/spark-console-root.new') && !has(f, 'usr/local/sbin/spark-console-root.new'));
+    assert.deepEqual(readdirSync(join(f.T, 'spark3/.cache/spark-console')), [], 'the copy is gone');
+    // Over ssh: the helper is copied; the set-up script is never written anywhere: it runs from the command line.
     const ssh = calls(f.target).filter(c => c[0] === 'ssh').map(c => c.slice(1));
-    assert.equal(ssh.length, 3);
+    assert.equal(ssh.length, 2);
     assert.deepEqual(ssh[0], ['-o', 'ConnectTimeout=8', 'owner@spark3.test', 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/spark-console-root.copy']);
-    assert.deepEqual(ssh[1], ['-o', 'ConnectTimeout=8', 'owner@spark3.test', 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/root-setup.sh']);
-    assert.deepEqual(ssh[2], ['-t', '-o', 'ConnectTimeout=8', 'owner@spark3.test', `bash ~/.cache/spark-console/root-setup.sh install ${sha(readFileSync(HELPER_SRC))} ${HUB_ID} 0`]);
+    assert.deepEqual(ssh[1].slice(0, 4), ['-t', '-o', 'ConnectTimeout=8', 'owner@spark3.test']);
+    assert.ok(ssh[1][4].startsWith("bash -c '# The set-up half of spark-console's deploy/root-for-sparkie.sh".replace("'s", "'\\''s")), ssh[1][4].slice(0, 120));
+    assert.ok(ssh[1][4].endsWith(`' root-setup install ${sha(readFileSync(HELPER_SRC))} ${HUB_ID} 0`));
+  });
+
+  test('a copy swapped after it was checked is caught where only root can change it: nothing is installed, and it says why', () => {
+    const f = fleet();
+    writeFileSync(join(f.T, 'swap-copy'), '');
+    const r = f.cmd(['3']);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /Stopped on .*: the helper's copy changed after it arrived \(its SHA-256 is no longer the one Spark 2 sent\), so nothing was installed\.\n/);
+    for (const p of ['usr/local/sbin/spark-console-root', 'usr/local/sbin/spark-console-root.new', 'etc/sudoers.d/spark-console-root',
+      'etc/sudoers.d/spark-console-root.new', 'var/lib/spark-console/proved']) assert.ok(!has(f, p), p);
+    const steps = sudoCalls(f);
+    assert.ok(steps.includes('sha256sum /usr/local/sbin/spark-console-root.new'), 'the swap was caught by the hash taken as root');
+    assert.ok(!steps.some(x => x.startsWith('mv ') || x.includes(' prove ')), steps.join('\n'));
+    assert.match(r.stdout, /the helper to install has SHA-256 [0-9a-f]{64}\n/, 'the first check, as you, still saw the right bytes');
   });
 
   test('a second run changes nothing', () => {
@@ -541,7 +561,7 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 2, r.stdout + r.stderr);
     assert.match(r.stderr, /Stopped on .*: visudo did not accept the sudo line, so nothing was changed\.\n/);
     assert.ok(!sudoCalls(f).some(x => x.startsWith('install ')), sudoCalls(f).join('\n'));
-    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root'));
+    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root.new'));
   });
 
   test('the proof fails: the line and the helper are removed again, and it says which attempt got through', () => {
@@ -561,7 +581,8 @@ describe("the owner's one-time command", () => {
     const n = sudoCalls(f).length;
     const r = f.cmd(['--undo', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /etc/sudoers.d/spark-console-root', 'rm -f /usr/local/sbin/spark-console-root', 'rm -f /var/lib/spark-console/proved']);
+    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /etc/sudoers.d/spark-console-root /etc/sudoers.d/spark-console-root.new',
+      'rm -f /usr/local/sbin/spark-console-root /usr/local/sbin/spark-console-root.new', 'rm -f /var/lib/spark-console/proved']);
     assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved'));
   });
 
@@ -612,7 +633,7 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /Stopped on .*: this is Spark 2, the hub: it is set up last, and only with --hub\./);
     assert.deepEqual(sudoCalls(f), []);
-    assert.ok(!existsSync(join(f.T, 'spark3/.cache/spark-console/root-setup.sh')), 'the copies are gone');
+    assert.ok(!existsSync(join(f.T, 'spark3/.cache/spark-console/spark-console-root.copy')), 'the copy is gone');
     // With --hub it runs on Spark 2 itself, no ssh.
     const hub = fleet({ target: spark({ installed: false }) });
     const h = hub.cmd(['--hub', '2']);
