@@ -23,6 +23,8 @@
 // last user message (whole, record included), which round it is, the tool results it was sent, and how it was asked
 // (temperature, top_p, top_k, max_tokens, thinking). The first round of each turn with tools also leaves exactly what
 // the brain was sent, the system prompt and every tool in full, in $MOCK_DIR/brain-sent.json (test/lock.mjs hashes it).
+// The brain check's requests (21-brain-check.mjs, known by its system line) are answered by checkReply instead, and
+// logged only to $MOCK_DIR/brain-check.jsonl: ~/.mock/brain-kind on spark2 picks the brain they meet (below).
 import http from 'node:http';
 import { readFileSync, appendFileSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 
@@ -82,9 +84,38 @@ function stream(res) {
   };
 }
 
+// The brain check's requests. ~/.mock/brain-kind on spark2 picks the brain: none (or "good") calls the toy tool once a
+// city with arguments that fit and answers from its result; "bad-arguments" calls it with arguments that don't fit;
+// "no-tools" never calls a tool. Every request is a line in $MOCK_DIR/brain-check.jsonl (when, the brain, the tools
+// offered, the last message's role, the words, how it was asked).
+async function checkReply(b, msgs, tools, res) {
+  let kind = 'good';
+  try { kind = readFileSync(`${M}/brain-kind`, 'utf8').trim() || 'good'; } catch {}
+  const last = msgs.at(-1) || {}, words = String(msgs.findLast(m => m.role === 'user')?.content || '');
+  try {
+    appendFileSync(`${DIR}/brain-check.jsonl`, `${JSON.stringify({ at: new Date().toISOString(), kind, tools: tools.map(t => t.function?.name), lastRole: last.role || null, words,
+      params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, max_tokens: b.max_tokens ?? null, thinking: b.chat_template_kwargs?.enable_thinking ?? null, toolChoice: b.tool_choice || null } })}\n`);
+  } catch {}
+  const s = stream(res), cities = [...words.matchAll(/\b(Oslo|Lima)\b/g)].map(m => m[1]);
+  if (tools.length && last.role === 'user' && cities.length && kind !== 'no-tools') {
+    for (const [i, city] of cities.entries()) {
+      const args = kind === 'bad-arguments' ? `{"place":"${city}","unit":"kelvin"}` : JSON.stringify({ city, unit: 'c' });
+      s.send({ tool_calls: [{ index: i, id: `call_check_${i}`, type: 'function', function: { name: 'weather', arguments: '' } }] });
+      s.send({ tool_calls: [{ index: i, function: { arguments: args } }] });
+    }
+    s.send({}, 'tool_calls');
+    return s.end();
+  }
+  const temp = last.role === 'tool' ? /-?\d+/.exec(String(last.content))?.[0] : null;
+  await s.words(kind === 'no-tools' && tools.length ? 'I can’t look that up, sorry.' : temp ? `It is ${temp} degrees there now.` : 'Hello there, nice to meet you.', 2);
+  s.send({}, 'stop');
+  s.end();
+}
+
 async function mainReply(b, port, res, log = true) {
   const msgs = Array.isArray(b.messages) ? b.messages : [], sys = msgs.find(m => m.role === 'system'), last = msgs.at(-1) || {};
   const tools = Array.isArray(b.tools) ? b.tools : [];
+  if (DIR && log && /^Spark Console is checking how this model calls tools\./.test(String(sys?.content || ''))) return checkReply(b, msgs, tools, res);
   const userAt = msgs.findLastIndex(m => m.role === 'user'), lastUser = String(msgs[userAt]?.content || ''), words = wordsOf(lastUser);
   // Which round of tool calls this is: how many times it called tools since the owner's message.
   const round = msgs.slice(userAt + 1).filter(m => m.role === 'assistant' && m.tool_calls?.length).length;
