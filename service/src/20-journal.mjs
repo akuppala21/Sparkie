@@ -189,7 +189,7 @@ function journalOp(job) {
     if (START_JOBS.has(job.type) && failure) {
       journal('attempt', { op: job.id, act: job.type, n: job.log.filter(l => /Known problem: .* \(attempt \d+ of 3\)$/.test(l)).length + 1, failure, fix: null, err: jErr(job.error), model: job.model || null, sub });
     }
-    journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
+    return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
       version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }

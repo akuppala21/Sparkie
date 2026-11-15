@@ -338,6 +338,7 @@ const FIX_WINDOW_MS = Number(process.env.SPARK_CONSOLE_FIX_WINDOW_MS || 30 * 600
 async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
+  job.setupTried = setupTried(m, how, placed);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
