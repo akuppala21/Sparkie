@@ -53,8 +53,9 @@ SERVICE_FILES=(
 )
 # The by-hand way back, kept at a fixed path on Spark 2 (~/.local/share/spark-console/): deploy/RECOVERY.txt says how.
 RECOVERY_FILES=(go-back.sh RECOVERY.txt)
-# pull.sh (the install from GitHub) goes there too, but only once the build it came with is kept: it judges the next.
-RECOVERY_FILES+=(pull.sh)
+# pull.sh (the install from GitHub) and update-guard.sh (its way back) go there too, but only once the build they came
+# with is kept: they judge the next.
+RECOVERY_FILES+=(pull.sh update-guard.sh)
 # server.mjs is built from service/src/*.mjs (tools/build-server.mjs): install only one that matches its parts.
 cat "$HERE"/service/src/[0-9][0-9]-*.mjs | cmp -s - "$HERE/service/server.mjs" || { echo "service/server.mjs doesn't match service/src: run node tools/build-server.mjs, then node test/lock.mjs." >&2; exit 1; }
 # Which workflow versions passed the whole test suite (test/lock.mjs writes it). Without it every workflow is off.
@@ -237,6 +238,13 @@ if [[ "$FREE_KB" =~ ^[0-9]+$ ]]; then
   [ "$FREE_KB" -ge "$NEED_KB" ] || fail "Spark 2 has $((FREE_KB / 1024)) MB free, and this update needs about $((NEED_KB / 1024)) MB (a snapshot of what's installed, plus the new files). Nothing was changed. Free some space, then run this again. Old snapshots are in $REL."
 else
   echo "  Note: couldn't read how much disk space is free, so that wasn't checked."
+fi
+# An update from GitHub whose way back is still armed (update-guard.sh) would put this install back when its timer
+# fires. An install made outside that update (another process group: from the Mac, or by hand) disarms it first (R30).
+GUARD="$HOME/.local/share/spark-console/update-guard" ME_PGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]] && [ "$(sed -n 's/^pgid=//p' "$GUARD/guard")" != "$ME_PGID" ]; then
+  echo "  An update from GitHub left its way back armed; this install takes over, so it is disarmed first."
+  bash "$GUARD/update-guard.sh" disarm >/dev/null 2>&1 || echo "  NOTE: couldn't disarm it; to put that update's build back by hand: bash $GUARD/update-guard.sh put-back hand"
 fi
 
 # From here on, however this script ends: a snapshot that wasn't finished is removed (it would hide the good ones from
@@ -439,13 +447,18 @@ fi
 same_process || miss "it restarted by itself during the checks"
 PHASE=done
 echo "  kept: build $API_BUILD passed its checks"
-# pull.sh judges the next install, so this build's copy takes over only now. Renamed into place: the pull.sh that may be
-# running this install keeps reading its own copy.
-if [ -f "$IN/pull.sh" ]; then
-  cp "$IN/pull.sh" "$HOME/.local/share/spark-console/.pull.sh.new" && chmod 700 "$HOME/.local/share/spark-console/.pull.sh.new" \
-    && mv -f "$HOME/.local/share/spark-console/.pull.sh.new" "$HOME/.local/share/spark-console/pull.sh" \
-    || echo "  NOTE: couldn't copy pull.sh to ~/.local/share/spark-console (the install itself is fine)."
-fi
+# pull.sh and update-guard.sh judge the next install, so this build's copies take over only now. Renamed into place:
+# the pull.sh that may be running this install keeps reading its own copy.
+for f in pull.sh update-guard.sh; do
+  if [ -f "$IN/$f" ]; then
+    cp "$IN/$f" "$HOME/.local/share/spark-console/.$f.new" && chmod 700 "$HOME/.local/share/spark-console/.$f.new" \
+      && mv -f "$HOME/.local/share/spark-console/.$f.new" "$HOME/.local/share/spark-console/$f" \
+      || echo "  NOTE: couldn't copy $f to ~/.local/share/spark-console (the install itself is fine)."
+  fi
+done
+# When this build was kept: for a day, the watchdog goes back a build if it stays silent for 15 minutes (R30).
+printf '%s %s\n' "$(date +%s)" "$API_BUILD" > "$HOME/.local/share/spark-console/install-mark" 2>/dev/null \
+  || echo "  NOTE: couldn't write ~/.local/share/spark-console/install-mark (the install itself is fine)."
 # The source, kept here too (swapped in whole; the old copy goes once the new one is in place).
 if [ -f "$IN/source.tar" ]; then
   SRC="$HOME/spark-console-src"
@@ -462,11 +475,11 @@ fi
 mkdir -p "$HOME/.local/share/spark-console"
 cat > "$HOME/.local/share/spark-console/watchdog.sh" <<'DOG'
 #!/usr/bin/env bash
-S="$HOME/.local/state/spark-console"; U=spark-console-api
+S="$HOME/.local/state/spark-console"; U=spark-console-api; D="$HOME/.local/share/spark-console"
 state=$(systemctl --user show -p ActiveState --value "$U" 2>/dev/null)
 restart() {
   now=$(date +%s); recent=$(awk -v n="$now" 'n - $1 < 3600' "$S/watchdog-restarts" 2>/dev/null | wc -l)
-  [ "$recent" -lt 3 ] || { logger -t spark-console-watchdog "not restarting: 3 restarts in the last hour already"; exit 0; }
+  [ "$recent" -lt 3 ] || { logger -t spark-console-watchdog "not restarting: 3 restarts in the last hour already"; return 0; }
   echo "$now" >> "$S/watchdog-restarts"; echo 0 > "$S/watchdog-misses"
   logger -t spark-console-watchdog "restarting Spark Console: $1"
   systemctl --user reset-failed "$U" 2>/dev/null; systemctl --user restart "$U"
@@ -474,10 +487,21 @@ restart() {
 case "$state" in
   failed) restart "systemd gave up on it" ;;
   active|activating)
-    if curl -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then echo 0 > "$S/watchdog-misses"; exit 0; fi
+    if curl -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then echo 0 > "$S/watchdog-misses"; rm -f "$S/watchdog-silent-since"; exit 0; fi
     m=$(( $(cat "$S/watchdog-misses" 2>/dev/null || echo 0) + 1 )); echo "$m" > "$S/watchdog-misses"
     [ "$m" -lt 3 ] || restart "it didn't answer /health 3 minutes in a row" ;;
+  *) rm -f "$S/watchdog-silent-since"; exit 0 ;;
 esac
+# Silent for 15 minutes within a day of an install (install-mark): go back a build, once. Never while an update's own
+# way back is armed (update-guard.sh decides then), and never for a console stopped on purpose (above).
+now=$(date +%s); since=$(cat "$S/watchdog-silent-since" 2>/dev/null)
+[[ "$since" =~ ^[0-9]+$ ]] || { echo "$now" > "$S/watchdog-silent-since"; exit 0; }
+mark=$(cut -d' ' -f1 "$D/install-mark" 2>/dev/null)
+if [ $((now - since)) -ge 900 ] && [[ "$mark" =~ ^[0-9]+$ ]] && [ $((now - mark)) -lt 86400 ] && [ ! -e "$D/update-guard" ]; then
+  rm -f "$D/install-mark" "$S/watchdog-silent-since"
+  logger -t spark-console-watchdog "going back a build: silent for 15 minutes within a day of an install"
+  bash "$D/go-back.sh" >/dev/null 2>&1
+fi
 DOG
 chmod 700 "$HOME/.local/share/spark-console/watchdog.sh"
 cat > "$HOME/.config/systemd/user/spark-console-watchdog.service" <<'DOGU'
