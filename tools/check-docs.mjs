@@ -26,7 +26,7 @@ const KB = 1024;
 // docs/review-astra/ holds a review with an outside reviewer (its evidence quotes line numbers and old names on purpose).
 const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//, /^docs\/review-astra\//];
 // Written by tools: never edited by hand. tools/make.mjs rebuilds them; build.test.mjs and this checker compare them.
-const GENERATED = ['docs/code-map.md', 'docs/rules.md'];
+const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md', 'docs/status.md'];
 // Not the app's documents: the agent bar (a separate trial harness that names its own run outputs) and anything inside
 // the stand-in fleet.
 const NOT_DOCS = [/^agentbar\//, /^test\/mock\//];
@@ -42,7 +42,7 @@ const LIMITS = [
   [/^docs\/state\.md$/, 24 * KB],
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
-  [/^docs\/contract\.md$/, 120 * KB, 139 * KB],
+  [/^docs\/contract\.md$/, 120 * KB],
   [/^README\.md$/, 4 * KB, 15 * KB],
   [/^test\/README\.md$/, 12 * KB, 48 * KB],
   [/^docs\/agent-door\.md$/, 16 * KB, 17 * KB],

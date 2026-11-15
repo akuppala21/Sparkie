@@ -35,7 +35,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | `docs/rules/`, `docs/rules.md` | One rule per file, and their index (generated). |
 | `docs/how/` | One card per kind of work. |
 | `docs/state.md`, `docs/glossary.md` | Who holds each fact; the words this project uses. |
-| `docs/code-map.md` | Generated: every part, action, state file, timer and function. |
+| `docs/code-map.md`, `docs/registry.md` | Generated: parts and who uses what; actions, state files, timers. |
 | `docs/contract.md` | What the product must do and why. Search it. |
 | `docs/history/` | Dated records: old plans, reviews, analyses. Never edited. |
 
@@ -45,9 +45,9 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 ## How to work
 
 1. Find it first: the task table below gives one card. Read the code before changing it; `docs/code-map.md` says
-   where each part, action and function lives.
-2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs`, the code map
-   and the rules index, and checks the documents. `node tools/make.mjs --check` changes nothing.
+   where everything lives.
+2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs` and the
+   generated documents, and checks them and the parts' headers. `node tools/make.mjs --check` changes nothing.
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
 4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
    `SPARK_TEST_SLOW=3` on a slow machine). They never touch the real Sparks.
@@ -91,7 +91,7 @@ No card fits? Search `docs/rules.md`.
 
 ## Before you say done
 
-1. Parts edited, not `server.mjs`; the part's name fits R28; `node tools/make.mjs --check` passes.
+1. Parts edited, not `server.mjs`; each part's name and header fit R28; `node tools/make.mjs --check` passes.
 2. A test that fails without the change; no existing test weakened.
 3. A new action is in `test/lib.mjs` and in the door and fuzz argument tables; a new change is in `ACTION_KIND`, with
    its target traced in `sparkieCheck`.

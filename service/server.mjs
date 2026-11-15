@@ -1,3 +1,7 @@
+/* ───────── setup: the build id, config.json, the Sparks, test switches and shared helpers ───────── */
+// Area: ground        Rules: R8, R28, R29, R30        Tests: build.test.mjs, fleet.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Generated: this file is service/src/*.mjs joined in name order (node tools/build-server.mjs). Edit the parts.
 // Spark Console API: live metrics, the model library and deployments across the Spark fleet.
 // Runs on the portal host behind `tailscale serve --set-path=/console/api`, next to the portal.
@@ -100,6 +104,9 @@ class HttpError extends Error {
 }
 
 /* ───────── running commands on Sparks ───────── */
+// Area: ground        Rules: R10        Tests: fleet.test.mjs, dark.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command.
 // `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there
 // after this side gave up.
@@ -171,6 +178,10 @@ const b64json = s => { try { return s ? JSON.parse(Buffer.from(s, 'base64').toSt
 let authProblem = null;
 
 /* ───────── who's asking ───────── */
+// Area: ground        Rules: R5, R10, R20        Tests: state.test.mjs, internet.test.mjs, passkey.test.mjs
+// Owns: access.json (writers: changeMembers, changeAccess), access.json.good (writers: ownAccess; a copy of the last
+//   good access.json)
+// Timers: none        Wakes: none
 // The owner, the members and the Spark list live in the console's own owner-only file on this Spark, managed in
 // Spark Console (Access). Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
 const ACCESS_FILE = `${STATE_DIR}/access.json`;
@@ -456,6 +467,9 @@ function sameOrigin(req) {
 }
 
 /* ───────── secrets: one owner-only file outside the state folder ───────── */
+// Area: ground        Rules: R20, R32        Tests: telegram.test.mjs, needs.test.mjs
+// Owns: secrets.json (writers: secretsWrite; outside the state folder)
+// Timers: none        Wakes: none
 // What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is
 // in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the
 // install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). It is typed
@@ -495,6 +509,11 @@ function secretsWrite(change) {
   return next;
 }
 /* ───────── live metrics ───────── */
+// Area: ground        Rules: R10, R24        Tests: internet.test.mjs
+// Owns: none
+// Timers: startSampler (again 15 s after a reader ends, while a page is open), metricsStream (a ping every 15 s to
+//   each open page)
+// Wakes: none
 // One long-running reader per Spark, only while someone has the page open; stopped shortly after they leave.
 const SAMPLE_SCRIPT = `nvidia-smi --query-gpu=utilization.gpu,power.draw,temperature.gpu --format=csv,noheader,nounits -lms 1000 2>/dev/null | sed -u 's/^/G,/' &
 free -b -s 1 | sed -u -n 's/^Mem:/M/p' &
@@ -578,6 +597,9 @@ function metricsStream(req, res, viewer) {
 }
 
 /* ───────── model library and deployments ───────── */
+// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do
@@ -975,6 +997,9 @@ mm=$(cd ${root} 2>/dev/null && ls *.gguf */*.gguf 2>/dev/null | grep -i mmproj |
 }
 
 /* ───────── multi-Spark readiness (read-only) ───────── */
+// Area: ground        Rules: R10, R17, R24        Tests: across.test.mjs, door.test.mjs
+// Owns: links.json (writers: fabric)
+// Timers: test (the cable test, fabric: 20 s after start, then every 10 minutes)        Wakes: none
 // Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the ConnectX links up with addresses
 // on a shared subnet, and full-MTU reachability between each pair. The console starts each Spark's part over its own
 // SSH from Spark 2, so Sparks don't need SSH to each other. Nothing here changes a Spark: it reads /sys and ip, and pings.
@@ -1073,6 +1098,11 @@ setTimeout(() => {
 }, 20000);
 
 /* ───────── jobs ───────── */
+// Area: ground
+// Rules: R7, R9, R13, R14, R15, R16, R21
+// Tests: change.test.mjs, state.test.mjs, pause.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 const jobs = new Map();
 // Set while the service is stopping: no new operations start (running ones get a moment to finish).
 let draining = false, agentFailuresInARow = [];
@@ -1300,6 +1330,9 @@ async function stopContainer(job, nodeId, container, viewer = null) {
 }
 
 /* ───────── one model across two linked Sparks ───────── */
+// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // NVIDIA's two-Spark method (build.nvidia.com/spark/vllm-cluster, advanced): native vLLM multi-node, one tensor-parallel
 // rank per Spark, talking over the direct cable. The first Spark is the head and serves the API on its Tailscale address,
 // port 8000, like a single-Spark deploy; the second runs headless. This service starts each part over its own SSH.
@@ -1779,6 +1812,9 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
 }
 
 /* ───────── verified deployments ───────── */
+// Area: ground        Rules: R15, R22        Tests: change.test.mjs, detail.test.mjs
+// Owns: verified.json (writers: recordVerified)
+// Timers: none        Wakes: none
 // Every deploy that comes up healthy is recorded with exactly how it ran (model, image, flags, memory share, Sparks) and a
 // quick speed test on these Sparks: time to the first token and tokens per second over one 256-token answer. Recipes and
 // the deploy dialog show these as "Verified on your Sparks", next to what others reported.
@@ -1923,6 +1959,9 @@ const verifiedView = v => ({ key: v.key, setupId: v.setupId || null, sourceUrl: 
   nodes: v.nodes, firstAt: v.firstAt, lastAt: v.lastAt, runs: v.runs, measured: v.measured || null, best: v.best || null });
 
 /* ───────── recipes ───────── */
+// Area: knowledge        Rules: R20, R27, R30        Tests: detail.test.mjs, intent.test.mjs, gateway.test.mjs
+// Owns: added-models.json (writers: addModel), found-setups.json (writers: digModel)
+// Timers: none        Wakes: none
 // Recipes: service/catalog.json (built by tools/build-catalog.py from the research): models → versions → setups, plus
 // models the owner added (~/.local/state/spark-console/added-models.json) and the setups the finder dug up for any
 // model (found-setups.json, one entry per model, replaced each time it looks again).
@@ -2163,6 +2202,9 @@ async function addList(job, viewer, repos) {
 }
 
 /* ───────── finding setups ───────── */
+// Area: knowledge        Rules: R10, R22, R27        Tests: dig.test.mjs
+// Owns: none
+// Timers: daily (the daily research: 3 minutes after start, then every 24 hours)        Wakes: none
 // For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai,
 // Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only).
 // The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads
@@ -2600,6 +2642,9 @@ fi` : inImage, { timeout: 6 * 3600000, signal: job.abort?.signal, onLine: line =
 
 
 /* ───────── Spark status (taking over from the original portal) ───────── */
+// Area: knowledge        Rules: R10, R24, R30, R37        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs
+// Owns: energy.json (writers: sampleEnergy)
+// Timers: collectStatus (every 30 s, after a first round 2 s after start)        Wakes: none
 // Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH
 // as everything else, with the same fields the portal reported. It's collected every 30 seconds whether or not
 // anyone is looking, like the portal did, which also keeps the GPU energy total going.
@@ -2779,6 +2824,11 @@ async function checkSparkAction(node, action) {
 }
 
 /* ───────── Sparkie's main model ───────── */
+// Area: brain
+// Rules: R2, R8, R14, R15, R17, R19, R20, R22, R27, R34
+// Tests: brain.test.mjs, agent-setup.test.mjs
+// Owns: main.json (writers: writeMainFile)
+// Timers: none        Wakes: none
 // Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark
 // so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after
 // reboots until someone stops it here, and it's labeled protected, so deploys never stop it.
@@ -3080,6 +3130,11 @@ async function stopMain(job, m = MAIN) {
 }
 
 /* ───────── Sparkie's chats ───────── */
+// Area: brain
+// Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs
+// Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
+// Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 const CHATS_FILE = `${STATE_DIR}/chats.json`;
 const CHAT_ID = /^sc_[0-9a-f]{16}$/;
@@ -3587,6 +3642,9 @@ async function chatReply(req, res, viewer, conv, text, context) {
 }
 
 /* ───────── choosing what Sparkie and agents use ───────── */
+// Area: brain        Rules: R5, R36        Tests: gateway.test.mjs, paste.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Running models this service can point Sparkie or agents at: its own main model, console deploys (they listen on the
 // tailnet too), and other model servers on its own Spark. Servers that only listen on another Spark's own address
 // are listed but can't be reached from here.
@@ -3799,6 +3857,11 @@ function proxyBrain(req, res, path, target, payload) {
 }
 
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
+// Area: core
+// Rules: R3, R7, R9, R11, R12, R18, R21, R23, R25, R26, R32, R33, R35, R36, R37, R38
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
 // time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the
 // page's buttons move onto the same list, with the same checks. Each action says:
@@ -4922,6 +4985,11 @@ action({
 });
 
 /* ───────── actions that change things: say it, and it's done (checked inside) ───────── */
+// Area: core
+// Rules: R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38
+// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs
+// Owns: agent-settings.json (writers: setAgentSettings)
+// Timers: none        Wakes: none
 // Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is
 // checked the same way before anything happens:
 //   1. inputs (checkInput)  2. a fresh plan, never the cached view  3. the rails below, in code  4. one change per Spark
@@ -5715,6 +5783,13 @@ action({
   },
 });
 /* ───────── workflows ───────── */
+// Area: core
+// Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
+// Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
+//   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
+//   writes it, noteUpdate reads it)
+// Timers: none        Wakes: none
 // Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it
 // worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a
 // workflow and fill in its inputs; they never make up the steps.
@@ -6308,6 +6383,11 @@ action({
   },
 });
 /* ───────── watching the fleet: what runs, what changed, and what it learns ───────── */
+// Area: core
+// Rules: R7, R19, R21, R23, R24, R38
+// Tests: fleet.test.mjs, dark.test.mjs, docker-down.test.mjs, state.test.mjs
+// Owns: knowledge.json (writers: saveKnowledge), events.jsonl (writers: fleetEvent)
+// Timers: watchFleet (15 s after start, then every 60 s)        Wakes: none
 // Every minute the console looks at every container on every Spark (models, services, dev boxes, anything started by
 // hand) and remembers how each was started: image, command (secrets hidden), ports, mounts, GPU use, and the names
 // (never the values) of its environment variables. Changes become events: started, stopped, crashed, removed, a Spark
@@ -6615,6 +6695,9 @@ function fleetNotes(viewer) {
 }
 
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
+// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler)
+// Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
 // isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console,
@@ -6871,6 +6954,11 @@ action({
   },
 });
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
+// Area: safety
+// Rules: R7, R8, R11, R18, R19, R21, R34, R38
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs
+// Owns: none
+// Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
 // back (maybeHeal), every minute, with the owner's switch (automatic restarts) on and agents not paused:
 // - a model across two Sparks that lost a part: what's left of it stops, and it starts again across the same Sparks
@@ -7117,6 +7205,10 @@ async function healPass() {
 }
 setInterval(healPass, HEAL_PASS_MS).unref?.();
 /* ───────── the agent door (MCP) ───────── */
+// Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
+// Owns: agents.json (writers: handler, top level; the top-level one is the last-use timer), audit.jsonl (writers:
+//   audit)
+// Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,
 // <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Access → Agents), so
 // you can see what each one did and remove one without touching the others. A key only works together with its
@@ -7417,6 +7509,9 @@ function maskDeep(v, key = '') {
 }
 
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
+// Area: record        Rules: R20, R25, R26        Tests: sparkie-more.test.mjs
+// Owns: memory.json (writers: remember, forget_memory)
+// Timers: none        Wakes: none
 // What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I
 // meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). A few
 // dozen short lines in memory.json, put at the end of Sparkie's system prompt (so the prompt cache stays warm until it
@@ -7555,6 +7650,9 @@ function memoryClear(name, input, ctx, asked) {
   return asked || !QUESTION_START.test(String(ctx.request || '').trim());
 }
 /* ───────── what is waiting on the owner (H4) ───────── */
+// Area: safety        Rules: R21, R26        Tests: needs.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model
 // call, no look at another Spark, and no text from a log, an error, a container's output or the web (so fleet_status
 // stays a read of the console's own numbers). Lock-out first, then the owner's data, then the fleet. A line stands while
@@ -7622,6 +7720,9 @@ function needsLines(list = openProblems()) {
   return lines.length > NEEDS_MAX ? [...lines.slice(0, NEEDS_MAX - 1), `And ${lines.length - (NEEDS_MAX - 1)} more. Fix the ones above first.`] : lines;
 }
 /* ───────── telling the owner on Telegram ───────── */
+// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13,
 // docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on
 // with a request made there, and Spark Console's own fixed lines (pairing, /status, "restarted while answering"). Never
@@ -7786,6 +7887,9 @@ async function needsMeTick() {
   } catch (e) { console.error(`The needs-me line: ${e.message}`); } finally { needsBusy = false; }
 }
 /* ───────── the owner's words: /status, /pause, /restart sparkie, /stop, /undo update, /help (round two, 2026-11-11) ───────── */
+// Area: safety        Rules: R34        Tests: words.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Typed as the whole message in the owner's own page chat, they're answered by code before any model call, so they work
 // with Sparkie's model down or stuck (docs/analysis-2026-11-11/10-round-two-report.md, item 1; contract 8.13). They are
 // not tools: no agent, no /mcp or /v1, no carry-on turn. They can only look, pause agents' changes, bring back the
@@ -7946,6 +8050,9 @@ async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null
   res.end(`data: ${JSON.stringify({ type: 'done', message })}\n\n`);
 }
 /* ───────── apps kept running (R38) ───────── */
+// Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
 // WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running
 // (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the
@@ -8519,6 +8626,9 @@ action({
   },
 });
 /* ───────── the app door: the owner's kept apps from anywhere (R40) ───────── */
+// Area: features        Rules: R40        Tests: app-door.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // The owner opens an app kept running (keep_running, R38) on any Spark that isn't the brain's from anywhere, a phone
 // without Tailscale too, signed in as on the main address (the owner, 2026-11-12: "once you're signed in, you shouldn't
 // need a separate password"). It is Spark Console's own name on port 10000 (Funnel's one free port; 443 is the public
@@ -8782,6 +8892,9 @@ async function doorUpgrade(req, socket, head) {
   }
 }
 /* ───────── VS Code in the browser (taking over from the original portal) ───────── */
+// Area: features        Rules: R4, R31        Tests: internet.test.mjs, passkey.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // <console api>/connect/<spark>/ goes to that Spark's code-server, which listens on 127.0.0.1 on this Spark: its own,
 // and Spark 3 and 4's through the tunnel services. Owner only, since the editor is a full shell as the owner. The
 // same checks and rewriting the portal did: no escaping the editor's path, redirects and cookies kept under it, and
@@ -8896,6 +9009,11 @@ async function editorUpgrade(req, socket, head) {
 }
 
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
+// Area: features
+// Rules: R1, R11, R13, R19, R20, R22, R30, R38
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs
+// Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
+// Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
 // "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in
 // config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no
@@ -9311,6 +9429,11 @@ function selfTestCutOff(e) {
   return Boolean(rec?.spark && (e.spark === rec.spark || (e.sparks || []).includes(rec.spark)) && String(e.at) >= String(rec.since || '~'));
 }
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */
+// Area: features        Rules: R32, R34        Tests: telegram.test.mjs
+// Owns: telegram.json (writers: tgSave)
+// Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
+//   Sparkie answers, 5 minutes at most)
+// Wakes: none
 // Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long polling): no route, port or Funnel,
 // so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired
 // with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as
@@ -9704,6 +9827,9 @@ async function telegramRoute(req, res, path, viewer) {
   throw new HttpError(405, 'Use GET, PUT, POST /telegram/pair, PUT /telegram/needs or DELETE.');
 }
 /* ───────── looking things up on the web ───────── */
+// Area: features        Rules: R39        Tests: web.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // When Sparkie doesn't know something (a new model, an error message, an engine flag, a how-to), search_web finds pages
 // and read_page reads one. Both are reads, open-world (an agent's 6 a minute at the door). What leaves the house is a
 // search query (keys and the fleet's own names and addresses hidden, 200 characters at most) and plain GETs: no cookies,
@@ -10009,6 +10135,9 @@ action({
   },
 });
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
+// Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
+// Owns: passkeys.json (writers: savePasskeys)
+// Timers: none        Wakes: none
 // One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to
 // who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a
 // passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that
@@ -10191,6 +10320,9 @@ async function passkeyGate(req, path, viewer) {
 }
 
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
+// Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
+// Owns: sessions.json (writers: saveSessions)
+// Timers: none        Wakes: none
 // From the internet (Tailscale Funnel) a request carries no Tailscale identity, so on its own it's a public visitor.
 // The owner signs a browser in with their passkey, or lets a device in by its short code (a terminal, or a phone
 // without the passkey) from a device that's already signed in, confirming with the passkey. Each signed-in device holds
@@ -10548,6 +10680,10 @@ async function sessionRoute(req, res, path, viewer) {
   return false;
 }
 /* ───────── HTTP ───────── */
+// Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
+// Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
+//   (writers: checkRoute)
+// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s, not on the stand-in fleet)        Wakes: none
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -10689,6 +10825,11 @@ function refreshBlocked() {
 if (!ALL_LOCAL) { setTimeout(refreshBlocked, 1500); setInterval(refreshBlocked, 60000); }
 
 /* ───────── the public page ───────── */
+// Area: ways in
+// Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
 // identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model,
 // container, job, chat, person, hostname or address.
@@ -11395,6 +11536,11 @@ const handler = async (req, res) => {
 };
 
 /* ───────── a daily copy of the console's state on another Spark ───────── */
+// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, fleet.test.mjs, install.test.mjs
+// Owns: backup.json (writers: backupState)
+// Timers: backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop
+//   waits for running operations, 60 s at most)
+// Wakes: none
 // People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
 // Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
 // one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is
