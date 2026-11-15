@@ -50,8 +50,8 @@
 //   before    messages sent first, each in a new chat of its own (or a list of messages: one chat, in that order)
 //   seed      {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …its fields}]}: lines in memory.json and
 //             records in the journal before the console starts; at is an ISO date, or "-20d", "-3h", "-15m" before the run
-//   has       words that must each be in a request the brain got for the case's turn (any round, any message; case
-//             aside); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
+//   has       words that must each be in a request the brain got for the case's turn (any round, any message; capitals
+//             or not); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
 //   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
 //                        POST /main/eval, to keep it in the profile of the brain serving now. Nothing else runs.
@@ -291,7 +291,7 @@ async function runCase(c) {
         && (!c.usesEach || c.usesEach.every(list => list.some(u => used.includes(u)))) && (!c.noUnverified || !(msg.unverified || []).length);
       why = pass ? '' : `tools ${JSON.stringify(used)}, unverified ${JSON.stringify(msg.unverified || [])}${changed.length ? ', and it changed something' : ''}`;
     }
-    // What the brain's requests for this turn held (has, hasNot): any round, any message, case aside.
+    // What the brain's requests for this turn held (has, hasNot): any round, any message, capitals or not.
     const missing = (c.has || []).filter(w => !sent.includes(w.toLowerCase())), unwanted = (c.hasNot || []).filter(w => sent.includes(w.toLowerCase()));
     if (missing.length || unwanted.length) {
       pass = false;
