@@ -36,7 +36,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R20](rules/R20.md) | partly | `test/state.test.mjs` (“the chat keeps answering”, “a throw while a turn is being set up frees the chat”, “a state file that isn't JSON”, “access.json that can't be read”, “a state file that can't be read when an operation finishes is never saved over”, “says whether agents are paused”, “new operations get 503 while a running one finishes”) | falls short today: its file says where |
 | [R21](rules/R21.md) | partly | `test/docker-down.test.mjs` | review; falls short today: its file says where |
 | [R22](rules/R22.md) | built | `test/docs.test.mjs` (“desired.json’s six writers are found in the code”, “a writer of a state file its owner doesn’t declare”); `test/lock.test.mjs`; `test/memory.test.mjs` (“replaces and forgetting retire a line”); `test/selftest.test.mjs` (“a model on the list of what should be running on that Spark is never the test's”, “its first seed passes over the self-test's own model”) |  |
-| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs`; `test/copy.test.mjs` (“rides on a Spark that is awake”) |  |
+| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs`; `test/copy.test.mjs` (“rides on a Spark that is awake”, “before a power-off”) |  |
 | [R24](rules/R24.md) | built | `test/fleet.test.mjs` (“what the Sparks report”); `test/brain-check.test.mjs` |  |
 | [R25](rules/R25.md) | partly | `test/sparkie.test.mjs` (“requests run (a polite”, “the container has to be the one the words point to”, “the model passing a choice id gets 403”); `test/sparkie-more.test.mjs` (“save_workflow from chat”, “forget_memory runs at once only when the owner says to forget that very line”, “is a button and keeps nothing”); `test/selftest.test.mjs` (“asked in the owner's words, it runs at once”, “an agent's call is the owner's question”) | falls short today: its file says where |
 | [R26](rules/R26.md) | partly | `test/sparkie-more.test.mjs` (“a plain statement updates memory by itself”, “Sparkie rephrases what the owner states”); `test/detail.test.mjs`; `test/needs.test.mjs`; `test/abilities.test.mjs`; `test/journal.test.mjs` (“after recall, remember needs a button”) | falls short today: its file says where |
@@ -54,12 +54,13 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
-| [R41](rules/R41.md) | partly | `test/plugs.test.mjs`; `test/power.test.mjs`; `test/copy.test.mjs` (“before a power-off”) | falls short today: its file says where |
+| [R41](rules/R41.md) | partly | `test/plugs.test.mjs`; `test/power.test.mjs`; `test/power-wake.test.mjs` | falls short today: its file says where |
 | [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”, “only the owner's own call reads them back”, “a start line written but not synced”, “an agent sees who, what and when of the owner's calls”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
 | [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”, “a forgotten line is the owner's alone”, “erasing a line for good: from Sparkie always a button”, “erasing for good: the owner's own call on the tailnet erases at once”, “T138: the 41st line is kept”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”, “erasing a memory line for good from Telegram waits for the page”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
+| [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -185,8 +186,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.24 | no test yet |  | T114, T115: no test holds them yet |
 | 9.25 | no test yet |  | T116, T117: no test holds them yet |
 | 9.26 | no test yet |  | T140: no test holds it yet |
-| 9.27 | no test yet |  | T141: no test holds it yet |
-| 9.28 | no test yet |  | T141: no test holds it yet |
+| 9.27 | partly | `test/power-wake.test.mjs` | holds part of T141: “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
+| 9.28 | partly | `test/power-wake.test.mjs` | holds part of T141: “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
 | 10.1 | no test yet |  | T60: no test holds it yet |
 | 10.2 | no test yet |  | T14: no test holds it yet |
 | 10.3 | no test yet |  | T60: no test holds it yet |
