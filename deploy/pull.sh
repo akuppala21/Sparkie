@@ -551,15 +551,23 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   elif [ -n "$ARMED" ]; then
     # The real door: through the real address, the new service answers, and each page that was served before still is.
     echo "Checking the new build through the real address ($DOOR), for up to $(span "$CONFIRM_S") …"
-    local until=$((SECONDS + CONFIRM_S)) ok='' newui hc pb
+    local until=$((SECONDS + CONFIRM_S)) ok='' newui hc pb signin=''
     newui=$(ui_build)
     while :; do
-      hc=$(door_get /console/api/health); last=''
+      hc=$(door_get /console/api/health); last='' signin=''
       [ "$hc" = 000 ] || reached=yes
       [ "$hc" != 200 ] || last=$(door_ok < "$W/door.body")
       if [ "$last" = "$code_build" ] || { [ "$last" = ok ] && [ -n "$pages" ]; }; then
         ok=yes
         for pg in $pages; do pb=$(door_page "$pg"); [ -n "$pb" ] && [ "$pb" = "$newui" ] || ok=''; done
+        # (and it signs in as far as it can without a passkey: each page's script is the new page's, and the sign-in
+        # answers, R30)
+        if [ -n "$ok" ]; then
+          for pg in $pages; do
+            if [ "$(door_get "${pg%/}/app.js")" != 200 ] || ! grep -qF "const BUILD = '$newui';" "$W/door.body"; then ok='' signin="its page's script (${pg%/}/app.js) isn't the new page's"; break; fi
+          done
+        fi
+        if [ -n "$ok" ] && { [ "$(door_get /console/api/whoami)" != 200 ] || ! grep -q '"access"' "$W/door.body"; }; then ok='' signin="its sign-in (/console/api/whoami) doesn't answer"; fi
         [ -z "$ok" ] || break
       fi
       [ "$SECONDS" -lt "$until" ] || break
@@ -567,6 +575,8 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     done
     if [ -z "$ok" ] && [ -z "$reached" ]; then
       failed="the real address ($DOOR) didn't answer at all in the $(span "$CONFIRM_S") after the install. That isn't proof the new build is bad (the address itself may be down), but nothing confirmed it, so the build from before went back. Try again once the address answers"
+    elif [ -z "$ok" ] && [ -n "$signin" ]; then
+      failed="through the real address ($DOOR) the new build answers, but $signin in $(span "$CONFIRM_S")"
     elif [ -z "$ok" ] && [ "$last" = "$code_build" ]; then
       failed="through the real address ($DOOR) the new build answers, but its page isn't served there in $(span "$CONFIRM_S") (its version.json names ${pb:-nothing})"
     elif [ -z "$ok" ]; then

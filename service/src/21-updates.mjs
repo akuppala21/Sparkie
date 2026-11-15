@@ -120,7 +120,8 @@ function updNeeds(add) {
    tested, the files that differ, and whether it changes what the brain reads (with the eval's result for it, or "not
    run", and that until that result is kept Sparkie asks before every change). Its yes starts pull.sh outside this
    service (systemd-run), which restarts it; the result pull.sh writes (update-result.json) is told in the chat that
-   asked, and on Telegram when it was asked from there, by whichever build runs then. */
+   asked, and on Telegram when it was asked from there, by whichever build runs then; after a kept one, the self-test
+   is started once (it wakes nothing). */
 const UPD_ASKED_FILE = `${STATE_DIR}/update-asked.json`, UPD_RESULT_FILE = `${STATE_DIR}/update-result.json`;
 const UPD_WAIT_MS = 90 * 60000;
 function updBrainLine(x) {
@@ -196,6 +197,21 @@ function updResultLook() {
   }
   fleetEvent({ type: 'notice', text: line });
   if (asked.channel === 'telegram') tell('result', line).catch(() => {});
+  if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});
+}
+// After a kept install, the self-test once (the owner's call 3), as the owner's: it wakes nothing, and a Spark that is
+// off or busy is said, with nothing started. Its report is posted in the chat that asked, as any operation's is.
+async function updSelfTest(conv) {
+  let line;
+  try {
+    const out = await runAction('self_test', healOwner(), {}, { via: 'update', actor: 'Spark Console, after the install', canChange: true,
+      request: 'The self-test after an install from chat', ...(conv ? { conv: conv.id, chat: conv.id } : {}) });
+    line = `After the install: ${out?.note || 'the self-test started.'}`;
+  } catch (e) { line = `After the install, the self-test didn’t run: ${maskSecrets(e.message)}`; }
+  if (!conv) return;
+  conv.messages.push({ role: 'assistant', notice: true, createdAt: new Date().toISOString(), content: line });
+  conv.updatedAt = new Date().toISOString();
+  saveChats();
 }
 function updAfterRestart() {
   try { updResultLook(); } catch (e) { console.error(`The install's result: ${e.message}`); }

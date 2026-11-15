@@ -3,7 +3,8 @@
 // the three code files, as check does), when it was tested, the files that differ, whether it changes what the brain
 // reads with the eval "not run" and that Sparkie then asks before every change. No plain question comes before it.
 // Nothing runs before the yes with its two digits; the yes starts pull.sh install <tree> (with ASSUME_YES=1), and the
-// result pull.sh writes is told in the chat that asked (kept, refused). Nothing newer: said, nothing asked. An agent's
+// result pull.sh writes is told in the chat that asked (kept, refused); after a kept one the self-test is started once.
+// Nothing newer: said, nothing asked. An agent's
 // own call shows nothing and is told the owner asks in their own chat; the tree can't be passed in.
 // The service runs pull.sh check --json against a stand-in GitHub (a bare repository with tested/ tags as the mark job
 // makes them); `install` is a stand-in that writes the console's update-result.json as pull.sh would, so the
@@ -15,7 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, copyFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, waitFor, REPO } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, waitFor, auditLines, REPO } from './lib.mjs';
 
 const TOKEN = `gt_${randomBytes(16).toString('hex')}`, REPO_NAME = 'someone/spark-console';
 const temps = [];
@@ -125,6 +126,9 @@ describe('install_update', { concurrency: 1 }, () => {
     await waitFor(async () => (await chatMessages(a.chat)).some(m => m.content === `Installed: build ${buildOf(c2)} (tree ${c2.t12}) is running. the stand-in install said kept`),
       { timeout: 30000, what: 'the result told in the chat' });
     assert.ok(!existsSync(join(STATE, 'update-asked.json')), 'told once');
+    // (the second piece: after a kept install, the self-test is started once, as the owner's; it wakes nothing)
+    await waitFor(async () => (await chatMessages(a.chat)).some(m => /self-test/i.test(String(m.content || '')) && m !== a.ask), { timeout: 30000, what: 'the self-test after the install' });
+    assert.equal(auditLines().filter(l => l.action === 'self_test' && l.via === 'update').length, 1, 'once');
     installed(c2);
   });
 

@@ -206,6 +206,9 @@ function startDoor(home) {
       up.on('error', () => { res.writeHead(502); res.end('Bad Gateway'); });
       return;
     }
+    // ($HOME/door-old-script: every app.js is that file's text; $HOME/door-no-signin: /console/api/whoami answers 404)
+    if (path.endsWith('/app.js') && existsSync(join(home, 'door-old-script'))) { res.writeHead(200); res.end(readFileSync(join(home, 'door-old-script'))); return; }
+    if (path === '/console/api/whoami' && existsSync(join(home, 'door-no-signin'))) { res.writeHead(404); res.end(); return; }
     if (path.endsWith('version.json') && existsSync(join(home, 'door-stale-page'))) { res.writeHead(200); res.end(readFileSync(join(home, 'door-stale-page'))); return; }
     if (path.startsWith('/console/api/')) {
       if (existsSync(join(home, 'door-502'))) { res.writeHead(502); res.end('Bad Gateway'); return; }
@@ -1114,5 +1117,22 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(read(share('REBUILD.txt')), before);
     await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering' });
     nothingArmed();
+  });
+
+  // (C5: the guard's check signs in as far as it can without a passkey)
+  test('the guard signs in as far as it can without a passkey: an old page script, or no sign-in at the real address, is not kept', CASE, async () => {
+    needs('kept');
+    for (const [n, flag, why] of [[70, 'door-old-script', /its page's script \(\/?[^)]*app\.js\) isn't the new page's/], [71, 'door-no-signin', /its sign-in \(\/console\/api\/whoami\) doesn't answer/]]) {
+      const g = push(treeFiles(n), `The sign-in look, ${n}`);
+      mark(g);
+      const mk = mark0(), old = read(home, 'spark-console', 'app.js');
+      const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' },
+        onOut: out => { if (out.includes('Installing tree') && !existsSync(join(home, flag))) writeFileSync(join(home, flag), flag === 'door-old-script' ? old : ''); } });
+      rmSync(join(home, flag), { force: true });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/, 'its own installer had kept it');
+      assert.match(resultOf(home).why, why);
+      await fromBefore(r, mk);
+    }
   });
 });
