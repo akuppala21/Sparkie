@@ -400,7 +400,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   const chat = await newChat(), cmd = 'echo top > top.txt';
   const r = await turn(chat, 'fix the top note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the top note on spark 3');
-  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the wall: it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only\.\n/, JSON.stringify(asked));
+  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only\.\nThere it still can’t gain root by itself, and the ways in \(~\/\.ssh\) and the start files stay read-only; but it runs as you with all your groups \(Docker’s too\), and the keys and tokens in your home are open to it\.\n/, JSON.stringify(asked));
   assert.ok(!existsSync(at3('top.txt')), 'nothing ran');
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
@@ -408,7 +408,19 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   const open = propsOf(cmd);
   assert.ok(!open.includes('ReadOnlyPaths=/spark3') && !open.some(a => a.startsWith('IPAddressDeny=')) && !open.includes('PrivateDevices=yes'), JSON.stringify(open));
   assert.deepEqual(startOf(cmd).outside, ['it writes ~/top.txt at the top of the home, which the plain wall keeps read-only']);
-  // (and an install into ~/.local, asked over the API: refused there, in the runner's words)
+  // The press ran exactly what the button showed (the unit's own held command, after code's git line).
+  assert.ok(readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', startOf(cmd).unit, 'command'), 'utf8').endsWith(`\n${cmd}`));
+  // Nothing takes that path without the owner's press: the brain's arguments can't ask for it, an agent's call is a
+  // button for the owner, and the owner's own call (no button to show) is refused; nothing ran.
+  const c2 = await newChat(), forced = 'echo forced > forced.txt';
+  await turn(c2, 'fix the forced note on spark 3', [[{ name: 'run', arguments: { on: 'spark3', command: forced, dir: '~', open: true } }]]);
+  const [bad] = sentBack('fix the forced note on spark 3');
+  assert.match(bad?.error || '', /^Unknown argument: open\./, JSON.stringify(bad));
+  const agent = await call(keys.act.token, 'run', { on: 'spark3', command: forced, dir: '~' });
+  assert.ok(!agent.isError && /^(?:needs-ok|question)$/.test(agent.value?.outcome || ''), agent.text);
+  const own = await run(forced, 'spark3', '~');
+  assert.equal(own.status, 409, own.text);
+  assert.ok(!existsSync(at3('forced.txt')) && !startOf(forced), 'nothing ran, nothing started');
   const pip = await run('pip install --user requests', 'spark3', null);
   assert.equal(pip.status, 409, pip.text);
   assert.equal(pip.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs outside that wall, and only after the owner’s yes. Nothing ran.');
@@ -458,6 +470,14 @@ test('the root helper\'s disk floor is said plainly: under 50 GB free nothing ru
   assert.equal(r.status, 409, r.text);
   assert.equal(r.json.error, 'Nothing ran: Spark 3’s disk has 49 GB free; a change needs 50 GB free. Free some space there first.');
   assert.ok(!existsSync(at3('notes/d.txt')));
+});
+
+test('a plain change that ends with the signs of no GPU says so: the GPU isn\'t open to a plain change, GPU work is a job, or ask again with gpu', { timeout: 60000 * SLOW }, async () => {
+  const r = await run("echo 'RuntimeError: No CUDA GPUs are available' > notes/gpu.log; cat notes/gpu.log; exit 1", 'spark3', '~');
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json.notes, ['The GPU isn’t open to a plain change (it gets no devices): GPU work is a job (keep_running with once and gpu), or ask for this again with gpu, which is asked first.']);
+  const fine = await run('echo plain > notes/gpu.log', 'spark3', '~');
+  assert.equal(fine.json.notes, undefined);
 });
 
 test('the root helper\'s own last lines (the disk floor ended it, the home put back) come apart from what the command printed, said plainly', () => {

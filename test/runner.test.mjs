@@ -248,7 +248,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   try { shown = await say(chat, words); } finally { noScript(); }
   const asked = JSON.parse(lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').at(-1).results[0].content);
   assert.equal(asked.outcome, 'needs-ok', JSON.stringify(asked));
-  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the wall: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\.\n/);
+  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\.\n/);
   assert.equal(text('dots.txt'), 'top dots before\n', 'nothing ran before the press');
   assert.equal(pair(top)[0], undefined, 'no start line before the press');
   const pressed = await choose(chat, shown.message.choices.find(c => c.label === 'Run it').id);
