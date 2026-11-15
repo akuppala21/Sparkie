@@ -401,6 +401,22 @@ describe('what the run wall holds in the home', () => {
     assert.deepEqual(c, ['TemporaryFileSystem=/home/owner/.docker:ro', 'TemporaryFileSystem=/home/owner/.local/state/spark-console:ro',
       ...['desired.json', 'lessons.json', 'plugs.json'].map(f => `BindReadOnlyPaths=/home/owner/.local/state/spark-console/${f}`)]);
   });
+  test('no sign-in file and no socket of the state folder is put back, in a look or a change, with or without --open', () => {
+    // These two were single hidden files (InaccessiblePaths=…/api.sock and …/sessions.json) before the state folder was
+    // hidden whole; each sign-in name is still held here, by name.
+    const s = proven();
+    const SIGN_IN = ['api.sock', 'door.sock', 'sessions.json', 'passkeys.json', 'agents.json', 'telegram.json', 'access.json', 'access.json.good'];
+    for (const f of SIGN_IN) s.put(`home/owner/.local/state/spark-console/${f}`, 'secret');
+    for (const [wall, r] of [['look', look(s, 'true')], ['run', change(s, 'true')]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
+      assert.ok(c.includes('TemporaryFileSystem=/home/owner/.local/state/spark-console:ro'), `${wall}: the state folder is hidden`);
+      for (const f of SIGN_IN) assert.ok(!c.some(a => a.endsWith(`/.local/state/spark-console/${f}`)), `${wall}: ${f} is not put back`);
+    }
+    // --open drops the hidden list on purpose (asked first, outside the wall): it is the only way these are seen.
+    const o = change(s, 'true', { extra: ['--open'] });
+    assert.ok(!unitCall(s, `sw-run-${o.id}`).some(a => a.startsWith('BindReadOnlyPaths=/home/owner/.local/state/')), 'nothing is put back under --open: nothing is hidden');
+  });
 });
 
 describe("the owner's words on Spark 2", () => {
