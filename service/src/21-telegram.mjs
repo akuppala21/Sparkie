@@ -53,15 +53,15 @@ function tgSetState(state) {
   if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under Access → Agents.' });
 }
 const TG_WORDS = {
-  off: 'Not connected.',
-  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
-  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
-  ok: 'Working.',
-  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
-  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
-  unreachable: 'Can’t reach Telegram. Trying again by itself.',
-  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
   'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
+  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
+  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
+  off: 'Not connected.',
+  ok: 'Working.',
+  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
+  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
+  unreachable: 'Can’t reach Telegram. Trying again by itself.',
 };
 const tgProblem = () => ['token-refused', 'in-use', 'unreachable', 'secrets-unreadable', 'forget-failed'].includes(tg.state);
 // What the page (GET /telegram), /health and sparkie_setup show. Never the token; the pairing code only in the answer to
