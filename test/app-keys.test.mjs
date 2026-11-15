@@ -9,7 +9,10 @@
 // starts the beat at once. A member's, an agent's, a bad name's or a key-shaped name's `/key` keeps nothing; so does a
 // key typed where the name goes, with words after it, and a key with words or quotes round it. On
 // Telegram the message is deleted, and a delete that fails tells the owner to delete it. An error that quotes a kept key
-// hides it; after a restart the state copy holds none, and a tool result still comes back hidden.
+// hides it; after a restart the state copy holds none, and a tool result still comes back hidden. A value typed in plain
+// words before it was given is hidden in the owner's stored chats when it is kept (a chat that never held it is left as
+// it was), never goes to the brain as history (seen through the stand-in brain's opt-in history log), also when it was
+// kept another way, and the answer names what still holds it: the journal, and an earlier Telegram message.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -18,7 +21,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, copyFileSync, chmodSync, rmSync, readdirSync, lstatSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, MEMBER, useFleet, api, call, createKey, newChat, say, chatMessages, waitFor, auditLines, SLOW } from './lib.mjs';
+import { T, REPO, MEMBER, useFleet, api, call, createKey, newChat, say, chatMessages, waitFor, sleep, auditLines, SLOW } from './lib.mjs';
 import { startMock, MOCK } from './start-mock.mjs';
 
 // Made-up keys, new each run, of no shape the mask knows: only their kept value can hide them.
@@ -27,6 +30,8 @@ const V = { page: made(), plain: made(), member: made(), agent: made(), bad: mad
 const GOOD = made('gt_'), BAD = made('gt_'), OLD = made('gt_');
 // Keys typed where the name goes (as typed, and in capitals), and one given with words round it.
 const K = { low: made(), up: made().toUpperCase(), tg: made() }, W = made();
+// Values typed in plain words before they were kept: on the page, on Telegram, and one kept another way.
+const E = { page: made(), tg: made(), byHand: made() };
 const BEAT_ID = randomUUID(), BEAT = `https://hc-ping.com/${BEAT_ID}`;
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, REPO_NAME = 'someone/spark-console';
 const temps = [];
@@ -91,6 +96,12 @@ function holders(text, fleet = T.fleet, allowed = [join(fleet.dir, SECRETS_TAIL)
 const nowhere = (text, opts = {}) => assert.deepEqual(holders(text, opts.fleet, opts.allowed), [], `${text.slice(0, 6)}… is in these files`);
 const nowhereAtAll = (text, fleet = T.fleet) => nowhere(text, { fleet, allowed: [] });
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
+// The earlier messages each request sent the stand-in brain, while $MOCK_DIR/model-history is there (test/mock/model.mjs).
+const historyLog = () => { const f = join(T.fleet.dir, 'model-history.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : []; };
+async function withHistory(fn) {
+  writeFileSync(join(T.fleet.dir, 'model-history'), '');
+  try { return await fn(); } finally { rmSync(join(T.fleet.dir, 'model-history'), { force: true }); }
+}
 // A file in Spark 3's shared folder, which the `files` tool reads.
 function plant(fleet, text) {
   const dir = join(fleet.root, 'spark3', '.local', 'share', 'spark-portal', 'workspaces', 'shared');
@@ -249,6 +260,49 @@ describe('keys given once', { concurrency: 1 }, () => {
     }
     assert.equal(secretsOf().keys.WANDB, undefined);
     nowhereAtAll(W);
+  });
+
+  // A value typed in plain words before it was given with /key (the review's "Later 1", its two cheap parts).
+  test('a value typed in plain words, then given with /key: the chats show it hidden, the brain is sent it nowhere after, a chat that never held it is untouched, and the answer says what still holds it', async () => {
+    const early = await newChat(), other = await newChat();
+    await say(other, 'hello there');
+    const untouched = JSON.stringify((await api(`/chats/${other}`)).json);
+    await say(early, `my wandb key is ${E.page} for later`);
+    const r = await say(early, `/key EARLY_KEY ${E.page}`);
+    assert.match(r.text, /^Kept your key EARLY_KEY\./);
+    assert.match(r.text, /\nIt was in your earlier words too: hidden in the chats now, but the journal \(never rewritten\) still holds it\.$/);
+    const msgs = await chatMessages(early);
+    assert.equal(msgs[0].content, 'my wandb key is [hidden] for later');
+    assert.match(msgs[1].content, /my wandb key is \[hidden\] for later/, 'the brain\'s answer that quoted it');
+    assert.equal((await api('/chats')).json.chats.find(c => c.id === early).title, 'my wandb key is [hidden] for later', 'the title the words gave');
+    const sent = await withHistory(async () => { await say(early, 'thanks for keeping it'); return historyLog().at(-1); });
+    assert.equal(sent.words, 'thanks for keeping it');
+    assert.ok(sent.history.some(h => h === 'my wandb key is [hidden] for later'), JSON.stringify(sent.history));
+    assert.ok(!JSON.stringify(sent).includes(E.page) && !JSON.stringify(requests().at(-1)).includes(E.page));
+    assert.equal(JSON.stringify((await api(`/chats/${other}`)).json), untouched, 'a chat that never held it');
+    // (the turn it was typed in sent it to the brain and wrote it in the journal: what could not be cleaned)
+    assert.deepEqual(holders(E.page).filter(f => !f.startsWith('journal/') && f !== 'model-requests.jsonl'), []);
+    // On Telegram the answer also names the earlier Telegram message, which only the owner can delete.
+    let from = tgCalls().length;
+    await tgSay(`my token is ${E.tg} ok`);
+    await sentAfter(from);
+    from = tgCalls().length;
+    await tgSay(`/key TG_EARLY ${E.tg}`);
+    assert.match((await sentAfter(from)).body.text, /\nIt was in your earlier words too: hidden in the chats now, but the journal \(never rewritten\) and your earlier Telegram message still hold it; delete that message yourself\.\n/);
+    assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(E.tg), 'the chat file');
+  });
+
+  test('a kept key that reached the secrets file another way (pull.sh setup in a terminal, or by hand) goes to the brain hidden in an earlier message\'s history', async () => {
+    const chat = await newChat();
+    await say(chat, `the build server password is ${E.byHand} for now`);
+    const file = join(T.fleet.dir, SECRETS_TAIL), s = JSON.parse(readFileSync(file, 'utf8'));
+    s.keys.BY_HAND = { value: E.byHand, at: new Date().toISOString() };
+    writeFileSync(file, JSON.stringify(s, null, 2), { mode: 0o600 });
+    await sleep(1200);   // (the mask looks at the file at most once a second)
+    const sent = await withHistory(async () => { await say(chat, 'and what now'); return historyLog().at(-1); });
+    assert.equal(sent.words, 'and what now');
+    assert.ok(sent.history.some(h => h === 'the build server password is [hidden] for now'), JSON.stringify(sent.history));
+    assert.ok(!JSON.stringify(sent).includes(E.byHand));
   });
 
   test('an error that quotes a kept key hides it: a tool\'s refusal, the audit and the journal', async () => {
