@@ -191,7 +191,7 @@ function pasteCard(client, baseUrl) {
 
 action({
   name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length.',
+  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length. asleep: the Sparks Spark Console powered off, with what was on their disks then and since when (looking never wakes one).',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => {
     const inv = await recentInventory();
@@ -201,6 +201,7 @@ action({
         architecture: m.architecture || null, quantization: m.dtype || null, contextLength: m.contextLength || null, draftOnly: m.role === 'draft' })),
       stillDownloading: inv.incomplete.filter(x => x.reason === 'downloading').map(x => ({ repo: x.repo, spark: x.node })),
       offline: inv.sparks.filter(sp => !sp.online).map(sp => sp.id),
+      asleep: asleepView(),
     };
   },
 });
@@ -310,16 +311,16 @@ async function estimateFit(name, viewer, inv) {
 
 action({
   name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. Next: deploy_plan or cluster_plan for the exact dry run.',
+  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. asleep: Sparks Spark Console powered off whose disk held it then (a start wakes one; looking never does). Next: deploy_plan or cluster_plan for the exact dry run.',
   input: { type: 'object', properties: { model: modelArg }, required: ['model'], additionalProperties: false },
   run: async ({ model }, viewer) => {
     const inv = await recentInventory(), m = libraryModel(inv, model);
-    if (!m) return estimateFit(model, viewer, inv);
+    if (!m) return { ...(await estimateFit(model, viewer, inv)), asleep: asleepView([String(model)]) };
     const r = await plansFor(m.name, viewer, inv, new Map());
     const sparks = r.sparks.map(fitView), pairs = r.pairs.map(pairView);
     const one = sparks.find(s => s.fitsNow) || sparks.find(s => s.canRun), two = pairs.find(p => p.canRun);
     return {
-      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs,
+      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs, asleep: asleepView([m.name, m.repo].filter(Boolean)),
       pairsNote: 'Only pairs whose cable passed the connection test are listed (linked_sparks).',
       next: one ? `deploy_plan {"model":"${m.name}","spark":"${one.spark}"}` : two ? `cluster_plan {"model":"${m.name}","sparks":${JSON.stringify(two.sparks)}}` : 'Nothing can run it right now; see blockers.',
     };

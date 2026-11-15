@@ -40,7 +40,7 @@ covers, is in `test/README.md`.
     end: what it prints is its log, its exit code the container's), `gpu-broken` (`nvidia-smi` answers as a driver
     that doesn't, exit 9) and `hf-hold` (`hf download` waits while the file is there).
   - `manifest.json` — what git can't hold: empty folders and the zero-filled weight files' sizes (recreated sparse).
-  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `ping`, `ss`, `tailscale`,
+  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `loginctl`, `ping`, `ss`, `tailscale`,
     and `ssh`/`scp` stubs that always fail. `docker` runs, stops, starts, kills (exit 137) and removes containers like the real one: the
     console's model containers share the serve port (a second can't start while one runs: "port is already
     allocated"), `*gemma*` models exit with code 1 as soon as they start, a stop frees the GPU memory `.mock/gpu` lists
@@ -52,6 +52,10 @@ covers, is in `test/README.md`.
     column and `--filter label=spark.gpu=1` keeps only those (A13). `curl` answers on the serve port once a console
     model on that Spark has run 4 seconds. `hf download` fills the Hugging Face cache. `tailscale ip` is 127.0.0.1 (or
     `.mock/tsip`), so model addresses reach the stand-in serve port; `tailscale serve status --json` (the console's route check) answers `$MOCK_DIR/serve.json`, or `{}` (nothing loaded, as right after a boot).
+    `tailscale status --json` (the console's look at the tailnet, R49) answers `$MOCK_DIR/status.json`, or Spark 2
+    running with a key that never expires; with `$MOCK_DIR/tailscale-hangs` every call hangs. `loginctl show-user`
+    (the linger look) answers Spark 2's `.mock/linger` (yes when there is none; `fail` fails). Both keep every call,
+    one line each, in `$MOCK_DIR/tailscale-calls` and `$MOCK_DIR/loginctl-calls`.
   - `bin/sudo` — only `sudo -n` with the two commands `deploy/power-setup.sh` allows (and `-l` to ask): `systemctl
     poweroff` makes every running container there exit and puts the Spark in the offline file (the stand-in plug reads
     it); `.mock/no-sudo` makes it ask for a password (refused), `.mock/poweroff-refused` lets `-l` say yes but refuses the
