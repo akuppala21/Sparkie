@@ -4,10 +4,10 @@
 
 ## Adding a model: two ways
 
-1. **Search** (Models → Find more → type what you need). Sparkie turns your words into search terms,
+1. **Search** (`GET /recipes/search?q=` with what you need). Sparkie turns your words into search terms,
    grounded in the current catalog. The service reads each result's real files on Hugging Face (size, format, gated) and
-   groups the versions of one model together. **Add to Recipes** adds it.
-2. **Paste links** (Models → Find more → paste into the same box). Paste up to 20 links or `org/model` names. Versions of the same
+   groups the versions of one model together. `POST /recipes/add` adds it.
+2. **Paste links** (`POST /recipes/add-list`). Paste up to 20 links or `org/model` names. Versions of the same
    model are grouped, and dataset and Space links are skipped.
 
 Either way, the service then **finds setups** for the model on its own. **Look again** on any model reruns the search.
