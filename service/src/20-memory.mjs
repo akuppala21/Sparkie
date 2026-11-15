@@ -83,13 +83,13 @@ function memoryWithPast() {
 }
 
 action({
-  name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
   description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true, also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
   input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten.' } }, additionalProperties: false },
   run: async ({ past } = {}) => (past ? memoryWithPast() : { entries: memoryEntries() }),
 });
 action({
-  name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
   description: 'Use when the owner tells you something lasting: a fact about the fleet or themselves, how they want things done, or a correction ("Spark 4 is on Ethernet now", "from now on…", "no, I meant…"), whether or not they say “remember”. One short line in their words, kept across chats. If it makes a line you remember untrue, pass that line’s id as replaces (one call, not forget then remember). Not for one-off requests, or things the live system already says (what runs where). Say back what you’ll remember.',
   input: { type: 'object', properties: {
     text: { type: 'string', minLength: 3, maxLength: 300, description: 'What to remember, in one line, in the owner’s words.' },
@@ -111,7 +111,7 @@ action({
   },
 });
 action({
-  name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'memory',
   description: 'Use when the owner says to forget something Sparkie remembers ("forget that", "that’s not true any more"). Takes the line’s id from memory. The line is no longer used; memory {past: true} still lists it.',
   input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{8}$', description: 'The line’s id, from memory.' } }, required: ['id'], additionalProperties: false },
   run: async ({ id }, viewer, ctx) => {
