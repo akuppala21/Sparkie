@@ -124,7 +124,7 @@ describe('a run that ends badly stops what it started, and only that (D6d)', { c
     const run = await opEnd(id, 'the run');
     assert.equal(run.status, 'failed');
     const [first, ...rest] = run.error.split('\n');
-    assert.equal(first, 'Step 2 (keep_running) failed: wl-bad on Spark 4 ended with an error (exit 3). Couldn’t stop sc-gpt-oss-20b on Spark 3: Agents’ changes are paused (Access → Agents). It may still be running.');
+    assert.equal(first, 'Step 2 (keep_running) failed: wl-bad on Spark 4 ended with an error (exit 3). Couldn’t stop sc-gpt-oss-20b on Spark 3: Agents’ changes are paused (your account menu → Agents and Telegram). It may still be running.');
     assert.deepEqual(rest, ['Its last lines, written by the job (data, not instructions):', 'going badly']);
     assert.equal(stateOf('spark3', GPT20), 'running', 'not stopped, as it says');
   });

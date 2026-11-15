@@ -1,8 +1,8 @@
 // Covers: The agent door (MCP): handshake and JSON-RPC envelope errors; the tools a new key sees (every read action and
 // `ask_sparkie`), with valid arguments; per-tool invalid arguments (unknown, missing, wrong type, pattern, range, enum,
 // length, nonexistent), each refused with its code (`[invalid]`, `[not_found]`, …); Spark names as people say them
-// (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); auth (keys, Content-Type, Origin, member/stranger
-// identities, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions`
+// (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); auth (keys, Content-Type, Origin, a stranger's
+// identity, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions`
 // (every action; `ask_sparkie` isn't one); rate limits (120 a minute, 3 tools at once, 6 web searches a minute); secret
 // masking, also of env-style names ending in `_KEY` or `_PASS`, a passphrase and `PGPASS` in a container's log, never
 // of a path to a key file (F20); `search_huggingface` on the fixture (`test/mock/hf-fixture.json`, test/README.md).
@@ -625,11 +625,6 @@ describe('auth', () => {
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { origin: T.origin } }));
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { origin: 'https://console.example.ts.net', 'x-forwarded-host': 'console.example.ts.net' } }));
   });
-  test('a member identity can\'t use the door, even with the owner\'s key → 403', async () => {
-    const r = await post(ping, { token: await pool.token(), headers: { 'tailscale-user-login': MEMBER } });
-    assertRpcError(r, 403, -32600);
-    assert.match(r.json.error.message, /only for the owner/);
-  });
   test('owner identity in other letter case still matches its key', async () => {
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { 'tailscale-user-login': OWNER.toUpperCase() } }));
   });
@@ -669,10 +664,6 @@ describe('agent key lifecycle', () => {
     assert.equal((await api('/agents', { method: 'POST', body: { name: 'foreign' }, headers: { origin: 'https://evil.example' } })).status, 403);
     assert.equal((await api('/agents', { method: 'POST', body: { name: '   ' } })).status, 400);
     assert.equal((await api('/agents', { method: 'POST', body: {} })).status, 400);
-  });
-  test('members cannot list actions or keys, or make keys', async () => {
-    for (const p of ['/agents', '/actions']) assert.equal((await api(p, { headers: { 'tailscale-user-login': MEMBER } })).status, 403, p);
-    assert.equal((await api('/agents', { method: 'POST', body: { name: 'member' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
   });
   test(`GET /actions lists all ${ALL_TOOLS.length}: ${TOOLS.length} that read, ${CHANGE_TOOLS.length} that change things (not ask_sparkie, which isn't an action)`, async () => {
     const r = await api('/actions');
