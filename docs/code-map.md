@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 43 parts in `service/src/`, joined in name order into `service/server.mjs` (12918 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 46 parts in `service/src/`, joined in name order into `service/server.mjs` (13828 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -70,7 +70,7 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-status`, `13-main-model`, `14-chats`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-needs`, `20-tell`, `20-words`, `21-apps`, `21-brain-check`, `21-door`, `21-editor`, `21-guide`, `21-selftest`, `21-telegram`, `21-web`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-status`, `13-main-model`, `14-chats`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-needs`, `20-sort`, `20-tell`, `20-words`, `21-apps`, `21-brain-check`, `21-door`, `21-editor`, `21-guide`, `21-selftest`, `21-telegram`, `21-web`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
@@ -412,6 +412,45 @@ One list of open problems, built by code each time it is asked for, from facts S
 - **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `nodeById`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`), `25-backup-and-start` (`backupLate`, `lastBackup`)
 - **Used by:** `16-actions`, `19-watcher`, `20-journal`, `20-tell`, `20-words`
 
+### `20-programs.mjs`: the sorter's programs: what each one it knows does (design A 2.8)
+
+One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, the package managers, git, Docker, systemd, Tailscale, the network, ssh and copies, archives, sudo and su. A program in no table is unknown, and so risky.
+
+- **Area:** safety. **Rules:** R42. **Tests:** sort.test.mjs
+- **Lines:** 375
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `sortShell`, `sortInterp`, `sortDoubts`, `sortDeclare`, `sortZip`, `sortBecome`, `sortPkgs`
+- **Uses:** `20-shell` (`unsure`, `sortSedSafe`), `20-sort` (`sortInline`, `sortRuns`, `raise`, `sortScan`, `sortAssign`, `sortFile`, `sortTouch`, `sortGone`, `sortProgram`, `sortPaths`, `SORT_LOCK_READS`, `sortReads`, `SORT_READS`, `sortOpen`, `sortFresh`, `sortAt`, `sortMerge`, `sortGlob`, `WAYS_UNITS`)
+- **Used by:** `20-sort`
+
+### `20-shell.mjs`: how bash reads a command: words, pipelines, here-documents (for the sorter)
+
+The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). It reads as bash does, and anything it can't read whole (a quote that never closes, a loop, arithmetic, a ${ … } form, a here-document that runs commands) throws a SortDoubt, which the sorter answers as risky. No model call, no file read.
+
+- **Area:** safety. **Rules:** R42. **Tests:** sort.test.mjs
+- **Lines:** 182
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `unsure`, `sortWs`, `shellLex`, `shellParse`, `sortSedSafe`
+- **Uses:** nothing from other parts
+- **Used by:** `20-programs`, `20-sort`
+
+### `20-sort.mjs`: the sorter: what one command on a Spark is (design A 2.8)
+
+sortCommand(command, {at, root, dir, hosts, brain}) says what one command for run is before anything runs, from its text and where it runs alone: no model call, no file read. Five classes, in their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes). The rule of doubt: what it can't read whole or doesn't know (an unknown program, a loop, a $ where a program or a path goes, a sign that isn't plain ASCII) is risky: never a look, …
+
+- **Area:** safety. **Rules:** R42. **Tests:** sort.test.mjs
+- **Lines:** 353
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `raise`, `sortFresh`, `sortMerge`, `sortNorm`, `sortPaths`, `sortGlob`, `sortUp`, `sortBraces`, `sortNames`, `sortPlace`, `sortTouch`, `sortScan`, `sortAssign`, `sortList`, `sortCmd`, `sortRuns`, `sortGone`, `sortOpen`, `sortInline`, `sortProgram`, `sortReads`, `sortFile`, `sortWrap`, `sortAt`, `sortCommand`
+- **Uses:** `01-setup` (`q`), `20-programs` (`SORT_HANDLERS`), `20-shell` (`unsure`, `sortWs`, `shellParse`, `shellLex`, `SortDoubt`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
+- **Used by:** `20-programs`
+
 ### `20-tell.mjs`: telling the owner on Telegram
 
 tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13, docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on with a request made there, and Spark Console's own fixed lines (pairing, /status, "restarted while answering"). Never heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the needs-me line at the end of this part. Every send is plain text with link previews off and secrets hidden, and is on the record (its kind and …
@@ -558,7 +597,7 @@ run (the one page's tool, design A's host_look) runs one command Sparkie writes 
 - **Wakes:** none
 - **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperCall`, `helperAnswer`, `ownerCommand`, `needsOwner`, `whoMayLook`, `forBrain`, `runCommand`, `selfTestWalls`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `CONFIG`, `HttpError`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`)
-- **Used by:** `16-actions`, `21-selftest`
+- **Used by:** `16-actions`, `20-sort`, `21-selftest`
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
 
