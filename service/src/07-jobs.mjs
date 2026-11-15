@@ -97,9 +97,17 @@ function runJob(job, fn) {
 // staging folder and moves into place only when complete, so an interrupted copy never looks like a model.
 // A Hugging Face cache entry goes into the target's cache as its served snapshot with the links followed (real
 // files, no blobs/), plus refs/ when there is one. That also works when blobs/ itself can't be listed.
-function copyModel(job, name, from, to, total, store = 'models') {
+// Following links hands their bytes over, so before anything is sent each file the copy would follow passes the
+// cache's link rule (hfEachFile, R17), with weight files that lead out at least 16 MiB: a link put in the entry must not
+// bring a key of this Spark onto the next one as an ordinary file.
+async function copyModel(job, name, from, to, total, store = 'models') {
   const [base, folder] = store === 'hf' ? [HF_HUB, `models--${name}`] : [`"$HOME/${CONFIG.modelsDir}"`, name];
   const staging = store === 'hf' ? `${HF_HUB}/.spark-console-incoming` : `"$HOME/${CONFIG.modelsDir}/.incoming"`;
+  const checked = store === 'hf' ? await run(from, `cd ${HF_HUB} || exit 0; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 0; dir=$PWD/${q(folder)}; ${HF_OWN}
+${hfEachFile('snapshots/$snap', ':', 16 * 2 ** 20)}
+[ -d "$dir/refs" ] || exit 0
+${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
+  if (checked.code) throw new Error(`${name} wasn’t copied from ${from.id}: ${String(checked.err || checked.out || '').trim().split('\n').pop() || 'its files couldn’t be checked'}`);
   return new Promise((resolve, reject) => {
     const src = spawnOn(from, { command: store === 'hf'
       ? `cd ${HF_HUB} || exit 1; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 1; tar -chf - ${q(folder)}/snapshots/"$snap" $([ -d ${q(folder)}/refs ] && echo ${q(folder)}/refs)`
