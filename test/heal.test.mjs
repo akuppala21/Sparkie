@@ -51,9 +51,10 @@ async function running(spark, name) {
   await waitFor(async () => (await tool('workloads', { spark })).workloads.some(w => w.name === name && w.running), { timeout: 60000, every: 500, what: `the watcher seeing ${spark}/${name} running` });
 }
 async function finished(id) {
-  for (;;) {
+  for (const until = Date.now() + 240000 * SLOW; ;) {
     const w = await tool('wait_operation', { id, seconds: 20 });
     if (w.status !== 'running') return w;
+    if (Date.now() > until) throw new Error(`operation ${id} still running after ${240 * SLOW} s: ${JSON.stringify(w)}`);
   }
 }
 const auditLines = () => (existsSync(join(T.fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(T.fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);

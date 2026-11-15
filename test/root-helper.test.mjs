@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
+import './file-limit.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MOCKBIN = join(REPO, 'test', 'mock', 'bin');

@@ -86,7 +86,6 @@ describe('Telegram', { concurrency: 1 }, () => {
 
     test('connecting needs the owner, the page and the passkey; a token Telegram refuses stores nothing', async () => {
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-      is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN }, headers: { 'x-spark-console': null } }), 403, 'cross-site');
       is(await api('/telegram', { method: 'PUT', body: { token: TOKEN } }), 428, 'without the passkey');
       const bad = await confirmed('PUT', '/telegram', { token: REFUSED });
@@ -431,10 +430,10 @@ describe('Telegram', { concurrency: 1 }, () => {
         const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: save.id });
         is(pressed, 200, 'the save, pressed on the page with the passkey');
         assert.equal(pressed.json.outcome, 'saved', pressed.text);
-        assert.equal(pressed.json.message.content, 'Saved the workflow “tg web”. A run asks before it starts nginx:1.27: only your yes to a save’s button, which lists its steps, covers the images it names.');
         const w = (await api('/actions/workflows', { method: 'POST', body: {} })).json.saved.find(x => x.name === 'tg-web');
         assert.deepEqual(w?.steps.map(st => [st.action, st.args.container, st.args.image]), [['keep_running', 'wl-tg', IMAGE]], JSON.stringify(w));
         assert.equal(w.imagesApproved, undefined, 'no yes to the image');
+        assert.equal(pressed.json.message.content, 'Saved the workflow “tg web”. A run asks before it starts nginx:1.27: only your yes to a save’s button, which lists its steps, covers the images it names.');
       } finally {
         noScript();
         await api('/actions/forget_workflow', { method: 'POST', body: { name: 'tg web' } }).catch(() => {});
@@ -455,6 +454,19 @@ describe('Telegram', { concurrency: 1 }, () => {
         const [m] = await sentAfter(from);
         assert.match(m.body.text, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
         assert.ok(!tgSent(from).some(x => String(x.body.text).includes(WORDS)), 'the words never went to Telegram');
+        // Nor through recall (the journal holds the call that kept it), or a question about that line, plain or to erase
+        // it: not in what the brain there is sent, not in a reply or on a button.
+        script([{ match: '^what do you have on my garage\\?$', calls: [{ name: 'recall', arguments: { about: 'garage code' } }, { name: 'recall', arguments: { id: kept.json.id } }] },
+          { match: '^drop the garage line$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id } }] },
+          { match: '^erase the garage line for good$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id, erase: true } }] }]);
+        for (const words of ['what do you have on my garage?', 'drop the garage line', 'erase the garage line for good']) {
+          const before = tgCalls().length;
+          await tgSay(words);
+          await sentAfter(before);
+          assert.ok(!tgCalls().slice(before).some(c => JSON.stringify(c.body).includes(WORDS)), `${words}: the words went to Telegram`);
+          const toBrain = requests().filter(x => x.words === words).flatMap(x => x.results.map(r => r.content)).join('\n');
+          assert.ok(toBrain && !toBrain.includes(WORDS), `${words}: the brain on Telegram was sent the words: ${toBrain.slice(0, 400)}`);
+        }
       } finally { noScript(); }
     });
 

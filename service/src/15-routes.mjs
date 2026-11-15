@@ -84,7 +84,7 @@ const usedRecently = key => { const u = inUse.get(key); return u && Date.now() -
 const sparkCalls = new Map();   // spark → time
 async function runningModels(viewer = null) {
   const inv = await recentInventory(), lib = new Map(inv.library.map(m => [m.name, m]));
-  return inv.sparks.filter(sp => sp.online && (!viewer || viewer.role === 'owner' || canUse(viewer, sp.id))).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && !d.rank && d.role !== 'main' && d.endpoint)
+  return inv.sparks.filter(sp => sp.online && (!viewer || viewer.role === 'owner')).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && !d.rank && d.role !== 'main' && d.endpoint)
     .map(d => { const m = lib.get(d.model); return { spark: sp.id, sparks: d.cluster ? d.cluster.split('+') : [sp.id], container: d.container, endpoint: d.endpoint, names: [d.model, m?.repo, m?.stores?.[sp.id] === 'hf' ? m.repo : d.model].filter(Boolean) }; }));
 }
 async function proxyModel(req, res, path, body, url, served) {
