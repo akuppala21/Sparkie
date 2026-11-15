@@ -285,6 +285,47 @@ test('a model on the list of what should be running on that Spark is never the t
   } finally { writeFileSync(file, saved, { mode: 0o600 }); }
 });
 
+test('with no list yet, its first seed passes over the self-test\'s own model while it runs, and the next self-test picks that same model and passes', { timeout: 600000 * SLOW }, async () => {
+  // As on a fleet's first start: no desired.json, so the next look (every 60 s) makes it from what runs then. Removed only
+  // once the self-test's model runs, and that model loads and loads (serve-down) until the list is there again.
+  const file = join(T.fleet.stateDir, 'desired.json'), saved = readFileSync(file, 'utf8'), down = mockFile('spark3', 'serve-down');
+  const listed = () => desiredRunning().filter(k => k.startsWith('spark3/'));
+  let op = null;
+  writeFileSync(down, '');
+  try {
+    const r = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(r.status, 200, r.text);
+    op = r.json.operation;
+    const model = r.json.container;
+    // (and a look at the Sparks that has it running, so the seed's look has it too)
+    await waitFor(async () => running('spark3').includes(model) && (await call(keys.look.token, 'running_models', {})).value?.models?.some(m => m.spark === 'spark3' && m.container === model),
+      { timeout: 120000, every: 1000, what: `${model} running` });
+    rmSync(file);
+    const seeded = await waitFor(() => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } }, { timeout: 120000, what: 'the list made again' });
+    assert.ok(running('spark3').includes(model), `${model} was still running`);
+    assert.equal(seeded.revisions[0]?.seeded, true, JSON.stringify(seeded));
+    const seededKeys = seeded.running.map(x => `${x.spark}/${x.container}`);
+    assert.ok(seededKeys.includes('spark4/sc-RadixArk--Qwen3.8-27B-NVFP4'), `the seed took what runs: ${seededKeys.join(', ')}`);
+    assert.ok(!seededKeys.includes(`spark3/${model}`), `the self-test's own model joined the list: ${seededKeys.join(', ')}`);
+    rmSync(down, { force: true });
+    const j = await finished(op);
+    assert.equal(j.status, 'completed', `${j.error}\n${(j.report || []).join('\n')}`);
+    assert.deepEqual(listed(), []);
+    // The next one: the same small model (no owner's entry holds it), and it passes.
+    const again = await api('/actions/self_test', { method: 'POST', body: {} });
+    assert.equal(again.status, 200, again.text);
+    op = again.json.operation;
+    assert.equal(again.json.container, model, again.text);
+    const j2 = await finished(op);
+    assert.equal(j2.status, 'completed', `${j2.error}\n${(j2.report || []).join('\n')}`);
+    assert.deepEqual(listed(), []);
+  } finally {
+    rmSync(down, { force: true });
+    if (op) await finished(op).catch(() => {});
+    writeFileSync(file, saved, { mode: 0o600 });
+  }
+});
+
 test('an agent\'s call is the owner\'s question, and nothing starts', async () => {
   const before = (await operations()).length;
   const r = await call(keys.act.token, 'self_test', {});

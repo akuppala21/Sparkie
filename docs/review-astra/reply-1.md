@@ -6,7 +6,9 @@ what is accepted. This answers `findings-1.md` under [the agreed procedure](READ
 **Status: complete for round 1.** Every point in `findings-1.md` is answered below: A-1 to A-12, the test run
 (T-1, and T-2, a second harness fault we found ourselves), P-1 to P-7, the broader answers, the design clean-up and
 the "no trash" default. The eight app fixes and two harness fixes that were accepted for now are on `main`, each with
-a test that fails without it, and the whole suite passed on Linux with all of them together (1,055 of 1,055). The
+a test that fails without it. Before they went to `main`, our own review of the fixes found five more things in
+them, and those are fixed too, in five further commits. The whole suite passed on Linux with all of it together
+(1,056 of 1,057; the one skipped needs zsh, which the test container does not have, and it passed on the Mac). The
 commits and tests are listed [at the end](#where-each-fix-landed), with what is later and what is not accepted in one
 place. The Sparks still run the build Astra reviewed; the install waits for the owner. Nothing here is closed:
 [`open.md`](open.md) has one row per id.
@@ -17,15 +19,15 @@ was read as a report; its scripts were not run. Where we ran something, it says 
 
 | Id | Answer | When |
 |---|---|---|
-| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fixed, `eab0f43` |
+| A-1 | Accepted in part: changes inside a reply under way, after removal and after a downgrade. Buttons and carry-on turns are not live for the agent | Fixed, `eab0f43`; one test's wait made real after our own review, `a677d71` |
 | A-2 | Accepted in part: the missing re-check is real; the path as told (a model start inside the gap) does not fit | Fixed, `2cc8152`; the restart path later |
-| A-3 | Accepted, and wider than reported | Fixed, `25f0cdb` |
+| A-3 | Accepted, and wider than reported | Fixed, `25f0cdb`; made narrower in one place and wider in another after our own review, `8e9dceb` and `55fd2cd` |
 | A-4 | Accepted | Fixed, `a65f880` |
-| A-5 | Accepted, with two more places found | Fixed, `acd2b92` |
+| A-5 | Accepted, with two more places found | Fixed, `acd2b92`; a third place after our own review, `7182534` |
 | A-6 | Accepted in part: the race is real; "blocks install" is not | Later, with the next `worker.py` change |
 | A-7 | Accepted; the byte-count limit is not taken | Fixed, `418e16b` |
 | A-8 | Accepted in part: the cause is real; "don't mark before telling" is not taken | Fixed, `3f8044c` |
-| A-9 | Accepted; the macOS run does not carry over, and the stronger harm is the pruning | Fixed, `aba4683` |
+| A-9 | Accepted; the macOS run does not carry over, and the stronger harm is the pruning | Fixed, `aba4683`; its first command after our own review, `ea0d6f1` |
 | A-10 | Accepted | Later (page) |
 | A-11 | Accepted | Later (page) |
 | A-12 | Accepted, and reachable one more way | Later (page) |
@@ -80,8 +82,10 @@ as it should.
 existing button:
 
 1. the line exists;
-2. this message says to forget, in a sentence that is not a question, not after don't, do not or never, not after if,
-   whether or should, and not inside quotes;
+2. this message says to forget, in a sentence that is not a question, not after if, whether or should, and not inside
+   quotes. A forget phrase after don't, do not or never anywhere in the message, or a later sentence that calls it off
+   ("Actually don't.", "No wait, keep it."), makes the whole message a button. "Can you" and "could you" ask politely;
+   "will you" and "would you" ask about it, so they are a button;
 3. the line is what they are talking about (`about >= 0.3`), never skipped, even when the owner did say forget.
 
 A bare "forget it" is not a forget (it means never mind). A plain statement still corrects through
@@ -90,8 +94,17 @@ A bare "forget it" is not a forget (it means never mind). A plain statement stil
 **Added in Astra's final text, and true (read; Astra ran the functions):** "Do not remember that Spark 4 is on Wi-Fi
 only". The parser gets it right (`negated: ['remember']`), but `memoryClear`'s `remember` path ends with "asked, or
 not a question", so a refusal the parser recognised is overridden by the owner's-statement fallback and the line is
-saved. The fix: when this message's intent has `remember` negated or mixed, `remember` is a button and nothing is
-saved. "Don't forget that …" is a request to remember, and still saves at once; a test holds both.
+saved. The fix: `remember` is a button, and nothing is saved, when the message rules the remembering itself out:
+don't, do not, never or "no need to" at most two words before a remember word, or a remember that is called off in
+its own sentence or a later one. "Don't forget that …" is a request to remember and still saves at once. So does a
+statement with a "not" in it ("Don't use Spark 1 from now on"). A test holds each.
+
+**Changed after our own review of the fix.** The first version (`25f0cdb`) took the intent's reading, `remember`
+negated or mixed. That turned everyday statements with a "not" in them into buttons, which is new harm the fix
+itself brought. It also left three forget shapes running with no button: a call-off in the next sentence ("Forget
+that … . Actually don't."), opposite asks in one message ("Don't forget that A. Forget that B.", with the model aimed
+at A), and "Will you forget that … if I restart you?". Both are fixed (`8e9dceb`, `55fd2cd`). The reviewer wrote 39
+remember statements and 73 forget sentences; the outcomes now match the reviewer's own sketch on all of them.
 
 **On the plan:** G 3.6 said `memoryClear`'s test stays unchanged; it now carries this rule, and G's "an agent never
 replaces an owner's line" also says "or forgets one". G's "forgetting retires the line" makes a wrong forget
@@ -137,7 +150,9 @@ clean.
 **What changes.** The catch masks before saving and before the event. `changeLabel` masks the `remember` text and
 `run_workflow`'s values (not every label: `keep_running`'s must read as typed, and a test holds that). The operation
 event and the two healing lines mask, then cut. `runAction`'s catch masks before its 200-character cut, so a key
-across the cut can't leave a piece. R7's "Today" note for operation errors closes.
+across the cut can't leave a piece. R7's "Today" note for operation errors closes. Our own review of the fix found a
+third healing reason built from an error (the one kept when a restart fails its check) and one audit line that cut
+before masking; both mask first now (`7182534`).
 
 **Rating: fix now, low likelihood.** A key at rest in a file that is copied off Spark 2 every day.
 
@@ -219,6 +234,9 @@ accepted copy is left.
 
 **What changes.** Two steps. The stream stops at the checked `.part`. Once both exit codes are known, a second command
 either moves it into place and keeps the newest 14, or removes it. A copy counts only when that second step answered.
+The first command also removes a `.part` an earlier try left, with `find … -delete` and not a file pattern: our own
+review found that a pattern matching nothing stops the whole command when the far user's shell is zsh, and no copy
+would land (`ea0d6f1`).
 
 **Rating: medium, fix now.** It needs a fault first, but the daily copy is the only thing between a failing disk on
 Spark 2 and losing people, passkeys, agent keys and chats.
@@ -586,9 +604,22 @@ then passed with the fix. No assertion in a test that existed before was changed
 test files are imports, comments and one fleet setup line (the fleet in `test/ask.test.mjs` now starts with the
 knowledge files).
 
-**The whole suite, all of it together.** 1,055 of 1,055 on Linux (Node 26, four files at once), none skipped, so the
-two cases that are skipped on macOS or as root both ran: real GNU tar on a file it can't read, and the folder that
-can't be removed. Build `2edd84ebf1f7`. The five workflow versions are the ones Astra reviewed (`start_model`
+**Found by our own review of these fixes.** Before anything went to `main`, each fix branch was read by a second
+checker that had not built it. It found five things in the fixes themselves. Each is fixed in its own commit after
+the ones above, with a test that fails without it.
+
+| Around | Commit | What the review found | What changed | Tests that fail without it |
+|---|---|---|---|---|
+| A-3 | `8e9dceb` | The fix was too wide: a statement with a "not" in it ("Don't use Spark 1 from now on") got a button in place of being kept | `20-memory` (`refusesRemember`); rule R25 | `test/sparkie-more.test.mjs`, the second A-3 test: three such statements are kept at once, with no button |
+| A-3 | `55fd2cd` | Three forget shapes still ran with no button: a call-off in the next sentence, opposite asks in one message, and "will you forget that …?" | `20-memory` (`saysForget`, and the call-off on the remember side) | `test/sparkie-more.test.mjs`: five forget sentences in the first A-3 test and "Remember that … . Actually don't." in the second, each a button with memory unchanged |
+| A-1 | `a677d71` | The "made look-only" test waited for words the test before it had already sent, so its wait took no time | `test/ask.test.mjs`: it waits for a request logged after its own start | A test change only: the wait now takes as long as the first test's |
+| A-9 | `ea0d6f1` | The first command removed leftovers with a file pattern, which ends the command under zsh when nothing matches | `25-backup-and-start`: `find … -delete` | `test/state.test.mjs`: "its first command on the far Spark ends well under zsh too, with no .part there and with a stale one" (skipped where there is no zsh) |
+| A-5 | `7182534` | A third healing reason was built from an error and not masked; one audit line cut its text before masking it | `18-workflows` (`maybeHeal`), `20-heal` (`bringBack`); rule R7 | `test/heal.test.mjs`: "a restart that fails with a key in its error: the reason kept in the fleet's record hides it". The audit line's cut has no test of its own |
+
+**The whole suite, all of it together.** 1,056 of 1,057 on Linux (Node 26, four files at once), with the five review
+commits in. The two cases that are skipped on macOS or as root both ran: real GNU tar on a file it can't read, and
+the folder that can't be removed. One case was skipped there: the zsh one, because the test container has no zsh; it
+passed on the Mac, where zsh is the login shell. Build `32cfab4f06fa`. The five workflow versions are the ones Astra reviewed (`start_model`
 `0ac26aa84281`, `start_model_across` `4f3813e23214`, `stop_model` `958b338b426d`, `find_setups` `f807e08bdd5d`,
 `restart_model` `bb7ffe5e4224`), so no workflow needs validating again on real Sparks.
 
@@ -609,6 +640,30 @@ stops a healthy model, leaks a key, or leaves the console dead or stuck). Astra 
 | A-7b | The same joining of raw pieces in three places that read short, plain-ASCII output | Much less likely to split a character |
 | A-10, A-11, A-12 | Three late-answer faults on the page | Nothing unseen stops and nothing is lost; the views are deleted in milestone 4 |
 | P-3a | Today's restore from an old copy brings back sign-ins removed since | Never done; a step the owner takes by hand, and the owner has been told what to do after it |
+
+**Later, found by the same review of the fixes.** Astra did not report these. They are listed so that round 2 can
+rebut "later" for any of them.
+
+| Around | What | Why later |
+|---|---|---|
+| A-1 | A removal that lands between the key check and the operation's own start is not seen | Seconds, not the whole reply; every action looks again inside its own run |
+| A-1 | The new refusal writes no audit line | The same as the look-only and pause refusals beside it |
+| A-2 | The paused check is still inside the `try`, so a pause landing during the re-checks runs the put-back for a container that was never started | As before the fix; the window is a few seconds |
+| A-2 | The re-check does not refuse when the fresh look says "not reachable" or "Docker didn't answer" | As before the fix; nothing new is worse |
+| A-2 | The test has no third case: the model on Spark 3 set running inside the window, which is the case Astra told | Test strength; the two cases there fail without the fix |
+| A-3 | A forget inside single quotes still counts. So do "I always forget that …", "forget that" straight after a question about the line, and a "never" more than four words before "forget" | Each also needs the model to call `forget_memory` unasked, and the line is one sentence the owner can say again |
+| A-3 | A short line has two counted words, so one shared word passes the topic test | Needs the model to aim at the wrong line |
+| A-3 | Everyday forget wordings outside the four phrases get the button ("forget about …", "delete that from your memory"), and so does a forget followed by a call-off of something else | One extra press, never a wrong delete |
+| All changes | A call-off in a later sentence is not seen for other changes: "Stop gemma on Spark 4. Actually don't." asks for a stop | Not part of A-3. It is a finding of its own, and it goes with the next change to the intent reader |
+| A-4 | A cut-off answer is saved as "aborted", so the plain sentence about the model never reaches the owner | Wording; the chat is free again, which was the finding |
+| A-4 | No test asserts that the count of model calls in use goes back to zero | No path was found that leaves it raised; the assertion goes with the next change there |
+| A-5 | A saved workflow's value under a secret-named input that is not key-shaped is still shown; the labels of stop, restart, start and save-file show the model's arguments unmasked | A key would have to be passed as a container or file name |
+| A-9 | The regression test cannot tell "the fix held" from "the stream never reached Spark 3 whole": against the old code it passed once in ten runs on a busy machine | Test strength; the Linux-only case with real tar does not have this gap |
+| A-9 | When `tar` fails on Spark 2 itself, the record still says the other Sparks "didn't take it" | Wording |
+| A-9 | A good stream whose final move fails leaves its `.part` until the next try; a `backups` folder that is itself a symlink keeps a stale `.part` | One file; the copy still lands |
+| Tests | Five waits in `test/ask.test.mjs` and `test/words.test.mjs` are fixed lengths of time | They pass on Linux, and on the Mac one file at a time; they can fail on a loaded machine |
+| Tests | `test/across.test.mjs`, "parts that only hang over RoCE start over plain sockets…": the stand-in's cable check listens on a port picked at random, and when another test's fleet holds it the start is refused with "Port 29501 … is already in use". Seen once in our whole-suite runs. It is in the build Astra reviewed | The fix is in the cable check, which is part of `start_model_across`, so it changes that workflow's version. It is built on the power branch, where that version changes anyway. If Astra's run fails on this one test, a rerun of that file alone settles it |
+| Documents | `test/README.md` does not list the stand-in model's new modes; `docs/architecture.md` lacks the "operations keep running" sentence | The rule files carry both |
 
 ### Not accepted, in one place
 
