@@ -41,7 +41,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R26](rules/R26.md) | partly | `test/sparkie-more.test.mjs` (“a plain statement updates memory by itself”, “Sparkie rephrases what the owner states”); `test/detail.test.mjs`; `test/needs.test.mjs`; `test/abilities.test.mjs` | falls short today: its file says where |
 | [R27](rules/R27.md) | partly | `test/change.test.mjs` (“a model whose spark.json isn't as safe as a recipe isn't started by an agent”, “Recipes knows each model’s best setup”); `test/dig.test.mjs` | falls short today: its file says where |
 | [R28](rules/R28.md) | partly | `test/build.test.mjs` (“service/server.mjs is exactly service/src/*.mjs joined”); `test/docs.test.mjs` (“every part has its header, and each header matches its code”, “headers”) | falls short today: its file says where |
-| [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs` | falls short today: its file says where |
+| [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs`; `test/affected.test.mjs`; `test/land.test.mjs` | falls short today: its file says where |
 | [R30](rules/R30.md) | built | `test/fleet.test.mjs` (“/health”); `test/install.test.mjs`; `test/door.test.mjs` (“search_huggingface on the stand-in fleet”) |  |
 | [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”) |  |
 | [R32](rules/R32.md) | built | `test/telegram.test.mjs`; `test/needs-me.test.mjs` |  |
