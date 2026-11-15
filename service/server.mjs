@@ -17383,6 +17383,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const protect = HELPER_TAKES.homeProtect ? RUNNER_PROTECT.filter(d => !reached.includes(d)) : [];
   runnerRefuses(node, sorted, ctx, asked);
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
+  await runnerLetGo(node);
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false;
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
@@ -17485,6 +17486,12 @@ function runnerHoldClaim(node, unit, until, release) {
   };
   setTimeout(holdTick, 1000).unref?.();
 }
+// A change or an undo that asks for a held Spark asks systemd at once: a unit gone now (or a time limit passed) lets the
+// Spark go then, not only at the next tick.
+async function runnerLetGo(node) {
+  const h = runnerHolds.get(node.id);
+  if (h && (Date.now() >= h.until || await runnerUnitLive(node, h.unit) === 'gone') && runnerHolds.get(node.id) === h) h.release();
+}
 // Whether systemd on that Spark still runs a change's unit: 'live', 'gone' or 'unknown' (not answering).
 async function runnerUnitLive(node, unit) {
   if (!/^sw-run-[0-9a-f]{24}$/.test(String(unit || ''))) return 'unknown';
@@ -17535,7 +17542,7 @@ async function runnerUndo(viewer, ctx, since = '') {
     const live = await runnerUnitLive(node, held.unit);
     if (live === 'gone') held.release();
     else throw new HttpError(409, `The copies on ${at}: that change ${live === 'live' ? 'is still running' : 'may still be running'} there (${held.unit}), so nothing was put back: ask again when it has ended.`);
-  }
+  } else await runnerLetGo(node);
   const release = claimSparks([node.id], 'putting back a change’s files');
   let rid = null;
   try {

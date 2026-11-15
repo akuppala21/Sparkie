@@ -468,6 +468,8 @@ test('a line the command prints as the helper would, then a dropped connection: 
   const [start, end] = pair(command);
   assert.deepEqual([end.outcome, end.ran], ['unreachable', undefined]);
   assert.ok(existsSync(join(BEFORE(), start.set, 'manifest.json')), 'its set is kept');
+  // (its end unknown, the Spark is held until systemd says the unit is gone: the next test's change waits for that)
+  await waitFor(() => !existsSync(join(H3(), '.rehearsal', 'standin', 'live', start.unit)), { what: 'its unit to end' });
 });
 
 test('a change\'s time counts from the end of its copies: the manifest\'s time is after every copy was made', { timeout: 120000 * SLOW }, async () => {
