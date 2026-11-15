@@ -8598,6 +8598,9 @@ action({
       : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
+// When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
+// (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
+const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
@@ -8605,7 +8608,7 @@ action({
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
     // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone)?.at || '');
+    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
     if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
@@ -16997,7 +17000,7 @@ function runnerKeep() {
   let revisions = [];
   try { revisions = desired().revisions || []; } catch {}
   for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
-    const last = runnerLatest(conv, scan), since = [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
     if (last && last.at > since) keep.push(last.set);
   }
   for (const r of scan.starts) {

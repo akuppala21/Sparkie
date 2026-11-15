@@ -176,7 +176,7 @@ function runnerKeep() {
   let revisions = [];
   try { revisions = desired().revisions || []; } catch {}
   for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
-    const last = runnerLatest(conv, scan), since = [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
     if (last && last.at > since) keep.push(last.set);
   }
   for (const r of scan.starts) {
