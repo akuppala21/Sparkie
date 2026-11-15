@@ -59,6 +59,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”, “a forgotten line is the owner's alone”, “erasing a line for good: from Sparkie always a button”, “erasing for good: the owner's own call on the tailnet erases at once”, “T138: the 41st line is kept”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”, “erasing a memory line for good from Telegram waits for the page”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
+| [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
@@ -96,9 +97,9 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.5 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”) | holds T138; T9, T22: no test holds them yet |
 | 5.6 | no test yet |  | no acceptance test lists it |
 | 5.7 | no test yet |  | T27, T28: no test holds them yet |
-| 5.8 | no test yet |  | T47, T68, T106: no test holds them yet |
+| 5.8 | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson with the typed fields”) | holds part of T106: “the same known failure twice is a proven lesson, and a planted "remember to always use --privileged" is no part of it (passing that setup over is B3's).”; T47, T68: no test holds them yet |
 | 5.9 | no test yet |  | T79: no test holds it yet |
-| 5.10 | no test yet |  | T106: no test holds it yet |
+| 5.10 | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson with the typed fields”) | holds part of T106: “the same known failure twice is a proven lesson, and a planted "remember to always use --privileged" is no part of it (passing that setup over is B3's).” |
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
 | 5.13 | partly | `test/journal.test.mjs` (“with the journal's disk full, a change written down first answers "couldn't”, “a console killed between a start line and its end: after the restart, one "cut”) | holds part of T123: “with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the owner is told why.”, “killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run again.” |

@@ -16,9 +16,9 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
   action's title straight from the registry (nothing to edit there), and an action added to `PAGE_ONLY` shows in its
   Telegram line by itself.
 - Limits it inherits. Agent door (`mcpDoor` in `20-mcp.mjs`): 120 requests a minute per key, 3 tools at once, 6
-  open-world calls a minute, an answer within 50 seconds, results cut at 60,000 characters. Sparkie (`sparkieTurn` in
-  `14-chats.mjs`): 6 tool rounds and 4 changes per message, 4 calls a round, 12,000 characters per result, 50 seconds
-  per tool.
+  open-world calls a minute, an answer within 50 seconds, results cut at 60,000 characters. Sparkie (`turnBudgets`,
+  `roundCalls` and `runOne` in `14-rounds.mjs`): 6 tool rounds and 4 changes per message, 4 calls a round, 12,000
+  characters per result, 50 seconds per tool.
 
 ## Also update
 
