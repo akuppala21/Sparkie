@@ -11,6 +11,11 @@
 // (a setup of 20,000 tokens: 24,000 characters a message). With the switch digest off the 12,000 cut comes back. On a
 // console of its own, results of megabytes made to be slow to cut (a run of backslashes, one line with no space, a
 // million short lines, escaped backslashes before an n, one failure word repeated) are cut in time and within size.
+// The line that says something failed is kept, in the tools' own shapes (review after landing, fix 2): a JSON field
+// with nothing in it is no failure (recent_operations of 50, the 30th failed), "exitCode":1 is one (workloads of 40,
+// one exited), and a log's last line stays whatever its early lines say. On Telegram and in an agent's chat a result
+// past the message's output says only the owner reads its record. (The brain's setup asks with a budget of 15,000
+// tokens, so a digest keeps 2,700 characters of lines and fits the stand-in brain's 4,000-character log of it.)
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
@@ -41,13 +46,24 @@ const LOG = Array.from({ length: 3000 }, (_, i) => {
 // A command's record written before masking (as an older build could have): raw keys, a kept value across the fold.
 const CMD = 'j_c0de00000001', CMD_TEXT = `$ cat /var/log/zircon.log\nzircon start\nHF_TOKEN=${HF} zircon login\n${'v'.repeat(290)}${NAS} zircon nas\nzircon end\n`;
 const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
+// A log of 300 refused retries, 300 quiet lines, and the outcome as its last line.
+const RETRY_LOG = [...Array.from({ length: 300 }, (_, i) => `retry ${i + 1} of 300: connection to the model server refused ${'.'.repeat(200)}`),
+  ...Array.from({ length: 300 }, (_, i) => `waiting ${i + 1}`), 'FATAL: giving up after 300 retries; nothing was started'].join('\n');
 const pieces = text => [HF.slice(0, 12), HF.slice(-12), NAS.slice(0, 10), NAS.slice(-10)].filter(p => text.includes(p));
 function seed({ dir, stateDir }) {
   // (a brain setup of 20,000 tokens: 24,000 characters of tool results a message)
   const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
-  m.presets[m.current] = { ...m.presets[m.current], contextTokens: 20000 };
+  m.presets[m.current] = { ...m.presets[m.current], contextTokens: 20000, ask: { ...(m.presets[m.current].ask || {}), tokenBudget: 15000 } };
   writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
-  writeFileSync(join(stateDir, 'events.jsonl'), `${JSON.stringify({ at: at(NOW - 60000), type: 'crashed', spark: 'spark1', container: 'kestrel-app', error: LOG })}\n`, { mode: 0o600 });
+  writeFileSync(join(stateDir, 'events.jsonl'), [{ at: at(NOW - 60000), type: 'crashed', spark: 'spark1', container: 'kestrel-app', error: LOG },
+    { at: at(NOW - 70000), type: 'stopped', spark: 'spark1', container: 'retry-app', error: RETRY_LOG },
+    { at: at(NOW - 80000), type: 'removed', spark: 'spark1', container: 'mid-app', error: 'm'.repeat(10000) }].map(e => JSON.stringify(e)).join('\n') + '\n', { mode: 0o600 });
+  // (forty containers last seen on Spark 1, which is off: the 20th by time exited with code 1)
+  writeFileSync(join(stateDir, 'knowledge.json'), JSON.stringify({ sparks: {}, workloads: Object.fromEntries(Array.from({ length: 40 }, (_, i) => {
+    const name = `sc-model-${String(i + 1).padStart(2, '0')}`, dead = i === 19, seen = at(NOW - 3600000 - i * 60000);
+    return [`spark1/${name}`, { spark: 'spark1', name, kind: 'model', byConsole: true, running: !dead, state: dead ? 'exited' : 'running', image: 'lmsysorg/sglang:v0.5.5-cu130-arm64',
+      ports: '0.0.0.0:30000->30000/tcp', gpu: true, servedModels: [`model-${i + 1}`], startedAt: at(NOW - 86400000), ...(dead ? { finishedAt: seen, exitCode: 1 } : {}), firstSeenAt: at(NOW - 86400000), lastSeenAt: seen }];
+  })) }), { mode: 0o600 });
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ keys: { NAS: { value: NAS, at: at(NOW) } },
     telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner' } }), { mode: 0o600 });
@@ -202,6 +218,66 @@ const readdirJournal = () => {
   return existsSync(dir) ? readFileSync(join(dir, `journal-${at(Date.now()).slice(0, 7)}.jsonl`), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }) : [];
 };
 
+// (what the brain was sent back for one call these words make, in the owner's page chat)
+async function sentFor(words, call) {
+  script([{ match: `^${words}$`, calls: [call] }]);
+  await say(await newChat(), words);
+  return (await resultsFor(words))[0];
+}
+
+test('recent_operations of 50 with one failure among empty error fields: the failed one is in the digest', { timeout: 300000 * SLOW }, async () => {
+  const save = body => api('/actions/save_workflow', { method: 'POST', body });
+  const run = async name => {
+    const r = await api('/actions/run_workflow', { method: 'POST', body: { name } });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    const j = await waitFor(async () => { const x = (await api(`/jobs/${r.json.operation}`)).json; return x?.status !== 'running' && x; }, { timeout: 60000 * SLOW, what: `the run of ${name}` });
+    return { ...j, id: r.json.operation };
+  };
+  assert.equal((await save({ title: 'g5 list', steps: [{ action: 'should_be_running', args: {} }] })).status, 200);
+  assert.equal((await save({ title: 'g5 bad', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'g5-new', image: 'nginx:1.27', port: '18081:80' } }] })).status, 200);
+  let failed = null;
+  try {
+    for (let i = 1; i <= 50; i++) {
+      const j = await run(i === 30 ? 'g5 bad' : 'g5 list');
+      assert.equal(j.status, i === 30 ? 'failed' : 'completed', JSON.stringify(j).slice(0, 300));
+      if (i === 30) failed = j.id;
+    }
+  } finally { for (const name of ['g5 list', 'g5 bad']) await api('/actions/forget_workflow', { method: 'POST', body: { name } }); }
+  const content = await sentFor('g5 what did the console do', { name: 'recent_operations', arguments: { limit: 50 } }), d = JSON.parse(content);
+  assert.deepEqual(Object.keys(d), DIGEST_KEYS, content.slice(0, 200));
+  const text = d.kept.map(k => k[1]).join('\n');
+  assert.ok(text.includes(failed) && text.includes('"status":"failed"'), `the failed operation ${failed}: ${content}`);
+});
+
+test('workloads of 40 with one that exited with code 1: that container is in the digest', { timeout: 120000 * SLOW }, async () => {
+  const content = await sentFor('g5 what ran on spark 1', { name: 'workloads', arguments: { spark: 'spark1' } }), d = JSON.parse(content);
+  assert.deepEqual(Object.keys(d), DIGEST_KEYS, content.slice(0, 200));
+  const text = d.kept.map(k => k[1]).join('');
+  assert.ok(text.includes('"name":"sc-model-20"') && text.includes('"exitCode":1'), content);
+});
+
+test('a long log whose last line is the outcome: the last line stays, whatever twenty early lines say', { timeout: 120000 * SLOW }, async () => {
+  const content = await sentFor('g5 why did the retry app stop', { name: 'fleet_events', arguments: { spark: 'spark1', type: 'stopped', limit: 1 } }), d = JSON.parse(content);
+  assert.deepEqual(Object.keys(d), DIGEST_KEYS, content.slice(0, 200));
+  const last = d.kept.at(-1);
+  assert.equal(last[0], d.lines);
+  assert.match(last[1], /FATAL: giving up after 300 retries; nothing was started/);
+});
+
+test('on Telegram and in an agent\'s chat, a result past the message\'s output says only the owner reads its record', { timeout: 120000 * SLOW }, async () => {
+  const MID = { name: 'fleet_events', arguments: { spark: 'spark1', type: 'removed', limit: 1 } };
+  const check = async (words, ask) => {
+    script([{ match: `^${words}$`, calls: [MID, MID, MID] }]);
+    await ask(words);
+    const sent = await resultsFor(words), notice = sent.find(c => c.startsWith('[Spark Console] Not shown:'));
+    assert.ok(notice, `${words}: ${sent.map(c => c.slice(0, 80)).join(' | ')}`);
+    assert.match(notice, /It is kept whole in record j_[0-9a-f]{12}, which only the owner reads back\. Answer now with what you have\.$/);
+    assert.ok(!notice.includes('recall {'), notice);
+  };
+  await check('g5 agent reads mid three times', async words => assert.equal((await call((await createKey('g5-mid')).token, ASK, { message: words })).isError, false));
+  await check('g5 phone reads mid three times', tgSay);
+});
+
 test('the switch: SPARK_CONSOLE_MEMORY_OFF=digest gives the 12,000 cut back; on, the digest', { timeout: 120000 * SLOW }, async () => {
   const off = await startMock({ watchMs: 60000, prepare: seed, env: { SPARK_CONSOLE_MEMORY_OFF: 'digest' } });
   later.push(off);
@@ -225,6 +301,9 @@ const HEAVY = {
   learned: '\\n'.repeat(2e6),
   crashed: 'error'.repeat(8e5),
   started: 'KV cache '.repeat(4.5e5),
+  healing: '"exitCode":0,'.repeat(3e5),
+  'heal-skipped': `exit${' code'.repeat(59)}\n`.repeat(14000),
+  notice: `${`${'Ab'.repeat(30)}Errox `.repeat(4)}\n`.repeat(14000),
 };
 const PLAIN = 'j_c0de00000002', PLAIN_TEXT = `$ cat big\n${'\\n'.repeat(1e6)}\n${'\\'.repeat(2e6)}\n`;
 test('results of megabytes made to be slow to cut are cut in a second or two each, within the digest\'s size; recall reads them as fast', { timeout: 300000 * SLOW }, async () => {
