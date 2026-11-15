@@ -141,7 +141,7 @@ for calm before it ships.
   passkey yes opens an approval link (in the browser for Touch ID, or as a link for the phone's Face ID). The owner
   approves that exact step there, and the command carries on. Agents get the same link (4.4).
 - 4.2 **Through agents**: Codex and Claude Code connect over MCP (`ask_sparkie`, plus the workflows
-  themselves), each with its own key. Setting one up takes one copy-paste from the Access page. Any other MCP agent
+  themselves), each with its own key. Setting one up takes one copy-paste from Agents and Telegram in the page's account menu. Any other MCP agent
   works the same way. An agent that calls a workflow directly gets the same checks and corrections as through
   `ask_sparkie`.
 - 4.3 It's one brain everywhere: the same memory, workflows, rules and answers. The owner sees every conversation,
