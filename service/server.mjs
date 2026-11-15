@@ -95,16 +95,28 @@ const hfSnap = dir => `snap=$(cat ${dir}/refs/main 2>/dev/null); { [ -n "$snap" 
 // judged as its own folder: a whole cache on another disk (the hub, or a folder above it, a link) is fine, but an entry
 // that is itself a link counts as outside, since it could point at the home. --mount misreads a comma, quote or line break.
 function hfMounts() {
-  return `hfmounts=(-v "$dir:/hf:ro"); hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}
+  return `hfmounts=(-v "$dir:/hf:ro"); ${HF_OWN}
 if [ -L "$dir" ] || [ -n "$(cd "$dir/snapshots/$snap" 2>/dev/null && find . \\( -type l -o -type f \\) -exec readlink -f {} \\; | awk -v p="$hfreal/" 'NF && index($0, p) != 1')" ]; then
-  hfmounts=(); nl=$'\\n'
-  while IFS= read -r -d '' f; do f=\${f#./}; t=$(readlink -f "$dir/snapshots/$snap/$f"); say="\${f//$nl/ } in the Hugging Face cache copy of \${dir##*/models--}"
-    case "$t$snap$f" in *[,\\"]*|*"$nl"*) echo "$say has a comma, quote or line break in its name or link, which Docker would misread." >&2; exit 1 ;; esac
-    case "$t" in "$hfreal"/*) ;; *) case "$f" in *.safetensors|*.gguf|*.bin|*.pt|*.pth) [ -f "$t" ] ;; *) false ;; esac || { echo "$say links outside the model’s folder (to \${t//$nl/ }). A start follows such a link only for a weight file (.safetensors, .gguf, .bin, .pt or .pth) that is a plain file." >&2; exit 1; } ;; esac
-    hfmounts+=(--mount "type=bind,src=$t,dst=/hf/snapshots/$snap/$f,readonly")
-  done < <(cd "$dir/snapshots/$snap" && find . \\( -type l -o -type f \\) -print0)
+  hfmounts=()
+  ${hfEachFile('snapshots/$snap', 'hfmounts+=(--mount "type=bind,src=$t,dst=/hf/snapshots/$snap/$f,readonly")')}
 fi
 `;
+}
+// Shell (bash, $dir a cache entry): $hfreal, the entry's own folder (the folders above it resolved, the entry itself not),
+// and $nl, a line break.
+const HF_OWN = `hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}; nl=$'\\n'`;
+// Shell (bash, after HF_OWN): `each` for every file or link under "$dir/<under>", with $f its path there and $t where it
+// leads. The one rule for links in a cache entry (R17), for a start (hfMounts) and a copy to another Spark (copyModel):
+// a link leads to a plain file, and out of the entry's own folder only for a weight file. A copy hands the bytes over, so
+// there a weight file that leads out must also be `min` bytes or more (no key or settings file is 16 MiB). Anything
+// else, or a comma, quote or line break in a name or target, stops the script with one line naming the file.
+function hfEachFile(under, each, min = 0) {
+  return `while IFS= read -r -d '' f; do f=\${f#./}; t=$(readlink -f "$dir/${under}/$f"); say="\${f//$nl/ } in the Hugging Face cache copy of \${dir##*/models--}"
+    case "\${t}/${under}/$f" in *[,\\"]*|*"$nl"*) echo "$say has a comma, quote or line break in its name or where it links, which Spark Console doesn’t take." >&2; exit 1 ;; esac
+    case "$t" in "$hfreal"/*) [ -f "$t" ] || { echo "$say links to something that isn’t a file (\${t//$nl/ })." >&2; exit 1; } ;;
+      *) case "$f" in *.safetensors|*.gguf|*.bin|*.pt|*.pth) [ -f "$t" ]${min ? ` && [ -n "$(find "$t" -size +${min - 1}c 2>/dev/null)" ]` : ''} ;; *) false ;; esac || { echo "$say links outside the model’s folder (to \${t//$nl/ }). ${min ? 'A copy to another Spark' : 'A start'} follows such a link only for a weight file (.safetensors, .gguf, .bin, .pt or .pth) that is a plain file${min ? ` of at least ${min / 2 ** 20} MiB` : ''}." >&2; exit 1; } ;; esac
+    ${each}
+  done < <(cd "$dir/${under}" && find . \\( -type l -o -type f \\) -print0)`;
 }
 const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/state/spark-console`;
 // The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
@@ -1254,9 +1266,17 @@ function runJob(job, fn) {
 // staging folder and moves into place only when complete, so an interrupted copy never looks like a model.
 // A Hugging Face cache entry goes into the target's cache as its served snapshot with the links followed (real
 // files, no blobs/), plus refs/ when there is one. That also works when blobs/ itself can't be listed.
-function copyModel(job, name, from, to, total, store = 'models') {
+// Following links hands their bytes over, so before anything is sent each file the copy would follow passes the
+// cache's link rule (hfEachFile, R17), with weight files that lead out at least 16 MiB: a link put in the entry must not
+// bring a key of this Spark onto the next one as an ordinary file.
+async function copyModel(job, name, from, to, total, store = 'models') {
   const [base, folder] = store === 'hf' ? [HF_HUB, `models--${name}`] : [`"$HOME/${CONFIG.modelsDir}"`, name];
   const staging = store === 'hf' ? `${HF_HUB}/.spark-console-incoming` : `"$HOME/${CONFIG.modelsDir}/.incoming"`;
+  const checked = store === 'hf' ? await run(from, `cd ${HF_HUB} || exit 0; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 0; dir=$PWD/${q(folder)}; ${HF_OWN}
+${hfEachFile('snapshots/$snap', ':', 16 * 2 ** 20)}
+[ -d "$dir/refs" ] || exit 0
+${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
+  if (checked.code) throw new Error(`${name} wasn’t copied from ${from.id}: ${String(checked.err || checked.out || '').trim().split('\n').pop() || 'its files couldn’t be checked'}`);
   return new Promise((resolve, reject) => {
     const src = spawnOn(from, { command: store === 'hf'
       ? `cd ${HF_HUB} || exit 1; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 1; tar -chf - ${q(folder)}/snapshots/"$snap" $([ -d ${q(folder)}/refs ] && echo ${q(folder)}/refs)`
@@ -5849,19 +5869,21 @@ function railsFor(p, f, allowStop) {
 }
 // What a model on disk would run with, from its own spark.json: for an agent's start it has to be as safe as a recipe.
 const inRecipes = m => recipeCatalog().models.some(r => r.variants.some(v => onDiskAs(m, v.repo)));
+// Its refusal is read by agents and Sparkie, so it quotes nothing a change could have written into the folder as words:
+// flag names (40 characters at most), setting names shaped like one, an image name shaped like one.
 function agentSafeSetup(m) {
   const args = Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [];
   const own = args.filter(a => a.startsWith('-') && dig.OWN.has(dig.flagKey(a.split('=')[0])));
-  if (own.length) return `its spark.json sets flags Spark Console sets itself (${own.join(', ')}); the owner can start it from Deploy`;
+  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it from Deploy`;
   if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, from Spark Console’s Deploy`;
   const flags = dig.cleanFlags(args, m.repo || m.name);
-  if (flags.problems.length) return `its spark.json ${flags.problems[0]}; the owner can start it from Deploy`;
+  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it from Deploy`;
   const env = { ...(m.manifest?.env || {}), ...(m.manifest?.cluster?.env || {}) }, cleaned = dig.cleanEnv(env);
-  const dropped = Object.keys(env).filter(k => !(k in cleaned));
-  if (dropped.length) return `its spark.json sets ${dropped.join(', ')}; the owner can start it from Deploy`;
+  const dropped = Object.keys(env).filter(k => !(k in cleaned)), named = dropped.filter(k => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k));
+  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it from Deploy`;
   const image = m.manifest?.image;
   if (image && !(String(image).includes('@sha256:') && (CONFIG.imageSources || []).some(p => String(image).startsWith(p)))) {
-    return `its spark.json names its own image (${image}), which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
+    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
   }
   return null;
 }
@@ -6626,6 +6648,9 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   fullContext,
   freeOn,
   memNow,
+  HF_OWN,
+  hfEachFile,
+  copyModel,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
