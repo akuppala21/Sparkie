@@ -119,7 +119,7 @@ const textOf = el => (typeof el === 'string' ? el : el.kids.map(textOf).join('')
 
 test('a command Sparkie ran is one quiet row of its own, the command on a button; a press shows it whole with the end of what it printed', () => {
   const { toolLines, commandRow } = pageFunctions('commandRow', 'toolLines');
-  const look = (line, more = {}) => ({ name: 'host_look', title: 'Look on a Spark', ok: true, ms: 400, change: false, where: 'Spark 3', line,
+  const look = (line, more = {}) => ({ name: 'run', title: 'Run a command on a Spark', ok: true, ms: 400, change: false, where: 'Spark 3', line,
     tail: 'hello from spark 3\nexit 0', root: false, kept: 'j_0123456789ab', ...more });
   const models = { name: 'running_models', title: 'Running models', ok: true, ms: 300, change: false };
   const ul = toolLines([look('$ cat docs/plain.txt'), look('$ cat docs/plain.txt'), models, models]);

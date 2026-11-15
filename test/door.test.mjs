@@ -376,7 +376,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     deploy_plan: { model: ctx.model, spark: sp() }, cluster_plan: { model: ctx.model, sparks: ctx.pair }, recipe_detail: { id: ctx.recipe },
     search_huggingface: { query: 'qwen3 0.6b' }, spark_diagnostics: { spark: sp() }, service_logs: { spark: sp(), service: 'console' },
     wait_operation: { id: '0123456789ab' }, files: { spark: sp() }, search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' },
-    recall: { about: 'gemma' }, host_look: { spark: sp(), command: 'ls' },
+    recall: { about: 'gemma' }, run: { on: sp(), command: 'ls' },
   }[t] || {});
   const cases = []; // [tool, args(), expected message, code, label]
   for (const t of TOOLS) cases.push([t, () => ({ ...validFor(t), bogus: 1 }), /^\[invalid\] Unknown argument: bogus/, 'invalid', 'unknown arg bogus']);

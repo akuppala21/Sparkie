@@ -50,4 +50,4 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 
 ## Copy from
 
-- `hostLook` in `21-work.mjs` (a look); `selfTestWalls` there (a verb with no command).
+- `runCommand` in `21-work.mjs` (`run`, a look today); `selfTestWalls` there (a verb with no command).

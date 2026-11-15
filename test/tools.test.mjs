@@ -81,7 +81,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['are spark 3 and 4 linked by a cable?', 'sparks'], ['how much disk space is left on spark 3?', 'sparks'],
     ['why did my job on spark 3 fail?', 'dig'], ['what went wrong?', 'dig'], ['show me the log', 'dig'],
     ['spark 4 went dark, what\'s up with it?', 'dig'],
-    ['what does /var/log/syslog on spark 4 say about the crash?', 'dig'],
+    ['what does /var/log/syslog on spark 4 say about the crash?', 'dig'], ['what should be running on my sparks?', 'control'],
     ['what happened on the fleet yesterday?', 'past'], ['what changed while I was away?', 'past'],
     ['what happened last time we started GLM?', 'past'], ['did we ever run gemma before the restart?', 'past'],
     ['show me the notes.md file in my shared folder', 'reading'], ['what\'s in my shared folder on spark 3?', 'reading'],

@@ -16,7 +16,7 @@ const SHOWN_SIZE = 200;
 // Each tool that runs a command, and how to read its arguments: the Spark, the command, and whether it runs as root
 // (a look never does: it runs as a throw-away account with root's read rights, R42).
 const SHOWN_CALLS = {
-  host_look: args => ({ spark: args.spark, command: args.command, root: false }),
+  run: args => ({ spark: args.on, command: args.command, root: false }),
 };
 const shownText = s => maskSecrets(String(s).replace(LOOK_PLAIN, ''));
 const shownFirst = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('')}…` : s; };
