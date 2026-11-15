@@ -27,6 +27,7 @@ Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.lo
      sudo tailscale serve --bg --https=8443 --set-path=/console/api unix:$HOME/.local/state/spark-console/api.sock
 
 5. Sign in. On the tailnet you are the owner at once. Every other device signs in again: no copy holds a sign-in.
+   Look at the list of what came back there and press "Keep these": until then sign-in from the internet is refused.
    Your passkey came back with the state. Make new recovery codes under Your passkey.
 
 6. Give back what no copy holds (it lived in ~/.config/spark-console/secrets.json, which is never copied):

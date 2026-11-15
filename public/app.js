@@ -3448,6 +3448,8 @@ function outsidePage(who) {
   // With no passkey on file the Tailscale steps show, with the recovery code beside them when whoami says one would work
   // (who.recovery, F18).
   async function openSignIn() {
+    // (state put back from a copy: nothing signs in from here until the owner has looked on the tailnet)
+    if (who.held) return dialog({ title: 'Sign in', description: who.held, cancel: null });
     if (!who.signin) return openTailscaleSignIn();
     let other = null, dlg = null;
     const pick = what => { if (dlg?.querySelector('[aria-busy]')) return; other = what; dlg?.close(); };
@@ -3584,6 +3586,31 @@ const offerUpdate = () => toast('Spark Console has been updated', {
   timeout: 0, id: 'update',
 });
 
+// State put back from a copy (contract 6.25): what came back, for the owner on the tailnet to look at once. A passkey
+// or agent key removed here stops working at once; "Keep these" lets the rest work from the internet again.
+async function putBackList() {
+  let l;
+  try { l = await capi('auth/putback'); } catch (e) { failToast(e); return; }
+  if (!l.held) return;
+  const when = t => (t ? fmt.when(t) : 'never');
+  const row = (text, sub, remove) => h('li', { class: 'putback-row' }, h('div', {}, h('div', {}, text), h('div', { class: 'muted' }, sub)),
+    h('button', { class: 'btn sm', type: 'button', onclick: async e => { e.target.disabled = true; try { await remove(); e.target.closest('li').remove(); } catch (err) { e.target.disabled = false; failToast(err); } } }, 'Remove'));
+  const body = h('div', { class: 'putback' },
+    h('p', {}, `Every device was signed out${l.parked ? `, and ${l.parked === 1 ? 'a task was' : `${l.parked} tasks were`} parked` : ''}. Remove anything here you had removed, then keep the rest.`),
+    l.removedAgain.length ? h('p', { class: 'muted' }, `Removed again (you had removed them since): ${l.removedAgain.map(x => `${x.kind} “${x.name}”`).join(', ')}.`) : null,
+    h('h3', {}, 'Passkeys'),
+    l.passkeys.length ? h('ul', { class: 'putback-list' }, ...l.passkeys.map(k => row(k.name, `Added ${when(k.addedAt)} · last used ${when(k.lastUsedAt)}`, () => capi(`auth/passkeys/${encodeURIComponent(k.id)}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    h('h3', {}, 'Agent keys'),
+    l.agentKeys.length ? h('ul', { class: 'putback-list' }, ...l.agentKeys.map(k => row(k.name, `${k.canChange ? 'Can start and stop models' : 'Can only look'}${k.fromAnywhere ? ', from anywhere' : ', on your tailnet only'}`, () => capi(`agents/${k.id}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    h('p', { class: 'muted' }, `${l.agentsPaused ? 'Agents’ changes are paused. ' : ''}${l.lastUse} ${l.namesAreData}`));
+  const ok = await dialog({
+    title: 'Spark Console’s state was put back from a copy', description: 'Until you keep what came back, sign-in from the internet is refused and agents can’t change anything.',
+    body, confirm: 'Keep these', cancel: 'Later', wide: true,
+    onConfirm: () => capi('auth/putback/keep', 'POST'),
+  });
+  if (ok) { toast('Kept. Sign-in from the internet and agents work again.'); refreshBoot(); }
+}
+
 async function start() {
   // tailscale serve can't send frame-ancestors, so inside another page Spark Console shows nothing (clickjacking).
   if (window.top !== window.self) {
@@ -3628,6 +3655,7 @@ async function start() {
     else { loadStatus(); connectLive(); checkForUpdate().then(offer => offer && offerUpdate()); }
   });
   render();
+  if (state.boot.putBack) putBackList();
   loadMain();
   loadConsoleChats();
   await loadStatus();

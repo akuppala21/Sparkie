@@ -27,5 +27,8 @@ If the page loads but Sparkie doesn't answer, type one of these alone in your ow
 Code answers them, not Sparkie's model:
      /status    /pause    /restart sparkie    /undo update    /help
 
+Putting state back too (restore.sh --with-state in one of those, or a copy): then open Spark Console once on your
+tailnet and press "Keep these"; until then sign-in from the internet is refused.
+
 Earlier builds are kept in ~/.local/share/spark-console/releases, the newest 10. go-back.sh uses the newest one
 that isn't what's installed now; run it again to go back one more build.

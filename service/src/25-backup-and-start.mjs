@@ -107,6 +107,7 @@ local.on('error', e => {
 });
 local.listen(CONFIG.port, '127.0.0.1', () => {
   console.log(`… and on 127.0.0.1:${CONFIG.port} (health only once Tailscale uses the socket) (models on ${CONFIG.modelsHost}:~/${CONFIG.modelsDir})`);
+  putBackAtStart();   // (state put back from a copy: the hold, before the sockets open; 22-putback.mjs)
   openSockets();
   // The update record (18-workflows): only here, so a second copy (which stops at EADDRINUSE above) never writes it.
   try { noteUpdate(); } catch (e) { console.error(`The update record: ${e.message}`); }

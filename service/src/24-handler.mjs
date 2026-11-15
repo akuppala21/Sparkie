@@ -78,7 +78,7 @@ const handler = async (req, res) => {
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
       return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
-        via: funnel ? 'internet' : 'tailnet' });
+        via: funnel ? 'internet' : 'tailnet', ...(!viewer && putBackHeld() ? { held: PUTBACK_LINE } : {}) });
     }
     // Signing a device in (a passkey, or a code the owner lets in), and signing out.
     if (SIGNIN_ROUTES.includes(path)) return await signinRoute(req, res, path, viewer);
@@ -119,6 +119,7 @@ const handler = async (req, res) => {
         // How this device is signed in when it isn't through Tailscale (4.10).
         session: viewer.session || null,
         ...(owner ? { passkeys: (() => { try { return passkeys().length; } catch { return -1; } })() } : {}),
+        ...(owner && putBackHeld() ? { putBack: true } : {}),
       });
     }
     if (req.method === 'GET' && path === '/status') return send(res, 200, await statusFor(viewer, url.searchParams.get('fresh') === '1' && owner));
@@ -136,6 +137,8 @@ const handler = async (req, res) => {
       ownerOnly();
       // Letting a device in, turning one away, and the signed-in devices (4.10).
       if (/^\/auth\/(device|sessions)(\/|$)/.test(path)) { if ((await sessionRoute(req, res, path, viewer)) !== false) return; throw new HttpError(404, 'Not found.'); }
+      // State put back from a copy: the list of what came back, and "Keep these" (22-putback.mjs).
+      if (path === '/auth/putback' || path === '/auth/putback/keep') return await putBackRoute(req, res, path, viewer);
       // Recovery codes (22-sessions.mjs): how many are left; making new ones needs the passkey (the gate above). From a
       // device signed in over the internet they're made only once a passkey exists, so a stolen cookie can't mint its own.
       if (path === '/auth/recovery') {
@@ -193,6 +196,7 @@ const handler = async (req, res) => {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
         savePasskeys(keys.filter(x => x !== k));
+        putBackRemoved('passkey', k.id, k.name);
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
         return send(res, 200, { ok: true });
@@ -226,6 +230,7 @@ const handler = async (req, res) => {
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
         const next = setAgentSettings(change);
+        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
@@ -270,6 +275,7 @@ const handler = async (req, res) => {
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
         writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
+        putBackRemoved('agent', gone.id, gone.name);
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
         return send(res, 200, { ok: true });
