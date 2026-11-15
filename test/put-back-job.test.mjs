@@ -5,10 +5,11 @@
 //
 // The owner's yes is the page's Deploy with the job on its stop list (POST /deploy). The start fails the known way
 // "gated" (a Hugging Face refusal in the model's log). On the stand-in fleet a job runs until it is stopped (Spark 4
-// has no ~/.mock/jobs-run), and a start writes ~/.mock/up-<name>, so a job not started again leaves that file as it was.
+// has no ~/.mock/jobs-run); a stop takes ~/.mock/up-<name> away and only a start writes it, so a job not started again
+// has none.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, renameSync, symlinkSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, renameSync, symlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, waitFor, SLOW } from './lib.mjs';
 
@@ -25,7 +26,7 @@ useFleet({
 
 const mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
 const stateOf = (spark, name) => readFileSync(mock(spark, 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
-const upAt = () => statSync(mock('spark4', `up-${JOB}`)).mtimeMs;
+const started = () => existsSync(mock('spark4', `up-${JOB}`));
 const opEnd = id => waitFor(async () => { const o = (await api(`/jobs/${id}`)).json; return o?.status && o.status !== 'running' ? o : null; }, { timeout: 240000, what: `operation ${id} to end`, every: 500 });
 // The page's Deploy of the model on Spark 4, the owner having said yes to stopping what its plan stops (the GPU job too).
 async function deployStoppingTheJob() {
@@ -52,10 +53,9 @@ describe('a failed start puts back a job it stopped only through the job folder 
       // (a walled change may do this while the start runs: the job's folder moved aside and a link to the home put there)
       renameSync(join(jobs, JOB), join(jobs, `${JOB}-aside`));
       symlinkSync(home, join(jobs, JOB));
-      const before = upAt();
       const w = await deployStoppingTheJob();
       assert.equal(stateOf('spark4', JOB), 'exited', 'not started again');
-      assert.equal(upAt(), before, 'no docker start');
+      assert.ok(!started(), 'no docker start');
       assert.ok(w.log.some(l => /The job’s folder jobs\/gpu-hold in the shared folder on Spark 4 isn’t a real folder: it is a link, or inside one\. Docker would follow it, so gpu-hold wasn’t started\./.test(l)), w.log.join('\n'));
       assert.ok(!w.log.some(l => /Started gpu-hold on spark4 again/.test(l)), w.log.join('\n'));
       // Its folder real again, the job run again: the same failed start puts it back, running.
@@ -65,11 +65,9 @@ describe('a failed start puts back a job it stopped only through the job folder 
       assert.equal(rerun.json?.outcome, 'started', rerun.text);
       assert.equal((await opEnd(rerun.json.operation)).status, 'completed');
       assert.equal(stateOf('spark4', JOB), 'running');
-      const ranAt = upAt();
-      await new Promise(res => setTimeout(res, 1100));
       const again = await deployStoppingTheJob();
       assert.equal(stateOf('spark4', JOB), 'running', 'started again');
-      assert.ok(upAt() > ranAt, 'docker start ran');
+      assert.ok(started(), 'docker start ran');
       assert.ok(again.log.some(l => /Started gpu-hold on spark4 again/.test(l)), again.log.join('\n'));
     } finally {
       if (existsSync(join(jobs, `${JOB}-aside`))) { rmSync(join(jobs, JOB), { force: true }); renameSync(join(jobs, `${JOB}-aside`), join(jobs, JOB)); }
