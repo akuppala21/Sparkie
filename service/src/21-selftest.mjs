@@ -1,7 +1,7 @@
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
-// Rules: R1, R11, R13, R19, R20, R22, R30, R38
-// Tests: selftest.test.mjs, selftest-cleanup.test.mjs
+// Rules: R1, R11, R13, R19, R20, R22, R30, R38, R42
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs
 // Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
@@ -312,6 +312,10 @@ async function selfTest(j, asked, where, image) {
     else if (!a) say('Model address from a container', 'not tried', null, 'The job didn’t get that far.');
     else if (a.code === 0) say('Model address from a container', 'worked', Date.now() - a.seconds * 1000, `The job got the model list from ${address} from inside its container.`);
     else say('Model address from a container', 'failed', Date.now() - a.seconds * 1000, `The job couldn’t get the model list from ${address} from inside its container; what it said is in jobs/${job}/address.txt in the shared folder on ${at}.`);
+    // Walls: the root helper proves its walls again on every Spark that has it (R42, 21-work.mjs); no line while none has.
+    t = Date.now();
+    const walls = await selfTestWalls();
+    if (walls) say('Walls', walls.result, t, walls.words);
   } finally {
     // Whatever this run started that still runs is stopped (a step's operation still going is cancelled first).
     // (its own: its steps, and the drill's restart of its model)
