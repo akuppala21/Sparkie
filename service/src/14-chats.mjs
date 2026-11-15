@@ -1,7 +1,7 @@
 /* ───────── Sparkie's chats ───────── */
 // Area: brain
-// Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39
-// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs
+// Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
 // Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 // Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.

@@ -3131,8 +3131,8 @@ async function stopMain(job, m = MAIN) {
 
 /* ───────── Sparkie's chats ───────── */
 // Area: brain
-// Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39
-// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs
+// Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
 // Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 // Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
@@ -3892,7 +3892,7 @@ function proxyBrain(req, res, path, target, payload) {
 
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
 // Area: core
-// Rules: R3, R7, R9, R11, R12, R18, R21, R23, R25, R26, R32, R33, R35, R36, R37, R38
+// Rules: R3, R7, R9, R11, R12, R18, R21, R23, R25, R26, R32, R33, R35, R36, R37, R38, R46
 // Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
