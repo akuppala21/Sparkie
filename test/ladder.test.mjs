@@ -110,7 +110,7 @@ test('a file this request wrote, then run, is asked (the sorter is told what it 
   const [second] = sentBack('fix the script on spark 3');
   assert.equal(second?.outcome, 'needs-ok', JSON.stringify(second));
   assert.match(second.question, /Asked because it is risky: “bash” runs the file “notes\/w\.sh”\. It runs a file this same command wrote/);
-  assert.match(second.question, /\nIt runs notes\/w\.sh \(SHA-256 [0-9a-f]{12}…\); what that script reads later isn’t checked\./);
+  assert.match(second.question, /\nIt runs ~\/notes\/w\.sh \(SHA-256 [0-9a-f]{12}…\); what that script reads later isn’t checked\./);
   assert.ok(!existsSync(at3('notes/ran.txt')));
   // The script changes before the press: the press runs nothing and asks again, with the new hash.
   writeFileSync(at3('notes/w.sh'), 'echo changed > notes/ran.txt\n');
@@ -232,14 +232,23 @@ test('the unit\'s memory cap, worked out from what is free beyond the 8 GB kept:
 
 test('a change starts in the work folder, ~/work, which the console makes first (owner only); dir ~ starts it in the home', { timeout: 60000 * SLOW }, async () => {
   rmSync(at3('work'), { recursive: true, force: true });
-  const r = await run('echo w > here.txt', 'spark3', null);
+  // (12 GB free: a cap of 4 GB, what is free beyond the 8 GB kept)
+  const meminfo = at3('.mock/meminfo'), memWas = existsSync(meminfo) ? readFileSync(meminfo, 'utf8') : null;
+  mkdirSync(dirname(meminfo), { recursive: true });
+  writeFileSync(meminfo, 'MemTotal:       131072000 kB\nMemAvailable:   12582912 kB\n');
+  let r;
+  try { r = await run('echo w > here.txt', 'spark3', null); } finally { if (memWas === null) rmSync(meminfo, { force: true }); else writeFileSync(meminfo, memWas); }
   assert.equal(r.status, 200, r.text);
   assert.equal(text('work/here.txt'), 'w\n');
   // (on the real helper's rehearsal: the top of the home read-only for a plain change, ~/work one of its writable
   // folders, R63; the unit's memory cap, 1 to 8 GB, what is free beyond the 8 GB kept)
   const wall = propsOf('echo w > here.txt');
   assert.ok(wall.includes('ReadOnlyPaths=/spark3') && wall.includes('ReadWritePaths=/spark3/work'), JSON.stringify(wall));
-  assert.ok(wall.some(p => /^MemoryMax=[1-8]G$/.test(p)) && r.json.memoryCap === wall.find(p => p.startsWith('MemoryMax=')).replace(/^MemoryMax=(\d)G$/, '$1 GB'), JSON.stringify([r.json.memoryCap, wall]));
+  assert.ok(wall.includes('MemoryMax=4G') && r.json.memoryCap === '4 GB', JSON.stringify([r.json.memoryCap, wall]));
+  // (a folder at the top of the home that is there is one of those writable folders: writing into it runs at once)
+  const into = await run('cp work/here.txt ~/notes/', 'spark3', '~');
+  assert.equal(into.status, 200, into.text);
+  assert.equal(text('notes/here.txt'), 'w\n');
   assert.ok(!existsSync(at3('here.txt')));
   assert.equal(statSync(at3('work')).mode & 0o777, 0o700);
   const held = unit => readFileSync(join(H3(), '.rehearsal', 'standin', 'ran', unit, 'dir'), 'utf8');
@@ -388,10 +397,6 @@ test('an asked change may reach the other Sparks (--fleet) or the GPU (--gpu), e
 const api_ = (command, extra = {}) => api('/actions/run', { method: 'POST', body: { on: 'spark3', command, dir: '~', ...extra } });
 
 test('a change that would fail inside the plain wall is asked, not run to fail: pip install --user, a write at the top of the home; after the yes it runs outside that wall', { timeout: 120000 * SLOW }, async () => {
-  const pip = await run('pip install --user requests', 'spark3', null);
-  assert.equal(pip.status, 409, pip.text);
-  assert.equal(pip.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs outside that wall, and only after the owner’s yes. Nothing ran.');
-  assert.ok(!readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8').includes('pip install --user'), 'run’s words no longer give it as a change that works');
   const chat = await newChat(), cmd = 'echo top > top.txt';
   const r = await turn(chat, 'fix the top note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the top note on spark 3');
@@ -403,6 +408,11 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   const open = propsOf(cmd);
   assert.ok(!open.includes('ReadOnlyPaths=/spark3') && !open.some(a => a.startsWith('IPAddressDeny=')) && !open.includes('PrivateDevices=yes'), JSON.stringify(open));
   assert.deepEqual(startOf(cmd).outside, ['it writes ~/top.txt at the top of the home, which the plain wall keeps read-only']);
+  // (and an install into ~/.local, asked over the API: refused there, in the runner's words)
+  const pip = await run('pip install --user requests', 'spark3', null);
+  assert.equal(pip.status, 409, pip.text);
+  assert.equal(pip.json.error, 'It would fail inside the plain wall (it installs into ~/.local, which the plain wall keeps read-only), so it runs outside that wall, and only after the owner’s yes. Nothing ran.');
+  assert.ok(!readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8').includes('pip install --user'), 'run’s words no longer give it as a change that works');
 });
 
 test('a script is hashed where the change reads it (dir, ~/work by default): the button shows that file; changing it voids the press; a same-named file in the home does not matter', { timeout: 120000 * SLOW }, async () => {

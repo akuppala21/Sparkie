@@ -138,6 +138,9 @@ test('past 7 days a set goes, but never one whose change still runs nor the newe
   for (const n of [old, one.value.set]) assert.ok(line.pruned.some(p => p.set === n && p.why === 'older than 7 days'), JSON.stringify(line.pruned));
   // Once the unit has ended, the cut-off change's set is no chat's to undo, and the next set takes it.
   await waitFor(() => existsSync(at3('notes/live-done')) && !existsSync(join(H3(), '.rehearsal', 'standin', 'live', unit)), { timeout: 60000 * SLOW, what: 'its unit to end' });
+  // (and the helper to say so: its own mark of the call, "ended", which the guard asks for)
+  const callMark = join(H3(), '.rehearsal', 'run', 'spark-console', '.calls', unit.slice('sw-run-'.length));
+  await waitFor(() => existsSync(callMark) && readFileSync(callMark, 'utf8').startsWith('ended'), { what: 'the helper\'s mark of its end' });
   const again = await run('echo again > notes/week.txt');
   assert.equal(again.json?.ran, true, again.text);
   assert.deepEqual([pruned(running), intact(two.value.set)], [true, true]);

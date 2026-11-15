@@ -131,7 +131,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
-| `holdTick` | `21-runner` | every 2 s, 30 s past its limit, only while a Spark is held past a change's unknown end |
+| `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |
 | `selfTestRecover` | `21-selftest` | 5 s after start, then each minute while the Spark doesn’t answer |
 | `tgLoop` | `21-telegram` | the long poll, one at a time, with a pause after a failure |
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |

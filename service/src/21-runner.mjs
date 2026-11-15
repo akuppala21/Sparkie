@@ -1,7 +1,7 @@
 /* ───────── the runner: one change on a compute Spark, its copies first (A7b) ───────── */
 // Area: features        Rules: R61, R13, R43        Tests: runner.test.mjs
 // Owns: none
-// Timers: holdTick (every 2 s, 30 s past its limit, only while a Spark is held past a change's unknown end)        Wakes: none
+// Timers: holdTick (every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end)        Wakes: none
 // runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain
 // change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13)
 // for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the
@@ -200,7 +200,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
-    if (unknownEnd) afterLook = wayCheck;
+    // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection
+    // dropped, or whose answer couldn't be read, gets none: undo's cut-off rule reads its files by their times)
+    if (a.kind === 'ended') afterLook = wayCheck;
     // (what it wrote, for the commands after it in this request: a command that runs one is asked, 21-ladder.mjs)
     if (!Object.hasOwn(RUNNER_NEVER, a.kind)) workWrote(ctx, sorted);
     const why = String(a.detail || '').slice(0, 300);
@@ -252,14 +254,14 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   }
 }
 // The Sparks held past a change whose end is unknown: Spark id → {unit, until, release}. The hold asks the root helper
-// what became of that call (state --id, every 2 s, a one-shot timer chained; every 30 s past the time limit) and lets go
+// what became of that call (state --id, every 2 s, a one-shot timer chained; every 30 s after two minutes) and lets go
 // when it never started or has ended. A call that runs keeps it, past its time limit too (a unit systemd failed to end).
 // One the helper has no mark of ("unknown": none begun there since the Spark started, or its mark swept), or a Spark
 // that doesn't answer, keeps it until the time limit has surely passed and no longer: a call that has not begun by then
 // gets nothing done inside its limit, and a Spark that restarted runs none of it.
 const runnerHolds = new Map();
 function runnerHoldClaim(node, unit, until, release, later = null) {
-  const h = { unit, until, later, release: () => { if (runnerHolds.get(node.id) === h) runnerHolds.delete(node.id); release(); } };
+  const h = { unit, until, later, since: Date.now(), release: () => { if (runnerHolds.get(node.id) === h) runnerHolds.delete(node.id); release(); } };
   runnerHolds.set(node.id, h);
   const holdTick = async () => {
     if (runnerHolds.get(node.id) !== h) return;
@@ -267,7 +269,7 @@ function runnerHoldClaim(node, unit, until, release, later = null) {
     // (its ways-in check and after-look, put off until then: only once nothing of it runs)
     if (s === 'ended' || (s !== 'running' && s !== 'never' && Date.now() >= until)) { const l = h.later; h.later = null; if (l) await l(); return h.release(); }
     if (s === 'never') return h.release();
-    setTimeout(holdTick, Date.now() >= until ? 30000 : 2000).unref?.();
+    setTimeout(holdTick, Date.now() - h.since < 120000 ? 2000 : 30000).unref?.();
   };
   setTimeout(holdTick, 1000).unref?.();
 }
