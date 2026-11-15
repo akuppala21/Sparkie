@@ -1,3 +1,10 @@
+// Covers: The installer's Spark 2 half against a stand-in console and a stand-in `systemctl` (F4): kept, never answers,
+// dies after answering, copy fails, chat or sign-in broken, brain down (and `SKIP_CHAT_CHECK=1`), no room, unfinished
+// snapshot, same update twice, Telegram, `restore.sh` with a failing copy, the watchdog counting `activating`, a cut
+// session; `go-back.sh`, `RECOVERY.txt` and the update note land where they should; nothing calls ssh, sudo, tailscale
+// or systemd-run; `install.sh verify` against the real service; which snapshot undo picks. On macOS it runs under bash
+// 3.2 with `tar` and `find` shims; a Linux run is the full proof.
+//
 // The installer's Spark 2 half (the install.sh inside deploy/host-on-portal.sh), its restore.sh and its watchdog, run on
 // this machine (F4, H1, S5). Nothing real is touched: each case gets its own short HOME, stand-ins come first on PATH
 // (systemctl starts and stops a small runner for the stand-in console, test/mock/standin-console.mjs; ssh, sudo,
