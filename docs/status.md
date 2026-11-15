@@ -53,8 +53,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
-| [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”, “only the owner's own call reads them back”, “a start line written but not synced”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
-| [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
+| [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”, “only the owner's own call reads them back”, “a start line written but not synced”, “an agent sees who, what and when of the owner's calls”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
+| [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”, “a forgotten line is the owner's alone”, “erasing a line for good: from Sparkie always a button”, “erasing for good: the owner's own call on the tailnet erases at once”, “T138: the 41st line is kept”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”, “erasing a memory line for good from Telegram waits for the page”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
 
@@ -88,9 +88,9 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 4.10 | no test yet |  | no acceptance test lists it |
 | 5.1 | no test yet |  | T1: no test holds it yet |
 | 5.2 | no test yet |  | no acceptance test lists it |
-| 5.3 | no test yet |  | T9, T21, T137, T138: no test holds them yet |
+| 5.3 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”) | holds T138; T9, T21, T137: no test holds them yet |
 | 5.4 | no test yet |  | T10: no test holds it yet |
-| 5.5 | no test yet |  | T9, T22, T138: no test holds them yet |
+| 5.5 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”) | holds T138; T9, T22: no test holds them yet |
 | 5.6 | no test yet |  | no acceptance test lists it |
 | 5.7 | no test yet |  | T27, T28: no test holds them yet |
 | 5.8 | no test yet |  | T47, T68, T106: no test holds them yet |
