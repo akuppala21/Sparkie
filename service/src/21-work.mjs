@@ -241,7 +241,7 @@ function whoMayLook(viewer, ctx) {
   const agentId = ctx.agentId || viewer?.agentKey?.id;
   if (ctx.via === 'agent' || ctx.agent || agentId) {
     const key = agentId ? agentKeys().find(k => k.id === agentId) : null;
-    if (!ctx.canChange || !(key?.scopes || []).includes('fleet:act')) throw new HttpError(403, 'An agent may run commands on a Spark only when the owner lets it change things too (Access → Agents).');
+    if (!ctx.canChange || !(key?.scopes || []).includes('fleet:act')) throw new HttpError(403, 'An agent may run commands on a Spark only when the owner lets it change things too (your account menu → Agents and Telegram).');
   }
 }
 // What a look printed, as it is kept and shown: escape codes and characters that don't show (or turn text around) taken

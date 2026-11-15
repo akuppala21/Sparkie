@@ -113,7 +113,6 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     assert.match(await said(), /^Approvals from Telegram: off\. /, 'sparkie_setup says so in one line');
     const on = { on: true };
     is(await api('/telegram/approve', { method: 'PUT', body: on, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-    is(await api('/telegram/approve', { method: 'PUT', body: on, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
     is(await api('/telegram/approve', { method: 'PUT', body: on, headers: { 'x-spark-console': null } }), 403, 'cross-site');
     is(await api('/telegram/approve', { method: 'PUT', body: on }), 428, 'without the passkey');
     is(await api('/telegram/approve', { method: 'PUT', body: { on: 'yes' } }), 400);

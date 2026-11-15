@@ -69,8 +69,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 
 | File | Owner | Writers | Copied daily | Read kept |
 |---|---|---|---|---|
-| `access.json` | `03-identity` | `changeMembers`, `changeAccess`; `changeMembers` is called by `handler`; `changeAccess` is called by `askAccess`, `handler` | yes | no |
-| `access.json.good` | `03-identity` | `ownAccess`; a copy of the last good access.json | yes | no |
+| `access.json` | `03-identity` | none | yes | no |
+| `access.json.good` | `03-identity` | `ownAccess`; a copy of the last good access.json; `ownAccess` is called by `accessList`, `openProblems` | yes | no |
 | `added-models.json` | `10-recipes` | `addModel` | yes | yes |
 | `agent-settings.json` | `17-changes` | `setAgentSettings`; `setAgentSettings` is called by `tripBreaker`, `pauseWord`, `handler` | yes | no |
 | `agents.json` | `20-mcp` | `top level`, `handler` (24-handler); the top-level one is the last-use timer | yes | no |

@@ -5,7 +5,7 @@
 // --tree runs another checkout's console and names its build, a changed tool text there is another mark, and a secret
 // flag in the brain's setup is hidden. POST /main/eval, the owner's alone, keeps a record in the profile of the brain
 // serving now: refused, storing nothing, before that brain has a profile, for another brain setup, a real brain's
-// record on a stand-in console, another cap, a malformed record, and as nobody, a member, an agent's key, cross-site,
+// record on a stand-in console, another cap, a malformed record, and as nobody, an agent's key, cross-site,
 // through Funnel and from a Spark's address. test/eval.mjs --store keeps one. sparkie_setup shows it on record for what
 // this build's brain reads on today's case set, or that the one on record is for another case set, and, in a build
 // whose tool text changed, for another version of what the brain reads. The newest five are kept for each, and the six
@@ -122,7 +122,7 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
     assert.equal(mine.key, A.brain.key);
   });
 
-  test('refused, storing nothing: another brain, a real brain’s record here, another cap, a malformed record; nobody, a member, an agent’s key, cross-site, through Funnel, a Spark’s address', { timeout: 120000 * SLOW }, async () => {
+  test('refused, storing nothing: another brain, a real brain’s record here, another cap, a malformed record; nobody, an agent’s key, cross-site, through Funnel, a Spark’s address', { timeout: 120000 * SLOW }, async () => {
     const before = readFileSync(join(fleet.stateDir, 'brain-profiles.json'), 'utf8'), run = A.cases[0].runs[0];
     const agent = (await createKey('brain-eval')).token;
     for (const [record, headers, status, what, says] of [
@@ -134,7 +134,6 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
       [{ ...A, cases: [{ ...A.cases[0], runs: [{ ...run, rounds: -1 }] }, A.cases[1]] }, {}, 400, 'a bad run', /whats-running's runs/],
       [[A], {}, 400, 'a list', /kind "spark-console-eval"/],
       [A, { 'tailscale-user-login': 'stranger@test' }, 401, 'nobody'],
-      [A, { 'tailscale-user-login': MEMBER }, 403, 'a member'],
       [A, { authorization: `Bearer ${agent}`, 'tailscale-funnel-request': '?1' }, 401, 'an agent’s key'],
       [A, { 'x-spark-console': null }, 403, 'cross-site'],
       [A, { 'tailscale-funnel-request': '?1' }, 401, 'through Funnel'],
