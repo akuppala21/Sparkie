@@ -59,6 +59,7 @@ async function statusText() {
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
   setAgentSettings({ halted: true, autoPaused: false });
+  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)

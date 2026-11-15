@@ -26,7 +26,7 @@ function sortNorm(p, r = null, home = null) {
   let n = `/${out.join('/')}`;
   for (let m; (m = /^\/proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/root(?=\/|$)/.exec(n));) n = n.slice(m[0].length) || '/';
   // (and /dev/fd/N or /dev/stdin as a folder, or a descriptor past the three a command starts with)
-  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)|^\/dev\/(?:fd\/(?:\d+\/|(?:[3-9]|\d{2,})$)|std(?:in|out|err)\/)/.test(n)) {
+  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)|^\/dev\/(?:fd|std(?:in|out|err))(?:\/|$)/.test(n)) {
     if (r && (LOCK_NAMES.has(n.slice(n.lastIndexOf('/') + 1)) || SIGNIN.test(n))) raise(r, 'lockout', `It names ${sortQ(n)}, one of the ways in.`);
     unsure(`It reaches a file through ${sortQ(n)}, which the sorter can't place.`);
   }
@@ -84,24 +84,39 @@ function sortClass(p, i, ch) {
   return hit !== neg ? e + 1 : -1;
 }
 const sortUp = q => q.split('/').slice(0, -1).map((_, j, a) => a.slice(0, j + 1).join('/') || '/');
+// A {…} as bash reads it: one holding another (even {}) and making words is a doubt, as is a range padded below zero.
+const sortNested = s => { for (let i = s.indexOf('{'); i >= 0; i = s.indexOf('{', i + 1)) { let d = 0, inner = false, top = false; for (let j = i; j < s.length; j++) { if (s[j] === '{') { if (++d > 1) inner = true; } else if (s[j] === '}') { if (--d === 0) break; } else if (d === 1 && (s[j] === ',' || s.startsWith('..', j))) top = true; } if (inner && top) return true; } return false; };
+// A word's {…} spelled out as bash does: the first {…} with a comma at its own level, or a range, left to right, each
+// part again; one with neither stays as written ({}, {b}). A range is spelled in full (1..3; 01..10 and 1..010 padded
+// and not, as bash 4 and later and older bash read it; a..d); a step, ends of two kinds, or a padded one below zero is a
+// doubt. One inside another is spelled out too, for the places it may reach, and is then a doubt (doubt, after).
 function sortBraces(s) {
+  const nested = sortNested(s);
+  const one = t => {
+    for (let i = t.indexOf('{'); i >= 0; i = t.indexOf('{', i + 1)) {
+      let d = 0, j = i;
+      const commas = [];
+      for (; j < t.length; j++) { if (t[j] === '{') d++; else if (t[j] === '}') { if (--d === 0) break; } else if (t[j] === ',' && d === 1) commas.push(j); }
+      if (j >= t.length) continue;
+      const body = t.slice(i + 1, j), pre = t.slice(0, i), post = t.slice(j + 1);
+      if (commas.length) return [i + 1, ...commas.map(c => c + 1)].map((k, x) => pre + t.slice(k, x < commas.length ? commas[x] : j) + post);
+      if (!body.includes('..') || /[{}]/.test(body)) continue;
+      const n = /^(?:(-?\d+)\.\.(-?\d+)|([a-z])\.\.([a-z]))$/i.exec(body);
+      if (!n) unsure('It holds a {…} range the sorter does not spell out (a step, or ends of two kinds).');
+      const [lo, hi] = n[1] != null ? [+n[1], +n[2]] : [n[3].charCodeAt(0), n[4].charCodeAt(0)];
+      if (Math.abs(hi - lo) > 64) unsure('It holds a {a..b} range too long to read.');
+      if (n[1] != null && (/^-0\d/.test(n[1]) || /^-0\d/.test(n[2]))) unsure('It holds a {…} range padded below zero, which the sorter does not spell out.');
+      const pad = n[1] != null && (/^0\d/.test(n[1]) || /^0\d/.test(n[2])) ? Math.max(n[1].length, n[2].length) : 0, run = Array.from({ length: Math.abs(hi - lo) + 1 }, (_, k) => Math.min(lo, hi) + k);
+      return (n[1] != null ? [...new Set([...run.map(v => String(v).padStart(pad, '0')), ...run.map(String)])] : run.map(v => String.fromCharCode(v))).map(x => pre + x + post);
+    }
+    return null;
+  };
   let out = [s];
-  for (let round = 0; round < 8; round++) {
+  for (let round = 0; round < 16; round++) {
     let more = false;
-    out = out.flatMap(t => {
-      const m = /\{([^{}]*(?:,|\.\.)[^{}]*)\}/.exec(t), n = m && /^(?:(-?\d+)\.\.(-?\d+)|([a-z])\.\.([a-z]))$/i.exec(m[1]);
-      if (!m) return [t];
-      more = true;
-      // (a range is spelled out in full: 1..3, 01..10 padded, a..d; a step, or ends of two kinds, is a doubt)
-      if (!n && !m[1].includes(',')) unsure('It holds a {…} range the sorter does not spell out (a step, or ends of two kinds).');
-      const [lo, hi] = n ? (n[1] != null ? [+n[1], +n[2]] : [n[3].charCodeAt(0), n[4].charCodeAt(0)]) : [0, 0];
-      if (n && Math.abs(hi - lo) > 64) unsure('It holds a {a..b} range too long to read.');
-      const pad = n?.[1] != null && /^-?0\d/.test(n[1] + ' ' + n[2]) ? Math.max(n[1].length, n[2].length) : 0, run = Array.from({ length: Math.abs(hi - lo) + 1 }, (_, j) => Math.min(lo, hi) + j);
-      const each = !n ? m[1].split(',') : n[1] != null ? run.map(v => String(v).padStart(pad, '0')) : run.map(v => String.fromCharCode(v));
-      return each.map(x => t.slice(0, m.index) + x + t.slice(m.index + m[0].length));
-    });
+    out = out.flatMap(t => { const x = one(t); if (x) more = true; return x ?? [t]; });
     if (out.length > 64) unsure('It holds {…} that makes too many words to read.');
-    if (!more) return out;
+    if (!more) return Object.assign(out, { doubt: nested ? 'It holds a {…} inside a {…}, which the sorter does not spell out as bash does.' : null });
   }
   return unsure('It holds {…} nested too deep to read.');
 }
@@ -186,7 +201,7 @@ const sortGitSet = p => { const g = p.split('/'), at = g.findIndex(x => sortSeg(
 // A word as the paths it can name: itself, what follows = or @, what follows a one-letter option (-opath), file://.
 const sortTails = t => { const m = /^-([A-Za-z]{1,26})/.exec(t); return m ? Array.from({ length: m[1].length }, (_, k) => t.slice(k + 2)).filter(Boolean) : []; };
 const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], ...sortTails(t), /^[\w-]*=?@(.+)$/.exec(t)?.[1],
-  /^file:\/\/(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
+  /^file:(?:\/\/)?(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
 // writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
@@ -201,6 +216,9 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
+  if (all.doubt) unsure(all.doubt);
+  // (a write by another program where git owned the folder: its settings may have come with it)
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
   for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
@@ -210,7 +228,7 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
 // A path written before this command (opts.written, a * kept): p is it or under it.
-const sortBefore = (b, p) => (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`));
+const sortBefore = (b, p) => (b === '/' || (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`)));
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
@@ -229,7 +247,9 @@ function sortScan(text, ctx, r, progs, touched = false) {
 function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
-    for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    const all = sortBraces(w.text);
+    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
 }

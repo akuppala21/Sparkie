@@ -8,7 +8,9 @@
 // so; one whose model ran before it leaves that running; a run with no job step (a stack) keeps what it started; keep
 // is refused when it isn't true or false, on a step that starts nothing, and beside an unknown field. An app on the
 // list of what should be running but stopped (held) that a step starts again is stopped at the end like the rest and
-// stays on the list (R57; the workloads review's Later 13).
+// stays on the list (R57; the workloads review's Later 13). What the owner stops by hand during the run is left as
+// they left it: an app the run started stays stopped and off the list (C2), and a listed model the run started again
+// stays off the list (C3).
 //
 // The stand-in fleet: Spark 3's model of Spark Console's is stopped before the service starts, so a restart_model step
 // there starts sc-gpt-oss-20b and stops nothing; Spark 4 keeps its model (on the list of what should be running, seeded
@@ -21,7 +23,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, agentSettings, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, chatMessages, agentSettings, waitFor, sleep, SLOW } from './lib.mjs';
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT20 = 'sc-gpt-oss-20b';
 const SINCE = '2026-11-12T08:00:00.000Z';
@@ -223,5 +225,44 @@ describe('a run that ends badly stops what it started, and only that (D6d)', { c
     assert.equal(run.cleanUp, 'Stopped what this run had started: wl-held on Spark 4. Still on the list of what should be running, as before this run: wl-held on Spark 4.');
     assert.equal(stateOf('spark4', 'wl-held'), 'exited');
     assert.deepEqual(await entry(), was);
+  });
+
+  // The workloads review's C2: the clean-up's stop of an app no longer on the list never starts it first.
+  test('an app the run started, stopped by the owner by hand during the run, stays stopped and off the list after the clean-up', { timeout: 300000 * SLOW }, async () => {
+    assert.deepEqual([stateOf('spark4', 'wl-web'), stateOf('spark4', 'wl-long')], ['exited', 'running']);
+    assert.ok(!(await listed()).includes('spark4/wl-web'));
+    await save('web then long', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-web' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-long' } }]);
+    const id = await runIt('web then long');
+    await waitFor(async () => /^Step 2: wl-long runs on Spark 4; waiting for it to end/.test((await opNow(id)).step), { timeout: 120000, what: 'step 2 waiting for wl-long', every: 250 });
+    assert.equal(stateOf('spark4', 'wl-web'), 'running');
+    const s = await act('keep_running', { spark: 'spark4', container: 'wl-web', do: 'stop' });
+    assert.equal((await opEnd(s.json.operation, 'wl-web stopped by hand')).status, 'completed');
+    const c = await api(`/jobs/${id}/cancel`, { method: 'POST' });
+    assert.equal(c.json?.outcome, 'cancelled', c.text);
+    assert.ok(!/Couldn’t stop|Stopped what/.test(String(c.json?.note)), c.json?.note);
+    await sleep(5000);
+    assert.equal(stateOf('spark4', 'wl-web'), 'exited', 'not started again');
+    assert.ok(!(await listed()).includes('spark4/wl-web'), 'not back on the list');
+  });
+
+  // C3: only what the clean-up's own stop takes off the list goes back on it.
+  test('a listed model a run started again, stopped by the owner by hand during the run, stays off the list after the clean-up', { timeout: 300000 * SLOW }, async () => {
+    const r = await act('restart_model', { spark: 'spark3', container: GPT20 });
+    assert.equal((await opEnd(r.json.operation, 'gpt-oss-20b started')).status, 'completed');
+    assert.ok((await listed()).includes(`spark3/${GPT20}`));
+    // (stopped outside Spark Console: on the list, not running)
+    writeFileSync(mockFile('spark3', 'containers'), containers('spark3').replace(new RegExp(`^${GPT20}\\|running\\|[^|]*\\|`, 'm'), `${GPT20}|exited|Exited (0) just now|`));
+    rmSync(mockFile('spark3', `up-${GPT20}`), { force: true });
+    await save('listed then long', [{ action: 'restart_model', args: { spark: 'spark3', container: GPT20 } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-long' } }]);
+    const id = await runIt('listed then long');
+    await waitFor(async () => /^Step 2: wl-long runs on Spark 4; waiting for it to end/.test((await opNow(id)).step), { timeout: 180000, what: 'step 2 waiting for wl-long', every: 250 });
+    assert.equal(stateOf('spark3', GPT20), 'running');
+    await stopByHand('spark3', GPT20);
+    assert.ok(!(await listed()).includes(`spark3/${GPT20}`), 'off the list, as the owner asked');
+    const c = await api(`/jobs/${id}/cancel`, { method: 'POST' });
+    assert.equal(c.json?.outcome, 'cancelled', c.text);
+    assert.ok(!/Still on the list|Stopped what/.test(String(c.json?.note)), c.json?.note);
+    assert.ok(!(await listed()).includes(`spark3/${GPT20}`), 'not written back on the list');
+    assert.equal(stateOf('spark3', GPT20), 'exited');
   });
 });

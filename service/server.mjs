@@ -5043,6 +5043,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (ctx.agentId) {
     const key = agentKeys().find(k => k.id === ctx.agentId);
     if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
+    if (putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
@@ -5878,7 +5879,8 @@ function setAgentSettings(change) {
 // Why nothing may stop: the owner said so, it is self-healing bringing something back (it never stops anything else), or
 // it is the self-test (21-selftest.mjs).
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
-  : ctx?.selfTest ? 'and the self-test never stops anything' : 'and the owner said not to stop anything');
+  : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
+    : 'and the owner said not to stop anything');
 const pausedCheck = ctx => {
   const s = agentSettings();
   if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
@@ -6734,8 +6736,11 @@ action({
 // chat (`can` on the setup, ["chat"] when not said) and answers at least 2 calls at once: a job then gets its
 // --max-running-requests less two (at least 1), which with R36's cap on app calls (its slots less one) leaves one place
 // for another app and one for the owner's chat; a setup that doesn't say how many gets 1. A model of the run's own gets
-// JOB_MODEL_PARALLEL (4). A job run again by name keeps what it was made with (a container keeps its settings), and
-// nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these run-time settings).
+// JOB_MODEL_PARALLEL (4). Only a job that is made in this run is handed them: one whose container is there already runs
+// again as it was made, with the settings it was made with (keep_running refuses other settings than a container has),
+// whether its step names its image or not, and the run says so and which model it was made to ask (the workloads
+// review, C1). Nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these
+// run-time settings).
 // Real use waits on the self-test's fifth line passing on the real Sparks: a container reaches the one address (R57's
 // Today).
 const JOB_MODEL_PARALLEL = 4;
@@ -6749,26 +6754,45 @@ function jobModel(action, args, out) {
   return null;
 }
 const jobFromImage = (action, args) => action === 'keep_running' && args.once === true && typeof args.image === 'string' && (args.do || 'keep') === 'keep';
+// Whether step's job container is there already on its Spark (and the model it was made to ask), from one look; a look
+// that fails counts as not there (keep_running looks again itself).
+async function jobThere(args) {
+  const node = nodeById(sparkIdOf(args.spark) || String(args.spark || ''));
+  if (!node) return null;
+  const look = await appLook(node, String(args.container), null).catch(() => null);
+  if (!look || look.state === 'missing') return null;
+  return { at: sparkName(node), model: look.env.find(e => e.startsWith('SPARK_MODEL_NAME='))?.slice(17) || null };
+}
+// The model this run would hand a job, and how many calls at once ({name, parallel}), or why it hands none ({why}).
+async function jobPick(j, given) {
+  const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
+  if (m && m.name !== SPARKIE_ID) {
+    const name = m.name || (await inventory(null).catch(() => null))?.sparks.find(sp => sp.id === m.spark)?.deployments.find(d => d.container === m.container && d.state === 'running')?.model;
+    return name ? { name, parallel: JOB_MODEL_PARALLEL } : { why: `isn’t handed a model: ${m.container} isn’t running on ${sparkName(nodeById(m.spark) || { id: m.spark })} any more` };
+  }
+  const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
+  const why = !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
+    : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
+  return why ? { why: `isn’t handed Sparkie’s model: ${why}` } : { name: SPARKIE_ID, parallel: slots ? Math.max(1, slots - 2) : 1 };
+}
 // The settings to add to step n's job (null when none): what it lacks of the three, and a note of what it was handed.
 async function jobModelEnv(j, n, args) {
   const env = Array.isArray(args.env) ? args.env : [], given = k => env.find(e => e.startsWith(`${k}=`))?.slice(k.length + 1);
   if (JOB_MODEL_KEYS.every(given)) return null;
+  const there = await jobThere(args), pick = await jobPick(j, given);
+  if (there) {
+    // (made to ask another model than this run would hand it: refused in those words, never run asking the old one; the
+    // model review, D: "a later run with no model uses" the kept winner, so from the second winner on this is the case)
+    if (there.model && pick.name && there.model !== pick.name) {
+      throw new Error(`Step ${n} (keep_running): ${args.container} is there already on ${there.at}, made to ask ${there.model}, and this run would hand it ${pick.name}. A job keeps the settings it was made with: remove ${args.container}, or save the step with another container name, to run it for ${pick.name}.`);
+    }
+    note(j, `Step ${n}: ${args.container} is there already on ${there.at}, so it runs again as it was made${there.model ? `, asking ${there.model}` : ''}: a job is handed a model only when it is made`);
+    return null;
+  }
   const url = given('SPARK_MODEL_URL') || jobModelAddress();
   if (!url) { note(j, `Step ${n}: ${args.container} isn’t handed a model address: Spark Console’s own address isn’t known.`); return null; }
-  const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
-  let name, parallel;
-  if (m && m.name !== SPARKIE_ID) {
-    name = m.name || (await inventory(null).catch(() => null))?.sparks.find(sp => sp.id === m.spark)?.deployments.find(d => d.container === m.container && d.state === 'running')?.model;
-    if (!name) { note(j, `Step ${n}: ${args.container} isn’t handed a model: ${m.container} isn’t running on ${sparkName(nodeById(m.spark) || { id: m.spark })} any more.`); return null; }
-    parallel = JOB_MODEL_PARALLEL;
-  } else {
-    const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
-    const why = !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
-      : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
-    if (why) { note(j, `Step ${n}: ${args.container} isn’t handed Sparkie’s model: ${why}.`); return null; }
-    name = SPARKIE_ID;
-    parallel = slots ? Math.max(1, slots - 2) : 1;
-  }
+  if (pick.why) { note(j, `Step ${n}: ${args.container} ${pick.why}.`); return null; }
+  const { name, parallel } = pick;
   const add = [['SPARK_MODEL_URL', url], ['SPARK_MODEL_NAME', name], ['SPARK_MODEL_PARALLEL', String(given('SPARK_MODEL_PARALLEL') || parallel)]].filter(([k]) => !given(k));
   note(j, `Step ${n}: ${args.container} is handed ${name} at ${url}, ${given('SPARK_MODEL_PARALLEL') || parallel} at once`);
   return { env: [...env, ...add.map(([k, v]) => `${k}=${v}`)] };
@@ -6782,14 +6806,16 @@ async function jobModelEnv(j, n, args) {
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
-// known only once its operation has ended), and the Sparks it keeps awake. The record goes when the run ends, however it
+// known only once its operation has ended, so a start under way is kept as its operation, `starting`), and the Sparks
+// it keeps awake. The record goes when the run ends, however it
 // ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
 // no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
 // keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
 // and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
-// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
-// copy ignores it (COPY_IGNORES).
+// operation or its steps' (savedRunCutOff), but for a start under way it is: the notice above says what is true, and
+// never that nothing was running when the run was cut inside a start. No state copy holds the file (sendCopy,
+// COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
 const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
@@ -6824,9 +6850,12 @@ function savedRunPending(action, args, out, keep) {
 }
 // An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
 // steps' (its actor, since the run began).
+// A start step's own operation is not one of those: its container is known only once it ends, so the run can't stop it,
+// and its own line says to check it (`starting`, the workloads review, C5).
 function savedRunCutOff(e) {
   let runs = [];
   try { runs = Object.values(savedRunsNow().runs); } catch { return false; }
+  if (runs.some(r => r?.starting === e.id)) return false;
   return runs.some(r => r?.operation === e.id || (r?.title && e.actor === `${r.title} (saved workflow)` && String(e.at) >= String(r.since || '~')));
 }
 async function savedRunsRecover() {
@@ -6841,7 +6870,9 @@ async function savedRunsRecover() {
     let words;
     try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }
     const awake = (Array.isArray(r.awake) ? r.awake : []).filter(id => nodeById(id));
-    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || 'Nothing it had started was still running.'}`
+    // (a run cut inside a start step: what that start brought up may be running; its own line says so)
+    const none = r.starting ? `The start at step ${r.step} was still under way: its own line says what to check.` : 'Nothing it had started was still running.';
+    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || none}`
       + `${awake.length ? ` ${awake.map(id => sparkName(nodeById(id))).join(' and ')}, which it had turned on, ${awake.length > 1 ? 'are' : 'is'} no longer held awake for it.` : ''} Nothing was run again: ask for it again if it’s still wanted.`;
     fleetEvent({ type: 'notice', text });
     const conv = /^sc_[0-9a-f]{16}$/.test(String(r.chat || '')) ? chatData().conversations.find(c => c.id === r.chat && c.login === accessList().owner) : null;
@@ -7097,6 +7128,9 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
+      // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
+      // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
+      const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
         : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
@@ -7105,7 +7139,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
-      if (x.listed && desiredPutBack([x.listed]).length) back.push(name);
+      if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
@@ -7113,10 +7147,14 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
 // An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
-// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's),
+// but only while it is running: one that isn't (the owner stopped it by hand, which took it off) has nothing to stop, and
+// keeping it would start it (the workloads review, C2).
 async function stopAppStarted(viewer, x, c) {
   try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
+    if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }
@@ -7579,13 +7617,21 @@ action({
   }, required: ['name'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
     // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
-    const w = ctx.compare?.workflow || findSaved(input.name);
-    if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    const saved = ctx.compare?.workflow || findSaved(input.name);
+    if (!saved) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    let w = saved;
     const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
     // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
     const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
     if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    // (Sparkie's own model, given or kept by a compare, runs the brain's view of it, as the compare ran it: its {model}
+    // start and stop steps left out; refused in the compare's words when the brain can't be asked)
+    if (!ctx.compare && 'model' in (w.inputs || {}) && compareIsBrain(given.model ?? '')) {
+      const why = compareBrainWhy();
+      if (why) throw new HttpError(409, `“${w.title}” can’t run with Sparkie’s own model: ${why}.`);
+      w = compareBrainView(w);
+    }
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
     let check = null, skipped = null;
@@ -7600,7 +7646,7 @@ action({
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     if (usedBest) job.usedBest = usedBest;
-    const steps = JSON.stringify(w.steps);
+    const steps = JSON.stringify(saved.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
@@ -7625,19 +7671,22 @@ action({
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
+            // (a compare's candidate run stops nothing to make room: the owner's models stay as they were, D)
             out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
-              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
+              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx), ...(ctx.compare ? { noStops: true, compareRun: true } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
+            starting: st.action === 'start_model' && out?.outcome === 'started' && out.operation ? out.operation : null });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
-          savedRunKeep(j, { started: ran, pending: [] });
-          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
+          savedRunKeep(j, { started: ran, pending: [], starting: null });
+          // (in a compare's run only the {model} step's model is handed on: the candidate, never a fixed helper's, D)
+          if (!ctx.compare || placeholders(st.args).includes('model')) j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
@@ -8389,10 +8438,10 @@ function desiredAfter(job) {
   const d = desired(true), before = d.running.map(x => ({ ...x }));
   // Bringing back what's already on the list (a restart, self-healing) changes nothing on it: no revision, so it never
   // stands in the way of undoing the owner's last change there. One parked while its Spark was powered off
-  // (21-power.mjs) runs again, so its mark goes (no revision either).
+  // (21-power.mjs), or put back by a run's clean-up (desiredPutBack), runs again, so its mark goes (no revision either).
   if (!stopped.length && started.every(k => d.running.some(x => keyOf(x) === k))) {
-    const parked = d.running.filter(x => x.parked && started.includes(keyOf(x)));
-    for (const x of parked) delete x.parked;
+    const parked = d.running.filter(x => (x.parked || x.putBack) && started.includes(keyOf(x)));
+    for (const x of parked) { delete x.parked; delete x.putBack; }
     let save = parked.length > 0;
     // (The owner's own start of one that's on the list makes it the newest wish for its Sparks. Self-healing brings
     // back only the newest model wanted on a Spark, displacedBy in 20-heal.mjs, so its date moves; still no revision.)
@@ -8459,15 +8508,17 @@ function parkDesired(keys, on) {
   if (hit.length) writePrivate(DESIRED_FILE, d);
   return hit.map(keyOf);
 }
-// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again
-// (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it was then, so the list is what it was before the run. Read
+// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again, and its
+// stop took it off (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it stood just before that stop, so the list
+// is what it was before the run. It carries putBack (when), so self-healing leaves it alone as it leaves a parked one
+// (the stop is the run's, not a crash: the workloads review, C4); the mark goes when it next runs (desiredAfter). Read
 // with readKept itself, so a file that can't be read is never saved over; no revision (what should run hasn't changed
 // since before the run). The keys it put back.
 function desiredPutBack(entries) {
   const d = readKept(DESIRED_FILE);
   if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
   const back = entries.filter(x => x && typeof x === 'object' && !d.running.some(y => keyOf(y) === keyOf(x)));
-  if (back.length) { d.running.push(...back.map(x => ({ ...x }))); writePrivate(DESIRED_FILE, d); }
+  if (back.length) { const at = new Date().toISOString(); d.running.push(...back.map(x => ({ ...x, putBack: at }))); writePrivate(DESIRED_FILE, d); }
   return back.map(keyOf);
 }
 // Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
@@ -8594,6 +8645,9 @@ action({
       : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
+// When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
+// (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
+const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
@@ -8601,7 +8655,7 @@ action({
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
     // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone)?.at || '');
+    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
     if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
@@ -8798,7 +8852,7 @@ function recordPart(month, [offset, length], id, { find, lines: stretch }, from)
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
 // Area: safety
 // Rules: R7, R8, R11, R18, R19, R21, R34, R38
-// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs, workloads-heal.test.mjs
 // Owns: none
 // Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
@@ -8851,8 +8905,9 @@ function healSkip(x, why) {
 // Which of the list's entries need bringing back now, and why; null when it's fine or not for self-healing now.
 function healReason(x, inv) {
   const sparks = x.sparks || [x.spark], sps = sparks.map(id => inv.sparks.find(s => s.id === id));
-  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark)
-  if (x.parked || sparks.some(consoleOff)) return null;
+  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark. Or put
+  // back by a run's clean-up, which stopped it on purpose: 20-desired.mjs desiredPutBack)
+  if (x.parked || x.putBack || sparks.some(consoleOff)) return null;
   // (a Spark whose Docker didn't answer the look is "couldn't read", not "its parts are gone": nothing is healed there, F6)
   if (sps.some(sp => !sp?.online || !sp.dockerOk)) return null;
   // (the status check hasn't seen it back yet: until it records this power-on, what is known of power-ons is the one
@@ -9038,7 +9093,7 @@ async function healPass() {
       if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id))) continue;
       // Parked by the power rules, or on a Spark Spark Console powered off (21-power.mjs): nothing heals against an
       // intentional power-off; it comes back when its Spark is turned on, or on its next call.
-      if (x.parked || (x.sparks || [x.spark]).some(consoleOff)) continue;
+      if (x.parked || x.putBack || (x.sparks || [x.spark]).some(consoleOff)) continue;
       // An app kept running (21-apps.mjs) has its own rules.
       if (x.app) { await healApp(x, inv).catch(e => console.error(`Self-healing ${x.container}: ${e.message}`)); continue; }
       const r = healReason(x, inv);
@@ -9835,8 +9890,8 @@ function lessonSeenBefore(job) {
 }
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
-// Owns: agents.json (writers: handler, top level; the top-level one is the last-use timer), audit.jsonl (writers:
-//   audit)
+// Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
+//   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,
 // <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Agents and Telegram), so
@@ -9874,6 +9929,7 @@ setInterval(() => {
 function keyViewer(req) {
   const m = /^Bearer\s+(\S+)\s*$/i.exec(String(req.headers.authorization || ''));
   if (!m || !AGENT_KEY_RE.test(m[1])) return null;
+  if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   const hash = keyHash(m[1]);
   const key = agentKeys().find(k => timingSafeEqual(Buffer.from(k.hash, 'hex'), hash));
   // A key works from the internet only if the owner let it (internet: true). Keys made before that switch existed
@@ -10894,6 +10950,8 @@ function openProblems() {
     // Lock-out: who may sign in, and the other ways in.
     () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
     () => { if (SECRETS_FILE && secretsRead() === null) add('secrets', `The secrets file on ${here} can’t be read, so Telegram and recovery codes are off. Fix or remove ${tilde(SECRETS_FILE)} there; Spark Console never writes over it.`); },
+    // State put back from a copy, held until the owner looks on the tailnet (22-putback.mjs).
+    () => putBackNeeds(add),
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.
     () => { if (chatsUnsaved) add('chats', `Chats aren’t being saved: ${here}’s state folder can’t be written (full disk?). What you say now is lost at the next restart.`); },
     () => {
@@ -11034,18 +11092,20 @@ function opWh(job) {
 const sortSpec = s => {
   if (Array.isArray(s) || s instanceof RegExp) return { re: [s].flat()[0], takes: [s].flat()[1] ?? null };
   const [short, ...longs] = s.split(' '), map = new Map();
-  for (let i = 0; i < short.length; i++) if (!':>}'.includes(short[i])) map.set(short[i], ':>}'.includes(short[i + 1] ?? 'x') ? short[i + 1] : false);
-  return { short: map, long: longs.filter(Boolean).map(l => [l.replace(/^!?--|[=>}]$/g, ''), l.startsWith('!') ? '!' : /[=>}]$/.test(l) ? l.slice(-1).replace('=', ':') : false]) };
+  for (let i = 0; i < short.length; i++) if (!':>}@'.includes(short[i])) map.set(short[i], ':>}@'.includes(short[i + 1] ?? 'x') ? short[i + 1] : false);
+  return { short: map, long: longs.filter(Boolean).map(l => [l.replace(/^!?--|[=>}@]$/g, ''), l.startsWith('!') ? '!' : /[=>}@]$/.test(l) ? l.slice(-1).replace('=', ':') : false]) };
 };
 const SORT_NOOPTS = sortSpec('');
 // A word bash may split into more words (an unquoted $ or `): a doubt where an option or its value stands, unless all
-// that is unknown in it is $(nproc), a number.
-const sortSplits = w => !!w?.split && !(!w.vars && w.subs?.length && w.subs.every(s => s.length === 1 && s[0].length === 1 && /^(?:nproc|getconf)$/.test(s[0][0].words?.[0]?.text ?? '')));
+// that is unknown in it is $(nproc) or $(getconf _NPROCESSORS_ONLN), a number. A value marked @ (an address, an index,
+// a registry, a file of code) is a doubt whenever the sorter can't read it, quoted or not.
+const sortNproc = s => s.length === 1 && s[0].length === 1 && !s[0][0].group && !s[0][0].assigns.length && !s[0][0].redirs.length && /^(?:nproc(?: --all)?|getconf _NPROCESSORS_ONLN)$/.test(s[0][0].words.map(w => w.text).join(' '));
+const sortSplits = w => !!w?.split && !(!w.vars && w.subs?.length && w.subs.every(sortNproc));
 function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const opts = [], plain = [], val = (w, text) => ({ ...w, text, subs: [] });
   let unknown = null, end = args.length;
   const rest = k => { end = k; plain.push(...args.slice(k)); };
-  const next = (w, k) => { const v = args[k] ?? val(w, ''); if (sortSplits(v)) unknown ??= v.text || '$…'; return v; };
+  const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
     if (t === '--' && !w.unknown) { rest(k + 1); break; }
@@ -11065,8 +11125,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
       const eq = t.indexOf('='), n = t.slice(2, eq < 0 ? undefined : eq), hits = spec.long.filter(([l]) => l.startsWith(n));
       const h = hits.find(([l]) => l === n) ?? (hits.length === 1 ? hits[0] : null);
       if (!h || !n || h[1] === '!' || (w.unknown && eq < 0)) { unknown ??= w.text || t; continue; }
-      if (sortSplits(w)) unknown ??= w.text || t;
-      opts.push([h[0], !h[1] ? true : eq >= 0 ? val(w, t.slice(eq + 1)) : next(w, ++k), h[1]]);
+      if (sortSplits(w) || (h[1] === '@' && eq >= 0 && w.unknown)) unknown ??= w.text || t;
+      opts.push([h[0], !h[1] ? true : eq >= 0 ? val(w, t.slice(eq + 1)) : next(w, ++k, h[1]), h[1]]);
       if (first?.includes(h[0])) { rest(k + 1); break; }
       continue;
     }
@@ -11074,7 +11134,7 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
     for (let j = 1; j < t.length; j++) {
       const takes = spec.short.get(t[j]);
       if (takes === undefined) { unknown ??= w.text || t; break; }
-      if (takes) { took = true; if (sortSplits(w)) unknown ??= w.text || t; opts.push([t[j], j < t.length - 1 || w.unknown ? val(w, t.slice(j + 1)) : next(w, ++k), takes]); stop = !!first?.includes(t[j]); break; }
+      if (takes) { took = true; if (sortSplits(w) || (takes === '@' && w.unknown)) unknown ??= w.text || t; opts.push([t[j], j < t.length - 1 || w.unknown ? val(w, t.slice(j + 1)) : next(w, ++k, takes), takes]); stop = !!first?.includes(t[j]); break; }
       opts.push([t[j], true, false]);
     }
     if (w.unknown && !took) unknown ??= w.text || t;
@@ -11105,15 +11165,15 @@ const SORT_OPTS = Object.fromEntries(Object.entries({
   xz: 'zdtlkfcqvT:0123456789eF:C:M:H --compress --decompress --uncompress --test --list --keep --force --stdout --to-stdout --quiet --verbose --threads= --format= --check= --memlimit= --extreme --suffix= --no-warn --robot --help --version',
   zstd: 'zdtlkfcqvo>T:0123456789rD:MB: --compress --decompress --uncompress --test --list --keep --force --stdout --quiet --verbose --output> --threads= --rm --long --ultra --fast --adapt --no-progress --progress --exclude-compressed --sparse --no-sparse --memory= --help --version',
   lz4: 'zdtlkfcqvm0123456789B:r --compress --decompress --test --list --keep --force --stdout --quiet --verbose --multiple --rm --fast --best --favor-decSpeed --help --version',
-  curl: '#fsSLkIvOJiNgGZ46nqlo>H:X:d:u:A:e:b:c>m:w:x:T:F:r:C:E:D>Y:y:z:t:P:Q:U: !--config --fail --fail-with-body --silent --show-error --location --location-trusted --insecure --output> --remote-name --remote-name-all --remote-header-name --header= --request= --data= --data-raw= --data-binary= --data-urlencode= --data-ascii= --user= --user-agent= --referer= --cookie= --cookie-jar> --max-time= --connect-timeout= --write-out= --proxy= --upload-file= --form= --form-string= --range= --continue-at= --cert= --cacert= --capath= --key= --dump-header> --retry= --retry-delay= --retry-max-time= --retry-all-errors --retry-connrefused --compressed --create-dirs --output-dir= --http1.0 --http1.1 --http2 --http3 --ipv4 --ipv6 --head --include --verbose --progress-bar --no-progress-meter --limit-rate= --max-filesize= --get --globoff --oauth2-bearer= --json= --url= --noproxy= --unix-socket= --abstract-unix-socket= --resolve= --connect-to= --keepalive-time= --no-keepalive --no-buffer --tlsv1.2 --tlsv1.3 --tls-max= --ssl-reqd --fail-early --parallel --parallel-max= --netrc --netrc-optional --basic --digest --anyauth --ntlm --negotiate --list-only --append --stderr> --trace> --trace-ascii> --trace-time --help --version',
-  wget: 'qvcNSrkKmplxEHFdO>o>a>t:T:w:U:Q:A:R:D:I:X:l:P:i:B:n: --quiet --verbose --no-verbose --continue --timestamping --output-document> --output-file> --append-output> --tries= --timeout= --wait= --waitretry= --random-wait --user-agent= --quota= --accept= --reject= --accept-regex= --reject-regex= --domains= --include-directories= --exclude-directories= --level= --directory-prefix= --input-file= --base= --force-html --recursive --mirror --page-requisites --convert-links --backup-converted --adjust-extension --no-parent --no-directories --force-directories --no-host-directories --cut-dirs= --no-clobber --spider --show-progress --progress= --header= --no-check-certificate --ca-certificate= --content-disposition --trust-server-names --limit-rate= --https-only --max-redirect= --retry-connrefused --server-response --span-hosts --inet4-only --inet6-only --no-cache --no-cookies --load-cookies= --save-cookies> --keep-session-cookies --post-data= --method= --body-data= --user= --password= --http-user= --http-password= --no-proxy --compression= --restrict-file-names= --ignore-case --no-glob --report-speed= --debug !--config !--use-askpass --help --version',
-  aria2c: 'cqxsjZVd:o:i:x:s:j:k: --continue --quiet --dir= --out= --input-file= --max-connection-per-server= --split= --min-split-size= --max-concurrent-downloads= --check-certificate= --file-allocation= --summary-interval= --auto-file-renaming= --allow-overwrite= --header= --user-agent= --max-tries= --retry-wait= --timeout= --connect-timeout= --console-log-level= --check-integrity= --help --version',
-  patch: 'bEflNRstuvp:i:o>d:D:F:g:r>B:V:Y:z: --backup --batch --force --forward --quiet --silent --reverse --posix --dry-run --unified --verbose --strip= --input= --output> --directory= --reject-file> --fuzz= --binary --no-backup-if-mismatch --remove-empty-files --ignore-whitespace --help --version',
+  curl: '#fsSLkIvOJiNgGZ46nqlo>H:X:d:u:A:e:b:c>m:w:x@T:F:r:C:E:D>Y:y:z:t:P:Q:U: !--config --fail --fail-with-body --silent --show-error --location --location-trusted --insecure --output> --remote-name --remote-name-all --remote-header-name --header= --request= --data= --data-raw= --data-binary= --data-urlencode= --data-ascii= --user= --user-agent= --referer= --cookie= --cookie-jar> --max-time= --connect-timeout= --write-out= --proxy@ --upload-file= --form= --form-string= --range= --continue-at= --cert= --cacert= --capath= --key= --dump-header> --retry= --retry-delay= --retry-max-time= --retry-all-errors --retry-connrefused --compressed --create-dirs --output-dir= --http1.0 --http1.1 --http2 --http3 --ipv4 --ipv6 --head --include --verbose --progress-bar --no-progress-meter --limit-rate= --max-filesize= --get --globoff --oauth2-bearer= --json= --url@ --noproxy= --unix-socket= --abstract-unix-socket= --resolve@ --connect-to@ --keepalive-time= --no-keepalive --no-buffer --tlsv1.2 --tlsv1.3 --tls-max= --ssl-reqd --fail-early --parallel --parallel-max= --netrc --netrc-optional --basic --digest --anyauth --ntlm --negotiate --list-only --append --stderr> --trace> --trace-ascii> --trace-time --help --version',
+  wget: 'qvcNSrkKmplxEHFdO>o>a>t:T:w:U:Q:A:R:D:I:X:l:P:i@B@n: --quiet --verbose --no-verbose --continue --timestamping --output-document> --output-file> --append-output> --tries= --timeout= --wait= --waitretry= --random-wait --user-agent= --quota= --accept= --reject= --accept-regex= --reject-regex= --domains= --include-directories= --exclude-directories= --level= --directory-prefix= --input-file@ --base@ --force-html --recursive --mirror --page-requisites --convert-links --backup-converted --adjust-extension --no-parent --no-directories --force-directories --no-host-directories --cut-dirs= --no-clobber --spider --show-progress --progress= --header= --no-check-certificate --ca-certificate= --content-disposition --trust-server-names --limit-rate= --https-only --max-redirect= --retry-connrefused --server-response --span-hosts --inet4-only --inet6-only --no-cache --no-cookies --load-cookies= --save-cookies> --keep-session-cookies --post-data= --method= --body-data= --user= --password= --http-user= --http-password= --no-proxy --compression= --restrict-file-names= --ignore-case --no-glob --report-speed= --debug !--config !--use-askpass --help --version',
+  aria2c: 'cqxsjZVd:o:i@x:s:j:k: --continue --quiet --dir= --out= --input-file@ --max-connection-per-server= --split= --min-split-size= --max-concurrent-downloads= --check-certificate= --file-allocation= --summary-interval= --auto-file-renaming= --allow-overwrite= --header= --user-agent= --max-tries= --retry-wait= --timeout= --connect-timeout= --console-log-level= --check-integrity= --help --version',
+  patch: 'bEflNRstuvp:i@o>d:D:F:g:r>B:V:Y:z: --backup --batch --force --forward --quiet --silent --reverse --posix --dry-run --unified --verbose --strip= --input@ --output> --directory= --reject-file> --fuzz= --binary --no-backup-if-mismatch --remove-empty-files --ignore-whitespace --help --version',
   rsync: 'avzrlptgoDhPHAXSnuWcCiqRxbLkKyf:T}B: !--rsh !--rsync-path !--daemon !--config --archive --verbose --compress --recursive --links --perms --times --group --owner --devices --specials --human-readable --progress --partial --partial-dir} --hard-links --acls --xattrs --sparse --dry-run --update --whole-file --checksum --relative --one-file-system --backup --backup-dir} --suffix= --copy-links --copy-unsafe-links --safe-links --keep-dirlinks --exclude= --include= --exclude-from= --include-from= --files-from= --from0 --filter= --delete --delete-before --delete-after --delete-during --delete-delay --delete-excluded --remove-source-files --stats --info= --itemize-changes --quiet --no-perms --no-owner --no-group --no-times --chmod= --chown= --numeric-ids --size-only --ignore-existing --existing --inplace --append --append-verify --bwlimit= --timeout= --contimeout= --mkpath --temp-dir} --max-size= --min-size= --ignore-times --modify-window= --out-format= --log-file> --link-dest= --compare-dest= --copy-dest= --compress-level= --no-motd --prune-empty-dirs --fuzzy --help --version',
   scp: '346ABCpqrTvc:i:l:P:', sftp: '46aCfNpqrvb:c:i:l:P:R:B:',
-  pip: 'vqUIylouVhr:c:e:i:f:t:d: !--python --verbose --quiet --upgrade --user --requirement= --constraint= --editable= --index-url= --extra-index-url= --find-links= --no-index --no-deps --pre --force-reinstall --ignore-installed --ignore-requires-python --no-cache-dir --disable-pip-version-check --no-build-isolation --break-system-packages --target= --prefix= --root= --upgrade-strategy= --only-binary= --no-binary= --prefer-binary --require-hashes --dry-run --report> --isolated --no-input --timeout= --retries= --yes --dest= --platform= --python-version= --implementation= --abi= --trusted-host= --cache-dir= --log> --progress-bar= --root-user-action= --format= --outdated --uptodate --not-required --local --all --path= --files --exclude= --exclude-editable --no-warn-script-location --no-warn-conflicts --compile --no-compile --no-clean --use-pep517 --no-use-pep517 --config-settings= --proxy= --cert= --client-cert= --require-virtualenv --no-color --exists-action= --group= --help --version',
-  npm: 'gDPOEySfqdlsw: !--userconfig !--globalconfig !--script-shell !--node-options --global --save --save-dev --save-optional --save-exact --save-prod --save-peer --no-save --force --legacy-peer-deps --strict-peer-deps --production --prod --dev --omit= --include= --prefix= --registry= --loglevel= --silent --quiet --verbose --yes --dry-run --workspace= --workspaces --include-workspace-root --if-present --audit --fund --no-audit --no-fund --ignore-scripts --foreground-scripts --json --parseable --depth= --all --long --location= --prefer-offline --prefer-online --offline --no-package-lock --package-lock-only --frozen-lockfile --immutable --pure-lockfile --non-interactive --network-timeout= --filter= --recursive --engine-strict --install-strategy= --install-links --cache= --help --version',
-  conda: 'ynqvaeCSc:n:p:f: --yes --name= --prefix= --channel= --override-channels --strict-channel-priority --quiet --verbose --dry-run --json --all --file= --force-reinstall --force --no-deps --only-deps --update-deps --freeze-installed --clone= --use-local --offline --solver= --copy --no-default-packages --from-history --no-builds --envs --use-index-cache --show --get --set --add --remove --append --prepend --prune --keep-env --help --version',
+  pip: 'vqUIylouVhr@c@e@i@f@t:d: !--python --verbose --quiet --upgrade --user --requirement@ --constraint@ --editable@ --index-url@ --extra-index-url@ --find-links@ --no-index --no-deps --pre --force-reinstall --ignore-installed --ignore-requires-python --no-cache-dir --disable-pip-version-check --no-build-isolation --break-system-packages --target= --prefix= --root= --upgrade-strategy= --only-binary= --no-binary= --prefer-binary --require-hashes --dry-run --report> --isolated --no-input --timeout= --retries= --yes --dest= --platform= --python-version= --implementation= --abi= --trusted-host@ --cache-dir= --log> --progress-bar= --root-user-action= --format= --outdated --uptodate --not-required --local --all --path= --files --exclude= --exclude-editable --no-warn-script-location --no-warn-conflicts --compile --no-compile --no-clean --use-pep517 --no-use-pep517 --config-settings= --proxy@ --cert= --client-cert= --require-virtualenv --no-color --exists-action= --group= --help --version',
+  npm: 'gDPOEySfqdlsw: !--userconfig !--globalconfig !--script-shell !--node-options --global --save --save-dev --save-optional --save-exact --save-prod --save-peer --no-save --force --legacy-peer-deps --strict-peer-deps --production --prod --dev --omit= --include= --prefix= --registry@ --loglevel= --silent --quiet --verbose --yes --dry-run --workspace= --workspaces --include-workspace-root --if-present --audit --fund --no-audit --no-fund --ignore-scripts --foreground-scripts --json --parseable --depth= --all --long --location= --prefer-offline --prefer-online --offline --no-package-lock --package-lock-only --frozen-lockfile --immutable --pure-lockfile --non-interactive --network-timeout= --filter= --recursive --engine-strict --install-strategy= --install-links --cache= --help --version',
+  conda: 'ynqvaeCSc@n:p:f@ --yes --name= --prefix= --channel@ --override-channels --strict-channel-priority --quiet --verbose --dry-run --json --all --file@ --force-reinstall --force --no-deps --only-deps --update-deps --freeze-installed --clone= --use-local --offline --solver= --copy --no-default-packages --from-history --no-builds --envs --use-index-cache --show --get --set --add --remove --append --prepend --prune --keep-env --help --version',
   'conda:run': 'n:p:a: --name= --prefix= --no-capture-output --live-stream --attach= --no-banner',
   apt: 'yqsdfmVuhat: --yes --assume-yes --assume-no --quiet --simulate --dry-run --download-only --no-download --fix-broken --fix-missing --ignore-missing --no-install-recommends --install-recommends --no-install-suggests --only-upgrade --reinstall --purge --auto-remove --autoremove --target-release= --show-progress --no-upgrade --installed --upgradable --upgradeable --all-versions --full --names-only --print-uris --fix-policy --allow-releaseinfo-change --allow-unauthenticated --force-yes --allow-downgrades --allow-remove-essential --allow-change-held-packages --help --version',
   hf: 'hq --local-dir= --revision= --include= --exclude= --repo-type= --cache-dir= --quiet --max-workers= --force-download --resume-download --local-dir-use-symlinks= --private --commit-message= --repo-id= --token= --help',
@@ -11127,8 +11187,8 @@ const SORT_OPTS = Object.fromEntries(Object.entries({
   'nvidia-smi': [/^(?:-[qLxuhicdlfsom]|-lms|-mp|-p2p|--(?:query|list-gpus|xml-format|unit|id|display|loop|loop-ms|query-gpu|query-compute-apps|query-supported-clocks|query-accounted-apps|query-retired-pages|format|filename|help-query-gpu|help|dtd|debug)(?:=.*)?)$/, /^(?:-[idlfcso]|-lms|-p2p|--(?:id|display|loop|loop-ms|query-gpu|query-compute-apps|format|filename))$/],
   journalctl: 'aefklmqrxNb:n:S:U:u:p:t:o:D:M:g:F:c: --all --pager-end --follow --full --no-full --lines= --no-tail --reverse --quiet --merge --boot= --list-boots --dmesg --unit= --user-unit= --priority= --identifier= --facility= --output> --output-fields= --utc --catalog --since= --until= --directory= --file= --root= --machine= --grep= --case-sensitive= --no-pager --no-hostname --fields --field= --cursor= --after-cursor= --show-cursor --system --user --disk-usage --header --verify --list-catalog --help --version',
   wait: 'fnp:', unzip: 'aAbBcCDfhjJKlLMnNopqstTuUvVWXZzd:x:P:',
-  awk: 'bcCNOPrSstMnF:v:f:e:E:i:l: --posix --traditional --characters-as-bytes --sandbox --re-interval --field-separator= --assign= --file= --source= --include= --load= --lint --help --version',
-  make: 'BbdeikLnpqRrSstvwj:l:C:f:I:o:W:O: --always-make --directory= --debug --environment-overrides --file= --makefile= --include-dir= --ignore-errors --jobs= --keep-going --load-average= --check-symlink-times --just-print --dry-run --recon --old-file= --assume-old= --output-sync= --print-data-base --question --no-builtin-rules --no-builtin-variables --silent --quiet --no-silent --stop --no-keep-going --touch --trace --print-directory --no-print-directory --what-if= --new-file= --assume-new= --warn-undefined-variables --help --version',
+  awk: 'bcCNOPrSstMnF:v:f@e:E@i@l@ --posix --traditional --characters-as-bytes --sandbox --re-interval --field-separator= --assign= --file@ --source= --include@ --load@ --lint --help --version',
+  make: 'BbdeikLnpqRrSstvwj:l:C@f@I@o:W:O: --always-make --directory@ --debug --environment-overrides --file@ --makefile@ --include-dir@ --ignore-errors --jobs= --keep-going --load-average= --check-symlink-times --just-print --dry-run --recon --old-file= --assume-old= --output-sync= --print-data-base --question --no-builtin-rules --no-builtin-variables --silent --quiet --no-silent --stop --no-keep-going --touch --trace --print-directory --no-print-directory --what-if= --new-file= --assume-new= --warn-undefined-variables --help --version',
   ninja: 'nvC:f:j:k:l:d:t:w: --verbose --quiet --version --help',
   cmake: [/^-(?:[SBGDUTA]\S*|j\d*|L[AH]*|N|v|Wn?o?-?(?:dev|deprecated)|Werror=\S+|-(?:build|target|config|parallel|install|prefix|preset|fresh|verbose|clean-first|log-level|toolchain|version|help|graphviz|system-information|warn-uninitialized|component|strip|list-presets|install-prefix|debug-find|log-context|no-warn-unused-cli|check-system-vars)(?:=\S*)?)$/, /^-(?:[SBGTACDU]|j|-(?:build|target|config|parallel|install|prefix|preset|component|toolchain|log-level|graphviz))$/],
   meson: [/^-(?:D\S*|C|j\d*|v|-(?:buildtype|prefix|reconfigure|wipe|backend|default-library|libdir|bindir|optimization|debug|warnlevel|werror|native-file|cross-file|verbose|jobs|clean|quiet|dry-run|destdir|no-rebuild|suite|print-errorlogs|num-processes|help|version|tags|skip-subprojects|strip|unity)(?:=\S*)?)$/, /^-(?:C|j|D|-(?:buildtype|prefix|backend|default-library|libdir|bindir|optimization|warnlevel|native-file|cross-file|jobs|destdir|suite|num-processes|tags))$/],
@@ -11204,7 +11264,7 @@ function sortNorm(p, r = null, home = null) {
   let n = `/${out.join('/')}`;
   for (let m; (m = /^\/proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/root(?=\/|$)/.exec(n));) n = n.slice(m[0].length) || '/';
   // (and /dev/fd/N or /dev/stdin as a folder, or a descriptor past the three a command starts with)
-  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)|^\/dev\/(?:fd\/(?:\d+\/|(?:[3-9]|\d{2,})$)|std(?:in|out|err)\/)/.test(n)) {
+  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)|^\/dev\/(?:fd|std(?:in|out|err))(?:\/|$)/.test(n)) {
     if (r && (LOCK_NAMES.has(n.slice(n.lastIndexOf('/') + 1)) || SIGNIN.test(n))) raise(r, 'lockout', `It names ${sortQ(n)}, one of the ways in.`);
     unsure(`It reaches a file through ${sortQ(n)}, which the sorter can't place.`);
   }
@@ -11262,24 +11322,39 @@ function sortClass(p, i, ch) {
   return hit !== neg ? e + 1 : -1;
 }
 const sortUp = q => q.split('/').slice(0, -1).map((_, j, a) => a.slice(0, j + 1).join('/') || '/');
+// A {…} as bash reads it: one holding another (even {}) and making words is a doubt, as is a range padded below zero.
+const sortNested = s => { for (let i = s.indexOf('{'); i >= 0; i = s.indexOf('{', i + 1)) { let d = 0, inner = false, top = false; for (let j = i; j < s.length; j++) { if (s[j] === '{') { if (++d > 1) inner = true; } else if (s[j] === '}') { if (--d === 0) break; } else if (d === 1 && (s[j] === ',' || s.startsWith('..', j))) top = true; } if (inner && top) return true; } return false; };
+// A word's {…} spelled out as bash does: the first {…} with a comma at its own level, or a range, left to right, each
+// part again; one with neither stays as written ({}, {b}). A range is spelled in full (1..3; 01..10 and 1..010 padded
+// and not, as bash 4 and later and older bash read it; a..d); a step, ends of two kinds, or a padded one below zero is a
+// doubt. One inside another is spelled out too, for the places it may reach, and is then a doubt (doubt, after).
 function sortBraces(s) {
+  const nested = sortNested(s);
+  const one = t => {
+    for (let i = t.indexOf('{'); i >= 0; i = t.indexOf('{', i + 1)) {
+      let d = 0, j = i;
+      const commas = [];
+      for (; j < t.length; j++) { if (t[j] === '{') d++; else if (t[j] === '}') { if (--d === 0) break; } else if (t[j] === ',' && d === 1) commas.push(j); }
+      if (j >= t.length) continue;
+      const body = t.slice(i + 1, j), pre = t.slice(0, i), post = t.slice(j + 1);
+      if (commas.length) return [i + 1, ...commas.map(c => c + 1)].map((k, x) => pre + t.slice(k, x < commas.length ? commas[x] : j) + post);
+      if (!body.includes('..') || /[{}]/.test(body)) continue;
+      const n = /^(?:(-?\d+)\.\.(-?\d+)|([a-z])\.\.([a-z]))$/i.exec(body);
+      if (!n) unsure('It holds a {…} range the sorter does not spell out (a step, or ends of two kinds).');
+      const [lo, hi] = n[1] != null ? [+n[1], +n[2]] : [n[3].charCodeAt(0), n[4].charCodeAt(0)];
+      if (Math.abs(hi - lo) > 64) unsure('It holds a {a..b} range too long to read.');
+      if (n[1] != null && (/^-0\d/.test(n[1]) || /^-0\d/.test(n[2]))) unsure('It holds a {…} range padded below zero, which the sorter does not spell out.');
+      const pad = n[1] != null && (/^0\d/.test(n[1]) || /^0\d/.test(n[2])) ? Math.max(n[1].length, n[2].length) : 0, run = Array.from({ length: Math.abs(hi - lo) + 1 }, (_, k) => Math.min(lo, hi) + k);
+      return (n[1] != null ? [...new Set([...run.map(v => String(v).padStart(pad, '0')), ...run.map(String)])] : run.map(v => String.fromCharCode(v))).map(x => pre + x + post);
+    }
+    return null;
+  };
   let out = [s];
-  for (let round = 0; round < 8; round++) {
+  for (let round = 0; round < 16; round++) {
     let more = false;
-    out = out.flatMap(t => {
-      const m = /\{([^{}]*(?:,|\.\.)[^{}]*)\}/.exec(t), n = m && /^(?:(-?\d+)\.\.(-?\d+)|([a-z])\.\.([a-z]))$/i.exec(m[1]);
-      if (!m) return [t];
-      more = true;
-      // (a range is spelled out in full: 1..3, 01..10 padded, a..d; a step, or ends of two kinds, is a doubt)
-      if (!n && !m[1].includes(',')) unsure('It holds a {…} range the sorter does not spell out (a step, or ends of two kinds).');
-      const [lo, hi] = n ? (n[1] != null ? [+n[1], +n[2]] : [n[3].charCodeAt(0), n[4].charCodeAt(0)]) : [0, 0];
-      if (n && Math.abs(hi - lo) > 64) unsure('It holds a {a..b} range too long to read.');
-      const pad = n?.[1] != null && /^-?0\d/.test(n[1] + ' ' + n[2]) ? Math.max(n[1].length, n[2].length) : 0, run = Array.from({ length: Math.abs(hi - lo) + 1 }, (_, j) => Math.min(lo, hi) + j);
-      const each = !n ? m[1].split(',') : n[1] != null ? run.map(v => String(v).padStart(pad, '0')) : run.map(v => String.fromCharCode(v));
-      return each.map(x => t.slice(0, m.index) + x + t.slice(m.index + m[0].length));
-    });
+    out = out.flatMap(t => { const x = one(t); if (x) more = true; return x ?? [t]; });
     if (out.length > 64) unsure('It holds {…} that makes too many words to read.');
-    if (!more) return out;
+    if (!more) return Object.assign(out, { doubt: nested ? 'It holds a {…} inside a {…}, which the sorter does not spell out as bash does.' : null });
   }
   return unsure('It holds {…} nested too deep to read.');
 }
@@ -11364,7 +11439,7 @@ const sortGitSet = p => { const g = p.split('/'), at = g.findIndex(x => sortSeg(
 // A word as the paths it can name: itself, what follows = or @, what follows a one-letter option (-opath), file://.
 const sortTails = t => { const m = /^-([A-Za-z]{1,26})/.exec(t); return m ? Array.from({ length: m[1].length }, (_, k) => t.slice(k + 2)).filter(Boolean) : []; };
 const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], ...sortTails(t), /^[\w-]*=?@(.+)$/.exec(t)?.[1],
-  /^file:\/\/(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
+  /^file:(?:\/\/)?(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
 // writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
@@ -11379,6 +11454,9 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
   }
+  if (all.doubt) unsure(all.doubt);
+  // (a write by another program where git owned the folder: its settings may have come with it)
+  if (!ctx.gitTouch && ctx.cloned?.size) for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) for (const g of ctx.cloned) if (p === g || p.startsWith(`${g}/`) || g.startsWith(`${p}/`)) ctx.cloned.delete(g);
   if (!ctx.changes) return;
   for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
@@ -11388,7 +11466,7 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
 // A path written before this command (opts.written, a * kept): p is it or under it.
-const sortBefore = (b, p) => (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`));
+const sortBefore = (b, p) => (b === '/' || (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`)));
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
@@ -11407,7 +11485,9 @@ function sortScan(text, ctx, r, progs, touched = false) {
 function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
-    for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    const all = sortBraces(w.text);
+    for (const t of all) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
+    if (all.doubt) unsure(all.doubt);
     sortScan(w.text, ctx, r, false, 'seen');
   }
 }
@@ -11445,6 +11525,7 @@ function sortShell(args, ctx, r, x, name) {
     if (file.fetches) ctx.fetched = true; else if (file.unknown) unsure(`${sortQ(name)} runs a file named by a $ or a command.`);
     return sortRuns(file.text || '<( … )', ctx, r, `${sortQ(name)} runs the file ${sortQ(file.text || 'a command makes')}.`);
   }
+  if (x.opaque) unsure(`${sortQ(name)} reads text with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`);
   if (typeof x.stdin === 'string') return inline(x.stdin);
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} commands an earlier part makes, which can’t be shown before they run.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the commands it reads from its input, which the sorter can’t see.`);
@@ -11470,6 +11551,7 @@ function sortInterp(args, ctx, r, x, name) {
   if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
+  if (x.opaque) unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`);
   if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} code an earlier part makes, which can’t be shown before it runs.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the code it reads from its input, which the sorter does not read.`);
@@ -11550,7 +11632,7 @@ const SORT_HANDLERS = {
     for (const f of [...files, ...libs]) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the program in ${sortQ(f.text)}, or loads code, which the sorter does not read.`);
     const progs = files.length || inline.length ? inline : [o.plain[0]];
     // (gawk -i inplace rewrites each file it reads)
-    if (libs.some(l => /^inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
+    if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
       if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
       if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
@@ -11627,7 +11709,7 @@ const SORT_HANDLERS = {
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
   set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
-  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text === '-' ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
+  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]+$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text.startsWith('-') ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
   pushd(a, ctx) { sortCd(null, ctx); ctx.cdTo = [null]; },
   // (crontab -l only lists; anything else is a job that runs by itself)
   crontab: (a, ctx, r) => (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' ')) ? raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.') : raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.')),
@@ -11651,7 +11733,7 @@ const SORT_HANDLERS = {
       if (/^\/dev\/(?!null$|zero$|std(?:out|err)$)/.test(sortNorm(m[2]))) sortGone(ctx, r, `dd writes ${sortQ(m[2])}, a disk or a device, directly.`);
       sortTouch({ ...w, text: m[2] }, ctx, r);
     }
-    const odd = a.find(w => !/^(?:if|of|bs|ibs|obs|cbs|count|skip|seek|iseek|oseek|conv|iflag|oflag|status)=/.test(w.text));
+    const odd = a.find(w => w.unknown || !/^(?:if|of|bs|ibs|obs|cbs|count|skip|seek|iseek|oseek|conv|iflag|oflag|status)=/.test(w.text));
     if (odd) unsure(`The sorter doesn’t know dd’s word ${sortQ(odd.text || '$…')}.`);
   },
   tar(a, ctx, r) {
@@ -11925,6 +12007,7 @@ Object.assign(SORT_HANDLERS, {
       const any = (w, text) => ({ ...w, text: text.replace(/#\d+|\{[^}]*\}|\[[^\]]*\]/g, '*'), glob: w.glob || /#\d|\{|\[/.test(text) });
       for (const w of o.all('o', 'output')) if (w.text !== '-') { sortTouch(any(w, w.text), ctx, r); if (dir) sortTouch(any(w, at(w.text).text), ctx, r); }
       // (and -w's %output{file} writes the rest of what -w prints to that file)
+      if (o.all('w', 'write-out').some(w => w.text.startsWith('@'))) unsure(`${sortQ(name)} -w @file reads its format from a file nobody read.`);
       for (const w of o.all('w', 'write-out')) for (const m of w.text.matchAll(/%output\{>{0,2}([^}]*)\}/g)) sortTouch(any(w, m[1]), ctx, r);
       if (o.has('J', 'remote-header-name')) sortInto(dir, ctx, r);
       else if (o.has('O', 'remote-name', 'remote-name-all')) for (const u of urls) if (last(u)) sortTouch(any(at(last(u)), at(last(u)).text), ctx, r);
@@ -12083,6 +12166,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
         lines.push(line);
       }
       h.tok.body = lines.join('\n');
+      h.tok.quoted = h.quoted;
       if (!h.quoted && /\$\(|`|\$\{|<\(/.test(h.tok.body)) unsure('Its here-document runs commands of its own ($( … ) or `…`).');
     }
     return j;
@@ -12247,29 +12331,26 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 
 // What may come before a program: a name that decides what runs, what it loads or where it fetches from (risky), and
 // the few a look may carry.
-const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
+const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
 function sortAssign(name, ctx, r, prefix) {
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
 // Each pipeline's first part reads what the command was handed (a group's commands inside a pipe too); the later parts
-// read the part before them. ctx.piped says an earlier part of this pipeline fetched from the network. A cd narrows the
-// folders the command may be in to its own only when it stands first in its && / || chain or right after &&, with no
-// !, in a chain not sent off with &: for the rest of the chain when && follows it, for good when || exit does. Anywhere
-// else, and when the chain ends, every folder a cd in it reached is added to where the chain started (a cd may fail).
-// A subshell, a $( ) or a pipe's part changes no folder after it (the folders it may be in only grow).
+// read the part before them. ctx.piped says an earlier part of this pipeline fetched from the network. One form alone
+// narrows where the command stands: its very first word is cd, with one plain folder and no option, and && follows; then
+// the rest of that && chain stands there. Any other cd (a second one, after ||, with an option, a later chain) narrows
+// nothing: the command stands in every folder a cd may have left it in, the start included. A subshell, a $( ) or a
+// pipe's part changes no folder after it (the folders it may be in only grow).
 const sortIsCd = p => p.length === 1 && !p[0].group && /^(?:cd|pushd)$/.test(p[0].words[0]?.text ?? '') && !p[0].words[0].unknown;
-const sortIsExit = p => p?.length === 1 && !p[0].group && p[0].words[0]?.text === 'exit' && !p[0].words[0].unknown;
-function sortList(items, ctx, r, inPipe = false) {
+const sortOneCd = p => sortIsCd(p) && !p[0].neg && p[0].words[0].text === 'cd' && p[0].words.length === 2 && !p[0].assigns.length && !p[0].redirs.length
+  && !/^-/.test(p[0].words[1].text) && !p[0].words[1].unknown && !p[0].words[1].glob && !p[0].words[1].brace;
+function sortList(items, ctx, r, inPipe = false, top = false) {
   if (items.length > 1) r.simple = false;
-  let start = null, reached = [], pinned = false;
+  let start = new Set(ctx.cwds), reached = [], narrowed = false;
   items.forEach((pipe, n) => {
     if (pipe.length > 1) r.simple = false;
-    const prev = items[n - 1]?.op ?? null, first = !/^(?:&&|\|\|)$/.test(prev ?? '');
-    if (first) { start = new Set(ctx.cwds); reached = []; pinned = false; }
-    let e = n;
-    while (e < items.length - 1 && /^(?:&&|\|\|)$/.test(items[e].op ?? '')) e++;
     const was = ctx.piped;
     if (!inPipe) ctx.piped = false;
     ctx.cdTo = null;
@@ -12277,13 +12358,14 @@ function sortList(items, ctx, r, inPipe = false) {
     ctx.piped = was;
     if (sortIsCd(pipe) && ctx.cdTo) {
       reached.push(...ctx.cdTo);
-      const may = (first || prev === '&&') && !pipe[0].neg && items[e].op !== '&';
-      if (may && pipe.op === '&&') ctx.cwds = new Set(ctx.cdTo);
-      else if (may && pipe.op === '||' && sortIsExit(items[n + 1])) { ctx.cwds = new Set(ctx.cdTo); pinned = true; }
+      let e = n;
+      while (e < items.length - 1 && /^(?:&&|\|\|)$/.test(items[e].op ?? '')) e++;
+      if (top && n === 0 && pipe.op === '&&' && sortOneCd(pipe) && items[e].op !== '&') { ctx.cwds = new Set(ctx.cdTo); narrowed = true; }
       else ctx.cwds = new Set([...ctx.cwds, ...ctx.cdTo]);
     }
-    // (after ||, the next part may run where the chain started; at its end, anywhere a cd in it reached)
-    if ((n === e || pipe.op === '||') && !pinned) ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]);
+    // (once the && chain after the first cd is left, or after ||, it may stand anywhere a cd reached, or where it began)
+    if (narrowed && pipe.op !== '&&') { ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]); narrowed = false; }
+    else if (!narrowed) ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]);
   });
 }
 const sortKeep = (ctx, f) => { const was = new Set(ctx.cwds); try { f(); } finally { ctx.cwds = new Set([...was, ...ctx.cwds]); } };
@@ -12291,9 +12373,13 @@ function sortCmd(cmd, ctx, r, inPipe) {
   const c = sortFresh(), all = [...cmd.assigns, ...cmd.words, ...cmd.redirs.map(d => d.w)], later = [];
   if (++ctx.steps > SORT_STEPS) unsure('It holds more commands than the sorter reads.');
   ctx.words.push(...all);
+  // (a {…} bash expands that the sorter can't spell out as bash does: with quoted or $ parts, or one inside another)
+  const odd = all.find(w => (w.brace && !w.plain) || sortNested(w.bare ?? ''));
   const was = ctx.cmd;
   // (the files its own output redirections write are not code it runs: they are written after it is sorted)
   ctx.cmd = [...cmd.assigns, ...cmd.words, ...cmd.redirs.filter(d => /^<(?!>)/.test(d.op)).map(d => d.w)];
+  const wasIn = ctx.inputs;
+  ctx.inputs = cmd.redirs.filter(d => d.op === '<').map(d => d.w);
   // (what was found before a doubt is kept: the doubt only adds "risky")
   try {
     for (const w of all.filter(x => x.subs.length)) {
@@ -12305,10 +12391,16 @@ function sortCmd(cmd, ctx, r, inPipe) {
       ctx.fetchSeen ||= seen;
     }
     if (cmd.group) { c.simple = false; if (cmd.sub || inPipe) sortKeep(ctx, () => sortList(cmd.group, ctx, c, inPipe)); else sortList(cmd.group, ctx, c, inPipe); }
-    let stdin = null;
+    let stdin = null, opaque = false;
     for (const d of cmd.redirs) {
       c.simple = false;
-      if (/^<</.test(d.op)) { raise(c, 'change', 'It hands a program text to read (a here-document).'); stdin = d.op === '<<<' ? (d.w.unknown ? null : d.w.text) : d.body; continue; }
+      if (/^<</.test(d.op)) {
+        raise(c, 'change', 'It hands a program text to read (a here-document).');
+        // (text with a $ or a ` the sorter can't read as written: a shell or an interpreter reading it is a doubt)
+        opaque = d.op === '<<<' ? d.w.unknown : !d.quoted && /[$`]/.test(d.body ?? '');
+        stdin = opaque ? null : d.op === '<<<' ? d.w.text : d.body;
+        continue;
+      }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
@@ -12317,8 +12409,10 @@ function sortCmd(cmd, ctx, r, inPipe) {
       later.push(d.w);
     }
     for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0);
-    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin }); } finally { for (const w of later) sortTouch(w, ctx, c); }
-  } finally { ctx.cmd = was; sortMerge(r, c); }
+    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
+    // (after what it does, so the more dangerous answer stands)
+    if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
+  } finally { ctx.cmd = was; ctx.inputs = wasIn; sortMerge(r, c); }
 }
 
 // Code runs: a script file, a one-liner, a build. A change; asked when an earlier part of this command fetched from the
@@ -12333,8 +12427,10 @@ function sortRuns(file, ctx, r, why, dir = null) {
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
   if (file) r.scripts.push(file);
   raise(r, 'change', why);
+  // (a file to run named by a pattern or a {…}, or a shell's input by one: what it names can't be matched to what was written)
+  if ((file && /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(file)) || (ctx.inputs ?? []).some(w => w.glob || w.brace)) unsure(`${why} It names the file it runs by a pattern or a {…}.`);
   if (ctx.fetched || ctx.piped) raise(r, 'risky', `${why} This command fetched from the network before it: code fetched and run is always asked.`);
-  if (file && !/^<\(/.test(file) && sortPaths(file, ctx).some(p => sortWrote(p, ctx))) raise(r, 'risky', `${why} It runs a file this same command wrote, whose text the sorter never read.`);
+  if (file && !/^<\(/.test(file) && sortPaths(file, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx))) raise(r, 'risky', `${why} It runs a file this same command wrote, whose text the sorter never read.`);
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
@@ -12351,7 +12447,7 @@ function sortInline(text, ctx, r, via) {
   if (ctx.depth >= SORT_DEPTH) unsure(`It nests commands in commands more than ${SORT_DEPTH} deep.`);
   const c = sortFresh();
   ctx.depth++;
-  try { sortKeep(ctx, () => sortList(shellParse(shellLex(text).toks), ctx, c)); } finally { ctx.depth--; sortMerge(r, c); }
+  try { sortKeep(ctx, () => sortList(shellParse(shellLex(text).toks), ctx, c, false, true)); } finally { ctx.depth--; sortMerge(r, c); }
   if (ctx.root && c.class !== 'look') raise(r, 'risky', `As root, ${via} with a command in it is always asked.`);
   r.simple = false;
 }
@@ -12369,7 +12465,10 @@ function sortProgram(words, ctx, r, x) {
   const [w0, ...args] = words;
   if (w0.unknown || w0.glob || w0.brace) unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
   if (++ctx.wraps > SORT_WRAPS || ++ctx.steps > SORT_STEPS) unsure('It wraps commands in commands more than the sorter reads.');
+  const gitTouch = ctx.gitTouch;
+  ctx.gitTouch = false;
   ctx.programs.add(w0);
+
   for (const a of args) if (!a.unknown) for (const t of [a.text, /=(.+)$/.exec(a.text)?.[1], /@([~/].*)$/.exec(a.text)?.[1], /^file:\/\/(\/.*)$/.exec(a.text)?.[1]].filter(Boolean)) ctx.seen.push(t, ...[...ctx.cwds].filter(d => d && !/^[~/]/.test(t)).map(d => `${d}/${t}`));
   try {
     let name = w0.text;
@@ -12396,12 +12495,14 @@ function sortProgram(words, ctx, r, x) {
     else raise(r, g.cls, `${sortQ(name)}: ${g.why}.`);
     // (after what it does, so the more dangerous answer stands; a handler that runs another program reads its own words)
     const so = SORT_OPTS[name] && sortOpts(SORT_OPTS[name], args.slice(0, own), SORT_MODES[name]), u = so?.unknown;
+    // (a {…} that makes an option word: what the program gets is not the words the sorter read; after what it does)
+    for (const a of args.slice(0, own)) if (a.brace && sortBraces(a.text).some(t => t.startsWith('-'))) unsure(`A {…} makes ${sortQ(a.text)} into option words, which the sorter does not read as the program would.`);
     // (a file an option names to write, and a folder it writes names of its own into, from the same table)
     for (const w of so?.writes ?? []) { raise(r, 'change', `${sortQ(name)} writes ${sortQ(w.text)}.`); r.deletes = true; sortTouch(w, ctx, r); }
     for (const w of so?.dirs ?? []) { raise(r, 'change', `${sortQ(name)} writes into ${sortQ(w.text)}.`); sortInto(w, ctx, r); }
     if (u) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(u)}: an option it doesn’t read could take the next word, write a file or run a program.`);
     if (ctx.root && r.class !== 'look' && SORT_ROOT_OPTS[name] && args.some(a => a.text.startsWith('-') && !SORT_ROOT_OPTS[name].test(a.text))) raise(r, 'risky', `As root, ${sortQ(name)} with an option the sorter doesn't know as safe is asked.`);
-  } finally { ctx.wraps--; }
+  } finally { ctx.wraps--; ctx.gitTouch = gitTouch; }
 }
 // A program that only reads, unless a flag in its list (a long one also by the letters that begin it) or more plain
 // words than #n makes it write or run something; then it is a change, and the files it names are checked. A flag
@@ -12438,7 +12539,7 @@ function sortFile(name, kind, args, ctx, r) {
   const into = /^(?:cp|install)$/.test(name) && o.has('r', 'R', 'a', 'recursive', 'archive') ? dir : null;
   // (a backup is the name it replaces with a suffix, ~ unless -S says; --parents keeps the source's whole path)
   const bk = /^(?:cp|mv|install|ln)$/.test(name) && o.has('b', 'backup', 'S', 'suffix') ? o.all('S', 'suffix').at(-1)?.text ?? '~' : null;
-  const to = (w, text) => { const x = { ...w, text, glob: w.glob || !!dir?.glob, unknown: w.unknown || !!dir?.unknown }; sortTouch(x, ctx, r, false); if (bk != null) sortTouch({ ...x, text: text + bk }, ctx, r, false); };
+  const to = (w, text) => { const x = { ...w, text, glob: w.glob || !!dir?.glob, unknown: w.unknown || !!dir?.unknown, tilde: dir?.tilde ?? w.tilde }; sortTouch(x, ctx, r, false); if (bk != null) sortTouch({ ...x, text: text + bk }, ctx, r, false); };
   for (const a of files) {
     if (a === dir) continue;
     const src = !!dir, at = dir?.text.replace(/\/+$/, '');
@@ -12449,93 +12550,6 @@ function sortFile(name, kind, args, ctx, r) {
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
-// Programs that only read: the string lists what makes one write or run something (see sortReads).
-const SORT_READS = {
-  ...Object.fromEntries(('ls dir vdir cat tac nl head tail wc du df free uptime uname arch whoami id groups logname pwd echo true false seq '
-    + 'sleep nproc getconf locale printenv tty stat readlink realpath basename dirname which whereis type lsblk lscpu lspci lsusb lsmod modinfo lsof ps '
-    + 'pgrep pidof pstree vmstat iostat mpstat sensors md5sum sha1sum sha224sum sha256sum sha384sum sha512sum b2sum cksum sum base32 base64 cut tr '
-    + 'paste join comm column fold fmt expand unexpand strings od hexdump grep egrep fgrep zgrep zcat bzcat xzcat more jq diff cmp last '
-    + 'lastlog w who users getent lsattr getfacl findmnt namei numfmt expr ldd lsb_release apt-cache dpkg-query top cd wait : exit return shift '
-    + 'break continue umask ulimit times').split(' ').map(n => [n, ''])),
-  less: '-o -O --log-file --LOG-FILE', sort: '-o -T --output !--compress-program --temporary-directory', uniq: '#1', rg: '!--pre !--pre-glob', tree: '-o',
-  zstdcat: '-o --output #1', lz4cat: '#1',
-  file: '-C --compile', xxd: '-r --revert #1', date: '-s --set', dmesg: '-c -C -D -E -n --clear --read-clear --console-off --console-on --console-level',
-  journalctl: '--setup-keys --rotate --flush --sync --relinquish-var --smart-relinquish-var --update-catalog --vacuum-size --vacuum-time --vacuum-files',
-};
-const SORT_FILES = Object.fromEntries(Object.entries({ over: 'cp mv ln install tee', del: 'rm rmdir unlink shred truncate', wide: 'chmod chown chgrp chattr setfacl',
-  '': 'mkdir touch mkfifo mktemp split csplit zip' }).flatMap(([k, v]) => v.split(' ').map(n => [n, k])));
-// Programs past a change, by class: open (needs what the run wall hides), device (needs a device or the network a look
-// lacks: a change), delete (a disk: risky, kind delete), and the rest by name.
-const SORT_PROGS = {};
-for (const [cls, names, why] of [
-  ['risky', 'shutdown reboot poweroff halt telinit rtcwake pm-suspend pm-hibernate', 'power, so what runs on that Spark stops'],
-  ['risky', 'modprobe insmod rmmod depmod update-grub grub-install grub-mkconfig update-initramfs mkinitramfs dracut dkms fwupdmgr fwupdtool ubuntu-drivers do-release-upgrade mokutil efibootmgr kexec', 'the kernel, a driver, firmware or a release upgrade'],
-  ['delete', 'mkfs mke2fs mkswap fdisk sfdisk gdisk sgdisk cfdisk parted partprobe wipefs blkdiscard hdparm sdparm nvme losetup cryptsetup mdadm pvcreate pvremove vgcreate vgremove vgextend vgreduce lvcreate lvremove lvextend lvresize lvreduce fsck e2fsck tune2fs resize2fs xfs_repair xfs_growfs btrfs zpool zfs debugfs fstrim umount swapoff smartctl', 'a disk'],
-  ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
-  ['risky', 'dockerd containerd chroot unshare setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
-  ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice nsenter snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
-  ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
-  ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
-  ['risky', 'npx pnpx bunx uvx', 'it downloads a package and runs it'],
-  ['lockout', 'useradd adduser userdel deluser usermod passwd chpasswd chage chsh chfn groupadd addgroup groupdel delgroup groupmod gpasswd newusers vipw vigr visudo pwconv pwunconv grpconv grpunconv pam-auth-update faillock ssh-copy-id sshd tailscaled iptables ip6tables iptables-legacy iptables-nft iptables-restore ip6tables-restore ebtables arptables nft ufw firewall-cmd netplan nmcli nmtui ifup ifdown ifconfig route iw iwconfig wpa_cli wpa_supplicant tc resolvectl systemd-resolve ethtool', 'users and passwords, SSH, the firewall or the network settings, ways in'],
-]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
-// The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
-const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
-const sortShows = (a, from = 0) => {
-  const p = a.filter(t => !t.startsWith('-')), v = p[from + 1];
-  return !a.some(t => /[;\n]/.test(t)) && !p.slice(from + 2).some(t => SORT_VERBS.includes(t))
-    && (v === undefined || ((['show', 'list', 'get', 'help'].some(s => s.startsWith(v)) || /^l(?:s|st)$/.test(v)) && !SORT_VERBS.some(s => s.startsWith(v))));
-};
-const SORT_LOCK_READS = {
-  iptables: a => a.every(t => /^(?:-[LSnvx]+|-t|--(?:list|list-rules|numeric|verbose|line-numbers|exact)|filter|nat|mangle|raw|security|[A-Z][A-Z_-]*)$/.test(t)),
-  nft: a => a.find(t => !t.startsWith('-')) === 'list' && !a.some(t => /[;\n]|^-\w*f/.test(t)), ufw: a => /^(?:status|show)$/.test(a[0] ?? '') && !a.some(t => /[;\n]/.test(t)), route: a => a.every(t => /^-[nev]+$/.test(t)),
-  ifconfig: a => a.length <= 1 && !/^-[^as]/.test(a[0] ?? ''), tc: a => !a.some(t => /^-(?:b|ba\w*|force)$/.test(t)) && a.filter(t => !t.startsWith('-')).length > 1 && /^(?:show|list|ls)$/.test(a.filter(t => !t.startsWith('-'))[1]) && sortShows(a), sshd: a => a.length > 0 && a.every(t => /^-[tT]$/.test(t)),
-  ethtool: a => a.length === 1 || (a.length === 2 && /^-[iSkgaclTPm]$|^--(?:driver|statistics|show-\w+)$/.test(a[0])),
-  hostname: a => a.every(t => /^-[aAdfiIsy]+$|^--(?:all-fqdns|all-ip-addresses|domain|fqdn|ip-address|short|long|alias)$/.test(t)),
-};
-SORT_LOCK_READS.ip6tables = SORT_LOCK_READS['iptables-legacy'] = SORT_LOCK_READS['iptables-nft'] = SORT_LOCK_READS.iptables;
-
-// Wrappers run the command after their own options: [flags, flags that take a word, plain words first, long options
-// (name= takes its value attached)]. An option the sorter doesn't know is a doubt: it could take the next word, or
-// change where the command runs (env -C).
-const SORT_WRAP = {
-  env: ['i0v', 'u', 0, 'ignore-environment null unset='], nice: ['', 'n', 0, 'adjustment='], ionice: ['t', 'cn', 0, 'class= classdata='],
-  nohup: ['', '', 0, ''], timeout: ['v', 'sk', 1, 'signal= kill-after= preserve-status foreground verbose'], stdbuf: ['', 'ioe', 0, 'input= output= error='],
-  time: ['pv', 'f', 0, 'portability verbose format='], command: ['p', '', 0, ''], exec: ['cl', 'a', 0, ''], builtin: ['', '', 0, ''],
-  setsid: ['cfw', '', 0, 'ctty fork wait'], unbuffer: ['p', '', 0, ''], flock: ['senuxo', 'wE', 1, 'shared exclusive unlock nonblock close wait= conflict-exit-code='],
-  watch: ['bcdeghtpwx', 'nq', 0, 'interval= differences beep color errexit chgexit exec no-title precise no-wrap'], busybox: ['', '', 0, ''],
-  xargs: ['0prtxiel', 'aEILnPsd', 0, 'null no-run-if-empty verbose interactive exit open-tty arg-file= delimiter= replace= max-lines= max-args= max-procs= max-chars= eof='],
-};
-function sortWrap(args, ctx, r, x, name) {
-  const [flags, takes, pos, longs] = SORT_WRAP[name];
-  r.simple = false;
-  if (name === 'command' && /^-[vV]$/.test(args[0]?.text)) return;
-  let k = 0;
-  for (; k < args.length; k++) {
-    const a = args[k], t = a.text;
-    if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
-    if (t === '--') { k++; break; }
-    if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
-    if (!t.startsWith('-') || t === '-') break;
-    if (name === 'nice' && /^-\d+$/.test(t)) continue;
-    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }
-    for (let j = 1; j < t.length; j++) {
-      if (takes.includes(t[j])) { if (j === t.length - 1) k++; break; }
-      if (!flags.includes(t[j])) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`);
-    }
-  }
-  const rest = args.slice(k + pos);
-  if (name === 'flock') { raise(r, 'change', 'flock makes its lock file.'); sortTouch(args[k], ctx, r); }
-  if (name === 'xargs') raise(r, 'change', 'xargs runs the command after it with words it reads, which the sorter can’t see.');
-  if (!rest.length) return;
-  if (name === 'watch' && !args.slice(0, k).some(a => /^-\w*x$|^--exec$/.test(a.text))) {
-    if (rest.some(a => a.unknown)) unsure('watch runs words that hold a $ or a command.');
-    const text = rest.map(a => a.text).join(' ');
-    if (text.includes('&>')) unsure('watch hands its words to sh, which reads &> another way than bash.');
-    return sortInline(text, ctx, r, 'watch');
-  }
-  sortProgram(rest, ctx, r, { ...x, unknownArgs: x.unknownArgs || name === 'xargs' });
-}
 // After the parts: on Spark 2 a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
 function sortAt(r, ctx) {
   if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', 'It changes Spark 2, which runs the console and the brain: anything that changes Spark 2 is asked first.');
@@ -12543,7 +12557,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], cloned: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -12557,7 +12571,7 @@ function sortCommand(command, opts) {
     // (what earlier commands of the task wrote or fetched, as placed lists them: counted as written by this one)
     if (o.written != null && (!Array.isArray(o.written) || o.written.length > SORT_PLACED * 4)) unsure('The paths written before are not a list the sorter reads.');
     for (const b of o.written ?? []) {
-      if (typeof b !== 'string' || !/^[~/]/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
+      if (typeof b !== 'string' || !/^(?:~(?:\/|$)|\/)/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
       ctx.before.push(sortNorm(b, null, home));
     }
     if (ctx.at !== 'compute' && ctx.at !== 'hub') { ctx.at = 'hub'; unsure('Where it runs is not one the sorter knows.'); }
@@ -12572,7 +12586,7 @@ function sortCommand(command, opts) {
       const odd = /[^\t\n\x20-\x7e]/u.exec(text);
       if (odd) unsure(`It holds the sign U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, which isn’t plain ASCII: such a sign can look like ; | > or a quote and not be one.`);
       form = lookForm(text);
-      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r);
+      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r, false, true);
       if (r.class !== 'look') sortSee(ctx.words, ctx, r);
     }
   } catch (e) {
@@ -12628,8 +12642,8 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; what a saved workflow under way started; and
-// cloud.json and sessions.json, which no copy carries (so a sign-in alone sends none).
+// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json, sessions.json and what a saved
+// workflow under way started (saved-runs.json), which no copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
   'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json', 'saved-runs.json']);
 // What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
@@ -12736,6 +12750,106 @@ function copyLate() {
   try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the copy’s record: ${e.message}`); }
   const hub = NODES.find(n => n.host === 'local');
   fleetEvent({ type: 'notice', text: copyLateWords(hub ? sparkName(hub) : 'the Spark that runs Spark Console') });
+}
+/* ───────── the sorter's tables: the programs it knows by what they do, and the wrappers ───────── */
+// Area: safety        Rules: R55        Tests: sort.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Moved out of 20-sort.mjs as it was (2026-11-15, no word changed): the programs that only read (SORT_READS), the file
+// tools (SORT_FILES), the programs past a change by class (SORT_PROGS), the lock-out programs' forms that only read
+// (SORT_VERBS, sortShows, SORT_LOCK_READS), and the wrappers that run the command after their own options (SORT_WRAP,
+// sortWrap). 20-sort.mjs reads a command through them.
+// Programs that only read: the string lists what makes one write or run something (see sortReads).
+const SORT_READS = {
+  ...Object.fromEntries(('ls dir vdir cat tac nl head tail wc du df free uptime uname arch whoami id groups logname pwd echo true false seq '
+    + 'sleep nproc getconf locale printenv tty stat readlink realpath basename dirname which whereis type lsblk lscpu lspci lsusb lsmod modinfo lsof ps '
+    + 'pgrep pidof pstree vmstat iostat mpstat sensors md5sum sha1sum sha224sum sha256sum sha384sum sha512sum b2sum cksum sum base32 base64 cut tr '
+    + 'paste join comm column fold fmt expand unexpand strings od hexdump grep egrep fgrep zgrep zcat bzcat xzcat more jq diff cmp last '
+    + 'lastlog w who users getent lsattr getfacl findmnt namei numfmt expr ldd lsb_release apt-cache dpkg-query top cd wait : exit return shift '
+    + 'break continue umask ulimit times').split(' ').map(n => [n, ''])),
+  less: '-o -O --log-file --LOG-FILE', sort: '-o -T --output !--compress-program --temporary-directory', uniq: '#1', rg: '!--pre !--pre-glob', tree: '-o',
+  zstdcat: '-o --output #1', lz4cat: '#1',
+  file: '-C --compile', xxd: '-r --revert #1', date: '-s --set', dmesg: '-c -C -D -E -n --clear --read-clear --console-off --console-on --console-level',
+  journalctl: '--setup-keys --rotate --flush --sync --relinquish-var --smart-relinquish-var --update-catalog --vacuum-size --vacuum-time --vacuum-files',
+};
+const SORT_FILES = Object.fromEntries(Object.entries({ over: 'cp mv ln install tee', del: 'rm rmdir unlink shred truncate', wide: 'chmod chown chgrp chattr setfacl',
+  '': 'mkdir touch mkfifo mktemp split csplit zip' }).flatMap(([k, v]) => v.split(' ').map(n => [n, k])));
+// Programs past a change, by class: open (needs what the run wall hides), device (needs a device or the network a look
+// lacks: a change), delete (a disk: risky, kind delete), and the rest by name.
+const SORT_PROGS = {};
+for (const [cls, names, why] of [
+  ['risky', 'shutdown reboot poweroff halt telinit rtcwake pm-suspend pm-hibernate', 'power, so what runs on that Spark stops'],
+  ['risky', 'modprobe insmod rmmod depmod update-grub grub-install grub-mkconfig update-initramfs mkinitramfs dracut dkms fwupdmgr fwupdtool ubuntu-drivers do-release-upgrade mokutil efibootmgr kexec', 'the kernel, a driver, firmware or a release upgrade'],
+  ['delete', 'mkfs mke2fs mkswap fdisk sfdisk gdisk sgdisk cfdisk parted partprobe wipefs blkdiscard hdparm sdparm nvme losetup cryptsetup mdadm pvcreate pvremove vgcreate vgremove vgextend vgreduce lvcreate lvremove lvextend lvresize lvreduce fsck e2fsck tune2fs resize2fs xfs_repair xfs_growfs btrfs zpool zfs debugfs fstrim umount swapoff smartctl', 'a disk'],
+  ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
+  ['risky', 'dockerd containerd chroot unshare setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
+  ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice nsenter snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
+  ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
+  ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
+  ['risky', 'npx pnpx bunx uvx', 'it downloads a package and runs it'],
+  ['lockout', 'useradd adduser userdel deluser usermod passwd chpasswd chage chsh chfn groupadd addgroup groupdel delgroup groupmod gpasswd newusers vipw vigr visudo pwconv pwunconv grpconv grpunconv pam-auth-update faillock ssh-copy-id sshd tailscaled iptables ip6tables iptables-legacy iptables-nft iptables-restore ip6tables-restore ebtables arptables nft ufw firewall-cmd netplan nmcli nmtui ifup ifdown ifconfig route iw iwconfig wpa_cli wpa_supplicant tc resolvectl systemd-resolve ethtool', 'users and passwords, SSH, the firewall or the network settings, ways in'],
+]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
+// The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
+const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
+const sortShows = (a, from = 0) => {
+  const p = a.filter(t => !t.startsWith('-')), v = p[from + 1];
+  return !a.some(t => /[;\n]/.test(t)) && !p.slice(from + 2).some(t => SORT_VERBS.includes(t))
+    && (v === undefined || ((['show', 'list', 'get', 'help'].some(s => s.startsWith(v)) || /^l(?:s|st)$/.test(v)) && !SORT_VERBS.some(s => s.startsWith(v))));
+};
+const SORT_LOCK_READS = {
+  iptables: a => a.every(t => /^(?:-[LSnvx]+|-t|--(?:list|list-rules|numeric|verbose|line-numbers|exact)|filter|nat|mangle|raw|security|[A-Z][A-Z_-]*)$/.test(t)),
+  nft: a => a.find(t => !t.startsWith('-')) === 'list' && !a.some(t => /[;\n]|^-\w*f/.test(t)), ufw: a => /^(?:status|show)$/.test(a[0] ?? '') && !a.some(t => /[;\n]/.test(t)), route: a => a.every(t => /^-[nev]+$/.test(t)),
+  ifconfig: a => a.length <= 1 && !/^-[^as]/.test(a[0] ?? ''), tc: a => !a.some(t => /^-(?:b|ba\w*|force)$/.test(t)) && a.filter(t => !t.startsWith('-')).length > 1 && /^(?:show|list|ls)$/.test(a.filter(t => !t.startsWith('-'))[1]) && sortShows(a), sshd: a => a.length > 0 && a.every(t => /^-[tT]$/.test(t)),
+  ethtool: a => a.length === 1 || (a.length === 2 && /^-[iSkgaclTPm]$|^--(?:driver|statistics|show-\w+)$/.test(a[0])),
+  hostname: a => a.every(t => /^-[aAdfiIsy]+$|^--(?:all-fqdns|all-ip-addresses|domain|fqdn|ip-address|short|long|alias)$/.test(t)),
+};
+SORT_LOCK_READS.ip6tables = SORT_LOCK_READS['iptables-legacy'] = SORT_LOCK_READS['iptables-nft'] = SORT_LOCK_READS.iptables;
+
+// Wrappers run the command after their own options: [flags, flags that take a word, plain words first, long options
+// (name= takes its value attached)]. An option the sorter doesn't know is a doubt: it could take the next word, or
+// change where the command runs (env -C).
+const SORT_WRAP = {
+  env: ['i0v', 'u', 0, 'ignore-environment null unset='], nice: ['', 'n', 0, 'adjustment='], ionice: ['t', 'cn', 0, 'class= classdata='],
+  nohup: ['', '', 0, ''], timeout: ['v', 'sk', 1, 'signal= kill-after= preserve-status foreground verbose'], stdbuf: ['', 'ioe', 0, 'input= output= error='],
+  time: ['pv', 'f', 0, 'portability verbose format='], command: ['p', '', 0, ''], exec: ['cl', 'a', 0, ''], builtin: ['', '', 0, ''],
+  setsid: ['cfw', '', 0, 'ctty fork wait'], unbuffer: ['p', '', 0, ''], flock: ['senuxo', 'wE', 1, 'shared exclusive unlock nonblock close wait= conflict-exit-code='],
+  watch: ['bcdeghtpwx', 'nq', 0, 'interval= differences beep color errexit chgexit exec no-title precise no-wrap'], busybox: ['', '', 0, ''],
+  xargs: ['0prtxiel', 'aEILnPsd', 0, 'null no-run-if-empty verbose interactive exit open-tty arg-file= delimiter= replace= max-lines= max-args= max-procs= max-chars= eof='],
+};
+function sortWrap(args, ctx, r, x, name) {
+  const [flags, takes, pos, longs] = SORT_WRAP[name];
+  r.simple = false;
+  if (name === 'command' && /^-[vV]$/.test(args[0]?.text)) return;
+  let k = 0;
+  for (; k < args.length; k++) {
+    const a = args[k], t = a.text;
+    if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
+    if (t === '--') { k++; break; }
+    if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
+    // (env -u takes a name away, as unset does; env -i or a lone - empties the environment, where the run wall keeps
+    // git's hooks off: asked)
+    if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
+    if (name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) raise(r, 'risky', 'env empties the environment, where the run wall keeps git’s hooks and settings off: asked.');
+    if (name === 'env' && t === '-') continue;
+    if (!t.startsWith('-') || t === '-') break;
+    if (name === 'nice' && /^-\d+$/.test(t)) continue;
+    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }
+    for (let j = 1; j < t.length; j++) {
+      if (takes.includes(t[j])) { if (j === t.length - 1) k++; break; }
+      if (!flags.includes(t[j])) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`);
+    }
+  }
+  const rest = args.slice(k + pos);
+  if (name === 'flock') { raise(r, 'change', 'flock makes its lock file.'); sortTouch(args[k], ctx, r); }
+  if (name === 'xargs') raise(r, 'change', 'xargs runs the command after it with words it reads, which the sorter can’t see.');
+  if (!rest.length) return;
+  if (name === 'watch' && !args.slice(0, k).some(a => /^-\w*x$|^--exec$/.test(a.text))) {
+    if (rest.some(a => a.unknown)) unsure('watch runs words that hold a $ or a command.');
+    const text = rest.map(a => a.text).join(' ');
+    if (text.includes('&>')) unsure('watch hands its words to sh, which reads &> another way than bash.');
+    return sortInline(text, ctx, r, 'watch');
+  }
+  sortProgram(rest, ctx, r, { ...x, unknownArgs: x.unknownArgs || name === 'xargs' });
 }
 /* ───────── telling the owner on Telegram ───────── */
 // Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
@@ -13015,6 +13129,7 @@ function tgApproving(choice) {
   if (!conv) return { answer: 'That button has expired. Ask again.' };
   // Not sent here, sent to a chat paired before this one, or approvals off or locked: the page answers it.
   if (!tgAskOpen(choice, c)) return { answer: 'That one waits for you in Spark Console.' };
+  if (putBackHeld()) return { answer: PUTBACK_TG };
   const held = c.action ? tgApprovalsHeld() : null;
   if (held) {
     audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approval-held', args: { chat: conv.id }, ok: true });
@@ -13112,6 +13227,12 @@ const GIT_LOOK = new Set('status log show diff rev-parse ls-files ls-tree cat-fi
 // change may set (any other decides what later git commands run: hooks, pagers, helpers, aliases, transports).
 const GIT_VERBS = new Set(Object.keys(SORT_OPTS).filter(k => k.startsWith('git:')).map(k => k.slice(4)));
 const GIT_PLAIN_KEYS = /^(?:user\.(?:name|email)|pull\.(?:rebase|ff)|push\.(?:default|autoSetupRemote|followTags)|init\.defaultBranch|fetch\.(?:prune|pruneTags)|merge\.(?:ff|conflictStyle)|rebase\.(?:autoSquash|autoStash|updateRefs)|rerere\.enabled|color\.[\w.]+|advice\.\w+|status\.\w+|log\.\w+|tag\.sort|column\.ui|commit\.verbose|branch\.(?:sort|autoSetupMerge|autoSetupRebase|[\w./-]+\.(?:remote|merge|rebase))|remote\.[\w./-]+\.(?:url|fetch|pushurl|prune)|diff\.(?:algorithm|colorMoved|renames|mnemonicPrefix))$/i;
+// What git itself writes in its work tree, or a clone: the folder is git's own after it, and later git there runs no
+// settings another program brought, unless another program writes there afterwards (sortTouch takes it back).
+const sortGitOwn = (dir, ctx, r) => {
+  sortInto(dir, ctx, r);
+  for (const d of dir ? (dir.unknown ? [] : sortPaths(dir.text, ctx)) : [...ctx.cwds]) if (d != null) ctx.cloned.add(d);
+};
 const SORT_BUILD_VERBS = { cargo: /^(?:build|b|check|c|test|t|run|r|bench|doc|fmt|clippy|clean|update|tree|metadata|new|init|add|remove|fetch|fix|search|version|help|vendor|package|generate-lockfile|locate-project|pkgid|verify-project|rustc|rustdoc)$/,
   go: /^(?:build|run|test|vet|fmt|mod|get|install|list|env|version|clean|generate|doc|work|tool|fix|help)$/ };
 function sortBuild(a, ctx, r, x, name) {
@@ -13141,6 +13262,9 @@ Object.assign(SORT_HANDLERS, {
         || (v === 'stash' && /^(?:list|show)$/.test(rest[0])) || (v === 'config' && rest.some(s => /^--(?:get\S*|list)$|^-l$/.test(s))) || (/^(?:worktree|reflog)$/.test(v) && /^(?:list|show)?$/.test(rest[0] ?? ''))) return;
     raise(r, 'change', `git ${sortQ(v)} changes the repository or its files.`);
     if (ctx.root) raise(r, 'risky', 'As root, a git command that changes something runs the repository’s hooks and settings: asked.');
+    // (in a folder this command or the task wrote or fetched into, the repository's own settings came with it, and git
+    // runs what they name: a credential helper, a gpg program, a filter, an ssh command)
+    if ((dir ? (dir.unknown ? [null] : sortPaths(dir.text, ctx)) : [...ctx.cwds]).some(d => d == null || (![...ctx.cloned].some(c => d === c || d.startsWith(`${c}/`)) && (sortWrote(d, ctx) || sortWroteIn(d, ctx))))) raise(r, 'risky', `git ${sortQ(v)} works in a folder this command or the task wrote into, whose own git settings it runs.`);
     if (v === 'filter-branch') unsure('git filter-branch runs the shell code it is given on every commit, which the sorter does not read.');
     if (!GIT_VERBS.has(v) && !GIT_LOOK.has(v)) unsure(`The sorter doesn’t know git ${sortQ(v)}: an alias the repository’s settings define, or a sub-command it doesn’t read.`);
     // (bisect run and submodule foreach: git's own options stop where the command it runs begins)
@@ -13152,7 +13276,8 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
-      const key = /^(?:set|unset|get)$/.test(p[0]?.text) ? p[1] : p[0], sets = p[0]?.text === 'set' || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all');
+      // (unsetting, or removing or renaming a section, writes the settings as setting does)
+      const key = /^(?:set|unset|get|remove-section|rename-section)$/.test(p[0]?.text) ? p[1] : p[0], sets = /^(?:set|unset|remove-section|rename-section)$/.test(p[0]?.text) || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all', 'unset', 'unset-all', 'remove-section', 'rename-section');
       if (key && sets && (key.unknown || !GIT_PLAIN_KEYS.test(key.text))) raise(r, 'risky', `git config sets ${sortQ(key.text)}, which can decide what later git commands run (hooks, helpers, pagers, aliases): asked.`);
     }
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
@@ -13163,9 +13288,12 @@ Object.assign(SORT_HANDLERS, {
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
     // reaches the folder it stands in (-C's, or where a cd left it), everything under it; a clone, the folder it makes.
     if (/^(?:pull|checkout|switch|restore|merge|rebase|cherry-pick|revert|clean|bisect|sparse-checkout|am)$/.test(v) || (v === 'apply' && !(o.has('check', 'stat', 'numstat', 'summary') && !o.has('apply')))
-      || (v === 'reset' && o.has('hard', 'merge', 'keep')) || (v === 'stash' && !/^(?:drop|clear|list|show)$/.test(p[0]?.text ?? '')) || (v === 'submodule' && /^(?:update|add|init)$/.test(p[0]?.text)) || (v === 'lfs' && /^(?:pull|checkout)$/.test(p[0]?.text))) sortInto(dir, ctx, r);
+      || (v === 'reset' && o.has('hard', 'merge', 'keep')) || (v === 'stash' && !/^(?:drop|clear|list|show)$/.test(p[0]?.text ?? '')) || (v === 'submodule' && /^(?:update|add|init)$/.test(p[0]?.text)) || (v === 'lfs' && /^(?:pull|checkout)$/.test(p[0]?.text))) sortGitOwn(dir, ctx, r);
     else if (dir) sortTouch(dir, ctx, r, true, false);
-    if (v === 'clone') { const u = p[0]?.text ?? '', to = p[1] ?? { ...p[0], text: u.replace(/\/+$|\.git$/g, '').split(/[/:]/).pop() || '.' }; sortInto(dir && !/^[~/]/.test(to.text) ? { ...to, text: `${dir.text}/${to.text}` } : to, ctx, r); }
+    if (v === 'clone') {
+      const u = p[0]?.text ?? '', to0 = p[1] ?? { ...p[0], text: u.replace(/\/+$|\.git$/g, '').split(/[/:]/).pop() || '.' }, to = dir && !/^[~/]/.test(to0.text) ? { ...to0, text: `${dir.text}/${to0.text}` } : to0;
+      sortGitOwn(to, ctx, r);
+    }
     // (the words that name files it writes: a look's, those of a sub-command that changes the work tree, and -o)
     for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree');
     if (o.unknown) unsure(`The sorter doesn’t know git ${sortQ(v)}’s option ${sortQ(o.unknown)}.`);
@@ -13201,7 +13329,8 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
     if (v === 'uninstall') return sortGone(ctx, r, `${sortQ(name)} uninstall removes packages, which are not put back.`);
     for (const s of a.map(w => w.text)) if (/:\/\/|^git\+/.test(s)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} installs code from an address: ${sortQ(s)}, always asked.`);
-    for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable'), ...o.plain.slice(1).filter(w => /^[.~/]|\.(?:whl|zip|tar\.gz)$/.test(w.text))]) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
+    // (a list it installs, a folder of packages it takes from, a local path with or without [extras]: code that runs)
+    for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))].map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
     for (const d of o.all('d', 'dest')) sortTouch(d, ctx, r);
   },
@@ -13220,6 +13349,8 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|create|remove|uninstall|update|upgrade|env|config|clean|rename|compare|package|notices|doctor)$/.test(v) && !(v === 'shell' && p[0] === 'hook')) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
     const t = a.map(w => w.text);
+    // (a channel that is a folder here is packages whose scripts run)
+    for (const c of o.all('c', 'channel')) if (/^(?:[.~/]|file:)/.test(c.text)) sortRuns(c.text.replace(/^file:(?:\/\/)?/, ''), ctx, r, `${sortQ(name)} installs from the folder ${sortQ(c.text)}, whose packages' scripts run.`);
     if (t.some((s, i) => /:\/\//.test(s) && (/^-c$|^--channel$/.test(t[i - 1] ?? '') || /^--channel=|^-c./.test(s)))) raise(r, 'risky', `${sortQ(name)} installs from a channel at an address: always asked.`);
     if (/^(?:remove|uninstall)$/.test(v) || (v === 'env' && p[0] === 'remove')) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages or an environment, which are not put back.`);
     // (env export -f writes the list; elsewhere -f is a list it installs)
@@ -13241,7 +13372,7 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
     // fetched into that folder, or as root)
-    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
+    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global|link|ln)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
     // (a package from a folder or a file is code whose install scripts run)
     for (const w of o.plain.slice(1)) if (/^(?:\.{0,2}\/|~|file:)|\.(?:tgz|tar\.gz|tar)$/.test(w.text)) sortRuns(w.text.replace(/^file:/, ''), ctx, r, `${sortQ(name)} ${sortQ(v)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
   },
@@ -13295,6 +13426,9 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'lockout', `loginctl ${sortQ(v)} changes sessions or linger, which keep the ways in running.`);
   },
 });
+// (what git itself writes in its handler is git's own: it leaves the folder git's; a program git runs is not git)
+const sortGitBody = SORT_HANDLERS.git;
+SORT_HANDLERS.git = (a, ctx, r, x, n) => { const was = ctx.gitTouch; ctx.gitTouch = true; try { return sortGitBody(a, ctx, r, x, n); } finally { ctx.gitTouch = was; } };
 /* ───────── the ways in, watched ahead: Tailscale's keys, linger, Funnel (ledger 5b, addition 6) ───────── */
 // Area: safety        Rules: R49        Tests: ways-in.test.mjs
 // Owns: funnel-seen.json (writers: noteFunnel; deploy/open-to-internet.sh --undo removes it)
@@ -13454,6 +13588,7 @@ async function statusText() {
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
   setAgentSettings({ halted: true, autoPaused: false });
+  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
@@ -14782,7 +14917,7 @@ function evalWaitingNeeds(add) {
   if (evalWaiting) add('eval', `A brain eval result for this build is waiting for your yes: press its button in the chat “${EVAL_CHAT}” in Spark Console. Until then Sparkie asks before every change.`);
 }
 /* ───────── compare_models: a saved workload run with each candidate model, and the winner kept (D8) ───────── */
-// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs
+// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs, compare-brain.test.mjs
 // Owns: none (saved-workflows.json's `compared` and `best`, through writeSaved in 18-workflows.mjs)
 // Timers: none        Wakes: none
 // "Run my workload on whatever is best, keep the winner" (contract 9.27, T141; design D 2.5's first block, as cut).
@@ -14794,11 +14929,16 @@ function evalWaitingNeeds(add) {
 // answers more than one call at once; nothing starts, stops or wakes for it. Each candidate's job made from its image
 // gets the compare's own name suffix (compareStep), so it is a new container with that candidate's settings, and the
 // number of items in SPARK_SAMPLE beside D7's SPARK_MODEL_NAME and SPARK_MODEL_URL: its job learns the candidate from
-// its settings, never from an {input} in it. Refused before anything starts, by name (compareWontReach), a workflow a
-// candidate's run would not reach: a job step with an {input} in it (asked on every run, D6c: a run's input is on no
-// button), a job step that names its own SPARK_MODEL_NAME or SPARK_MODEL_URL (D7 keeps a step's own settings, so every
-// candidate's job would ask that one model), and a keep_running step with no image that names a job Spark Console made
-// (run again by name, it keeps the settings it was made with).
+// its settings, never from an {input} in it, and only the {model} step's model is handed on (run_workflow). A
+// candidate's run stops nothing to make room (noStops: the owner's models stay as they were), and it is the owner's own
+// unless an agent asked (ownersOwn: one that fails doesn't count toward pausing agents). Refused before anything
+// starts, by name (compareWontReach), a workflow a candidate's run would not reach: a job step with an {input} in it
+// (asked on every run, D6c: a run's input is on no button), a job step that names its own SPARK_MODEL_NAME or
+// SPARK_MODEL_URL (D7 keeps a step's own settings, so every candidate's job would ask that one model), a keep_running
+// step with no image that names a job Spark Console made (run again by name, it keeps the settings it was made with),
+// a workflow with no job made from an image (nothing to score), and one that starts no {model} before its last job
+// (every candidate's job would ask the same model). A run with no model given runs the brain's view when the brain is
+// the one kept (run_workflow), and a job made for another model is refused in those words (jobModelEnv).
 // The score: `result.json` in the folder of the run's last job (jobs/<container> on the Spark it ran on), read by code
 // through the worker (no link followed), only when it is at most 4 KB, JSON, and written after that job began; only
 // `score` (0 to 1), `ok` (true or false) and `items` (a whole number) are taken, as numbers, and nothing else of the
@@ -14826,6 +14966,18 @@ function compareBrainView(w) {
 // Why a candidate's run of saved workflow w would not reach its job (see above), or null. A job made before is known
 // from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken.
 async function compareWontReach(w) {
+  const wont = await compareStepWont(w);
+  if (wont) return wont;
+  // (with no job made from an image nothing is scored, and the last candidate stays running; with no start of {model}
+  // before the last job every candidate's job asks the same model)
+  const last = w.steps.map((st, i) => (jobFromImage(st.action, stepArgs(st)) ? i : -1)).filter(i => i >= 0).pop();
+  if (last === undefined) return `“${w.title}” runs no job made from an image, so no candidate would be scored (a score is the job’s result.json). Save it with its job.`;
+  if (!w.steps.slice(0, last).some(st => ['start_model', 'restart_model'].includes(st.action) && placeholders(st.args).includes('model'))) {
+    return `“${w.title}” starts no {model} before its job (step ${last + 1}), so every candidate’s job would ask the same model. Save it with a start of {model} before the job.`;
+  }
+  return null;
+}
+async function compareStepWont(w) {
   for (const [i, st] of w.steps.entries()) {
     const a = stepArgs(st), n = `Step ${i + 1} of “${w.title}”`, job = jobFromImage(st.action, a);
     if (job && placeholders(st.args).length) return `${n} is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`;
@@ -14912,6 +15064,9 @@ async function compareRun(j, w, cands, sample, viewer, ctx) {
     const c = { ...ctx, conv: null, onQuestion: null, request: `comparing models for ${w.title}: ${model}`, compare: { tag: `${tag}${i + 1}`, sample, ...(brain ? { workflow: compareBrainView(w) } : {}) } };
     let out;
     try { out = await ACTIONS.get('run_workflow').run({ name: w.title, inputs }, viewer, c); } catch (e) { results.push({ model, result: 'failed', why: compareWords(e) }); note(j, `${model}: failed: ${compareWords(e)}`); continue; }
+    // (the owner asked for the compare, so its candidate runs are the owner's own, as runAction marks a run Sparkie
+    // starts in the owner's chat: one that fails doesn't count toward pausing agents; an agent's compare's runs do)
+    if (!savedStepAgent(viewer, ctx).agent && jobs.has(out.operation)) jobs.get(out.operation).ownersOwn = true;
     const run = await compareWait(j, out.operation, until);
     const seconds = Math.round((Date.parse(run?.finishedAt) - Date.parse(run?.createdAt)) / 1000) || 0;
     const r = run?.status === 'completed' ? { model, result: 'ran', seconds, ...(await compareScore(run)) }
@@ -14956,7 +15111,7 @@ function compareKeep(w, keep, viewer, ctx) {
 
 action({
   name: 'compare_models', title: 'Compare models on a saved workload', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model. Runs it once for each candidate, one after another: each starts what it needs; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL, handed to it: the step names neither) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and is made from its image (not a job run again by name), and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
+  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model, start {model} before its job, and run a job made from its image. Runs it once for each candidate, one after another: each starts what it needs, stopping nothing to make room; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL, handed to it: the step names neither) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and is made from its image (not a job run again by name), and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
   input: { type: 'object', properties: {
     workflow: { type: 'string', minLength: 2, maxLength: 80, description: 'The saved workflow’s name, from workflows (saved); it declares an input called model.' },
     candidates: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][^\\n\\r\\x00-\\x1f]{0,199}$' }, description: 'The models to try, as start_model takes them; "sparkie" is Sparkie’s own model.' },
@@ -14984,6 +15139,142 @@ action({
       next: `wait_operation {"id":"${job.id}"}` };
   },
 });
+/* ───────── pruning the copies on a Spark (A8) ───────── */
+// Area: features        Rules: R61        Tests: prune.test.mjs, runner.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The copies program's pruning (21-copies.mjs joins this text into it): when a new set opens on a Spark, older sets
+// there go: any older than COPIES_DAYS, all but the newest COPIES_SETS (the new one counts), then the oldest until the
+// copies on that Spark hold COPIES_BYTES. Never the new set, a set the console names (runnerKeep: the newest set of a chat
+// that can still undo it), nor one whose unit systemd says still runs or can't tell. A set's age is its folder's
+// modification time, which only this program writes (both walls hide the folder). What goes leaves its manifest, its
+// after-look and a pruned.json, so an undo can say "pruned" file by file (pruned_answer); that mark goes too after
+// COPIES_MARK_DAYS, past the journal's two months undo reads. One look at the copies folder (os.scandir), sizes only of
+// the sets left, and at most COPIES_PRUNE_MOST removed in one go, so a folder someone made long costs one listing. No
+// link is followed.
+const COPIES_DAYS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_DAYS) || 7;
+const COPIES_SETS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_SETS) || 20;
+const COPIES_BYTES = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_BYTES) || 2 * 2 ** 30;
+const COPIES_PRUNE_MOST = 200, COPIES_MARK_DAYS = 62;
+const COPIES_PRUNE_PY = String.raw`
+SETNAME = re.compile(r'^s[0-9a-z]{8,24}$')
+
+def tree_size(top):
+    # the bytes of the plain files under a set, never through a link
+    n = 0
+    for dp, dns, fns in os.walk(top, followlinks=False):
+        for x in fns:
+            try:
+                st = os.lstat(os.path.join(dp, x))
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                n += st.st_size
+    return n
+
+def prune(base):
+    # Older sets go when a new one opens (A8): older than the days given, all but the newest sets given (the new one
+    # counts), then the oldest until the copies on this Spark hold the bytes given. Never the new set, one the console
+    # names (keep: the newest set of a chat that can still undo it), nor one whose unit systemd says still runs or can't
+    # tell. What goes leaves its manifest and a pruned.json behind, so an undo can say "pruned" file by file; such a
+    # mark goes too once it is older than the journal's window. One look at the folder, sizes only of what is left, and
+    # at most the given number removed in one go.
+    P = A['prune']
+    now, sets, marks = time.time(), [], []
+    with os.scandir(base) as it:
+        for d in it:
+            if d.name == A['set'] or not SETNAME.match(d.name):
+                continue
+            try:
+                st = d.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+                continue
+            (marks if os.path.lexists(os.path.join(base, d.name, 'pruned.json')) else sets).append((st.st_mtime, d.name))
+    keep = set(P.get('keep') or [])
+    for t, n in sets:
+        unit = (P.get('units') or {}).get(n)
+        if unit and unit_live(unit) not in (3, 4):
+            keep.add(n)
+    sets.sort(reverse=True)
+    gone, rest = [], []
+    for i, (t, n) in enumerate(sets):
+        if n in keep:
+            rest.append((t, n))
+        elif now - t > P['days'] * 86400:
+            gone.append((n, 'older than %d days' % P['days']))
+        elif i + 2 > P['sets']:
+            gone.append((n, 'past the newest %d sets on this Spark' % P['sets']))
+        else:
+            rest.append((t, n))
+    total, sizes = tree_size(os.path.join(base, A['set'])), {}
+    for t, n in rest:
+        sizes[n] = tree_size(os.path.join(base, n))
+        total += sizes[n]
+    for t, n in reversed(rest):
+        if total <= P['bytes']:
+            break
+        if n not in keep:
+            gone.append((n, 'past the %s the copies on this Spark keep' % (('%g GB' % (P['bytes'] / 2 ** 30)) if P['bytes'] >= 2 ** 30 else ('%g MB' % round(P['bytes'] / 2 ** 20, 1)))))
+            total -= sizes[n]
+    out = []
+    for n, why in gone[:P['most']]:
+        sd = os.path.join(base, n)
+        info = {'set': n, 'why': why, 'files': 0, 'bytes': 0, 'paths': []}
+        try:
+            man = json.loads(read(os.path.join(sd, 'manifest.json'), 64 << 20))
+            kept = [e for e in man.get('entries', []) if e.get('kind') == 'file' and not e.get('way')]
+            info.update(files=len(kept), bytes=sum(e.get('size', 0) for e in kept), paths=[show(e['path']) for e in kept[:20]])
+            mark = True
+        except (OSError, OverflowError, ValueError, AttributeError):
+            mark = False
+        for x in os.listdir(sd):
+            # (the manifest and the after-look stay: what the set held, and whether its change was cut off)
+            if mark and x in ('manifest.json', 'after.json'):
+                continue
+            q = os.path.join(sd, x)
+            if stat.S_ISDIR(os.lstat(q).st_mode):
+                shutil.rmtree(q)
+            else:
+                os.unlink(q)
+        if mark:
+            put(os.path.join(sd, 'pruned.json'), json.dumps({'at': now, 'why': why}).encode())
+        else:
+            os.rmdir(sd)
+        out.append(info)
+    for t, n in marks[:P['most']]:
+        if now - t > P['marks'] * 86400:
+            shutil.rmtree(os.path.join(base, n))
+    return out
+
+
+def pruned_answer(sd, man, after, only):
+    # a set pruned since: its copies are gone and only its manifest is left, so each file says so (and the answer ends)
+    try:
+        gone = json.loads(read(os.path.join(sd, 'pruned.json'), 1 << 20))
+    except (OSError, OverflowError, ValueError):
+        gone = None
+    if gone is not None:
+        when = time.strftime('%Y-%m-%d', time.localtime(gone.get('at', 0)))
+        missed, same = [], []
+        for e in man['notKept']:
+            if only is None or e['path'] in only:
+                missed.append({'path': e['path'], 'why': 'never kept: ' + e['why']})
+        for e in sorted(man['entries'], key=lambda e: e['path']):
+            p = e['path']
+            if only is not None and p not in only:
+                continue
+            before = {'absent': 'absent', 'link': 'link:' + e.get('target', ''), 'dir': 'dir:%o' % e.get('mode', 0), 'file': 'file:%o:%s' % (e.get('mode', 0), e.get('sha', ''))}[e['kind']]
+            if fp(p) == before:
+                same.append(p)
+            elif e['kind'] == 'absent':
+                missed.append({'path': p, 'why': 'it was not there before the change: left as it is'})
+            else:
+                missed.append({'path': p, 'why': 'pruned: its copy was removed on %s (%s)' % (when, gone.get('why', 'pruned'))})
+        OUT.update(restored=[], same=[show(p) for p in same], notRestored=[dict(e, path=show(e['path'])) for e in missed], cutOff=after is None, pruned={'at': when, 'why': gone.get('why', 'pruned')})
+        done()
+`;
 /* ───────── the copies a change makes first, and putting them back (A7b) ───────── */
 // Area: features        Rules: R61        Tests: runner.test.mjs
 // Owns: none
@@ -14994,7 +15285,8 @@ action({
 // folder 0700, files 0600, the bytes, the mode and the path of each kept, so a restore is exact. At most 16 MB a file
 // and 128 MB a command; a file past a limit, unreadable or not a plain file, and what a named link points to, is "not
 // kept", with why. The set's name is made by code. One fixed Python program does it all on the Spark, as the owner, in
-// one of four modes: copy (the set and its manifest; the ways-in fingerprints too), after (the fingerprints once the
+// one of four modes: copy (the set and its manifest; the ways-in fingerprints too; then older sets pruned,
+// 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
 // O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
@@ -15005,7 +15297,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, re, secrets, stat, subprocess, sys, time
+import base64, glob, hashlib, json, os, re, secrets, shutil, stat, subprocess, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -15171,6 +15463,7 @@ def put(path, data):
     finally:
         os.close(fd)
 
+` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
         raw = read(os.path.join(sd, 'manifest.json'), 64 << 20)
@@ -15244,6 +15537,12 @@ if A['mode'] == 'copy':
     man['at'] = time.time()
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
+    # (the older sets on this Spark, now that this one is open: a problem there never stops the change)
+    if A.get('prune'):
+        try:
+            OUT['pruned'] = prune(os.path.dirname(sd))
+        except OSError as x:
+            OUT['pruneProblem'] = x.strerror or 'error'
     OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
                notKept=[dict(e, path=show(e['path'])) for e in man['notKept']], ways=ways_now())
     done()
@@ -15270,6 +15569,7 @@ if A['mode'] == 'restore':
     except (OSError, OverflowError, ValueError):
         after = None
     only = None if A.get('only') is None else set(whole(p) or p for p in A['only'])
+    pruned_answer(sd, man, after, only)
     restored, same, missed = [], [], []
     for e in man['notKept']:
         if only is None or e['path'] in only:
@@ -15631,6 +15931,61 @@ async function doorUpgrade(req, socket, head) {
   } catch {
     deny('403 Forbidden');
   }
+}
+/* ───────── the lock-out net: its calls to the root helper (dark: only tests call them) ───────── */
+// Area: features        Rules: R60, R42        Tests: root-helper.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The lock-out net (R60; design A 2.8, step A13a). The root helper's `run --net` copies the ways in, writes restore.sh
+// beside them and arms a timer in the Spark's own systemd before the change runs; when nothing differs afterwards it
+// disarms by itself, and otherwise what differs goes back when the timer fires unless `keep` stopped it. Nothing in the
+// console calls these yet (A13b turns the net on): guardScript builds the one script a call runs on a Spark, as
+// helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came back.
+// The guard's id is the call's own, and keep names it again.
+function guardScript(node, verb, { id, command = '', seconds = 60 }) {
+  const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
+  const call = verb === 'run'
+    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir "$HOME" -- ${q(command)}`
+    : 'keep --id "$id"';
+  return [
+    `id=${id}; h=${HELPER_AT}`,
+    "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
+    '[ -f "$h" ] || said none',
+    's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
+    `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
+    `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+  ].join('\n');
+}
+// What the helper said of the net: armed (and when it goes back), disarmed (nothing differed), open (what differs),
+// kept, already put back (and when), or refused (why); for run, the command's own end. Only lines that begin with the
+// call's id count: what the command printed is never read as the helper's.
+function guardAnswer(id, out) {
+  const own = String(out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1));
+  const find = p => own.find(l => l.startsWith(p))?.slice(p.length);
+  const end = own.map(l => /^end (\d{1,3}|time)$/.exec(l)).filter(Boolean).pop();
+  const said = find('console '), refused = find('refused: ');
+  return {
+    ...(said != null ? { said } : {}),
+    ...(refused != null ? { refused } : {}),
+    goesBackAt: /^the ways in go back at (\S+) /.exec(find('net armed: ') || '')?.[1] || null,
+    disarmed: find('net disarmed: ') != null,
+    open: find('net open: ') ?? null,
+    kept: find('kept: ') != null || find('kept already: ') != null,
+    putBackAt: find('already put back at ') ?? null,
+    ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
+  };
+}
+// One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
+// first; keep: id is the guard's own.
+function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60 } = {}) {
+  return new Promise(resolve => {
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds }), limit: Number(seconds) + 180 });
+    const chunks = [];
+    let bytes = 0;
+    child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
+    child.on('error', () => {});
+    child.on('close', code => resolve({ id, code, out: Buffer.concat(chunks).toString('utf8').slice(0, J_MAX) }));
+  });
 }
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
 // Area: features        Rules: R46        Tests: tools.test.mjs
@@ -16920,7 +17275,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds,
+      prune: { days: COPIES_DAYS, sets: COPIES_SETS, bytes: COPIES_BYTES, most: COPIES_PRUNE_MOST, marks: COPIES_MARK_DAYS, ...runnerKeep() } });
+    runnerPruned(node, copied, ctx);
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -16996,9 +17353,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   } finally { release(); }
 }
 
-// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
-function runnerLatest(conv) {
-  const undone = new Set(), never = new Set(), starts = [];
+// The runner's lines in the journal's two newest months: the sets an undo put back, the commands the helper never
+// started, every start line, and each start's end line.
+function runnerScan() {
+  const undone = new Set(), never = new Set(), starts = [], ends = new Map();
   for (const f of journalFiles().slice(0, 2)) {
     for (const line of jLinesOf(f)) {
       if (!line.includes('"set":"') || !line.includes('"k":"cmd"')) continue;
@@ -17007,11 +17365,47 @@ function runnerLatest(conv) {
       // (an undo that ended well; one that failed may be asked for again; a command the helper never started)
       if (r.act === 'undo_last_change' && r.end && r.ok) undone.add(r.set);
       else if (r.act === 'run' && r.end && r.ran === false) never.add(r.id);
-      else if (r.start && r.act === 'run' && r.chat === conv && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      else if (r.start && r.act === 'run' && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      if (r.act === 'run' && r.end) ends.set(r.id, r);
     }
   }
-  const best = starts.filter(r => !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
+  return { undone, never, starts, ends };
+}
+// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
+function runnerLatest(conv, scan = runnerScan()) {
+  const { undone, never, starts } = scan;
+  const best = starts.filter(r => r.chat === conv && !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
   return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id, unit: /^sw-run-[0-9a-f]{24}$/.test(best.unit || '') ? best.unit : null } : null;
+}
+// What pruning never takes (A8): the newest set of each chat that can still undo it, as runnerUndo would find it (newer
+// than that chat's last model change not undone); and every set whose change may still run (no end line, or one that
+// neither says it finished nor that it never started), which the Spark keeps while systemd says its unit runs or can't
+// tell (a set with no unit of its own name is kept).
+function runnerKeep() {
+  const scan = runnerScan(), keep = [], units = {};
+  let revisions = [];
+  try { revisions = desired().revisions || []; } catch {}
+  for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
+    if (last && last.at > since) keep.push(last.set);
+  }
+  for (const r of scan.starts) {
+    const end = scan.ends.get(r.id);
+    if (scan.never.has(r.id) || ['ran', 'ended', 'cut'].includes(end?.outcome)) continue;
+    if (/^sw-run-[0-9a-f]{24}$/.test(r.unit || '')) units[r.set] = r.unit;
+    else keep.push(r.set);
+  }
+  return { keep, units };
+}
+// What a new set's opening pruned on that Spark: one journal line names each set that went, why, and what it held (the
+// owner's files' paths, in its text): their copies are gone for good.
+function runnerPruned(node, copied, ctx) {
+  if (copied.pruneProblem) console.error(`Pruning the copies on ${sparkName(node)}: ${copied.pruneProblem}`);
+  const gone = Array.isArray(copied.pruned) ? copied.pruned : [];
+  if (!gone.length) return;
+  journal('cmd', { act: 'prune', where: 'host', class: 'prune', via: ctx.via || null, actor: ctx.actor || null, chat: ctx.chat || null, args: { spark: node.id }, ok: true,
+    outcome: 'pruned', sub: jSub(node.id), pruned: gone.map(p => ({ set: p.set, why: p.why, files: p.files, bytes: p.bytes })) },
+  gone.map(p => `${p.set} (${p.why}): ${p.files} file${p.files === 1 ? '' : 's'}, ${sizeWords(p.bytes)}${(p.paths || []).map(x => `\n  ${x}`).join('')}${p.files > (p.paths || []).length ? `\n  and ${p.files - p.paths.length} more` : ''}`).join('\n'));
 }
 const runnerSparkOf = r => (r.args && typeof r.args === 'object' ? r.args.spark : null) || (r.sub || []).find(x => nodeById(x)) || null;
 // undo_last_change for files (20-desired.mjs): the chat's newest set, when it is newer than the chat's last model
@@ -17030,13 +17424,14 @@ async function runnerUndo(viewer, ctx, since = '') {
     if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
     // (not beside the change's own unit while it still runs: a cut-off change may)
     const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true, unit: last.unit, slack: RUNNER_CUT_SLACK });
-    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome: r.notRestored.length ? 'partly' : 'restored', set: last.set,
+    const outcome = r.pruned ? 'pruned' : r.notRestored.length ? 'partly' : 'restored';
+    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome, set: last.set,
       restored: r.restored.length, notRestored: r.notRestored.length, ms: Date.now() - t0 });
     const said = p => maskSecrets(String(p)).slice(0, 300);
     return {
-      outcome: r.notRestored.length ? 'partly' : 'restored', spark: node.id, set: last.set,
+      outcome, spark: node.id, set: last.set, ...(r.pruned ? { pruned: r.pruned } : {}),
       restored: r.restored.map(said), alreadyAsBefore: r.same.map(said), notRestored: r.notRestored.map(x => ({ path: said(x.path), why: x.why })),
-      note: `${r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
+      note: `${r.pruned ? `Nothing was put back on ${at}: the copies of that change were pruned on ${r.pruned.at} (${r.pruned.why}).` : r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
     };
   } catch (e) {
     if (rid) journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: false, outcome: 'failed', err: jErr(e), ms: Date.now() - t0 });
@@ -18369,7 +18764,7 @@ function commandShown(c, ok, out) {
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '8b6ea139d806ea817f3688587d37826194ab74547726a09b415bd687f83d1eca';
+const HELPER_SHA256 = 'ac9f2e08c9b7e0a49bf5fe38a52dd84fc53c2bd4d777ad3bb77e9b2f06ad91ef';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
@@ -18745,6 +19140,7 @@ function describeChange(method, path, body = {}) {
     body.selfHeal === true ? 'turn on automatic restarts' : body.selfHeal === false ? 'turn off automatic restarts' : null].filter(Boolean).join(', ') || 'Change agent settings';
   if (method === 'DELETE' && pk) return `Remove the passkey “${keyName(pk[1])}”`;
   if (method === 'POST' && path === '/auth/passkey/register') return `Add a new passkey, “${clean(body.name, 60)}”`;
+  if (method === 'POST' && path === '/auth/putback/keep') return 'Keep what came back with the copy of Spark Console’s state: its passkeys and agent keys work again, from the internet too';
   if (method === 'POST' && path === '/auth/device/approve') {
     const d = deviceCodes.get(String(body.code || '').toUpperCase());
     return d ? `Let ${d.kind === 'terminal' ? 'a terminal' : 'a browser'} called “${d.name}” sign in as you (code ${d.userCode}, asked from ${d.from || 'an unknown address'})`
@@ -18809,6 +19205,7 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/agents/settings') return !(body && Object.keys(body).length === 1 && body.halted === true);
   if (method === 'DELETE' && path.startsWith('/auth/passkeys/')) return true;
   if (method === 'POST' && path === '/auth/passkey/register') return haveKeys;
+  if (method === 'POST' && path === '/auth/putback/keep') return true;
   // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a chat.
   if (method === 'DELETE' && /^\/chats\/[^/]+$/.test(path)) return true;
   // Letting a new device in (4.10). Validation runs, "Test the changes" and going back to the last good build no longer
@@ -18862,6 +19259,191 @@ async function passkeyGate(req, path, viewer) {
   if (viewer.session?.id) markPasskey(viewer.session.id);
 }
 
+/* ───────── state put back from a copy lets no device or key in by itself ───────── */
+// Area: ways in        Rules: R23, R33        Tests: putback.test.mjs
+// Owns: auth-serial.json (writers: putBackSerialWrite)
+// Timers: none        Wakes: none
+// Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json,
+// so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
+// that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
+// each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
+// tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; for a narrowing, the
+// right it took). Nothing else writes either number; restore.sh --with-state removes the state's.
+// At start (putBackAtStart, before the sockets open), the state was put back (by restore.sh --with-state, or by hand from
+// a copy) when something the secrets file notes as removed is in the state again, whatever the numbers say; or when the
+// state's number is below the secrets file's (a state with no number is one when the secrets file has a number); or when
+// the state has a number and the secrets file none (a new disk). Nothing in the state folder, no agent and no walled
+// command can lower the secrets file's number. A copy made before this build, on a new disk, has no number: no hold.
+// Then, before anything is answered: what the owner removed since is removed again, every device is signed out (also
+// sessions an older copy or snapshot still held), the owner's own pause comes back, and a task under way is parked, with
+// a line in its chat. The hold follows until the owner, on the tailnet, looks at the list of what came back and presses
+// "Keep these" (with the passkey, if one is set up). While it holds, from the internet nothing signs a device in (a
+// passkey, a recovery code, a device code) and no agent key works: each gets one plain line (PUTBACK_LINE). Agents'
+// changes are refused on the tailnet too, and an approval from Telegram waits. The tailnet door is the owner at once,
+// the owner's own chat and Telegram requests work, and go-back.sh and an update's way back (program files only) never
+// trip it. A secrets file that can't be read keeps the last answer read while Spark Console runs, so a hold doesn't lift;
+// after a start with the file unreadable, nothing is held until it reads again. A right the owner gave back to a key
+// after taking it is taken again at a put-back (the owner gives it back again).
+const PUTBACK_FILE = `${STATE_DIR}/auth-serial.json`;
+const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
+const PUTBACK_AGENTS = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
+const PUTBACK_TG = 'Spark Console’s state was put back from a copy, so this waits until you have looked at what came back: open Spark Console once on your tailnet.';
+const PUTBACK_KEPT_MAX = 500;
+// The state's own number: 0 when there is none.
+function putBackSerial() {
+  const v = readJson(PUTBACK_FILE);
+  return Number.isInteger(v?.serial) && v.serial > 0 ? v.serial : 0;
+}
+const putBackSerialWrite = n => writePrivate(PUTBACK_FILE, { serial: n });
+// The secrets file's part (auth: serial, removed, halted, hold): read again only when the file changed.
+const putBackSeen = { at: 0, mtime: null, auth: {} };
+function putBackAuth() {
+  if (!SECRETS_FILE) return {};
+  if (Date.now() - putBackSeen.at < 500) return putBackSeen.auth;
+  putBackSeen.at = Date.now();
+  let mtime = null;
+  try { mtime = statSync(SECRETS_FILE).mtimeMs; } catch {}
+  if (mtime !== putBackSeen.mtime) {
+    const s = secretsRead();
+    // (one that can't be read keeps the last answer while this process runs: a hold doesn't lift; there is none yet
+    // after a start, so then nothing is held until it reads again)
+    if (s === null) return putBackSeen.auth;
+    putBackSeen.auth = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {};
+    putBackSeen.mtime = mtime;
+  }
+  return putBackSeen.auth;
+}
+const putBackHeld = () => Boolean(putBackAuth().hold);
+const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r => r && typeof r === 'object') : []);
+
+// A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
+// between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
+// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused;
+// resumed notes the owner's resume and changes no number.
+function putBackRemoved(kind, id = null, name = null, extra = {}) {
+  if (!SECRETS_FILE) return;
+  try {
+    const s = secretsRead();
+    if (s === null) throw new Error('the secrets file can’t be read');
+    // (a resume is noted only over a pause that was: nothing else to put right later)
+    if (kind === 'resumed' && s.auth?.halted !== true) return;
+    const n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (kind === 'resumed' ? 0 : 1);
+    if (kind !== 'resumed') putBackSerialWrite(n);
+    secretsWrite(x => {
+      const a = { ...(x.auth && typeof x.auth === 'object' ? x.auth : {}), serial: n };
+      if (kind === 'paused' || kind === 'resumed') a.halted = kind === 'paused';
+      else a.removed = [...putBackRemovedList(a), { kind, id: String(id), ...(name ? { name: clean(name, 60) } : {}), ...extra, at: new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+      return { ...x, auth: a };
+    });
+    putBackSeen.at = 0;
+  } catch (e) { console.error(`What was removed couldn’t be noted for a state put back later: ${e.message}`); }
+}
+
+// A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
+// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. The secrets file
+// first: if writing it fails, neither has a number and nothing holds.
+function putBackSeed() {
+  if (!SECRETS_FILE) return;
+  try {
+    const s = secretsRead();
+    if (s === null || putBackSerial() || (Number.isInteger(s.auth?.serial) && s.auth.serial > 0) || !(passkeys().length || agentKeys().length)) return;
+    secretsWrite(x => ({ ...x, auth: { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}), serial: 1 } }));
+    putBackSerialWrite(1);
+    putBackSeen.at = 0;
+  } catch (e) { console.error(`The state’s number couldn’t be started: ${e.message}`); }
+}
+
+// At start, before the sockets open (25-backup-and-start.mjs). Never throws. While it holds, each start removes again
+// what the owner removed and signs every device out again (a second put-back under the hold can bring either back);
+// only the first one parks tasks, brings back the owner's pause and says so.
+function putBackAtStart() {
+  if (!SECRETS_FILE) return;
+  try {
+    const s = secretsRead();
+    if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
+    const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
+    const n = Number.isInteger(a.serial) && a.serial > 0 ? a.serial : 0, first = !a.hold;
+    const removed = putBackRemovedList(a), gone = kind => new Set(removed.filter(r => r.kind === kind).map(r => String(r.id)));
+    // Something the owner removed is in the state again: put back, whatever the numbers say (a snapshot with no number
+    // put back over a state with one, by an older snapshot's restore.sh or by hand).
+    let back = false;
+    try {
+      const [p, k, d] = [gone('passkey'), gone('agent'), gone('session')];
+      back = passkeys().some(x => p.has(String(x.id))) || agentKeys().some(x => k.has(String(x.id))) || sessionList().some(x => d.has(String(x.id)));
+    } catch {}
+    if (first && !back && n && t > n) { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), serial: t } })); return; }
+    if (first && !back && (n ? t >= n : !t)) { putBackSeed(); return; }
+    const again = [];
+    try {
+      const keys = passkeys(), drop = gone('passkey'), kept = keys.filter(k => !drop.has(String(k.id)));
+      if (kept.length < keys.length) { savePasskeys(kept); again.push(...keys.filter(k => drop.has(String(k.id))).map(k => ({ kind: 'passkey', name: clean(k.name, 60) }))); }
+    } catch (e) { console.error(`The passkeys after a put-back: ${e.message}`); }
+    try {
+      const keys = agentKeys(), drop = gone('agent'), kept = keys.filter(k => !drop.has(String(k.id)));
+      let changed = kept.length < keys.length;
+      again.push(...keys.filter(k => drop.has(String(k.id))).map(k => ({ kind: 'agent key', name: clean(k.name, 60) })));
+      // A right the owner took from a key (each narrowing notes the right it took): taken again, never given.
+      const took = (k, right) => removed.some(r => r.kind === 'narrowed' && String(r.id) === String(k.id) && r[right] === false);
+      for (const k of kept) {
+        if (took(k, 'act') && (k.scopes || []).includes('fleet:act')) { k.scopes = ['fleet:read']; changed = true; again.push({ kind: 'agent key’s right to change things', name: clean(k.name, 60) }); }
+        if (took(k, 'internet') && k.internet !== false) { k.internet = false; changed = true; again.push({ kind: 'agent key’s use from the internet', name: clean(k.name, 60) }); }
+      }
+      if (changed) writePrivate(AGENTS_FILE, { keys: kept });
+    } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }
+    let signedOut = 0;
+    try { signedOut = sessionList().length; if (signedOut || existsSync(SESSIONS_FILE)) saveSessions([]); } catch (e) { console.error(`The devices after a put-back: ${e.message}`); }
+    if (!first) return;
+    try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
+    let parked = 0;
+    try {
+      const at = new Date().toISOString();
+      for (const conv of chatData().conversations.filter(c => c.task)) {
+        const request = String(conv.task.request || '').slice(0, 200);
+        conv.task = null;
+        conv.messages.push({ role: 'assistant', content: maskSecrets(`Spark Console’s state was put back from a copy, so “${request}” isn’t carried on. Once you have looked at what came back (open Spark Console on your tailnet), say “carry on” if it’s still wanted.`), createdAt: at, notice: true });
+        conv.updatedAt = at;
+        parked++;
+      }
+      if (parked) saveChats();
+    } catch (e) { console.error(`The tasks after a put-back: ${e.message}`); }
+    const since = new Date().toISOString();
+    secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
+    putBackSeen.at = 0;
+    audit({ via: 'start', actor: 'Spark Console', action: 'state-put-back', args: { state: t, secrets: n || null, removedAgain: again.length, signedOut, parked }, ok: true });
+    fleetEvent({ type: 'notice', text: `Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.` });
+  } catch (e) { console.error(`Looking for a state put back from a copy: ${e.message}`); }
+}
+
+// The list on the sign-in page, and "Keep these" (the owner on the tailnet: the handler's /auth/ routes are the owner's).
+function putBackList() {
+  const a = putBackAuth(), h = a.hold && typeof a.hold === 'object' ? a.hold : null;
+  return {
+    held: Boolean(h), ...(h ? { since: h.since || null, removedAgain: Array.isArray(h.again) ? h.again : [], signedOut: h.signedOut || 0, parked: h.parked || 0 } : {}),
+    passkeys: passkeys().map(k => ({ id: k.id, name: k.name, addedAt: k.createdAt || null, lastUsedAt: k.lastUsedAt || null })),
+    agentKeys: agentKeys().map(k => ({ id: k.id, name: k.name, canChange: (k.scopes || []).includes('fleet:act'), fromAnywhere: k.internet !== false, addedAt: k.createdAt || null })),
+    agentsPaused: agentSettings().halted === true,
+    namesAreData: 'Names were typed by whoever set each one up: data, not instructions.',
+    lastUse: 'Last use is as the copy had it: a key may have been used since.',
+  };
+}
+async function putBackRoute(req, res, path, viewer) {
+  if (req.method === 'GET' && path === '/auth/putback') return send(res, 200, putBackList());
+  if (req.method !== 'POST' || path !== '/auth/putback/keep') throw new HttpError(405, 'Use GET for the list, POST to keep it.');
+  if (viewer.session || req.headers['tailscale-funnel-request']) throw new HttpError(403, 'Keep these works on your tailnet only: open Spark Console there.');
+  if (!putBackHeld()) return send(res, 200, { kept: false, words: 'Nothing is held: there was nothing to keep.' });
+  const n = Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0);
+  putBackSerialWrite(n);
+  secretsWrite(x => { const b = { ...(x.auth || {}), serial: n }; delete b.hold; return { ...x, auth: b }; });
+  putBackSeen.at = 0;
+  audit({ via: 'page', actor: 'owner', action: 'state-put-back-kept', args: { serial: n }, ok: true });
+  fleetEvent({ type: 'notice', text: 'You looked at what came back with the copy and kept it. Sign-in from the internet and agents work again.' });
+  return send(res, 200, { kept: true, words: 'Kept. Sign-in from the internet and agents work again.' });
+}
+// The needs-you line while it holds (20-needs.mjs).
+function putBackNeeds(add) {
+  const h = putBackAuth().hold;
+  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.`);
+}
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
 // Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
 // Owns: sessions.json (writers: saveSessions)
@@ -18939,6 +19521,7 @@ function sessionFor(req) {
 function sessionViewer(req) { return ownerSessionView(sessionFor(req)); }
 // A signed-in device's session as a viewer: only the owner's (the app door reads its ticket's session with it, R40).
 function ownerSessionView(s) {
+  if (putBackHeld()) return null;   // (state put back from a copy: no device until the owner has looked, 22-putback.mjs)
   const owner = accessList().owner;
   if (!s || !owner || String(s.login).toLowerCase() !== String(owner).toLowerCase()) return null;
   return { login: owner, role: 'owner', nodeIds: null, chat: true, permissions: ownerPermissions(),
@@ -19109,11 +19692,13 @@ async function signinRoute(req, res, path, viewer) {
     if (s) {
       saveSessions(sessionList().filter(x => x.id !== s.id));
       endSession(s.id);
+      putBackRemoved('session', s.id, s.name);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
     return send(res, 200, { ok: true });
   }
+  if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   if (!owner) throw new HttpError(409, 'No owner is set up on this Spark yet.');
   if (path === '/auth/signin/begin') {
     limited(signinHits, req, 30);
@@ -19215,6 +19800,7 @@ async function sessionRoute(req, res, path, viewer) {
     saveSessions(list.filter(x => x !== s));
     if (s.id === viewer.session?.id) clearSessionCookie(res);
     endSession(s.id);
+    putBackRemoved('session', s.id, s.name);
     audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     return send(res, 200, { ok: true });
   }
@@ -19440,15 +20026,16 @@ const handler = async (req, res) => {
     const funnel = Boolean(req.headers['tailscale-funnel-request']);
     const tailnetLogin = !funnel && LOGIN_RE.test(String(req.headers['tailscale-user-login'] || '')) ? String(req.headers['tailscale-user-login']).slice(0, 200) : null;
     if (req.method === 'GET' && path === '/whoami') {
-      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in.
-      const signin = !viewer && !tailnetLogin && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
+      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in. While
+      // state put back waits for the owner (R23), neither a passkey nor a recovery code signs in from here.
+      const signin = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
       // code that can be read. Yes or no only, never how many. The sign-in page shows "Use a recovery code" from it (F18).
-      const recovery = !viewer && !tailnetLogin && Boolean(accessList().owner) && recoveryView().left > 0;
+      const recovery = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && recoveryView().left > 0;
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
       return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
-        via: funnel ? 'internet' : 'tailnet' });
+        via: funnel ? 'internet' : 'tailnet', ...(!viewer && putBackHeld() ? { held: PUTBACK_LINE } : {}) });
     }
     // Signing a device in (a passkey, or a code the owner lets in), and signing out.
     if (SIGNIN_ROUTES.includes(path)) return await signinRoute(req, res, path, viewer);
@@ -19486,6 +20073,7 @@ const handler = async (req, res) => {
         // How this device is signed in when it isn't through Tailscale (4.10).
         session: viewer.session || null,
         ...(owner ? { passkeys: (() => { try { return passkeys().length; } catch { return -1; } })() } : {}),
+        ...(owner && putBackHeld() ? { putBack: true } : {}),
       });
     }
     if (req.method === 'GET' && path === '/status') return send(res, 200, await statusFor(viewer, url.searchParams.get('fresh') === '1' && owner));
@@ -19503,6 +20091,8 @@ const handler = async (req, res) => {
       ownerOnly();
       // Letting a device in, turning one away, and the signed-in devices (4.10).
       if (/^\/auth\/(device|sessions)(\/|$)/.test(path)) { if ((await sessionRoute(req, res, path, viewer)) !== false) return; throw new HttpError(404, 'Not found.'); }
+      // State put back from a copy: the list of what came back, and "Keep these" (22-putback.mjs).
+      if (path === '/auth/putback' || path === '/auth/putback/keep') return await putBackRoute(req, res, path, viewer);
       // Recovery codes (22-sessions.mjs): how many are left; making new ones needs the passkey (the gate above). From a
       // device signed in over the internet they're made only once a passkey exists, so a stolen cookie can't mint its own.
       if (path === '/auth/recovery') {
@@ -19547,6 +20137,7 @@ const handler = async (req, res) => {
         const name = clean(b.name, 60) || 'Passkey';
         keys.push({ ...k, name, createdAt: new Date().toISOString(), lastUsedAt: null });
         savePasskeys(keys);
+        putBackSeed();
         audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'passkey-added', args: { name, domain: k.rpId, ...(viewer.session ? { device: viewer.session.name } : {}) }, ok: true });
         // From a device signed in over the internet: on its record (it may add one without another only once), and said.
         if (viewer.session) {
@@ -19560,6 +20151,7 @@ const handler = async (req, res) => {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
         savePasskeys(keys.filter(x => x !== k));
+        putBackRemoved('passkey', k.id, k.name);
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
         return send(res, 200, { ok: true });
@@ -19593,6 +20185,7 @@ const handler = async (req, res) => {
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
         const next = setAgentSettings(change);
+        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
@@ -19608,6 +20201,7 @@ const handler = async (req, res) => {
         const token = `sck_${randomBytes(32).toString('base64url')}`;
         const key = { id: randomBytes(6).toString('hex'), name, login: viewer.login, hash: keyHash(token).toString('hex'), scopes: ['fleet:read'], internet: false, createdAt: new Date().toISOString(), lastUsedAt: null, lastAction: null };
         writePrivate(AGENTS_FILE, { keys: [...keys, key] });
+        putBackSeed();
         audit({ via: 'page', actor: 'owner', action: 'agent-added', args: { agent: name }, ok: true });
         return send(res, 201, { ...agentView(key), token, url: mcpUrl() });
       }
@@ -19621,9 +20215,13 @@ const handler = async (req, res) => {
         }
         const keys = agentKeys(), key = keys.find(k => k.id === agentId);
         if (!key) throw new HttpError(404, 'That agent was removed.');
+        const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
         writePrivate(AGENTS_FILE, { keys });
+        // A right taken away counts as a removal (R23): a state put back from before takes it away again.
+        const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
+        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
@@ -19637,6 +20235,7 @@ const handler = async (req, res) => {
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
         writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
+        putBackRemoved('agent', gone.id, gone.name);
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
         return send(res, 200, { ok: true });
@@ -20027,8 +20626,9 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25)
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25; no saved-runs.json: a
+    // start from it would stop by name what a saved workflow ran back then, R57)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
@@ -20103,6 +20703,7 @@ local.on('error', e => {
 });
 local.listen(CONFIG.port, '127.0.0.1', () => {
   console.log(`… and on 127.0.0.1:${CONFIG.port} (health only once Tailscale uses the socket) (models on ${CONFIG.modelsHost}:~/${CONFIG.modelsDir})`);
+  putBackAtStart();   // (state put back from a copy: the hold, before the sockets open; 22-putback.mjs)
   openSockets();
   // The update record (18-workflows): only here, so a second copy (which stops at EADDRINUSE above) never writes it.
   try { noteUpdate(); } catch (e) { console.error(`The update record: ${e.message}`); }
