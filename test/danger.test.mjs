@@ -125,7 +125,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
   // (and a model a failed test stopped is running again, so the next test starts where the others did)
   afterEach(async () => { await closeOpened(); if (stateOf('spark3', TESTORG) !== 'running') await settle(); });
   test('came from is one string comparison: the owner\'s words win, newest read first, then earlier answers; 40 reads, 64 MB, 8 lines', () => {
-    const src = readFileSync(join(REPO, 'service', 'src', '20-danger.mjs'), 'utf8'), pick = re => src.match(re)[0];
+    const src = ['20-came-from.mjs', '20-danger.mjs'].map(f => readFileSync(join(REPO, 'service', 'src', f), 'utf8')).join('\n'), pick = re => src.match(re)[0];
     const { cameFrom, dangerThings, dangerAskedFor, dangerReadsLoaded } = new Function('ACTION_KIND', 'tokensOf', 'dangerJournalText', `${[/const DANGER_READS = [^\n]*\n/,
       /const dangerPlain = [^\n]*\n[^\n]*\n/, /const dangerHhmm = [^\n]*\n/, /const DANGER_HOST = [^\n]*\n/, /function dangerThings[\s\S]*?\n}\n/, /function dangerWhole[\s\S]*?\n}\n/, /function cameFrom[\s\S]*?\n}\n/,
       /function dangerAskedFor[\s\S]*?\n}\n/, /function dangerReadsLoaded[\s\S]*?\n}\n/].map(pick).join('')}; return { cameFrom, dangerThings, dangerAskedFor, dangerReadsLoaded };`)(

@@ -8334,82 +8334,14 @@ async function beatSave(url, via) {
   // (only a copy whose tick was started, the one that holds the port, beats)
   if (beat.started) await beatStart();
 }
-/* ───────── the dangerous ask: hard to tap by reflex (A10b) ───────── */
+/* ───────── the dangerous ask's "came from": what the command names and where it was read (A10b) ───────── */
 // Area: safety        Rules: R54        Tests: danger.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A
-// 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no
-// word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came
-// from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes.
-// One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text
-// (the Telegram message; the page's copy, filled in when the owner's page reads the chat): never in chats.json, the
-// journal, the audit, a button's label, a tool result or an event. On the page one request carries the press and the
-// pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
-// minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
-// close it; /lock and the switch going off close its Telegram side. Nothing on main raises one yet (the raisers come
-// with A7c, A12, A13, C5 and D12); on the stand-in fleet a test raises one through dangerForTest.
-const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
-// Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
-const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
-// (an ask's life is 15 minutes, every button's, and a third inside ten minutes waits one; the stand-in fleet may shorten
-// either, so most tests are not held up by the ones before them)
-const dangerEnvMs = (name, ms) => (ALL_LOCAL && /^\d+$/.test(process.env[name] || '') ? Number(process.env[name]) : ms);
-const DANGER_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_MS', 15 * 60000), DANGER_LATE_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_LATE_MS', 60000), DANGER_LONG = 300;
+// Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner
+// did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only
+// searched and never shown.
 const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20;
-// The one open ask; when recent ones were built (the third inside ten minutes is sent a minute late); the buttons of
-// asks that closed, so a later press is told so (the newest 200); the ask closed last, for a pair typed after it.
-let dangerOpen = null, dangerLastPair = null, dangerRecent = null;
-const dangerBuilt = [], dangerGoneIds = new Map();
-// An agent's conversation whose ask was just declined, and when: it waits a minute before it may ask again.
-const dangerDeclined = new Map(), DANGER_AGENT_WAIT_MS = 60000;
-// Text that is not the command: one line, no control or invisible character, cut. Names, labels and facts pass here,
-// so nothing from elsewhere can make a line of its own.
-const dangerPlain = (s, n = 200) => String(s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]+/gu, ' ').replace(/\s+/g, ' ').trim()
-  .slice(0, n).replace(/[\ud800-\udbff]$/, '');
-// The command may hold line breaks, tabs and plain spaces, never another control, format, invisible or unassigned
-// character, nor a space that is not a space to the shell: what is shown is what runs.
-const DANGER_HIDDEN = /(?![\n\t ])[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]/u;
-const dangerHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? '?' : d.toTimeString().slice(0, 5); };
-const dangerSha = s => createHash('sha256').update(s).digest('hex');
-const dangerSame = (typed, digits) => typeof digits === 'string' && /^\d{2}$/.test(typed) && timingSafeEqual(Buffer.from(typed), Buffer.from(digits));
-
-// Line 1: the kinds and the place, in capitals. A command of two kinds is one ask: "ROOT on Spark 2 · CAN LOCK YOU OUT".
-function dangerHead(kinds, where) {
-  const place = where ? sparkName(nodeById(where) || { id: dangerPlain(where, 40) }) : 'Spark Console';
-  return kinds.map((k, i) => (i ? DANGER_HEAD[k][0] : `${DANGER_HEAD[k][0]} ${DANGER_HEAD[k][1]} ${place}`)).join(' · ');
-}
-// Line 7, the bytes the press runs: a command; a file's path with its lines that change; a script's text.
-function dangerCodeOf(shown) {
-  if (typeof shown.script === 'string') return { text: shown.script, before: [`The script's SHA-256 begins ${dangerSha(shown.script).slice(0, 12)}.`] };
-  if (typeof shown.path === 'string') {
-    const rows = (sign, t) => String(t ?? '').split('\n').filter((l, i, all) => l || i < all.length - 1).map(l => `${sign} ${l}`);
-    return { text: [...rows('-', shown.before), ...rows('+', shown.after)].join('\n'), before: [`The file ${dangerPlain(shown.path, 400)}: the lines that change, old (-) and new (+).`] };
-  }
-  return { text: String(shown.command ?? ''), before: [] };
-}
-// Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
-function dangerBack(f) {
-  if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
-  if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
-  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
-  return [];
-}
-// Lines 5 and 6: the ways-in files a command names; an install's tree, when it was tested, what differs, what the brain
-// reads; why it runs outside the wall.
-function dangerMore(f) {
-  const out = [];
-  if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
-  if (f.install) {
-    const d = Array.isArray(f.install.differs) ? f.install.differs : [];
-    out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerHhmm(f.install.testedAt) : 'never'}.`,
-      d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
-    if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
-  }
-  if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
-  return out;
-}
-
 // The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
 // one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
 // pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
@@ -8503,6 +8435,81 @@ function dangerReadsLoaded(reads) {
   if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
   return out;
 }
+/* ───────── the dangerous ask: hard to tap by reflex (A10b) ───────── */
+// Area: safety        Rules: R54        Tests: danger.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A
+// 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no
+// word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came
+// from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes.
+// One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text
+// (the Telegram message; the page's copy, filled in when the owner's page reads the chat): never in chats.json, the
+// journal, the audit, a button's label, a tool result or an event. On the page one request carries the press and the
+// pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
+// minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
+// close it; /lock and the switch going off close its Telegram side. Nothing on main raises one yet (the raisers come
+// with A7c, A12, A13, C5 and D12); on the stand-in fleet a test raises one through dangerForTest.
+const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
+// Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
+const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
+// (an ask's life is 15 minutes, every button's, and a third inside ten minutes waits one; the stand-in fleet may shorten
+// either, so most tests are not held up by the ones before them)
+const dangerEnvMs = (name, ms) => (ALL_LOCAL && /^\d+$/.test(process.env[name] || '') ? Number(process.env[name]) : ms);
+const DANGER_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_MS', 15 * 60000), DANGER_LATE_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_LATE_MS', 60000), DANGER_LONG = 300;
+// The one open ask; when recent ones were built (the third inside ten minutes is sent a minute late); the buttons of
+// asks that closed, so a later press is told so (the newest 200); the ask closed last, for a pair typed after it.
+let dangerOpen = null, dangerLastPair = null, dangerRecent = null;
+const dangerBuilt = [], dangerGoneIds = new Map();
+// An agent's conversation whose ask was just declined, and when: it waits a minute before it may ask again.
+const dangerDeclined = new Map(), DANGER_AGENT_WAIT_MS = 60000;
+// Text that is not the command: one line, no control or invisible character, cut. Names, labels and facts pass here,
+// so nothing from elsewhere can make a line of its own.
+const dangerPlain = (s, n = 200) => String(s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  .slice(0, n).replace(/[\ud800-\udbff]$/, '');
+// The command may hold line breaks, tabs and plain spaces, never another control, format, invisible or unassigned
+// character, nor a space that is not a space to the shell: what is shown is what runs.
+const DANGER_HIDDEN = /(?![\n\t ])[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]/u;
+const dangerHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? '?' : d.toTimeString().slice(0, 5); };
+const dangerSha = s => createHash('sha256').update(s).digest('hex');
+const dangerSame = (typed, digits) => typeof digits === 'string' && /^\d{2}$/.test(typed) && timingSafeEqual(Buffer.from(typed), Buffer.from(digits));
+
+// Line 1: the kinds and the place, in capitals. A command of two kinds is one ask: "ROOT on Spark 2 · CAN LOCK YOU OUT".
+function dangerHead(kinds, where) {
+  const place = where ? sparkName(nodeById(where) || { id: dangerPlain(where, 40) }) : 'Spark Console';
+  return kinds.map((k, i) => (i ? DANGER_HEAD[k][0] : `${DANGER_HEAD[k][0]} ${DANGER_HEAD[k][1]} ${place}`)).join(' · ');
+}
+// Line 7, the bytes the press runs: a command; a file's path with its lines that change; a script's text.
+function dangerCodeOf(shown) {
+  if (typeof shown.script === 'string') return { text: shown.script, before: [`The script's SHA-256 begins ${dangerSha(shown.script).slice(0, 12)}.`] };
+  if (typeof shown.path === 'string') {
+    const rows = (sign, t) => String(t ?? '').split('\n').filter((l, i, all) => l || i < all.length - 1).map(l => `${sign} ${l}`);
+    return { text: [...rows('-', shown.before), ...rows('+', shown.after)].join('\n'), before: [`The file ${dangerPlain(shown.path, 400)}: the lines that change, old (-) and new (+).`] };
+  }
+  return { text: String(shown.command ?? ''), before: [] };
+}
+// Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
+function dangerBack(f) {
+  if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
+  if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
+  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
+  return [];
+}
+// Lines 5 and 6: the ways-in files a command names; an install's tree, when it was tested, what differs, what the brain
+// reads; why it runs outside the wall.
+function dangerMore(f) {
+  const out = [];
+  if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
+  if (f.install) {
+    const d = Array.isArray(f.install.differs) ? f.install.differs : [];
+    out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerHhmm(f.install.testedAt) : 'never'}.`,
+      d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
+    if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
+  }
+  if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  return out;
+}
+
 // Line 2: the gate's own answer for this call, as sparkieCheck's: the owner's words in this request ask for this
 // action's kind of change (never a question, a "don't" or a mixed one) and name this Spark. An action with no kind is
 // "not asked" unless its raiser, which knows better (rule 2 of A 2.5, R25's word kinds), says so with facts.asked.
