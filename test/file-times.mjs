@@ -6,7 +6,7 @@ import { relative, resolve } from 'node:path';
 export default async function* fileTimes(source) {
   const files = new Map();
   for await (const e of source) {
-    const f = e.data?.file;
+    const f = e.data?.file && resolve(String(e.data.file));
     if (!f) continue;
     const x = files.get(f) || { first: Date.now(), last: 0, ms: null, ok: true };
     x.last = Date.now();
