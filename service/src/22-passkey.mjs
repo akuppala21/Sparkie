@@ -2,9 +2,9 @@
 // Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)
 // Timers: none        Wakes: none
-// One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to
-// who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a
-// passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that
+// Tailscale, or a device the owner signed in, says the owner is asking, and for the few changes to who may act (agent
+// keys and their rights, resuming paused agents, new devices and passkeys) the owner also confirms with a passkey
+// (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that
 // exact request, so a program on the owner's device can't make those changes with Tailscale's identity alone. Until a
 // passkey is set up, these changes need none (nothing can lock the owner out).
 const PASSKEYS_FILE = `${STATE_DIR}/passkeys.json`;
@@ -45,18 +45,9 @@ function newChallenge(viewer, purpose, hash = null) {
 // What a confirmation is for, in plain words, from the service itself: shown before the owner confirms, so the page
 // can't pass one change off as another.
 function describeChange(method, path, body = {}) {
-  const who = id => accessList().members.find(u => u.id === id)?.login || 'someone';
-  const perms = p => (p && typeof p === 'object' ? [`uses ${(p.nodeIds || []).map(id => sparkName(nodeById(id) || { id })).join(', ') || 'no Sparks'}`,
-    p.deploy ? 'can run and stop models' : null, p.chat ? `chats with ${ASSISTANT_NAME}` : null, p.files && p.files !== 'none' ? `own files: ${p.files}` : null,
-    p.sharedFiles && p.sharedFiles !== 'none' ? `shared files: ${p.sharedFiles}` : null].filter(Boolean).join('; ') : '');
-  const member = path.match(/^\/access\/([a-f0-9]{16})$/), agent = path.match(/^\/agents\/([a-f0-9]{12})$/), pk = path.match(/^\/auth\/passkeys\/(.+)$/);
+  const agent = path.match(/^\/agents\/([a-f0-9]{12})$/), pk = path.match(/^\/auth\/passkeys\/(.+)$/);
   const agentName = id => { try { return agentKeys().find(k => k.id === id)?.name || 'an agent'; } catch { return 'an agent'; } };
   const keyName = id => { try { return passkeys().find(k => k.id === id)?.name || 'a passkey'; } catch { return 'a passkey'; } };
-  if (method === 'POST' && path === '/access') return `Give ${clean(body.login, 200)} access (${perms(body.permissions)})`;
-  if (method === 'PUT' && member) return `Change ${who(member[1])}’s access to: ${perms(body.permissions)}`;
-  if (method === 'DELETE' && member) return `Remove ${who(member[1])}’s access`;
-  if (method === 'POST' && path === '/access/requests') return `${body.decision === 'approve' ? 'Approve' : 'Decline'} ${clean(body.login, 200)}’s request${body.decision === 'approve' ? ` (${clean(body.preset, 20)})` : ''}`;
-  if (method === 'PUT' && path === '/access/invite') return body.url ? `Save the Tailscale share link ${clean(body.url, 400)}` : 'Remove the saved share link';
   if (method === 'POST' && path === '/agents') return `Create a key for a new agent, “${clean(body.name, 60)}”`;
   if (method === 'PUT' && agent) return [body.act === true ? `Let ${agentName(agent[1])} start, stop and restart models` : body.act === false ? `Make ${agentName(agent[1])} look-only` : null,
     body.internet === true ? `let ${agentName(agent[1])}’s key work from anywhere, without Tailscale` : body.internet === false ? `make ${agentName(agent[1])}’s key work on your tailnet only` : null].filter(Boolean).join(', ');
@@ -103,7 +94,7 @@ function takeChallenge(id, viewer, purpose) {
 }
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
 // The routes whose request may need the passkey: one a line, in name order.
-const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path)
+const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
@@ -127,13 +118,9 @@ function stopsOutside(stop) {
   const ours = new Set(Object.values(knowledge.workloads || {}).filter(w => w.byConsole).map(w => `${w.spark}/${w.name}`));
   return stop.some(x => !ours.has(String(x)));
 }
-// Which requests need the owner's passkey. Taking access away (removing a person or an agent, declining, pausing
-// agents) never does.
+// Which requests need the owner's passkey. Taking a right away (removing an agent, pausing agents) never does.
 function needsPasskey(method, path, body, haveKeys) {
   if (method === 'GET') return false;
-  if (method === 'DELETE' && /^\/access\/[a-f0-9]{16}$/.test(path)) return false;
-  if (method === 'POST' && path === '/access/requests' && body?.decision === 'decline') return false;
-  if (/^\/access(\/|$)/.test(path)) return true;
   // A model that runs its own code could take over the Spark it runs on.
   if (method === 'POST' && (path === '/deploy' || path === '/deploy/cluster')) return body?.allowRemoteCode === true || stopsOutside(body?.stop);
   if (method === 'POST' && path === '/agents') return true;
@@ -161,15 +148,14 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'POST' && path === '/main/eval') return evalCouldUnlock(body);
   return false;
 }
-// Members never write hidden files or folders, nor does a terminal signed in from the internet: .git/hooks,
-// .vscode/tasks.json or .envrc run code when a folder is opened on a Spark.
-async function refuseHiddenFiles(req, path, terminal = false) {
+// A terminal signed in from the internet never writes hidden files or folders: .git/hooks, .vscode/tasks.json or .envrc
+// run code when a folder is opened on a Spark.
+async function refuseHiddenFiles(req, path) {
   if (req.method !== 'POST' || !/^\/nodes\/[^/]+\/files$/.test(path)) return;
   const body = await readBody(req, bodyLimit(path));
   if (!['write', 'mkdir', 'rename'].includes(body?.operation)) return;
   const hidden = p => String(p || '').split(/[\\/]+/).some(part => part.startsWith('.'));
-  if (hidden(body.path) || hidden(body.destination)) throw new HttpError(403, terminal ? 'Hidden files and folders (names starting with a dot) aren’t changed from a terminal signed in from the internet: use the page, or Tailscale.'
-    : 'Hidden files and folders (names starting with a dot) can only be changed by the owner.');
+  if (hidden(body.path) || hidden(body.destination)) throw new HttpError(403, 'Hidden files and folders (names starting with a dot) aren’t changed from a terminal signed in from the internet: use the page, or Tailscale.');
 }
 // The owner confirms with a one-time challenge for exactly this change, signed by one of their passkeys. Until a
 // passkey is set up, these changes need none.

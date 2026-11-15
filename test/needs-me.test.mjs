@@ -68,7 +68,6 @@ describe('the needs-me line', { concurrency: 1 }, () => {
     assert.equal((await api('/telegram')).json.needsMe, false);
     const on = { on: true };
     is(await api('/telegram/needs', { method: 'PUT', body: on, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-    is(await api('/telegram/needs', { method: 'PUT', body: on, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
     is(await api('/telegram/needs', { method: 'PUT', body: on, headers: { 'x-spark-console': null } }), 403, 'cross-site');
     is(await api('/telegram/needs', { method: 'PUT', body: on }), 428, 'without the passkey');
     is(await api('/telegram/needs', { method: 'PUT', body: { on: 'yes' } }), 400);

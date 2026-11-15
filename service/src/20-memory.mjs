@@ -36,8 +36,9 @@ function saveMemory(entries, gone = [], erased = null) {
   }
   memoryIndexOf(entries, memorySig());
 }
-// A line's words, live or retired, for its button (changeLabel); null when there is none or memory can't be read.
-const memoryText = id => { for (const read of [memoryEntries, memoryPast]) { try { const e = read().find(x => x.id === id); if (e) return e.text; } catch {} } return null; };
+// A live line's words, for its button (changeLabel); null for a line no longer live (forgotten, replaced or past its
+// day: its words go on no button, question or reply, to Telegram or an agent: R59), none, or memory that can't be read.
+const memoryText = id => { try { const e = memoryEntries().find(x => x.id === id); return e && memoryLive(e) ? e.text : null; } catch { return null; } };
 // Who a line is from (contract 5.8): the owner, or an agent by its name: its own call or press over the agent door, or
 // Sparkie answering it in its own chat (whose words are the agent's, not the owner's).
 const lineBy = ctx => (ctx.via === 'agent' ? (ctx.actor || 'an agent') : ctx.agent ? (chatData().conversations.find(c => c.id === ctx.conv)?.agent?.name || 'an agent') : 'owner');
@@ -91,8 +92,8 @@ function memoryPrompt(chosen = null) {
 // A line in both files (a stop between saveMemory's two saves) is live. The retired lines are the owner's own, read in
 // Spark Console (their page chat, their own call): what they asked to be rid of is never handed to an agent (over the
 // agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14). recall keeps the same
-// rule (memoryPastShown).
-const memoryPastShown = ctx => !(ctx.via === 'agent' || ctx.agent || ctx.channel);
+// rule (memoryPastShown). Nor in a chat an agent started, when the owner types there: the agent reads the reply (R59).
+const memoryPastShown = ctx => !(ctx.via === 'agent' || ctx.agent || ctx.channel || (ctx.conv && chatData().conversations.find(c => c.id === ctx.conv)?.agent));
 function memoryWithPast(ctx) {
   if (!memoryPastShown(ctx)) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const all = memoryEntries(), live = new Set(all.map(e => e.id)), entries = all.filter(memoryLive);
@@ -120,7 +121,8 @@ function keepLine({ text, kind = 'preference', replaces, until: end }, ctx) {
   if (replaces && !old) throw new HttpError(404, 'There’s no such line in memory to replace (memory lists them).');
   notTheOwners(old, ctx);
   const all = before.filter(e => e !== old);
-  if (all.some(e => memoryLive(e) && e.text.toLowerCase() === line.toLowerCase() && !(until && e.until !== until))) return { outcome: 'already', note: `Already remembered: ${line}` };
+  // (the same words are already kept only with the same end; with another end, or none, the new line takes its place)
+  if (all.some(e => memoryLive(e) && e.text.toLowerCase() === line.toLowerCase() && (memoryOffFor('time') || (e.until || null) === until))) return { outcome: 'already', note: `Already remembered: ${line}` };
   const about = memoryNamesIn(line), again = old ? null : memorySaidAgain(line, about, all);
   // (an agent saying an owner's line again joins it: it never takes an owner's line's place, R45)
   if (again?.by === 'owner' && (ctx.via === 'agent' || ctx.agent)) return { outcome: 'already', joined: { id: again.id, text: again.text }, note: `The owner already said nearly that: “${again.text}”. Nothing new was kept.` };
@@ -166,7 +168,8 @@ function eraseLine(id, viewer, ctx) {
   const all = memoryEntries(), line = all.find(e => e.id === id) || memoryPast().find(p => p.id === id);
   if (!line) return { outcome: 'already', note: 'There’s no such line in memory or its history.' };
   if (!(ctx.via === 'api' && !viewer.session && !viewer.agentKey) && !ctx.ownerConfirmed) {
-    const label = changeLabel('forget_memory', { id, erase: true });
+    // (a retired line's words on its button only for a caller who may see the history, R59)
+    const label = memoryPastShown(ctx) ? `Erase for good: “${String(line.text).slice(0, 200)}”` : changeLabel('forget_memory', { id, erase: true });
     return question(viewer, ctx, `${label}? Its words leave memory and its history for good. That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: 'forget_memory', args: { id, erase: true } } }, { label: 'No, keep it', call: null }], 'question', { ownerOnly: true });
   }

@@ -56,3 +56,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R52](rules/R52.md): The rail (contract 3.11; the one page, milestone 5 and section 7, item 13): a change Sparkie asks for runs at once only while its brain is *checked*; otherwise it is one button, …
 - [R53](rules/R53.md): What the console runs as the owner reads nothing from the owner's home.
 - [R57](rules/R57.md): A saved workflow run as a workload (contract 9.27; design D 2.3 as cut): what R35 says of its steps, its job waits and its clean-up holds; this rule adds what outlives the process.
+- [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).

@@ -5,7 +5,7 @@
 // to what was checked: the model, engine, image and flags (its key; another flag is another profile) and this build's
 // "what the brain reads" hash from the lock, and a new check keeps the eval results stored with it. It runs once, a
 // minute after the service starts, for a brain in use with no profile; as the last step of a switch; and on POST
-// /main/check, the owner's alone (refused as nobody, a member, cross-site, through Funnel and from a Spark's address).
+// /main/check, the owner's alone (refused as nobody, cross-site, through Funnel and from a Spark's address).
 // A brain that doesn't answer keeps nothing and says why. A check waits while a chat is on the brain and is no part of
 // the chat's turn.
 import { test, describe } from 'node:test';
@@ -116,9 +116,9 @@ describe('the brain check', { concurrency: 1 }, () => {
     assert.ok(checkLog().every(a => a.tools.every(n => n === 'weather')));
   });
 
-  test('POST /main/check is the owner’s alone: refused as nobody, a member, cross-site, through Funnel and from a Spark’s address', { timeout: 60000 * SLOW }, async () => {
+  test('POST /main/check is the owner’s alone: refused as nobody, cross-site, through Funnel and from a Spark’s address', { timeout: 60000 * SLOW }, async () => {
     const before = checkLog().length;
-    for (const [headers, status, who] of [[{ 'tailscale-user-login': 'stranger@test' }, 401, 'nobody'], [{ 'tailscale-user-login': MEMBER }, 403, 'a member'],
+    for (const [headers, status, who] of [[{ 'tailscale-user-login': 'stranger@test' }, 401, 'nobody'],
       [{ 'x-spark-console': null }, 403, 'cross-site'], [{ 'tailscale-funnel-request': '?1' }, 401, 'through Funnel'], [{ 'x-forwarded-for': '100.64.0.4' }, 403, 'a Spark’s address']]) {
       const r = await api('/main/check', { method: 'POST', body: {}, headers });
       assert.equal(r.status, status, `${who}: ${r.text}`);

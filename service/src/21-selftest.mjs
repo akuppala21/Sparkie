@@ -128,8 +128,8 @@ async function healDrill(j, node, container, id) {
 const inAbout = at => { const m = Math.max(1, Math.ceil((at - Date.now()) / 60000)); return `in about ${m} minute${m === 1 ? '' : 's'}`; };
 function drillHeldBack(node, container) {
   const s = agentSettings();
-  if (!s.selfHeal) return 'Automatic restarts are off (Access → Agents), so the drill didn’t run.';
-  if (s.halted && !s.autoPaused) return 'Agents’ changes are paused (Access → Agents), and self-healing waits too, so the drill didn’t run.';
+  if (!s.selfHeal) return 'Automatic restarts are off (your account menu → Agents and Telegram), so the drill didn’t run.';
+  if (s.halted && !s.autoPaused) return 'Agents’ changes are paused (your account menu → Agents and Telegram), and self-healing waits too, so the drill didn’t run.';
   const tries = healTriesThisHour(`${node.id}/${container}`);
   if (tries.length >= 2) return `Self-healing restarted ${container} twice in the last hour, the most it does, so the drill didn’t run. Ask again ${inAbout(Math.min(...tries) + 3600000)}.`;
   if (workflowStatus('restart_model').state === 'untested') return 'The restart workflow hasn’t passed Spark Console’s tests, so self-healing restarts nothing and the drill didn’t run.';
