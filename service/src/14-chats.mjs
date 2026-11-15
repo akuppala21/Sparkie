@@ -349,7 +349,8 @@ function turnHistory(conv) {
   for (let i = conv.messages.length - 1, used = 0; i >= 0 && history.length < LIMITS.history; i--) {
     const m = conv.messages[i];
     if (m.error) continue;
-    const content = String(m.content).length > 8000 ? `${String(m.content).slice(0, 8000)} …(shortened)` : String(m.content);
+    // (a kept key typed in plain words before it was given goes to the brain hidden, R51; hidden before the cut)
+    const whole = keptHidden(m.content), content = whole.length > 8000 ? `${whole.slice(0, 8000)} …(shortened)` : whole;
     if (used + content.length > 40000) break;
     used += content.length;
     // Spark Console's own notices (operation results, buttons pressed) can quote programs' output: data, in its own words.

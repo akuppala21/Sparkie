@@ -1992,7 +1992,9 @@ async function recordVerified(job, { model, engine, image, args: rawArgs = [], e
   const list = verifiedList(), now = new Date().toISOString(), found = list.find(v => v.key === key);
   const entry = found || { key, model: model.name, repo: model.repo || null, title: model.manifest?.title || model.repo || model.name, engine, image, args, env, sparks, ...(file ? { file } : {}), firstAt: now, runs: 0 };
   Object.assign(entry, { nodes, lastAt: now, by: viewer?.login || null, runs: entry.runs + 1, sizeBytes: model.sizeBytes || entry.sizeBytes || null,
-    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}) });
+    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}),
+    // (a run whose context was cut to fit keeps the free memory then, so a later start can try the full context: B3)
+    ...(job?.contextCut ? { contextCut: job.contextCut } : {}) });
   if (measured) {
     entry.measured = { ...measured, at: now, nodes };
     if (!entry.best || measured.decodeTokS > entry.best.decodeTokS) entry.best = entry.measured;
@@ -3866,7 +3868,8 @@ function turnHistory(conv) {
   for (let i = conv.messages.length - 1, used = 0; i >= 0 && history.length < LIMITS.history; i--) {
     const m = conv.messages[i];
     if (m.error) continue;
-    const content = String(m.content).length > 8000 ? `${String(m.content).slice(0, 8000)} …(shortened)` : String(m.content);
+    // (a kept key typed in plain words before it was given goes to the brain hidden, R51; hidden before the cut)
+    const whole = keptHidden(m.content), content = whole.length > 8000 ? `${whole.slice(0, 8000)} …(shortened)` : whole;
     if (used + content.length > 40000) break;
     used += content.length;
     // Spark Console's own notices (operation results, buttons pressed) can quote programs' output: data, in its own words.
@@ -5907,22 +5910,39 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
 }
 
 // The setup to run it with: the fastest run that worked here before, else the best one-click setup, else defaults.
-function bestHow(m, sparks, viewer, library) {
+// over(how): true passes that one over (B3, bestHowNow); free: the least free memory on its Sparks now (fullContext).
+function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) {
   const runs = verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === sparks && (v.source !== 'seen' || v.approved === true))
     .sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
   const setups = recipeCatalog().models.flatMap(r => r.setups || []).filter(s => s.deployable !== false && s.sparks === sparks && m.repo && sameRepo(s.repo, m.repo) && s.source?.kind !== 'forum')
     .sort((a, b) => (CREDIBILITY[a.credibility] ?? 3) - (CREDIBILITY[b.credibility] ?? 3) || (b.perf?.decodeTokS || 0) - (a.perf?.decodeTokS || 0));
   const tryHow = body => { try { const how = resolveHow(body, viewer, m.name, sparks, library); return how && !dig.remoteCode(how.args) ? how : null; } catch { return null; } };
+  const ok = how => Boolean(how) && !over?.(how);
   // Ordinary runs first; then the brain's proven run, made ordinary (its draft model and stretched context are Spark
   // 2's); then Recipes' one-click setups. The brain runs on one Spark; across two, the same engine and settings split
   // the model over the cable (the start adds its own two-Spark flags), which beats the engine's defaults: those
   // couldn't start the brain's hybrid Qwen at all (2026-11-08).
-  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = tryHow({ verified: v.key }); if (how) return how; }
+  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = fullContext(tryHow({ verified: v.key }), v, free); if (ok(how)) return how; }
   const brainRuns = sparks === 1 ? runs : verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === 1 && (v.source !== 'seen' || v.approved === true)
     && ['sglang', 'vllm'].includes(v.engine)).sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
-  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (how) return how; }
-  for (const s of setups) { const how = tryHow({ setup: s.id }); if (how) return how; }
+  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (ok(how)) return how; }
+  for (const s of setups) { const how = tryHow({ setup: s.id }); if (ok(how)) return how; }
   return null;
+}
+// A run that worked only once its context was cut to fit (out of memory: startWithFixes notes the free memory then, and
+// recordVerified keeps it as contextCut) isn't locked into the shorter context: when its Sparks have more free memory
+// now, by the 8 GB kept free and more, it goes first with its full context (its setup's own, or the engine's). If that
+// runs out of memory, the start cuts it again, and the new figure is kept.
+function fullContext(how, v, free) {
+  const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
+  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+}
+// The least free memory on these Sparks right now, or null when one can't be read.
+async function freeOn(ids) {
+  const mem = await Promise.all(ids.map(id => memNow(nodeById(id)).catch(() => null)));
+  return mem.every(x => Number.isFinite(x?.available)) ? Math.min(...mem.map(x => x.available)) : null;
 }
 
 // Starts the model where placed; if it fails, stops the new parts and starts again what it stopped.
@@ -6020,6 +6040,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
+  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -6036,6 +6057,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      // (the context first cut to fit: the free memory then goes with the run that works, recordVerified's contextCut)
+      if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
         if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
@@ -6246,12 +6269,16 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ]);
     }
-    const how = setup ? resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library) : bestHow(m, placed.two ? 2 : 1, viewer, inv.library);
+    // (a setup that failed twice the same known way is passed over, and the result says so: B3, 20-lessons.mjs)
+    const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library), passed: [] } : bestHowNow(m, placed, viewer, inv, (across || ctx).workflowVersion, args.tryPassedOver === true);
+    const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
+    if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
-    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
+    for (const line of passedOver) note(job, line);
+    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };
   }
   // Not on disk yet: download the best version that fits now, then start it, in one operation. Never for a call at the
@@ -6302,7 +6329,9 @@ async function startModel(args, viewer, ctx) {
     }
     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
     await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
-    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
+    const best = bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true), how = best.how;
+    if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
+    for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
     const release = claimSparks(placed.nodes, `starting ${v.repo}`);
     try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
@@ -6588,7 +6617,20 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  lessonOf,
+  lessonsKept,
+  PASS_OVER_FAILURES,
+  failedTwice,
+  bestHowNow,
+  passedWords,
+  passedOverLines,
+  askedByOwner,
+  passedOverAsk,
+  fullContext,
+  freeOn,
+  memNow,
+];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -8617,12 +8659,14 @@ async function keepBeat(value, via) {
 // by what became of it and the answer as a notice, the journal the words as kept, the audit the name. `after` is a line
 // to add (Telegram's delete). Gives the notice.
 async function giveKey(conv, given, via, channel = null, after = '') {
-  const r = await keepKey(given, via), mark = r.kept ? 'kept' : 'not kept';
+  const r = await keepKey(given, via), mark = r.kept ? 'kept' : 'not kept', left = r.kept ? hideKeptInChats(given.value) : null;
   // (a name is said back only when a key came after it: in "/key <the key>" with nothing after, the name is the key)
   const name = given.name && given.value ? given.name : null;
   const words = given.form ? `/key ${name ? `${name} ` : ''}[${mark}]` : given.text.replace(BEAT_SHAPE, `[key HEARTBEAT ${mark}]`);
   const at = new Date().toISOString();
-  const message = { role: 'assistant', content: maskSecrets(`${r.line}${after ? `\n${after}` : ''}`), createdAt: at, notice: true, word: true };
+  // (what code could not clean, said only when it is so: the owner's earlier words held the key)
+  const unclean = left?.said ? `It was in your earlier words too: hidden in the chats now, but the journal (never rewritten)${left.telegram ? ' and your earlier Telegram message still hold it; delete that message yourself.' : ' still holds it.'}` : '';
+  const message = { role: 'assistant', content: maskSecrets([r.line, unclean, after].filter(Boolean).join('\n')), createdAt: at, notice: true, word: true };
   // (a full chat still gets the answer; it just isn't saved there, as with the owner's words)
   if (conv.messages.length < LIMITS.messages - 1) {
     conv.messages.push({ role: 'user', content: maskSecrets(words), context: null, createdAt: at, key: true }, message);
@@ -8632,6 +8676,34 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   journalSaid(conv, words, null, channel, null);
   audit({ via, actor: channel === 'telegram' ? 'owner on Telegram' : 'owner', action: 'key-given', args: { name, kept: r.kept }, ok: r.kept });
   return message;
+}
+// A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
+// (messages, titles, a carried-on request) get every kept value hidden and are saved once if one changed, so the daily
+// copy stops carrying it. A chat that never held one is left exactly as it was (nor is its time touched). Says whether
+// one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too), and
+// whether one of them was on Telegram.
+function hideKeptInChats(value) {
+  const owner = accessList().owner, left = { said: false, telegram: false };
+  let changed = false;
+  for (const c of chatData().conversations) {
+    if (c.login !== owner) continue;
+    // (its title and a carried-on request are the owner's words too)
+    for (const [o, k] of [[c, 'title'], [c.task, 'request']]) {
+      if (typeof o?.[k] !== 'string') continue;
+      const t = keptHidden(o[k]);
+      if (t !== o[k]) { o[k] = t; changed = true; }
+    }
+    for (const m of c.messages) {
+      if (typeof m.content !== 'string') continue;
+      const t = keptHidden(m.content);
+      if (t === m.content) continue;
+      if (m.role === 'user' && !m.auto && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
+      m.content = t;
+      changed = true;
+    }
+  }
+  if (changed) saveChats();
+  return left;
 }
 // The page (24-handler.mjs, the owner's own chat, before the owner's words): answered in the stream the page reads.
 async function answerKeys(res, conv, text, viewer) {
@@ -8658,7 +8730,7 @@ async function tgKeys(m) {
   return true;
 }
 /* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
-// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs
 // Owns: lessons.json (writers: recordLesson)
 // Timers: none        Wakes: none
 // A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
@@ -8671,8 +8743,9 @@ async function tgKeys(m) {
 // failure of an app leaves none. The same failure of the same setup again adds to its count: two or more of the same
 // known failure with no success between make it proven, while an unknown one stays seen. A later success of the same
 // setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
-// its proven run (verified.json). Nothing reads lessons to change what a start does yet: passing over a setup that
-// failed twice is B3, cards for the brain B4.
+// its proven run (verified.json). A start reads them before it picks a setup (B3): one that failed twice the same known
+// way is passed over while its image, Sparks and start code are what the start would use (failedTwice, bestHowNow).
+// Cards for the brain are B4.
 const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
 // (a cap, never reached in use: the newest are kept)
 const LESSONS_MAX = 500;
@@ -8768,6 +8841,76 @@ function learnFrom(job, evidence) {
     const l = lessonOf(job);
     if (l) recordLesson(l, job.status === 'completed', evidence);
   } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
+}
+
+// Which known failures count toward passing a setup over (B3, decided 2026-11-14). The setup's own count. One whose
+// cause is outside the setup never does: every setup meets the same wall, and the setup would stay passed over after
+// that was put right. A lesson still records it (R48); a failure not listed here doesn't count.
+const PASS_OVER_FAILURES = [
+  // [failure, counts, why]
+  ['out-of-memory', true, 'the setup asks for more memory than its Sparks have'],
+  ['bad-flag', true, 'the engine refuses one of its settings'],
+  ['garbage', true, 'its engine or image answers only garbage'],
+  ['no-answer', true, 'its engine or chat template doesn’t answer'],
+  ['gated', false, 'a Hugging Face sign-in or license, the same for every setup'],
+  ['port-busy', false, 'another program holds the model port'],
+  ['image', false, 'the network, while the image downloads'],
+  ['memory-share', false, 'other work holds the memory'],
+  ['never-connected', false, 'the cable between the two Sparks'],
+];
+// B3 (design B 2.4; contract 5.10): a setup that failed twice the same known way with no success between (a proven
+// lesson) is passed over while what that lesson was true of is what this start would use: its image, its Sparks and its
+// start code (the start workflow's version). When one differs, it is tried again. The lesson the setup would leave is
+// worked out as a failure would write it (setupTried, lessonOf) and looked for among the kept ones. Lessons that can't
+// be read pass nothing over: a lesson never stops a start by itself. Only failures of the setup's own count
+// (PASS_OVER_FAILURES).
+function failedTwice(m, how, placed, code) {
+  try {
+    const l = lessonOf({ type: 'deploy', status: 'failed', setupTried: setupTried(m, how, placed), workflowVersion: code });
+    if (!l?.subject.model || !l.tried.how || !l.tried.flags || !l.tried.on) return null;
+    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && PASS_OVER_FAILURES.some(([id, counts]) => counts && id === x.failure)
+      && JSON.stringify(x.subject) === JSON.stringify(l.subject)
+      && ['how', 'flags', 'image', 'on', 'code'].every(k => x.tried?.[k] === l.tried[k])) || null;
+  } catch { return null; }
+}
+// The setup a start runs with: bestHow's, each one that failed twice passed over while another is left. { how, passed:
+// [{ how, lesson }], only }: only when every setup there is failed twice, and how is then the best of them. again (the
+// yes to passedOverAsk): nothing is passed over, and what failed twice is still said. free: the least free memory on its
+// Sparks now, for a context that was cut to fit (fullContext).
+function bestHowNow(m, placed, viewer, inv, code, again = false) {
+  const passed = [], over = how => { const lesson = failedTwice(m, how, placed, code); if (lesson) passed.push({ how, lesson }); return Boolean(lesson) && !again; };
+  const free = Math.min(...placed.nodes.map(id => Number(inv.sparks.find(s => s.id === id)?.memAvailable) || NaN));
+  const how = bestHow(m, placed.two ? 2 : 1, viewer, inv.library, { over, free });
+  if (how || !over(null)) return { how, passed };
+  return { how: passed[0].how, passed, only: true };
+}
+// A setup that failed twice, in the owner's words: what it is, and how it failed.
+const passedWords = ({ how, lesson: l }) => ({
+  what: how?.setupId ? `recipe setup ${how.setupId}` : how?.fromBrain ? 'the brain’s proven setup' : how ? 'a run that worked here before' : 'its own setup (its spark.json, or the engine’s defaults)',
+  failed: `failed ${l.failed} times the same way on ${String(l.tried?.on || '').split('+').map(id => sparkName(nodeById(id) || { id })).join(' + ')} (${START_FAILURES.find(f => f.id === l.failure)?.title || l.failure}), last on ${String(l.lastAt).slice(0, 10)}` });
+// What the start's result and its operation's log say: each setup passed over, and the one tried again though it failed
+// twice, with why.
+function passedOverLines(best, args) {
+  return best.passed.map(p => {
+    const { what, failed } = passedWords(p), id = p.lesson.id;
+    if (p.how === best.how) return `Tried again ${args.tryPassedOver === true ? 'as asked' : 'at the owner’s own request'}, though ${what} ${failed}${best.only ? ': it is the only setup there is' : ''} (lesson ${id}).`;
+    return `Passed over ${what}: it ${failed}, with the image, Sparks and start code this start would use (lesson ${id}). ${p.how?.setupId ? `To try it anyway, ask for setup ${p.how.setupId}.` : 'It is tried again when its image, its Sparks or its start code change.'}`;
+  });
+}
+// The owner's own request: their own call (POST /actions), the page's own controls (the self-test too), or the yes to
+// passedOverAsk. A button pressed for another question isn't one.
+const askedByOwner = (viewer, ctx, args) => args.tryPassedOver === true || (viewer.role === 'owner' && (ctx.via === 'api' || (ctx.via === 'page' && !ctx.button)));
+// When every setup there is failed twice (design B 2.4): the owner's own request runs the best of them, and says so;
+// self-healing and a call to the model address leave it, saying why; Sparkie or an agent gets a question whose yes runs
+// it. null: run it.
+function passedOverAsk(viewer, ctx, args, m, placed, best) {
+  if (askedByOwner(viewer, ctx, args)) return null;
+  const title = m.repo || m.name, { what, failed } = passedWords(best.passed[0]);
+  if (ctx.via === 'watcher' || ctx.via === 'gateway') throw new HttpError(409, `${title}’s only setup here, ${what}, ${failed}, so it isn’t tried again by itself; the owner can ask for it.`);
+  return question(viewer, ctx, `${title}’s only setup here, ${what}, ${failed}, with the same image, Sparks and start code. Try it again anyway?`, [
+    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
+      ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
+    { label: 'No, leave it', call: null }]);
 }
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
@@ -9077,6 +9220,127 @@ function maskDeep(v, key = '') {
   return v;
 }
 
+/* ───────── what Sparkie's memory lines are about: their names, and an index of them ───────── */
+// Area: record        Rules: R45        Tests: memory.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// Each memory line says what it is about (`about`, G2a): up to five names of things Spark Console itself knows, found by
+// code in the line's own words when it is saved: never by a model, and never by reading a file then. A name is a Spark
+// ("spark4"), a model (a recipe's id, "glm-5.3-flash"), a container, an app, a setup (one of the brain's, "aphex-x4", or a
+// recipe's, by its id), a person (the owner, a member) or an agent, each kept in one form, lower case. The names come
+// from a book of what the console lists (memoryNameBook): made at start, and again at most once a minute when memory is
+// used, after the call that used it. A name counts only as whole words: "aphexian" names no setup, and a model's name in
+// a web address names nothing. A line saved before names were kept gets its names the first time memory is read after
+// start (in memory; they are written with it the next time memory.json is saved). An index from each name to the live
+// lines about it is kept in memory (memoryIndexNow): made at start, after every save, and again only when memory.json
+// changed under it, so while the file is as it was it reads nothing. Sparkie isn't shown the names yet (G2b, the picker).
+const ABOUT_MAX = 5, NAME_BOOK_MS = 60000;
+// One word alone that is never a name, whatever a container, a setup or an agent is called ("default" is the brain's
+// setup when config.json names none).
+const NOT_NAMES = new Set(['default', 'main', 'test', 'tests', 'model', 'models', 'app', 'apps', 'web', 'server', 'chat', 'owner', 'agent', 'agents',
+  'sparkie', 'spark', 'sparks', 'setup', 'setups', 'container', 'box', 'job', 'jobs', 'home', 'work', 'local', 'none', 'new', 'all']);
+// Words, lower case, with web addresses taken out (whatever has :// in it, starts www., or is a host and a path:
+// "huggingface.co/zai-org/…"), and Sparks said by number made one word each ("Sparks 3 and 4" is spark3 spark4;
+// "akspark2" stays one word, Spark 2's only by its alias).
+const ADDRESS = /:\/\/|^\W*www\.|^[^/]*\.[a-z]{2,}\//;
+const nameWords = text => String(text || '').toLowerCase().split(/\s+/).filter(w => !ADDRESS.test(w)).join(' ')
+  .replace(/\bsparks?[\s_-]*(\d+)((?:\s*(?:,|and|&|\+|or)\s*\d+)*)/g, (m, a, rest) => ` ${[a, ...(rest.match(/\d+/g) || [])].map(d => `spark${d}`).join(' ')} `)
+  .split(/[^a-z0-9]+/).filter(Boolean);
+
+// The book: each way a known thing is written, as its words run together ("glm 5.3 flash", "GLM-5.3-Flash-FP8" and
+// "glm-5.3-flash" are one form), to the names it stands for; and every start of a form, so a look-up stops at the first
+// word that can't go on to one.
+let nameBook = null, nameBookDue = false;
+function buildNameBook() {
+  const forms = new Map(), starts = new Set();
+  // (one name of each kind for a form: the first source wins, so the brain's own model keeps its recipe's name)
+  const add = (kind, name, ...said) => {
+    const id = String(name || '').trim().toLowerCase();
+    if (!id) return;
+    for (const s of [id, ...said]) {
+      const key = nameWords(s).join(''), at = forms.get(key) || [];
+      if (key.length < 3 || NOT_NAMES.has(key) || /^\d+$/.test(key) || at.some(x => x.kind === kind)) continue;
+      forms.set(key, [...at, { kind, name: id }]);
+      for (let i = 1; i <= key.length; i++) starts.add(key.slice(0, i));
+    }
+  };
+  const each = (what, fill) => { try { fill(); } catch (e) { console.error(`Memory’s names: ${what} couldn’t be read (${e.message}).`); } };
+  each('the Sparks', () => { for (const n of NODES) add('spark', n.id, n.name, n.alias); });
+  const recipeOf = new Map(), modelName = raw => { const k = modelKey(repoOf(raw)); return recipeOf.get(k) || k; };
+  each('the recipes', () => {
+    for (const r of recipeCatalog().models) {
+      const repos = (r.variants || []).map(v => String(v.repo || '')).filter(Boolean);
+      for (const k of [r.id, ...repos.map(modelKey)]) if (!recipeOf.has(String(k).toLowerCase())) recipeOf.set(String(k).toLowerCase(), r.id);
+      add('model', r.id, r.title, ...repos.map(modelKey), ...repos.map(x => x.split('/').pop()));
+      for (const s of r.setups || []) add('setup', s.id);
+    }
+  });
+  each('the brain’s setups', () => { for (const [id, p] of Object.entries(mainPresets())) { add('setup', id, p.title); if (p.model) add('model', modelName(p.model), p.model, p.served); } });
+  each('the containers', () => {
+    for (const w of Object.values(knowledge.workloads)) {
+      add(w.labels?.['spark.app'] ? 'app' : 'container', w.name);
+      for (const m of [...(w.servedModels || []), w.labels?.['spark.model']].filter(Boolean)) add('model', modelName(m), m);
+    }
+  });
+  each('the agents', () => { for (const k of agentKeys()) add('agent', k.name); });
+  each('the people', () => { const a = accessList(); add('person', a.userName); for (const m of a.members) add('person', m.login, m.name); });
+  return { forms, starts, at: Date.now() };
+}
+function memoryNameBook() {
+  if (!nameBook) nameBook = buildNameBook();
+  else if (!nameBookDue && Date.now() - nameBook.at > NAME_BOOK_MS) {
+    nameBookDue = true;
+    setTimeout(() => { nameBookDue = false; nameBook = buildNameBook(); }, 0);
+  }
+  return nameBook;
+}
+// The names in a text, in the order they first come, five at most. A name inside a longer one of its own kind is that
+// one ("aphex" in "aphex-x4", a recipe inside a longer recipe's name); a model's name in a container's is both.
+function memoryNamesIn(text) {
+  const { forms, starts } = memoryNameBook(), w = nameWords(text), found = [];
+  for (let i = 0; i < w.length; i++) {
+    for (let j = i, s = ''; j < w.length; j++) {
+      s += w[j];
+      if (!starts.has(s)) break;
+      for (const x of forms.get(s) || []) found.push({ ...x, i, j });
+    }
+  }
+  const kept = found.filter(m => !found.some(n => n.kind === m.kind && n.i <= m.i && n.j >= m.j && n.j - n.i > m.j - m.i));
+  return [...new Set(kept.map(m => m.name))].slice(0, ABOUT_MAX);
+}
+
+// The index: the live lines, each with its names, and each name's lines in the file's order. `sig` is memory.json as the
+// index last saw it (its inode, size and times), so a look needs no read while the file is unchanged.
+let memIndex = null;
+function memorySig() {
+  try { const s = statSync(MEMORY_FILE, { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; } catch (e) { return e.code === 'ENOENT' ? 'none' : null; }
+}
+// Lines with their names: their own, saved with them; else those found for that line before (the same words); else found
+// now (a line saved before names were kept).
+function memoryNamed(lines) {
+  const was = new Map((memIndex?.lines || []).map(e => [e.id, e]));
+  return lines.map(e => (Array.isArray(e.about) ? e : { ...e, about: (was.get(e.id)?.text === e.text && was.get(e.id).about) || memoryNamesIn(e.text) }));
+}
+function memoryIndexOf(entries, sig) {
+  const lines = memoryNamed(entries), byName = new Map();
+  for (const e of lines) for (const n of new Set(e.about)) if (typeof n === 'string') { const at = byName.get(n); if (at) at.push(e); else byName.set(n, [e]); }
+  memIndex = { sig, lines, byName };
+  return memIndex;
+}
+// The index as memory.json is now: read again only when the file changed (a read error throws, as memoryEntries does).
+function memoryIndexNow() {
+  const sig = memorySig();
+  if (memIndex && sig && sig === memIndex.sig) return memIndex;
+  const entries = memoryEntries(), after = memorySig();
+  return memoryIndexOf(entries, after === sig ? after : null);
+}
+// The live lines about one name ("spark4", "glm-5.3-flash"), oldest first.
+const memoryLinesAbout = name => memoryIndexNow().byName.get(String(name).trim().toLowerCase()) || [];
+// A line as Sparkie and agents are shown it: as before names were kept (the owner's own call sees `about`).
+const withoutAbout = ({ about, ...line }) => line;
+// At start, once every part has run: the book, then the index (the first read of memory after start).
+setTimeout(() => {
+  try { memoryNameBook(); memoryIndexNow(); } catch (e) { console.error(`Memory’s index wasn’t made at start (${e.message}); it is made when memory is next read.`); }
+}, 0);
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
 // Area: record        Rules: R20, R22, R25, R26, R45        Tests: sparkie-more.test.mjs, memory.test.mjs
 // Owns: memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
@@ -9091,6 +9355,7 @@ function maskDeep(v, key = '') {
 // A line that is replaced or forgotten is retired, never erased: it moves to memory-past.json with when, why, who did
 // it and what replaced it (`memory {past: true}` lists them). Every line says who it is from (`by`) and where it came
 // from (`src`). saveMemory is the one writer of both files (R22); an agent never replaces or forgets an owner's line (R45).
+// What each line is about (`about`, the names in it) and the index of them are 20-memory-names.mjs's.
 const MEMORY_FILE = `${STATE_DIR}/memory.json`;
 const MEMORY_PAST_FILE = `${STATE_DIR}/memory-past.json`;
 const MEMORY_CHARS = 4000;
@@ -9103,11 +9368,14 @@ const memoryPast = () => { const f = readKept(MEMORY_PAST_FILE); return Array.is
 // An erase (`erased`, a line's id) takes every record of it out of the past file and saves both files twice, so neither
 // copy from before the last save (<file>.prev, writePrivate) still holds its words.
 function saveMemory(entries, gone = [], erased = null) {
+  // (every line is written with what it is about, and the index follows the save: 20-memory-names.mjs)
+  [entries, gone] = [memoryNamed(entries), memoryNamed(gone)];
   const past = gone.length || erased ? [...memoryPast().filter(p => p.id !== erased && !gone.some(g => g.id === p.id)), ...gone] : null;
   for (let n = erased ? 2 : 1; n > 0; n--) {
     if (past) writePrivate(MEMORY_PAST_FILE, { past });
     writePrivate(MEMORY_FILE, { entries });
   }
+  memoryIndexOf(entries, memorySig());
 }
 // A line's words, live or retired, for its button (changeLabel); null when there is none or memory can't be read.
 const memoryText = id => { for (const read of [memoryEntries, memoryPast]) { try { const e = read().find(x => x.id === id); if (e) return e.text; } catch {} } return null; };
@@ -9166,14 +9434,16 @@ function memoryWithPast(ctx) {
   if (ctx.via === 'agent' || ctx.agent || ctx.channel) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const entries = memoryEntries(), live = new Set(entries.map(e => e.id)), past = memoryPast().filter(p => !live.has(p.id));
   const textOf = id => (entries.find(e => e.id === id) || past.find(p => p.id === id))?.text ?? null;
-  return { entries, past: past.map(p => (p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
+  const shown = ctx.via === 'api' ? x => x : withoutAbout;
+  return { entries: entries.map(shown), past: past.map(p => shown(p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
 }
 
 action({
   name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
   description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
   input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten (the owner’s own, in Spark Console).' } }, additionalProperties: false },
-  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: memoryEntries() }),
+  // (the owner's own call sees what each line is about, from the index; Sparkie and agents see the lines as before)
+  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: ctx.via === 'api' ? memoryIndexNow().lines : memoryEntries().map(withoutAbout) }),
 });
 action({
   name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
@@ -9191,7 +9461,7 @@ action({
     notTheOwners(old, ctx);
     const all = before.filter(e => e !== old);
     if (all.some(e => e.text.toLowerCase() === line.toLowerCase())) return { outcome: 'already', note: `Already remembered: ${line}` };
-    const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line,
+    const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line, about: memoryNamesIn(line),
       by: lineBy(ctx), at: new Date().toISOString(), src: lineSrc(ctx), ...(old ? { replaces: old.id } : {}) };
     saveMemory([...all, entry], old ? [retired(old, 'replaced', ctx, entry.id)] : []);
     return { outcome: 'remembered', id: entry.id, note: `I’ll remember: ${line}${old ? ` (instead of: ${old.text})` : ''}` };
