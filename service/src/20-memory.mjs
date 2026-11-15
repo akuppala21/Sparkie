@@ -90,9 +90,11 @@ function memoryPrompt(chosen = null) {
 // memory {past: true}: the live lines, and the retired ones in the order they left, each with the line that replaced it.
 // A line in both files (a stop between saveMemory's two saves) is live. The retired lines are the owner's own, read in
 // Spark Console (their page chat, their own call): what they asked to be rid of is never handed to an agent (over the
-// agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14).
+// agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14). recall keeps the same
+// rule (memoryPastShown).
+const memoryPastShown = ctx => !(ctx.via === 'agent' || ctx.agent || ctx.channel);
 function memoryWithPast(ctx) {
-  if (ctx.via === 'agent' || ctx.agent || ctx.channel) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
+  if (!memoryPastShown(ctx)) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const all = memoryEntries(), live = new Set(all.map(e => e.id)), entries = all.filter(memoryLive);
   // (a line past its last day is shown as past, expired, until the next save moves it there: 20-memory-time.mjs)
   const past = [...memoryPast().filter(p => !live.has(p.id)), ...all.filter(memoryEnded).map(memoryExpired)];
