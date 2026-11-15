@@ -13,22 +13,37 @@ const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
 function dangerThings(text) {
   let t = String(text || '');
   const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
-  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, ' '); };
+  // (what is taken is blanked where it stands, as long as it was, so nothing after it moves and nothing else is touched)
+  const blank = s => ' '.repeat(s.length);
+  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, blank); };
   take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
-  // (packages and images before addresses with no scheme: an image's name can look like one)
-  const named = [];
+  // (packages and images before addresses with no scheme: an image's name can look like one; each name is kept with
+  // where it stands, [at, name])
+  const named = [], ok = w => !w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w);
+  const words = m => [...m[1].matchAll(/\S+/g)].map(w => [m.index + m[0].length - m[1].length + w.index, w[0]]);
   for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    for (const w of m[1].trim().split(/\s+/)) if (!w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
+    for (const w of words(m)) if (ok(w[1])) named.push(w);
   }
   for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    const w = m[1].trim().split(/\s+/).find(x => !x.startsWith('-'));
-    if (w && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
+    const w = words(m).find(x => !x[1].startsWith('-'));
+    if (w && ok(w[1])) named.push(w);
   }
-  for (const w of named) { add(w); t = t.split(w).join(' '); }
-  take(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
+  for (const [, w] of named) add(w);
+  // Each name blanked at its own place only, in one pass: the same letters in an address or path after it stay
+  // ("torch" in torch.evil.example/i.sh, "etc" in /etc/sudoers.d).
+  let rest = '', end = 0;
+  for (const [at, w] of [...named].sort((a, b) => a[0] - b[0])) {
+    if (at + w.length <= end) continue;
+    const from = Math.max(at, end);
+    rest += t.slice(end, from) + ' '.repeat(at + w.length - from);
+    end = at + w.length;
+  }
+  t = rest + t.slice(end);
+  // (a host right after "@" counts: root@evil.example, git@github.com:evil/repo.git)
+  take(new RegExp(`(?<![\\w/.-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
   for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
   for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
-  for (const m of t.matchAll(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
+  for (const m of t.matchAll(new RegExp(`(?<![\\w/.-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
   return [...out];
 }
 // A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in

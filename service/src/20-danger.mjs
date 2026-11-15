@@ -100,6 +100,10 @@ function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, c
   if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
     throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
   }
+  // (a file's path is shown on one line as it is: one that line would flatten or cut is not asked)
+  if (shown?.path != null && dangerPlain(shown.path, 400) !== String(shown.path)) {
+    throw new HttpError(400, 'The file’s path holds a line break, a tab, two spaces together, a space at either end or more than 400 characters, so it can’t be shown on one line as it is. Nothing was asked or run.');
+  }
   // Shown whole or not asked: a part the masks would hide is a part the owner could not read before saying yes.
   const masked = x => maskSecrets(x) !== x;
   if ((code && masked(code.text)) || masked(String(shown?.path || ''))) {
@@ -246,13 +250,18 @@ function dangerWrong(a) {
   if (a.tries >= 3) { dangerClose(a, 'three wrong pairs'); return 'That was the third wrong pair, so the ask is closed and nothing was run. Ask again.'; }
   return 'Those aren’t the two digits from the ask, so nothing was run. Type them again, or press No.';
 }
+// Whether text holds the open ask's two digits as a number of their own (alone, or among other words).
+const dangerHolds = (a, t) => Boolean(a?.digits) && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(String(t));
+// The page's own chat box (24-handler.mjs, the owner's messages): one holding the open ask's pair is refused there,
+// before Sparkie, the chat file or the journal see it; the pair goes in the ask's own field.
+const dangerPairInChat = text => dangerHolds(dangerLive(), text);
 // The owner's next message in the paired chat (tgUpdate): after a press, the pair (spaces or punctuation around it
 // allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
 // ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
 // or the journal). null: not about an ask (it goes on to Sparkie).
 function dangerTypedHere(text) {
   const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
-  const holds = Boolean(a?.digits) && !pair && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(t);
+  const holds = !pair && dangerHolds(a, t);
   if (!a || !a.telegram) {
     if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
     return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;

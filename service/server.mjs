@@ -8349,22 +8349,37 @@ const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
 function dangerThings(text) {
   let t = String(text || '');
   const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
-  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, ' '); };
+  // (what is taken is blanked where it stands, as long as it was, so nothing after it moves and nothing else is touched)
+  const blank = s => ' '.repeat(s.length);
+  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, blank); };
   take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
-  // (packages and images before addresses with no scheme: an image's name can look like one)
-  const named = [];
+  // (packages and images before addresses with no scheme: an image's name can look like one; each name is kept with
+  // where it stands, [at, name])
+  const named = [], ok = w => !w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w);
+  const words = m => [...m[1].matchAll(/\S+/g)].map(w => [m.index + m[0].length - m[1].length + w.index, w[0]]);
   for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    for (const w of m[1].trim().split(/\s+/)) if (!w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
+    for (const w of words(m)) if (ok(w[1])) named.push(w);
   }
   for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    const w = m[1].trim().split(/\s+/).find(x => !x.startsWith('-'));
-    if (w && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
+    const w = words(m).find(x => !x[1].startsWith('-'));
+    if (w && ok(w[1])) named.push(w);
   }
-  for (const w of named) { add(w); t = t.split(w).join(' '); }
-  take(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
+  for (const [, w] of named) add(w);
+  // Each name blanked at its own place only, in one pass: the same letters in an address or path after it stay
+  // ("torch" in torch.evil.example/i.sh, "etc" in /etc/sudoers.d).
+  let rest = '', end = 0;
+  for (const [at, w] of [...named].sort((a, b) => a[0] - b[0])) {
+    if (at + w.length <= end) continue;
+    const from = Math.max(at, end);
+    rest += t.slice(end, from) + ' '.repeat(at + w.length - from);
+    end = at + w.length;
+  }
+  t = rest + t.slice(end);
+  // (a host right after "@" counts: root@evil.example, git@github.com:evil/repo.git)
+  take(new RegExp(`(?<![\\w/.-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
   for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
   for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
-  for (const m of t.matchAll(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
+  for (const m of t.matchAll(new RegExp(`(?<![\\w/.-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
   return [...out];
 }
 // A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
@@ -8537,6 +8552,10 @@ function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, c
   if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
     throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
   }
+  // (a file's path is shown on one line as it is: one that line would flatten or cut is not asked)
+  if (shown?.path != null && dangerPlain(shown.path, 400) !== String(shown.path)) {
+    throw new HttpError(400, 'The file’s path holds a line break, a tab, two spaces together, a space at either end or more than 400 characters, so it can’t be shown on one line as it is. Nothing was asked or run.');
+  }
   // Shown whole or not asked: a part the masks would hide is a part the owner could not read before saying yes.
   const masked = x => maskSecrets(x) !== x;
   if ((code && masked(code.text)) || masked(String(shown?.path || ''))) {
@@ -8683,13 +8702,18 @@ function dangerWrong(a) {
   if (a.tries >= 3) { dangerClose(a, 'three wrong pairs'); return 'That was the third wrong pair, so the ask is closed and nothing was run. Ask again.'; }
   return 'Those aren’t the two digits from the ask, so nothing was run. Type them again, or press No.';
 }
+// Whether text holds the open ask's two digits as a number of their own (alone, or among other words).
+const dangerHolds = (a, t) => Boolean(a?.digits) && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(String(t));
+// The page's own chat box (24-handler.mjs, the owner's messages): one holding the open ask's pair is refused there,
+// before Sparkie, the chat file or the journal see it; the pair goes in the ask's own field.
+const dangerPairInChat = text => dangerHolds(dangerLive(), text);
 // The owner's next message in the paired chat (tgUpdate): after a press, the pair (spaces or punctuation around it
 // allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
 // ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
 // or the journal). null: not about an ask (it goes on to Sparkie).
 function dangerTypedHere(text) {
   const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
-  const holds = Boolean(a?.digits) && !pair && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(t);
+  const holds = !pair && dangerHolds(a, t);
   if (!a || !a.telegram) {
     if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
     return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;
@@ -20010,6 +20034,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;

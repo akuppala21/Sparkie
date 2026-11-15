@@ -545,6 +545,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;
