@@ -1,14 +1,15 @@
-// Memory with no ceiling, its history kept, and a source on every line (G1, 2026-11-14; R45). The 41st line is saved
-// (it was refused with 409); a line that is replaced or forgotten moves to memory-past.json, where `memory {past: true}`
-// shows it with what replaced it, also after the build before this one has saved memory.json as {entries} only; that
-// build still reads the memory.json this one writes. Past the old 4,000 characters the prompt keeps the newest lines
-// that fit and says how many more there are. Forgetting through Sparkie: a question, "don't forget", "never forget", a
-// supposed and a quoted "forget" keep the line live; "forget that …" retires it. An agent never replaces or forgets an
-// owner's line, over the agent door or through Sparkie; its own lines it may, and a line said in its chat is its own.
-// The retired lines are the owner's alone: an agent's key and Sparkie in an agent's chat are refused `memory {past}`.
-// Erasing a line for good (forget_memory {erase}) is the owner's alone: from Sparkie it is always a button, whatever the
-// words; pressed in Spark Console, the words leave both files, their copies from before the last save and any copy set
-// aside; the owner's own call erases at once; an agent is refused, for its own lines too. The stand-in model is scripted.
+// Covers: Memory with no ceiling, its history kept, and a source on every line (G1, 2026-11-14; R45). The 41st line is
+// saved (it was refused with 409); a line that is replaced or forgotten moves to memory-past.json, where `memory {past:
+// true}` shows it with what replaced it, also after the build before this one has saved memory.json as {entries} only;
+// that build still reads the memory.json this one writes. Past the old 4,000 characters the prompt keeps the newest
+// lines that fit and says how many more there are. Forgetting through Sparkie: a question, "don't forget", "never
+// forget", a supposed and a quoted "forget" keep the line live; "forget that …" retires it. An agent never replaces or
+// forgets an owner's line, over the agent door or through Sparkie; its own lines it may, and a line said in its chat is
+// its own. The retired lines are the owner's alone: an agent's key and Sparkie in an agent's chat are refused `memory
+// {past}`. Erasing a line for good (forget_memory {erase}) is the owner's alone: from Sparkie it is always a button,
+// whatever the words; pressed in Spark Console, the words leave both files, their copies from before the last save and
+// any copy set aside; the owner's own call erases at once; an agent is refused, for its own lines too. The stand-in
+// model is scripted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';

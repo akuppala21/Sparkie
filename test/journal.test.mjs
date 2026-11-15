@@ -1,14 +1,14 @@
-// The journal (B1, R43): Spark Console's own record of what was said, called, run and seen, in a folder of its own
-// outside the state folder (here each stand-in fleet's own journal/), read back with recall. A look writes one line;
-// keys are hidden before anything is written, also where a key falls across two pieces of a long text (pieces shortened
-// here with SPARK_CONSOLE_JOURNAL_PIECE); a failed start leaves its log, its attempt and its operation, and recall still
-// finds them after a restart (operation_log says expired); text recall returned isn't the owner's words, so remember
-// needs a button after it. A change that is written down first (save_file, keep_running with an image) answers
-// "couldn't write the record, nothing was changed" when the journal can't be written (mock/disk-full.mjs: a full disk
-// under the journal only), and nothing runs, while a look, /stop and stop_model still work. A console killed between a
-// start line and its end leaves, after the restart, one "cut off" notice in the chat that asked and one needs-you line,
-// and a second restart adds neither. Past its limit (shortened with SPARK_CONSOLE_JOURNAL_MAX_BYTES) a record's text
-// stops and the record says so.
+// Covers: The journal (B1, R43): Spark Console's own record of what was said, called, run and seen, in a folder of its
+// own outside the state folder (here each stand-in fleet's own journal/), read back with recall. A look writes one
+// line; keys are hidden before anything is written, also where a key falls across two pieces of a long text (pieces
+// shortened here with SPARK_CONSOLE_JOURNAL_PIECE); a failed start leaves its log, its attempt and its operation, and
+// recall still finds them after a restart (operation_log says expired); text recall returned isn't the owner's words,
+// so remember needs a button after it. A change that is written down first (save_file, keep_running with an image)
+// answers "couldn't write the record, nothing was changed" when the journal can't be written (mock/disk-full.mjs: a
+// full disk under the journal only), and nothing runs, while a look, /stop and stop_model still work. A console killed
+// between a start line and its end leaves, after the restart, one "cut off" notice in the chat that asked and one
+// needs-you line, and a second restart adds neither. Past its limit (shortened with SPARK_CONSOLE_JOURNAL_MAX_BYTES) a
+// record's text stops and the record says so.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, cpSync, rmSync } from 'node:fs';
@@ -169,8 +169,6 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
   assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-4471\.md/.test(v.error)), JSON.stringify(all));
 });
 
-// Part of acceptance test T123: with the journal unwritable, a file write (save_file, and an app from an image) runs
-// nothing and the owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
 // The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
 // to an agent's key that looks or acts, an agent through ask_sparkie, or a member.
 test('words said to Sparkie and a chat\'s tool results: only the owner\'s own call reads them back', { timeout: 120000 * SLOW }, async () => {
@@ -202,6 +200,8 @@ test('words said to Sparkie and a chat\'s tool results: only the owner\'s own ca
   assert.equal((await api('/actions/recall', { method: 'POST', body: { id: tool.id } })).json.text, textOf(tool).slice(0, 8000));
 });
 
+// T123 (part): with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the
+// owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
 test('with the journal\'s disk full, a change written down first answers "couldn\'t write the record, nothing was changed" and nothing runs; a look, /stop and stop_model still work', { timeout: 180000 * SLOW }, async () => {
   const file = join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'full-disk.md');
   const size = () => readdirSync(T.fleet.journalDir).reduce((n, f) => n + statSync(join(T.fleet.journalDir, f)).size, 0);
@@ -257,8 +257,8 @@ const copyTo = (from, events = []) => ({ dir, stateDir }) => {
 const CUT_PREFIX = 'A restart of Spark Console cut off deploy ';
 const CUT_OP = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'fedcba987654', operation: 'deploy', status: 'started', model: `${'m'.repeat(584 - CUT_PREFIX.length)}-${EVKEY}`, spark: 'spark3' };
 const env = { SPARK_CONSOLE_JOURNAL_MAX_BYTES: '2048', SPARK_CONSOLE_JOURNAL_NEEDS_BYTES: '1' };
-// Part of acceptance test T123: killed while a file write changes a Spark, after the restart one "cut off" notice, and
-// it is never run again.
+// T123 (part): killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run
+// again.
 test('a console killed between a start line and its end: after the restart, one "cut off" notice in the chat that asked and one needs-you line; it isn\'t run again', { timeout: 180000 * SLOW }, async () => {
   writeFileSync(mock('spark3', 'stall-worker'), '120');
   script([{ match: '^save this as cut-note\\.md on spark 3$', calls: [{ name: 'save_file', arguments: { spark: 'spark3', path: 'cut-note.md', text: 'cut off\n' } }] }]);

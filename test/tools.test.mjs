@@ -1,11 +1,11 @@
-// The brain's tool list (R46, design F 2.4): each round Sparkie's brain is offered the core and the groups the request
-// opened, at most TOOL_CAP tools, never every action. The owner's words open groups (GROUP_WORDS), and so does state (an
-// operation of the chat running, its last operation failing, a web search this turn); with a third group the oldest
-// one opened by words closes; groups last through the request's carry-on turns. Hidden is not forbidden: a call to an
-// action that wasn't offered still runs through runAction and opens its group, and guide {tools} opens one. Prompt lines
-// follow their tools. The agent door hides nothing. The tested mark (brainReads) covers every group, not just one turn.
-// The stand-in brain calls a scripted tool whether or not it was offered, so what is offered is checked here, from what
-// the stand-in brain logged (model-requests.jsonl).
+// Covers: The brain's tool list (R46, design F 2.4): each round Sparkie's brain is offered the core and the groups the
+// request opened, at most TOOL_CAP tools, never every action. The owner's words open groups (GROUP_WORDS), and so does
+// state (an operation of the chat running, its last operation failing, a web search this turn); with a third group the
+// oldest one opened by words closes; groups last through the request's carry-on turns. Hidden is not forbidden: a call
+// to an action that wasn't offered still runs through runAction and opens its group, and guide {tools} opens one.
+// Prompt lines follow their tools. The agent door hides nothing. The tested mark (brainReads) covers every group, not
+// just one turn. The stand-in brain calls a scripted tool whether or not it was offered, so what is offered is checked
+// here, from what the stand-in brain logged (model-requests.jsonl).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdtempSync } from 'node:fs';

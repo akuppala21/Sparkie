@@ -1,3 +1,10 @@
+// Covers: Agents pausing themselves (`SPARK_CONSOLE_AGENT_CHANGES_PER_HOUR=3` here): three failed agent operations in a
+// row; 3 changes in an hour (an agent's and Sparkie's count; an `already`, and the owner's button press, don't); then a
+// change is refused (403), settings show `halted` and `autoPaused`, a notice is in `events.jsonl` and an audit line
+// `pause-agents`; Sparkie is paused too, the owner's buttons still run; resuming. The service's clock moves an hour
+// between the cases. The owner's own failed work: three failed `POST /actions` operations, then three started by
+// Sparkie in the owner's chat (the job marked `ownersOwn`), don't pause.
+//
 // Agents pause themselves: outside agents, Sparkie and self-healing (anything but the owner on the page) stop changing
 // things after SPARK_CONSOLE_AGENT_CHANGES_PER_HOUR changes in an hour (3 here; start-mock.mjs sets 1000 for the other
 // files) or after three failed operations in a row. Only changes that started an operation count. Pausing sets the

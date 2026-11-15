@@ -1,14 +1,15 @@
-// The brain eval's record and where it is kept (R47; the one page, milestone 1 and section 10; P-4). test/eval.mjs on the
-// stand-in brain writes one record a run: what the brain reads in the build that answered (the lock's mark, the same on
-// a fresh stand-in console of that tree), the case set's version (an edited case is a new one), the cap, the brain and
-// the build, and each run's grade, rounds, seconds and calls, with no words of the answer; --tree runs another
-// checkout's console and names its build, a changed tool text there is another mark, and a secret flag in the brain's
-// setup is hidden. POST /main/eval, the owner's alone, keeps a record in the profile of the brain serving now: refused,
-// storing nothing, before that brain has a profile, for another brain setup, a real brain's record on a stand-in
-// console, another cap, a malformed record, and as nobody, a member, an agent's key, cross-site, through Funnel and from
-// a Spark's address. test/eval.mjs --store keeps one. sparkie_setup shows it on record for what this build's brain reads
-// on today's case set, or that the one on record is for another case set, and, in a build whose tool text changed, for
-// another version of what the brain reads. The newest five are kept for each, and the six newest of those.
+// Covers: The brain eval's record and where it is kept (R47; the one page, milestone 1 and section 10; P-4).
+// test/eval.mjs on the stand-in brain writes one record a run: what the brain reads in the build that answered (the
+// lock's mark, the same on a fresh stand-in console of that tree), the case set's version (an edited case is a new
+// one), the cap, the brain and the build, and each run's grade, rounds, seconds and calls, with no words of the answer;
+// --tree runs another checkout's console and names its build, a changed tool text there is another mark, and a secret
+// flag in the brain's setup is hidden. POST /main/eval, the owner's alone, keeps a record in the profile of the brain
+// serving now: refused, storing nothing, before that brain has a profile, for another brain setup, a real brain's
+// record on a stand-in console, another cap, a malformed record, and as nobody, a member, an agent's key, cross-site,
+// through Funnel and from a Spark's address. test/eval.mjs --store keeps one. sparkie_setup shows it on record for what
+// this build's brain reads on today's case set, or that the one on record is for another case set, and, in a build
+// whose tool text changed, for another version of what the brain reads. The newest five are kept for each, and the six
+// newest of those.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

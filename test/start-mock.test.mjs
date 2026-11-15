@@ -1,9 +1,9 @@
-// The stand-in fleet itself (start-mock.mjs). Its start: a port taken by someone else in the moment before the service
-// listens (another file's fleet, four files at once) is noticed at once and the start made again, clean, on new ports.
-// Its clean-up, stop(): a process that outlives the guard and still writes in the fleet's temporary folder (stop() tries
-// again until it is done), and a folder that can't be removed at all (one line on stderr, never an error). A leftover
-// temporary folder is not a product failure: it must never fail a test or hide the error a test's own body threw from
-// inside `try { … } finally { await fleet.stop(); }`.
+// Covers: The stand-in fleet itself (start-mock.mjs). Its start: a port taken by someone else in the moment before the
+// service listens (another file's fleet, four files at once) is noticed at once and the start made again, clean, on new
+// ports. Its clean-up, stop(): a process that outlives the guard and still writes in the fleet's temporary folder
+// (stop() tries again until it is done), and a folder that can't be removed at all (one line on stderr, never an
+// error). A leftover temporary folder is not a product failure: it must never fail a test or hide the error a test's
+// own body threw from inside `try { … } finally { await fleet.stop(); }`.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
