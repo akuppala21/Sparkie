@@ -173,6 +173,7 @@ async function runChoice(viewer, conv, id, by) {
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
+  compare: 'Comparing models for',
   deploy: 'Starting',
   'deploy-cluster': 'Starting',
   'power-off': 'Powering off',
@@ -201,7 +202,7 @@ function postResult(job) {
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
   // (a failure already on record as a lesson says so, from the lesson's typed fields: 20-lessons.mjs)
   const seen = job.status === 'failed' ? lessonSeenBefore(job) : null;
-  conv.messages.push({ role: 'assistant', content: `${content}${seen ? `\n${seen}` : ''}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status });
+  conv.messages.push({ role: 'assistant', content: `${content}${seen ? `\n${seen}` : ''}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status, ...(Array.isArray(job.choices) && job.choices.length ? { choices: job.choices } : {}) });
   conv.updatedAt = new Date().toISOString();
   saveChats();
   // Work started from Telegram reports there too, as a fixed line (20-tell.mjs).
