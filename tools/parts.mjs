@@ -192,7 +192,7 @@ const none = v => /^none\b/i.test(v || '');
 
 // Owns: "access.json (writers: changeAccess, ownAccess), audit.jsonl (writers: none; the installer writes it)"
 export function owned(value) {
-  if (none(value)) return [];
+  if (!value || none(value)) return [];
   return items(value).map(it => {
     const m = /^`?([\w.-]+)`?\s*(?:\((.*)\))?$/.exec(it);
     if (!m) return { file: it, writers: null };
@@ -201,7 +201,7 @@ export function owned(value) {
   });
 }
 // Timers: "watchHeld (every 60 s), healPass (every HEAL_PASS_MS)": each item's first name (or "top level").
-export const timerNames = value => (none(value) ? [] : items(value).map(it => (/^top level\b/.test(it) ? 'top level' : /^`?([A-Za-z_$][\w$]*)/.exec(it)?.[1] || it)));
+export const timerNames = value => (!value || none(value) ? [] : items(value).map(it => (/^top level\b/.test(it) ? 'top level' : /^`?([A-Za-z_$][\w$]*)/.exec(it)?.[1] || it)));
 
 // One part, read: its header, top-level names, functions, actions, and the writes, timers, events and operations in it.
 function readPart(file, text) {
@@ -639,7 +639,7 @@ export function registry(root = ROOT, tree = readParts(root)) {
     ...timers.map(t => `| \`${t.name}\` | \`${t.part.slice(0, -4)}\` | ${cell(t.text) || '—'} |`),
     '',
     ...(() => {
-      const wakes = parts.filter(p => p.header && !none(p.header.fields.Wakes));
+      const wakes = parts.filter(p => p.header?.fields.Wakes && !none(p.header.fields.Wakes));
       return wakes.length ? ['| Part | May wake |', '|---|---|', ...wakes.map(p => `| \`${p.file.slice(0, -4)}\` | ${cell(p.header.fields.Wakes)} |`)] : ['No part may wake a Spark: every header says `Wakes: none`.'];
     })(),
     '',
