@@ -335,7 +335,6 @@ function portalHostId() {
   }
 }
 const hardware = n => `${HARDWARE[n.id] || 'DGX Spark'} · ${String(n.gpu || 'NVIDIA GB10').replace(/^NVIDIA\s+/, '')}`;
-const editorUrl = n => n.editorPath || `${CONSOLE_API}connect/${n.id}/`;
 const sshCommand = id => (conn(id) ? `ssh ${conn(id).alias || `${conn(id).user}@${conn(id).ip}`}` : null);
 const sshDirect = id => (conn(id) ? `ssh ${conn(id).user}@${conn(id).ip}` : null);
 function desktopUrl(id, scheme) {
@@ -830,12 +829,7 @@ function drawer({ title, body, foot, actions = [], wide = false, onClose }) {
 }
 
 /* ───────── jobs ───────── */
-// Spark actions: what each is called, and the warning asked before it runs.
-const ACTION_COPY = {
-  'editor-restart': ['Restart VS Code', 'Open VS Code tabs will reconnect. Save your work first.'],
-};
-const actionLabel = action => ACTION_COPY[action]?.[0] || null;
-const jobLabel = j => (j.type === 'spark-action' && actionLabel(j.action)) || actionLabel(j.type) || SVC_LABEL[j.type]?.(j) || cap(String(j.type || 'Operation').replace(/[-_]/g, ' '));
+const jobLabel = j => SVC_LABEL[j.type]?.(j) || cap(String(j.type || 'Operation').replace(/[-_]/g, ' '));
 const jobTarget = j => (j.nodeIds || (j.nodeId ? [j.nodeId] : [])).map(nodeName).join(', ');
 
 async function resumeJobs() {
@@ -846,16 +840,6 @@ async function resumeJobs() {
 async function followNewJobs() {
   await loadJobs();
   for (const j of state.recentJobs || []) if (!TERMINAL.has(j.status) && !state.svcJobs.has(j.id)) followServiceJob(j);
-}
-
-async function nodeAction(n, action) {
-  const [label, warning] = ACTION_COPY[action];
-  if (warning && !(await dialog({ title: `${label} on ${n.name}?`, description: warning, confirm: label, danger: true }))) return;
-  try {
-    await followServiceJob(await capi(`nodes/${n.id}/actions`, 'POST', { action }));
-  } catch (e) {
-    toast(e.message, { kind: 'bad', timeout: 9000 });
-  }
 }
 
 /* ───────── routing ───────── */
@@ -1231,7 +1215,6 @@ function openTargets(n) {
   const ssh = sshCommand(n.id);
   return [
     { heading: `Open ${n.name}` },
-    { label: 'VS Code in browser', icon: 'code', href: editorUrl(n), external: true, hint: 'editor + terminal' },
     conn(n.id) ? { label: 'VS Code desktop', icon: 'monitor', href: desktopUrl(n.id, 'vscode'), hint: 'Remote SSH' } : null,
     conn(n.id) ? { label: 'Cursor', icon: 'monitor', href: desktopUrl(n.id, 'cursor'), hint: 'Remote SSH' } : null,
     'sep',
@@ -1239,25 +1222,18 @@ function openTargets(n) {
   ];
 }
 
+// Your own editor over SSH, or the SSH command (nothing goes through Spark Console).
 function openButton(n, size = 'sm') {
-  if (!owner()) return null;
-  return h('div', { class: 'btn-group' },
-    h('a', { class: `btn ${size} primary`, href: editorUrl(n), target: '_blank', rel: 'noopener noreferrer', title: `Open VS Code on ${n.name} in a new tab`, 'aria-label': `Open VS Code on ${n.name}` }, icon('code'), 'VS Code'),
-    h('button', {
-      class: `btn ${size} primary`, type: 'button', 'aria-label': `More ways to open ${n.name}`, 'aria-haspopup': 'menu',
-      onclick: e => openMenu(e.currentTarget, openTargets(n)),
-    }, icon('chevronDown')));
+  if (!owner() || !conn(n.id)) return null;
+  return menuButton(() => openTargets(n), { label: `Ways to open ${n.name}`, cls: `btn ${size} primary`, iconName: 'monitor', text: 'Open' });
 }
 
 function sparkActions(n, onPage = false) {
-  const up = isUp(n);
   return [
     onPage ? null : { label: 'View details', icon: 'chip', onSelect: () => go(`spark/${n.id}`) },
     owner() && !onPage ? { label: 'Logs', icon: 'logs', onSelect: () => go(`spark/${n.id}/logs`) } : null,
     owner() && !onPage ? { label: 'Workloads', icon: 'box', onSelect: () => go(`spark/${n.id}/workloads`) } : null,
     owner() ? { label: 'Run checks', icon: 'clipboard', onSelect: () => go(`spark/${n.id}/diagnostics?run=1`) } : null,
-    owner() ? 'sep' : null,
-    owner() ? { label: 'Restart VS Code', icon: 'refresh', disabled: !up, onSelect: () => nodeAction(n, 'editor-restart') } : null,
   ];
 }
 
@@ -1480,7 +1456,6 @@ function factChips(n) {
   const chip = (ic, text, kind = '') => h('span', { class: `chip ${kind}` }, icon(ic), text);
   return [
     n.dockerAccessible ? null : chip('alert', 'Can’t run models: Docker isn’t answering', 'warn'),
-    owner() && !n.editorReady ? chip('code', 'VS Code not ready', 'warn') : null,
     num(net.highSpeedLinksConfigured) && net.highSpeedLinksUp < net.highSpeedLinksConfigured ? chip('link', `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} direct cables up`, 'warn') : null,
   ];
 }
@@ -1533,9 +1508,7 @@ function overviewTab(box, n0) {
     redraw(services, 
       row('box', 'Running here', n.dockerAccessible ? null : pill('Docker isn’t answering', 'warn'),
         workloads(n).length ? workloads(n).join(', ') : 'Nothing running.',
-        owner() ? h('a', { class: 'btn ghost sm', href: `#/spark/${id}/workloads` }, 'Details') : null),
-      owner() ? row('code', 'VS Code', pill(n.editorReady ? 'Ready' : 'Not ready', n.editorReady ? 'good' : 'warn'), 'Editor and terminal in your browser.',
-        h('button', { class: 'btn ghost sm', type: 'button', onclick: () => nodeAction(node(id), 'editor-restart') }, 'Restart')) : null);
+        owner() ? h('a', { class: 'btn ghost sm', href: `#/spark/${id}/workloads` }, 'Details') : null));
 
     const net = n.network || {}, pw = n.power || {};
     const kv = (k, v) => h('div', {}, h('dt', {}, k), h('dd', {}, v));
@@ -1557,14 +1530,13 @@ function overviewTab(box, n0) {
 function connectPanel(id) {
   const body = h('div', { class: 'connect-grid' });
   live(() => {
-    const n = node(id), c = conn(id);
+    const c = conn(id);
     if (!c) { set(body, state.connectionsError ? failBanner('Couldn’t load the connection details', state.connectionsError, loadConnections) : h('p', { class: 'muted' }, state.connections === null ? 'Loading connection details…' : 'No connection details for this Spark.')); return; }
     const line = (text, label) => h('div', { class: 'connect-line' }, h('code', {}, text),
       h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': `Copy ${label}`, title: 'Copy', onclick: () => copy(text, `Copied: ${text}`) }, icon('copy')));
     const launch = (ic, name, sub, href, external) => h('a', { class: 'launch', href, target: external ? '_blank' : null, rel: external ? 'noopener noreferrer' : null }, icon(ic), h('strong', {}, name), h('span', {}, sub));
     redraw(body, 
       h('div', { class: 'launch-grid' },
-        launch('code', 'Browser', 'VS Code + terminal', editorUrl(n), true),
         launch('monitor', 'VS Code', 'Remote SSH', desktopUrl(id, 'vscode')),
         launch('monitor', 'Cursor', 'Remote SSH', desktopUrl(id, 'cursor'))),
       line(sshCommand(id), 'SSH command'),
@@ -2148,7 +2120,6 @@ const SVC_LABEL = {
   download: j => `Download ${j.model} to ${nodeName(j.node)}`,
   'main-start': j => `Start ${j.model} on ${nodeName(j.node)}`,
   'main-stop': j => `Stop ${j.model} on ${nodeName(j.node)}`,
-  'spark-action': j => `${actionLabel(j.action) || 'Change'} on ${nodeName(j.node)}`,
   'main-switch': j => `Switch ${ASSISTANT} to ${j.model}`,
   dig: j => `Find setups for ${j.model}`,
   'add-list': j => `Add ${j.model} from Hugging Face`,
@@ -2233,7 +2204,7 @@ async function streamChat(path, body, onEvent) {
 // What Sparkie did while answering, one quiet line each: "Checked Fleet status · 0.4 s", "Started: Start a model".
 // The same lookup made more than once is one line; changes are always listed one by one. A change that only asked
 // (which model? OK to stop this?) waits for a button below, so it doesn't say Started. The service marks those with
-// outcome; without it, buttons on the message say the same.
+// outcome; without it, buttons on the message say the same. A command run as a look (outcome look) says it changed nothing.
 // How a change was checked (docs/contract.md 7.9): its plan, folded away. And numbers in the answer no tool reported.
 const SOURCE_WORDS = { said: 'from your words', live: 'from what’s running', chosen: 'chosen by Spark Console', owner: 'you picked it' };
 const INPUT_NAMES = { spark: 'Spark', sparks: 'Sparks', model: 'Model', container: 'Model', setup: 'Recipe setup', id: 'Operation' };
@@ -2253,15 +2224,17 @@ function checkedFold(m) {
 }
 
 // A command Sparkie ran on a Spark (design A 2.10): its own quiet row, never folded, the command itself on a button
-// (the Spark it ran on before it, "as root" when it was); a press shows the command whole in fixed-width type with the
-// end of what it printed, and where all of it is kept. The service builds and masks every field; here they are text.
+// (the Spark it ran on before it, "as root" or "as a look"); a press shows the line saying it ran as a look, the
+// command whole in fixed-width type with the end of what it printed, and where all of it is kept. The service builds
+// and masks every field; here they are text.
 function commandRow(t) {
   const shown = h('div', { class: 'cmd-shown', hidden: true },
+    t.look ? h('div', { class: 'muted' }, t.look) : null,
     h('pre', {}, [t.line, t.tail].filter(Boolean).join('\n')),
     t.kept ? h('div', { class: 'muted' }, `All of it is kept in Sparkie’s record ${t.kept}.`) : null);
   const btn = h('button', { type: 'button', class: 'cmd-row', 'aria-expanded': 'false',
     onclick: () => { shown.hidden = !shown.hidden; btn.setAttribute('aria-expanded', String(!shown.hidden)); } },
-  t.where ? h('span', {}, `${t.where}${t.root ? ', as root' : ''}`) : null, h('code', {}, t.line), t.ok === false ? h('span', {}, 'didn’t run') : null);
+  t.where ? h('span', {}, `${t.where}${t.root ? ', as root' : t.look ? ', as a look' : ''}`) : null, h('code', {}, t.line), t.ok === false ? h('span', {}, 'didn’t run') : null);
   return h('li', {}, btn, shown);
 }
 
@@ -2278,7 +2251,7 @@ function toolLines(tools, asked = false) {
     const title = t.title || t.name;
     const waits = t.outcome ? ['question', 'needs-ok'].includes(t.outcome) : asked;
     return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? 'Started' : 'Couldn’t'}: ${title}`)
-      : t.ok ? `Checked ${title}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
+      : t.ok ? `${t.outcome === 'look' ? `${title} as a look (nothing changed or sent)` : `Checked ${title}`}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
   }));
 }
 
@@ -2795,7 +2768,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
         if (ev.type === 'thinking') reply.thinking = true;
         if (ev.type === 'delta') reply.content += ev.text;
         if (ev.type === 'tool') {
-          reply.tools = [...(reply.tools || []), { name: ev.name, title: ev.title, ok: ev.ok, ms: ev.ms, change: ev.change, outcome: ev.outcome, where: ev.where, line: ev.line, tail: ev.tail, root: ev.root, kept: ev.kept }];
+          reply.tools = [...(reply.tools || []), { name: ev.name, title: ev.title, ok: ev.ok, ms: ev.ms, change: ev.change, outcome: ev.outcome, where: ev.where, line: ev.line, tail: ev.tail, root: ev.root, kept: ev.kept, look: ev.look }];
           if (ev.change && ev.ok) followNewJobs();
         }
         if (ev.type === 'done' || ev.type === 'error') {
@@ -3300,7 +3273,6 @@ function paletteCommands() {
     const up = isUp(n), sub = COND[condition(n)][0];
     add('Sparks', n.name, 'chip', () => go(`spark/${n.id}`), { sub, keywords: `${hardware(n)} ${conn(n.id)?.alias || ''} details` });
     if (owner() && up) {
-      add('Open', `VS Code on ${n.name}`, 'code', () => window.open(editorUrl(n), '_blank', 'noopener'), { keywords: 'editor terminal browser ide' });
       if (conn(n.id)) {
         add('Open', `VS Code desktop on ${n.name}`, 'monitor', () => { location.href = desktopUrl(n.id, 'vscode'); }, { keywords: 'remote ssh ide' });
         add('Open', `Cursor on ${n.name}`, 'monitor', () => { location.href = desktopUrl(n.id, 'cursor'); }, { keywords: 'remote ssh ide' });
@@ -3312,7 +3284,6 @@ function paletteCommands() {
       add('Inspect', `Logs on ${n.name}`, 'logs', () => go(`spark/${n.id}/logs`), { keywords: 'editor console sparkie output' });
       add('Inspect', `Workloads on ${n.name}`, 'box', () => go(`spark/${n.id}/workloads`), { keywords: 'containers processes docker gpu' });
       add('Inspect', `Run checks on ${n.name}`, 'clipboard', () => go(`spark/${n.id}/diagnostics?run=1`), { keywords: 'check health troubleshoot diagnostics cables' });
-      if (up) add('Actions', `Restart VS Code on ${n.name}`, 'refresh', () => nodeAction(n, 'editor-restart'), { keywords: 'vscode code server editor' });
     }
   }
   if (canChat()) {

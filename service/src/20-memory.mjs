@@ -12,6 +12,7 @@
 // A line that is replaced or forgotten is retired, never erased: it moves to memory-past.json with when, why, who did
 // it and what replaced it (`memory {past: true}` lists them). Every line says who it is from (`by`) and where it came
 // from (`src`). saveMemory is the one writer of both files (R22); an agent never replaces or forgets an owner's line (R45).
+// What each line is about (`about`, the names in it) and the index of them are 20-memory-names.mjs's.
 const MEMORY_FILE = `${STATE_DIR}/memory.json`;
 const MEMORY_PAST_FILE = `${STATE_DIR}/memory-past.json`;
 const MEMORY_CHARS = 4000;
@@ -24,11 +25,14 @@ const memoryPast = () => { const f = readKept(MEMORY_PAST_FILE); return Array.is
 // An erase (`erased`, a line's id) takes every record of it out of the past file and saves both files twice, so neither
 // copy from before the last save (<file>.prev, writePrivate) still holds its words.
 function saveMemory(entries, gone = [], erased = null) {
+  // (every line is written with what it is about, and the index follows the save: 20-memory-names.mjs)
+  [entries, gone] = [memoryNamed(entries), memoryNamed(gone)];
   const past = gone.length || erased ? [...memoryPast().filter(p => p.id !== erased && !gone.some(g => g.id === p.id)), ...gone] : null;
   for (let n = erased ? 2 : 1; n > 0; n--) {
     if (past) writePrivate(MEMORY_PAST_FILE, { past });
     writePrivate(MEMORY_FILE, { entries });
   }
+  memoryIndexOf(entries, memorySig());
 }
 // A line's words, live or retired, for its button (changeLabel); null when there is none or memory can't be read.
 const memoryText = id => { for (const read of [memoryEntries, memoryPast]) { try { const e = read().find(x => x.id === id); if (e) return e.text; } catch {} } return null; };
@@ -87,14 +91,16 @@ function memoryWithPast(ctx) {
   if (ctx.via === 'agent' || ctx.agent || ctx.channel) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const entries = memoryEntries(), live = new Set(entries.map(e => e.id)), past = memoryPast().filter(p => !live.has(p.id));
   const textOf = id => (entries.find(e => e.id === id) || past.find(p => p.id === id))?.text ?? null;
-  return { entries, past: past.map(p => (p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
+  const shown = ctx.via === 'api' ? x => x : withoutAbout;
+  return { entries: entries.map(shown), past: past.map(p => shown(p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
 }
 
 action({
   name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
   description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
   input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten (the owner’s own, in Spark Console).' } }, additionalProperties: false },
-  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: memoryEntries() }),
+  // (the owner's own call sees what each line is about, from the index; Sparkie and agents see the lines as before)
+  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: ctx.via === 'api' ? memoryIndexNow().lines : memoryEntries().map(withoutAbout) }),
 });
 action({
   name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
@@ -112,7 +118,7 @@ action({
     notTheOwners(old, ctx);
     const all = before.filter(e => e !== old);
     if (all.some(e => e.text.toLowerCase() === line.toLowerCase())) return { outcome: 'already', note: `Already remembered: ${line}` };
-    const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line,
+    const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line, about: memoryNamesIn(line),
       by: lineBy(ctx), at: new Date().toISOString(), src: lineSrc(ctx), ...(old ? { replaces: old.id } : {}) };
     saveMemory([...all, entry], old ? [retired(old, 'replaced', ctx, entry.id)] : []);
     return { outcome: 'remembered', id: entry.id, note: `I’ll remember: ${line}${old ? ` (instead of: ${old.text})` : ''}` };

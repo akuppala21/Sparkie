@@ -2,12 +2,13 @@
 // Area: features        Rules: R42        Tests: work.test.mjs, page.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries five more fields, which
+// The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which
 // the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line
 // ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root
-// (whether it ran as root) and kept (the journal record that holds the whole command and output, when it ran). Code
-// builds them from the call's arguments and from the result exactly as the brain and the journal got it (masked by the
-// chat loop), never from the brain's prose, so nothing rides the event that the journal does not hold. Each text is
+// (whether it ran as root), kept (the journal record that holds the whole command and output, when it ran) and look
+// (the result's own line saying it ran as a look: nothing changed, nothing sent). Code builds them from the call's
+// arguments and from the result exactly as the brain and the journal got it (masked by the chat loop), never from the
+// brain's prose or the command's output, so nothing rides the event that the journal does not hold. Each text is
 // cleaned as a look's output is (lookClean), masked with maskSecrets before it is cut, and cut by whole
 // characters, never inside one: the line to its first 200, the last line to its last 200. A tool that is not in
 // SHOWN_CALLS gets none of this: its event is as it was. The page (public/app.js, commandRow) shows one row a command:
@@ -43,5 +44,7 @@ function commandShown(c, ok, out) {
     tail = [last && shownLast(shownText(last)), end].filter(Boolean).join('\n');
   }
   const kept = ok && value?.ran === true && /^j_[0-9a-f]{12}$/.test(value.record || '') ? value.record : null;
-  return { where: node ? sparkName(node) : null, line, tail, root: root === true, kept };
+  // (the result's own first line, built by code, when it ran as a look: nothing changed, nothing sent)
+  const look = ok && value?.ran === true && typeof value.look === 'string' ? shownFirst(shownText(value.look)) : null;
+  return { where: node ? sparkName(node) : null, line, tail, root: root === true, kept, look };
 }

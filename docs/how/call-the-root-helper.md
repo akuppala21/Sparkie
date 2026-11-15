@@ -14,8 +14,9 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 - `helperAnswer` reads the answer from the lines that begin with the id; a look's (or run's) answer is its last line,
   `<id> end <code>` or `<id> end time`, so what a command prints can never stand for one. Map a new kind of answer
   there, never by searching the output.
-- An action that calls it answers `needsOwner` (the owner's one-time command for that Spark, `ownerCommand`) when the
-  helper is missing, not this build's, without its sudo line, or without a current proof, and runs nothing else.
+- With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:
+  the owner's command (`ownerCommand`) once per Spark and reason while the console runs, then one line; never the
+  hub's yet (it waits for the lock-out net). While a proof holds its lock: "being proven right now".
 
 ## Also update
 
@@ -38,12 +39,12 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 
 ## Rules
 
-- R42: the helper, its walls, its proof, the one-time command and this call. `run` today: every command is a look
-  in the look wall. Refused before the helper runs: `sudo`, a key file (by name, link, `*`, or under a folder a walker
-  reads whole), a third look at once on a Spark. `LOOK_FORMS` run code's own text outside the wall once `check` says
-  ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too); never a member or a saved
-  workflow's step. Not built yet: proving by itself before a look, a failed proof told beyond the self-test's report
-  or kept past a restart; the key check reads words, not what a script opens; Spark 2's call needs systemd 254.
+- R42 and this call. `run` today: every command is a look; each answer that ran begins with `look` (nothing changed or
+  sent) and its step's outcome is `look`. Refused first: `sudo` as a command word, a key file (by name, link, `*`, or
+  under a folder a walker reads whole), a third look at once. `LOOK_FORMS` run code's own text once `check` says
+  ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too). Not built: proving by itself,
+  a failed proof told beyond the self-test or kept past a restart; the key check reads words, not what a script
+  opens; Spark 2's call needs systemd 254.
 - R43: a look writes one `cmd` record when it ends; a change will write its start line before the call.
 - R25 and R26: what a command printed never causes a change.
 - R10: commands reach a Spark through `spawnOn`.

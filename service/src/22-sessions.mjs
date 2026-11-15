@@ -151,11 +151,7 @@ function accessView() {
     whereToChange: 'On the page, in your account menu: Your devices signs one out; Your passkey adds or removes a passkey and makes new recovery codes. Sparkie can’t change any of these.',
   };
 }
-// When this device last used the owner's passkey: signing in with it, or confirming a change. The editors (a shell on
-// every Spark) open from the internet only within EDITOR_PASSKEY_MS of that, so a stolen cookie alone doesn't open them
-// (security audit, 2026-11-11). On the tailnet, Tailscale's identity is enough, as before.
-const EDITOR_PASSKEY_MS = Number(process.env.SPARK_CONSOLE_EDITOR_PASSKEY_MS || 12 * 3600000);
-const editorPasskeyFresh = viewer => !viewer?.session || Date.now() - Date.parse(viewer.session.passkeyAt || 0) < EDITOR_PASSKEY_MS;
+// When this device last used the owner's passkey: signing in with it, or confirming a change.
 function markPasskey(sessionId) {
   const list = sessionList(), s = list.find(x => x.id === sessionId);
   if (!s) return;
@@ -166,7 +162,7 @@ const sessionCookie = (token, maxAge) => `${SESSION_COOKIE}=${token}; Path=/cons
 // The cookie outlives the limits (browsers keep it up to 400 days); the service signs it out after 60 idle days.
 const setSessionCookie = (res, token) => res.setHeader('set-cookie', sessionCookie(token, 400 * 86400));
 const clearSessionCookie = res => res.setHeader('set-cookie', sessionCookie('', 0));
-// Signing a device out also ends what it has open: the live view and metrics streams, and the editors' connections.
+// Signing a device out also ends what it has open: the live view and metrics streams, and its app door WebSockets.
 const sessionSockets = new Map();
 function holdForSession(viewer, closable) {
   const id = viewer?.session?.id;

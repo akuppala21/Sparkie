@@ -10,14 +10,15 @@
 //                the console has no new privileges there); ~/.sudo-hangs (seconds) hangs, then fails; each call is a JSON
 //                line in ~/.sudo-calls
 //   systemd-run  --user (the owner's service manager) runs what follows its options, logged in ~/.user-units; any
-//                other call is test/mock/bin/systemd-run's, a look's unit held to its RuntimeMaxSec
+//                other call is test/mock/bin/systemd-run's, a look's unit held to its RuntimeMaxSec; with ~/.prove-hangs
+//                (seconds) a proof's outside unit waits that long first, holding the proof open
 // Spark 2 and Spark 3 are set up and proven; Spark 4 has no helper until the self-test's test sets one up whose proof
 // lets one attempt through. What this cannot show: the stand-ins build no wall, so a look runs unwalled here. The tests
 // show what the console asks the helper for and how it reads the answers; what a Spark grants is its own proof's word.
 // Linux only (GNU coreutils, bash 4 or newer): run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync, openSync, readSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -53,6 +54,7 @@ fi
 secs=''
 for a in "$@"; do case "$a" in RuntimeMaxSec=*) secs=\${a#RuntimeMaxSec=} ;; esac; done
 case " $* " in *" --unit=sw-look-"*) [ -n "$secs" ] && exec /usr/bin/timeout "$secs" ${MOCKBIN}/systemd-run "$@" ;; esac
+case " $* " in *" --unit=sw-prove-outside-"*) if [ -s "$HOME/.prove-hangs" ]; then : > "$HOME/.prove-hanging"; sleep "$(cat "$HOME/.prove-hangs")"; fi ;; esac
 exec ${MOCKBIN}/systemd-run "$@"
 `, { mode: 0o755 });
 
@@ -154,10 +156,18 @@ test('T124\'s look: where the one-time command has not run, nothing runs and Spa
   assert.match(r4.text, /"ran":false/);
   assert.deepEqual(sudoCalls('spark4'), [], 'no sudo on Spark 4');
   assert.ok(!existsSync(join(home('spark4'), '.rehearsal')));
+  // The command is given once per Spark while the console runs: a second look there says so in one line, without it.
+  const again = await look({ on: 'spark4', command: 'ls' });
+  assert.equal(again.status, 200, again.text);
+  assert.ok(!('ownerCommand' in again.json), again.text);
+  assert.match(again.json.why, /^The root helper isn’t set up on Spark 4 yet .*, so nothing ran there\.$/);
+  assert.match(again.json.next, /^The owner was given its one-time command earlier/);
+  assert.deepEqual(sudoCalls('spark4'), [], 'no sudo on Spark 4');
   // The typed actions still work there.
   assert.equal((await call(keys.look.token, 'spark_detail', { spark: 'spark4' })).isError, false);
   // Spark 3: it ran, through sudo -n, with a fresh id, the command's SHA-256 and its seconds, in the look wall's unit.
-  assert.deepEqual(r3.tools.map(t => [t.name, t.ok]), [['run', true]]);
+  assert.deepEqual(r3.tools.map(t => [t.name, t.ok, t.outcome]), [['run', true, 'look']], 'the step the page shows says it ran as a look');
+  assert.match(r3.text, /^I checked\. run said: \{"look":"It ran as a look: nothing on Spark 3 was changed and nothing was sent\./);
   assert.match(r3.text, /"ran":true/);
   assert.match(r3.text, /hello from spark 3/);
   const [s] = sudoCalls('spark3').filter(c => c.args[2] === 'look').slice(-1);
@@ -205,6 +215,36 @@ test('a helper whose sudo line is gone, one this build does not know, or one who
   assert.equal(units('spark3').length, before, 'no look wall started');
   // As it was: the look runs.
   assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
+});
+
+test('a look while a proof of the walls holds its lock there: "being proven right now", nothing runs, and afterwards it runs', { timeout: 120000 * SLOW }, async () => {
+  const h = home('spark3'), R = realpathSync(join(h, '.rehearsal'));
+  writeFileSync(join(h, '.prove-hangs'), '8');
+  rmSync(join(h, '.prove-hanging'), { force: true });
+  // (the owner's one-time command, or the self-test, proving at that moment)
+  const proof = spawn(join(R, 'usr/local/sbin/spark-console-root'), ['prove', '--id', 'heldopen0001'], { env: envFor(realpathSync(h), R), stdio: 'ignore' });
+  const ended = new Promise(res => proof.on('exit', code => res(code)));
+  try {
+    await waitFor(() => existsSync(join(h, '.prove-hanging')), { timeout: 30000, what: 'the proof held open' });
+    const calls = sudoCalls('spark3').length;
+    const r = await look({ on: 'spark3', command: 'cat docs/plain.txt' });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'The walls on Spark 3 are being proven right now; try again in a minute. Nothing ran.');
+    assert.equal(sudoCalls('spark3').length, calls, 'the helper is not called');
+  } finally { rmSync(join(h, '.prove-hangs'), { force: true }); }
+  assert.equal(await ended, 0, 'the proof passes');
+  assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
+});
+
+test('every answer of a command that ran says, first, that it ran as a look: nothing changed and nothing sent', { timeout: 60000 * SLOW }, async () => {
+  for (const [command, output] of [["find ~/jobs/x -name '*.tmp' -delete 2>/dev/null; echo cleaned", 'cleaned\n'], ['ls docs', 'plain.txt\ntodo.txt\n']]) {
+    const r = await look({ on: 'spark3', command });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(Object.keys(r.json)[0], 'look', command);
+    assert.equal(r.json.look, 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.');
+    assert.equal(r.json.outcome, 'look');
+    assert.equal(r.json.output, output, command);
+  }
 });
 
 test('what a look prints comes back masked, without escape codes, cut to the first 2,000 and last 3,500 characters, and is kept whole in its one record', { timeout: 60000 * SLOW }, async () => {
@@ -284,13 +324,14 @@ test('Spark 2: the call goes through the owner\'s service manager (sudo fails in
   assert.deepEqual(via.slice(9, 11), ['look', '--id']);
   assert.equal(via.at(-1), 'cat hub.txt');
   assert.equal(sudoCalls('spark2').at(-1).userUnit, true);
-  // Its answer when it isn't set up names --hub.
+  // Not set up there: no command is given for the hub yet (its set-up waits for the lock-out net).
   const line = join(home('spark2'), '.rehearsal', 'etc/sudoers.d/spark-console-root');
   renameSync(line, `${line}.away`);
   try {
     const n = await look({ on: 'spark2', command: 'cat hub.txt' });
-    assert.match(n.json.ownerCommand, /^ssh -t \S+@\S+ 'bash ~\/spark-console-src\/deploy\/root-for-sparkie\.sh --hub 2'$/);
-    assert.match(n.json.next, /the hub is set up last/);
+    assert.equal(n.json.ran, false);
+    assert.ok(!('ownerCommand' in n.json) && !/root-for-sparkie/.test(n.text), n.text);
+    assert.equal(n.json.why, 'Commands on Spark 2, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.');
   } finally { renameSync(`${line}.away`, line); }
 });
 
@@ -307,7 +348,13 @@ test('key files are never read back: by name, through a link, through *, and und
   await refused('grep -r BEGIN ~', 403, /^Not run: it would read every file under ~ on Spark 3, and keys are there\. Name a folder that holds none\.$/);
   await refused('cd project && grep -rn BEGIN', 403, /^Not run: it would read every file under project on Spark 3/);
   await refused('cat $HOME/.ssh/id_ed25519', 403, /^Not run: ~\/\.ssh\/id_ed25519 is a key file/);
-  await refused('sudo cat /etc/shadow', 400, /^Leave out sudo/);
+  // sudo is refused as a command, never as a word to look for.
+  for (const command of ['sudo cat /etc/shadow', 'sudo ls', 'true && sudo ls', 'env sudo ls', 'ls | sudo tee x', 'echo $(sudo id)']) await refused(command, 400, /^Leave out sudo/);
+  for (const command of ['grep sudo /var/log/auth.log', 'ls -l /usr/bin/sudo', 'journalctl -t sudo']) {
+    const r = await look({ on: 'spark3', command });
+    assert.equal(r.status, 200, `${command}: ${r.text}`);
+    assert.equal(r.json.ran, true, command);
+  }
   const ok = async (command, re) => {
     const r = await look({ on: 'spark3', command });
     assert.equal(r.status, 200, `${command}: ${r.text}`);
@@ -328,10 +375,10 @@ test('the short table of exact forms: nvidia-smi runs outside the wall, by code\
   assert.equal(units('spark3').length, before, 'no look wall: the form runs outside it');
   assert.deepEqual(sudoCalls('spark3').at(-1).args.slice(2, 4), ['check', '--id']);
   assert.equal(records().find(y => y.id === r.json.record).form, 'nvidia-smi');
-  // Not set up: the command, as for any look.
+  // Not set up: nothing runs there, as for any look (its command was given once already).
   const n = await look({ on: 'spark4', command: 'nvidia-smi' });
   assert.equal(n.json.ran, false);
-  assert.match(n.json.ownerCommand, ONE_TIME(4));
+  assert.match(n.json.why, /isn’t set up on Spark 4 yet/);
   assert.deepEqual(sudoCalls('spark4'), []);
 });
 
@@ -417,16 +464,18 @@ test('a look\'s tool event carries where, line, tail, root and kept; one that di
   const { ms, ...ran } = look3;
   assert.ok(Number.isFinite(ms));
   assert.match(ran.kept || '', /^j_[0-9a-f]{12}$/);
-  assert.deepEqual(ran, { name: 'run', title: 'Run a command on a Spark', ok: true, change: false,
-    where: 'Spark 3', line: '$ cat docs/plain.txt', tail: 'hello from spark 3\nexit 0', root: false, kept: ran.kept });
+  // (and the result's own first line, built by code, saying it ran as a look: the pressed row shows it)
+  assert.deepEqual(ran, { name: 'run', title: 'Run a command on a Spark', ok: true, change: false, outcome: 'look',
+    where: 'Spark 3', line: '$ cat docs/plain.txt', tail: 'hello from spark 3\nexit 0', root: false, kept: ran.kept,
+    look: 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.' });
   const rec = records().find(y => y.id === ran.kept);
   assert.equal(rec.k, 'cmd');
   assert.equal(recordText(rec), '$ cat docs/plain.txt\nhello from spark 3\n');
   // Spark 4 has no helper: nothing ran, and the tail says why; nothing is kept.
-  assert.deepEqual([look4.ok, look4.where, look4.line, look4.root, look4.kept], [true, 'Spark 4', '$ cat docs/plain.txt', false, null]);
+  assert.deepEqual([look4.ok, look4.where, look4.line, look4.root, look4.kept, look4.look], [true, 'Spark 4', '$ cat docs/plain.txt', false, null, null]);
   assert.equal(look4.tail, 'The root helper isn’t set up on Spark 4 yet (the owner’s one-time command hasn’t run there), so nothing ran there.');
   // A refused look (asked for by the Spark's name): the refusal is its tail.
-  assert.deepEqual([refused.ok, refused.where, refused.line, refused.root, refused.kept], [false, 'Spark 3', '$ cat project/server.key', false, null]);
+  assert.deepEqual([refused.ok, refused.where, refused.line, refused.root, refused.kept, refused.look], [false, 'Spark 3', '$ cat project/server.key', false, null, null]);
   assert.match(refused.tail, /^Not run: project\/server\.key is a key file or holds keys, and a look never reads keys back\./);
   // A tool that runs no command: the event and the saved step have exactly the fields they had.
   assert.deepEqual(Object.keys(r.tools.find(t => t.name === 'running_models')).sort(), ['change', 'ms', 'name', 'ok', 'title', 'type']);
