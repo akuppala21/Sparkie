@@ -73,6 +73,11 @@ function sortWrap(args, ctx, r, x, name) {
     if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
+    // (env -u takes a name away, as unset does; env -i or a lone - empties the environment, where the run wall keeps
+    // git's hooks off: asked)
+    if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
+    if (name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) raise(r, 'risky', 'env empties the environment, where the run wall keeps git’s hooks and settings off: asked.');
+    if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;
     if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }

@@ -71,7 +71,8 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
-      const key = /^(?:set|unset|get)$/.test(p[0]?.text) ? p[1] : p[0], sets = p[0]?.text === 'set' || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all');
+      // (unsetting, or removing or renaming a section, writes the settings as setting does)
+      const key = /^(?:set|unset|get|remove-section|rename-section)$/.test(p[0]?.text) ? p[1] : p[0], sets = /^(?:set|unset|remove-section|rename-section)$/.test(p[0]?.text) || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all', 'unset', 'unset-all', 'remove-section', 'rename-section');
       if (key && sets && (key.unknown || !GIT_PLAIN_KEYS.test(key.text))) raise(r, 'risky', `git config sets ${sortQ(key.text)}, which can decide what later git commands run (hooks, helpers, pagers, aliases): asked.`);
     }
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
