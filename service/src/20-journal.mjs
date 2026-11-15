@@ -191,7 +191,7 @@ function journalOp(job) {
     }
     return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
-      version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub }, jOpText(job));
+      version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub, ...opWh(job) }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }
 }
 function journalEvent(e) {
@@ -225,7 +225,7 @@ const jWhere = r => { const n = (r.sub || []).map(nodeById).find(Boolean); retur
 const jTitle = r => ACTIONS.get(r.act)?.title || r.act || r.k;
 // How a record is shown by recall: short, its own text one call away. A call's or a tool call's arguments and error only
 // when the caller may read them (open, jOpen).
-const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt']
+const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt', 'wh', 'noWh']
   .filter(k => r[k] != null).map(k => [k, r[k]])), ...(r.words ? { said: String(r.words).slice(0, 300) } : {}),
   ...(open && r.args != null ? { args: (typeof r.args === 'string' ? r.args : JSON.stringify(r.args)).slice(0, 300) } : {}), ...(open && r.err ? { error: String(r.err).slice(0, 300) } : {}),
   ...(r.text ? { text: String(r.text).slice(0, 300) } : {}), ...(r.sub?.length ? { about: r.sub } : {}),
