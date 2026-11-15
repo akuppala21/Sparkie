@@ -20,7 +20,14 @@
 # another tree or another build; a tree holding a submodule, a link other than the stand-in fleet's (below), or a
 # .gitattributes with export-; a second install while one runs. Each install leaves
 # ~/.local/state/spark-console/update-result.json: {tree, build, result: kept | not kept | refused, why, at}; kept
-# means the new build answers and the installed lock names this tree.
+# means the new build answers, the installed lock names this tree, and (when a build answered before) the real address
+# answered with it.
+# When a build answers now, the real address (config.json's origin) must answer with it first, or nothing changes.
+# Then the way back is armed from this build, not the incoming one (update-guard.sh, beside this file): a copy of what
+# an install changes and one timer in the owner's systemd that puts it back unless this script confirms the new build
+# through the real address within 10 minutes of its installer ending. The incoming installer runs with tailscale, sudo,
+# ssh and systemd-run refused, whatever it does with SKIP_ROUTES=1; a call to one of them means not kept. Tests may
+# use SPARK_CONSOLE_DOOR_URL and SPARK_CONSOLE_UPDATE_CONFIRM_S, only with SPARK_CONSOLE_ALL_LOCAL=1.
 # The token reaches git only through its environment, never a command line or git's config. A test may point at
 # another repository with SPARK_CONSOLE_REPO_URL, only with SPARK_CONSOLE_ALL_LOCAL=1.
 set -euo pipefail
@@ -31,7 +38,10 @@ SECRETS="$HOME/.config/spark-console/secrets.json"
 RESULT="$STATE/update-result.json"
 LOCK_PATH=service/workflows.lock.json
 ME="bash $SHARE/pull.sh"
-WANT='' W=''
+HERE="$(cd "$(dirname "$0")" && pwd)"
+WANT='' W='' DOOR='' ARMED=''
+CONFIRM_S=600
+if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_CONFIRM_S:-}" =~ ^[0-9]+$ ]]; then CONFIRM_S=$SPARK_CONSOLE_UPDATE_CONFIRM_S; fi
 
 die() { echo "  STOP: $*" >&2; exit 1; }
 usage() {
@@ -139,6 +149,33 @@ try: d = json.load(open(sys.argv[1]))
 except Exception: d = {}
 print(d.get("build") or "-", d.get("tree") or "-", d.get("commit") or "-")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || echo '- - -'
 }
+# The real address, the way in the owner uses: config.json's origin, as installed now (a test's own, only with ALL_LOCAL).
+door_url() {
+  if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -n "${SPARK_CONSOLE_DOOR_URL:-}" ]; then echo "$SPARK_CONSOLE_DOOR_URL"; return 0; fi
+  python3 -c 'import json, re, sys
+try: o = json.load(open(sys.argv[1])).get("origin") or ""
+except Exception: o = ""
+if not re.fullmatch(r"https://[a-z0-9.-]+(:[0-9]{1,5})?", o): sys.exit(1)
+print(o)' "$HOME/spark-console-service/config.json" 2>/dev/null
+}
+# door_get <path>: the status code through the real address (000: no answer at all); the body in $W/door.body.
+door_get() {
+  local c
+  c=$(curl -s -m 10 --max-redirs 0 -o "$W/door.body" -w '%{http_code}' "$DOOR$1" 2>/dev/null) || true
+  [[ "$c" =~ ^[0-9]{3}$ ]] || c=000
+  echo "$c"
+}
+json_build() { python3 -c 'import json, sys
+d = json.loads(sys.stdin.read())
+print(d.get("build") or "" if d.get("ok", True) is True else "")' 2>/dev/null || true; }
+# The service's build through the real address, or nothing.
+door_build() { [ "$(door_get /console/api/health)" = 200 ] && json_build < "$W/door.body" || true; }
+# door_page <path>: the build of the page served at <path> (its version.json), when <path> answers.
+door_page() {
+  [ "$(door_get "$1")" = 200 ] && [ "$(door_get "${1}version.json")" = 200 ] && json_build < "$W/door.body" || true
+}
+ui_build() { json_build < "$HOME/spark-console/version.json"; }
+span() { if [ "$1" -ge 120 ]; then echo "$(($1 / 60)) minutes"; else echo "$1 seconds"; fi; }
 health_build() {
   curl -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
 d = json.loads(sys.stdin.read())
@@ -294,29 +331,112 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
     || refuse "Tree $WANT's links couldn't be read after unpacking."
   [ -z "$p" ] || refuse "Tree $WANT unpacked with a link that isn't allowed ($p)."
 
+  # When a build answers now: the real address must answer with it (else a new one couldn't be confirmed), the owner
+  # is asked here if work is running, and the way back is armed from this build before the new one's code runs.
+  local before pages='' pg ui busy answer
+  before=$(health_build)
+  if [ -n "$before" ]; then
+    DOOR=$(door_url) || refuse "The real address isn't known: the installed config.json has no origin."
+    pg=$(door_build)
+    [ "$pg" = "$before" ] || refuse "The real address ($DOOR) doesn't answer with the build running now ($before; it answered ${pg:-nothing}), so a new build couldn't be confirmed through it."
+    ui=$(ui_build)
+    for pg in / /console/; do [ -z "$ui" ] || [ "$(door_page "$pg")" != "$ui" ] || pages="$pages $pg"; done
+    busy=$(curl -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
+d = json.loads(sys.stdin.read())
+print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null || echo '0 0')
+    if [ "$busy" != '0 0' ] && [ "${ASSUME_YES:-}" != 1 ]; then
+      answer=''
+      echo "Spark Console is busy: ${busy% *} job(s) running, and Sparkie is answering in ${busy#* } chat(s). Updating restarts it, which interrupts them."
+      read -rp "Update anyway? [y/N] " answer </dev/tty 2>/dev/null || answer=''
+      case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
+    fi
+    [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
+    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" \
+      || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
+    ARMED=yes
+    trap 'echo "  The install was interrupted." >&2; bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted"; result "not kept" "the install was interrupted; the build from before was put back" "$code_build"; exit 130' INT TERM HUP
+  else
+    echo "Spark Console isn't answering now, so there is no working build to go back to: the new build stays if it passes its own installer's checks."
+  fi
+  # tailscale, sudo, ssh and systemd-run, refused for the incoming installer (SKIP_ROUTES=1 asks it not to call them).
+  mkdir "$W/guard-bin"
+  for pg in tailscale sudo ssh systemd-run; do
+    printf '#!/bin/sh\necho "%s $*" >> %q\necho "pull.sh: an install from GitHub never runs %s; refused." >&2\nexit 1\n' "$pg" "$W/guarded.log" "$pg" > "$W/guard-bin/$pg"
+    chmod 700 "$W/guard-bin/$pg"
+  done
+
   # Its own installer, on this Spark: no routes (no tailscale, sudo or ssh), the note built here. If work is running,
-  # the installer asks on this terminal first; ASSUME_YES=1 skips the question, and with no terminal nothing changes.
+  # the installer asks on this terminal first (here pull.sh has asked already when a build answers); ASSUME_YES=1
+  # skips the question, and with no terminal nothing changes.
   note="Installed from GitHub with pull.sh: tree $WANT, commit ${c:0:12}$([ "$lat" = - ] || echo ", tested at $lat")."
   [ -z "${NOTE:-}" ] || note="$note ${NOTE}"
   echo "Installing tree $WANT (commit ${c:0:12}, build $code_build) with its own installer …"
-  ( cd "$W/tree" && NOTE="$note" SKIP_ROUTES=1 bash deploy/host-on-portal.sh local ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
+  local ay="${ASSUME_YES:-}"
+  [ -z "$ARMED" ] || ay=1
+  ( cd "$W/tree" && export PATH="$W/guard-bin:$PATH" && NOTE="$note" SKIP_ROUTES=1 ASSUME_YES="$ay" \
+      bash deploy/host-on-portal.sh local ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"
-  # Kept only when the new build answers, the installed lock names this tree and its installer said it kept it: a tree
-  # with the same service code (only the page, documents or worker.py changed) answers with the same build even when
-  # its installer changed nothing or went back.
-  if [ "$now" = "$code_build" ] && [ "$it" = "$t" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; then
+  local guarded failed='' reached='' last=''
+  guarded=$(cut -d' ' -f1 "$W/guarded.log" 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/ $//' || true)
+  # Kept by its installer only when the new build answers, the installed lock names this tree and its installer said it
+  # kept it: a tree with the same service code (only the page, documents or worker.py changed) answers with the same
+  # build even when its installer changed nothing or went back.
+  if ! { [ "$now" = "$code_build" ] && [ "$it" = "$t" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; }; then
+    failed=$(grep -E 'STOP:|didn.t pass' "$W/install.log" | tail -n 1 | sed 's/^ *//' | cut -c1-400 || true)
+    if [ -z "$failed" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; then
+      failed="its installer said it kept build $code_build, but the build answering is ${now:-none}"
+    fi
+    failed=${failed:-the installer ended with exit $code}
+  elif [ -n "$guarded" ] && [ -n "$ARMED" ]; then
+    failed="its installer ran $guarded, which an install from pull.sh never does (refused)"
+  elif [ -n "$ARMED" ]; then
+    # The real door: through the real address, the new service answers, and each page that was served before still is.
+    echo "Checking the new build through the real address ($DOOR), for up to $(span "$CONFIRM_S") …"
+    local until=$((SECONDS + CONFIRM_S)) ok='' newui hc
+    newui=$(ui_build)
+    while :; do
+      hc=$(door_get /console/api/health); last=''
+      [ "$hc" = 000 ] || reached=yes
+      [ "$hc" != 200 ] || last=$(json_build < "$W/door.body")
+      if [ "$last" = "$code_build" ]; then
+        ok=yes
+        for pg in $pages; do [ "$(door_page "$pg")" = "$newui" ] || ok=''; done
+        [ -z "$ok" ] || break
+      fi
+      [ "$SECONDS" -lt "$until" ] || break
+      sleep 2
+    done
+    if [ -z "$ok" ] && [ -z "$reached" ]; then
+      failed="the real address ($DOOR) didn't answer at all in the $(span "$CONFIRM_S") after the install. That isn't proof the new build is bad (the address itself may be down), but nothing confirmed it, so the build from before went back. Try again once the address answers"
+    elif [ -z "$ok" ]; then
+      failed="through the real address ($DOOR) the new build didn't answer as itself in $(span "$CONFIRM_S") (its service answered ${last:-nothing})"
+    else
+      echo "  Through the real address: the new build answers$([ -z "$pages" ] || echo ", and its page is served")."
+    fi
+  fi
+  if [ -z "$failed" ] && [ -n "$ARMED" ] && ! bash "$SHARE/update-guard/update-guard.sh" disarm; then
+    failed='the way back had already put the build from before back'
+  fi
+  if [ -z "$failed" ]; then
+    trap - INT TERM HUP
     why='it passed its checks'
-    [ "$code" = 0 ] || why="it passed its checks, but the installer then ended with exit $code"
+    [ -z "$ARMED" ] || why="$why, and the real address answers with it"
+    [ "$code" = 0 ] || why="$why, but the installer then ended with exit $code"
+    [ -z "$guarded" ] || why="$why; its installer tried to run $guarded, which was refused"
     result kept "$why" "$code_build"
     echo "  Kept: build $code_build (tree $WANT) is running."
-  else
-    why=$(grep -E 'STOP:|didn.t pass' "$W/install.log" | tail -n 1 | sed 's/^ *//' | cut -c1-400 || true)
-    now="the build answering now is ${now:-none}$([ "$it" = - ] || echo ", installed from tree ${it:0:12}")"
-    result 'not kept' "${why:-the installer ended with exit $code}; $now" "$code_build"
-    echo "  Not kept: $now." >&2
-    return 1
+    return 0
   fi
+  echo "  Not kept: $failed." >&2
+  [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed"
+  trap - INT TERM HUP
+  now=$(health_build)
+  read -r ib it ic <<<"$(installed)"
+  now="the build answering now is ${now:-none}$([ "$it" = - ] || echo ", installed from tree ${it:0:12}")"
+  result 'not kept' "$failed; $now" "$code_build"
+  echo "  Not kept: $now." >&2
+  return 1
 }
 
 main() {
