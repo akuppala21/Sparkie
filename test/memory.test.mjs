@@ -4,7 +4,7 @@
 // build still reads the memory.json this one writes. Past the old 4,000 characters the prompt keeps the newest lines
 // that fit and says how many more there are. Forgetting through Sparkie: a question, "don't forget", "never forget", a
 // supposed and a quoted "forget" keep the line live; "forget that …" retires it. An agent never replaces or forgets an
-// owner's line through Sparkie, nor replaces one over the agent door; a line said in an agent's chat is the agent's.
+// owner's line, over the agent door or through Sparkie; its own lines it may, and a line said in its chat is its own.
 // The stand-in model is scripted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,7 +125,7 @@ test('forgetting through Sparkie: a question, "don\'t forget", "never forget", a
   } finally { script([]); fresh(); }
 });
 
-test('an agent never replaces or forgets an owner\'s line through Sparkie, nor replaces one over the agent door; its own lines are its own', { timeout: 240000 * SLOW }, async () => {
+test('an agent never replaces or forgets an owner\'s line, over the agent door or through Sparkie; its own lines it may', { timeout: 240000 * SLOW }, async () => {
   fresh();
   const OWN = 'Spark 3 is where models go';
   const mine = await remember(OWN, 'preference');
@@ -134,12 +134,18 @@ test('an agent never replaces or forgets an owner\'s line through Sparkie, nor r
   const theirs = door.value.id;
   const before = await live();
   assert.deepEqual(before.map(e => [e.text, e.by, e.src.via]), [[OWN, 'owner', 'api'], ['The nightly eval runs at 2am', agent.name, 'agent']]);
-  // Over the agent door: replacing the owner's line is refused, and nothing changes.
+  // Over the agent door: replacing or forgetting the owner's line is refused, and nothing changes.
   const swap = await call(agent.token, 'remember', { text: 'Spark 4 is where models go', kind: 'preference', replaces: mine });
   assert.equal(swap.isError, true, swap.text);
   assert.match(swap.text, /^\[not_allowed\] That line is the owner’s: an agent never replaces or forgets it/);
   assert.deepEqual(await live(), before);
   assert.deepEqual(await past(), []);
+  const drop = await call(agent.token, 'forget_memory', { id: mine });
+  assert.equal(drop.isError, true, drop.text);
+  assert.match(drop.text, /^\[not_allowed\] That line is the owner’s: an agent never replaces or forgets it/);
+  assert.deepEqual(await live(), before);
+  assert.deepEqual(await past(), []);
+  assert.equal(existsSync(state('memory-past.json')), false);
   // Through Sparkie in the agent's own chat: forgetting or replacing the owner's line is refused, with no button.
   const ask = async (message, calls) => {
     script([{ match: `^${esc(message)}$`, calls }]);
@@ -164,6 +170,11 @@ test('an agent never replaces or forgets an owner\'s line through Sparkie, nor r
     assert.deepEqual(now.map(e => [e.text, e.by]), [[OWN, 'owner'], ['The nightly eval runs on Spark 4', agent.name]]);
     assert.deepEqual(now[1].src, { via: 'sparkie', chat: v.conversation });
     assert.deepEqual((await past()).map(p => [p.id, p.gone.why, p.gone.who]), [[theirs, 'replaced', agent.name]]);
+    // Over the agent door, the agent forgets its own line: it is retired, with the agent's name.
+    const own = await call(agent.token, 'forget_memory', { id: now[1].id });
+    assert.equal(own.value?.outcome, 'forgotten', own.text);
+    assert.deepEqual((await live()).map(e => e.text), [OWN]);
+    assert.deepEqual((await past()).map(p => [p.id, p.gone.why, p.gone.who, p.gone.src.via]), [[theirs, 'replaced', agent.name, 'sparkie'], [now[1].id, 'forgotten', agent.name, 'agent']]);
   } finally { script([]); fresh(); }
 });
 

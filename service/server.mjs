@@ -7593,12 +7593,10 @@ const lineBy = ctx => (ctx.via === 'agent' ? (ctx.actor || 'an agent') : ctx.age
 const lineSrc = ctx => ({ via: ctx.via || null, ...(ctx.conv ? { chat: ctx.conv } : {}), ...(ctx.channel ? { channel: ctx.channel } : {}) });
 // A line leaving the live list, as memory-past.json keeps it: when, why, the line that replaced it, who and from where.
 const retired = (e, why, ctx, by = null) => ({ ...e, gone: { at: new Date().toISOString(), why, ...(by ? { by } : {}), who: lineBy(ctx), src: lineSrc(ctx) } });
-// An agent never replaces or forgets an owner's line (R45): not with its own replaces over the agent door, and not
-// through Sparkie in its own chat or a button pressed there. Nothing changes. (Today an agent's own forget_memory over
-// the agent door still retires one, so it can be brought back: R45's Today.)
-function notTheOwners(e, ctx, forgetting = false) {
+// An agent never replaces or forgets an owner's line (R45): not with its own call over the agent door, and not through
+// Sparkie in its own chat or a button pressed there. Nothing changes. Its own lines it may replace and forget.
+function notTheOwners(e, ctx) {
   if (e?.by !== 'owner' || !(ctx.via === 'agent' || ctx.agent)) return;
-  if (forgetting && ctx.via === 'agent' && !ctx.button) return;
   throw new HttpError(403, 'That line is the owner’s: an agent never replaces or forgets it, so nothing was changed. The owner can, in their own chat with Sparkie.');
 }
 // (each line shows its id, so a line that's no longer true can be replaced or forgotten by it)
@@ -7677,7 +7675,7 @@ action({
   run: async ({ id }, viewer, ctx) => {
     const all = memoryEntries(), gone = all.find(e => e.id === id);
     if (!gone) return { outcome: 'already', note: 'There’s no such line in memory.' };
-    notTheOwners(gone, ctx, true);
+    notTheOwners(gone, ctx);
     saveMemory(all.filter(e => e.id !== id), [retired(gone, 'forgotten', ctx)]);
     return { outcome: 'forgotten', note: `Forgotten: ${gone.text}` };
   },
@@ -7740,7 +7738,7 @@ function memoryClear(name, input, ctx, asked) {
   const shared = text => { const t = [...tokensOf(text)].filter(x => x.length >= 3 && !MEMORY_FILLER.has(x)), hits = t.filter(has).length; return { share: t.length ? hits / t.length : 0, hits }; };
   const about = text => shared(text).share;
   const entry = id => memoryEntries().find(e => e.id === id);
-  notTheOwners(entry(name === 'forget_memory' ? input.id : input.replaces), ctx, name === 'forget_memory');
+  notTheOwners(entry(name === 'forget_memory' ? input.id : input.replaces), ctx);
   // Forgetting: the line exists, this message says to forget, and the line is what they're talking about (never skipped).
   if (name === 'forget_memory') { const e = entry(input.id); return Boolean(e) && saysForget(ctx.request) && about(e.text) >= 0.3; }
   if (refusesRemember(ctx)) return false;
