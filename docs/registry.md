@@ -56,6 +56,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
+| `host_look` | read | `21-work` | dig | — | — | no | outside |
 
 ## State files and their writers
 
