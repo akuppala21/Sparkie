@@ -17,8 +17,7 @@ map's "Where new things go", row "An event type or a job type".
   (`20-desired.mjs`); `startingNow` (`17-changes.mjs`). A job type that holds no claim and changes no model itself,
   only through steps that are jobs of their own (`self-test`, `workflow-run`), stays out of `CHANGES_MODELS`,
   `startingNow` and the busy checks below.
-- The by-type busy checks: `handler` in `24-handler.mjs` (`/deploy`, `/deploy/cluster`) and `checkSparkAction` in
-  `12-status.mjs`.
+- The by-type busy checks: `handler` in `24-handler.mjs` (`/deploy`, `/deploy/cluster`).
 - Nothing for the journal (R43): each event and each operation's end and log go in by themselves (`journalEvent`,
   `journalOp`). A new kind of journal record: `JOURNAL_KINDS` (`20-journal.mjs`, also `recall`'s list), one call of
   `journal` where it happens, outside every function a workflow's `code()` lists (a line inside one changes its

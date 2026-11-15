@@ -90,14 +90,15 @@ function backupIfDue() {
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));
 
 const server = http.createServer(handler), local = http.createServer(handler);
-server.on('upgrade', editorUpgrade);
+// No route on the API takes a WebSocket (the editor proxy went, E10c): every upgrade is refused as an unknown path was.
+server.on('upgrade', (req, socket) => refuseUpgrade(socket, '404 Not Found'));
 // The app door (21-door.mjs, R40): its own private socket, for the owner's kept apps only. No time limit on a request
 // (an upload to an app can take minutes), and room for an app's cookies in the headers.
 const door = http.createServer({ maxHeaderSize: 65536, requestTimeout: 0 }, doorHandler);
 door.on('upgrade', doorUpgrade);
 // (each refused upgrade gets an error listener first: a reset socket with none would end the process)
 const refuseUpgrade = (socket, status) => { socket.on('error', () => socket.destroy()); socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
-local.on('upgrade', (req, socket, head) => (tcpApiOff ? refuseUpgrade(socket, '403 Forbidden') : editorUpgrade(req, socket, head)));
+local.on('upgrade', (req, socket) => refuseUpgrade(socket, tcpApiOff ? '403 Forbidden' : '404 Not Found'));
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 // Another copy already running (say, one started by hand) keeps its sockets: this one stops before touching them.
 local.on('error', e => {

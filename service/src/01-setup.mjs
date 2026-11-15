@@ -51,6 +51,8 @@ const CONFIG = {
   ...readJsonFile('config.json'),
 };
 if (process.env.PORT) CONFIG.port = Number(process.env.PORT);
+// Where the API sits on the console's address (the model address is <API_MOUNT>/v1, the agent door <API_MOUNT>/mcp).
+const API_MOUNT = CONFIG.apiMount || '/console/api';
 // Test switches: run every Spark's commands on this machine (each with its own HOME under MOCK_ROOT),
 // and accept requests without Tailscale headers as this login.
 const ALL_LOCAL = process.env.SPARK_CONSOLE_ALL_LOCAL === '1';

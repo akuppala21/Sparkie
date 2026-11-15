@@ -51,6 +51,8 @@ const CONFIG = {
   ...readJsonFile('config.json'),
 };
 if (process.env.PORT) CONFIG.port = Number(process.env.PORT);
+// Where the API sits on the console's address (the model address is <API_MOUNT>/v1, the agent door <API_MOUNT>/mcp).
+const API_MOUNT = CONFIG.apiMount || '/console/api';
 // Test switches: run every Spark's commands on this machine (each with its own HOME under MOCK_ROOT),
 // and accept requests without Tailscale headers as this login.
 const ALL_LOCAL = process.env.SPARK_CONSOLE_ALL_LOCAL === '1';
@@ -2979,9 +2981,9 @@ setTimeout(() => {
   setInterval(() => collectStatus().catch(() => {}), STATUS_EVERY);
 }, 3000);
 
-/* ───────── Spark pages: workloads, logs, diagnostics, files, actions (taking over from the portal) ───────── */
-// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics and runs
-// actions; files follow each person's permissions (personal and shared areas; members see only their own area).
+/* ───────── Spark pages: workloads, logs, diagnostics, files (taking over from the portal) ───────── */
+// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics; files
+// follow each person's permissions (personal and shared areas; members see only their own area).
 const LOG_SERVICES = ['editor', 'console', 'sparkie'];
 const FILE_OPS = ['list', 'read', 'write', 'mkdir', 'rename', 'delete'];
 const fileBusy = new Map();
@@ -3017,24 +3019,9 @@ async function sparkFiles(viewer, node, data) {
   fileBusy.set(viewer.login, mine + 1);
   try {
     const { editorFolder, editorRoot, ...visible } = await workerCall(node, { action: 'workspace-files', ...settings, ...scope }, 30000);
-    if (owner && typeof (editorRoot || editorFolder) === 'string') visible.editorPath = `${editorPath(node.id)}?folder=${encodeURIComponent(editorRoot || editorFolder)}`;
     return visible;
   } finally {
     fileBusy.set(viewer.login, Math.max(0, (fileBusy.get(viewer.login) || 1) - 1));
-  }
-}
-
-// Restarting a Spark's VS Code server, as a job (owner only).
-async function sparkAction(job, node, action) {
-  step(job, 'Restarting the VS Code server');
-  const result = await workerCall(node, { action }, 60000);
-  if (action === 'editor-restart' && result.editorReady === false) throw new Error('The VS Code server didn’t come back up.');
-  note(job, 'Done on the Spark');
-}
-async function checkSparkAction(node, action) {
-  if (action !== 'editor-restart') throw new HttpError(400, 'Unsupported Spark action.');
-  if ([...jobs.values()].some(j => j.status === 'running' && j.node === node.id && ['spark-action', 'deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
-    throw new HttpError(409, `Something is already changing on ${node.id}. Wait for it to finish.`);
   }
 }
 
@@ -10395,131 +10382,6 @@ async function doorUpgrade(req, socket, head) {
     deny('403 Forbidden');
   }
 }
-/* ───────── VS Code in the browser (taking over from the original portal) ───────── */
-// Area: features        Rules: R4, R31        Tests: internet.test.mjs, passkey.test.mjs
-// Owns: none
-// Timers: none        Wakes: none
-// <console api>/connect/<spark>/ goes to that Spark's code-server, which listens on 127.0.0.1 on this Spark: its own,
-// and Spark 3 and 4's through the tunnel services. Owner only, since the editor is a full shell as the owner. The
-// same checks and rewriting the portal did: no escaping the editor's path, redirects and cookies kept under it, and
-// WebSockets only from this site.
-const EDITOR_PORTS = CONFIG.editorPorts || { spark1: 8803, spark2: 8801, spark3: 8802, spark4: 8804 };
-const API_MOUNT = CONFIG.apiMount || '/console/api';
-const editorPath = id => `${API_MOUNT}/connect/${id}/`;
-// Editor use on each Spark, for the idle power-off (21-power.mjs): when a request last went to its editor, and how many
-// of its WebSockets (an open editor tab) are open now. In memory only.
-const editorUse = new Map();   // spark → { at, open }
-const editorSeen = (id, open = 0) => { const u = editorUse.get(id) || { at: 0, open: 0 }; editorUse.set(id, { at: Date.now(), open: Math.max(0, u.open + open) }); };
-
-function editorTarget(path) {
-  const m = /^\/connect\/([a-z0-9-]+)\/(.*)$/.exec(path);
-  if (!m) return null;
-  if (!EDITOR_PORTS[m[1]]) throw new HttpError(404, 'That Spark has no editor.');
-  let decoded;
-  try { decoded = decodeURIComponent(m[2].split('?')[0]); } catch { throw new HttpError(400, 'Invalid workspace path.'); }
-  if (decoded.includes('\\') || decoded.split('/').includes('..') || /[\x00-\x1f]/.test(decoded)) throw new HttpError(400, 'Invalid workspace path.');
-  // code-server's port forwarding (/proxy/<port>/, /absproxy/<port>/) would put any program's page on a Spark on this
-  // console's own address, with the owner's sign-in: never through the console (security audit, 2026-11-11).
-  if (/^(abs)?proxy$/i.test(decoded.split('/').filter(Boolean)[0] || '')) throw new HttpError(400, 'Port forwarding isn’t offered through Spark Console.');
-  return { id: m[1], port: EDITOR_PORTS[m[1]], path: `/${m[2]}`, prefix: `${API_MOUNT}/connect/${m[1]}` };
-}
-function editorRequestHeaders(req, upgrade) {
-  const headers = { ...req.headers };
-  for (const key of Object.keys(headers)) {
-    if (key.startsWith('tailscale-') || key.startsWith('x-forwarded-') || ['authorization', 'proxy-authorization', 'x-spark-console', 'host', 'connection', 'upgrade', 'proxy-connection', 'forwarded'].includes(key)) delete headers[key];
-  }
-  // The editor keeps its own cookies; the owner's sign-in cookie (4.10) is Spark Console's alone.
-  if (headers.cookie) {
-    const kept = String(headers.cookie).split(';').map(s => s.trim()).filter(s => s && !s.startsWith(`${SESSION_COOKIE}=`)).join('; ');
-    if (kept) headers.cookie = kept; else delete headers.cookie;
-  }
-  headers.host = req.headers.host;
-  if (upgrade) { headers.connection = 'Upgrade'; headers.upgrade = 'websocket'; }
-  return headers;
-}
-function editorResponseHeaders(headers, target) {
-  const out = { ...headers };
-  delete out['access-control-allow-origin'];
-  delete out['access-control-allow-credentials'];
-  if (out.location) {
-    const loc = out.location;
-    if (/^https?:\/\//.test(loc)) {
-      const u = new URL(loc);
-      if (!['127.0.0.1', 'localhost'].includes(u.hostname) && u.origin !== CONFIG.origin) throw new Error('External workspace redirect denied.');
-      out.location = target.prefix + u.pathname + u.search;
-    } else if (loc.startsWith('/') && !loc.startsWith('//')) out.location = target.prefix + loc;
-    else if (/^[a-z][a-z0-9+.-]*:/i.test(loc) || loc.startsWith('//')) throw new Error('External redirect denied.');
-  }
-  if (out['set-cookie']) out['set-cookie'] = out['set-cookie'].map(c => (/;\s*Path=/i.test(c) ? c.replace(/;\s*Path=([^;]*)/i, `; Path=${target.prefix}/`) : `${c}; Path=${target.prefix}/`));
-  out['cache-control'] = 'no-store';
-  return out;
-}
-// Cross-site checks for the editor: browsers mark where a request came from; changes and WebSockets must come from
-// this site.
-function editorAllowed(req, strict) {
-  const site = req.headers['sec-fetch-site'];
-  if (site && !['same-origin', 'none'].includes(site)) return false;
-  const origin = req.headers.origin;
-  if (origin && origin !== CONFIG.origin && !sameOrigin(req)) return false;
-  return !strict || Boolean(origin) && (origin === CONFIG.origin || sameOrigin(req));
-}
-
-function editorHttp(req, res, target) {
-  if (Number(req.headers['content-length'] || 0) > 100 * 1024 * 1024) throw new HttpError(413, 'Workspace upload is too large.');
-  if (!editorAllowed(req, !['GET', 'HEAD'].includes(req.method))) throw new HttpError(403, 'Open the editor from Spark Console.');
-  editorSeen(target.id);
-  const up = http.request({ host: '127.0.0.1', port: target.port, path: target.path, method: req.method, headers: editorRequestHeaders(req, false) }, r => {
-    let headers;
-    try { headers = editorResponseHeaders(r.headers, target); } catch { r.destroy(); return send(res, 502, { error: 'Workspace redirect was rejected.' }); }
-    // (a reply Node reads but can't pass on, a status of 099 say, must not end the process)
-    try { res.writeHead(r.statusCode, headers); } catch { r.destroy(); return res.headersSent ? res.destroy() : send(res, 502, { error: 'The workspace answered with something Spark Console can’t pass on.' }); }
-    r.pipe(res);
-  });
-  up.on('error', () => { if (!res.headersSent) send(res, 503, { error: `${target.id}’s editor isn’t answering. Restart it from the Spark’s menu.` }); else res.destroy(); });
-  up.setTimeout(120000, () => up.destroy());
-  res.on('close', () => { if (!res.writableFinished) up.destroy(); });
-  req.pipe(up);
-}
-
-async function editorUpgrade(req, socket, head) {
-  // A socket that errors with no listener ends the whole process: one is attached before anything else, so a visitor
-  // resetting a refused connection can't restart the console (security audit, 2026-11-11).
-  socket.on('error', () => socket.destroy());
-  const deny = status => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); socket.destroySoon?.(); };
-  try {
-    const path = new URL(req.url, 'http://local').pathname.replace(/^\/console\/api(?=\/|$)/, '') + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
-    const target = editorTarget(path);
-    if (!target || req.headers.upgrade?.toLowerCase() !== 'websocket') return deny('404 Not Found');
-    try { requestGate(req, path); } catch { return deny('403 Forbidden'); }
-    const viewer = await viewerFor(req);
-    if (!viewer || viewer.role !== 'owner' || (viewer.session && viewer.session.kind !== 'browser') || !editorPasskeyFresh(viewer) || !editorAllowed(req, true)) return deny('403 Forbidden');
-    // Signing this device out closes its editor connections too (4.10).
-    holdForSession(viewer, socket);
-    const up = http.request({ host: '127.0.0.1', port: target.port, path: target.path, method: 'GET', headers: editorRequestHeaders(req, true) });
-    up.on('upgrade', (response, remote, upHead) => {
-      let headers;
-      try { headers = editorResponseHeaders(response.headers, target); } catch { remote.destroy(); socket.destroy(); return; }
-      // (an open editor tab: its Spark is in use until the socket closes)
-      editorSeen(target.id, 1);
-      socket.once('close', () => editorSeen(target.id, -1));
-      socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(headers).flatMap(([k, v]) => (Array.isArray(v) ? v.map(x => `${k}: ${x}`) : [`${k}: ${v}`])).join('\r\n')}\r\n\r\n`);
-      if (upHead.length) socket.write(upHead);
-      if (head.length) remote.write(head);
-      socket.pipe(remote).pipe(socket);
-      socket.on('error', () => remote.destroy());
-      remote.on('error', () => socket.destroy());
-      socket.on('close', () => remote.destroy());
-      remote.on('close', () => socket.destroy());
-    });
-    up.on('response', r => { r.resume(); deny('502 Bad Gateway'); });
-    up.on('error', () => socket.destroy());
-    up.setTimeout(15000, () => up.destroy());
-    up.end();
-  } catch {
-    deny('403 Forbidden');
-  }
-}
-
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
 // Area: features        Rules: R46        Tests: tools.test.mjs
 // Owns: none
@@ -11357,14 +11219,14 @@ action({
 // Every minute (one round at a time; never while agents' changes are paused, an operation runs on that Spark, or a
 // validation run goes): a Spark (never Spark 2) with a switchable plug is idle when nothing changes there, nothing runs
 // there but Spark Console's own models and kept apps, its GPU is under 5% and its load low, nothing answers Sparkie's
-// chats or apps there, no call reached its models, no editor is open to it and no app door request reached it. Idle for
+// chats or apps there, no call reached its models and no app door request reached it. Idle for
 // the owner's minutes without a break (counted from this process's start: a restart or an install starts the count
 // again), it is powered off through power_off (why: idle), with both Sparks of a model across two together. A Spark it
 // powered off that answers again (turned on another way) has its record cleared and what was parked brought back.
 const idleSince = new Map();
 let powerTicking = false;
 const lastJobOn = id => Math.max(0, ...[...jobs.values()].filter(j => (j.nodes || [j.node]).includes(id)).map(j => Date.parse(j.finishedAt || j.createdAt) || 0));
-const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, editorUse.get(id)?.at || 0, lastJobOn(id),
+const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, lastJobOn(id),
   ...[...doorTickets.values()].filter(t => t.spark === id).map(t => t.lastAt || 0),
   ...[...inUse].filter(([k]) => k.startsWith(`${id}/`)).map(([, u]) => u.at || 0));
 // May this Spark be shut down? Every reason it may not, in words; [] means it may sleep (d-fleet-workloads 2.6). The idle
@@ -11382,7 +11244,6 @@ function sparkNeeded(id, { recentUse = true, unseen = true } = {}) {
   if (!fresh) why.push('no fresh status');
   if (busySparks.has(id) || [...jobs.values()].some(j => j.status === 'running' && (j.nodes || [j.node]).includes(id))) why.push('an operation');
   if (routedSparks().has(id)) why.push('it answers Sparkie’s chats or apps');
-  if ((editorUse.get(id)?.open || 0) > 0) why.push('an editor is open');
   if ([...doorTickets.values()].some(t => t.spark === id && t.sockets?.size)) why.push('an app is open through the app door');
   const s = knowledge.sparks[id];
   if (!s?.watchedAt || Date.now() - Date.parse(s.watchedAt) > Math.max(3 * WATCH_EVERY, 180000)) why.push('not watched lately');
@@ -13096,11 +12957,7 @@ function accessView() {
     whereToChange: 'On the page, in your account menu: Your devices signs one out; Your passkey adds or removes a passkey and makes new recovery codes. Sparkie can’t change any of these.',
   };
 }
-// When this device last used the owner's passkey: signing in with it, or confirming a change. The editors (a shell on
-// every Spark) open from the internet only within EDITOR_PASSKEY_MS of that, so a stolen cookie alone doesn't open them
-// (security audit, 2026-11-11). On the tailnet, Tailscale's identity is enough, as before.
-const EDITOR_PASSKEY_MS = Number(process.env.SPARK_CONSOLE_EDITOR_PASSKEY_MS || 12 * 3600000);
-const editorPasskeyFresh = viewer => !viewer?.session || Date.now() - Date.parse(viewer.session.passkeyAt || 0) < EDITOR_PASSKEY_MS;
+// When this device last used the owner's passkey: signing in with it, or confirming a change.
 function markPasskey(sessionId) {
   const list = sessionList(), s = list.find(x => x.id === sessionId);
   if (!s) return;
@@ -13111,7 +12968,7 @@ const sessionCookie = (token, maxAge) => `${SESSION_COOKIE}=${token}; Path=/cons
 // The cookie outlives the limits (browsers keep it up to 400 days); the service signs it out after 60 idle days.
 const setSessionCookie = (res, token) => res.setHeader('set-cookie', sessionCookie(token, 400 * 86400));
 const clearSessionCookie = res => res.setHeader('set-cookie', sessionCookie('', 0));
-// Signing a device out also ends what it has open: the live view and metrics streams, and the editors' connections.
+// Signing a device out also ends what it has open: the live view and metrics streams, and its app door WebSockets.
 const sessionSockets = new Map();
 function holdForSession(viewer, closable) {
   const id = viewer?.session?.id;
@@ -13558,8 +13415,8 @@ const handler = async (req, res) => {
     // Your own agents, through the agent door (MCP): they bring their own key, not the page's header.
     if (path === '/mcp') return await mcpDoor(req, res, viewer);
     const owner = viewer.role === 'owner', chatRoute = /^\/chats(\/|$)/.test(path), filesRoute = /^\/nodes\/[^/]+\/files$/.test(path);
-    const agentRoute = path.startsWith('/v1/'), editorRoute = path.startsWith('/connect/');
-    if (req.method !== 'GET' && !editorRoute) {
+    const agentRoute = path.startsWith('/v1/');
+    if (req.method !== 'GET') {
       if (agentRoute) {
         // Agents don't send the console's header. A page on another site would send its Origin, and requiring JSON
         // makes browsers ask first (CORS), which this service never allows.
@@ -13573,15 +13430,6 @@ const handler = async (req, res) => {
     }
     if ((chatRoute || agentRoute) && !viewer.chat) throw new HttpError(403, 'Chat isn’t enabled for your account.');
     if (agentRoute) return await sparkieApi(req, res, path, viewer);
-    const bare = /^\/connect\/([a-z0-9-]+)$/.exec(path);
-    if (bare && EDITOR_PORTS[bare[1]]) { res.writeHead(302, { location: editorPath(bare[1]) + url.search }); return res.end(); }
-    const editor = editorTarget(path + url.search);
-    if (editor) {
-      if (!owner) throw new HttpError(403, 'Only the owner can open the editors.');
-      if (viewer.session && viewer.session.kind !== 'browser') throw new HttpError(403, 'Open the editors from a browser.');
-      if (!editorPasskeyFresh(viewer)) throw new HttpError(403, `From the internet, the editors open only within ${Math.round(EDITOR_PASSKEY_MS / 3600000)} hours of using your passkey on this device. Sign in again with your passkey, or open them on your tailnet.`);
-      return editorHttp(req, res, editor);
-    }
     const ownerOnly = () => { if (!owner) throw new HttpError(403, 'Only the owner can do that.'); };
     // Changes to who has access need the owner's passkey (see "the owner's passkey").
     if (owner) await passkeyGate(req, path, viewer);
@@ -13596,7 +13444,7 @@ const handler = async (req, res) => {
       return send(res, 200, {
         source: 'console', viewer: { login: viewer.login, role: viewer.role, permissions: viewer.permissions || ownerPermissions() },
         userName: owner ? a.userName : viewer.login,
-        nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true, editorPath: owner && EDITOR_PORTS[n.id] ? editorPath(n.id) : null })),
+        nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true })),
         main: consoleOrigin() || null,
         // How this device is signed in when it isn't through Tailscale (4.10).
         session: viewer.session || null,
@@ -13814,17 +13662,10 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files|actions)$/);
+    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files)$/);
     if (nodeMatch) {
       const node = sparkFor(viewer, nodeMatch[1]), what = nodeMatch[2];
       if (what === 'files' && req.method === 'POST') return send(res, 200, await sparkFiles(viewer, node, await readBody(req, 400000)));
-      if (what === 'actions' && req.method === 'POST') {
-        const { action } = await readBody(req);
-        ownerOnly();
-        await checkSparkAction(node, action);
-        const job = newJob('spark-action', { node: node.id, action, by: viewer.login });
-        return send(res, 202, publicJob(runJob(job, j => sparkAction(j, node, action))));
-      }
       ownerOnly();
       if (req.method !== 'GET') throw new HttpError(405, 'Not allowed.');
       if (what === 'workloads') return send(res, 200, await workerCall(node, { action: 'workloads' }, 40000));
@@ -14265,14 +14106,15 @@ function backupIfDue() {
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));
 
 const server = http.createServer(handler), local = http.createServer(handler);
-server.on('upgrade', editorUpgrade);
+// No route on the API takes a WebSocket (the editor proxy went, E10c): every upgrade is refused as an unknown path was.
+server.on('upgrade', (req, socket) => refuseUpgrade(socket, '404 Not Found'));
 // The app door (21-door.mjs, R40): its own private socket, for the owner's kept apps only. No time limit on a request
 // (an upload to an app can take minutes), and room for an app's cookies in the headers.
 const door = http.createServer({ maxHeaderSize: 65536, requestTimeout: 0 }, doorHandler);
 door.on('upgrade', doorUpgrade);
 // (each refused upgrade gets an error listener first: a reset socket with none would end the process)
 const refuseUpgrade = (socket, status) => { socket.on('error', () => socket.destroy()); socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
-local.on('upgrade', (req, socket, head) => (tcpApiOff ? refuseUpgrade(socket, '403 Forbidden') : editorUpgrade(req, socket, head)));
+local.on('upgrade', (req, socket) => refuseUpgrade(socket, tcpApiOff ? '403 Forbidden' : '404 Not Found'));
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 // Another copy already running (say, one started by hand) keeps its sockets: this one stops before touching them.
 local.on('error', e => {
