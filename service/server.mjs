@@ -9211,7 +9211,7 @@ function buildNameBook() {
     }
   });
   each('the agents', () => { for (const k of agentKeys()) add('agent', k.name); });
-  each('the people', () => { const a = accessList(); add('person', a.userName); for (const m of a.members) add('person', m.login, m.name); });
+  each('the owner', () => add('person', accessList().userName));
   return { forms, starts, at: Date.now() };
 }
 function memoryNameBook() {
@@ -13893,7 +13893,7 @@ function whoMayLook(viewer, ctx) {
   const agentId = ctx.agentId || viewer?.agentKey?.id;
   if (ctx.via === 'agent' || ctx.agent || agentId) {
     const key = agentId ? agentKeys().find(k => k.id === agentId) : null;
-    if (!ctx.canChange || !(key?.scopes || []).includes('fleet:act')) throw new HttpError(403, 'An agent may run commands on a Spark only when the owner lets it change things too (Access → Agents).');
+    if (!ctx.canChange || !(key?.scopes || []).includes('fleet:act')) throw new HttpError(403, 'An agent may run commands on a Spark only when the owner lets it change things too (your account menu → Agents and Telegram).');
   }
 }
 // What a look printed, as it is kept and shown: escape codes and characters that don't show (or turn text around) taken

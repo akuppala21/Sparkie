@@ -386,7 +386,7 @@ test('the short table of exact forms: nvidia-smi runs outside the wall, by code\
   assert.deepEqual(sudoCalls('spark4'), []);
 });
 
-test('who may look: the owner; an agent only when its key may change things too; never a member or a saved workflow\'s step; two at once on a Spark', { timeout: 120000 * SLOW }, async () => {
+test('who may look: the owner; an agent only when its key may change things too; never a saved workflow\'s step; two at once on a Spark', { timeout: 120000 * SLOW }, async () => {
   const calls = sudoCalls('spark3').length;
   const ro = await call(keys.look.token, 'run', { on: 'spark3', command: 'cat docs/plain.txt' });
   assert.equal(ro.isError, true);
@@ -405,7 +405,6 @@ test('who may look: the owner; an agent only when its key may change things too;
   assert.ok(listed && !('kept' in listed), JSON.stringify(listed));
   assert.match((await call(keys.act.token, 'recall', { id })).value.text, /^\$ cat docs\/plain\.txt\nhello from spark 3\n$/);
   assert.match((await api('/actions/recall', { method: 'POST', body: { id } })).json.text, /hello from spark 3/);
-  assert.equal((await look({ on: 'spark3', command: 'ls' }, { 'tailscale-user-login': MEMBER })).status, 403);
   // The one page's later inputs aren't there yet: refused as any action refuses an input it doesn't know.
   for (const extra of [{ root: true }, { dir: '/tmp' }, { minutes: 5 }, { seconds: 10 }]) {
     const r = await look({ on: 'spark3', command: 'ls', ...extra });
