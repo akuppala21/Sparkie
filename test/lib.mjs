@@ -41,6 +41,7 @@ export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PROD
 // The agent door's actions: the ones that read (every key sees them) and the ones that change things (only keys the
 // owner let act, scope fleet:act). One a line, in name order.
 export const TOOLS = [
+  'check_update',
   'cluster_plan',
   'container_logs',
   'deploy_plan',

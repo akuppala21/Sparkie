@@ -119,6 +119,8 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['is spark 4 asleep?', 'power'],
     ['shut down spark 4', 'power'],
     ['turn on spark 3', 'power'],
+    ['is there a newer tested build?', 'updates'],
+    ['check for updates to spark console', 'updates'],
     // (longer: more groups match than fit, and the ones it began with stay)
     ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
     ['why did it fail? check the logs and the config file', 'dig', 'find'],
