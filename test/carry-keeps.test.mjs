@@ -41,6 +41,25 @@ const carryOn = chat => waitFor(async () => { const x = await chatMessages(chat)
 const noCarryOn = async chat => { await sleep(7000 * SLOW); const m = await chatMessages(chat); assert.equal(m.filter(x => x.auto).length, 0, `no carry-on turn: ${shown(m)}`); };
 const BUDGET_END = /\nCarrying on with your request in a fresh turn\.$/;
 
+test('a start that only fits by stopping a model is refused in the carry-on turn too', { timeout: 400000 * SLOW }, async () => {
+  assert.equal(stateOf('spark3', GGUF), 'running');
+  const words = 'start gemma-3-12b-it on spark 3, then tell me how fast it is', START = { name: 'start_model', arguments: { model: 'gemma-3-12b-it', spark: 'spark3' } };
+  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${esc(words)}$`, rounds: [[START], [LONG]] }, { match: CARRIED, rounds: [[START]] }, { match: FINISHED, calls: [] }]);
+  try {
+    const before = (await changes()).length, chat = await newChat();
+    await say(chat, 'Don’t stop anything.');
+    const r = await say(chat, words);
+    assert.equal(r.message.tools[0].ok, false, r.text);
+    assert.match(r.text, BUDGET_END, r.text.slice(-300));
+    const next = await carryOn(chat);
+    script(QUIET);
+    assert.deepEqual(next.tools.map(t => [t.name, t.ok]), [['start_model', false]], shown(await chatMessages(chat)));
+    await settled();
+    assert.equal(stateOf('spark3', GGUF), 'running', 'the owner said not to stop anything');
+    assert.equal((await changes()).length, before, 'nothing was stopped or started');
+  } finally { noScript(); }
+});
+
 test('“don’t stop anything”, then a task whose reply reaches a budget: its carry-on turn still offers the saved workflow that stops a model as a button, and the model runs', { timeout: 400000 * SLOW }, async () => {
   await save('night mode', [{ action: 'stop_model', args: { spark: 'spark4', container: RADIX } }]);
   assert.equal(stateOf('spark4', RADIX), 'running');
@@ -81,25 +100,6 @@ test('the same when an operation’s end starts the carry-on turn', { timeout: 6
   } finally { noScript(); }
 });
 
-test('a start that only fits by stopping a model is refused in the carry-on turn too', { timeout: 400000 * SLOW }, async () => {
-  assert.equal(stateOf('spark3', GGUF), 'running');
-  const words = 'start gemma-3-12b-it on spark 3, then tell me how fast it is', START = { name: 'start_model', arguments: { model: 'gemma-3-12b-it', spark: 'spark3' } };
-  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${esc(words)}$`, rounds: [[START], [LONG]] }, { match: CARRIED, rounds: [[START]] }, { match: FINISHED, calls: [] }]);
-  try {
-    const before = (await changes()).length, chat = await newChat();
-    await say(chat, 'Don’t stop anything.');
-    const r = await say(chat, words);
-    assert.equal(r.message.tools[0].ok, false, r.text);
-    assert.match(r.text, BUDGET_END, r.text.slice(-300));
-    const next = await carryOn(chat);
-    script(QUIET);
-    assert.deepEqual(next.tools.map(t => [t.name, t.ok]), [['start_model', false]], shown(await chatMessages(chat)));
-    await settled();
-    assert.equal(stateOf('spark3', GGUF), 'running', 'the owner said not to stop anything');
-    assert.equal((await changes()).length, before, 'nothing was stopped or started');
-  } finally { noScript(); }
-});
-
 test('a reply that read a container’s log makes its carry-on turn as strict: a memory line partly the owner’s words and a saved workflow are buttons there', { timeout: 400000 * SLOW }, async () => {
   const words = 'read the log of qwen-recipe-chisel on spark 3, then save a workflow called chisel check and tell me why the chisel recipe runs slow';
   const LOGS = { name: 'container_logs', arguments: { spark: 'spark3', container: 'qwen-recipe-chisel' } };
@@ -120,18 +120,23 @@ test('a reply that read a container’s log makes its carry-on turn as strict: a
 });
 
 test('a pressed “No” ends the carrying on', { timeout: 300000 * SLOW }, async () => {
-  const words = 'run night mode, then tell me how it went', chat = await newChat(), RUN = { name: 'run_workflow', arguments: { name: 'night mode' } };
-  script([{ match: '^Don.t stop anything\\.$', calls: [] }, { match: `^${words}$`, rounds: [[RUN], [LONG]] }, ...QUIET]);
+  // (erasing a memory line for good is always a question, with a No)
+  const made = await api('/actions/remember', { method: 'POST', body: { text: 'The rack in the hall opens with code 7731', kind: 'fact' } });
+  assert.equal(made.json?.outcome, 'remembered', made.text);
+  const words = 'erase the line about the rack code for good, then tell me what is left', chat = await newChat();
+  script([{ match: `^${esc(words)}$`, rounds: [[{ name: 'forget_memory', arguments: { id: made.json.id, erase: true } }], [LONG]] }, ...QUIET]);
   try {
-    await say(chat, 'Don’t stop anything.');
     const r = await say(chat, words);
     assert.match(r.text, BUDGET_END, r.text.slice(-300));
-    const no = r.message.choices.find(c => /^No\b/.test(c.label));
+    const no = r.message.choices?.find(c => /^No\b/.test(c.label));
     assert.ok(no, JSON.stringify(r.message.choices));
     const pressed = await choose(chat, no.id);
     assert.equal(pressed.status, 200, pressed.text);
     await noCarryOn(chat);
-  } finally { noScript(); }
+  } finally {
+    noScript();
+    await api('/actions/forget_memory', { method: 'POST', body: { id: made.json.id, erase: true } });
+  }
 });
 
 // The paired Telegram chat (stand-in Bot API).
