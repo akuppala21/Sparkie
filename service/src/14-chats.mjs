@@ -55,6 +55,7 @@ function ownChat(viewer, id) {
 // What Sparkie never changes: one list, in its prompt and in what it says it can do (abilities, 16-actions.mjs).
 const NEVER_CHANGES = 'SSH, Tailscale, firewalls, users, keys, sudo or who has access';
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
+// (One a line, in this order: the prompt and the brain's catalog say them so.)
 const TOOL_LINES = [
   [['forget_memory'], 'forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees.'],
   [['workflows'], 'The workflows tool lists every workflow: when to use each, its inputs and its known problems.'],
@@ -95,7 +96,20 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
 // finish, so it never waits on them.
 const sparkieToolNames = () => [...ACTIONS.keys()];
 // Lookups whose results are the console's own numbers and names, or the owner's own lines: not text from outside.
-const INSIDE_READS = new Set(['guide', 'memory', 'workflows', 'fleet_status', 'running_models', 'models_on_disk', 'linked_sparks', 'should_be_running', 'sparkie_setup', 'where_it_fits', 'deploy_plan', 'cluster_plan']);
+const INSIDE_READS = new Set([
+  'cluster_plan',
+  'deploy_plan',
+  'fleet_status',
+  'guide',
+  'linked_sparks',
+  'memory',
+  'models_on_disk',
+  'running_models',
+  'should_be_running',
+  'sparkie_setup',
+  'where_it_fits',
+  'workflows',
+]);
 const sparkieTools = () => sparkieToolNames().map(n => ACTIONS.get(n)).filter(Boolean)
   .map(a => ({ type: 'function', function: { name: a.name, description: a.description, parameters: liveSchema(a.input) } }));
 // Each Spark Console model call at a time: helpers (search terms) step aside while Sparkie answers someone.
@@ -151,8 +165,19 @@ async function runChoice(viewer, conv, id, by) {
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
-const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting',
-  'power-off': 'Powering off', 'power-on': 'Turning on', 'self-test': 'The self-test with' };
+const OP_WORDS = {
+  deploy: 'Starting',
+  'deploy-cluster': 'Starting',
+  'power-off': 'Powering off',
+  'power-on': 'Turning on',
+  restart: 'Restarting',
+  'restart-model': 'Restarting',
+  'self-test': 'The self-test with',
+  'start-model': 'Downloading and starting',
+  stop: 'Stopping',
+  'stop-model': 'Stopping',
+  undo: 'Undoing the last change',
+};
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
   if (!conv) return;

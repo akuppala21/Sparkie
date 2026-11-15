@@ -3402,6 +3402,7 @@ function ownChat(viewer, id) {
 // What Sparkie never changes: one list, in its prompt and in what it says it can do (abilities, 16-actions.mjs).
 const NEVER_CHANGES = 'SSH, Tailscale, firewalls, users, keys, sudo or who has access';
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
+// (One a line, in this order: the prompt and the brain's catalog say them so.)
 const TOOL_LINES = [
   [['forget_memory'], 'forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees.'],
   [['workflows'], 'The workflows tool lists every workflow: when to use each, its inputs and its known problems.'],
@@ -3442,7 +3443,20 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
 // finish, so it never waits on them.
 const sparkieToolNames = () => [...ACTIONS.keys()];
 // Lookups whose results are the console's own numbers and names, or the owner's own lines: not text from outside.
-const INSIDE_READS = new Set(['guide', 'memory', 'workflows', 'fleet_status', 'running_models', 'models_on_disk', 'linked_sparks', 'should_be_running', 'sparkie_setup', 'where_it_fits', 'deploy_plan', 'cluster_plan']);
+const INSIDE_READS = new Set([
+  'cluster_plan',
+  'deploy_plan',
+  'fleet_status',
+  'guide',
+  'linked_sparks',
+  'memory',
+  'models_on_disk',
+  'running_models',
+  'should_be_running',
+  'sparkie_setup',
+  'where_it_fits',
+  'workflows',
+]);
 const sparkieTools = () => sparkieToolNames().map(n => ACTIONS.get(n)).filter(Boolean)
   .map(a => ({ type: 'function', function: { name: a.name, description: a.description, parameters: liveSchema(a.input) } }));
 // Each Spark Console model call at a time: helpers (search terms) step aside while Sparkie answers someone.
@@ -3498,8 +3512,19 @@ async function runChoice(viewer, conv, id, by) {
   return { ...(out || { outcome: 'declined' }), message };
 }
 // Results of operations started from a conversation are posted in it when they finish.
-const OP_WORDS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Downloading and starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting',
-  'power-off': 'Powering off', 'power-on': 'Turning on', 'self-test': 'The self-test with' };
+const OP_WORDS = {
+  deploy: 'Starting',
+  'deploy-cluster': 'Starting',
+  'power-off': 'Powering off',
+  'power-on': 'Turning on',
+  restart: 'Restarting',
+  'restart-model': 'Restarting',
+  'self-test': 'The self-test with',
+  'start-model': 'Downloading and starting',
+  stop: 'Stopping',
+  'stop-model': 'Stopping',
+  undo: 'Undoing the last change',
+};
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
   if (!conv) return;
@@ -4335,6 +4360,7 @@ const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:o
 // What asks for a change (base forms: "start gemma", "bring it up") …
 // A file's name, by its ending: one list for the gate's file words and the reading group's (R46).
 const FILE_ENDINGS = 'md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css';
+// (The rows stay in this order: each sentence is matched against them first to last, and the kinds come back so.)
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
   // "use qwen coder on spark 3" as an instruction (at the start, or after "please" / "let's" / "I want to").
@@ -4375,6 +4401,7 @@ const CHANGE_FORMS = [
 // The brain's tool groups (R46): each action outside the core has one (its `group`). A round offers the core and the
 // groups this request opened (21-guide.mjs); these words in the owner's request open them, in the order they come.
 // [group, what it holds (guide's description lists it), its words]
+// (The rows stay in this order: guide's description, its list of groups and the brain's catalog name them so.)
 const GROUP_WORDS = [
   ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
@@ -4426,13 +4453,44 @@ function changeIntent(text) {
 // phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
-const PAGE_ONLY = new Set(['undo_update', 'remember', 'forget_memory', 'save_workflow', 'forget_workflow']);
-const PAGE_ONLY_TOOLS = new Set(['remember', 'forget_memory', 'save_workflow', 'forget_workflow']);
+// (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
+const PAGE_ONLY = new Set([
+  'undo_update',
+  'remember',
+  'forget_memory',
+  'save_workflow',
+  'forget_workflow',
+]);
+const PAGE_ONLY_TOOLS = new Set([
+  'forget_memory',
+  'forget_workflow',
+  'remember',
+  'save_workflow',
+]);
 const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
-const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
-  find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
+// The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
+const ACTION_KIND = {
+  cancel_operation: ['cancel'],
+  find_setups: ['find'],
+  forget_memory: ['remember'],
+  forget_workflow: ['forget'],
+  keep_running: ['keep', 'start', 'restart', 'stop'],
+  power_off: ['poweroff'],
+  power_on: ['poweron'],
+  power_settings: ['poweroff', 'stop', 'powerset'],
+  remember: ['remember'],
+  restart_model: ['restart', 'start'],
+  run_workflow: ['start'],
+  save_file: ['file'],
+  save_workflow: ['save'],
+  self_test: ['selftest'],
+  start_model: ['start'],
+  stop_model: ['stop'],
+  test_changes: ['test'],
+  undo_last_change: ['undo'],
+  undo_update: ['undo'],
+};
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -4468,7 +4526,16 @@ function tracesToRequest(name, input, saidText, request = saidText) {
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
 // of the request ("said"), the live system ("live", a container or Spark that exists), or Spark Console's own choice
 // when the request left it open ("chosen", like the Spark with room). Shown as "how this was checked" (7.9).
-const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops']);
+// The inputs a plan leaves out (PLAN_SKIP): one a line, in name order.
+const PLAN_SKIP = new Set([
+  '__validate',
+  'allowBusy',
+  'allowStop',
+  'choice',
+  'confirmOutside',
+  'confirmRouted',
+  'confirmStops',
+]);
 function planOf(wf, st, rawInput, ctx) {
   const input = rawInput.choice ? pendingChoices.get(rawInput.choice)?.args || {} : rawInput;
   const saidText = String(ctx.said || ctx.request || ''), said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText)));
@@ -5388,7 +5455,23 @@ action({
   },
 });
 
-const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'spark-powered-off', 'spark-powered-on', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
+// Every event type (R23), one a line in this order: fleet_events offers them so, and docs/registry.md lists them so.
+const EVENT_TYPES = [
+  'started',
+  'stopped',
+  'crashed',
+  'removed',
+  'created',
+  'spark-offline',
+  'spark-online',
+  'spark-powered-off',
+  'spark-powered-on',
+  'learned',
+  'operation',
+  'healing',
+  'heal-skipped',
+  'notice',
+];
 action({
   name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'past',
   description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, Sparks Spark Console powered off or on (on purpose: why, and what it parked), model servers learned as recipes, and Spark Console’s own operations with their result.',
@@ -6397,7 +6480,16 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
-const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file', 'self_test', 'power_settings']);
+const NOT_A_STEP = new Set([
+  'forget_memory',
+  'forget_workflow',
+  'power_settings',
+  'remember',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
   if (Array.isArray(v)) return v.map(x => fillIn(x, inputs));
@@ -8836,6 +8928,7 @@ const tilde = p => String(p).replace(homedir(), '~');
 function openProblems() {
   const out = [], add = (key, text) => out.push({ key, text });
   const hereNode = NODES.find(n => n.host === 'local'), here = hereNode ? sparkName(hereNode) : 'the Spark that runs Spark Console';
+  // (In this order, which is the order they are said in: a new source goes at the end of its group, not of the list.)
   const sources = [
     // Lock-out: who may sign in, and the other ways in.
     () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy and who has access can’t be changed. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
@@ -8907,7 +9000,13 @@ function needsLines(list = openProblems()) {
 // heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the
 // needs-me line at the end of this part. Every send is plain text with link previews off and secrets hidden, and is on
 // the record (its kind and size, never its text).
-const TELL_WHY = new Set(['reply', 'result', 'carry', 'system', 'needs']);
+const TELL_WHY = new Set([
+  'carry',
+  'needs',
+  'reply',
+  'result',
+  'system',
+]);
 // A result or carry-on line long after the owner's last message there arrives silently.
 const TELL_QUIET_MS = Number(process.env.SPARK_CONSOLE_TELL_QUIET_MS || 30 * 60000);
 const TELL_PART = 4000;
@@ -8970,8 +9069,19 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
 
 // An operation's result on Telegram: a fixed line from its type, name, Spark and status. No error text, log line,
 // endpoint or address (the page's chat keeps the full notice).
-const TELL_OPS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting', 'self-test': 'The self-test with',
-  'power-off': 'Powering off', 'power-on': 'Turning on' };
+const TELL_OPS = {
+  deploy: 'Starting',
+  'deploy-cluster': 'Starting',
+  'power-off': 'Powering off',
+  'power-on': 'Turning on',
+  restart: 'Restarting',
+  'restart-model': 'Restarting',
+  'self-test': 'The self-test with',
+  'start-model': 'Starting',
+  stop: 'Stopping',
+  'stop-model': 'Stopping',
+  undo: 'Undoing the last change',
+};
 const tellName = s => String(s || '').replace(/[^A-Za-z0-9._/:-]/g, '').slice(0, 60);
 function tellWhat(job) {
   const name = tellName(job.model || job.container);
@@ -12104,15 +12214,15 @@ function tgSetState(state) {
   if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under Access → Agents.' });
 }
 const TG_WORDS = {
-  off: 'Not connected.',
-  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
-  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
-  ok: 'Working.',
-  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
-  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
-  unreachable: 'Can’t reach Telegram. Trying again by itself.',
-  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
   'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
+  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
+  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
+  off: 'Not connected.',
+  ok: 'Working.',
+  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
+  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
+  unreachable: 'Can’t reach Telegram. Trying again by itself.',
 };
 const tgProblem = () => ['token-refused', 'in-use', 'unreachable', 'secrets-unreadable', 'forget-failed'].includes(tg.state);
 // What the page (GET /telegram), /health and sparkie_setup show. Never the token; the pairing code only in the answer to
@@ -12857,10 +12967,23 @@ function takeChallenge(id, viewer, purpose) {
   return c;
 }
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
-const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path) || /^\/deploy(\/cluster)?$/.test(path) || path === '/stop' || /^\/chats\/[^/]+(\/choose)?$/.test(path)
-  || /^\/nodes\/[^/]+\/files$/.test(path) || path === '/workflows/validate' || path === '/rollback' || /^\/telegram(\/(pair|needs))?$/.test(path) || path === '/heartbeat';
-// Each kind of request keeps its own size limit when the passkey check reads it first.
-const bodyLimit = path => (path.startsWith('/agents') ? 4000 : path.startsWith('/telegram') || path === '/heartbeat' ? 2000 : path.startsWith('/auth') ? 50000 : /\/files$/.test(path) ? 400000 : 1e5);
+// The routes whose request may need the passkey: one a line, in name order.
+const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path)
+  || /^\/chats\/[^/]+(\/choose)?$/.test(path)
+  || /^\/deploy(\/cluster)?$/.test(path)
+  || path === '/heartbeat'
+  || /^\/nodes\/[^/]+\/files$/.test(path)
+  || path === '/rollback'
+  || path === '/stop'
+  || /^\/telegram(\/(pair|needs))?$/.test(path)
+  || path === '/workflows/validate';
+// Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
+// first that fits gives the limit.)
+const bodyLimit = path => (path.startsWith('/agents') ? 4000
+  : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
+  : path.startsWith('/auth') ? 50000
+  : /\/files$/.test(path) ? 400000
+  : 1e5);
 // A deploy's stop list names something Spark Console didn't start (known to the watcher as not ours, or not known).
 function stopsOutside(stop) {
   if (!Array.isArray(stop)) return false;

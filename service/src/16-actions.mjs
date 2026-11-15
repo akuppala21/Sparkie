@@ -112,6 +112,7 @@ const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:o
 // What asks for a change (base forms: "start gemma", "bring it up") …
 // A file's name, by its ending: one list for the gate's file words and the reading group's (R46).
 const FILE_ENDINGS = 'md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css';
+// (The rows stay in this order: each sentence is matched against them first to last, and the kinds come back so.)
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
   // "use qwen coder on spark 3" as an instruction (at the start, or after "please" / "let's" / "I want to").
@@ -152,6 +153,7 @@ const CHANGE_FORMS = [
 // The brain's tool groups (R46): each action outside the core has one (its `group`). A round offers the core and the
 // groups this request opened (21-guide.mjs); these words in the owner's request open them, in the order they come.
 // [group, what it holds (guide's description lists it), its words]
+// (The rows stay in this order: guide's description, its list of groups and the brain's catalog name them so.)
 const GROUP_WORDS = [
   ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
@@ -203,13 +205,44 @@ function changeIntent(text) {
 // phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
-const PAGE_ONLY = new Set(['undo_update', 'remember', 'forget_memory', 'save_workflow', 'forget_workflow']);
-const PAGE_ONLY_TOOLS = new Set(['remember', 'forget_memory', 'save_workflow', 'forget_workflow']);
+// (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
+const PAGE_ONLY = new Set([
+  'undo_update',
+  'remember',
+  'forget_memory',
+  'save_workflow',
+  'forget_workflow',
+]);
+const PAGE_ONLY_TOOLS = new Set([
+  'forget_memory',
+  'forget_workflow',
+  'remember',
+  'save_workflow',
+]);
 const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
-const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
-  find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
+// The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
+const ACTION_KIND = {
+  cancel_operation: ['cancel'],
+  find_setups: ['find'],
+  forget_memory: ['remember'],
+  forget_workflow: ['forget'],
+  keep_running: ['keep', 'start', 'restart', 'stop'],
+  power_off: ['poweroff'],
+  power_on: ['poweron'],
+  power_settings: ['poweroff', 'stop', 'powerset'],
+  remember: ['remember'],
+  restart_model: ['restart', 'start'],
+  run_workflow: ['start'],
+  save_file: ['file'],
+  save_workflow: ['save'],
+  self_test: ['selftest'],
+  start_model: ['start'],
+  stop_model: ['stop'],
+  test_changes: ['test'],
+  undo_last_change: ['undo'],
+  undo_update: ['undo'],
+};
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -245,7 +278,16 @@ function tracesToRequest(name, input, saidText, request = saidText) {
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
 // of the request ("said"), the live system ("live", a container or Spark that exists), or Spark Console's own choice
 // when the request left it open ("chosen", like the Spark with room). Shown as "how this was checked" (7.9).
-const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops']);
+// The inputs a plan leaves out (PLAN_SKIP): one a line, in name order.
+const PLAN_SKIP = new Set([
+  '__validate',
+  'allowBusy',
+  'allowStop',
+  'choice',
+  'confirmOutside',
+  'confirmRouted',
+  'confirmStops',
+]);
 function planOf(wf, st, rawInput, ctx) {
   const input = rawInput.choice ? pendingChoices.get(rawInput.choice)?.args || {} : rawInput;
   const saidText = String(ctx.said || ctx.request || ''), said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText)));
@@ -1165,7 +1207,23 @@ action({
   },
 });
 
-const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'spark-powered-off', 'spark-powered-on', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
+// Every event type (R23), one a line in this order: fleet_events offers them so, and docs/registry.md lists them so.
+const EVENT_TYPES = [
+  'started',
+  'stopped',
+  'crashed',
+  'removed',
+  'created',
+  'spark-offline',
+  'spark-online',
+  'spark-powered-off',
+  'spark-powered-on',
+  'learned',
+  'operation',
+  'healing',
+  'heal-skipped',
+  'notice',
+];
 action({
   name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'past',
   description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, Sparks Spark Console powered off or on (on purpose: why, and what it parked), model servers learned as recipes, and Spark Console’s own operations with their result.',
