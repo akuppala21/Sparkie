@@ -96,7 +96,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.10 | no test yet |  | T106: no test holds it yet |
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
-| 5.13 | built | `test/journal.test.mjs` (“with the journal's disk full, a change written down first answers "couldn't”, “a console killed between a start line and its end: after the restart, one "cut”) | holds T123 |
+| 5.13 | no test yet |  | T123: no test holds it yet |
 | 5.14 | no test yet |  | T137: no test holds it yet |
 | 6.1 | no test yet |  | no acceptance test lists it |
 | 6.2 | no test yet |  | T2, T17: no test holds them yet |
