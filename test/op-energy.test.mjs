@@ -66,7 +66,7 @@ const counting = ids => waitFor(async () => { const e = (await status()).energy?
   { what: `wall readings counted for ${ids.join(' and ')}` });
 let oneSpark = null, noPlug = null;
 
-test('steady 60 W on Spark 3: a stop that takes about 6 s ends with 60 W times its time, in watt-hours', { timeout: 300000 * SLOW }, async () => {
+test('steady 60 W on Spark 3: a stop that takes about 6 s ends with 60 W times its time, in watt-hours', { timeout: 300000 * SLOW }, async t => {
   await counting(['spark3', 'spark4']);
   writeFileSync(mock('spark3', 'slow-stop'), '6');
   try { oneSpark = await done(await act('stop_model', { spark: 'spark3', container: T3 })); } finally { rmSync(mock('spark3', 'slow-stop'), { force: true }); }
@@ -75,6 +75,7 @@ test('steady 60 W on Spark 3: a stop that takes about 6 s ends with 60 W times i
   assert.ok(r.ms >= 6000, `${r.ms} ms`);
   near(r.wh, 60, r.ms);
   assert.equal(r.noWh, undefined);
+  t.diagnostic(`the end line: ${JSON.stringify(r)}`);
 });
 
 test('across Spark 3 and Spark 4: both Sparks add up', { timeout: 300000 * SLOW }, async () => {
@@ -89,12 +90,13 @@ test('across Spark 3 and Spark 4: both Sparks add up', { timeout: 300000 * SLOW 
   near(r.wh, 120, r.ms);
 });
 
-test('no plug: Spark 3 taken out of plugs.json gives no number, and says so', { timeout: 300000 * SLOW }, async () => {
+test('no plug: Spark 3 taken out of plugs.json gives no number, and says so', { timeout: 300000 * SLOW }, async t => {
   writeFileSync(plugsFile(), JSON.stringify({ spark4: PLUGS.spark4 }), { mode: 0o600 });
   try { noPlug = await done(await act('stop_model', { spark: 'spark3', container: 'sc-gpt-oss-120b' })); } finally { writeFileSync(plugsFile(), JSON.stringify(PLUGS), { mode: 0o600 }); }
   const r = await opRecord(noPlug);
   assert.equal(r.wh, undefined, JSON.stringify(r));
   assert.equal(r.noWh, 'Spark 3 has no plug Spark Console reads');
+  t.diagnostic(`the end line: ${JSON.stringify(r)}`);
 });
 
 test('a plug that doesn’t answer the controller: no number, and says so', { timeout: 300000 * SLOW }, async () => {
