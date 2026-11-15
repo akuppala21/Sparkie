@@ -5,7 +5,8 @@
 // risky delete is the dangerous ask, which names what came from what the request read; an agent's change is a
 // button; not done, the lock-out class and Spark 2 are refused; what put-back does not cover is said; the run unit
 // gets git with no hooks; the claim is held past a change whose end is unknown; /undo works while changes are paused;
-// the memory cap's working-out; what the page's line for a command shows.
+// the memory cap's working-out; what the page's line for a command shows; with no eval on record (the rail, R52),
+// Sparkie's plain change is a button too, and the owner's press runs it.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true), the
 // stand-ins in test/mock/bin, and the stand-in brain told by a script which tools to call. Linux only: run it on a
 // Spark with tools/test-on-spark.sh.
@@ -15,6 +16,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, 
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
+import { startMock } from './start-mock.mjs';
 
 const SECONDS = 6;
 const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
@@ -301,4 +303,33 @@ test('no change runs at once while a Spark advertises Tailscale SSH, or while th
   const r = await turn(chat, 'fix the notes 5 on spark 3', [[RUN('echo 5 > notes/ts5.txt')]]);
   assert.deepEqual(r.choices, [], 'at once again');
   assert.equal(text('notes/ts5.txt'), '5\n');
+});
+
+// The rail (R52): Sparkie's own call makes a change at once only while an eval is on record for its brain. A fleet of
+// its own with none: the plain change the owner's words ask for is one button, nothing runs, and the press runs it.
+test('with no eval on record, a plain change Sparkie proposes is a button like any other, and the owner\'s own press runs it', { timeout: 240000 * SLOW }, async () => {
+  const fleet = await startMock({ evalOnRecord: false, env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000' },
+    prepare: ({ root }) => {
+      rehearse(root, 'spark3', { run: true });
+      mkdirSync(join(root, 'spark3', 'notes'), { recursive: true });
+      writeFileSync(join(root, 'spark3', 'notes', 'r.txt'), 'r before\n');
+    } });
+  const was = { fleet: T.fleet, base: T.base, mcp: T.mcp, origin: T.origin };
+  Object.assign(T, { fleet, base: fleet.base, mcp: fleet.mcp, origin: fleet.origin });
+  try {
+    await waitFor(() => existsSync(join(fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
+    await sleep(500);
+    const chat = await newChat();
+    const r = await turn(chat, 'fix the notes r on spark 3', [[RUN('echo railed > notes/r.txt')]]);
+    assert.equal(r.tools[0]?.tail, 'Asked first, with a button: nothing ran yet.', JSON.stringify(r.tools));
+    const [asked] = sentBack('fix the notes r on spark 3');
+    assert.match(asked?.question || '', /^Run this on Spark 3\?\n\$ echo railed > notes\/r\.txt\nAsked because Sparkie asks before every change: [^\n]+\.\n/, JSON.stringify(asked));
+    assert.equal(text('notes/r.txt'), 'r before\n', 'nothing ran');
+    const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
+    assert.equal(p.status, 200, p.text);
+    assert.equal(text('notes/r.txt'), 'railed\n', 'the owner\'s press ran it');
+  } finally {
+    Object.assign(T, was);
+    await fleet.stop();
+  }
 });

@@ -16347,7 +16347,7 @@ action({
   },
 });
 /* ───────── the ladder: a change on a Spark at once, asked first, or not done (A7c) ───────── */
-// Area: features        Rules: R61, R55, R54        Tests: ladder.test.mjs
+// Area: features        Rules: R61, R55, R54, R52        Tests: ladder.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
@@ -16483,7 +16483,10 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) 
     workAsks.delete(key);
     return runChange(node, command, viewer, ctx, { asked: true, dir });
   }
-  const why = hostClear(node, sorted, viewer, ctx);
+  let why = hostClear(node, sorted, viewer, ctx);
+  // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
+  // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
+  if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
   if (!why) return runChange(node, command, viewer, ctx, { dir });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
@@ -19503,7 +19506,7 @@ async function runCommand(input, viewer, ctx = {}) {
     Object.assign(rec, { exit: a.exit ?? null, bytes: Buffer.byteLength(a.output), cut: a.cut ? J_MAX : null, outcome: a.cut ? 'cut' : a.ended || a.kind === 'ended' ? 'ended' : 'ran' });
     const b = forBrain(rec.text);
     return {
-      look: `It ran as a look: nothing on ${at} was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.`,
+      look: `It ran as a look: nothing on ${at} was changed and nothing was sent. A command that writes or connects is a change instead: it runs at once or is asked first, as the sorter says.`,
       spark: node.id, ran: true, outcome: 'look', observedAt: new Date().toISOString(), exit: a.exit ?? null,
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended.` } : a.kind === 'ended' ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so the look was ended; what it printed until then is below.` } : {}),
       ...(a.cut ? { cut: `Its output passed ${J_MAX >= 2 ** 20 ? `${Math.round(J_MAX / 2 ** 20)} MB` : sizeWords(J_MAX)}, so it was ended there.` } : {}),

@@ -264,7 +264,7 @@ test('every answer of a command that ran says, first, that it ran as a look: not
     const r = await look({ on: 'spark3', command });
     assert.equal(r.status, 200, r.text);
     assert.equal(Object.keys(r.json)[0], 'look', command);
-    assert.equal(r.json.look, 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.');
+    assert.equal(r.json.look, 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that writes or connects is a change instead: it runs at once or is asked first, as the sorter says.');
     assert.equal(r.json.outcome, 'look');
     assert.equal(r.json.output, output, command);
   }
@@ -556,7 +556,7 @@ test('a look\'s tool event carries where, line, tail, root and kept; one that di
   // (and the result's own first line, built by code, saying it ran as a look: the pressed row shows it)
   assert.deepEqual(ran, { name: 'run', title: 'Run a command on a Spark', ok: true, change: false, outcome: 'look',
     where: 'Spark 3', line: '$ cat docs/plain.txt', tail: 'hello from spark 3\nexit 0', root: false, kept: ran.kept,
-    look: 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.' });
+    look: 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that writes or connects is a change instead: it runs at once or is asked first, as the sorter says.' });
   const rec = records().find(y => y.id === ran.kept);
   assert.equal(rec.k, 'cmd');
   assert.equal(recordText(rec), '$ cat docs/plain.txt\nhello from spark 3\n');

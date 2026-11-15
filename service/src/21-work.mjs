@@ -310,7 +310,7 @@ async function runCommand(input, viewer, ctx = {}) {
     Object.assign(rec, { exit: a.exit ?? null, bytes: Buffer.byteLength(a.output), cut: a.cut ? J_MAX : null, outcome: a.cut ? 'cut' : a.ended || a.kind === 'ended' ? 'ended' : 'ran' });
     const b = forBrain(rec.text);
     return {
-      look: `It ran as a look: nothing on ${at} was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.`,
+      look: `It ran as a look: nothing on ${at} was changed and nothing was sent. A command that writes or connects is a change instead: it runs at once or is asked first, as the sorter says.`,
       spark: node.id, ran: true, outcome: 'look', observedAt: new Date().toISOString(), exit: a.exit ?? null,
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended.` } : a.kind === 'ended' ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so the look was ended; what it printed until then is below.` } : {}),
       ...(a.cut ? { cut: `Its output passed ${J_MAX >= 2 ** 20 ? `${Math.round(J_MAX / 2 ** 20)} MB` : sizeWords(J_MAX)}, so it was ended there.` } : {}),

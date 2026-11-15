@@ -1,5 +1,5 @@
 /* ───────── the ladder: a change on a Spark at once, asked first, or not done (A7c) ───────── */
-// Area: features        Rules: R61, R55, R54        Tests: ladder.test.mjs
+// Area: features        Rules: R61, R55, R54, R52        Tests: ladder.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
@@ -135,7 +135,10 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) 
     workAsks.delete(key);
     return runChange(node, command, viewer, ctx, { asked: true, dir });
   }
-  const why = hostClear(node, sorted, viewer, ctx);
+  let why = hostClear(node, sorted, viewer, ctx);
+  // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
+  // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
+  if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
   if (!why) return runChange(node, command, viewer, ctx, { dir });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
