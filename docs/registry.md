@@ -44,7 +44,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
 | `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
-| `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
+| `should_be_running` | read | `20-desired` | control | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
 | `recall` | read | `20-journal` | past | — | — | yes | outside |
@@ -59,6 +59,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
+| `run` | read | `21-work` | core | — | — | no | outside |
 
 ## State files and their writers
 
@@ -116,7 +117,6 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `startSampler` | `04-metrics` | again 15 s after a reader ends, while a page is open |
 | `metricsStream` | `04-metrics` | a ping every 15 s to each open page |
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
-| `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |

@@ -108,7 +108,9 @@ async function recordVerified(job, { model, engine, image, args: rawArgs = [], e
   const list = verifiedList(), now = new Date().toISOString(), found = list.find(v => v.key === key);
   const entry = found || { key, model: model.name, repo: model.repo || null, title: model.manifest?.title || model.repo || model.name, engine, image, args, env, sparks, ...(file ? { file } : {}), firstAt: now, runs: 0 };
   Object.assign(entry, { nodes, lastAt: now, by: viewer?.login || null, runs: entry.runs + 1, sizeBytes: model.sizeBytes || entry.sizeBytes || null,
-    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}) });
+    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}),
+    // (a run whose context was cut to fit keeps the free memory then, so a later start can try the full context: B3)
+    ...(job?.contextCut ? { contextCut: job.contextCut } : {}) });
   if (measured) {
     entry.measured = { ...measured, at: now, nodes };
     if (!entry.best || measured.decodeTokS > entry.best.decodeTokS) entry.best = entry.measured;
