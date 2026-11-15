@@ -3,7 +3,8 @@
 # a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails and starts nothing. Every call is one JSON line in
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
 #   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
-#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first
+#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first; past its
+#                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
 #                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
@@ -110,7 +111,19 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     held = os.path.join(R, 'run', 'spark-console', uid)
     shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
-    os.execv(cmd[0], cmd)
+    # Its RuntimeMaxSec, as systemd holds it: past it, the command and everything it started are ended (exit 1).
+    limit = next((float(a.split('=', 1)[1]) for a in args if a.startswith('RuntimeMaxSec=')), None)
+    if limit is None:
+        os.execv(cmd[0], cmd)
+    import signal, subprocess
+    p = subprocess.Popen(cmd, start_new_session=True)
+    try:
+        code = p.wait(timeout=limit)
+        sys.exit(code if code >= 0 else 128 - code)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        sys.exit(1)
 
 sys.stderr.write(f'systemd-run: the stand-in does not know this unit ({unit or "no --unit"})\n')
 sys.exit(1)

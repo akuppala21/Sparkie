@@ -222,7 +222,8 @@ function* jLinesOf(name) {
   } finally { closeSync(fd); }
 }
 const jWhere = r => { const n = (r.sub || []).map(nodeById).find(Boolean); return n ? ` on ${sparkName(n)}` : ''; };
-const jTitle = r => ACTIONS.get(r.act)?.title || r.act || r.k;
+// (a command's record names the command too: one line, cut short)
+const jTitle = r => `${ACTIONS.get(r.act)?.title || r.act || r.k}${r.k === 'cmd' && typeof r.args?.command === 'string' ? `: $ ${r.args.command.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 120)}` : ''}`;
 // How a record is shown by recall: short, its own text one call away. A call's or a tool call's arguments and error only
 // when the caller may read them (open, jOpen).
 const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt']

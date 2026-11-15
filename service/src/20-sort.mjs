@@ -24,7 +24,9 @@
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); answer ('set root' for sudo or su, 'owner command' for the root helper or its
-// line); lasting (a lock-out change the net can't put back).
+// line); lasting (a lock-out change the net can't put back); placed and wide (the files it writes, removes or changes, and
+// the folders it reaches everything under, as the sorter placed them: ~/… or whole paths, a * kept; the runner copies them
+// first, A7b).
 const SORT_ORDER = ['look', 'change', 'risky', 'lockout', 'notdone'], SORT_MAX = 16384, SORT_DEPTH = 4, SORT_WRAPS = 32;
 const raise = (r, cls, why) => { if (SORT_ORDER.indexOf(cls) > SORT_ORDER.indexOf(r.class)) Object.assign(r, { class: cls, why }); };
 const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null });
@@ -282,7 +284,7 @@ function sortCommand(command, opts) {
   const hosts = Object.create(null);
   for (const [k, v] of Object.entries(o.hosts && typeof o.hosts === 'object' ? o.hosts : {})) hosts[k] = v === 'compute' ? 'compute' : 'hub';
   const ctx = { at: o.at ?? 'compute', root: !!o.root, hosts, brain: (Array.isArray(o.brain) ? o.brain : []).filter(b => typeof b === 'string' && b.length > 2), depth: 0,
-    cwds: new Set(), fetched: false, fetchSeen: false, piped: false, seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(),
+    cwds: new Set(), fetched: false, fetchSeen: false, piped: false, seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), changes: new Map(),
     steps: 0, wraps: 0 };
   let form = null;
   try {
@@ -319,5 +321,6 @@ function sortCommand(command, opts) {
   if (ctx.root) ctx.kinds.add('root');
   const kinds = r.class === 'look' ? [] : ['root', 'lockout', 'delete', 'brain'].filter(k => ctx.kinds.has(k));
   const why = r.why.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 400);
-  return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting };
+  return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
+    placed: [...ctx.changes].filter(([, w]) => !w).map(([p]) => p.slice(0, 1000)), wide: [...ctx.changes].filter(([, w]) => w).map(([p]) => p.slice(0, 1000)) };
 }

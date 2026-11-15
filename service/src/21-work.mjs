@@ -27,6 +27,8 @@ const PROVE_LOCK_AT = `${ALL_LOCAL ? '"$HOME/.rehearsal"' : ''}/run/spark-consol
 // console gives the call LOOK_SLACK more before it ends it; the stand-in fleet may shorten it); two at once on a Spark; a
 // proof 15 minutes.
 const LOOK_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_LOOK_SECONDS) || 30;
+// Stand-in fleet only: a plain change goes to the runner while it is dark (runCommand, 21-runner.mjs).
+const RUNNER_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_RUNNER_DOOR === '1';
 const LOOK_SLACK = 8, LOOK_AT_ONCE = 2, LOOK_HEAD = 2000, LOOK_TAIL = 3500, PROVE_MS = 15 * 60000;
 const looking = new Map();       // Spark id → looks running there now
 const wallsFailed = new Map();   // Spark id → the attempt its last proof (the self-test's) let through; gone when one passes
@@ -143,7 +145,7 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null }) {
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
-  const call = verb === 'look' ? `look --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir "$HOME" -- ${q(command)}` : `${verb} --id "$id"`;
+  const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir "$HOME" -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
     "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
@@ -161,7 +163,7 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
 // folders), check (with form: an exact form run after it), or prove. A fresh id each call. Never rejects: { id, code, out
 // (stdout and stderr together, at most J_MAX bytes: past that the call is ended, cut), err (ssh's own), timedOut }.
 function helperCall(node, verb, opts = {}) {
-  const id = randomBytes(12).toString('hex'), limitMs = opts.limitMs || ((opts.seconds || LOOK_SECONDS) + LOOK_SLACK) * 1000;
+  const id = /^[a-z0-9]{8,40}$/.test(opts.id || '') ? opts.id : randomBytes(12).toString('hex'), limitMs = opts.limitMs || ((opts.seconds || LOOK_SECONDS) + LOOK_SLACK) * 1000;
   if (knownOffline(node)) return Promise.resolve({ id, code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
     const child = spawnOn(node, { script: helperScript(node, verb, { ...opts, id }), limit: limitMs / 1000 + 5 });
@@ -259,6 +261,9 @@ function forBrain(t) {
 // run's own work: today a look (A7 sorts each command into a look, a change or an ask).
 async function runCommand(input, viewer, ctx = {}) {
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
+  // (stand-in fleet only, while the runner is dark: a command the sorter doesn't call a look goes to the runner, which
+  // refuses all but a plain change itself, so its tests reach it; A7c wires it in for real, 21-runner.mjs)
+  if (RUNNER_DOOR && command.trim()) { whoMayLook(viewer, ctx); const sorted = sortCommand(command, runnerSortOpts(node)); if (sorted.class !== 'look') return runChange(node, command, sorted, viewer, ctx); }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {
     whoMayLook(viewer, ctx);

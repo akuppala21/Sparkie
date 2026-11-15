@@ -153,7 +153,8 @@ function sortPlace(p, glob, ctx, r, wide, touched = false) {
 const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], /^-\w(.+)$/.exec(t)?.[1], /^[\w-]*=?@(.+)$/.exec(t)?.[1],
   /^file:\/\/(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
-// writes is kept, so a file this same command wrote and then runs is known.
+// writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what the
+// runner copies first).
 function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
@@ -161,6 +162,7 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
   for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
+    ctx.changes?.set(p, ctx.changes.get(p) || wide);
   }
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`));
