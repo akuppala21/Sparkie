@@ -31,7 +31,7 @@ test('"remember …" keeps one line, in every chat\'s system prompt after; a sec
   // A secret is refused; a plain question about memory changes nothing (it isn't a "remember").
   const bad = await call(act.token, 'remember', { text: 'my token is hf_abcdefghijklmnopqrstuvwxyz1234' });
   assert.equal(bad.isError, true, bad.text);
-  const f = await call(act.token, 'forget_memory', { id: mem[0].id });
+  const f = await api('/actions/forget_memory', { method: 'POST', body: { id: mem[0].id } }).then(r => ({ ...r, value: r.json }));
   assert.equal(f.value.outcome, 'forgotten', f.text);
   assert.deepEqual((await call(look, 'memory', {})).value.entries, []);
 });
@@ -52,7 +52,7 @@ test('a plain statement updates memory by itself (no "remember", no button), rep
   const q = await say(await newChat(), 'what does the log say about gemma');
   assert.deepEqual(q.message.tools.map(t => [t.name, t.outcome]), [['remember', 'needs-ok']], JSON.stringify(q.message.tools));
   assert.deepEqual(await now(), [['fact', 'Spark 4 is on Ethernet now (fixed)', 'owner']]);
-  const f = await call(act.token, 'forget_memory', { id: (await call(look, 'memory', {})).value.entries[0].id });
+  const f = await api('/actions/forget_memory', { method: 'POST', body: { id: (await call(look, 'memory', {})).value.entries[0].id } }).then(r => ({ ...r, value: r.json }));
   assert.equal(f.value.outcome, 'forgotten', f.text);
 });
 
@@ -70,7 +70,12 @@ test('Sparkie rephrases what the owner states: kept without a button in a turn t
   assert.equal(q.message.choices?.[0]?.label, `Remember: “${fromLog}”`, JSON.stringify(q.message.choices));
   const entries = (await call(look, 'memory', {})).value.entries;
   assert.deepEqual(entries.map(e => e.text), [line]);
-  assert.equal((await call(act.token, 'forget_memory', { id: entries[0].id })).value.outcome, 'forgotten');
+  // An agent never forgets an owner's line (R45): refused, and the line is still live; the owner's own call forgets it.
+  const agents = await call(act.token, 'forget_memory', { id: entries[0].id });
+  assert.equal(agents.isError, true, agents.text);
+  assert.match(agents.text, /^\[not_allowed\] That line is the owner’s/);
+  assert.deepEqual((await call(look, 'memory', {})).value.entries, entries);
+  assert.equal((await api('/actions/forget_memory', { method: 'POST', body: { id: entries[0].id } })).json.outcome, 'forgotten');
 });
 
 // A-3 (review with Astra, 2026-11-14): Sparkie's forget_memory runs at once only when the owner's own message says to
@@ -78,7 +83,7 @@ test('Sparkie rephrases what the owner states: kept without a button in a turn t
 // an unrelated "remember …" give the button that shows the line, and memory stays as it was.
 const WIFI = 'Spark 4 is on Wi-Fi only';
 const memoryNow = async () => (await call(look, 'memory', {})).value.entries;
-const forgetAll = async () => { for (const e of await memoryNow()) await call(act.token, 'forget_memory', { id: e.id }); };
+const forgetAll = async () => { for (const e of await memoryNow()) await api('/actions/forget_memory', { method: 'POST', body: { id: e.id } }); };
 test('forget_memory runs at once only when the owner says to forget that very line; a question, "don\'t forget", quoted words or another line give a button', { timeout: 180000 * SLOW }, async () => {
   const OTHER = 'Spark 3 is where models go', SAID = 'forget that Spark 4 is on Wi-Fi';
   const seed = async text => (await call(act.token, 'remember', { text, kind: 'fact' })).value.id;
