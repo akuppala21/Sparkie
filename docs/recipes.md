@@ -4,7 +4,8 @@
 
 ## Adding a model: two ways
 
-1. **Search** (`GET /recipes/search?q=` with what you need). Sparkie turns your words into search terms,
+1. **Search** (`GET /recipes/search?q=` with what you need). Sparkie turns your words into search terms (`searchTerms` in
+   `10-recipes.mjs` asks the chat route's model: the brain's third caller, beside the chats and `/v1`),
    grounded in the current catalog. The service reads each result's real files on Hugging Face (size, format, gated) and
    groups the versions of one model together. `POST /recipes/add` adds it.
 2. **Paste links** (`POST /recipes/add-list`). Paste up to 20 links or `org/model` names. Versions of the same

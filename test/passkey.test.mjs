@@ -1,3 +1,17 @@
+// Covers: The owner's passkey (WebAuthn, at the console's one address), answered by a software authenticator in the
+// test (P-256 or RSA, "none" attestation). Before one exists: changes to who has access, new agent keys and remote-code
+// deploys need none; the old relay routes are gone (404). Every access change is an audit line (`agent-added`,
+// `access-approved`, `invite-link-saved`, `agent-can-change`, `agent-settings`, …, via `page`). Setting one up: refused
+// for another origin, domain, type or challenge, without UP, UV or a credential, from inside another site; challenges
+// single use; RSA keys must be 2048–4096 bits with e = 65537. With one: every gated change without `X-Spark-Passkey`
+// gets 428 `confirm`; a confirmation works once, only for its exact method, path and body; refused for a wrong origin
+// or domain, a tampered or foreign signature, an unknown passkey, no UP/UV, after 3 minutes (the service's clock is
+// moved with `mock/clock.mjs`); a counter going backwards is noted, not refused. Pausing, removing an agent or a
+// person, declining, and resuming an automatic pause with exactly `{halted: false}` need none. Hidden files: never by
+// members; the owner can. One pool of 150 challenges, the oldest making way. Each route's body limit applies when the
+// check reads it. Members can't use `/auth`; an unreadable `passkeys.json` lets nothing sensitive through but still
+// lets access be taken away.
+//
 // The owner's passkey (WebAuthn), at Spark Console's one address (the main address). A change that needs it carries its
 // confirmation inline (X-Spark-Passkey: a one-time challenge for exactly that change, signed by one of the owner's
 // passkeys on the page). Passkeys are set up there too. Until one exists, nothing asks for one. There's no relay.

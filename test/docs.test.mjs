@@ -1,3 +1,12 @@
+// Covers: The documents match the code (`tools/check-docs.mjs`): on this tree, and on a made-up tree with one fault at
+// a time (an id, a path, a name, an action, a line pointer, a typed count, a size, a heading, the task table, a stale
+// rules index); dated records are never checked, nor the lock's path. `node tools/make.mjs --check` passes and changes
+// nothing. The parts' headers (`tools/parts.mjs`): every part has one and it matches its code, `docs/registry.md` is
+// current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
+// header cut short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
+// declared-but-absent writer, a state file nobody owns, a helper writing a file it is given, an undeclared repeating
+// timer, an unlisted event or job type, a part outside its band, brackets it can't read).
+//
 // The documents match the code: tools/check-docs.mjs, the same code tools/make.mjs runs. File reads only, no server.
 // First on this tree; then on a small made-up tree that passes, with one fault added at a time, so each check is
 // shown to fail on the drift it is for.
@@ -10,6 +19,7 @@ import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
 import { checkDocs, rulesIndex, describe as say } from '../tools/check-docs.mjs';
 import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
+import { codeMap } from '../tools/code-map.mjs';
 import { checkStatus, statusTable } from '../tools/status.mjs';
 
 test('this tree: the documents match the code', () => {
@@ -222,6 +232,24 @@ describe('headers', () => {
   test('an area that isn’t one', () => partsFail(part('17-changes.mjs', HEAD('changes', { area: 'workloads' }), BASE['service/src/17-changes.mjs']), /an area is one of/));
   test('a ground part with an action', () => partsFail({ 'service/src/07-jobs.mjs': `${PARTS['service/src/07-jobs.mjs']}action({\n  name: 'jobs_list', title: 'Jobs', kind: 'read',\n});\n` }, /ground part .* defines jobs_list/));
   test('a part whose brackets don’t match can’t be read', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function half() {\n` }, /can’t be read/));
+  // tools/make.mjs makes the registry and the code map before it runs the check, so neither may throw on a part a
+  // builder hasn't headed yet: the check is what says which lines to add.
+  test('no header, a title only, a header that stops before Timers: the registry and code map are made, and the check gives the lines to add', () => {
+    const root = makeTree({ ...PARTS,
+      'service/src/20-desired.mjs': DESIRED,
+      'service/src/17-changes.mjs': `${HEAD('changes').split('\n')[0]}\n${BASE['service/src/17-changes.mjs']}`,
+      'service/src/16-actions.mjs': PARTS['service/src/16-actions.mjs'].replace('// Timers:', '\n// Timers:') });
+    try {
+      for (const make of [registry, codeMap]) assert.doesNotMatch(make(root), /undefined/);
+      const problems = checkParts(root);
+      for (const [file, said] of [['20-desired.mjs', /has no header/], ['17-changes.mjs', /without Area, Rules, Tests, Owns, Timers, Wakes/], ['16-actions.mjs', /without Timers, Wakes/]]) {
+        const p = problems.find(x => x.file === `service/src/${file}`);
+        assert.ok(p, `${file} isn’t named: ${problems.map(say).join('\n')}`);
+        assert.match(p.message, said);
+        assert.match(p.message, /\n\/\/ Area: .+\n\/\/ Owns: .+\n\/\/ Timers: .+ {2,}Wakes: none$/);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test('comments, strings and regular expressions are not code', () => {
     const quiet = "// writePrivate(DESIRED_FILE, x); setInterval(watchHeld, 1);\nconst NOTE = 'newJob(\"power-off\") fleetEvent({ type: \"boom\" })';\nconst RE = /setInterval\\(x\\)|[/(]/g;\nconst T = `writeFileSync(${'${'}NOTE}) ${'${'}RE.source}`;\n";
     assert.deepEqual(partsProblems({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}${quiet}` }).map(say), []);

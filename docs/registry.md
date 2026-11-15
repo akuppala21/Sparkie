@@ -72,6 +72,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `backup.json` | `25-backup-and-start` | `backupState`; `backupState` is called by `backupIfDue` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck` | yes | yes |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
 | `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
@@ -82,7 +83,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory.json` | `20-memory` | `remember`, `forget_memory` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
