@@ -11,8 +11,11 @@
 // answers more than one call at once; nothing starts, stops or wakes for it. Each candidate's job made from its image
 // gets the compare's own name suffix (compareStep), so it is a new container with that candidate's settings, and the
 // number of items in SPARK_SAMPLE beside D7's SPARK_MODEL_NAME and SPARK_MODEL_URL: its job learns the candidate from
-// its settings, never from an {input} in it. A job step with an {input} in it is asked on every run (D6c: a run's input
-// is on no button), so such a workflow is refused before anything starts.
+// its settings, never from an {input} in it. Refused before anything starts, by name (compareWontReach), a workflow a
+// candidate's run would not reach: a job step with an {input} in it (asked on every run, D6c: a run's input is on no
+// button), a job step that names its own SPARK_MODEL_NAME or SPARK_MODEL_URL (D7 keeps a step's own settings, so every
+// candidate's job would ask that one model), and a keep_running step with no image that names a job Spark Console made
+// (run again by name, it keeps the settings it was made with).
 // The score: `result.json` in the folder of the run's last job (jobs/<container> on the Spark it ran on), read by code
 // through the worker (no link followed), only when it is at most 4 KB, JSON, and written after that job began; only
 // `score` (0 to 1), `ok` (true or false) and `items` (a whole number) are taken, as numbers, and nothing else of the
@@ -36,6 +39,29 @@ function compareBrainView(w) {
   const steps = w.steps.filter(st => !compareSkips(st));
   const approved = w.approved && w.approved.steps === savedStepsHash(w.steps) ? { ...w.approved, steps: savedStepsHash(steps) } : null;
   return { ...w, steps, approved };
+}
+// Why a candidate's run of saved workflow w would not reach its job (see above), or null. A job made before is known
+// from what the watcher last saw, else from a look at the Sparks that are on: nothing is woken.
+async function compareWontReach(w) {
+  for (const [i, st] of w.steps.entries()) {
+    const a = stepArgs(st), n = `Step ${i + 1} of “${w.title}”`, job = jobFromImage(st.action, a);
+    if (job && placeholders(st.args).length) return `${n} is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`;
+    const own = job ? (Array.isArray(a.env) ? a.env : []).map(e => String(e).split('=')[0]).find(k => ['SPARK_MODEL_NAME', 'SPARK_MODEL_URL'].includes(k)) : null;
+    if (own) return `${n} is a job that names its own ${own}, so every candidate’s run would ask that one model. Save it without ${own}: each candidate’s job is handed it.`;
+    if (st.action === 'keep_running' && a.image === undefined && (a.do || 'keep') === 'keep' && !placeholders(st.args).length && await compareIsJob(String(a.container), a.spark)) {
+      return `${n} runs the job ${a.container} again by name, which keeps the settings it was made with, so no candidate would reach it. Save it with its image, so each candidate gets a job of its own.`;
+    }
+  }
+  return null;
+}
+async function compareIsJob(name, spark) {
+  const ids = spark ? [String(spark)] : computeSparks();
+  if (ids.some(id => { const x = knowledge.workloads?.[`${id}/${name}`]; return x && x.state !== 'removed' && x.labels?.['spark.job'] === '1'; })) return true;
+  const inv = await inventory(null).catch(() => null);
+  for (const sp of (inv?.sparks || []).filter(x => ids.includes(x.id) && x.online && nodeById(x.id))) {
+    if ((await appLook(nodeById(sp.id), name, sp.tsip).catch(() => null))?.job) return true;
+  }
+  return false;
 }
 // run_workflow's loop asks this of each step of a candidate's run: a job made from its image gets the compare's suffix,
 // and the number of items in its settings (unless it sets them itself).
@@ -147,7 +173,7 @@ function compareKeep(w, keep, viewer, ctx) {
 
 action({
   name: 'compare_models', title: 'Compare models on a saved workload', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model. Runs it once for each candidate, one after another: each starts what it needs; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
+  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model. Runs it once for each candidate, one after another: each starts what it needs; its job learns the model to ask from its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL, handed to it: the step names neither) and how many items to do from SPARK_SAMPLE, never from an {input} in it, and is made from its image (not a job run again by name), and writes result.json with a score from 0 to 1; what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
   input: { type: 'object', properties: {
     workflow: { type: 'string', minLength: 2, maxLength: 80, description: 'The saved workflow’s name, from workflows (saved); it declares an input called model.' },
     candidates: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][^\\n\\r\\x00-\\x1f]{0,199}$' }, description: 'The models to try, as start_model takes them; "sparkie" is Sparkie’s own model.' },
@@ -158,14 +184,14 @@ action({
     const w = findSaved(input.workflow);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.workflow}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
     if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `“${w.title}” has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step; its job gets the model in SPARK_MODEL_NAME).`);
-    // (a job step with an {input} in it is asked on every run, D6c, so every candidate's run would stop there)
-    const asks = w.steps.findIndex(st => jobFromImage(st.action, st.args || {}) && placeholders(st.args).length);
-    if (asks >= 0) throw new HttpError(409, `Step ${asks + 1} of “${w.title}” is a job with an {input} in it, so every run of it stops at a question. Its job gets the model to ask in its settings (SPARK_MODEL_NAME, SPARK_MODEL_URL) and how many items to do in SPARK_SAMPLE: save it without the {input}.`);
     if (input.keep !== undefined) {
       if (input.candidates !== undefined || input.sample !== undefined) throw new HttpError(400, 'Give keep alone, with the workflow.');
       return compareKeep(w, input.keep, viewer, ctx);
     }
     if (!input.candidates) throw new HttpError(400, 'Missing argument: candidates.');
+    // (one a candidate's run would not reach: refused by name before anything starts)
+    const wont = await compareWontReach(w);
+    if (wont) throw new HttpError(409, wont);
     const cands = [...new Set(input.candidates.map(String))].sort((a, b) => compareIsBrain(b) - compareIsBrain(a));
     if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of “${w.title}” is running already. Its scores are posted when it ends.`);
     const sample = input.sample ?? 10;

@@ -3,8 +3,9 @@
 // model uses it; the model that ran before the compare still runs and nothing it started is left running; scores 0.80
 // and 0.81 give the owner buttons in the chat, and a press keeps that one; a result.json written before its job began
 // gives no score; a workflow with no model input is refused, and so is one whose job takes an {input} (it would be
-// asked every run, D6c); names holding a quote, a semicolon or $( run nothing, a line break is refused, and a setting
-// holding them reaches its job whole; a candidate that won't start is listed with why and the
+// asked every run, D6c), one whose job names its own SPARK_MODEL_NAME, and one that runs a job made before again by
+// name (each would give a wrong winner); names holding a quote, a semicolon or $( run nothing, a line break is
+// refused, and a setting holding them reaches its job whole; a candidate that won't start is listed with why and the
 // loop goes on; "sparkie" with a brain that answers one call at a time is not tried, and starts and stops nothing; at
 // the hour the run under way is stopped (what it started too) and the best so far is kept.
 //
@@ -136,6 +137,30 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
     assert.equal(op.report[0], 'sparkie: not tried: it answers one call at a time, and that place is the owner’s', 'the brain first');
     assert.match(op.report[1], /^zzqx nothing matches this: failed: .*No model on disk or in the recipes matches/);
     assert.match(op.report[2], /^gpt-oss-20b: score 0\.9, 2 items, \d+ s$/);
+    assert.deepEqual(running('spark3'), before);
+  });
+
+  // The workloads review's second read: two workflows that give a wrong winner, refused by name before anything starts.
+  test('a job step that names its own SPARK_MODEL_NAME is refused: every candidate would ask that one model', { timeout: 120000 * SLOW }, async () => {
+    const s = await act('save_workflow', { title: 'own model name', inputs: { model: 'the model' }, steps: [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } },
+      { action: 'keep_running', args: { spark: 'spark3', container: 'named', image: IMAGE, once: true, env: [`SPARK_MODEL_NAME=${GPT}`], command: scoring({ gpt: 0.9 }) } }] });
+    assert.equal(s.status, 200, s.text);
+    const before = running('spark3'), r = await act('compare_models', { workflow: 'own model name', candidates: [GPT, TEST] });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'Step 2 of “own model name” is a job that names its own SPARK_MODEL_NAME, so every candidate’s run would ask that one model. Save it without SPARK_MODEL_NAME: each candidate’s job is handed it.');
+    assert.deepEqual(running('spark3'), before);
+  });
+
+  test('a step that runs a job made before again by name is refused: it keeps the settings it was made with', { timeout: 180000 * SLOW }, async () => {
+    const made = await act('keep_running', { spark: 'spark3', container: 'made-before', image: IMAGE, once: true, command: scoring({ gpt: 0.9 }) });
+    assert.equal(made.json?.outcome, 'started', made.text);
+    assert.equal((await opEnd(made.json.operation, 'made-before made')).status, 'completed');
+    const s = await act('save_workflow', { title: 'job by name', inputs: { model: 'the model' }, steps: [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } },
+      { action: 'keep_running', args: { spark: 'spark3', container: 'made-before' } }] });
+    assert.equal(s.status, 200, s.text);
+    const before = running('spark3'), r = await act('compare_models', { workflow: 'job by name', candidates: [GPT, TEST] });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'Step 2 of “job by name” runs the job made-before again by name, which keeps the settings it was made with, so no candidate would reach it. Save it with its image, so each candidate gets a job of its own.');
     assert.deepEqual(running('spark3'), before);
   });
 
