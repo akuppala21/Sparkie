@@ -56,3 +56,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R53](rules/R53.md): What the console runs as the owner reads nothing from the owner's home.
 - [R56](rules/R56.md): Asleep, and waking for work (contract 9.22 and 9.28; it carries on from R41, which is full).
 - [R57](rules/R57.md): A saved workflow run as a workload (contract 9.27; design D 2.3 as cut): what R35 says of its steps, its job waits and its clean-up holds; this rule adds what outlives the process.
+- [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).

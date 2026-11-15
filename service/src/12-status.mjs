@@ -139,15 +139,15 @@ setTimeout(() => {
 }, 3000);
 
 /* ───────── Spark pages: workloads, logs, diagnostics, files (taking over from the portal) ───────── */
-// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics; files
-// follow each person's permissions (personal and shared areas; members see only their own area).
+// The same worker operations and checks the portal used, for the owner (the only one who gets past the handler): the
+// owner's own files and the shared folder.
 const LOG_SERVICES = ['editor', 'console', 'sparkie'];
 const FILE_OPS = ['list', 'read', 'write', 'mkdir', 'rename', 'delete'];
 const fileBusy = new Map();
 
 function sparkFor(viewer, id) {
   const node = nodeById(id);
-  if (!node || !canUse(viewer, id)) throw new HttpError(403, 'This Spark isn’t shared with you.');
+  if (!node || !canUse(viewer, id)) throw new HttpError(403, 'There’s no such Spark on the list.');
   return node;
 }
 async function workerCall(node, payload, timeout) {
@@ -159,18 +159,15 @@ async function sparkFiles(viewer, node, data) {
   if (!data || typeof data !== 'object' || Object.keys(data).some(k => !allowed.includes(k))) throw new HttpError(400, 'Unsupported request settings.');
   const area = data.area || 'personal';
   if (!['personal', 'shared'].includes(area)) throw new HttpError(400, 'Choose personal or shared files.');
-  const permission = (viewer.permissions || ownerPermissions())[area === 'shared' ? 'sharedFiles' : 'files'];
-  if (permission === 'none' || (permission !== 'write' && ['write', 'mkdir', 'rename', 'delete'].includes(data.operation))) throw new HttpError(403, 'This file operation isn’t permitted.');
   if (!FILE_OPS.includes(data.operation) || typeof data.path !== 'string' || data.path.length > 1000) throw new HttpError(400, 'Choose a workspace file operation.');
   if ((data.operation !== 'write' && data.data !== undefined) || (!['write', 'rename', 'delete'].includes(data.operation) && data.revision !== undefined)
     || (data.operation !== 'rename' && data.destination !== undefined) || (data.operation !== 'list' && (data.offset !== undefined || data.limit !== undefined))) {
     throw new HttpError(400, 'Unexpected file settings.');
   }
-  const owner = viewer.role === 'owner';
-  const memberId = owner ? null : accessList().members.find(u => u.login === viewer.login)?.id;
-  if (!owner && area === 'personal' && !memberId) throw new HttpError(403, 'Your personal files aren’t set up.');
+  // (only the owner reaches here: canUse is the owner's alone, and Sparkie and agents act as the owner)
+  if (!canUse(viewer)) throw new HttpError(403, 'Only the owner can do that.');
   const { area: _area, ...settings } = data;
-  const scope = area === 'shared' ? { workspaceScope: 'shared' } : owner ? {} : { workspaceScope: 'member', memberId };
+  const scope = area === 'shared' ? { workspaceScope: 'shared' } : {};
   const mine = fileBusy.get(viewer.login) || 0, all = [...fileBusy.values()].reduce((a, b) => a + b, 0);
   if (mine >= 2 || all >= 8) throw new HttpError(429, 'File operations are busy. Try again shortly.');
   fileBusy.set(viewer.login, mine + 1);
