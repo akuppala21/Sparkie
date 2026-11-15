@@ -57,6 +57,8 @@ test('"remember that …" in the paired chat keeps one line, marked as said on T
     assert.deepEqual([a.outcome, a.channel], ['remembered', 'telegram']);
     const r = (await owner('recall', { about: 'coding box', kind: 'said' })).json.records;
     assert.ok(r.some(x => x.via === 'telegram' && /coding box/.test(x.said)), JSON.stringify(r));
+    const lines = await owner('recall', { about: 'Spark 3' });
+    assert.match(JSON.stringify(lines.json), /"source":"said by the owner on Telegram","text":"Spark 3 is the coding box"/);
   } finally { script([]); fresh(); }
 });
 
