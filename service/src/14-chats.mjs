@@ -52,7 +52,7 @@ function ownChat(viewer, id) {
   return c;
 }
 
-// What Sparkie never changes: one list, in its prompt and in what it says it can do (abilities, 16-actions.mjs).
+// What Sparkie never changes: one list, in its prompt and in what it says it can do (abilities, 16-reads.mjs).
 const NEVER_CHANGES = 'SSH, Tailscale, firewalls, users, keys, sudo or who has access';
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
 // (One a line, in this order: the prompt and the brain's catalog say them so.)
