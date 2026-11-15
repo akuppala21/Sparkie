@@ -150,7 +150,7 @@ NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 NODE=$(PATH=$NODE_FROM command -v node 2>/dev/null || true)
 # (22 or newer: the plug control uses Node's built-in WebSocket client, 12-plugs.mjs. NodeSource's package has it; Ubuntu's
 # own is older, a snap doesn't start)
-NODE_HOW='Install Node.js 22 from NodeSource: curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs. Then run this again. Nothing was changed.'
+NODE_HOW='Install Node.js 22 from NodeSource: curl -q -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs. Then run this again. Nothing was changed.'
 if [ -z "$NODE" ]; then
   CS_NODE=$(ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
   [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE). $NODE_HOW"

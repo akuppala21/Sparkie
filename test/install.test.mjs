@@ -599,7 +599,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
   };
   const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
   // (what every Node refusal says to do, word for word, as a pattern)
-  const HOW = 'Install Node\\.js 22 from NodeSource: curl -fsSL https://deb\\.nodesource\\.com/setup_22\\.x \\| sudo -E bash - && sudo apt-get install -y nodejs\\. Then run this again\\. Nothing was changed\\.';
+  const HOW = 'Install Node\\.js 22 from NodeSource: curl -q -fsSL https://deb\\.nodesource\\.com/setup_22\\.x \\| sudo -E bash - && sudo apt-get install -y nodejs\\. Then run this again\\. Nothing was changed\\.';
   const fixedNode = spawnSync('sh', ['-c', 'command -v node'], { env: { PATH: FIXED }, encoding: 'utf8' }).stdout.trim();
   test('28. the console runs on Spark 2\'s own Node, from the fixed path: with code-server\'s first on the PATH, install.sh takes the other', { ...CASE, skip: !fixedNode && 'no node on the fixed path here' }, async () => {
     const home = makeHome(), cs = codeServerNode(home);
