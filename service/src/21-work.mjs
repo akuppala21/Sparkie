@@ -21,6 +21,8 @@ const HELPER_SHA256 = '10b986b04e2ea5ae7d3b82a5b0a13b43f780ca10291e12daa748cfa83
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
+// The lock a proof of the walls holds while it runs (the self-test's or the owner's command's): the mark is gone then.
+const PROVE_LOCK_AT = `${ALL_LOCAL ? '"$HOME/.rehearsal"' : ''}/run/spark-console/prove.lock`;
 // A look's seconds: 30 (the helper allows 60, but a tool call has 50 seconds in chat and at the agent door, and the
 // console gives the call LOOK_SLACK more before it ends it; the stand-in fleet may shorten it); two at once on a Spark; a
 // proof 15 minutes.
@@ -137,7 +139,8 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 
 // The script one call runs on the Spark (as the owner's user), built here; the brain's text is in it only as one
 // single-quoted word. It answers with lines that begin with the call's id: "console none" (no helper there), "console
-// unknown <its SHA-256>" (not this build's), "console key|walk|slow …" (the key check); otherwise the helper's own.
+// unknown <its SHA-256>" (not this build's), "console proving" (a proof holds its lock), "console key|walk|slow …" (the
+// key check); otherwise the helper's own.
 function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null }) {
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const call = verb === 'look' ? `look --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir "$HOME" -- ${q(command)}` : `${verb} --id "$id"`;
@@ -147,6 +150,7 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
+    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
@@ -265,6 +269,7 @@ async function runCommand(input, viewer, ctx = {}) {
     if (a.kind === 'nosudo') return needsOwner(node, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
     if (a.kind === 'unknown') return needsOwner(node, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
     if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
+    if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
     if (a.kind === 'key') throw new HttpError(403, `Not run: ${maskSecrets(why)} is a key file on ${at} (or a link to one), and a look never reads keys back. Everything else may be read.`);
     if (a.kind === 'walk') throw new HttpError(403, `Not run: it would read every file under ${maskSecrets(why)} on ${at}, and keys are there. Name a folder that holds none.`);
     if (a.kind === 'slow') throw new HttpError(409, `Not run: checking the command’s files on ${at} for keys took over 15 seconds. Name fewer or smaller folders.`);

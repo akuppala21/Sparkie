@@ -10,14 +10,15 @@
 //                the console has no new privileges there); ~/.sudo-hangs (seconds) hangs, then fails; each call is a JSON
 //                line in ~/.sudo-calls
 //   systemd-run  --user (the owner's service manager) runs what follows its options, logged in ~/.user-units; any
-//                other call is test/mock/bin/systemd-run's, a look's unit held to its RuntimeMaxSec
+//                other call is test/mock/bin/systemd-run's, a look's unit held to its RuntimeMaxSec; with ~/.prove-hangs
+//                (seconds) a proof's outside unit waits that long first, holding the proof open
 // Spark 2 and Spark 3 are set up and proven; Spark 4 has no helper until the self-test's test sets one up whose proof
 // lets one attempt through. What this cannot show: the stand-ins build no wall, so a look runs unwalled here. The tests
 // show what the console asks the helper for and how it reads the answers; what a Spark grants is its own proof's word.
 // Linux only (GNU coreutils, bash 4 or newer): run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync, openSync, readSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -53,6 +54,7 @@ fi
 secs=''
 for a in "$@"; do case "$a" in RuntimeMaxSec=*) secs=\${a#RuntimeMaxSec=} ;; esac; done
 case " $* " in *" --unit=sw-look-"*) [ -n "$secs" ] && exec /usr/bin/timeout "$secs" ${MOCKBIN}/systemd-run "$@" ;; esac
+case " $* " in *" --unit=sw-prove-outside-"*) if [ -s "$HOME/.prove-hangs" ]; then : > "$HOME/.prove-hanging"; sleep "$(cat "$HOME/.prove-hangs")"; fi ;; esac
 exec ${MOCKBIN}/systemd-run "$@"
 `, { mode: 0o755 });
 
@@ -204,6 +206,25 @@ test('a helper whose sudo line is gone, one this build does not know, or one who
   try { await answer(/proof of its walls on Spark 3 is out of date: systemd changed/); } finally { rmSync(join(R, 'standin/systemd-version')); }
   assert.equal(units('spark3').length, before, 'no look wall started');
   // As it was: the look runs.
+  assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
+});
+
+test('a look while a proof of the walls holds its lock there: "being proven right now", nothing runs, and afterwards it runs', { timeout: 120000 * SLOW }, async () => {
+  const h = home('spark3'), R = realpathSync(join(h, '.rehearsal'));
+  writeFileSync(join(h, '.prove-hangs'), '8');
+  rmSync(join(h, '.prove-hanging'), { force: true });
+  // (the owner's one-time command, or the self-test, proving at that moment)
+  const proof = spawn(join(R, 'usr/local/sbin/spark-console-root'), ['prove', '--id', 'heldopen0001'], { env: envFor(realpathSync(h), R), stdio: 'ignore' });
+  const ended = new Promise(res => proof.on('exit', code => res(code)));
+  try {
+    await waitFor(() => existsSync(join(h, '.prove-hanging')), { timeout: 30000, what: 'the proof held open' });
+    const calls = sudoCalls('spark3').length;
+    const r = await look({ on: 'spark3', command: 'cat docs/plain.txt' });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.json.error, 'The walls on Spark 3 are being proven right now; try again in a minute. Nothing ran.');
+    assert.equal(sudoCalls('spark3').length, calls, 'the helper is not called');
+  } finally { rmSync(join(h, '.prove-hangs'), { force: true }); }
+  assert.equal(await ended, 0, 'the proof passes');
   assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
 });
 
