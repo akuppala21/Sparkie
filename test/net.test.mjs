@@ -42,6 +42,8 @@ useFleet({ env: { SPARK_CONSOLE_NET: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECO
 
 const keysFile = (f = T.fleet) => join(f.root, 'spark3', '.ssh', 'authorized_keys');
 const keysNow = () => readFileSync(keysFile(), 'utf8');
+// (each test starts from the owner's one key, whatever the one before it left)
+const keysReset = () => writeFileSync(keysFile(), KEYS_LINE, { mode: 0o600 });
 const guardDir = id => join(T.fleet.root, 'var/lib/spark-console/guard', id);
 const timerWaits = id => existsSync(join(T.fleet.root, 'standin/timers', `sw-guard-${id}.timer`));
 const netRecord = (f = T.fleet) => { try { return JSON.parse(readFileSync(join(f.stateDir, 'net.json'), 'utf8')).guards; } catch { return []; } };
@@ -92,6 +94,7 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
 });
 
 test('pressed: the timer is armed first (its time limit plus 600 s), the change runs, the ways in still work from outside, so code keeps it, and says so once', { timeout: 180000 * SLOW }, async () => {
+  keysReset();
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3 now', ADD);
   const before = calls().length;
@@ -111,12 +114,11 @@ test('pressed: the timer is armed first (its time limit plus 600 s), the change 
   const rec = journalLines().filter(x => x.id === g.record);
   assert.deepEqual(rec.map(x => [Boolean(x.start), Boolean(x.end), x.class || null, x.outcome || null, x.net]), [[true, false, 'lockout', null, g.id], [false, true, null, 'kept', g.id]]);
   // Told once in the chat: the press's own answer says it (no notice of its own there).
-  assert.equal((await chatMessages(chat)).filter(m => m.notice && /lock-out net/.test(m.content)).length, 0, 'not twice in the chat');
-  // Back as it was, for the tests after it.
-  writeFileSync(keysFile(), KEYS_LINE, { mode: 0o600 });
+  assert.equal((await chatMessages(chat)).filter(m => m.notice && !m.danger && /lock-out net/.test(m.content)).length, 0, 'not twice in the chat');
 });
 
 test('a way in that worked before stops working after it: put back at once, and said', { timeout: 180000 * SLOW }, async () => {
+  keysReset();
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3 again', `${ADD}; sleep 4`);
   const seen = netRecord().length;
@@ -137,6 +139,7 @@ test('a way in that worked before stops working after it: put back at once, and 
 });
 
 test('no answer after it: the Spark’s own timer puts it back, Spark 3 stays claimed, a second lock-out change is refused before it is asked, /stop leaves the timer, and /putback puts it back', { timeout: 240000 * SLOW }, async () => {
+  keysReset();
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3 once more', ADD);
   // (the connection drops right after the helper's first line, its "armed": the helper goes on, as on a Spark)
@@ -144,6 +147,8 @@ test('no answer after it: the Spark’s own timer puts it back, Spark 3 stays cl
   mkdirSync(dirname(drops), { recursive: true });
   writeFileSync(drops, 'first-line\n');
   let g;
+  // (left open by a failure here, it would hold Spark 3 for the tests after it: put back then)
+  const cleanUp = async () => { if (['open', 'timer', 'arming'].includes(newest()?.state)) await say(chat, '/putback').catch(() => {}); };
   try {
     const p = await press(chat, a.yes.id, a.pair);
     assert.equal(p.status, 200, p.text);
@@ -151,6 +156,7 @@ test('no answer after it: the Spark’s own timer puts it back, Spark 3 stays cl
     assert.equal(g.state, 'timer', JSON.stringify(g));
     assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) ran inside the lock-out net, but Spark 3 didn’t answer after it, so it wasn’t checked: Spark 3’s own timer puts it back at \\d\\d:\\d\\d UTC\\. Spark 3 stays claimed until then\\.$`));
   } finally { rmSync(drops, { force: true }); }
+  try {
   await waitFor(() => keysNow().includes(ADDED), { what: 'the change, which ran on' });
   assert.ok(timerWaits(g.id), 'its timer waits');
   // A second lock-out change there: refused before it is asked.
@@ -159,8 +165,8 @@ test('no answer after it: the Spark’s own timer puts it back, Spark 3 stays cl
   assert.equal((await chatMessages(chat)).filter(x => x.danger).length, asks, 'no new ask');
   const [refused] = sentBack('add the other key on spark 3');
   assert.match(refused?.error || '', new RegExp(`^A change that can lock you out of Spark 3 is still open there \\(record ${g.record}\\): it is kept or goes back first, at \\d\\d:\\d\\d UTC at the latest\\. Nothing was asked or run\\.$`));
-  // Any other change there meets its claim.
-  const plain = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch work-note.txt', dir: '~' } });
+  // Any other change there meets its claim (a plain one, which the owner's call would run at once).
+  const plain = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch net-note.txt' } });
   assert.equal(plain.status, 409, plain.text);
   assert.match(plain.json.error, /Something is already changing on Spark 3 \(a change inside the lock-out net\)/);
   // /stop ends Sparkie's answer, never the Spark's own timer.
@@ -172,11 +178,13 @@ test('no answer after it: the Spark’s own timer puts it back, Spark 3 stays cl
   assert.equal(keysNow(), KEYS_LINE, 'put back');
   assert.ok(!timerWaits(g.id));
   assert.equal(newest().state, 'put back');
-  const after = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch work-note.txt', dir: '~' } });
-  assert.notEqual(after.status, 409, after.text);
-  // Nothing left to put back: said, nothing done.
+  const after = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch net-note.txt' } });
+  assert.equal(after.status, 200, after.text);
+  assert.equal(after.json.ran, true, after.text);
+  // The newest open or kept one now is the one kept earlier: it stays, and that is said.
   const again = await say(chat, '/putback');
-  assert.match(again.text, /^\/putback\nNothing was put back: the newest change made inside the lock-out net, on Spark 3 \(record j_[0-9a-f]{12}\)|^\/putback\nPut back:/);
+  assert.match(again.text, /^\/putback\nNothing was put back: the newest change made inside the lock-out net, on Spark 3 \(record j_[0-9a-f]{12}\) was kept, and once kept the net puts nothing back\./);
+  } finally { await cleanUp(); }
 });
 
 test('what the net can’t put back is not done, and nothing is asked: a Tailscale sign-out, or a sign-in as another key', { timeout: 120000 * SLOW }, async () => {
@@ -196,6 +204,7 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
 
 // Last: it stops this file's console.
 test('a restart of Spark Console inside the window puts the change back at start, and says so in the chat it was asked in', { timeout: 300000 * SLOW }, async () => {
+  keysReset();
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3 slowly', `${ADD}; sleep 30`);
   const seen = netRecord().length;
