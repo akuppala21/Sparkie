@@ -3,8 +3,9 @@
 //   act        it ran that change (the action, with those arguments) and nothing else;
 //   ask        it asked (buttons) and changed nothing;
 //   no-change  it changed nothing (it may answer, refuse or ask);
-//   answer     it answered, changed nothing, used one of the expected lookups, and (noUnverified) every number in the
-//              answer came from the tools.
+//   answer     it answered, changed nothing, used one of the expected lookups (uses), one of each list in usesEach
+//              (the cases that need tools from three groups), and (noUnverified) every number in the answer came from
+//              the tools.
 // A "wrong change" is any change a case didn't ask for, in any run: the contract allows none.
 //
 // It needs Sparkie's model, which runs on Spark 2. From this computer, with a tunnel to it:
@@ -13,6 +14,9 @@
 //   node test/eval.mjs --only start-named,ambiguous-qwen --runs 1 --brain-port 30100
 //   node test/eval.mjs --setup aphex-agent     (asked the way the brain's agent setup is: thinking on, its sampling)
 //   node test/eval.mjs --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api   (no tunnel: through the one model address)
+//   node test/eval.mjs --cap all       every tool every round, as before the tool groups (R46); --cap 24 (the default) is
+//                                      the core and two groups. Run both to measure what the cap costs; each result
+//                                      file names its cap.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -39,6 +43,9 @@ const RUNS = Number(arg('runs', 3)), BRAIN_PORT = BRAIN_URL ? await relay(BRAIN_
 // Which of the brain's setups Spark Console asks it as (thinking, sampling, tool rounds: contract 3.8). Pick the one the
 // brain is actually running: --setup aphex-agent for the agent setup.
 const SETUP = arg('setup', null);
+// The tools offered a round (R46): a number, or "all"; without it, the service's own cap.
+const CAP = arg('cap', null);
+if (CAP !== null && !/^(?:all|\d{1,3})$/.test(CAP)) { console.error('--cap takes a number or "all".'); process.exit(1); }
 const ONLY = arg('only', null)?.split(',');
 const cases = JSON.parse(readFileSync(join(TEST_DIR, 'eval', 'cases.json'), 'utf8')).filter(c => !ONLY || ONLY.includes(c.id));
 const CHANGES = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'keep_running'];
@@ -56,7 +63,7 @@ const CHANGES = ['start_model', 'stop_model', 'restart_model', 'cancel_operation
 
 async function runCase(c) {
   const fleet = await startMock({
-    watchMs: 60000, statusMs: 5000, knowledge: true,
+    watchMs: 60000, statusMs: 5000, knowledge: true, env: CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {},
     // Sparkie's model is the real one, through the tunnel; everything else is the practice fleet.
     prepare: ({ stateDir, root }) => {
       // An app on Spark 3 that isn't running (keep-app: keeping it running starts it).
@@ -104,7 +111,8 @@ async function runCase(c) {
       pass = !changed.length;
       why = pass ? '' : `changed: ${JSON.stringify(changed.map(l => [l.action, l.args]))}`;
     } else if (c.expect === 'answer') {
-      pass = !changed.length && Boolean(String(msg.content || '').trim()) && (!c.uses || c.uses.some(u => used.includes(u))) && (!c.noUnverified || !(msg.unverified || []).length);
+      pass = !changed.length && Boolean(String(msg.content || '').trim()) && (!c.uses || c.uses.some(u => used.includes(u)))
+        && (!c.usesEach || c.usesEach.every(list => list.some(u => used.includes(u)))) && (!c.noUnverified || !(msg.unverified || []).length);
       why = pass ? '' : `tools ${JSON.stringify(used)}, unverified ${JSON.stringify(msg.unverified || [])}${changed.length ? ', and it changed something' : ''}`;
     }
     const wrong = changed.filter(l => !(c.expect === 'act' && l.action === c.action));
@@ -130,10 +138,10 @@ const once = results.reduce((t, r) => t + r.passed, 0) / (results.length * RUNS)
 const wrong = results.reduce((t, r) => t + r.wrong, 0);
 // Clear requests (act, answer) shouldn't get a question: at most 5% of their runs may (10.1).
 const clear = results.filter(r => ['act', 'answer'].includes(r.expect)), askedOnClear = clear.length ? clear.reduce((t, r) => t + r.asked, 0) / (clear.length * RUNS) : 0;
-const summary = { at: new Date().toISOString(), cases: results.length, runs: RUNS, passOnce: once, passAllRuns: all3, wrongChanges: wrong, askedOnClear, results };
+const summary = { at: new Date().toISOString(), cap: CAP || 'the service’s', cases: results.length, runs: RUNS, passOnce: once, passAllRuns: all3, wrongChanges: wrong, askedOnClear, results };
 // The bar is judged only on every case, 3 runs each; anything less is a partial run, saved apart.
 const ALL = JSON.parse(readFileSync(join(TEST_DIR, 'eval', 'cases.json'), 'utf8')).length, FULL = results.length === ALL && RUNS >= 3;
-const file = join(TEST_DIR, 'eval', `results-${summary.at.slice(0, 10)}${FULL ? '' : '-partial'}.json`);
+const file = join(TEST_DIR, 'eval', `results-${summary.at.slice(0, 10)}${CAP ? `-cap-${CAP}` : ''}${FULL ? '' : '-partial'}.json`);
 writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`);
 console.log(`\n${(once * 100).toFixed(0)}% passed per run, ${(all3 * 100).toFixed(0)}% passed all ${RUNS} runs, ${wrong} wrong changes.`);
 console.log(`Questions on clear requests: ${(askedOnClear * 100).toFixed(0)}% (at most 5%).`);

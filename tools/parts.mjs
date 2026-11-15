@@ -192,7 +192,7 @@ const none = v => /^none\b/i.test(v || '');
 
 // Owns: "access.json (writers: changeAccess, ownAccess), audit.jsonl (writers: none; the installer writes it)"
 export function owned(value) {
-  if (none(value)) return [];
+  if (!value || none(value)) return [];
   return items(value).map(it => {
     const m = /^`?([\w.-]+)`?\s*(?:\((.*)\))?$/.exec(it);
     if (!m) return { file: it, writers: null };
@@ -201,13 +201,14 @@ export function owned(value) {
   });
 }
 // Timers: "watchHeld (every 60 s), healPass (every HEAL_PASS_MS)": each item's first name (or "top level").
-export const timerNames = value => (none(value) ? [] : items(value).map(it => (/^top level\b/.test(it) ? 'top level' : /^`?([A-Za-z_$][\w$]*)/.exec(it)?.[1] || it)));
+export const timerNames = value => (!value || none(value) ? [] : items(value).map(it => (/^top level\b/.test(it) ? 'top level' : /^`?([A-Za-z_$][\w$]*)/.exec(it)?.[1] || it)));
 
 // One part, read: its header, top-level names, functions, actions, and the writes, timers, events and operations in it.
 function readPart(file, text) {
   const code = blank(text), pr = pairs(code);
   const part = { file, text, code, header: header(text), lines: text.split('\n').length - 1, bad: pr.bad ?? null, top: [], fns: [], acts: [] };
-  part.actions = [...text.matchAll(/^\s*name: '([a-z_]+)', title: '([^']+)', kind: '(read|change)'/gm)].map(m => ({ name: m[1], title: m[2], kind: m[3], file }));
+  part.actions = [...text.matchAll(/^\s*name: '([a-z_]+)', title: '([^']+)', kind: '(read|change)'.*$/gm)].map(m => ({ name: m[1], title: m[2], kind: m[3], file,
+    group: m[0].match(/\bgroup: '([a-z]+)'/)?.[1] || null }));
   part.functions = [...new Set([...text.matchAll(/^(?:async )?function\*? ([A-Za-z_$][\w$]*)|^const ([A-Za-z_$][\w$]*) = (?:async )?(?:\([^)]*\)|[A-Za-z_$][\w$]*) =>/gm)].map(m => m[1] || m[2]))];
   if (part.bad != null) return part;
   const { close, open } = pr;
@@ -602,11 +603,11 @@ export function registry(root = ROOT, tree = readParts(root)) {
     'Kind: a lookup runs at once; a change goes through the checks in `runAction`. Answers to: the words of the owner’s',
     'request it may follow (`ACTION_KIND`). Page only: never run from a channel (`PAGE_ONLY`). Step: may be a step of a',
     'saved workflow (not in `NOT_A_STEP`). Text: a lookup whose result is the console’s own (`INSIDE_READS`), or text',
-    'from outside.',
+    'from outside. Group: the tool group Sparkie is offered it in (R46; the core is in every round).',
     '',
-    '| Action | Kind | Part | Answers to | Page only | Step | Text |',
-    '|---|---|---|---|---|---|---|',
-    ...actions.map(a => `| \`${a.name}\` | ${a.kind} | \`${a.file.slice(0, -4)}\` | ${(kinds?.get?.(a.name) || []).join(', ') || '—'} | ${pageOnly?.has(a.name) ? 'yes' : '—'} | ${notStep?.has(a.name) ? 'no' : 'yes'} | ${a.kind === 'read' ? (inside?.has(a.name) ? 'inside' : 'outside') : '—'} |`),
+    '| Action | Kind | Part | Group | Answers to | Page only | Step | Text |',
+    '|---|---|---|---|---|---|---|---|',
+    ...actions.map(a => `| \`${a.name}\` | ${a.kind} | \`${a.file.slice(0, -4)}\` | ${a.group || '—'} | ${(kinds?.get?.(a.name) || []).join(', ') || '—'} | ${pageOnly?.has(a.name) ? 'yes' : '—'} | ${notStep?.has(a.name) ? 'no' : 'yes'} | ${a.kind === 'read' ? (inside?.has(a.name) ? 'inside' : 'outside') : '—'} |`),
     '',
     '## State files and their writers',
     '',
@@ -638,7 +639,7 @@ export function registry(root = ROOT, tree = readParts(root)) {
     ...timers.map(t => `| \`${t.name}\` | \`${t.part.slice(0, -4)}\` | ${cell(t.text) || '—'} |`),
     '',
     ...(() => {
-      const wakes = parts.filter(p => p.header && !none(p.header.fields.Wakes));
+      const wakes = parts.filter(p => p.header?.fields.Wakes && !none(p.header.fields.Wakes));
       return wakes.length ? ['| Part | May wake |', '|---|---|', ...wakes.map(p => `| \`${p.file.slice(0, -4)}\` | ${cell(p.header.fields.Wakes)} |`)] : ['No part may wake a Spark: every header says `Wakes: none`.'];
     })(),
     '',

@@ -9,7 +9,7 @@ One address only since 2026-11-11 (the owner's choice; contract section 13). All
 |---|---|---|
 | Anyone | The internet, when the main address is open to it (below) | The fleet page: each Spark's name, online or not, GPU use, memory, temperature, power, and which Sparks are cabled together. **Sign in** and **Request access**. Nothing about models, chats, jobs, files, people or addresses. |
 | Someone on your tailnet who isn't on the list | The main address | The same fleet page, with Request access. |
-| Someone who asked | Same | "Request sent". You approve or decline on **Access → People**. |
+| Someone who asked | Same | "Request sent". You approve or decline through `/access/requests`. |
 | Members | Tailscale, signed in as someone on the list | The console, limited to what you gave them (People). |
 | You | Tailscale, signed in as the owner, on any device; or, without Tailscale, a device you signed in (below) | Everything. |
 
@@ -99,15 +99,15 @@ port, removes the lock and restarts the service.
 
 1. **Admin console:** open Spark 2 (the Spark that runs Spark Console), then Share → Copy share link. One link works
    for anyone, for 30 days. Your tailnet's access rules decide what else on Spark 2 they can reach.
-2. **Access → People → Invite:** paste the link and Save.
-3. **Copy invite** and send it. They accept the share (Tailscale is free), open Spark Console and press
+2. **Save the link:** `PUT /access/invite` with `{"url": …}`.
+3. **Send them the link** and the console's address. They accept the share (Tailscale is free), open Spark Console and press
    **Request access**.
-4. **Approve** them under **Waiting for access**, choosing a starting point:
-   - **Look around:** they see the fleet and read Shared files.
-   - **Chat and files:** they also chat with Sparkie and get their own files.
-   - **Run models too:** they can also deploy and stop models.
+4. **Approve** them (`POST /access/requests` with `login`, `decision` and `preset`), choosing a starting point:
+   - **Look around** (`look`): they see the fleet and read Shared files.
+   - **Chat and files** (`chat`): they also chat with Sparkie and get their own files.
+   - **Run models too** (`run`): they can also deploy and stop models.
 
-   Change any of it later under People.
+   Change any of it later with `PUT /access/<id>`.
 
 People can also ask straight from the public page with their email. Those requests say "email not checked yet":
 the access only applies once they sign in to Tailscale with that email.
@@ -133,5 +133,5 @@ still has them, the owner removes them by hand; the console never does:
     sudo rm -rf ~/.local/state/spark-console-door     # its Tailscale state is owned by root
 
 Then delete the device in the Tailscale admin console and the page with `npx wrangler delete <name>`. A share link saved
-before then points at the old device: make a new one from Spark 2 and save it in Access → Address. The installer prints
+before then points at the old device: make a new one from Spark 2 and save it with `PUT /access/invite`. The installer prints
 these lines when it finds `door.json` or the container.
