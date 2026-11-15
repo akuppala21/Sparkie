@@ -368,10 +368,14 @@ holds it for the command and everything the command starts. The helper runs no w
   yet; replacing a link that the setting followed. So: each folder between the home and a held path is bound onto
   itself (`BindPaths`), and a mount point cannot be renamed or replaced, while what is inside stays writable; a set
   of names must be there (the start files, `.ssh`, `.docker`, the service manager's folders,
-  `.cache/spark-console`), and the one-time command makes the missing ones, before the password, as the owner (a
+  `.cache/spark-console`, `~/.local/share/spark-console`, the jobs' shared folder), and the one-time command makes the missing ones, before the password, as the owner (a
   `.bash_profile` it makes is one line that reads what bash read without one); and a held path in the home must be
-  the real thing, not a link nor under one. `run` refuses by name when a name is missing or a link; a look, which
-  writes nothing, is not refused. `--check` names them, says whether PAM reads `~/.pam_environment`, lists enabled
+  the real thing, not a link nor under one. `run` refuses by name when a name is missing or a link, or when the
+  owner's login shell is not bash, sh or dash (the names are bash's start files); a look, which writes nothing, is
+  not refused. Any other listed name that is a link (a change could have left it) is left alone by both walls: not
+  held and never followed, and `check` names it. A folder under a held one is never pinned (it is held already, and
+  a pin would be a writable place inside it). The jobs' shared and output folders, which the console mounts into
+  containers, hold their place the same way: there, real, and bound onto themselves. `--check` names them, says whether PAM reads `~/.pam_environment`, lists enabled
   units of the owner's whose program is in the home outside the read-only list, and says whether Tailscale SSH is on.
 - **What the walls cannot promise.** A key in a file nobody listed (2.3). A file a walled change may write that the
   owner later runs outside the wall (a project script, something on the owner's `PATH`), or that a start file
