@@ -381,6 +381,7 @@ test('undo never puts back a set whose command did not run, nor, for a change cu
   const line = join(H3(), '.rehearsal', 'etc', 'sudoers.d', 'spark-console-root'), was = readFileSync(line);
   const before = sets(), chat = await newChat();
   let ran;
+  rmSync(line);
   try { ran = await inChat(chat, 'edit h on spark three', 'run', { on: 'spark3', command: 'echo attempt > notes/h.txt' }); } finally { writeFileSync(line, was); chmodSync(line, 0o440); }
   assert.equal(ran.value?.ran, false, ran.error || JSON.stringify(ran.value));
   assert.match(ran.value.why, /sudo line isn’t on Spark 3/);
