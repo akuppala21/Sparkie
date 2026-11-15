@@ -42,7 +42,7 @@ const LIMITS = [
   [/^docs\/state\.md$/, 24 * KB],
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
-  [/^docs\/contract\.md$/, 120 * KB, 139 * KB],
+  [/^docs\/contract\.md$/, 120 * KB],
   [/^README\.md$/, 4 * KB, 15 * KB],
   [/^test\/README\.md$/, 12 * KB, 48 * KB],
   [/^docs\/agent-door\.md$/, 16 * KB, 17 * KB],

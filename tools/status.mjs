@@ -5,7 +5,8 @@
 //                            when a comment in it starts with that test's id (`// T54: …`)
 //
 // checkStatus fails when a rule or a requirement has no row, a built or partly row names no test, a test a row names is
-// gone (no file, no test with those words, or skipped or marked to-do), or the table is not what this file makes.
+// gone (no file, no test with those words, or skipped or marked to-do), or the table is not what this file makes; and
+// when the contract carries a version mark (`*(v3)*`, `*(changed)*`, `*(2026-11-11)*`): status lives here, not there.
 // tools/make.mjs runs it; so does test/docs.test.mjs, on this tree and on small made-up ones.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -14,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const STATUS = 'docs/status.md';
 const STATUSES = ['built', 'partly', 'no test yet'];
+// A version mark: the contract states each rule as it must hold now, and its history is in docs/history/.
+const MARK = /\*\((?:v\d[\d.]*|new|changed\b[^)\n]*|\d{4}-\d{2}-\d{2}\b[^)\n]*)\)\*/g;
 // The checker's own test holds made-up faults on purpose: it is not read for acceptance tests.
 const SELF = ['docs.test.mjs'];
 
@@ -150,5 +153,9 @@ export function checkStatus(root = ROOT) {
     for (const t of r.tests) { const dead = deadTest(root, t); if (dead) say(`row ${id} ${dead}`, r.line); }
   }
   if (text !== statusTable(root)) say('is not what the rule files and the tests make: run node tools/make.mjs');
+  const contract = contractOf(root);
+  for (const m of contract.matchAll(MARK)) {
+    out.push({ check: 'status', file: 'docs/contract.md', line: contract.slice(0, m.index).split('\n').length, message: `has a version mark (${m[0]}): state the rule as it must hold now; what is built is in ${STATUS}` });
+  }
   return out;
 }

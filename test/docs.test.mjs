@@ -112,6 +112,7 @@ describe('typed counts', () => {
 
 describe('sizes', () => {
   test('AGENTS.md over 8 KB', () => fails({ 'AGENTS.md': `${BASE['AGENTS.md']}${'Short line.\n'.repeat(700)}` }, 'sizes', /over its limit of 8192/));
+  test('the contract over 120 KB: made flat, it has no higher ceiling', () => fails({ 'docs/contract.md': `${BASE['docs/contract.md']}${'Short line.\n'.repeat(10500)}` }, 'sizes', /over its limit of 122880/));
   test('a card over 4 KB', () => fails({ 'docs/how/add-an-action.md': CARD.replace('- A second route.', `${'- A second route.\n'.repeat(250)}`) }, 'sizes', /over its limit of 4096/));
   test('a line over 400 characters', () => fails(doc('word '.repeat(90)), 'sizes', /line of 45\d characters/));
 });
@@ -244,6 +245,11 @@ describe('status', () => {
   test('a test name no test there has', () => statusFails({ 'docs/status.md': statusOf({}).replace('“a choice is used once”', '“a choice is used twice”') }, /a choice is used twice/));
   test('a test that is skipped is no proof', () => {
     statusFails({ 'test/change.test.mjs': "// T1: a start\ntest.skip('a choice is used once, alone, and only by whoever was asked', () => {});\n" }, /skipped or marked to-do/);
+  });
+  test('a version mark still in the contract', () => {
+    for (const mark of ['*(v3)*', '*(changed in v3)*', '*(2026-11-11)*', '*(changed 2026-11-12, the owner’s decision 6)*']) {
+      statusFails({ 'docs/contract.md': BASE['docs/contract.md'].replace('- 8.3 It never', `- 8.3 ${mark} It never`) }, new RegExp(`version mark \\(${mark.replace(/[.*()]/g, '\\$&')}\\)`));
+    }
   });
   test('a row the rule files and the tests do not make', () => statusFails({ 'docs/status.md': statusOf({}).replace('| partly |', '| no test yet |') }, /run node tools\/make\.mjs/));
   test('a rule with no test says so; an acceptance test held by a test makes its requirement built', () => {
