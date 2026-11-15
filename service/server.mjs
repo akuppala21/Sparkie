@@ -7546,9 +7546,10 @@ action({
     // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
     const w = ctx.compare?.workflow || findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    const given = input.inputs || {}, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
     // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
-    if (missing.includes('model') && w.best?.model) { given.model = w.best.model; missing.splice(missing.indexOf('model'), 1); }
+    const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
+    if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
@@ -7563,7 +7564,7 @@ action({
       throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
-    if (w.best?.model && given.model === w.best.model && !input.inputs?.model) job.usedBest = w.best.model;
+    if (usedBest) job.usedBest = usedBest;
     const steps = JSON.stringify(w.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
