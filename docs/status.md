@@ -36,7 +36,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R20](rules/R20.md) | partly | `test/state.test.mjs` (“the chat keeps answering”, “a throw while a turn is being set up frees the chat”, “a state file that isn't JSON”, “access.json that can't be read”, “a state file that can't be read when an operation finishes is never saved over”, “says whether agents are paused”, “new operations get 503 while a running one finishes”) | falls short today: its file says where |
 | [R21](rules/R21.md) | partly | `test/docker-down.test.mjs` | review; falls short today: its file says where |
 | [R22](rules/R22.md) | built | `test/docs.test.mjs` (“desired.json’s six writers are found in the code”, “a writer of a state file its owner doesn’t declare”); `test/lock.test.mjs`; `test/memory.test.mjs` (“replaces and forgetting retire a line”); `test/selftest.test.mjs` (“a model on the list of what should be running on that Spark is never the test's”, “its first seed passes over the self-test's own model”) |  |
-| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs` |  |
+| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs`; `test/copy.test.mjs` (“rides on a Spark that is awake”, “before a power-off”) |  |
 | [R24](rules/R24.md) | built | `test/fleet.test.mjs` (“what the Sparks report”); `test/brain-check.test.mjs` |  |
 | [R25](rules/R25.md) | partly | `test/sparkie.test.mjs` (“requests run (a polite”, “the container has to be the one the words point to”, “the model passing a choice id gets 403”); `test/sparkie-more.test.mjs` (“save_workflow from chat”, “forget_memory runs at once only when the owner says to forget that very line”, “is a button and keeps nothing”); `test/selftest.test.mjs` (“asked in the owner's words, it runs at once”, “an agent's call is the owner's question”) | falls short today: its file says where |
 | [R26](rules/R26.md) | partly | `test/sparkie-more.test.mjs` (“a plain statement updates memory by itself”, “Sparkie rephrases what the owner states”); `test/detail.test.mjs`; `test/needs.test.mjs`; `test/abilities.test.mjs`; `test/journal.test.mjs` (“after recall, remember needs a button”) | falls short today: its file says where |
@@ -48,7 +48,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs`; `test/app-keys.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
-| [R35](rules/R35.md) | partly | `test/steps.test.mjs`; `test/change.test.mjs` | falls short today: its file says where |
+| [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/workloads.test.mjs`; `test/workloads-place.test.mjs`; `test/workloads-save.test.mjs`; `test/change.test.mjs` |  |
 | [R36](rules/R36.md) | built | `test/paste.test.mjs` |  |
 | [R37](rules/R37.md) | built | `test/files.test.mjs` |  |
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
@@ -131,7 +131,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 6.22 | no test yet |  | T120: no test holds it yet |
 | 6.23 | no test yet |  | T121: no test holds it yet |
 | 6.24 | no test yet |  | T70, T90, T134: no test holds them yet |
-| 6.25 | no test yet |  | T99, T135: no test holds them yet |
+| 6.25 | partly | `test/copy.test.mjs` (“Spark 3 wakes after the state changed: it gets a copy while it is awake”) | holds part of T135: “Spark 3 wakes after the state changed, and a copy is taken while it is awake.”; T99: no test holds it yet |
 | 7.1 | no test yet |  | no acceptance test lists it |
 | 7.2 | no test yet |  | T11, T28, T53: no test holds them yet |
 | 7.3 | built | `test/change.test.mjs` (“start_model across a "full" pair (Spark 3 + Spark 4)”) | holds T54 |

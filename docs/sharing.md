@@ -83,8 +83,8 @@ ssh akuppala@100.79.155.126 'mv ~/.local/state/spark-console/passkeys.json ~/.lo
 ```
 
 That takes effect at once: these changes work without a passkey again, and you set a new one up. Each install keeps a
-copy of the state folder under `~/.local/share/spark-console/releases/<time>/state/`, and Spark 3 keeps a daily copy
-under `~/.local/share/spark-console/backups/` (the last 14). To put one back: stop the service, untar it into
+copy of the state folder under `~/.local/share/spark-console/releases/<time>/state/`, and Spark 3 (or 4) keeps copies
+taken while it was on under `~/.local/share/spark-console/backups/` (one a day, the last 14). To put one back: stop the service, untar it into
 `~/.local/state/spark-console`, start the service.
 
 **If the API lock gets in the way**, `bash spark-console/deploy/lock-api.sh --undo` points Tailscale back at the local

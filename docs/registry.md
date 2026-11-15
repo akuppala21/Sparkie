@@ -76,7 +76,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `agents.json` | `20-mcp` | `top level`, `handler` (24-handler); the top-level one is the last-use timer | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
-| `backup.json` | `25-backup-and-start` | `backupState`; `backupState` is called by `backupIfDue` | yes | yes |
+| `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `storeBrainEval` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
@@ -131,7 +131,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |
 | `checkRoute` | `23-http` | every 60 s |
 | `refreshBlocked` | `23-http` | every 60 s |
-| `backupIfDue` | `25-backup-and-start` | 10 minutes after start, then hourly |
+| `backupIfDue` | `25-backup-and-start` | 10 minutes after start, then hourly; it sends only while a Spark is on and the state changed |
 | `needsMeTick` | `25-backup-and-start` | every 60 s |
 | `tick` | `25-backup-and-start` | every 0.5 s while a stop waits for running operations, 60 s at most |
 
@@ -159,7 +159,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
 | `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler), `backupState` (25-backup-and-start) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `copyLate` (20-state-copy), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler) |
 
 | Operation | Started by |
 |---|---|

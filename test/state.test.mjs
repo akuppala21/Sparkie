@@ -15,9 +15,10 @@
 // still matches it (S2). `desired.json` and `validations.json` that can't be read as a stop
 // finishes (a link to a folder in their place) are not saved over, Forget answers 503, and both entries of each are
 // there once they read again (F12). The daily copy's record survives a restart (`/health` `lastBackup.good`); with
-// every other Spark off it is retried, with one notice a day and a line in `needsOwner`; a copy cut short
-// (`.mock/gzip-bad`) never replaces the file there; with Spark 3 off it lands on Spark 4, is recorded, and no second
-// copy is made that day (F17).
+// every other Spark off nothing is tried and nothing is said on day 3, and past day 7 with changes there is one notice
+// and one line in `needsOwner`, once, even after an older build's daily notice; a copy cut short (`.mock/gzip-bad`)
+// never replaces the file there; with Spark 3 off it lands on Spark 4, is recorded, and no second copy is made that day
+// (F17).
 //
 // What Spark Console keeps, and how it stops and starts: every operation on the fleet's record (events.jsonl) when it
 // starts and when it ends, under one id; one cut off by a restart reported as interrupted when the service is back; on
@@ -27,8 +28,8 @@
 // when memory.json can't be read, when the state folder can't be written (a full disk), and when a turn throws while it
 // is set up. The fleet group (2026-11-12): a file that isn't JSON falls back to the copy from before its last save (S1);
 // access.json that can't be read answers from its last good copy (S2); a list or record that can't be read as an
-// operation finishes is never saved over (F12); the daily copy's record survives a restart, it is tried again, checked
-// and said when it's late (F17).
+// operation finishes is never saved over (F12); the daily copy's record survives a restart, nothing is tried while
+// every other Spark is off, a copy is checked, and a week without one is said once (F17).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -467,43 +468,78 @@ describe('the main service', { concurrency: 1 }, () => {
   });
 
   /* ───────── the daily copy, across restarts and with the other Sparks off (F17) ───────── */
-  // As if Spark Console restarted with every other Spark off: its record names a good copy from three days ago. Tried
-  // 2 s after the start, then every 3 s here (every hour on the Sparks).
-  describe('the daily copy: its record survives a restart; it is tried again; a copy cut short is never moved in; a day without one is said once', { concurrency: 1 }, () => {
+  // As if Spark Console restarted with every other Spark off: its record names a good copy from three days ago, and an
+  // older build's daily notice went out yesterday (noticedOn). The hourly look runs 2 s after the start, then every 3 s
+  // here (every hour on the Sparks).
+  describe('the daily copy: its record survives a restart; with every other Spark off nothing is tried; a copy cut short is never moved in; a week without one is said once', { concurrency: 1 }, () => {
     const GOOD = { at: new Date(Date.now() - 3 * 86400000).toISOString(), to: 'spark3', file: 'state-old.tgz' };
+    const OLDER_NOTICE = new Date(Date.parse(`${DAY}T12:00:00.000Z`) - 86400000).toISOString().slice(0, 10);
     const today = () => `state-${DAY}.tgz`;
     let F;
     const copies = spark => join(F.root, spark, '.local', 'share', 'spark-console', 'backups');
     const record = async () => (await health(F.base)).lastBackup;
-    const notices = () => eventLines(F).filter(e => e.type === 'notice' && /^Spark Console’s state was last copied/.test(e.text));
     const nextTry = last => waitFor(async () => { const b = await record(); return b && b.at !== last?.at && b; }, { timeout: 40000, what: 'the next try' });
     const needsOn = async () => (await ownerOn(F, '/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner;
-    before(async () => {
-      F = await startMock({ watchMs: 600000, statusMs: 3000,
-        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '3000', ...HOLD_DAY },
-        prepare: ({ dir, stateDir }) => {
-          holdDay(dir);
-          writeFileSync(join(dir, 'offline'), 'spark1\nspark3\nspark4\n');
-          writeFileSync(join(stateDir, 'backup.json'), JSON.stringify({ at: GOOD.at, ok: true, to: GOOD.to, file: GOOD.file, good: GOOD, noticedOn: null }), { mode: 0o600 });
-        } });
-    }, { timeout: 180000 });
+    const asRestarted = { watchMs: 600000, statusMs: 3000,
+      env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '3000', ...HOLD_DAY },
+      prepare: ({ dir, stateDir }) => {
+        holdDay(dir);
+        writeFileSync(join(dir, 'offline'), 'spark1\nspark3\nspark4\n');
+        writeFileSync(join(stateDir, 'backup.json'), JSON.stringify({ at: GOOD.at, ok: true, to: GOOD.to, file: GOOD.file, good: GOOD, noticedOn: OLDER_NOTICE }), { mode: 0o600 });
+      } };
+    before(async () => { F = await startMock(asRestarted); }, { timeout: 180000 });
     after(() => F?.stop(), { timeout: 30000 });
 
     test('after a restart /health still names the last good copy', { timeout: 30000 * SLOW }, async () => {
       assert.deepEqual((await record()).good, GOOD);
     });
 
-    test('every other Spark off: tried again and again, one notice that day naming the last good copy, and a line for the owner', { timeout: 90000 * SLOW }, async () => {
-      let last = await waitFor(async () => { const b = await record(); return b?.ok === false && b; }, { timeout: 40000, what: 'a failed try' });
-      assert.deepEqual(last.good, GOOD);
-      const n = await waitFor(() => notices()[0], { timeout: 10000, what: 'the notice' });
-      assert.match(n.text, new RegExp(`^Spark Console’s state was last copied to another Spark on ${GOOD.at.slice(0, 10)} \\(Spark 3 holds it\\)\\. Today .+\\. It tries again every hour\\.$`));
-      last = await nextTry(last);
-      last = await nextTry(last);
-      assert.equal(last.ok, false);
-      assert.equal(notices().length, 1, 'one notice a day, not one per try');
-      assert.equal(JSON.parse(readFileSync(join(F.stateDir, 'backup.json'), 'utf8')).noticedOn, DAY);
-      assert.ok((await needsOn()).some(l => l.startsWith(`Spark Console’s state hasn’t been copied to another Spark since ${GOOD.at.slice(0, 10)}.`)), 'the open-problems list says so');
+    // Contract 6.25 and 4.7 as the owner approved them on 2026-11-14 (design E 2.5, R23): a copy rides on a Spark that is
+    // awake anyway, none is woken for it, and the owner hears only after 7 days with changes and no copy. Until E2a this
+    // test held the old rule: a try every hour with every other Spark off, and a notice and a line from day 1.
+    // (On a fleet of its own, from the same fixture: it moves the clock days ahead, and moving it back would leave the
+    // Sparks it couldn't reach counted unreachable for those days, so the tests after it couldn't run on that fleet.)
+    describe('every other Spark off, on a fleet of its own', () => {
+      let G;
+      before(async () => { G = await startMock(asRestarted); }, { timeout: 180000 });
+      after(() => G?.stop(), { timeout: 30000 });
+      test('every other Spark off: on day 3 nothing is tried, woken or said; past day 7 with changes, one notice and one needs line in exact words, once, even after an older build’s daily notice', { timeout: 150000 * SLOW }, async () => {
+        const record = async () => (await health(G.base)).lastBackup;
+        const needsOn = async () => (await ownerOn(G, '/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner;
+        const kept = () => JSON.parse(readFileSync(join(G.stateDir, 'backup.json'), 'utf8'));
+        const fixture = kept(), sevenDays = () => eventLines(G).filter(e => e.type === 'notice' && /copied to another Spark/.test(e.text || ''));
+        assert.equal(fixture.noticedOn, OLDER_NOTICE);
+        // Day 3: the status check has seen every other Spark off, and the look has run three times since.
+        await waitFor(async () => (await ownerOn(G, '/status?fresh=1')).json.nodes.filter(n => n.id !== 'spark2').every(n => n.state !== 'online'), { timeout: 30000, what: 'every other Spark seen off' });
+        await sleep(10000);
+        assert.deepEqual(kept(), fixture, 'backup.json records no new try');
+        assert.deepEqual(await record(), fixture);
+        assert.deepEqual(sevenDays(), [], 'no notice on day 3');
+        assert.ok(!(await needsOn()).some(l => /copied to another Spark/.test(l)), 'no needs line on day 3');
+        const ops = (await ownerOn(G, '/actions/recent_operations', { method: 'POST', body: { limit: 50 } })).json.operations;
+        assert.ok(!ops.some(o => o.type === 'power-on'), JSON.stringify(ops));
+        assert.ok(!eventLines(G).some(e => e.type === 'spark-powered-on'), 'nothing was woken');
+        assert.deepEqual(readFileSync(G.offlineFile, 'utf8').split(/\s+/).filter(Boolean).sort(), ['spark1', 'spark3', 'spark4']);
+        // The same record carried past day 7, with the state changed: one notice, in these words, and the same needs line.
+        const held = Number(readFileSync(join(G.dir, 'clock-offset'), 'utf8')) || 0;
+        const words = `Spark Console’s state hasn’t been copied to another Spark for over 7 days (the newest copy is from ${GOOD.at.slice(0, 10)}, on Spark 3), and it has changed since. A copy goes by itself the next time another Spark is on; none is turned on for it, so turn one on for a few minutes. Until then, losing Spark 2’s disk would lose what changed.`;
+        {
+          assert.equal((await ownerOn(G, '/agents/settings', { method: 'PUT', body: { selfHeal: true } })).status, 200);
+          writeFileSync(join(G.dir, 'clock-offset'), String(held + 4.5 * 86400000));
+          const n = await waitFor(() => sevenDays()[0], { timeout: 20000, what: 'the notice past day 7' });
+          assert.equal(n.text, words);
+          assert.deepEqual((await needsOn()).filter(l => /copied to another Spark/.test(l)), [words]);
+          await sleep(7000);
+          assert.equal(sevenDays().length, 1, 'one notice, not one a look');
+          assert.deepEqual(kept(), { ...fixture, noticedOn: n.at.slice(0, 10) }, 'noticedOn set once; still no try');
+          // The next day: no second notice, and the line stands.
+          writeFileSync(join(G.dir, 'clock-offset'), String(held + 5.5 * 86400000));
+          await sleep(7000);
+          assert.equal(sevenDays().length, 1, 'no second notice the next day');
+          assert.equal(kept().noticedOn, n.at.slice(0, 10));
+          assert.deepEqual((await needsOn()).filter(l => /copied to another Spark/.test(l)), [words]);
+        }
+      });
     });
 
     test('a copy that arrives cut short is not moved into place: the earlier file stays', { timeout: 90000 * SLOW }, async () => {
@@ -521,7 +557,12 @@ describe('the main service', { concurrency: 1 }, () => {
       assert.deepEqual((await record()).good, GOOD);
     });
 
-    test('Spark 3 off and Spark 4 on: the copy lands on Spark 4, is recorded as the last good one, and no second copy is made that day', { timeout: 90000 * SLOW }, async () => {
+    test('Spark 3 off and Spark 4 on: the copy lands on Spark 4, is recorded as the last good one, and no second copy is made that day', { timeout: 240000 * SLOW }, async () => {
+      // (what Spark Console writes by itself a minute after it starts, the list of what should be running and the brain's
+      // first check, is written before the window opens: a copy follows a change of the state now, and those are changes)
+      await waitFor(() => existsSync(join(F.stateDir, 'desired.json')), { timeout: 120000, every: 1000, what: 'the start-up look' });
+      await waitFor(() => existsSync(join(F.stateDir, 'brain-profiles.json')), { timeout: 60000, every: 1000, what: 'the brain’s first check' }).catch(() => {});
+      await sleep(5000);
       rmSync(join(F.root, 'spark3', '.mock', 'gzip-bad'), { force: true });
       writeFileSync(F.offlineFile, 'spark1\nspark3\n');
       const b = await waitFor(async () => { const x = await record(); return x?.ok && x; }, { timeout: 40000, what: 'a good copy' });

@@ -10,14 +10,16 @@ new things go", row "A state file".
 ## Also update
 
 - `docs/state.md`: a row for the new fact.
-- The daily copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`) and the install snapshot (`on_exit` and its
+- The state copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`) and the install snapshot (`on_exit` and its
   `save` in `deploy/host-on-portal.sh`), if it must be left out.
+- `COPY_IGNORES` (`20-state-copy.mjs`), if Spark Console rewrites it by itself as it watches or logs: a change to it
+  alone then sends no copy to a Spark that is awake (it still rides in the next one).
 - Its part's header: `Owns: <file> (writers: …)`, naming every function that writes it, wherever it is (R22, R28).
   `node tools/make.mjs` lists it in `docs/registry.md` and fails on a writer the header doesn't name.
 
 ## Never
 
-- Put a secret in it: everything in the folder except `*.sock` is copied daily to another Spark and into every
+- Put a secret in it: everything in the folder except `*.sock` is copied to another Spark and into every
   install snapshot. A secret goes in `~/.config/spark-console/secrets.json` through `secretsWrite`
   (`03-secrets.mjs`), typed only on the passkey page (R32).
 - Keep an owner's setting in `config.json` (replaced on every install).

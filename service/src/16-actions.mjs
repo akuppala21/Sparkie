@@ -217,7 +217,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'remember',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -408,8 +408,11 @@ async function sparkieCheck(name, input, ctx) {
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
   if (name === 'save_workflow') {
-    const steps = Array.isArray(out.steps) ? out.steps : [];
-    return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
+    // ("save that as …": the request's own steps, so the check and the button see them, D6e)
+    const o = out.from !== undefined ? fromRequest(out, null, ctx) : out, { leftOut, ...plain } = o;
+    const steps = Array.isArray(o.steps) ? o.steps : [];
+    const clear = asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request));
+    return { clear, input: clear ? o : plain };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
 }

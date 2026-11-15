@@ -3003,12 +3003,12 @@ function agentsTab(view, bind) {
   put(view, agentsBox, telegramBox, backup);
   bind(() => redraw(telegramBox, telegramPanel()));
   loadTelegram();
-  // Spark Console copies its own state (keys, chats, settings) to another Spark once a day.
+  // Spark Console copies its own state (keys, chats, settings) to another Spark while one is on.
   capi('health').then(x => {
     const b = x?.lastBackup;
     if (!b || !backup.isConnected) return;
     backup.textContent = b.ok ? `Spark Console’s settings were last backed up ${fmt.when(b.at)} to ${nodeName(b.to)}.`
-      : `The last backup of Spark Console’s settings didn’t work (${fmt.when(b.at)}${b.error ? `: ${b.error}` : ''}). ${b.good ? `The last good one is from ${fmt.when(b.good.at)}, on ${nodeName(b.good.to)}.` : 'There is no good one yet.'} It tries again every hour.`;
+      : `The last backup of Spark Console’s settings didn’t work (${fmt.when(b.at)}${b.error ? `: ${b.error}` : ''}). ${b.good ? `The last good one is from ${fmt.when(b.good.at)}, on ${nodeName(b.good.to)}.` : 'There is no good one yet.'} It tries again when another Spark is on.`;
   }).catch(() => {});
   bind(() => {
     const a = state.agents, titleOf = name => a?.actions?.find(x => x.name === name)?.title || name;

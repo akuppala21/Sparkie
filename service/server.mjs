@@ -3616,6 +3616,7 @@ const OP_WORDS = {
   stop: 'Stopping',
   'stop-model': 'Stopping',
   undo: 'Undoing the last change',
+  'workflow-run': 'The saved workflow',
 };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
@@ -3625,8 +3626,8 @@ function postResult(job) {
   const what = (/^power-/.test(job.type) ? `${OP_WORDS[job.type]} ${where}${job.model ? ` for ${job.model}` : ''}`
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
-  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
-    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
+  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
+    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
@@ -4566,7 +4567,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'remember',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -4757,8 +4758,11 @@ async function sparkieCheck(name, input, ctx) {
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
   if (name === 'save_workflow') {
-    const steps = Array.isArray(out.steps) ? out.steps : [];
-    return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
+    // ("save that as …": the request's own steps, so the check and the button see them, D6e)
+    const o = out.from !== undefined ? fromRequest(out, null, ctx) : out, { leftOut, ...plain } = o;
+    const steps = Array.isArray(o.steps) ? o.steps : [];
+    const clear = asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request));
+    return { clear, input: clear ? o : plain };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
 }
@@ -6467,20 +6471,83 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
-/* ───────── a saved workflow's job steps: the run waits for the job's end (D6b) ───────── */
-// Area: core        Rules: R35, R38        Tests: steps.test.mjs
+/* ───────── "save that as …": a saved workflow from the changes a request made (D6e) ───────── */
+// Area: core        Rules: R35, R43        Tests: workloads-save.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// save_workflow {title, from: "this request"} saves the chain of changes the journal recorded for the request just
+// before this one, in this chat (contract 9.7's "save this as …"; the critic's cut of B7 and D's pipelines). Only in the
+// owner's own chat with Sparkie, on the page or Telegram, or a press of its button there: never an agent (its key,
+// ask_sparkie or a chat an agent started) and never POST /actions, which has no chat; R43's own-call test. The records
+// are this chat's alone (`chat`): its two newest `said` lines bound the request (the owner's words that asked, then the
+// words asking to save it), and the request is every change call between them, Sparkie's and the owner's button
+// presses, its carry-on turns included. A step is a change that worked and isn't a question, kept with the arguments it
+// was called with (as the journal masked them; answers to a question are left out), once. Not a step: a lookup, anything in
+// NOT_A_STEP, and cancel, undo, test runs (savedFromSkip). A call whose arguments the journal cut, or that carried a hidden
+// key or a pressed choice's id, is left out and said. Nothing that can be saved: refused, saying so. The steps then go
+// through save_workflow's own checks as if they were typed.
+const savedFromSkip = new Set(['cancel_operation', 'test_changes', 'undo_last_change', 'undo_update']);
+// The input with its steps: those given, or those of the request before this one when `from` is (with what was left
+// out of them, leftOut, for the answer).
+function fromRequest(input, viewer, ctx) {
+  if (input.from !== undefined && input.steps !== undefined) throw new HttpError(400, 'Give steps or from, not both.');
+  if (input.from === undefined) { if (input.steps === undefined) throw new HttpError(400, 'Missing argument: steps.'); return input; }
+  const { from, ...rest } = input, { steps, left } = requestSteps(viewer, ctx);
+  return { ...rest, steps, ...(left.length ? { leftOut: left } : {}) };
+}
+function requestSteps(viewer, ctx) {
+  const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  if (viewer?.agentKey || ctx?.agent || ctx?.agentId || !conv || conv.agent || !['sparkie', 'page', 'telegram'].includes(ctx.via)) {
+    throw new HttpError(403, 'from “this request” works only in your own chat with Sparkie: it saves what the request just before it changed there.');
+  }
+  // This chat's records, oldest first, from this month's journal and the last one's (a line names its chat).
+  const recs = [], tag = `"chat":${JSON.stringify(conv.id)}`;
+  for (const f of journalFiles().slice(0, 2).reverse()) for (const line of jLinesOf(f)) { if (line.includes(tag)) { const r = jParse(line); if (r?.chat === conv.id) recs.push(r); } }
+  const said = recs.map((r, i) => (r.k === 'said' ? i : -1)).filter(i => i >= 0);
+  if (said.length < 2) throw new HttpError(409, 'There’s no request before this one in this chat, so nothing was saved.');
+  const calls = new Map();
+  for (const r of recs.slice(said.at(-2) + 1, said.at(-1))) if (r.k === 'call') calls.set(r.id, calls.has(r.id) ? jMerge(calls.get(r.id), r) : r);
+  const steps = [], left = [];
+  for (const r of calls.values()) {
+    const a = ACTIONS.get(r.act);
+    if (!a || a.kind === 'read' || NOT_A_STEP.has(r.act) || savedFromSkip.has(r.act)) continue;
+    if (!r.ok || ['question', 'needs-ok', 'cancelled', 'refused'].includes(r.outcome)) continue;
+    const args = r.args && typeof r.args === 'object' && !Array.isArray(r.args) ? r.args : null;
+    const why = !args ? 'its arguments were too long to keep' : 'choice' in args ? 'it answered a question, so its arguments aren’t kept'
+      : JSON.stringify(args).includes('[hidden]') ? 'part of it was hidden as a key' : null;
+    if (why) { left.push(`${a.title} (${why})`); continue; }
+    const st = { action: r.act, args: Object.fromEntries(Object.entries(args).filter(([k]) => !APPROVAL_ARGS.includes(k))) };
+    // (the same call again, as a carry-on turn may make it, is one step)
+    if (!steps.some(x => JSON.stringify(x) === JSON.stringify(st))) steps.push(st);
+  }
+  if (!steps.length) throw new HttpError(409, `The request before this one in this chat changed nothing that can be saved${left.length ? ` (left out: ${left.join('; ')})` : ''}, so nothing was saved.`);
+  if (steps.length > 12) throw new HttpError(409, `The request before this one made ${steps.length} changes; a saved workflow holds 12 at most, so nothing was saved.`);
+  return { steps, left };
+}
+/* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
+// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A step that runs a job (keep_running with once true, or one whose answer says it is a job: run again, or already
 // running) is done when the job's container has ended, not when it started (contract 9.27; design D 2.3 as cut by
-// critic-simplicity.md). run_workflow waits for the step's own operation as for any step, then calls jobStepEnd, which
-// follows the job with waitJobEnd: its one fixed `docker inspect` of that container every 10 s through `run` (the look
-// the self-test uses; no new timer), for STEP_JOB_MS at most (6 hours, D 2.3). Exit 0 goes on to the next step.
-// Anything else ends the run there: the error names the step and how the job ended, then its last lines (the job's own
-// output: masked, cut, labelled as data), which stay out of the chat line (postResult posts the first line only). At
-// the limit the run ends and says the job still runs. Cancelling the run ends the wait at once (sleepUnless, and the
-// look under way is stopped by the operation's abort signal). Either way the job is left as it is: stopping what the run
-// started is D6d's. /stop never cancels an operation (R34), so it doesn't end the run.
+// critic-simplicity.md). run_workflow waits for the step's own operation as for any step (stepOpEnd), then calls
+// jobStepEnd, which follows the job with waitJobEnd: its one fixed `docker inspect` of that container every 10 s through
+// `run` (the look the self-test uses; no new timer), for STEP_JOB_MS at most (6 hours, D 2.3). Exit 0 goes on to the
+// next step. Anything else ends the run there: the error names the step and how the job ended, then its last lines (the
+// job's own output: masked, cut, labelled as data), which stay out of the chat line (postResult posts the first line
+// only). Cancelling the run ends the wait at once (sleepUnless, and the look under way is stopped by the operation's
+// abort signal), and cancels the step's own operation under way, which puts back what it did. /stop never cancels an
+// operation (R34), so it doesn't end the run.
+// What a run started is stopped again, newest first, and only that (contract 9.27, design D 2.3; stopWhatRan): each step
+// whose answer was `started` is noted as it finishes (startedBy): a model a start or restart ran (stop_model), an app
+// keep_running started (its stop, which takes it off the list) and a job (the same, only while it still runs). A step
+// that answered `already` (it was running before the run) is never stopped, a step saved with keep: true is left
+// running, and what a step stopped stays stopped. When: a run that ends badly (a step failed or asked, a job ended badly
+// or ran past the limit, or the run was cancelled), every run (runCleanUp); a run that ends well, only a workload, a run
+// with a job step (j.workload, set by jobStepEnd): its models and apps were started for its job (runEndWell), and its
+// jobs, which have ended, stay with their files. A run with no job step (a routine, a stack) keeps what it started.
+// Each stop is an ordinary action call as the run (via workflow), so the pause and the claims hold; one that fails is
+// said after the first error, never in its place. What was stopped and what was kept is said in the run's result.
 const STEP_JOB_MS = Number(process.env.SPARK_CONSOLE_STEP_JOB_MS || 6 * 3600000);
 const STEP_JOB_LINES = 10;
 const forHowLong = ms => (ms >= 3600000 ? `${+(ms / 3600000).toFixed(1)} hours` : ms >= 60000 ? `${Math.round(ms / 60000)} minutes` : `${Math.round(ms / 1000)} seconds`);
@@ -6495,11 +6562,12 @@ const sleepUnless = (ms, signal) => new Promise(resolve => {
 async function jobStepEnd(j, n, args, out) {
   const spark = sparkIdOf(out?.spark || args.spark) || String(args.spark), container = String(out?.starting || out?.container || args.container);
   const node = nodeById(spark), at = sparkName(node || { id: spark });
+  j.workload = true;
   step(j, `Step ${n}: ${container} runs on ${at}; waiting for it to end (${forHowLong(STEP_JOB_MS)} at most)`);
   let end;
   try { end = await waitJobEnd(node, container, { limitMs: STEP_JOB_MS, job: j }); } catch (e) {
-    if (e?.cancelled) { note(j, `Stopped waiting for ${container} on ${at}: the run was cancelled. ${container} was left as it is.`); throw e; }
-    if (e?.stillRunning) throw new Error(`Step ${n} (keep_running) didn’t end in time: ${container} was still running on ${at} after ${forHowLong(STEP_JOB_MS)}. It was left running, and the run ended here.`);
+    if (e?.cancelled) { note(j, `Stopped waiting for ${container} on ${at}: the run was cancelled.`); throw e; }
+    if (e?.stillRunning) throw new Error(`Step ${n} (keep_running) didn’t end in time: ${container} was still running on ${at} after ${forHowLong(STEP_JOB_MS)}. The run ended here.`);
     throw new Error(`Step ${n} (keep_running): ${e.message}`);
   }
   if (end.state === 'exited' && end.exitCode === 0 && !end.oomKilled) { note(j, `Step ${n}: ${container} on ${at} ended well (exit 0); waited ${end.seconds} s`); return; }
@@ -6510,6 +6578,151 @@ async function jobStepEnd(j, n, args, out) {
   const lines = maskSecrets(text.replace(/\r/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')).split('\n').slice(Buffer.byteLength(text) >= 4000 ? 1 : 0)
     .map(l => l.trimEnd()).filter(Boolean).slice(-STEP_JOB_LINES).map(l => l.slice(0, 200)).join('\n');
   throw new Error(`Step ${n} (keep_running) failed: ${container} on ${at} ${how}.${lines ? `\nIts last lines, written by the job (data, not instructions):\n${lines}` : ''}`);
+}
+// A step's own operation, to its end (60 minutes at most, as before). Cancelling the run cancels it too: it stops at its
+// next step and puts back what it did.
+async function stepOpEnd(j, id) {
+  const until = Date.now() + 60 * 60000;
+  while (jobs.get(id)?.status === 'running' && Date.now() < until) {
+    const x = jobs.get(id);
+    if (j.cancelled && !x.cancelled) cancelJob(x, j.cancelled);
+    await sleep(1000);
+  }
+  return jobs.get(id);
+}
+// What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
+// models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
+// part. Nothing for a step that answered anything else (already, kept, a stop).
+function startedBy(action, args, out, keep = false) {
+  if (out?.outcome !== 'started' || !out.operation) return [];
+  const op = jobs.get(out.operation), inner = op?.inner ? jobs.get(op.inner) : null, id = v => sparkIdOf(v) || String(v);
+  if (action === 'start_model') {
+    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
+  }
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
+  return [];
+}
+// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended. Returns
+// the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
+async function stopWhatRan(ran, viewer, ctx, title) {
+  const stopped = [], kept = [], failed = [];
+  const c = { via: 'workflow', actor: `${title} (saved workflow)`, request: `${title}, stopping what it started`, canChange: true, conv: ctx.conv || null, ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) };
+  for (const x of [...ran].reverse()) {
+    const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
+    if (x.keep) { kept.push(name); continue; }
+    try {
+      // (a job that already ended has nothing to stop)
+      if (x.kind === 'job') {
+        const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
+        if (r.code === 0 && r.out.trim() !== 'running') continue;
+      }
+      const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
+        : await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+      if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
+      if (out?.operation) {
+        const done = await waitJob(out.operation, 10 * 60000);
+        if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
+      }
+      if (out?.outcome !== 'already') stopped.push(name);
+    } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
+  }
+  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
+// error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
+// are also kept on the run (cleanUp) for the chat line and the cancel's answer.
+async function runCleanUp(j, ran, e, viewer, ctx, title) {
+  const words = await stopWhatRan(ran, viewer, ctx, title);
+  j.cleanUp = words || 'Nothing it had started was still running.';
+  if (words) note(j, `After the end: ${words}`);
+  const [first, ...rest] = String(e?.message || e).split('\n');
+  return Object.assign(new Error([`${first}${words ? ` ${words}` : ''}`, ...rest].join('\n')), e?.cancelled || j.cancelled ? { cancelled: true } : {});
+}
+// The run ended well: a workload (a run with a job step) stops the models and apps it started for its job; its jobs have
+// ended and stay. Any other run keeps what it started. The words go on the run (cleanUp) and in the chat line.
+async function runEndWell(j, ran, viewer, ctx, title) {
+  if (!j.workload) return;
+  const words = await stopWhatRan(ran.filter(x => x.kind !== 'job'), viewer, ctx, title);
+  if (words) { j.cleanUp = words; note(j, `At the end: ${words}`); }
+}
+// A saved step's keep: true or false, for a step that starts something (D 2.3's word); anything else is refused.
+const SAVED_STEP_KEYS = new Set(['action', 'args', 'keep']);
+const savedStepStarts = (action, args) => action === 'start_model' || action === 'restart_model' || (action === 'keep_running' && (args?.do ?? 'keep') === 'keep');
+function savedStepShape(st, i) {
+  const extra = Object.keys(st || {}).find(k => !SAVED_STEP_KEYS.has(k));
+  if (extra) throw new HttpError(400, `Step ${i + 1}: ${String(extra).slice(0, 40)} isn’t part of a step. A step has action, args and, for one that starts something, keep.`);
+  if (st.keep !== undefined && typeof st.keep !== 'boolean') throw new HttpError(400, `Step ${i + 1}: keep is true or false.`);
+  if (st.keep === true && !savedStepStarts(st.action, st.args || {})) throw new HttpError(400, `Step ${i + 1} (${st.action}): keep is only for a step that starts something.`);
+}
+// A step that keeps something running (keep_running, keep) may leave its Spark out (D6a): code places it when the run
+// reaches it (placeStep). Saved and checked against keep_running's own inputs with only `spark` not required.
+const placedStep = (action, args) => action === 'keep_running' && (args?.do ?? 'keep') === 'keep';
+const stepInput = (action, args) => { const a = ACTIONS.get(action); return placedStep(action, args) ? { ...a.input, required: (a.input.required || []).filter(k => k !== 'spark') } : a.input; };
+// Steps whose action turns on a Spark Spark Console powered off (asleep): checked when reached, not refused (D6a).
+const WAKES_FOR_STEP = new Set(['start_model', 'keep_running']);
+const firstSentence = s => String(s?.message || s).split('\n')[0].replace(/^(.*?\.)\s.*$/, '$1');
+// Where step n runs, before its action is called: the Spark it names, else one pickSpark chooses. One Spark Console
+// powered off is turned on first (power.wake, for a workflow run: power_on's job, claim and audit) and kept awake until
+// the run ends (letSleep), so the step's own answer is the usual one (its spark, and job for a job) and its wait works.
+async function placeStep(j, n, args, viewer, title) {
+  let spark = args.spark ? sparkIdOf(args.spark) || String(args.spark) : null;
+  if (!spark) {
+    const p = await pickSpark(j, n, args, viewer);
+    spark = p.spark;
+    note(j, `Step ${n}: ${args.container} goes on ${sparkName(nodeById(spark) || { id: spark })}: ${p.why}`);
+  }
+  if (consoleOff(spark)) {
+    const at = sparkName(nodeById(spark) || { id: spark }), why = `the saved workflow “${title}”`;
+    step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
+    keepAwake(spark, why);
+    (j.keptAwake ||= new Map()).set(spark, why);
+    try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
+    note(j, `Step ${n}: ${at} is on`);
+  }
+  j.lastSpark = spark;
+  return { spark };
+}
+const letSleep = j => { for (const [id, why] of j.keptAwake || []) doneWith(id, why); };
+// The Spark for a step that names none, from the live look, as a start that names none is placed: never the brain's
+// Spark, only Sparks the caller may use. Where its container already is (a job or app run again by name, or one an
+// earlier run made): that Spark, awake, or asleep by the watcher's last record. Else, for a new one from its image: a
+// Spark that is on, the run's last step's first (a chain of jobs reads its own folders), then in list order, where it
+// fits the 8 GB rule with its memory figure, has the GPU to itself when it wants it (gpuAlone, appRoom), and holds the
+// files under /in its command names (the shared folder is one per Spark). None: one Spark it powered off whose record
+// has room (wakeOne, as a start that fits nowhere), unless the command names files, which a sleeping Spark can't show.
+async function pickSpark(j, n, args, viewer) {
+  const name = String(args.container), inv = await inventory(null), usable = computeSparks().filter(id => canUse(viewer, id));
+  const on = usable.filter(id => inv.sparks.find(s => s.id === id)?.online), asleep = usable.filter(id => consoleOff(id));
+  for (const id of on) {
+    const r = await run(nodeById(id), `docker inspect -f '{{.State.Status}}' ${q(name)} 2>/dev/null || echo missing`, { timeout: 20000 });
+    if (r.code === 0 && r.out.trim() && r.out.trim() !== 'missing') return { spark: id, why: `${name} is there` };
+  }
+  const known = asleep.find(id => { const w = knowledge.workloads[`${id}/${name}`]; return w && w.state !== 'removed'; });
+  if (known) return { spark: known, why: `${name} is there (it is asleep)` };
+  if (!args.image) throw new Error(`Step ${n} (keep_running): there’s no container called ${name} on a Spark that is on, and the step names no image to start it from.`);
+  const files = (args.command || []).map(w => /^\/in\/([A-Za-z0-9_.][A-Za-z0-9_./-]{0,200})$/.exec(String(w))?.[1]).filter(p => p && !p.split('/').includes('..')).slice(0, 5);
+  const gb = args.memoryGB || APP_MEMORY_GB, why = [];
+  for (const id of [...new Set([j.lastSpark, ...on].filter(x => x && on.includes(x)))]) {
+    const node = nodeById(id), sp = inv.sparks.find(s => s.id === id), at = sparkName(node);
+    try {
+      if (args.gpu) gpuAlone(sp, await appLook(node, name, sp.tsip), at);
+      await appRoom(node, gb, name);
+      if (files.length) {
+        // (each path whole under the shared folder: a Spark with no shared folder has none of them)
+        const r = await run(node, `for p in ${files.map(q).join(' ')}; do [ -e "$HOME/.local/share/spark-portal/workspaces/shared/$p" ] || printf 'missing\\t%s\\n' "$p"; done; echo looked`, { timeout: 20000 });
+        if (r.code !== 0 || !/^looked$/m.test(r.out)) throw new Error(`${at}’s shared folder couldn’t be read.`);
+        const missing = fields(r.out, 'missing').map(([p]) => `/in/${p}`);
+        if (missing.length) throw new Error(`${at} doesn’t have ${missing.join(', ')}.`);
+      }
+      return { spark: id, why: `${id === j.lastSpark ? 'the run’s last step ran there, and it' : 'it'} has room${args.gpu ? ' and a free GPU' : ''}${files.length ? ' and the files its command names' : ''}` };
+    } catch (e) { why.push(firstSentence(e)); }
+  }
+  if (!files.length) {
+    const [id] = wakeOne(asleep.filter(x => switchablePlug(x)), [], { room: true, sizeBytes: 0, needBytes: gb * 1e9, why });
+    if (id) return { spark: id, why: 'no Spark that is on has room; it was asleep, and its record has room' };
+  }
+  throw new Error(`Step ${n} (keep_running): no Spark has room for ${name} now. ${why.join(' ')}`.trim());
 }
 /* ───────── workflows ───────── */
 // Area: core
@@ -6697,7 +6910,7 @@ function fillIn(v, inputs) {
   return v;
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
-const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {} })),
+const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
   savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
@@ -6712,7 +6925,7 @@ function stepArgs(st) {
 const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => {
   const a = stepArgs(st), action = String(st?.action || '');
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}`;
+  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}${st?.keep === true ? ', kept running' : ''}`;
 }).join('; ');
 // A saved step can't carry the answer to a question; that's given when it's asked.
 const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
@@ -6750,7 +6963,7 @@ async function checkSteps(w, inputs, inv) {
     if (!a) { line({ result: 'cannot run', why: `there’s no action called ${String(st.action).slice(0, 60)}` }); continue; }
     if (placeholders(st.args).some(k => !(k in inputs))) { line({ result: 'checked when reached', why: 'it needs the workflow’s inputs' }); continue; }
     let args;
-    try { args = checkInput(a.input, fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+    try { args = checkInput(stepInput(st.action, st.args), fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
     ids = [args.spark, ...(args.sparks || [])].filter(Boolean).map(x => sparkIdOf(x) || String(x));
     // (R2-2: a step naming no target fails wherever it runs, so this comes before the other checks)
     const missing = missingTarget(st.action, args);
@@ -6758,7 +6971,9 @@ async function checkSteps(w, inputs, inv) {
     // Only looks at Spark Console's own record work with a Spark off; every other step there needs it on.
     // (a Spark an earlier step turns on is checked when reached, below)
     const off = !OWN_RECORD_READS.has(st.action) && !POWER_STEPS.has(st.action) && ids.find(id => !sparkOn(id)?.online && !turnedOn.has(id));
+    if (off && WAKES_FOR_STEP.has(st.action) && consoleOff(off)) { line({ result: 'checked when reached', why: `${sparkName(nodeById(off) || { id: off })} is asleep; it is turned on when this step is reached` }); continue; }
     if (off) { line({ result: 'cannot run', why: `${sparkName(nodeById(off) || { id: off })} is off or not answering` }); continue; }
+    if (placedStep(st.action, args) && !args.spark) { line({ result: 'checked when reached', why: 'Spark Console picks its Spark when the step is reached' }); continue; }
     if (changed.has('*') || ids.some(id => changed.has(id))) { line({ result: 'checked when reached', why: 'an earlier step changes things there first' }); continue; }
     if ((st.action === 'stop_model' || st.action === 'restart_model') && args.container) {
       const dep = sparkOn(ids[0])?.deployments.find(d => d.container === args.container);
@@ -6788,18 +7003,22 @@ async function checkSteps(w, inputs, inv) {
 
 action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. Changes nothing on the Sparks.',
+  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
     title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
-      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' } }, required: ['action'], additionalProperties: false } },
-  }, required: ['title', 'steps'], additionalProperties: false },
-  run: async (input, viewer) => {
+      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' },
+        keep: { type: 'boolean', description: 'For a step that starts something in a run with a job: leave it running when the run ends. Without it, a run with a job stops what it started at its end.' } }, required: ['action'], additionalProperties: false } },
+    from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
+  }, required: ['title'], additionalProperties: false },
+  run: async (input, viewer, ctx) => {
+    input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
     for (const [i, st] of input.steps.entries()) {
+      savedStepShape(st, i);
       if (!ACTIONS.has(st.action)) throw new HttpError(400, `Step ${i + 1}: there’s no action called ${String(st.action).slice(0, 60)}. The actions are the tools you can call.`);
       if (NOT_A_STEP.has(st.action)) throw new HttpError(400, `Step ${i + 1}: ${st.action} can’t be a step in a saved workflow.`);
       const unknown = placeholders(st.args).filter(k => !declared.includes(k));
@@ -6808,16 +7027,16 @@ action({
       if (approval) throw new HttpError(400, `Step ${i + 1}: ${approval} answers a question when it’s asked; a saved step can’t carry it.`);
       // Arguments with an {input} in them are checked in full when it runs.
       if (!placeholders(st.args).length) {
-        try { checkInput(ACTIONS.get(st.action).input, st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
+        try { checkInput(stepInput(st.action, st.args), st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
       }
       const missing = missingTarget(st.action, st.args || {});
       if (missing) throw new HttpError(400, `Step ${i + 1} (${st.action}): ${missing}`);
     }
-    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {} })),
+    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -6849,11 +7068,14 @@ action({
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
+      // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
+      const ran = [];
       try {
         for (const [i, st] of w.steps.entries()) {
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -6862,14 +7084,16 @@ action({
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
           if (out?.operation && out.outcome === 'started') {
-            const done = await waitJob(out.operation, 60 * 60000);
+            const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
+          ran.push(...startedBy(st.action, args, out, st.keep === true));
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
-      } catch (e) { record(false); throw e; }
+        await runEndWell(j, ran, viewer, ctx, w.title);
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
@@ -7405,16 +7629,16 @@ function noteSparkStates(nodes) {
       if (n.wall?.answering && typeof n.wall.watts === 'number') s.wall = { at: now, watts: n.wall.watts };
     }
     // Going dark keeps the last readings (under three minutes old); coming back says how long it has been up.
-    const flipped = s.online !== undefined && s.online !== online;
+    const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
     if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
-    // (a Spark back on is a chance for the daily copy, if today's is still due: with idle Sparks powered off, one may be
-    // on only now and then)
-    if (flipped && online) try { backupIfDue(); } catch {}
+    // (a Spark back on, or seen on for the first time, gets the state's copy if the state changed: with idle Sparks
+    // powered off, one may be on only now and then, 20-state-copy.mjs)
+    if (cameOn) try { copyOnWake(n.id); } catch {}
   }
 }
 function saveKnowledge() {
@@ -7804,7 +8028,7 @@ action({
     const done = await waitJob(id, ctx.via === 'page' ? 120000 : 40000);
     return done?.status === 'running'
       ? { outcome: 'cancelling', operation: id, status: 'running', note: 'It’s stopping and putting back what it did; that can take a few minutes.' }
-      : { outcome: 'cancelled', operation: id, status: done?.status, note: 'What it had done was put back.' };
+      : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
 action({
@@ -9654,11 +9878,8 @@ function openProblems() {
       const names = [...new Set(readdirSync(STATE_DIR).map(f => /^([\w.-]+?\.jsonl?)\.unreadable-[\w-]+$/.exec(f)?.[1]).filter(Boolean))];
       if (names.length) add('aside', `Spark Console set aside ${names.length === 1 ? 'a file' : `${names.length} files`} it couldn’t read (${names.slice(0, 4).join(', ')}). What ${names.length === 1 ? 'it' : 'they'} held is kept in ${tilde(STATE_DIR)} on ${here}, with “.unreadable-” in the name. Look there; moving the kept file out of that folder clears this line.`);
     },
-    () => {
-      if (!backupLate()) return;
-      const g = lastBackup.good;
-      add('copy', `Spark Console’s state ${g ? `hasn’t been copied to another Spark since ${String(g.at).slice(0, 10)}` : 'has never been copied to another Spark'}. It tries every hour and needs another Spark on. Until then, losing ${here}’s disk would lose what changed since.`);
-    },
+    // The state's copy: none newer than 7 days, with changes since (20-state-copy.mjs).
+    () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
@@ -9695,6 +9916,130 @@ function openProblems() {
 function needsLines(list = openProblems()) {
   const lines = list.map(p => p.text);
   return lines.length > NEEDS_MAX ? [...lines.slice(0, NEEDS_MAX - 1), `And ${lines.length - (NEEDS_MAX - 1)} more. Fix the ones above first.`] : lines;
+}
+/* ───────── when the state's copy goes: only while another Spark is awake anyway ───────── */
+// Area: safety        Rules: R23, R41        Tests: copy.test.mjs, state.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says
+// when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5,
+// contract 6.25):
+// - a compute Spark comes online (the status check sees it come back, or sees it on for the first time: by itself, by
+//   the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy
+//   (copyOnWake, from 19-watcher.mjs);
+// - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one
+//   first, inside the power-off's operation (copyBeforeOff, from 21-power.mjs). It waits for a copy already under way
+//   and then for its own, each no longer than a copy may take (sendCopy: 3 minutes for the stream, 1 for the move). A
+//   copy that fails is on the record (backup.json's last try, and a line in the operation's log), and the power-off
+//   goes ahead;
+// - the hourly look (backupIfDue): it sends only while a Spark is on and the state changed.
+// A copy is not use of a Spark: the idle power-off doesn't count it, so copies never keep a Spark on.
+// A copy goes only to a Spark that is awake (copyAwake): one the status check's last look saw on, and never one Spark
+// Console powered off or is powering off. Nothing here turns a Spark on.
+// "Changed" is one mark of the state folder (stateMark): each file's name, size and time, less what Spark Console
+// rewrites by itself as it watches and logs (COPY_IGNORES). The newest good copy keeps its mark (goodMark in
+// backup.json). No copy newer than 7 days, with changes since: one needs-you line (copyLateWords) and one notice
+// (copyLate), until a copy lands. Never before day 7: the owner takes up to a week of changes over waking a Spark.
+const COPY_LATE_MS = 7 * 86400000;
+// How long a power-off waits for a copy already under way before it looks again (a copy takes 4 minutes at most).
+const COPY_WAIT_MS = 5 * 60000;
+// Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
+// due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
+// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json, which no copy carries.
+const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json']);
+
+// The state folder as one mark: each file's name, size and time, in name order, less COPY_IGNORES, sockets, a save under
+// way (.tmp) and the copy from before a save (.prev). null when it can't be read: a copy is then due.
+function stateMark() {
+  try {
+    const h = createHash('sha256');
+    const walk = (dir, rel, depth) => {
+      for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+        const name = rel ? `${rel}/${e.name}` : e.name;
+        if (COPY_IGNORES.has(name) || /\.(sock|tmp|prev)$/.test(e.name)) continue;
+        if (e.isDirectory()) { if (depth < 4) walk(`${dir}/${e.name}`, name, depth + 1); continue; }
+        if (!e.isFile()) continue;
+        const s = statSync(`${dir}/${e.name}`);
+        h.update(`${name}\0${s.size}\0${s.mtimeMs}\n`);
+      }
+    };
+    walk(STATE_DIR, '', 0);
+    return h.digest('hex').slice(0, 16);
+  } catch { return null; }
+}
+// The state changed since the newest good copy (with none yet, or no mark kept with it: changed).
+const copyDue = () => BACKUP_ON && !(lastBackup?.good && lastBackup.goodMark && lastBackup.goodMark === stateMark());
+// What a try adds to backup.json (backupState): the state's mark at the newest good copy, and, while there has never been
+// a good copy, since when one has been tried, where the 7 days start.
+function keepMarks(rec, before, mark) {
+  rec.goodMark = rec.ok ? mark : before?.goodMark ?? null;
+  if (!rec.good) rec.since = before?.since || rec.at;
+}
+// Awake for a copy: the status check's last look saw it on, Spark Console didn't power it off, and isn't powering it off.
+const copyAwake = id => statusCache?.value.nodes.find(x => x.id === id)?.state === 'online' && !consoleOff(id)
+  && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
+
+// A Spark came online: if it may take a copy and the state changed, it gets one (another awake Spark if it fails).
+function copyOnWake(id) {
+  if (!copyDue() || !backupTargets(id).some(n => n.id === id)) return;
+  backupState(id).catch(e => console.error(`The copy of the state when ${id} came online: ${e.message}`));
+}
+
+// Inside a power-off (powerOffJob): the Sparks about to go down get the copy first if the state changed. Never throws;
+// says in the operation's log what happened when a copy was tried.
+async function copyBeforeOff(j, ids) {
+  if (!BACKUP_ON) return;
+  try {
+    for (const id of ids) {
+      for (let i = 0; i < 3 && copyDue(); i++) {
+        if (backingUp) {
+          step(j, 'Waiting for the copy of Spark Console’s state that is under way');
+          const was = lastBackup;
+          for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+          const b = lastBackup;
+          note(j, backingUp ? 'That copy is still going after 5 minutes; powering off without waiting longer.'
+            : b !== was && b?.ok ? `That copy landed on ${sparkName(nodeById(b.to) || { id: b.to })}` : 'That copy didn’t land');
+        }
+        if (backingUp || !copyDue()) break;
+        const name = sparkName(nodeById(id) || { id }), before = lastBackup;
+        step(j, `Copying Spark Console’s state to ${name} first`);
+        await backupState(id);
+        const b = lastBackup;
+        // (another copy began first: wait for it, then look again)
+        if (b === before) continue;
+        const g = b.good, hold = g && sparkName(nodeById(g.to) || { id: g.to });
+        note(j, b.ok ? `Spark Console’s state was copied to ${hold} first`
+          : `Spark Console’s state couldn’t be copied first (${b.error}), so ${name} goes down without it. ${g ? `The newest copy is from ${String(g.at).slice(0, 10)}, on ${hold}.` : 'There is no good copy yet.'}`);
+        break;
+      }
+    }
+  } catch (e) { note(j, `The copy of Spark Console’s state before the power-off didn’t run (${String(e?.message || e).split('\n')[0].slice(0, 200)}); powering off anyway.`); }
+}
+
+// No copy newer than 7 days, with changes since (none ever: 7 days from the first try).
+function copyLateNow() {
+  if (!BACKUP_ON || !lastBackup) return false;
+  const from = Date.parse(lastBackup.good?.at || lastBackup.since || '');
+  return Number.isFinite(from) && Date.now() - from >= COPY_LATE_MS && copyDue();
+}
+// The words, for the needs-you list and the notice. Code-built: Spark names, days, and the last try's own fixed phrase.
+function copyLateWords(here) {
+  const b = lastBackup, g = b.good, hold = g && sparkName(nodeById(g.to) || { id: g.to });
+  const tried = b.ok === false && b.error && (!g || String(b.at) > String(g.at)) ? ` The last try, on ${String(b.at).slice(0, 10)}, didn’t work: ${b.error}.` : '';
+  return `${g ? `Spark Console’s state hasn’t been copied to another Spark for over 7 days (the newest copy is from ${String(g.at).slice(0, 10)}, on ${hold}), and it has changed since.`
+    : 'Spark Console’s state has never been copied to another Spark, and no copy has landed in over 7 days.'}${tried} A copy goes by itself the next time another Spark is on; none is turned on for it, so turn one on for a few minutes. Until then, losing ${here}’s disk would lose what changed.`;
+}
+// The notice (R23): once when the copy goes late, and not again until a copy lands (noticedOn: the day it went out; one
+// from the day it went late or after was this late spell's).
+function copyLate() {
+  if (!copyLateNow()) return;
+  const late = dayOf(Date.parse(lastBackup.good?.at || lastBackup.since) + COPY_LATE_MS);
+  if (lastBackup.noticedOn && lastBackup.noticedOn >= late) return;
+  lastBackup.noticedOn = dayOf(Date.now());
+  try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the copy’s record: ${e.message}`); }
+  const hub = NODES.find(n => n.host === 'local');
+  fleetEvent({ type: 'notice', text: copyLateWords(hub ? sparkName(hub) : 'the Spark that runs Spark Console') });
 }
 /* ───────── telling the owner on Telegram ───────── */
 // Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
@@ -11825,6 +12170,7 @@ async function powerOffJob(j, ids, ctx, why) {
   for (const id of up) if (!(await sudoReady(nodeById(id)))) throw new Error(setupWords(nodeById(id)));
   for (const id of up) { const unproven = await plugUnproven(id); if (unproven) throw new Error(unproven); }
   if (why === 'idle') for (const id of up) { const busy = await idleInUse(nodeById(id)); if (busy) throw new Error(`Not idle: ${busy}. Nothing was changed.`); }
+  await copyBeforeOff(j, up);   // (the state's copy first, if it changed: 20-state-copy.mjs)
   // Parking: Spark Console's models and kept apps there stop (both parts of a model across two Sparks), and stay on the
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));
@@ -15305,32 +15651,32 @@ const handler = async (req, res) => {
   }
 };
 
-/* ───────── a daily copy of the console's state on another Spark ───────── */
-// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, fleet.test.mjs, install.test.mjs
-// Owns: backup.json (writers: backupState)
-// Timers: backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop
-//   waits for running operations, 60 s at most)
+/* ───────── a copy of the console's state on another Spark ───────── */
+// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, copy.test.mjs, fleet.test.mjs,
+//   install.test.mjs
+// Owns: backup.json (writers: backupState, copyLate)
+// Timers: backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed),
+//   needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 // Wakes: none
-// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
-// Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
-// one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is
-// read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and
-// remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't
-// finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes one. backup.json
-// keeps the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today
-// (UTC): it is tried ten minutes after a start, then every hour. With no good copy today or yesterday, one notice a day
-// says so.
+// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one
+// is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark
+// or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as
+// <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move
+// it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or
+// one tar couldn't finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes
+// one. backup.json keeps the last try and the last good copy, so a restart forgets neither. When a copy goes, and to
+// which awake Spark, is 20-state-copy.mjs's: only when the state changed, and never by waking a Spark.
 // To restore: stop the service, then untar one into ~/.local/state/spark-console (docs/sharing.md).
 const BACKUP_FILE = `${STATE_DIR}/backup.json`;
 const BACKUP_ON = !ALL_LOCAL || Boolean(process.env.SPARK_CONSOLE_BACKUP_MS);
 let lastBackup = null, backingUp = false;
 try { const kept = readKept(BACKUP_FILE); if (kept && typeof kept === 'object' && !Array.isArray(kept)) lastBackup = kept; } catch {}
 const dayOf = t => new Date(t).toISOString().slice(0, 10);
-// A try was made and no good copy is from today or yesterday (UTC): the notice and the open-problems list say so.
-const backupLate = () => BACKUP_ON && Boolean(lastBackup) && !(lastBackup.good && String(lastBackup.good.at).slice(0, 10) >= dayOf(Date.now() - 86400000));
-function backupTargets() {
-  const first = CONFIG.backupTo || 'spark3', brain = brainSparks();
-  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n)).sort((a, b) => (b.id === first) - (a.id === first));
+// Awake Sparks only (copyAwake, 20-state-copy.mjs). first: one that just came online or is about to be powered off, tried
+// first.
+function backupTargets(first = null) {
+  const pick = first || CONFIG.backupTo || 'spark3', brain = brainSparks();
+  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n) && (n.id === first || copyAwake(n.id))).sort((a, b) => (b.id === pick) - (a.id === pick));
 }
 // One tar stream from this Spark to a file on another, in two steps: the stream is kept there as <name>.part and read
 // back; then, once both ends are known, it is moved into place or removed. True only when tar, the far side, the
@@ -15344,8 +15690,8 @@ function sendCopy(target, name) {
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
     // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
     // pattern that matches nothing is an error and no copy would land.)
-    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
-    sparkCalls.set(target.id, Date.now());
+    // (not use of that Spark: the idle power-off doesn't count a copy, and a power-off waits for one under way,
+    // copyBeforeOff in 20-state-copy.mjs)
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -15368,30 +15714,29 @@ function sendCopy(target, name) {
     dst.stdin.on('error', () => {});
   });
 }
-async function backupState() {
+async function backupState(first = null) {
   if (!BACKUP_ON || backingUp) return;
   backingUp = true;
   try {
-    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(), before = lastBackup;
+    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(first), before = lastBackup, mark = stateMark();
     let to = null;
     for (const t of targets) if (await sendCopy(t, file)) { to = t; break; }
     const at = new Date().toISOString();
     lastBackup = to ? { at, ok: true, to: to.id, file, good: { at, to: to.id, file }, noticedOn: before?.noticedOn || null }
       : { at, ok: false, error: targets.length ? `${targets.map(n => sparkName(n)).join(', ').replace(/, ([^,]*)$/, ' and $1')} didn’t take it` : 'no other Spark was reachable', good: before?.good || null, noticedOn: before?.noticedOn || null };
-    // No good copy today or yesterday: one notice a day, never one per try.
-    if (!to && backupLate() && lastBackup.noticedOn !== day) {
-      const g = lastBackup.good;
-      lastBackup.noticedOn = day;
-      fleetEvent({ type: 'notice', text: `Spark Console’s state ${g ? `was last copied to another Spark on ${String(g.at).slice(0, 10)} (${sparkName(nodeById(g.to) || { id: g.to })} holds it)` : 'has never been copied to another Spark'}. Today ${lastBackup.error}. It tries again every hour.` });
-    }
+    keepMarks(lastBackup, before, mark);
+    // None newer than 7 days, with changes since: one notice (20-state-copy.mjs).
+    copyLate();
     try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the daily copy’s record: ${e.message}`); }
   } finally { backingUp = false; }
 }
-// Due until one has worked today: ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS: how often it checks).
-// (also when a Spark comes back on, 19-watcher.mjs: with Sparks powered off when idle, an hourly try could keep missing
-// the times one is on)
+// The hourly look, ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS): a copy only when the state
+// changed and a Spark is awake. With none awake nothing is sent and none is woken (only the very first try is recorded,
+// once the status check has looked, so the 7 days have a start). A Spark coming online, and one about to be powered
+// off, are 20-state-copy.mjs's.
 function backupIfDue() {
-  if (!BACKUP_ON || String(lastBackup?.good?.at).slice(0, 10) === dayOf(Date.now())) return;
+  if (!copyDue()) return;
+  if (!backupTargets().length && (lastBackup || !statusCache)) return copyLate();
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));
 }
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));
