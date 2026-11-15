@@ -10,6 +10,9 @@ messaging channel".
   through `tell()` (`20-tell.mjs`).
 - Its door takes a key out before anything reads the words, as `tgKeys` does (`20-keys.mjs`): `keysGiven`, delete the
   message there if it can, then `giveKey` in the owner's chat of that channel.
+- The owner's yes from it: an owner-only ask goes out through `tgAsk` and its press comes back through
+  `tgApproving` (`20-tg-approve.mjs`), with the switch, the caps and `/lock`; `runChoice` takes it as the owner's yes
+  only after `tgAskOpen`.
 
 ## Also update
 
@@ -24,6 +27,7 @@ messaging channel".
 - A route the internet can call.
 - A new `via` for its tool calls (the intent gate keys on `sparkie`).
 - A second sender.
+- A second way for a channel's press to count as the owner's yes, or one for a `PAGE_ONLY` action.
 - Its token anywhere but the secrets file.
 - The owner's words to `sparkieTurn` before the key door has seen them.
 
@@ -33,7 +37,7 @@ messaging channel".
 
 ## Tests
 
-- `telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `app-keys.test.mjs`.
+- `telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `app-keys.test.mjs`, `tg-approve.test.mjs`.
 
 ## Copy from
 

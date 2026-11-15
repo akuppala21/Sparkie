@@ -202,7 +202,7 @@ async function waitJob(id, ms = 30 * 60000) {
 }
 
 action({
-  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'control',
   description: 'Use to see the owner’s list of what should be running on each Spark (every model a change started, and every app kept running with keep_running, with its link and whether it answers now), and how each is now: running, changing, or held (and why). Held ones can be brought back.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => ({ observedAt: new Date().toISOString(), ...(await desiredNow({ check: true })) }),
@@ -222,7 +222,7 @@ action({
     const done = await waitJob(id, ctx.via === 'page' ? 120000 : 40000);
     return done?.status === 'running'
       ? { outcome: 'cancelling', operation: id, status: 'running', note: 'It’s stopping and putting back what it did; that can take a few minutes.' }
-      : { outcome: 'cancelled', operation: id, status: done?.status, note: 'What it had done was put back.' };
+      : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
 action({

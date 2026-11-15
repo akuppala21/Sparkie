@@ -49,10 +49,11 @@ flowchart TD
   HEAL["Healing: maybeHeal, healPass every 60 s (bringBack, watchBrain, keepBrain)"]
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
   STATE["State files in ~/.local/state/spark-console"]
-  BACKUP["Daily copy on another Spark (25-backup-and-start)"]
+  BACKUP["Copy on another Spark that is awake (25-backup-and-start, 20-state-copy)"]
   INSTALL["test/lock.mjs (here, on a compute Spark or in GitHub's suite job), then deploy/host-on-portal.sh"]
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
+  GUARD["Update guard (pull.sh, update-guard.sh): the installed build's copy and one timer, for one install"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
@@ -60,7 +61,8 @@ flowchart TD
   INSTALL -->|"files, lock, config, restart. Keeps the update only if its checks hold 40 s later as one process (R30); on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
-  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
+  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses; go-back.sh once after 15 minutes silent within a day of an install"| LISTEN
+  GUARD -->|"armed before the incoming installer runs; kept only if the real address answers with the new build within 10 minutes, else the build from before goes back"| LISTEN
   ROLL -->|"puts back the newest whole snapshot not marked same (files, not state), restarts; ends with the unit started"| LISTEN
   LISTEN -->|"every request, /health aside"| GATE
   PAGE -->|"an app's door link: GET /console/api/open/spark/app on :10000 reads the sign-in cookie (viewerFor) and gives a door ticket (its own cookie)"| APPDOOR
@@ -79,7 +81,7 @@ flowchart TD
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
   TG -->|"polled from Spark 2: the paired chat's words, a turn with ctx.channel telegram"| CHAT
-  TG -->|"a button pressed there: runChoice, via telegram, plain buttons only"| RUN
+  TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
   CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
   PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
@@ -115,7 +117,7 @@ flowchart TD
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
   SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
-  KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
+  KNOW -->|"research jobs (the four lists and the model's own card), search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
@@ -124,7 +126,7 @@ flowchart TD
   JOBS -->|"power jobs only: switchPlug, never Spark 2’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
-  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
+  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; sent when a Spark comes online, before a power-off and hourly, only if the state changed; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
@@ -186,7 +188,8 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
   the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
-  looked up daily. A model already on disk joins only through `find_setups`.
+  looked up again when a start or `recipe_detail` finds its setups over a week old (never by the clock). A model
+  already on disk joins only through `find_setups`.
 - **A GPU app or job and a model never share a Spark (A13).** Until memory is held for an app in `plan`, `deploy` and
   `restartChecked`, a GPU app refuses a Spark where a model runs, and a model start asks before it stops a GPU app.
   Whether `--memory` bounds what the GPU takes on GB10 wasn’t checked live. A job runs as root in its image, reads the
