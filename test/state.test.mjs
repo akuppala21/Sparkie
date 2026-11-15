@@ -72,9 +72,10 @@ async function ok(name, args, token = keys.act.token) {
   return r.value;
 }
 async function finished(id) {
-  for (;;) {
+  for (const until = Date.now() + 240000 * SLOW; ;) {
     const w = await ok('wait_operation', { id, seconds: 20 }, keys.look.token);
     if (w.status !== 'running') return w;
+    if (Date.now() > until) throw new Error(`operation ${id} still running after ${240 * SLOW} s: ${JSON.stringify(w)}`);
   }
 }
 const operationEvents = id => eventLines().filter(e => e.type === 'operation' && e.id === id);

@@ -90,7 +90,7 @@ function recallInAll({ about, when, live, lessons, proven, past, j }) {
 // One piece whole, by its id: a journal record (with its text), a lesson, or a line (live, or retired when this caller
 // may see it), with the line it replaced or that replaced it.
 async function recallOne(id, from, see, ctx) {
-  if (id.startsWith('j_')) return jRecord(id, from, see.own, see.who, see.looks);
+  if (id.startsWith('j_')) return jRecord(id, from, see.own, see.who, see.looks, see.channel);
   if (id.startsWith('l_')) {
     const l = lessonsKept().find(x => x.id === id);
     if (!l) throw new HttpError(404, `There’s no lesson ${id}: a later start of the same setup that worked takes its lessons out (the journal keeps what happened).`);
@@ -103,7 +103,7 @@ async function recallOne(id, from, see, ctx) {
   return { record: { ...recallLine(line, !live.includes(line), ctx), src: line.src ?? null }, ...(replaced ? { replaced } : {}), ...(by ? { replacedBy: by } : {}) };
 }
 async function recallAnswer({ about, id, kind, spark, when, since, until, limit = 8, next }, viewer = {}, ctx = {}) {
-  const own = jOwnCall(viewer, ctx), see = { own, who: jWho(viewer, ctx), looks: own || mayRun(viewer, ctx) };
+  const own = jOwnCall(viewer, ctx), see = { own, who: jWho(viewer, ctx), looks: own || mayRun(viewer, ctx), channel: ctx.channel || null };
   const base = { observedAt: new Date().toISOString(), recordIsData: RECALL_DATA };
   if (id) return maskDeep({ ...base, ...(await recallOne(id, Number(String(next || '0').split('-')[0]), see, ctx)) });
   // (next: how many were shown, and the moment of the first page: what was kept after it is left out)
