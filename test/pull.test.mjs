@@ -158,8 +158,12 @@ fi
 pidf="$HOME/runner.pid"
 # Running: the pid is there and hasn't ended. One that has ended but isn't reaped yet (ps shows Z: the runner killed by
 # the power cut, for a moment) is stopped, as systemd sees it; kill -0 alone still finds it, and a start then did
-# nothing (pull.test's restart case, 2026-11-15).
-running() { kill -0 "$1" 2>/dev/null && case "$(ps -o stat= -p "$1" 2>/dev/null)" in *Z*|*X*) false ;; *) true ;; esac; }
+# nothing (pull.test's restart case, 2026-11-15). One that ps no longer finds (reaped in between) is stopped too.
+running() {
+  local st
+  kill -0 "$1" 2>/dev/null && st=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  case "$st" in *Z*|*X*) return 1 ;; esac
+}
 alive() { [ -f "$pidf" ] && running "$(cat "$pidf")"; }
 stop_it() {
   if alive; then p=$(cat "$pidf"); kill -TERM "$p" 2>/dev/null
