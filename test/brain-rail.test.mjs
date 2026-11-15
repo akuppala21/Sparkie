@@ -306,7 +306,7 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.equal((await keep(await oneCase(pass.at))).status, 201, 'the one-case record');
     const w = await waiting(), p = await press(w, w.keep);
     assert.equal(p.status, 200, p.text);
-    assert.doesNotMatch(p.json.note || '', /Already kept/, p.text);
+    assert.doesNotMatch(p.json.message?.content || '', /Already kept/, p.text);
     const slot = profiles()[(await shown()).brainCheck.inUse.key].evals[`${pass.reads}:${pass.set}`];
     assert.ok(slot.some(x => x.at === pass.at && x.keptWith === 'passkey' && x.score.full), 'the pass is on record');
     await atOnce('the pass decides');
@@ -442,7 +442,7 @@ describe('the rail', { concurrency: 1 }, () => {
     const w = await waiting(), p = await press(w, w.keep);
     assert.equal(p.status, 200, p.text);
     assert.equal(p.json.outcome, 'kept', p.text);
-    assert.match(p.json.note, /^Kept\. Sparkie asks before every change, one button each: the newest full run of the eval on record for this build \(\d{4}-\d\d-\d\d\) didn’t meet the bar\./, p.text);
+    assert.match(p.json.message?.content || '', /^Kept\. Sparkie asks before every change, one button each: the newest full run of the eval on record for this build \(\d{4}-\d\d-\d\d\) didn’t meet the bar\./, p.text);
     await aButton('the newer failing run decides');
     await yes(await record());
     await atOnce('a newer pass');

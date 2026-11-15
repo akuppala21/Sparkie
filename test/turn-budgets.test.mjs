@@ -79,7 +79,7 @@ useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_L
     // (E5b: more rounds than a brain not checked gets; 15 commands a message, for a task's 120; its context flag twice)
     m.presets['a3-big'] = { ...base, title: 'Many rounds', toolRounds: 20 };
     m.presets['a3-task'] = { ...base, title: 'Fifteen a message', workSteps: 15 };
-    m.presets['a3-twice'] = { ...base, title: 'Context given twice', args: [...base.args, '--context-length', '20000'] };
+    m.presets['a3-twice'] = { ...base, title: 'Context given twice', args: [...base.args, '--context-length', '15000'] };
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   } });
 
@@ -322,11 +322,12 @@ test('a context flag given twice: the last one counts, for the output a message 
   await use('a3-twice');
   const hello = await newChat();
   await say(hello, 'hello');
-  assert.deepEqual(budgetsIn(hello), [{ steps: 12, output: 24000 }], '40% of the last flag’s 20,000 tokens');
-  // (a digest keeps lines within a recall answer's size: 6,000 characters at 20,000 tokens and up, scaled below)
+  assert.deepEqual(budgetsIn(hello), [{ steps: 12, output: 18000 }], '40% of the last flag’s 15,000 tokens');
+  // (a digest keeps lines within a recall answer's size: 6,000 characters from 33,334 tokens up, 2,700 at 15,000; the
+  // stand-in brain logs 4,000 characters of a result, so the whole digest is in its log only at the smaller size)
   const r = await saying([{ match: '^read one long thing$', rounds: [[SEQ('spark3')]] }], await newChat(), 'read one long thing');
   assert.deepEqual(calls(r), [['run', true]]);
   const sent = requests('read one long thing')[1].results[0].content, d = JSON.parse(sent);
   assert.deepEqual(Object.keys(d), ['digest', 'isData', 'lines', 'record', 'kept']);
-  assert.ok(JSON.stringify(d.kept).length <= 4000 && sent.length < 4800, `${JSON.stringify(d.kept).length} characters of kept lines, ${sent.length} in all`);
+  assert.ok(JSON.stringify(d.kept).length <= 3000 && sent.length < 4000, `${JSON.stringify(d.kept).length} characters of kept lines, ${sent.length} in all`);
 });
