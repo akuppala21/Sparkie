@@ -43,10 +43,11 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
-| `undo_update` | change | `18-workflows` | updates | undo | yes | yes | — |
+| `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
 | `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
+| `recall` | read | `20-journal` | past | — | — | yes | outside |
 | `memory` | read | `20-memory` | memory | — | — | yes | inside |
 | `remember` | change | `20-memory` | core | remember | yes | no | — |
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
@@ -83,8 +84,8 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
-| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
-| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory` | yes | yes |
+| `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
+| `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
@@ -110,6 +111,8 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
+| `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
+| `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |

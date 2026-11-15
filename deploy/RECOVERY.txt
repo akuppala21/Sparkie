@@ -16,6 +16,9 @@ SSH, Tailscale, the firewall, users or any model.
 4. Check that it answers. A good answer starts with {"ok":true
      curl -s --unix-socket ~/.local/state/spark-console/api.sock http://localhost/health
 
+5. Install the newest tested build from GitHub (once pull.sh setup has run). check names it; install takes its tree.
+     bash ~/.local/share/spark-console/pull.sh check
+
 If the page loads but Sparkie doesn't answer, type one of these alone in your own chat on the page.
 Code answers them, not Sparkie's model:
      /status    /pause    /restart sparkie    /undo update    /help

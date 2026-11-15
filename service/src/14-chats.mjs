@@ -56,7 +56,7 @@ function ownChat(viewer, id) {
 const NEVER_CHANGES = 'SSH, Tailscale, firewalls, users, keys, sudo or who has access';
 // Lines that name a tool outside the core (R46): each goes only into a round that offers every tool it names.
 const TOOL_LINES = [
-  [['forget_memory'], 'forget_memory removes a line.'],
+  [['forget_memory'], 'forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees.'],
   [['workflows'], 'The workflows tool lists every workflow: when to use each, its inputs and its known problems.'],
   [['read_page'], 'What you know from training may be out of date. For anything new or version-specific (new models, releases, engine versions and flags, error messages), look it up with search_web first and read one or two good results with read_page, then answer and say where the answer came from.'],
 ];
@@ -281,6 +281,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   if (!conv.title || conv.title === 'New chat') conv.title = `${agent ? `${agent.name}: ` : ''}${kept.replace(/\s+/g, ' ')}`.slice(0, 60);
   conv.updatedAt = now;
   saveChats();
+  const turnId = journalSaid(conv, text, agent, channel, task);
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -461,6 +462,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
             ok = false;
             out = `[error] ${maskSecrets(e.message || String(e))}`;
           }
+          journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
           if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
           const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
           steps[i] = step;
@@ -511,6 +513,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'error', error: why, message });
       return message;
     } finally {
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
       finish();
     }
   } finally { finish(); }

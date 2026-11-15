@@ -578,7 +578,7 @@ action({
   run: async (_, viewer, ctx) => { const job = startTestChanges(viewer, ctx.via || 'agent'); return { outcome: 'started', operation: job.id, next: `wait_operation {"id":"${job.id}"}` }; },
 });
 action({
-  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'updates',
+  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use only when the owner asks to undo the last update of Spark Console itself (roll back the console, not a model: for a model, undo_last_change). Puts back the build from before the last install; Spark Console restarts a moment later.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => {

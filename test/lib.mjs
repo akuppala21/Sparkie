@@ -40,7 +40,7 @@ export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PROD
 export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_recipes', 'recipe_detail', 'search_huggingface', 'where_it_fits',
   'deploy_plan', 'cluster_plan', 'linked_sparks', 'spark_detail', 'recent_operations', 'operation_log', 'container_logs', 'spark_diagnostics',
   'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
-  'search_web', 'read_page', 'guide'];
+  'search_web', 'read_page', 'guide', 'recall'];
 export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
   'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test'];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
