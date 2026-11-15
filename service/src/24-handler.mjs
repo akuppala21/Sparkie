@@ -231,10 +231,12 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    // The action list, as agents see it (Access → Agents shows it).
+    // The action list, as agents see it (Access → Agents shows it), each with its group; and what Sparkie's brain is
+    // offered from it (brainCatalog, 21-guide.mjs: the cap, the groups and their words, the lines that follow tools).
     if (req.method === 'GET' && path === '/actions') {
       ownerOnly();
-      return send(res, 200, { actions: [...ACTIONS.values()].map(a => ({ name: a.name, title: a.title, kind: a.kind, scope: a.scope, description: a.description, input: liveSchema(a.input) })) });
+      return send(res, 200, { actions: [...ACTIONS.values()].map(a => ({ name: a.name, title: a.title, kind: a.kind, scope: a.scope, group: a.group || null, description: a.description, input: liveSchema(a.input) })),
+        brain: brainCatalog() });
     }
     // Any action, for the owner's own scripts and terminal (2026-11-11: one way in, the same actions Sparkie and agents
     // use): POST /actions/<name> with its arguments as the body. It runs as the owner's own call: a change runs at once
