@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync,
-  lstatSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync } from 'node:fs';
+  lstatSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync, utimesSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
@@ -47,6 +47,13 @@ useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: Str
     put('notes/s.txt', 'before s\n', 0o600);
     put('notes/p.txt', 'before p\n');
     put('notes/q.txt', 'before q\n');
+    put('notes/r[1].txt', 'bracket\n');
+    put('notes/r1.txt', 'plain one\n');
+    put('notes/cpa.txt', 'cpa\n');
+    put('notes/cpb.txt', 'cpb\n', 0o640);
+    put('notes/h.txt', 'h before\n');
+    put('notes/cut.txt', 'cut before\n');
+    put('notes/cut2.txt', 'cut2 before\n');
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
     put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\necho added\n", 0o755);
@@ -130,6 +137,8 @@ test('the copies come first: a file\'s bytes, mode and path before it is overwri
   assert.equal(v.kept, v.record, 'kept names the start and end record (one id)');
   assert.equal(v.tail, 'exit 0');
   assert.ok(!('putBack' in v), 'no way in changed');
+  assert.equal(v.copied, 1, 'the one file of its own it keeps (the ways in, marks and folders are not counted)');
+  assert.equal(v.notCovered, 'Put-back covers only the files counted in copied: anything else it wrote (a file an option names, a program’s own writes) isn’t copied first.');
   assert.equal(text('notes/a.txt'), 'new\n');
   const dir = join(BEFORE(), v.set), c = copyOf(v.set, 'notes/a.txt');
   assert.deepEqual([c.kind, c.mode, c.size, c.sha], ['file', 0o640, 6, sha('old a\n')]);
@@ -322,6 +331,9 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
     assert.equal(r.status, 200, r.text);
     assert.equal(r.json.ran, true);
     assert.match(r.json.output, /^added\n/);
+    // (what the script writes is not the sorter's to place: none of it is counted as copied, and it says so)
+    assert.equal(r.json.copied, 0);
+    assert.equal(r.json.notCovered, 'Not covered by put-back: what a script or a program (an install, a build) writes on its own isn’t copied first, so undo can’t put that back.');
     assert.deepEqual(r.json.putBack, { differed: ['~/.ssh/authorized_keys'], restored: ['~/.ssh/authorized_keys'], notRestored: [] }, r.text);
     assert.equal(text('.ssh/authorized_keys'), KEYS_LINE);
     assert.equal(modeOf(at3('.ssh/authorized_keys')), 0o600);
@@ -337,6 +349,71 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
     assert.equal(next.json.error, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
     assert.ok(!existsSync(at3('notes/paused.txt')));
   } finally { await agentSettings({ halted: false }); }
+});
+
+test('a name holding [ ] is that file, copied before it is removed and put back by undo; a file the pattern matches is copied too, and left as it is', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  const ran = await inChat(chat, 'remove r one on spark three', 'run', { on: 'spark3', command: "rm 'notes/r[1].txt'" });
+  assert.equal(ran.value?.ran, true, ran.error || JSON.stringify(ran.value));
+  assert.ok(!existsSync(at3('notes/r[1].txt')));
+  assert.equal(copyOf(ran.value.set, 'notes/r[1].txt').bytes.toString(), 'bracket\n');
+  assert.equal(copyOf(ran.value.set, 'notes/r1.txt').bytes.toString(), 'plain one\n');
+  const undo = await inChat(chat, 'undo r one', 'undo_last_change');
+  assert.equal(undo.value?.outcome, 'restored', undo.error || JSON.stringify(undo.value));
+  assert.deepEqual([undo.value.restored, undo.value.notRestored], [['~/notes/r[1].txt'], []]);
+  assert.deepEqual([text('notes/r[1].txt'), text('notes/r1.txt')], ['bracket\n', 'plain one\n']);
+});
+
+test('cp onto a file that is there runs: a path under a file is not there, not "unreadable"; undo puts the file back whole', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat();
+  const ran = await inChat(chat, 'copy cpa over cpb on spark three', 'run', { on: 'spark3', command: 'cp notes/cpa.txt notes/cpb.txt' });
+  assert.equal(ran.value?.ran, true, ran.error || JSON.stringify(ran.value));
+  assert.deepEqual([ran.value.notKept, ran.value.copied], [[], 2], JSON.stringify(ran.value));
+  assert.equal(text('notes/cpb.txt'), 'cpa\n');
+  const undo = await inChat(chat, 'undo the copy', 'undo_last_change');
+  assert.equal(undo.value?.outcome, 'restored', undo.error || JSON.stringify(undo.value));
+  assert.deepEqual([undo.value.restored, undo.value.notRestored], [['~/notes/cpb.txt'], []]);
+  assert.deepEqual([text('notes/cpb.txt'), modeOf(at3('notes/cpb.txt'))], ['cpb\n', 0o640]);
+});
+
+test('undo never puts back a set whose command did not run, nor, for a change cut off, a file written after its time', { timeout: 180000 * SLOW }, async () => {
+  // The helper runs nothing (its sudo line gone): the owner's command, the set gone, and undo there finds nothing.
+  const line = join(H3(), '.rehearsal', 'etc', 'sudoers.d', 'spark-console-root'), was = readFileSync(line);
+  const before = sets(), chat = await newChat();
+  let ran;
+  try { ran = await inChat(chat, 'edit h on spark three', 'run', { on: 'spark3', command: 'echo attempt > notes/h.txt' }); } finally { writeFileSync(line, was); chmodSync(line, 0o440); }
+  assert.equal(ran.value?.ran, false, ran.error || JSON.stringify(ran.value));
+  assert.match(ran.value.why, /sudo line isn’t on Spark 3/);
+  assert.deepEqual(sets(), before, 'the set made for it is gone');
+  const [start, end] = pair('echo attempt > notes/h.txt');
+  assert.deepEqual([end.ok, end.outcome, end.ran], [false, 'nosudo', false]);
+  assert.ok(start.set);
+  writeFileSync(at3('notes/h.txt'), 'by hand\n');
+  const none = await inChat(chat, 'undo h', 'undo_last_change');
+  assert.equal(none.value?.set, undefined, JSON.stringify(none));
+  assert.equal(text('notes/h.txt'), 'by hand\n');
+  // The Spark stops answering as the change starts (the connection drops; the command runs on): its end is unknown and
+  // it has no after-look. A file of its set written later is left, and said; one as the change left it is put back.
+  const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo cut > notes/cut.txt && echo cut > notes/cut2.txt && touch notes/cut-done', chat2 = await newChat();
+  writeFileSync(drops, '');
+  let cut;
+  try { cut = await inChat(chat2, 'cut on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  assert.match(cut.error || '', /^Spark 3 stopped answering while the change ran, so whether it finished is unknown/, JSON.stringify(cut));
+  await waitFor(() => existsSync(at3('notes/cut-done')), { what: 'the change to finish on the Spark' });
+  const [cs, ce] = pair(command);
+  assert.equal(ce.outcome, 'unreachable');
+  assert.ok(!existsSync(join(BEFORE(), cs.set, 'after.json')), 'no after-look');
+  writeFileSync(at3('notes/cut.txt'), 'by hand later\n');
+  const later = Math.floor(manifestOf(cs.set).at) + 3600;
+  utimesSync(at3('notes/cut.txt'), later, later);
+  const undo = await inChat(chat2, 'undo the cut', 'undo_last_change');
+  assert.equal(undo.value?.outcome, 'partly', undo.error || JSON.stringify(undo.value));
+  assert.ok(undo.value.restored.includes('~/notes/cut2.txt'), JSON.stringify(undo.value));
+  const byPath = (x, y) => (x.path < y.path ? -1 : 1);
+  assert.deepEqual(undo.value.notRestored.filter(x => x.path.startsWith('~/notes/')).sort(byPath), [{ path: '~/notes/cut-done', why: 'it was not there before the change: left as it is' },
+    { path: '~/notes/cut.txt', why: 'changed since that change was cut off: left as it is' }].sort(byPath));
+  assert.match(undo.value.note, /That change was cut off, so what it did is unknown\.$/);
+  assert.deepEqual([text('notes/cut.txt'), text('notes/cut2.txt')], ['by hand later\n', 'cut2 before\n']);
 });
 
 test('a key in the command, or in what it printed, is masked in the result and the journal\'s lines', { timeout: 60000 * SLOW }, async () => {

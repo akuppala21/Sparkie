@@ -1,5 +1,5 @@
 /* ───────── the copies a change makes first, and putting them back (A7b) ───────── */
-// Area: features        Rules: R55        Tests: runner.test.mjs
+// Area: features        Rules: R61        Tests: runner.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Before the runner (21-runner.mjs) runs a change on a compute Spark, every file the sorter placed it as writing,

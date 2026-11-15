@@ -16010,8 +16010,10 @@ const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Ob
 
 // (the helper's answers that mean the command never started there: its set goes, and undo passes over it)
 const RUNNER_NEVER = ['none', 'nosudo', 'unknown', 'proof', 'proving', 'refused'];
-// A script's, or a program's own, writes (an install, a build) are not placed by the sorter, so not copied.
+// What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
+// any write the sorter didn't place (a file an option names). The result never says all a command wrote was kept.
 const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program (an install, a build) writes on its own isn’t copied first, so undo can’t put that back.';
+const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a file an option names, a program’s own writes) isn’t copied first.';
 
 async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
@@ -16027,7 +16029,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
-    const notCovered = sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? { notCovered: RUNNER_NOT_COVERED } : {};
+    const notCovered = { notCovered: sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : RUNNER_ONLY_COPIED };
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
     // deletes): otherwise nothing runs, and the set goes.
     const lost = copied.notKept.filter(x => !x.way);

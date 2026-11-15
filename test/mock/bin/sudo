@@ -9,6 +9,7 @@
 # The root helper's rehearsal (test/rehearsal.mjs): a Spark whose ~/.rehearsal holds a made-up root with the real
 # helper runs it, through sudo -n only and only while the rehearsal has its sudo line, as sudo would run it for root
 # (SUDO_UID and SUDO_USER set; the rehearsal's folder named, so the helper reads every system path under it).
+# ~/.mock/sudo-drops: the helper runs, but the connection drops at once, as ssh's does (255, nothing said).
 M="$HOME/.mock"; spark=$(basename "$HOME")
 [ "$1" = -n ] || { echo "sudo: the stand-in only answers sudo -n" >&2; exit 1; }
 shift
@@ -16,7 +17,9 @@ R="$HOME/.rehearsal"
 if [ "$1" = "$R/usr/local/sbin/spark-console-root" ]; then
   [ -f "$R/etc/sudoers.d/spark-console-root" ] || { echo "sudo: a password is required" >&2; exit 1; }
   shift; R=$(realpath "$R")
-  exec env SUDO_UID=1000 SUDO_USER=owner SUDO_GID=1000 SPARK_CONSOLE_REHEARSAL="$R" "$R/usr/local/sbin/spark-console-root" "$@"
+  set -- env SUDO_UID=1000 SUDO_USER=owner SUDO_GID=1000 SPARK_CONSOLE_REHEARSAL="$R" "$R/usr/local/sbin/spark-console-root" "$@"
+  if [ -f "$M/sudo-drops" ]; then "$@" </dev/null >/dev/null 2>&1 & exit 255; fi
+  exec "$@"
 fi
 list=0
 [ "$1" = -l ] && { list=1; shift; }

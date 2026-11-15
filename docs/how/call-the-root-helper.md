@@ -45,7 +45,7 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
   ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too). Not built: proving by itself,
   a failed proof told beyond the self-test or kept past a restart; the key check reads words, not what a script
   opens; Spark 2's call needs systemd 254.
-- R43: a look writes one `cmd` record when it ends; a change (`runChange`) its start line before the call. R55.
+- R43: a look writes one `cmd` record when it ends; a change (`runChange`) its start line before the call. R61.
 - R25 and R26: what a command printed never causes a change.
 - R10: commands reach a Spark through `spawnOn`.
 
