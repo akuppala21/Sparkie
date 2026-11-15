@@ -8,7 +8,8 @@ import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, agentSettings, waitFor, SLOW } from './lib.mjs';
 
-useFleet({ watchMs: 60000 }, async () => { await agentSettings({ selfHeal: false }); });
+// (no eval recorded at the start: the stand-in fleet's own check would leave a profile before the first test)
+useFleet({ watchMs: 60000, evalOnRecord: false }, async () => { await agentSettings({ selfHeal: false }); });
 
 const mock = f => join(T.fleet.root, 'spark2', '.mock', f);
 const profiles = () => { try { return JSON.parse(readFileSync(join(T.fleet.stateDir, 'brain-profiles.json'), 'utf8')).profiles; } catch { return {}; } };

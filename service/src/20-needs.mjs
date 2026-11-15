@@ -44,6 +44,8 @@ function openProblems() {
     () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
     () => memoryNeeds(add),
+    // A brain eval result waiting for the owner's yes (21-brain-rail.mjs, R52).
+    () => evalWaitingNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {

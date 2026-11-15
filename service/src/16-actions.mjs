@@ -211,6 +211,7 @@ function changeIntent(text) {
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
 const PAGE_ONLY = new Set([
   'undo_update',
+  'keep_eval_result',
   'remember',
   'forget_memory',
   'save_workflow',
@@ -458,6 +459,8 @@ async function firmModel(name, input) {
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
+  // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
+  if (name === EVAL_YES) return evalYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
@@ -496,7 +499,8 @@ async function runAction(name, viewer, args, ctx = {}) {
     const was = workflowFor(name, input), wst = was && workflowStatus(was.id);
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
-    if (!check.clear) {
+    // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
+    if (!check.clear || !(await brainRail()).checked) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
