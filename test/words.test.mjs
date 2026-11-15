@@ -350,4 +350,9 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
     // (the page sends the word even while another answer is coming)
     assert.match(readFileSync(join(REPO, 'public', 'app.js'), 'utf8'), /const OWNER_WORDS = \[[^\]]*'\/undo update'[^\]]*\];/);
   });
+
+  test('/help names the rebuild steps: deploy/REBUILD.txt on GitHub, and the copy every install puts beside RECOVERY.txt', { timeout: 30000 * SLOW }, async () => {
+    const r = await say(await newChat(), '/help');
+    assert.match(r.text, /\n  bring Spark 2 back after its disk is lost: deploy\/REBUILD\.txt on GitHub \(a copy: .*\/\.local\/share\/spark-console\/REBUILD\.txt\)\n/);
+  });
 });

@@ -1,0 +1,47 @@
+Spark Console: bringing Spark 2 back after its disk is lost
+
+Read this on GitHub (deploy/REBUILD.txt) or in your copy of the repository on your Mac. You need the Mac, Spark 3 or
+Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.local/share/spark-console/ on Spark 2.
+
+1. On Spark 2, by hand: DGX OS, the same user name as before, Docker working, Node.js 18 or newer, Tailscale joined
+   under the same machine name (the address and your passkeys depend on it), then
+     sudo loginctl enable-linger $USER
+   and give Spark 2's new SSH key to Spark 3 and Spark 4 (ssh-copy-id from Spark 2 to each).
+
+2. Find the newest copy of the state. Turn Spark 3 and Spark 4 on (their buttons, or the Tapo app), then on each:
+     ls -lt ~/.local/share/spark-console/backups/state-*.tgz | head -3
+   The newest date wins. It may be up to 7 days old: a copy is made only while one of them is on.
+
+3. Put it back before Spark Console first starts. On Spark 2 (<spark> is the one holding it, <day> its date):
+     scp <spark>:.local/share/spark-console/backups/state-<day>.tgz ~/
+     mkdir -p ~/.local/state/spark-console && chmod 700 ~/.local/state/spark-console
+     tar -xzf ~/state-<day>.tgz -C ~/.local/state/spark-console --exclude=./sessions.json
+   (--exclude matters for an older copy: it may still hold the old sign-ins.)
+
+4. Install it, from the Mac, as for any update: bash spark-console/deploy/host-on-portal.sh
+   Then, once each, as before: deploy/cutover.sh, deploy/lock-api.sh, deploy/open-to-internet.sh.
+   Without the Mac, once Spark 2 has git, Node.js and a GitHub read token: clone the repository and run
+     bash deploy/pull.sh setup <owner>/<repository>; bash deploy/pull.sh check; bash deploy/pull.sh install <tree>
+
+5. Sign in. On the tailnet you are the owner at once. Every other device signs in again: no copy holds a sign-in.
+   Your passkey came back with the state. Make new recovery codes under Your passkey.
+
+6. Give back what no copy holds (it lived in ~/.config/spark-console/secrets.json, which is never copied):
+   - each key: /key NAME and the key, in your own chat; the GitHub token: /key GITHUB and the token
+   - the heartbeat's address: paste it in your chat; Telegram: Agents and Telegram in the page's menu, then pair
+   - the smart plugs, from the Mac: bash spark-console/deploy/plugs.sh pair 3 (and 4)
+   - the root helper, if you used it: bash spark-console/deploy/root-for-sparkie.sh --hub 2
+   Sparkie's model is in no copy either: download it and its draft model to Spark 2 again, then type /restart sparkie.
+
+What comes back as that copy had it: people and access, passkeys, agent keys, memory, lessons, chats, saved
+workflows, setups that worked, what should be running, and which brain to use. What doesn't: sign-ins, the keys in
+step 6, the journal (never copied: recall starts empty, and a memory line's source may point at a record that's gone),
+and whatever changed after that copy.
+
+7. Check: /status in your chat (it lists what needs you), one ordinary chat turn, the heartbeat green at
+   Healthchecks.io. Workflows say "needs validation" until each runs once for real.
+
+8. Afterwards: remove again anything you had removed after that copy (a passkey, an agent key, a person). Once a
+   new state-<day>.tgz with today's date is on Spark 3 or 4, delete the older ones there that hold sign-ins:
+     for f in ~/.local/share/spark-console/backups/state-*.tgz; do tar -tzf "$f" | grep -q sessions.json && rm "$f"; done
+   and take the lost disk's old SSH key out of ~/.ssh/authorized_keys on Spark 3 and Spark 4.
