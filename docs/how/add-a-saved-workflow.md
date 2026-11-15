@@ -14,6 +14,7 @@ the map's "Where new things go", row "A saved workflow".
 - A `keep_running` step that runs a job waits for the job's end before the next step (`jobStepEnd`,
   `18-step-jobs.mjs`); a job that ends badly ends the run and names the step (R35). A run that ends badly stops what
   its own steps started (`runCleanUp`), never what was running before it.
+- A `keep_running` step may leave out its Spark: `pickSpark` places it when the run reaches it, waking one if it must.
 
 ## Also update
 

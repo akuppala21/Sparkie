@@ -6513,8 +6513,8 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
-/* ───────── a saved workflow's run: job steps wait for their end, and a run that fails stops what it started (D6b, D6d) ───────── */
-// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs
+/* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
+// Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // A step that runs a job (keep_running with once true, or one whose answer says it is a job: run again, or already
@@ -6617,6 +6617,74 @@ async function runCleanUp(j, ran, e, viewer, ctx, title) {
   if (words) note(j, `After the end: ${words}`);
   const [first, ...rest] = String(e?.message || e).split('\n');
   return Object.assign(new Error([`${first}${words ? ` ${words}` : ''}`, ...rest].join('\n')), e?.cancelled || j.cancelled ? { cancelled: true } : {});
+}
+// A step that keeps something running (keep_running, keep) may leave its Spark out (D6a): code places it when the run
+// reaches it (placeStep). Saved and checked against keep_running's own inputs with only `spark` not required.
+const placedStep = (action, args) => action === 'keep_running' && (args?.do ?? 'keep') === 'keep';
+const stepInput = (action, args) => { const a = ACTIONS.get(action); return placedStep(action, args) ? { ...a.input, required: (a.input.required || []).filter(k => k !== 'spark') } : a.input; };
+// Steps whose action turns on a Spark Spark Console powered off (asleep): checked when reached, not refused (D6a).
+const WAKES_FOR_STEP = new Set(['start_model', 'keep_running']);
+const firstSentence = s => String(s?.message || s).split('\n')[0].replace(/^(.*?\.)\s.*$/, '$1');
+// Where step n runs, before its action is called: the Spark it names, else one pickSpark chooses. One Spark Console
+// powered off is turned on first (power.wake, for a workflow run: power_on's job, claim and audit) and kept awake until
+// the run ends (letSleep), so the step's own answer is the usual one (its spark, and job for a job) and its wait works.
+async function placeStep(j, n, args, viewer, title) {
+  let spark = args.spark ? sparkIdOf(args.spark) || String(args.spark) : null;
+  if (!spark) {
+    const p = await pickSpark(j, n, args, viewer);
+    spark = p.spark;
+    note(j, `Step ${n}: ${args.container} goes on ${sparkName(nodeById(spark) || { id: spark })}: ${p.why}`);
+  }
+  if (consoleOff(spark)) {
+    const at = sparkName(nodeById(spark) || { id: spark }), why = `the saved workflow “${title}”`;
+    step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
+    keepAwake(spark, why);
+    (j.keptAwake ||= new Map()).set(spark, why);
+    try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
+    note(j, `Step ${n}: ${at} is on`);
+  }
+  j.lastSpark = spark;
+  return { spark };
+}
+const letSleep = j => { for (const [id, why] of j.keptAwake || []) doneWith(id, why); };
+// The Spark for a step that names none, from the live look, as a start that names none is placed: never the brain's
+// Spark, only Sparks the caller may use. Where its container already is (a job or app run again by name, or one an
+// earlier run made): that Spark, awake, or asleep by the watcher's last record. Else, for a new one from its image: a
+// Spark that is on, the run's last step's first (a chain of jobs reads its own folders), then in list order, where it
+// fits the 8 GB rule with its memory figure, has the GPU to itself when it wants it (gpuAlone, appRoom), and holds the
+// files under /in its command names (the shared folder is one per Spark). None: one Spark it powered off whose record
+// has room (wakeOne, as a start that fits nowhere), unless the command names files, which a sleeping Spark can't show.
+async function pickSpark(j, n, args, viewer) {
+  const name = String(args.container), inv = await inventory(null), usable = computeSparks().filter(id => canUse(viewer, id));
+  const on = usable.filter(id => inv.sparks.find(s => s.id === id)?.online), asleep = usable.filter(id => consoleOff(id));
+  for (const id of on) {
+    const r = await run(nodeById(id), `docker inspect -f '{{.State.Status}}' ${q(name)} 2>/dev/null || echo missing`, { timeout: 20000 });
+    if (r.code === 0 && r.out.trim() && r.out.trim() !== 'missing') return { spark: id, why: `${name} is there` };
+  }
+  const known = asleep.find(id => { const w = knowledge.workloads[`${id}/${name}`]; return w && w.state !== 'removed'; });
+  if (known) return { spark: known, why: `${name} is there (it is asleep)` };
+  if (!args.image) throw new Error(`Step ${n} (keep_running): there’s no container called ${name} on a Spark that is on, and the step names no image to start it from.`);
+  const files = (args.command || []).map(w => /^\/in\/([A-Za-z0-9_.][A-Za-z0-9_./-]{0,200})$/.exec(String(w))?.[1]).filter(p => p && !p.split('/').includes('..')).slice(0, 5);
+  const gb = args.memoryGB || APP_MEMORY_GB, why = [];
+  for (const id of [...new Set([j.lastSpark, ...on].filter(x => x && on.includes(x)))]) {
+    const node = nodeById(id), sp = inv.sparks.find(s => s.id === id), at = sparkName(node);
+    try {
+      if (args.gpu) gpuAlone(sp, await appLook(node, name, sp.tsip), at);
+      await appRoom(node, gb, name);
+      if (files.length) {
+        const r = await run(node, `cd "$HOME/.local/share/spark-portal/workspaces/shared" 2>/dev/null && for p in ${files.map(q).join(' ')}; do [ -e "$p" ] || printf 'missing\\t%s\\n' "$p"; done; echo looked`, { timeout: 20000 });
+        if (r.code !== 0 || !/^looked$/m.test(r.out)) throw new Error(`${at}’s shared folder couldn’t be read.`);
+        const missing = fields(r.out, 'missing').map(([p]) => `/in/${p}`);
+        if (missing.length) throw new Error(`${at} doesn’t have ${missing.join(', ')}.`);
+      }
+      return { spark: id, why: `${id === j.lastSpark ? 'the run’s last step ran there, and it' : 'it'} has room${args.gpu ? ' and a free GPU' : ''}${files.length ? ' and the files its command names' : ''}` };
+    } catch (e) { why.push(firstSentence(e)); }
+  }
+  if (!files.length) {
+    const [id] = wakeOne(asleep.filter(x => switchablePlug(x)), [], { room: true, sizeBytes: 0, needBytes: gb * 1e9, why });
+    if (id) return { spark: id, why: 'no Spark that is on has room; it was asleep, and its record has room' };
+  }
+  throw new Error(`Step ${n} (keep_running): no Spark has room for ${name} now. ${why.join(' ')}`.trim());
 }
 /* ───────── workflows ───────── */
 // Area: core
@@ -6843,7 +6911,7 @@ async function checkSteps(w, inputs, inv) {
     if (!a) { line({ result: 'cannot run', why: `there’s no action called ${String(st.action).slice(0, 60)}` }); continue; }
     if (placeholders(st.args).some(k => !(k in inputs))) { line({ result: 'checked when reached', why: 'it needs the workflow’s inputs' }); continue; }
     let args;
-    try { args = checkInput(a.input, fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+    try { args = checkInput(stepInput(st.action, st.args), fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
     ids = [args.spark, ...(args.sparks || [])].filter(Boolean).map(x => sparkIdOf(x) || String(x));
     // (R2-2: a step naming no target fails wherever it runs, so this comes before the other checks)
     const missing = missingTarget(st.action, args);
@@ -6851,7 +6919,9 @@ async function checkSteps(w, inputs, inv) {
     // Only looks at Spark Console's own record work with a Spark off; every other step there needs it on.
     // (a Spark an earlier step turns on is checked when reached, below)
     const off = !OWN_RECORD_READS.has(st.action) && !POWER_STEPS.has(st.action) && ids.find(id => !sparkOn(id)?.online && !turnedOn.has(id));
+    if (off && WAKES_FOR_STEP.has(st.action) && consoleOff(off)) { line({ result: 'checked when reached', why: `${sparkName(nodeById(off) || { id: off })} is asleep; it is turned on when this step is reached` }); continue; }
     if (off) { line({ result: 'cannot run', why: `${sparkName(nodeById(off) || { id: off })} is off or not answering` }); continue; }
+    if (placedStep(st.action, args) && !args.spark) { line({ result: 'checked when reached', why: 'Spark Console picks its Spark when the step is reached' }); continue; }
     if (changed.has('*') || ids.some(id => changed.has(id))) { line({ result: 'checked when reached', why: 'an earlier step changes things there first' }); continue; }
     if ((st.action === 'stop_model' || st.action === 'restart_model') && args.container) {
       const dep = sparkOn(ids[0])?.deployments.find(d => d.container === args.container);
@@ -6881,7 +6951,7 @@ async function checkSteps(w, inputs, inv) {
 
 action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. Changes nothing on the Sparks.',
+  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
     title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
@@ -6901,7 +6971,7 @@ action({
       if (approval) throw new HttpError(400, `Step ${i + 1}: ${approval} answers a question when it’s asked; a saved step can’t carry it.`);
       // Arguments with an {input} in them are checked in full when it runs.
       if (!placeholders(st.args).length) {
-        try { checkInput(ACTIONS.get(st.action).input, st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
+        try { checkInput(stepInput(st.action, st.args), st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
       }
       const missing = missingTarget(st.action, st.args || {});
       if (missing) throw new HttpError(400, `Step ${i + 1} (${st.action}): ${missing}`);
@@ -6949,6 +7019,7 @@ action({
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -6965,7 +7036,7 @@ action({
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },

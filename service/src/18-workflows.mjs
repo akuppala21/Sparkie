@@ -223,7 +223,7 @@ async function checkSteps(w, inputs, inv) {
     if (!a) { line({ result: 'cannot run', why: `there’s no action called ${String(st.action).slice(0, 60)}` }); continue; }
     if (placeholders(st.args).some(k => !(k in inputs))) { line({ result: 'checked when reached', why: 'it needs the workflow’s inputs' }); continue; }
     let args;
-    try { args = checkInput(a.input, fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+    try { args = checkInput(stepInput(st.action, st.args), fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
     ids = [args.spark, ...(args.sparks || [])].filter(Boolean).map(x => sparkIdOf(x) || String(x));
     // (R2-2: a step naming no target fails wherever it runs, so this comes before the other checks)
     const missing = missingTarget(st.action, args);
@@ -231,7 +231,9 @@ async function checkSteps(w, inputs, inv) {
     // Only looks at Spark Console's own record work with a Spark off; every other step there needs it on.
     // (a Spark an earlier step turns on is checked when reached, below)
     const off = !OWN_RECORD_READS.has(st.action) && !POWER_STEPS.has(st.action) && ids.find(id => !sparkOn(id)?.online && !turnedOn.has(id));
+    if (off && WAKES_FOR_STEP.has(st.action) && consoleOff(off)) { line({ result: 'checked when reached', why: `${sparkName(nodeById(off) || { id: off })} is asleep; it is turned on when this step is reached` }); continue; }
     if (off) { line({ result: 'cannot run', why: `${sparkName(nodeById(off) || { id: off })} is off or not answering` }); continue; }
+    if (placedStep(st.action, args) && !args.spark) { line({ result: 'checked when reached', why: 'Spark Console picks its Spark when the step is reached' }); continue; }
     if (changed.has('*') || ids.some(id => changed.has(id))) { line({ result: 'checked when reached', why: 'an earlier step changes things there first' }); continue; }
     if ((st.action === 'stop_model' || st.action === 'restart_model') && args.container) {
       const dep = sparkOn(ids[0])?.deployments.find(d => d.container === args.container);
@@ -261,7 +263,7 @@ async function checkSteps(w, inputs, inv) {
 
 action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. Changes nothing on the Sparks.',
+  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
     title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
@@ -281,7 +283,7 @@ action({
       if (approval) throw new HttpError(400, `Step ${i + 1}: ${approval} answers a question when it’s asked; a saved step can’t carry it.`);
       // Arguments with an {input} in them are checked in full when it runs.
       if (!placeholders(st.args).length) {
-        try { checkInput(ACTIONS.get(st.action).input, st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
+        try { checkInput(stepInput(st.action, st.args), st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
       }
       const missing = missingTarget(st.action, st.args || {});
       if (missing) throw new HttpError(400, `Step ${i + 1} (${st.action}): ${missing}`);
@@ -329,6 +331,7 @@ action({
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -345,7 +348,7 @@ action({
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
