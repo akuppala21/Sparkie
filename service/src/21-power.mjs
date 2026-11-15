@@ -280,7 +280,7 @@ function powerTargets(input, viewer) {
   const ids = input.spark ? [input.spark] : input.sparks || [];
   if (!ids.length) throw new HttpError(400, 'Missing argument: spark (or sparks).');
   for (const id of ids) sparkOf(viewer, id);
-  mustUse(viewer, ids);
+  mustUse(viewer);
   for (const id of ids) {
     if (brainSparks().includes(id)) throw new HttpError(403, `${sparkWord(id)} runs Spark Console and Sparkie, so it is never powered off or on from here. Only you can, with its own plug in the Tapo app or its power button.`);
     if (!switchablePlug(id)) {
@@ -659,7 +659,7 @@ action({
 // needBytes or versions, and `why`, which says why none was when none was). A call (which never downloads) turns on only
 // a Spark whose record lists the model, or has no list.
 function powerFirst(args, viewer, ctx, mode = 'named', names = null, size = null) {
-  const off = Object.keys(powerState().off).filter(id => nodeById(id) && canUse(viewer, id) && switchablePlug(id) && !brainSparks().includes(id));
+  const off = Object.keys(powerState().off).filter(id => nodeById(id) && switchablePlug(id) && !brainSparks().includes(id));
   if (!off.length) return null;
   const named = [args.spark, ...(args.sparks || [])].filter(Boolean), call = ctx.via === 'gateway';
   const need = mode === 'all' ? wakeOne(off, names || [String(args.model)], { call }) : named.length ? named.filter(id => off.includes(id))
@@ -750,7 +750,7 @@ function powerSettingsClear(input, saidText) {
 
 action({
   name: 'power_settings', title: 'Idle power-off setting', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'power',
-  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, no call to its models at the model address and no open editor, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
+  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, and no call to its models at the model address, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
   input: { type: 'object', properties: {
     idleMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: 'Minutes a Spark must be idle before it is powered off; 0 turns the idle power-off off.' },
   }, required: ['idleMinutes'], additionalProperties: false },

@@ -191,7 +191,7 @@ async function plan(modelName, nodeId, viewer, known = null, probes = null, how 
   if (!NAME_RE.test(modelName || '')) throw new HttpError(400, 'Unknown model.');
   const node = nodeById(nodeId);
   if (!node) throw new HttpError(400, 'Unknown Spark.');
-  if (!canUse(viewer, nodeId)) throw new HttpError(403, `${sparkName(node)} isn’t shared with you.`);
+  if (!canUse(viewer)) throw new HttpError(403, 'Only the owner can do that.');
   const inv = known || await inventory(null);
   const model = withHow(inv.library.find(m => m.name === modelName), how);
   if (!model) throw new HttpError(404, `No online Spark has ${modelName} right now.`);
@@ -281,7 +281,7 @@ function fitOf(p) {
 }
 async function plansFor(modelName, viewer, known = null, probes = null) {
   const inv = known || await inventory(null);
-  const sparks = inv.sparks.filter(sp => sp.online && canUse(viewer, sp.id));
+  const sparks = inv.sparks.filter(sp => sp.online);
   const results = await Promise.all(sparks.map(sp => plan(modelName, sp.id, viewer, inv, probes).then(fitOf, e => ({ node: sp.id, error: e.message }))));
   const ok = results.filter(r => !r.error)
     .sort((a, b) => b.fits - a.fits || a.stop.length - b.stop.length || a.copy - b.copy || b.spare - a.spare);
@@ -293,7 +293,7 @@ async function plansFor(modelName, viewer, known = null, probes = null) {
 async function pairOptions(modelName, viewer, inv, probes) {
   const model = inv.library.find(m => m.name === modelName);
   if (!model || model.role === 'draft' || !ENGINES[engineOf(model)].pairs) return [];
-  const online = new Set(inv.sparks.filter(sp => sp.online && canUse(viewer, sp.id)).map(sp => sp.id));
+  const online = new Set(inv.sparks.filter(sp => sp.online).map(sp => sp.id));
   const linked = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.has(p.a) && online.has(p.b));
   const out = await Promise.all(linked.map(p => clusterPlan(modelName, [p.a, p.b], viewer, inv, probes).then(cp => ({
     nodes: cp.nodes, fits: cp.fits, each: cp.each, copy: cp.members.some(m => m.copy), spare: Math.min(...cp.members.map(m => m.spare)),
