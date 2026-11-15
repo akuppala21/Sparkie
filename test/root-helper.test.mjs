@@ -728,7 +728,8 @@ describe("the owner's one-time command", () => {
 // The real proof.py, as the helper writes it, run here as this user with nothing stopping it. With its own program and
 // files in place, each attempt must see what it is after, outside and "inside" alike (there is no wall here); with its
 // program missing, every attempt must fail rather than say "blocked". (On a Spark, inside a wall, a working attempt
-// must not get through: that is the proof.)
+// must not get through: that is the proof.) Lines are matched by their start: on a machine with a network, a Docker
+// socket or Tailscale (GitHub's runner, say), more is reached and the lines are longer.
 const HANDLE_PROBE = `import ctypes, sys
 class H(ctypes.Structure): _fields_ = [('b', ctypes.c_uint), ('t', ctypes.c_int), ('f', ctypes.c_ubyte * 128)]
 h, m = H(), ctypes.c_int(); h.b = 128; open(sys.argv[1], 'w').close()
@@ -762,6 +763,12 @@ function realProof(id) {
   return { held, home, stay, py, H: join(home, `.local/share/spark-console/proof-${id}`) };
 }
 const lines = r => r.stdout.split('\n').filter(Boolean);
+// Attempt 2 always tries the loopback first; attempt 3 lists the Docker and Tailscale sockets before api.sock, and the
+// door's socket after it.
+const MATCH = {
+  loopback: what => new RegExp(`^P 2 ${what} the loopback(, |$)`),
+  apiSock: /^P 3 direct through (.*, )?api\.sock by its path, api\.sock by a second path(, |$)/,
+};
 
 describe("the proof's own attempts", () => {
   test('with no wall, each attempt is seen working outside and gets through inside: a link, a connection, a socket, an environment, /proc, a signal, a key, a write that stays, something left behind', async t => {
@@ -776,14 +783,15 @@ describe("the proof's own attempts", () => {
       // The controls: every attempt the helper requires works outside; the rest work, or are absent for a stated reason.
       const outside = lines(P.py('outside', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
       for (const n of [1, 3, 4, 5, 6, 7, 10]) assert.ok(outside.some(l => l.startsWith(`P ${n} outside works `)), `outside ${n}: ${outside.join('\n')}`);
-      assert.ok(outside.includes('P 2 outside works the loopback'), outside.join('\n'));
+      assert.ok(outside.some(l => MATCH.loopback('outside works').test(l)), outside.join('\n'));
       for (const n of [8, 9, 11]) assert.ok(outside.some(l => new RegExp(`^P ${n} outside (works|not-there) \\S`).test(l)), `outside ${n}: ${outside.join('\n')}`);
       assert.equal(outside.length, 11);
       const inside = lines(P.py('look', 1, 2, 3, 4, 6, 10));
       for (const n of [1, 2, 3, 4, 6, 10]) for (const how of ['direct', 'child']) {
         assert.ok(inside.some(l => l.startsWith(`P ${n} ${how} through `)), `look ${n} ${how}: ${inside.join('\n')}`);
       }
-      assert.ok(inside.includes('P 2 direct through the loopback') && inside.includes('P 3 direct through api.sock by its path, api.sock by a second path'), inside.join('\n'));
+      assert.ok(inside.some(l => MATCH.loopback('direct through').test(l)), inside.join('\n'));
+      assert.ok(inside.some(l => MATCH.apiSock.test(l)), inside.join('\n'));
       assert.ok(inside.some(l => /^P 10 direct through by its path, through a link, by \*/.test(l)), inside.join('\n'));
       const five = lines(P.py('look', 5, 12));
       assert.ok(five.some(l => l.startsWith('P 5 direct left ')) && five.some(l => l.startsWith('P 12 child left ')), five.join('\n'));
