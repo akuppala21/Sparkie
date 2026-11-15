@@ -92,7 +92,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+        : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
@@ -102,6 +102,15 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+async function stopAppStarted(viewer, x, c) {
+  try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
+    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
+    return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+  }
 }
 // The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
 // error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
@@ -151,6 +160,7 @@ async function placeStep(j, n, args, viewer, title) {
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
+    savedRunKeep(j, { awake: [...j.keptAwake.keys()] });
     try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
     note(j, `Step ${n}: ${at} is on`);
   }
