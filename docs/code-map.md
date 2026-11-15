@@ -500,7 +500,7 @@ Design G's third addition (A3, step 4). The brain eval switches it off with `tim
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `memoryOffFor`, `memoryLive`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`
+- **Functions:** `memoryOffFor`, `memoryEnded`, `memoryLive`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`
 - **Uses:** `01-setup` (`HttpError`), `20-memory-names` (`nameWords`, `memoryNamed`, `memoryLinesAbout`), `20-memory` (`MEMORY_FILLER`)
 - **Used by:** `20-memory`, `21-selftest`
 

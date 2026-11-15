@@ -17,8 +17,8 @@ const NEAR_SHARE = 0.8, ALSO_MAX = 2;
 const memoryOffFor = name => String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes(name);
 // Spark 2's own day, YYYY-MM-DD.
 const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-// Whether a line is past its last day; a line that is not, is live.
-const memoryEnded = (e, day = memoryDay()) => typeof e?.until === 'string' && e.until < day && !memoryOffFor('time');
+// Whether a line is past its last day; a line that is not, is live. (One argument only: it is passed to filter.)
+const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');
 const memoryLive = e => !memoryEnded(e);
 // A line past its day, as memory's history keeps it: gone at the start of the next day, by Spark Console.
 function memoryExpired(e) {
