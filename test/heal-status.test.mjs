@@ -1,3 +1,6 @@
+// Covers: Self-healing after a power-on waits until the status check has seen the Spark back (`sparkOff`), then the
+// settle wait.
+//
 // Self-healing after a power-on waits until the status check has seen the Spark back (REVIEW-GUIDE section 6, done with
 // the smart-plug work, 21-power.mjs). Until then the status check still has the Spark as off, and what self-healing
 // knows of power-ons is the one before: one under 6 hours old that wasn't acted on for this model would bring it back at

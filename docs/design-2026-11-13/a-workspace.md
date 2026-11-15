@@ -2,6 +2,7 @@
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-1, P-2, P-5; items 7, 8, 9 and 14; clean-up 1; trash.
 Amended again the same day: the root helper (new 2.13; 2.3, 2.5, 2.7 and 2.8 follow it; step 1 is now 1a and 1b).
+Amended a third time the same day, for the build map's unclear items 2 and 3: the dangerous ask (new 2.14; step 10 is now 10a, 10b and 10c) and `minutes` on `run` (2.9, 2.10, step 6). Step 7 keeps what was read as a list (2.12).
 
 Gap 1, revised for decision 22 ("everything means everything … permissions for risky ones to ask me on telegram"). A
 design only: no code was changed, nothing was run. "Verified": read in the code today. "Inference": follows from what
@@ -131,7 +132,7 @@ decision 20): when off, an ask still arrives on Telegram as a notice and is answ
 | A change set | One per request or task, in `changes.json` on Spark 2 (state folder, one writer, the last 50): files (path, kept or why not, hash before and after, made new), containers started or stopped (operation ids), packages (`pip`, `conda`, `npm`, `apt`: the list before and after), units touched, keys used (names), and `unseen` when a step's effects could not be known. A `find -newer` over a command's folders adds what it made or changed without naming. |
 | `put_back {set}` | Restores the kept files of one set (this chat's latest when none is named) and removes files the set made that are unchanged since. It opens its own set, so it can be put back too, and says what it did not restore. Containers go back with `undo_last_change`, which exists. |
 | What cannot be put back | A deleted volume or image; a database's contents and anything changed inside a container; a file too big to copy, or changed by a command that did not name it; what another program wrote to a file between the copy and the command; packages (the list from before is given, not replayed); a stopped process; anything sent over the network. |
-| How the owner is told before | Code marks each host change `kept` or `not kept`. A deleting command (`rm`, `rmdir`, `shred`, `truncate`, `dd`, `find -delete`, `git clean`, `git reset --hard`, `docker rmi`, `volume rm`, `prune`, `pip uninstall`, a `mv`, `cp` or `>` over a file) that is not fully kept is risky: always a button saying "This cannot be put back" and what would go. A fully kept delete follows the ladder. Any other step with unseen effects (a script, an install, `docker exec`) says "not covered by put-back" on its step line as it starts, on any button and on an always entry. |
+| How the owner is told before | Code marks each host change `kept` or `not kept`. A deleting command (`rm`, `rmdir`, `shred`, `truncate`, `dd`, `find -delete`, `git clean`, `git reset --hard`, `docker rmi`, `volume rm`, `prune`, `pip uninstall`, a `mv`, `cp` or `>` over a file) that is not fully kept is risky: always a button saying "This cannot be put back" and what would go, asked as a dangerous ask of kind `delete` (2.14). A fully kept delete follows the ladder. Any other step with unseen effects (a script, an install, `docker exec`) says "not covered by put-back" on its step line as it starts, on any button and on an always entry. |
 
 ### 2.7 Spark 2 itself
 Looks: as anywhere. A change on Spark 2 is risky by decision 20:
@@ -146,7 +147,9 @@ Looks: as anywhere. A change on Spark 2 is risky by decision 20:
 Code sorts each host command (its words through one tokenizer, a typed path after it is resolved, a script
 Sparkie wrote before it runs): **(a)** the ladder of 2.5; **(b) risky:** always a button on Telegram and the page with
 the exact command, one press for one command, never under a go-ahead or an always entry; **(c) not done**, and never
-for lack of permission. The gate that reads only the owner's words, the record and `/stop` hold for all three.
+for lack of permission. The gate that reads only the owner's words, the record and `/stop` hold for all three. Five
+kinds of (b) are asked the harder way of 2.14: root, the lock-out class, a delete that cannot be put back, the brain,
+and an install of Spark Console.
 
 | What | Class | Notes |
 |---|---|---|
@@ -211,21 +214,60 @@ The one page (section 4) settled the way to root: the line the owner installs na
 All are `who: 'owner'`; none may be a saved-workflow step. A wrong place is safe: a host command sent to the box fails
 harmlessly, and a box command sent to a Spark meets the gate.
 
+**What is built is the one page's two tools**, not these seven: `run {on, command, root?, dir?, minutes?}` and
+`write_file {on, path, text, from?, to?, root?}`. The table above stays as the record of what each must do. Neither
+tool has a `seconds` input: a command's time is 30 seconds, or what `minutes` says (2.10).
+
 ### 2.10 Limits, time, the live view, stopping
 | Limit (a brain setup may state `workSteps` and `contextTokens`; else these defaults) | Value | When reached |
 |---|---|---|
 | Work steps per message | `workSteps`, else 2 × `toolRounds`, at most 30 | The turn answers; the task carries on in a fresh turn. |
 | Tool output per message | 40% of `contextTokens` at 3 characters a token (default 32,768) | Same: a small brain never overflows. |
 | One result to the brain | 6,000 characters (the first 2,000, the last 3,500) | The whole output goes to the record. |
-| One command | Look 30 s. Box and compute Spark: 30 s, or up to 120 minutes as an operation. Spark 2: 10 minutes. Inside the net: 10 minutes on Spark 2 and for the lock-out class, 30 minutes for other root commands. Output is kept whole up to 16 MB (2.11) | The unit's own time limit, then the box removed or the unit killed by name. Past 16 MB of output the command is ended and the record says so. |
+| One command | 30 s, or what `minutes` says, held to the most its class allows (the table below, step 6). Output is kept whole up to 16 MB (2.11) | The unit's own time limit, then the box removed or the unit killed by name. Past 16 MB of output the command is ended and the record says so. |
 | One task | 120 steps, 2 hours, 8 carry-on turns | A plain report; the owner's next message gives a new budget. |
 | Refused or malformed calls | 3 in a row | The tools are withdrawn for that message, with the reason. |
 | Room | The 8 GB rule before every command; a memory cap (4 GB box, 8 GB host, 2 GB Spark 2); 50 GB free disk | Refused in plain words. |
 
+**`minutes` on `run` (step 6; settled 2026-11-14).** The simplicity review cut long commands; the one page's `run`
+keeps `minutes`, and the one page wins. `minutes` is a whole number from 1 to 120, and nothing else sets a command's
+time. Code sorts the command first (2.8), so the limit follows the class code found, not what the brain expected.
+
+| The command is | Without `minutes` | With `minutes` | The most it may ask |
+|---|---|---|---|
+| A look | 30 s, inside the turn | an operation | 1 (the helper gives a look 60 s: 2.13) |
+| In the box, or a change on a compute Spark as the owner's user | 30 s, inside the turn | an operation | 120 |
+| A root command, which runs inside the net | 30 s | an operation | 30 |
+| On Spark 2, or in the lock-out class | 30 s | an operation | 10 |
+
+- **More than the most is held to it**, and the result says so ("held to 10 minutes: this runs on Spark 2"). Nothing is
+  refused for asking too long.
+- **With `minutes` the command is an operation** (a job of type `run`, `07-jobs.mjs`). The call returns at once with
+  the operation's id. A change holds the Spark's claim while it runs, as any host change does; a look and a box
+  command hold none. `cancel_operation` ends it by stopping its unit. Its end is posted in the chat, as any
+  operation's is, and that wakes today's carry-on. The notice is built by code: where it ran, how long, the exit code
+  and the journal id of its output. It quotes none of the output: the next turn reads it with `recall`, which counts
+  as outside text like any read.
+- **An exit code other than 0 is a result**, not a failed operation: the operation ends completed and says the code.
+  It fails only when the command could not be run at all (the helper refused, the Spark went away, the journal's
+  start line could not be written).
+- **At the limit** the unit's own time limit ends the command and everything it started (`RuntimeMaxSec`, then 5 s:
+  2.13). That is a result too: "stopped at its limit of 20 minutes". What it wrote stays, the copies stay,
+  `undo_last_change` restores them, and the output up to then is in the journal. Inside the net the guard then does
+  what it does after any command (2.8): nothing differs and it is disarmed, or the check, the confirm or the
+  put-back. Nothing is run again.
+- **After a restart of Spark Console** the operation is gone, because operations live in memory. The journal's start
+  line with no end names the unit. Start-up stops that unit by name when its Spark answers (as `/stop` stops a
+  command), then writes the one "cut off" notice (B 2.1), which says the command was stopped. If the Spark does not
+  answer, the unit ends at its own limit.
+- **Step 6 no longer builds** the task card, the `NOTES.md` digest, `conv.task.work`, or a second trigger for the
+  carry-on when a budget ends a turn. A turn that ends at a budget (step 3) answers with where it got. Carrying on by
+  itself after that is design E's step 6 (E 2.1).
+
 | Topic | How |
 |---|---|
 | What it costs in time (decision 21; estimates, to be measured: each step's record splits its `ms` into connect, check and command) | **An ordinary reply: nothing.** No model call, no ssh, no search, no timer; the gate's sorting is in-process, under a millisecond. The seven tool texts are kept short (about 800 tokens in all) and sit in the brain's cached prefix after a chat's first turn. A test counts zero `run()` calls for a turn with no work. **A look:** one ssh connection (about half a second to a compute Spark, none on Spark 2) plus the command. **A box command:** about one second more, for the container. **A host change:** the connection, the copies (milliseconds for small files), the unit (about 0.1 s), two fingerprints (about 50 ms); root adds about 20 ms. **A guarded change:** about 2 s for the copy, the timer and the check, then only the owner's confirm. Go-aheads, copies and root's setup are looked at only when used. |
-| Carried across messages | Each turn starts fresh with a task card, as labelled data beside the fleet notes (`14-chats.mjs:322`): the first 1,500 characters of `NOTES.md` (in the box) and the last 12 steps, one line each, built by code. `conv.task` gains `work: {name, steps, more, read, goAhead, set}`; `more` (a budget ended the turn) is a second trigger for `wakeWork`. |
+| Carried across messages | Cut (the one page): no task card, no `NOTES.md` digest and no `conv.task.work`. A long command's result is posted like any operation's and wakes today's carry-on (step 6, above). What was read is kept on `conv.task` as a list (2.12); the go-ahead is step 9's. The first design, for the record: each turn starts fresh with a task card, as labelled data beside the fleet notes (`14-chats.mjs:322`): the first 1,500 characters of `NOTES.md` (in the box) and the last 12 steps, one line each, built by code. |
 | What the owner sees live | The `tool` event gains `where` (Spark 3, Spark 2, box), `line` (`$ the command`, masked, 200 characters), `tail` (exit code and last line), `root` and `kept`, built by code and saved in `message.tools`: one quiet row a step, folded to "23 steps, 2 failed". A button shows the whole command in fixed-width type, on the page and on Telegram. |
 | How `/stop` ends one | `/stop` (page or Telegram) ends the reply, the task and the go-ahead, aborts the command under way (`run`'s `signal`), then removes its box or kills its unit by name and frees the claim. A long command stops with `cancel_operation`. `/pause` stops every change; looks still work. After a console restart a command still ends at its unit's own time limit. A guard timer is never stopped by `/stop`: only a confirm stops it. |
 
@@ -244,7 +286,7 @@ If the start line cannot be written, the change does not run and the owner is to
 ### 2.12 Outside text, and what this needs from the other designs
 | Topic | How |
 |---|---|
-| Outside text | Output, logs, files and pages are labelled as data and set `readOutside`, which now lasts for the task. From then on a host change is a button unless the owner gave a go-ahead or an always entry: rule 3 of 2.5, in code. Both come only from the owner's words or press (R25), and neither covers anything risky. A button says when Sparkie read outside text before proposing it. An address a command printed cannot be opened by `read_page` (R39) nor used in a host command without a button. Step lines, button labels and always-allow kinds are built by code, never from the brain's prose. |
+| Outside text | Output, logs, files and pages are labelled as data and set `readOutside`, which now lasts for the task. Step 7 keeps it on `conv.task` as a list, not a flag: for each outside read, the journal id of its record and a label code built (the newest 40), so that 2.14's ask can say what came from where; any entry counts as "read". From then on a host change is a button unless the owner gave a go-ahead or an always entry: rule 3 of 2.5, in code. Both come only from the owner's words or press (R25), and neither covers anything risky. A button says when Sparkie read outside text before proposing it. An address a command printed cannot be opened by `read_page` (R39) nor used in a host command without a button. Step lines, button labels and always-allow kinds are built by code, never from the brain's prose. |
 | Needs from E | The key store: `keyValue(name)` for code only, each key's names and hosts, and a key taken out of a message before anything else sees it. One task is one queue item that parks at a button and asks on Telegram. `workBusy(spark)` before a Spark is powered off. A carry-on turn counts as a message for the brain's sleep. The profile holds `workSteps`, `contextTokens` and the `careful` grade. |
 | Needs from B and C | B: `journal('cmd', …)`. C: code, never the brain, fills a box from a tar stream and reads it back. |
 
@@ -403,6 +445,138 @@ for control groups); name look-up inside the run wall; `sudo -n` with no termina
 manager; that no other kernel guard (AppArmor) stops root's `unshare`; where Docker keeps its data; the time a call
 adds. The proof is what decides each of these on the Spark itself.
 
+### 2.14 The dangerous ask (step 10b)
+Added 2026-11-14 to close the build map's third "unclear" item. The one page (section 4, "Dangerous asks are hard to
+tap by reflex"; section 7, item 5) and the contract (8.18) require it before root, a lock-out change, an install, a
+final delete and a change of brain. No step built it. Nothing was run.
+
+**In short.** A dangerous ask is a risky ask (2.5, 2.8: the exact command, one press for one command, never a typed
+"ok") with three things added by code. It is a message of its own that holds no word of the brain's. It opens with
+facts that code built. Its press counts only with the two digits the ask shows. One is open at a time. Ordinary work
+gets none of this.
+
+**Which asks are dangerous.** Five kinds, a closed list. The sorter of 2.8 or the action's own code names the kind.
+The brain never does, and no input of any tool adds or removes one.
+
+| Kind | What raises it | Its first line | Raised by step |
+|---|---|---|---|
+| `root` | Any ask for a command or a file write that would run as root. (A plain root command that the ladder runs at once is not asked, so it has no ask at all.) | `ROOT on Spark 3` | 12 |
+| `lockout` | A command the sorter puts in the lock-out class | `CAN LOCK YOU OUT of Spark 3` | 13 |
+| `delete` | A delete that cannot be put back (2.6), and the disk commands of 2.8 | `DELETES FOR GOOD on Spark 4` | 10b (step 7 made it a plain button) |
+| `brain` | A command that names the brain's container, its model files or its setup (2.8); `brain_across` (design D, step 12) | `THE BRAIN on Spark 2` | 10b; D's step 12 |
+| `install` | `install_update`, for any build of Spark Console (design C, step 5). Sparkie's own proposal adds its facts (C, step 8) | `INSTALLS SPARK CONSOLE on Spark 2` | C's steps 5 and 8 |
+
+- A command of two kinds is one ask whose first line joins them: `ROOT on Spark 2 · CAN LOCK YOU OUT`.
+- "Installing its own code" (the one page) is read as any install of Spark Console, not only a change Sparkie wrote.
+  That is the safer reading, and it costs two digits an install.
+- A typed action that deletes for good keeps the button it has today (erasing a memory line is on the page only). If
+  one is later opened to Telegram, it raises this ask.
+- Anything else on Spark 2, power, a schedule and free-form container starts stay plain risky asks: one press.
+- The page's own brain switch keeps its passkey, as today. It is not an ask.
+
+**What it shows**, in this order. Every line is built by code from typed facts.
+
+| # | Line | Built from | Built by step |
+|---|---|---|---|
+| 1 | The kind and the place, in capitals | The sorter's class, `root`, the Spark | the raiser (the table above) |
+| 2 | `You asked for this.` or `You did not ask for this.` For an agent's request: `You did not ask for this. <the agent's name> did.` | The gate's own answer to rule 2 of 2.5 for this call (`sparkieCheck`): the owner's own words in this request ask for this kind of work and name this Spark. For `install_update` and `brain_across` it is their own word kind (R25). A question never counts. A go-ahead or an always entry is not "asked" | 10b |
+| 3 | `It goes back by itself at 14:32 unless you confirm.` (inside the net), or `Can be put back: 3 files are copied first.`, or `This cannot be put back.` with what would go and its size | The guard's time (2.8); `kept` (2.6) | 13; 7 and 8 |
+| 4 | `Came from, not from you:` and one line for each thing, for example `github.com/x/y/install.sh: the page raw.githubusercontent.com/x/y (read 14:02)` | "Came from", below | 10b |
+| 5 | For the lock-out class: the ways-in files the command names. For an install: the tree, when it was tested, the files that differ from the build installed now, and the "what the brain reads" line (C 2.3) | The sorter's resolved paths; C's facts | 13; C's step 5 |
+| 6 | `Runs outside the wall:` and why, when it runs with `run --open` (2.13) | The sorter | 7 |
+| 7 | The exact command, whole, in fixed-width type. For `write_file`: the path and the lines that change, old and new. For a script or a fetched installer: its text and the first 12 characters of its SHA-256 | The bytes the press will run (2.13, P-5) | 7 (scripts); 12 (fetched code) |
+| 8 | `To run it: press Run it, then type 47.` | The two digits, below | 10b |
+
+- **An install** has no line 4 and no line 7: what it runs is the tree that line 5 names.
+- **Buttons.** Two: the yes, in two or three fixed words (`Run it`, `Install it`, `Switch the brain`), and `No`. "Don't
+  ask again for this task" and "Always allow" are never offered here (2.5).
+- **Sparkie's reason is not in the ask.** It is Sparkie's ordinary reply, which follows the ask as its own message, as
+  after any button today.
+- **Long text.** Lines 1 to 6 always come first and are never cut. When the text of line 7 is 300 characters or more,
+  one line goes before it, `Long: read all of it before you answer.`, and line 8 and the buttons come after the text,
+  so they are reached only past it. Over 3,500 characters the ask is answered on the page only, like any ask (2.5):
+  Telegram gets lines 1 to 6 and "This one waits for you in Spark Console." The safety review's other way (the text
+  sent to Telegram as a file) is not built: this is the smaller mechanism, and nothing is cut or refused.
+
+**"Came from"** (line 4). One comparison of strings, with no model call, made only when a dangerous ask is built.
+- *The things.* From the bytes of line 7 code takes every address (a URL, a host name, an IP address), every path,
+  and every package or image name (the words after `install`, `add`, `pull` or `run` of the package and image
+  programs the sorter knows).
+- *The owner's.* A thing found, ignoring case, in the owner's own messages of this request (the one that began it and
+  the owner's later ones in it) gets no line.
+- *Read.* Otherwise code looks for the thing in what was read in this request. Step 7 keeps `readOutside` as a list
+  (2.12): the journal id of each outside read and a label code built for it ("the page <host and path>", "a web
+  search", "the log of sc-glm on Spark 3", "a command's output on Spark 4", "the file <path> on Spark 3", "the
+  journal"). The text is read back from the journal, which keeps it whole (B 2.1), the newest read first. The first
+  read that holds the thing is where it came from. Sparkie's own earlier answers in this chat (the newest 20) are
+  searched the same way, labelled "Sparkie's earlier answer (14:02)": a command quoted from an earlier answer counts
+  as read (the one page, section 7, item 7).
+- *Neither.* No line: the thing is Sparkie's own.
+- *Limits.* The newest 40 reads and 64 MB of text in all. If a limit stops the search, the ask says `Not all of what
+  was read was searched.` At most 8 lines are shown, then `and 5 more`. A label never quotes its source.
+
+**The two digits.**
+
+| | |
+|---|---|
+| What they are | Two digits, 10 to 99, drawn by code (`randomInt`) when the ask is built. A new pair for every ask |
+| Where they are | With the pending ask, in memory, and in the ask's own text. Never in a journal line, the audit, a button's label or a tool result |
+| What they bind | One ask. The ask holds its kinds, the Spark, the wall or verb, the SHA-256 of the exact bytes with the hash of any script it runs (2.13), and for an install the tree. A pair typed for one ask runs nothing else. An ask whose bytes changed is void, and its pair with it |
+| When they count | Only while that ask is open, and only with that ask's own yes button. On the page the press opens a field for them, and one request carries the press and the pair. In the paired Telegram chat the press is answered "Type the two digits from the ask to run it.", and the owner's next message there is compared with the pair. A pair typed in Telegram with no press there is answered "Press the button first." and runs nothing |
+| A wrong pair | Runs nothing and says so. The third wrong pair makes the ask void |
+| Anything else typed after a press in Telegram | The press is forgotten (press again to answer), the ask stays open, and the message goes to Sparkie as usual |
+| What they are not | Proof of who is typing: whoever can read the ask can read them. They make the owner look at the ask. What slows a phone in another hand is step 10a's caps and `/lock`; what stops it is the daily code (step 10c, below) |
+
+**Where it may be answered.**
+
+| Who asked | Where the ask is shown | Where it is answered |
+|---|---|---|
+| The owner's own chat, on the page or in Telegram, or a task of the owner's | In that chat on the page, and in the paired Telegram chat | On the page. Or in the paired chat, while "Approve from Telegram" is on (2.5), Telegram is not locked (`/lock`), and the caps allow it (3 risky approvals an hour and 10 a day; a dangerous approval counts as one) |
+| An agent talking to Sparkie: `ask_sparkie`, or a chat an agent started | In that conversation on the page, and in the paired Telegram chat. Line 2 names the agent | As the row above, by the owner. The agent is told "asked: it waits for the owner" and can answer nothing |
+| A call with no conversation: an agent's own tool call, `POST /actions`, a saved workflow's step | Nowhere. The call is answered "the owner asks Sparkie for this in their own chat", as an owner-only question is today (`question`, `17-changes.mjs`). This is the smaller mechanism, chosen: no new place to show an ask | Not answered there |
+| Any of them, when the command changes who may approve: passkeys, recovery codes, Telegram's pairing, the approvals switch (2.8) | As above; Telegram gets the facts and no button | On the page only |
+
+On the page the answer needs what an owner-only button needs today: the owner's signed-in page, and the passkey when
+the sign-in came over the internet (R6, R31). The keeping of a lock-out change is a different answer with its own
+rule (the fresh visit of 2.8, step 13).
+
+**One at a time.** One dangerous ask is open in the whole of Spark Console. While it is open, a call that needs
+another is answered "waiting for your answer to the ask already open", with that ask's first line, and nothing is
+sent or run. A task parks there, as at any button. A third dangerous ask built inside ten minutes is sent one minute
+late, and its fifteen minutes start when it is sent.
+
+**What cancels it.** A void ask runs nothing. Its buttons go grey on the page, and a later press or pair is answered
+"That ask is no longer open. Ask again."
+1. `No`, on the page or in Telegram.
+2. Fifteen minutes after it was sent (every ask's life today: `pendingChoices`). A press does not add time.
+3. The third wrong pair.
+4. A restart of Spark Console, and a new Telegram pairing (the one page; contract 8.17).
+5. `/stop` in the chat that asked, and `/pause`.
+6. What it shows is no longer what would run: a script whose bytes changed, `main` moved under an install, a helper
+   on that Spark this build does not know, a guard already open on that Spark. A new ask is built from the new facts.
+7. `/lock`, or "Approve from Telegram" switched off: void in Telegram only. The page still answers it.
+
+**The record.** The ask, its answer and its end are journal lines like any other (2.11). `gate` says `asked:telegram`
+or `asked:page`; `danger` holds the kinds; `asked` is line 2 as true or false; `from` holds line 4's labels. Never the
+digits. An approval from Telegram is echoed on the page (step 10a).
+
+**Where the code goes.** A new part, `20-danger.mjs`, so that the full parts do not grow: `dangerAsk(viewer, ctx,
+{kinds, where, facts, shown, call})`, which every raiser calls in place of `question`; `cameFrom`; the digits; the
+one-at-a-time rule. A pending choice (`question`, `17-changes.mjs`) gains one field, `danger`. `runChoice`
+(`14-chats.mjs`) and `tgPress` (`21-telegram.mjs`) check it. `public/app.js` gets the field for the pair. A step that
+lands before 10b asks with today's owner-only button on the page; 10b turns every such ask on `main` into this one
+(`delete`, `brain`, and `install` if design C's step 5 is in).
+
+**The daily code (step 10c; a switch, off by default).** The one page lists "a four-digit code once a day for the
+dangerous presses" as a switch. No other step needs it.
+- Set, changed and removed on the page only, with the passkey. Kept with the pairing in the secrets file, as a salted
+  hash, and never shown back.
+- While it is set: the first dangerous answer from Telegram in any 24 hours is asked for it after its two digits
+  ("Send today's code."). The bot deletes the owner's message that holds it, at once. A right code runs that ask, and
+  dangerous answers from Telegram then count for 24 hours.
+- A third wrong code turns Telegram approvals off, as `/lock` does. Only the page turns them on.
+- The page never asks for it.
+
 ## 3. Rules kept, and rules that must change
 Kept as written: R2 (`appRoom` before every command, a memory cap on each), R10, R12, R20 and R22 (`work.json`,
 `allowed.json`, `changes.json`: one writer each), R27, R28. One new rule, **R41 "Sparkie's hands"** (2.2 to 2.10), and:
@@ -434,15 +608,17 @@ Step 1 builds the root helper before the first look: without it `run` and `write
 | 3 | `work_run` in the box, `work_read`, the loop's budgets | `21-work.mjs`; `14-chats.mjs` | Output cannot forge the exit line. A timeout and `/stop` remove the box. The 8 GB rule refuses. The step budget ends the turn with a report. |
 | 4 | `work_write`, `work_edit` in the box | `21-work.mjs` | An edit must match once. A link in the box cannot move a write out of it. |
 | 5 | Live steps and the command button | `14-chats.mjs`; `public/app.js` | The `tool` event carries `where`, `line`, `tail`, masked; `test/install.test.mjs` still passes (R30). |
-| 6 | Long commands and carrying on | `21-work.mjs`; `14-chats.mjs` (`wakeWork`, `continueTask`, `OP_WORDS`) | A long command posts its result and one carry-on turn runs with the task card. An exit code other than 0 is a result, not a failed operation. |
-| 7 | Host changes on a compute Spark, with the copy first | `21-work.mjs` (`hostClear`, the sorting of 2.8, the unit, the copies, the ways-in check); `16-actions.mjs` (`CHANGE_WORDS`, `sparkieCheck`) | The owner's words naming the Spark, with nothing read, run at once, from the page and from Telegram. After a `container_logs` read the same call is a button whose label is the exact command, and a press runs exactly that. Each (b) row is a button even under perfect words; each (c) row is not done and says why. `sudo` inside a non-root unit fails. A stand-in command that changes `authorized_keys` unasked is put back, pauses and notices. A second change meets the claim. An agent's call is a button. `/stop` kills the unit. Every named file is copied first. A change whose start line cannot be written to the journal runs nothing and says so, while a look, `/stop` and `/putback` still answer; a console killed after a write leaves a start line with no end, one "cut off" notice, a file that `undo_last_change` restores from `before/<set>/`, and no second run. An ask shown for `bash fix.sh` whose file is changed, or is a link pointed elsewhere, before the press runs nothing and asks again with the new text; an unchanged script runs once; a file rewritten after the runner opened it does not change what ran. The "read outside text" mark survives a console restart. |
+| 6 | `minutes` on `run`: a command as an operation (2.10). No task card | `21-work.mjs`; `07-jobs.mjs` (the job type `run`); `14-chats.mjs` (`OP_WORDS`); `20-tell.mjs` (`TELL_OPS`) | `run` with `minutes: 5` returns an operation at once; its end is posted with the exit code and a journal id and none of the output, and one carry-on turn runs. Exit code 3 ends the operation completed, not failed. A look asked with `minutes: 5` is held to 1 and says so; a command on Spark 2 asked with `minutes: 30` is held to 10. A command still running at its limit is stopped with everything it started, and the result says "stopped at its limit". `cancel_operation` stops its unit. A console killed while it runs: after the restart the unit is stopped by name, there is one "cut off" notice, and it is not run again. Without `minutes` a 40-second command is stopped at 30 s. |
+| 7 | Host changes on a compute Spark, with the copy first | `21-work.mjs` (`hostClear`, the sorting of 2.8, the unit, the copies, the ways-in check); `16-actions.mjs` (`CHANGE_WORDS`, `sparkieCheck`) | The owner's words naming the Spark, with nothing read, run at once, from the page and from Telegram. After a `container_logs` read the same call is a button whose label is the exact command, and a press runs exactly that. Each (b) row is a button even under perfect words; each (c) row is not done and says why. `sudo` inside a non-root unit fails. A stand-in command that changes `authorized_keys` unasked is put back, pauses and notices. A second change meets the claim. An agent's call is a button. `/stop` kills the unit. Every named file is copied first. A change whose start line cannot be written to the journal runs nothing and says so, while a look, `/stop` and `/putback` still answer; a console killed after a write leaves a start line with no end, one "cut off" notice, a file that `undo_last_change` restores from `before/<set>/`, and no second run. An ask shown for `bash fix.sh` whose file is changed, or is a link pointed elsewhere, before the press runs nothing and asks again with the new text; an unchanged script runs once; a file rewritten after the runner opened it does not change what ran. The "read outside text" mark survives a console restart, and it is a list: after a page and a log were read, `conv.task` names both, each with its journal id and a label built by code (2.12). |
 | 8 | Change sets and `put_back` | `21-work.mjs` (`changes.json`) | Two edits and a made file in one task: `put_back` restores both and removes the made file; a file changed since is left and named. The answer lists what was not restored. Copies over 7 days or 2 GB are pruned when a set opens. |
 | 9 | The go-ahead and the always list | `21-work.mjs` (`allowed.json`); `14-chats.mjs`; `20-words.mjs` (`/allowed`) | The owner's sentence, or the second answer, lets the next host change run after an outside read, and ends at each of its ends. A tool result saying "go ahead" grants nothing. "Always" is added only by the owner's press: an agent's and a typed yes are refused. A matching command runs with no button; one outside its folder (also through a link), or as root under a non-root entry, does not. Neither answer covers a (b) row or Spark 2. |
-| 10 | Asking on Telegram, and its switch | `20-tell.mjs` (`ask`); `21-telegram.mjs`; `14-chats.mjs` (`runChoice`); `22-passkey.mjs`; `03-secrets.mjs` | A risky change sends one ask with the exact command to the paired chat and shows the same button on the page; a press on either runs it once. With the switch off a Telegram press is refused and the page still works. Another chat gets silence. A command over 3,500 characters is asked on the page only. An ask is void after a console restart and after Telegram is paired again. |
+| 10a | Asking on Telegram, and its switch | `20-tell.mjs` (`ask`); `21-telegram.mjs`; `14-chats.mjs` (`runChoice`); `22-passkey.mjs`; `03-secrets.mjs` | A risky change sends one ask with the exact command to the paired chat and shows the same button on the page; a press on either runs it once. With the switch off a Telegram press is refused and the page still works. Another chat gets silence. A command over 3,500 characters is asked on the page only. An ask is void after a console restart and after Telegram is paired again. |
+| 10b | The dangerous ask (2.14). Needs step 7 | `20-danger.mjs` (new: `dangerAsk`, `cameFrom`, the digits, one at a time); `17-changes.mjs` (`question`: the `danger` field); `14-chats.mjs` (`runChoice`); `21-telegram.mjs` (`tgPress`, the pair as the next message); `public/app.js` (the field for the pair); new `test/danger.test.mjs` | A final delete proposed after a `read_page`: the ask is its own message and holds no word of the stand-in brain's; its first line is `DELETES FOR GOOD on Spark 3`; it says `You did not ask for this.`; a path that is in the page and not in the owner's words is listed with that page's label, and one the owner typed is not. A press with no pair runs nothing. A wrong pair runs nothing, and the third makes the ask void. The pair typed in Telegram with no press there runs nothing. A typed "ok" runs nothing. The right pair after the press runs the exact bytes, once. One ask's pair does not answer the next. With one ask open, a second dangerous call answers "waiting" and sends nothing; a third inside ten minutes is sent a minute late. Void after each of: `No`, 15 minutes, a restart, a new pairing, `/stop`, `/pause`, a script changed since the ask. After `/lock` a Telegram press is refused and the page still answers. An agent's request through `ask_sparkie` is asked in both places and names the agent, and the agent's own answer runs nothing; an agent's own tool call, with no conversation, gets no ask and is told the owner must ask Sparkie. A command that changes Telegram's pairing gets no Telegram button. The delete that step 7 made a plain button is now this ask; a plain command on Spark 2 is still one press. A 400-character command has `Long:` before it and the digits after it. The digits are in no journal line, audit line, label or tool result (searched for exactly). |
+| 10c | The daily code, a switch that is off (2.14) | `21-telegram.mjs`; `22-passkey.mjs`; `03-secrets.mjs`; `20-danger.mjs` | With no code set nothing asks for one. With one set: the first dangerous answer from Telegram in 24 hours runs only after the right code, and the message that held it is deleted; the next dangerous answer that day needs none; a third wrong code turns Telegram approvals off, and only the page turns them on; the page never asks for it; it is set and removed only with the passkey. |
 | 11 | Host changes on Spark 2 | `21-work.mjs` (console code only: the helper is the same file on every Spark, 2.13) | Perfect words, a go-ahead and an always entry still ask. The call reaches the helper through the owner's service manager, so the command runs outside the console's unit; it runs inside the net and is held to 10 minutes. A failed `check_ways` puts back, pauses and notices. |
 | 12 | Root commands | `21-work.mjs`; `deploy/spark-console-root` (the `root` verb's copy of named files; `--undo` was built in step 1a) | On a Spark set up in step 1, `root: true` runs through the helper's `root` verb, with the net armed in the same call, and the button and record say "as root". A command that names the helper or its line is answered with the owner's one command and runs nothing. The word `sudo` in a command is answered "set root". A root script is always asked. A root command inside the net is held to 30 minutes, 10 in the lock-out class. An installer from an address is downloaded once, when the ask is built: a stand-in server that answers differently the second time sees one request, and the press runs the first text. After `--undo`, `root: true` answers with the one command again. |
 | 13 | The lock-out net | `21-work.mjs` (`guard`); `deploy/spark-console-root` (the copy list, `restore.sh`, `--net`, `keep`, `putback`: 2.13) | The timer is armed before the change (the mock records the order); if arming fails nothing changes. A failed check restores at once. No confirm: the stand-in timer fires, the files are back, the owner is told. A confirm stops the timer. Sparkie's own call cannot confirm, and `/stop` does not stop the timer. A restart inside the window restores at start. `tailscale logout` says it cannot be put back. The timer recorded is the unit's time limit plus 600 s, for a 30 s command and a 20-minute one; a lock-out command asked with `minutes: 30` is held to 10. A put-back stops the command's unit before the first copy back, and 5 s later the restored bytes are still there, also when the limit and the timer end together and for a child the command left behind. With a guard open, also after a console restart, a second root command on that Spark answers "waiting for your confirm" and runs nothing. "Keep it" after the stand-in timer fired answers "already put back". An expiry where nothing differs reloads nothing. A sign-in change is not kept by a standing session, nor by a link opened before the change was live. |
-| 14 | Keys by name | `21-work.mjs`; design E's store | The value is in no command text, output, record or tool result (searched for exactly). An address outside the key's hosts makes the command risky. The file on the memory disk is gone after the command. A made-up key is searched for, and not found, in error fields, in the state copy and after a restart. |
+| 14 | Keys by name. Two keys given at the door have a home of their own in the secrets file and are saved through their own check: `GITHUB`, the pull install's token (design C, 2.3), and the heartbeat's address, known by its shape (design E, 2.4) | `21-work.mjs`; design E's store | The value is in no command text, output, record or tool result (searched for exactly). A heartbeat address pasted in the owner's chat starts the beat and is in no chat file; a `GITHUB` token that the stand-in GitHub refuses is not kept. An address outside the key's hosts makes the command risky. The file on the memory disk is gone after the command. A made-up key is searched for, and not found, in error fields, in the state copy and after a restart. |
 | 15 | Eval cases; the trial's contestant; a job may read a box; code fills a box (C) | `test/eval/cases.json`; `agentbar/`; `21-apps.mjs` | `agentbar --dry` still fails every untouched task. A job with `work` has one more mount, read-only. |
 | 16 | Internet for a box, through a gate | later | — |
 

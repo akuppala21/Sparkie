@@ -1,3 +1,10 @@
+// Covers: Memory lines (kept from the owner's words, a button otherwise, forgotten). Carrying on: after the operation
+// ends; when it ends before the reply does; after a reply that failed once its stop started; after a typed yes to
+// Sparkie's question. `/stop` during a lookup (the change in the same round never runs, the model isn't asked again)
+// and after the reply (the operation finishes and posts its result; no carry-on turn). `save_workflow` from the owner's
+// chat (F20): at once only when every step is in the owner's words, nothing outside was read and the name is new; else
+// one button listing the steps; a key typed or repeated in a chat is `[hidden]` in `chats.json`.
+//
 // Sparkie remembers and carries on (reviews, 2026-11-11). Memory: "remember …" in the owner's words keeps one line in
 // memory.json, at the end of Sparkie's system prompt in every chat after; forget_memory removes it; nothing secret is
 // kept. Carrying on: when the operations Sparkie started for a request finish, it gets a turn in that chat (acting only

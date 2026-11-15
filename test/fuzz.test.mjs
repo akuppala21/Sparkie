@@ -1,3 +1,7 @@
+// Covers: Hostile values, argument names and envelopes against every tool: no 5xx, no non-JSON, no broken JSON-RPC, no
+// leaked exceptions, every error coded, the service stays up. The change tools are fuzzed with agents paused (their
+// inputs are still checked; nothing may run).
+//
 // Fuzz pass: hostile argument values, argument names and envelopes against every tool. Looks for HTTP 500s, non-JSON
 // answers, broken JSON-RPC envelopes, results that aren't JSON, leaked internal exceptions, and the service going down.
 // The tools that change things are fuzzed with agents' changes paused, so nothing they're asked for runs (their inputs

@@ -1,5 +1,5 @@
-// Affected tests only (tools/affected.mjs, design C 2.4 and section 4 step 6): a made-up map and real git diffs in a
-// made-up repository give the right test files; every path on the "always" list, and a missing map, answer all; a
+// Covers: Affected tests only (tools/affected.mjs, design C 2.4 and section 4 step 6): a made-up map and real git diffs
+// in a made-up repository give the right test files; every path on the "always" list, and a missing map, answer all; a
 // documents-only change picks the documents test alone; a changed test file is always picked. And the map itself, from
 // real coverage of two small test files run the way test/lock.mjs runs them. No fleet: git, node and temporary folders.
 import { test, describe, before, after } from 'node:test';

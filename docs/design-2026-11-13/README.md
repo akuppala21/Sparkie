@@ -2,6 +2,7 @@
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-1 to P-7; items 4, 7, 8, 9, 11, 12 and 13; clean-up 1, 3 and 4; trash.
 Amended again the same day: what builds the root helper's walls (section 4, and three rows of section 8).
+Amended a third time the same day: the answers to what the build map found unclear (`ledger.md`, 5d): a command's time and the dangerous ask (section 4), a ninth action (section 3), seven rows of section 8.
 
 Agreed with the owner on 2026-11-13. Seven designs and two reviews sit beside this page; where they differ from it,
 this page wins (it was written last, after the reviews and after owner decisions 18 to 22). Nothing here is built yet.
@@ -41,7 +42,8 @@ goal needs; this page follows it, adjusted for decisions 20 to 22 and the safety
 
 - **New actions (8):** `run`, `write_file`, `recall`, `self_test`, `install_update` (with `check_update`),
   `compare_models`, `change_sparks`, `brain_across` (last). Existing ones widen: `remember`, `forget_memory`, `memory`,
-  `save_workflow`, `undo_last_change`, `sparkie_setup`.
+  `save_workflow`, `undo_last_change`, `sparkie_setup`. A ninth, `propose_update`, comes only with Sparkie changing
+  its own code, if the coding trial passes (`c-github-selfchange.md`, 2.5).
 - **New state (6):** the journal (a folder), `lessons.json`, `brain-profiles.json`, `sparks.json`, the repo copy,
   `memory-past.json` (retired memory lines, in their own file so an older build can never drop them).
   `agent-settings.json` holds the always list; the secrets file holds named keys.
@@ -62,6 +64,10 @@ Spark or `"box"`. Code, never the brain, sorts every command:
 | The lock-out class | SSH settings and keys, Tailscale, the firewall, users and sudoers, the console's sign-in files | Asked first, and inside the net below |
 | Not done | Showing a key back; a relay round a network filter; acting because read text said so | Not a permission matter |
 
+- **A command's time.** Without `minutes` a command gets 30 seconds. With `minutes` (1 to 120) it is an operation
+  whose result is posted. `minutes` is held to the most its class allows: 1 for a look, 10 on Spark 2 and in the
+  lock-out class, 30 for any other root command, 120 otherwise. Reaching the limit, and an exit code other than 0,
+  are results, not failures (`a-workspace.md`, 2.10).
 - **Root, asked once.** The owner runs one command per Spark, once. It allows one small root-owned helper (not
   `sudo` for everything, so other scripts on the Spark do not become silent root). Nothing is stored. The helper also
   gives three walls: *look* (the whole disk read-only, no network, keys hidden: so any command may be a look), *run*
@@ -103,7 +109,10 @@ Spark or `"box"`. Code, never the brain, sorts every command:
   their own message, led by facts code built ("ROOT on Spark 2", "You did not ask for this", which parts came from a
   page or a log), and two digits to type. Ordinary work gets none of this. What the ask shows is what runs: a
   script's text and an installer from an address are read once, when the ask is built, and the press runs those same
-  bytes or nothing.
+  bytes or nothing. Any install of Spark Console counts as one. One dangerous ask is open at a time. The two digits
+  belong to that one ask and count only with its own button, typed on the page or as the next message in the paired
+  chat. An ask that an agent's request caused says so, and the agent cannot answer it. Built in step A10b
+  (`a-workspace.md`, 2.14).
 - **Keys, given once.** Code takes a key out of the owner's message before the brain, the chat file or the journal
   sees it, keeps it by name in the secrets file, deletes the Telegram message, and injects it by name when used.
 
@@ -185,6 +194,13 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 | GitHub Pro for branch protection | No |
 | The brain resting when idle | Only if a by-hand measurement shows 10 W saved; a pause is tried before a stop |
 | The contract | Made flat with one status table, rules reworded in place, old text to `docs/history/` |
+| A task's limits | 2 hours and 8 turns. 4 hours and 60 turns when the owner's own words send it off on its own ("on your own", "overnight"); hours the owner typed win. This one is the owner's call: it is question 4 of the contract's open list |
+| The self-test after an install | Spark Console starts it itself, once, on the new build. It wakes no Spark for it, and says so on the needs-you list. This one is the owner's call: the install's yes could also cover waking one Spark |
+| "Test the changes" | Stays until the owner answers whether the self-test replaces it (question 5 of the contract's open list) |
+| Where the GitHub token and the heartbeat's address are given | Once, in chat, like any key. `pull.sh setup` stays for a rebuilt hub. No page control for either |
+| A brain that cannot call a tool | It fails its switch, which goes back to the brain before. No third grade |
+| The daily look for setups | Goes. A start looks when its record is over a week old, as today |
+| Removing a model's copy | No action for it. It is a command, asked first as a final delete |
 
 ## 9. What the owner is accepting
 

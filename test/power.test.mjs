@@ -1,3 +1,8 @@
+// Covers: Powering Sparks off and on (R41) with the stand-in plug controller (`setWatts` for a lagging reading) and a
+// stand-in `sudo`: what is refused and why (Spark 2 first), the clean path, the one-minute hold, `power_on`'s cases, an
+// agent waiting for the owner, the owner's words, every signal the idle loop reads, and a model across two Sparks. Each
+// test's name says what it checks.
+//
 // Power-aware Sparks (contract 9.22, R41, 21-power.mjs): Spark Console shuts a Spark down cleanly and switches its
 // smart plug off (power_off), turns it on again (power_on), powers idle Sparks off by itself (power_settings), and turns
 // a Spark it powered off back on when a start or a call needs it. On the stand-in fleet: the stand-in plug controller

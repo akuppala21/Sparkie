@@ -1,3 +1,6 @@
+// Covers: Wall power read from the stand-in plug controller (contract 9.22): `/status`, `fleet_status` and energy;
+// Spark 2's plug read only when marked `readOnly`; a plug or controller that doesn't answer. It switches nothing.
+//
 // Smart plugs (contract 9.22, deploy/plugs.sh): the whole Spark's power at the wall, read from the Matter controller on
 // Spark 2 (here a stand-in, test/mock/plugs.mjs), in /status, in fleet_status for agents and Sparkie, and in the
 // energy totals. Spark 2's own plug is never read, even when plugs.json names it. Nothing here switches a plug.

@@ -1,3 +1,7 @@
+// Covers: How the owner says it (the stand-in brain scripted to make the calls): "free up spark 4" and "clear spark 4"
+// stop what runs there; "start … on 4" (a bare number names that Spark) and "switch spark 4 to …" start the model on
+// Spark 4. Each runs at once, with no button, and its audit line keeps the Spark as said.
+//
 // How the owner says it (review of Sparkie's gate, 2026-11-11): a bare Spark number after "on" / "across" / "from" /
 // "to" names that Spark ("start gemma on 3" ran wherever there was room before), and "switch … to", "swap", "replace",
 // "set up", "install", "use …" ask for a start, "free up spark N" for stopping what runs there. Each runs at once, on

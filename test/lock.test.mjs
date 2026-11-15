@@ -1,3 +1,9 @@
+// Covers: The tested mark without the whole suite: the lock `test/lock.mjs` writes names the build, `tree`, `commit`,
+// `run` and `brainReads`, the same on a second write; a changed tool description, tool input or system prompt changes
+// `brainReads`; the lock leaves itself out of `tree`, names `commit` only when HEAD holds exactly the files, and
+// doesn't touch git's own index; `run` only on GitHub; the service still counts every workflow of the build as tested
+// with the new lock.
+//
 // The tested mark, test/lock.mjs, without running the whole suite: the lock it writes for the stand-in fleet's build
 // names the files tested (tree, and commit when they are exactly a commit's), the GitHub run (only on GitHub) and what
 // the brain reads (brainReads: a sha256 of the system prompt and every tool's name, description and inputs, as the

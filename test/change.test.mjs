@@ -1,3 +1,21 @@
+// Covers: The change actions through the door. Who: a new key looks only (every read tool and `ask_sparkie`), `PUT
+// /agents/<id> {act}` gives every tool; the owner's switches: paused refuses every change but not reads, an unreadable
+// settings file counts as paused. Names: already running by any name; a name matching several models → a question whose
+// choices are ids only, used once, alone, by whoever was asked; unknown, draft, remote-code and unsafe `spark.json`
+// models refused. Rails: a pair whose cable isn't "full", 8 GB kept free / not enough / unknown memory, Spark 2 only
+// when named, room only by stopping a container the console didn't start → a question only the owner answers (an
+// agent's "yes" is refused); a model that answers Sparkie's chats or apps → the same. Deploys that complete (three
+// Sparks at once): start → asked again while starting, the same operation (`already-starting`, no second job) →
+// `wait_operation` → `running_models`; stop; restart (room checked first); a restart while another holds the port fails
+// cleanly; put-back when the new model crashes, and when memory measured after the stops is short; a two-Spark start, a
+// one-Spark start that would stop a part (refused), stopping both parts. What stop/restart won't touch. A model not on
+// disk: downloaded (never onto Spark 2), and a pause stops the operation at its next step. A start over a running copy
+// of the same model (F9): when it fails that copy runs again (set aside, not removed), when it works nothing set aside
+// is left. A Hugging Face repo started or looked up by its full name joins Recipes (A9) with its model card's setup,
+// one click after; `find_setups` adds one that isn't in Recipes instead of refusing. A GPU job on Spark 4 (A13 part E):
+// `deploy_plan` shows it as a stop, `start_model` there is the owner's question naming it and stops nothing, with no
+// Spark named the model goes to Spark 3, and `restart_model` there is refused. `audit.jsonl` lines.
+//
 // The actions that change things, through the agent door: start_model, stop_model, restart_model (and wait_operation to
 // follow them). Who may call them (a key's scopes), the owner's pause, names and questions (choices kept on the server,
 // single-use, bound to whoever asked), the rails on where a model goes (memory with 8 GB kept free, two-Spark links,

@@ -1,3 +1,18 @@
+// Covers: The self-test (`self_test`, D2) on a Spark 3 made free: asked in the owner's words it runs at once; the lines
+// come in order (model, healing, stop, app, job, model address from a container), each with its seconds, then what is
+// left; nothing is left running, Spark 2 is untouched, the list of what should be running is as it was, and a model
+// already running elsewhere is never stopped. The healing drill kills only the container this run started, by its id,
+// and self-healing brings it back; a third self-test within the hour doesn't run the drill ("not tried", with why and
+// when to ask again), kills nothing and passes. With the stand-in GPU broken (`.mock/gpu-broken`) only the job line
+// fails, and its stopped web page and job are used again. The model it stops is the container it started, by id: one
+// made by hand under that name keeps running. An operation under way on a compute Spark makes that Spark not free, and
+// one the owner starts there during the test is never cancelled by it. Cancelled during its first step, it still stops
+// what it started. A model on the list of what should be running there is never the test's (every one listed: it says
+// so and changes nothing). With no list yet, the list's first seed (made while the test's model runs, held loading by
+// `.mock/serve-down`) passes over that model, and the next self-test picks the same model and passes. An agent's call
+// is the owner's question; with every compute Spark off it says so and starts nothing. On Spark 3 a job runs its
+// command (`.mock/jobs-run`) and starts carry their time (`.mock/stamp-starts`).
+//
 // The self-test (self_test, 21-selftest.mjs; design D 2.9): on one compute Spark that is on and free, a small model
 // (started, stopping nothing), the healing drill (its container killed by id, self-healing brings it back), a stop, a
 // small web page whose link answers, and a job with the GPU that also calls the model address from inside its

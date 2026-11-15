@@ -1,3 +1,32 @@
+// Covers: Apps kept running (R38): `keep_running` adopts a running app (its link, whether it answers, no operation;
+// again changes nothing; `should_be_running` checks the link); never on Spark 2 (any verb); refused for a console
+// model, a protected container, a model server, a missing container, a restart or stop of one not kept; a port only on
+// a LAN address has no link. Self-healing brings a kept app back after a crash and after its Spark is powered off and
+// on, never after a clean stop with the Spark on (held, a notice; Bring back starts it). Restart, stop (off the list,
+// stays stopped), keep again. A new app from an image: `spark.app=1`, a memory cap, its port on 127.0.0.1 and the
+// Spark's tailnet address (`.mock/tsip`), named volumes and settings, no GPU or host network; refused for a secret
+// setting (a whole word of its name: `DB_PASS` yes, `WEBUI_AUTH=False` no; the value never reaches `audit.jsonl`), a
+// host folder, a low or model port, a model engine's image, a bad image, too little or unknown memory; an agent gets an
+// owner-only question with no choice ids; one that never answers a web request stays running and listed, with no link.
+// Ports: above 65535 refused, one Docker doesn't publish for a container that's there refused, a stopped app kept gets
+// its port from `docker inspect`. The start of a container's id is never its name. A model server by what it is (a
+// stopped one with an engine image is refused); a stopped app starts within its own memory limit, else the owner's
+// figure. A database that doesn't speak HTTP is kept, healed and left running. Agents: keeping, restarting or stopping
+// a container the console didn't start is the owner's call. An app the console started that answers `/v1/models` stays
+// an app. A new image under a stopped container's name is refused, saying what differs; a `docker run` that failed on
+// its port leaves no container. Sparkie runs it at once for clear words with the Spark named, else a button (a new
+// image not typed out as whole words too; every image, volume and setting on the button); undo leaves an app change
+// alone. A new app under a name still listed takes the new port and memory; Forget during a heal pass stays; a held
+// app's reason is never an old skipped bring-back; undo of a start that stopped a kept app brings it back as an app;
+// Docker that didn't answer is never a container that's gone; a stop while its Spark is off takes it off the list;
+// "keep Open WebUI running" that `keep_running` answered isn't "don't stop anything" in the next message. Any workload
+// (A13): a GPU app needs its memory figure, never starts on Spark 2, beside a model or another GPU app, or past the 8
+// GB rule; its command follows the image, a key in it is refused; a dev box says who can use it; a kept GPU app that
+// crashes while a model runs there isn't brought back; a job (`once`) mounts the shared folder at `/in` and its own
+// `jobs/<name>` at `/out`, never joins the list, is told once when it ends (also in the chat it was started from), runs
+// again and stops; Sparkie's button for a GPU app or a dev box shows every setting, and typed in full it runs at once;
+// a stack of `keep_running` steps runs as a saved workflow, and one with a new image needs an answer first.
+//
 // Apps kept running (A12, R38): keep_running puts an app that isn't a model (Open WebUI, a database) on the list of what
 // should be running, with its link; restarts or stops one kept that way; and starts a new one from an image the owner
 // names (no GPU, a memory cap, named volumes, opened on 127.0.0.1 and the Spark's tailnet address only). Self-healing
