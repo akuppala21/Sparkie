@@ -121,6 +121,16 @@ async function noCarryOn(chat, n) {
   assert.equal((await chatMessages(chat)).length, n, 'no carry-on turn');
 }
 
+// (A1b's check for a proof under way took the proof's lock itself, so two looks at once on a Spark could each take the
+// other for a proof: "being proven right now". This file runs two at once on a Spark in most rounds.)
+test('two looks at once on one Spark never take each other for a proof of the walls', { timeout: 120000 * SLOW }, async () => {
+  await answering();
+  for (let i = 0; i < 15; i++) {
+    const both = await Promise.all(['spark3', 'spark3'].map(on => api('/actions/run', { method: 'POST', body: { on, command: 'cat docs/plain.txt' } })));
+    assert.deepEqual(both.map(r => [r.status, r.json.ran]), [[200, true], [200, true]], both.map(r => r.text).join('\n'));
+  }
+});
+
 test('a brain that runs commands again and again stops at 12, twice its 6 rounds: no command past them runs, the answer says how many ran and that the owner can say go on, and the next message starts fresh', { timeout: 300000 * SLOW }, async () => {
   await answering();
   const FOUR = [RUN('spark3'), RUN('spark3'), RUN('spark4'), RUN('spark4')], THREE = [RUN('spark3'), RUN('spark3'), RUN('spark4')];
