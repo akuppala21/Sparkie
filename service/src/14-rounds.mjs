@@ -36,10 +36,14 @@ function setupLimits(tuned) {
   const steps = Number(tuned.workSteps);
   return { rounds, changes, steps: Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * rounds), output: Math.floor(budgetContext(tuned) * 12 / 10) };
 }
-// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left (task.steps: those
-// its turns made, taskStepsKept). A task with none left ends this turn's tools at once ('task').
+// What one task has left of its 120 run calls (task.steps: those its turns made, taskStepsKept); 120 with no task. The one
+// place that says whether a task may run more (a task's carrying on asks it too).
+const taskStepsDone = task => (Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0);
+const taskStepsLeft = task => Math.max(0, TASK_STEPS - taskStepsDone(task));
+// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left. A task with none
+// left ends this turn's tools at once ('task').
 function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
-  const done = Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0, left = Math.max(0, TASK_STEPS - done);
+  const done = taskStepsDone(task), left = taskStepsLeft(task);
   const WORK_STEPS = Math.min(limits.steps, left);
   return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
     works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
@@ -47,7 +51,7 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
 function taskStepsKept({ conv, task, agent, works = 0 }) {
-  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = (Number.isInteger(task?.steps) ? task.steps : 0) + works;
+  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = taskStepsDone(task) + works;
 }
 // A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
 // the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup

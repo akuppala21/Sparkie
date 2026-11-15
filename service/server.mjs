@@ -4091,10 +4091,14 @@ function setupLimits(tuned) {
   const steps = Number(tuned.workSteps);
   return { rounds, changes, steps: Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * rounds), output: Math.floor(budgetContext(tuned) * 12 / 10) };
 }
-// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left (task.steps: those
-// its turns made, taskStepsKept). A task with none left ends this turn's tools at once ('task').
+// What one task has left of its 120 run calls (task.steps: those its turns made, taskStepsKept); 120 with no task. The one
+// place that says whether a task may run more (a task's carrying on asks it too).
+const taskStepsDone = task => (Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0);
+const taskStepsLeft = task => Math.max(0, TASK_STEPS - taskStepsDone(task));
+// The turn's budgets: its limits (the setup's own unless given), and the run calls its task has left. A task with none
+// left ends this turn's tools at once ('task').
 function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
-  const done = Number.isInteger(task?.steps) && task.steps > 0 ? task.steps : 0, left = Math.max(0, TASK_STEPS - done);
+  const done = taskStepsDone(task), left = taskStepsLeft(task);
   const WORK_STEPS = Math.min(limits.steps, left);
   return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
     works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
@@ -4102,7 +4106,7 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
 function taskStepsKept({ conv, task, agent, works = 0 }) {
-  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = (Number.isInteger(task?.steps) ? task.steps : 0) + works;
+  if (!agent && conv.task && (conv.task === task || !task)) conv.task.steps = taskStepsDone(task) + works;
 }
 // A setup's context in tokens: its contextTokens, else the number after its serving flag (contextFlag, 20-memory-names.mjs:
 // the last of --context-length for SGLang, --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup
@@ -5072,7 +5076,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail()).checked) {
+    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
@@ -15187,8 +15191,11 @@ const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECR
 // from an overlay (rope settings), in the overlay's links its start made; for a model in the models folder, the folder.
 // Never the snapshot a start would serve now: one downloaded later moves no key until a start loads it. The last look is
 // kept (brainRanOf reads it for the key); every caller that decides something looks again first, and GET /v1/models,
-// which apps poll, takes one up to 5 seconds old (within).
-let brainRan = null, brainRanAt = 0;
+// which apps poll, takes one up to 5 seconds old (within). One look runs at a time (the others share it), and the chat's
+// callers wait for it at most 3 seconds (wait, RAIL_LOOK_WAIT_MS): a Docker that doesn't answer by then gives "not seen,
+// slow" (slow: true), and the look goes on to its end by itself.
+const RAIL_LOOK_WAIT_MS = 3000;    // limit: how long a reply or a change waits for the look at what Sparkie's model runs
+let brainRan = null, brainRanAt = 0, brainLooking = null;
 const brainRanScript = m => `c=${q(m.container)}; ov="$HOME/.cache/spark-console/overlay/"${q(m.served)}
 a=$(docker inspect -f '{{json .Args}}' "$c" 2>/dev/null | head -1)
 snap() {
@@ -15197,10 +15204,20 @@ snap() {
 }
 model=${m.store === 'models' ? q(m.model) : `$(snap model ${q(`models--${m.model}`)})`}; draft=${m.draft && m.store !== 'models' ? `$(snap draft ${q(`models--${m.draft}`)})` : ''}
 printf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' "$c" 2>/dev/null | head -1)" "$model" "$draft"`;
-async function brainRanLook({ within = 0 } = {}) {
-  const m = MAIN, node = m ? mainNode(m) : null;
+async function brainRanLook({ within = 0, wait = 0 } = {}) {
+  const m = MAIN;
   if (!m) return null;
   if (within && brainRan?.id === m.id && Date.now() - brainRanAt < within) return brainRan;
+  if (brainLooking?.id !== m.id) {
+    const p = brainLookNow(m).finally(() => { if (brainLooking?.p === p) brainLooking = null; });
+    brainLooking = { id: m.id, p };
+  }
+  if (!wait) return brainLooking.p;
+  const look = brainLooking.p, late = new Promise(r => { setTimeout(() => r(null), wait).unref?.(); });
+  return (await Promise.race([look, late])) || { id: m.id, image: null, model: null, draft: null, slow: true };
+}
+async function brainLookNow(m) {
+  const node = mainNode(m);
   let seen = { id: m.id, image: null, model: null, draft: null };
   if (node) {
     try {
@@ -15220,12 +15237,13 @@ const brainLimits = m => { const l = setupLimits(m); return { toolRounds: l.roun
 // The loop's limits for one turn (E5b; design E 2.3): a brain checked for this setup and build (brainRail: its check
 // passed and the eval on record met the bar) gets the limits its profile was made with (its key holds them, so they are
 // its setup's own); any other, and a chat routed to another model, the careful ones: at most 8 rounds and 16 work steps
-// a message. (Its changes are each a button then anyway: R52.)
+// a message. (Its changes are each a button then anyway: R52.) The look it judges by may be 5 seconds old, and it waits
+// for one at most 3 seconds: a Docker that doesn't answer makes the reply careful, never late.
 const CAREFUL_LIMITS = { rounds: 8, steps: 16 };
 async function turnLimits({ target, tuned }) {
   const own = setupLimits(tuned), careful = { ...own, rounds: Math.min(own.rounds, CAREFUL_LIMITS.rounds), steps: Math.min(own.steps, CAREFUL_LIMITS.steps) };
   if (target?.kind !== 'main' || tuned !== MAIN) return careful;
-  return (await brainRail().catch(() => null))?.checked && tuned === MAIN ? own : careful;
+  return (await brainRail({ within: 5000, wait: RAIL_LOOK_WAIT_MS }).catch(() => null))?.checked && tuned === MAIN ? own : careful;
 }
 // The setup's key without what runs now: the eval's runner compares it with its own stand-in console's (test/eval.mjs).
 const brainSetupKey = m => { const { ran, ...declared } = brainSetupOf(m); return createHash('sha256').update(JSON.stringify(declared)).digest('hex').slice(0, 16); };
@@ -15281,14 +15299,16 @@ function evalCounts(x, key, reads, set, sealed = true) {
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
-async function brainRail() {
+async function brainRail({ within = 0, wait = 0 } = {}) {
   const no = why => ({ checked: false, why });
   try {
     if (!MAIN) return no('Sparkie has no model set up');
-    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look)
-    const ran = await brainRanLook();
+    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look; a reply's may be a
+    // few seconds old, and the chat waits for it a few seconds at most: within, wait)
+    const ran = await brainRanLook({ within, wait });
     if (chatTarget()?.kind !== 'main') return no('Sparkie’s chat is routed to another model, which no eval has checked');
     if (mainBusy()) return no('Sparkie’s model is starting, stopping or changing');
+    if (ran?.slow) return no(`Docker didn’t say within ${Math.round(wait / 1000)} seconds what Sparkie’s model runs (its Spark may be busy or stuck), so it counts as not checked`);
     const reads = brainReadsNow(), set = evalSetLocked();
     if (!reads) return no('there is no lock for this build, so what its brain reads isn’t known');
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
@@ -15309,7 +15329,7 @@ async function brainRail() {
 }
 // sparkie_setup's one line about changes.
 async function railWords() {
-  const r = await brainRail();
+  const r = await brainRail({ wait: RAIL_LOOK_WAIT_MS });
   return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
     : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
 }
@@ -16558,11 +16578,16 @@ function brainCatalog() {
 // The fixed words the brain is sent outside the system prompt and the tools, by the code that writes them: the carry-on
 // line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines (budgetReport),
 // the digest's words (digestOut), the cards' heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
-// (lessonSeenBefore). Each is a hash of that code with its whole-line comments left out, so a change to any of them is
-// another mark and owes an eval (R52); a change to the code around them does too.
-const BRAIN_WORDS = () => ({ carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
-  cards: [memoryPickBlock, lessonCard], seenBefore: [lessonSeenBefore] });
-const brainWordsOf = fns => createHash('sha256').update(fns.map(f => String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n')).join('\n\n')).digest('hex').slice(0, 16);
+// (lessonSeenBefore); a card and "Seen before" say what was tried and how it failed with lessonTried and lessonFailWords,
+// from the failures' titles (START_FAILURES', 17-changes.mjs, and LESSON_APP_FAILS). Each is a hash of that code with its
+// whole-line comments left out, and of those titles as JSON, so a change to any of them is another mark and owes an eval
+// (R52); a change to the code around them does too.
+const BRAIN_WORDS = () => {
+  const lesson = [lessonTried, lessonFailWords, START_FAILURES.map(f => [f.id, f.title]), LESSON_APP_FAILS];
+  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
+    cards: [memoryPickBlock, lessonCard, ...lesson], seenBefore: [lessonSeenBefore, ...lesson] };
+};
+const brainWordsOf = parts => createHash('sha256').update(parts.map(f => (typeof f === 'function' ? String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n') : JSON.stringify(f))).join('\n\n')).digest('hex').slice(0, 16);
 const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([k, fns]) => [k, brainWordsOf(fns)]));
 
 action({

@@ -500,7 +500,7 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail()).checked) {
+    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';

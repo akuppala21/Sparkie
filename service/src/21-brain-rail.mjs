@@ -26,8 +26,11 @@ const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECR
 // from an overlay (rope settings), in the overlay's links its start made; for a model in the models folder, the folder.
 // Never the snapshot a start would serve now: one downloaded later moves no key until a start loads it. The last look is
 // kept (brainRanOf reads it for the key); every caller that decides something looks again first, and GET /v1/models,
-// which apps poll, takes one up to 5 seconds old (within).
-let brainRan = null, brainRanAt = 0;
+// which apps poll, takes one up to 5 seconds old (within). One look runs at a time (the others share it), and the chat's
+// callers wait for it at most 3 seconds (wait, RAIL_LOOK_WAIT_MS): a Docker that doesn't answer by then gives "not seen,
+// slow" (slow: true), and the look goes on to its end by itself.
+const RAIL_LOOK_WAIT_MS = 3000;    // limit: how long a reply or a change waits for the look at what Sparkie's model runs
+let brainRan = null, brainRanAt = 0, brainLooking = null;
 const brainRanScript = m => `c=${q(m.container)}; ov="$HOME/.cache/spark-console/overlay/"${q(m.served)}
 a=$(docker inspect -f '{{json .Args}}' "$c" 2>/dev/null | head -1)
 snap() {
@@ -36,10 +39,20 @@ snap() {
 }
 model=${m.store === 'models' ? q(m.model) : `$(snap model ${q(`models--${m.model}`)})`}; draft=${m.draft && m.store !== 'models' ? `$(snap draft ${q(`models--${m.draft}`)})` : ''}
 printf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' "$c" 2>/dev/null | head -1)" "$model" "$draft"`;
-async function brainRanLook({ within = 0 } = {}) {
-  const m = MAIN, node = m ? mainNode(m) : null;
+async function brainRanLook({ within = 0, wait = 0 } = {}) {
+  const m = MAIN;
   if (!m) return null;
   if (within && brainRan?.id === m.id && Date.now() - brainRanAt < within) return brainRan;
+  if (brainLooking?.id !== m.id) {
+    const p = brainLookNow(m).finally(() => { if (brainLooking?.p === p) brainLooking = null; });
+    brainLooking = { id: m.id, p };
+  }
+  if (!wait) return brainLooking.p;
+  const look = brainLooking.p, late = new Promise(r => { setTimeout(() => r(null), wait).unref?.(); });
+  return (await Promise.race([look, late])) || { id: m.id, image: null, model: null, draft: null, slow: true };
+}
+async function brainLookNow(m) {
+  const node = mainNode(m);
   let seen = { id: m.id, image: null, model: null, draft: null };
   if (node) {
     try {
@@ -59,12 +72,13 @@ const brainLimits = m => { const l = setupLimits(m); return { toolRounds: l.roun
 // The loop's limits for one turn (E5b; design E 2.3): a brain checked for this setup and build (brainRail: its check
 // passed and the eval on record met the bar) gets the limits its profile was made with (its key holds them, so they are
 // its setup's own); any other, and a chat routed to another model, the careful ones: at most 8 rounds and 16 work steps
-// a message. (Its changes are each a button then anyway: R52.)
+// a message. (Its changes are each a button then anyway: R52.) The look it judges by may be 5 seconds old, and it waits
+// for one at most 3 seconds: a Docker that doesn't answer makes the reply careful, never late.
 const CAREFUL_LIMITS = { rounds: 8, steps: 16 };
 async function turnLimits({ target, tuned }) {
   const own = setupLimits(tuned), careful = { ...own, rounds: Math.min(own.rounds, CAREFUL_LIMITS.rounds), steps: Math.min(own.steps, CAREFUL_LIMITS.steps) };
   if (target?.kind !== 'main' || tuned !== MAIN) return careful;
-  return (await brainRail().catch(() => null))?.checked && tuned === MAIN ? own : careful;
+  return (await brainRail({ within: 5000, wait: RAIL_LOOK_WAIT_MS }).catch(() => null))?.checked && tuned === MAIN ? own : careful;
 }
 // The setup's key without what runs now: the eval's runner compares it with its own stand-in console's (test/eval.mjs).
 const brainSetupKey = m => { const { ran, ...declared } = brainSetupOf(m); return createHash('sha256').update(JSON.stringify(declared)).digest('hex').slice(0, 16); };
@@ -120,14 +134,16 @@ function evalCounts(x, key, reads, set, sealed = true) {
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
-async function brainRail() {
+async function brainRail({ within = 0, wait = 0 } = {}) {
   const no = why => ({ checked: false, why });
   try {
     if (!MAIN) return no('Sparkie has no model set up');
-    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look)
-    const ran = await brainRanLook();
+    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look; a reply's may be a
+    // few seconds old, and the chat waits for it a few seconds at most: within, wait)
+    const ran = await brainRanLook({ within, wait });
     if (chatTarget()?.kind !== 'main') return no('Sparkie’s chat is routed to another model, which no eval has checked');
     if (mainBusy()) return no('Sparkie’s model is starting, stopping or changing');
+    if (ran?.slow) return no(`Docker didn’t say within ${Math.round(wait / 1000)} seconds what Sparkie’s model runs (its Spark may be busy or stuck), so it counts as not checked`);
     const reads = brainReadsNow(), set = evalSetLocked();
     if (!reads) return no('there is no lock for this build, so what its brain reads isn’t known');
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
@@ -148,7 +164,7 @@ async function brainRail() {
 }
 // sparkie_setup's one line about changes.
 async function railWords() {
-  const r = await brainRail();
+  const r = await brainRail({ wait: RAIL_LOOK_WAIT_MS });
   return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
     : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
 }

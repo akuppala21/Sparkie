@@ -24,7 +24,8 @@
 // to 40 rounds and 12 changes a message. A carry-on turn with no eval kept asks with a button. The mark covers the fixed
 // words the brain is sent outside its prompt and tools. A 429 or 404 on the check keeps nothing; a record that doesn't
 // name every memory addition on never counts; the press of a waiting result says what the rail says; a seal's key that
-// can't be read is named.
+// can't be read is named. A Docker that doesn't answer the look within 3 seconds delays no reply: the reply is careful
+// and its change a button, and sparkie_setup says why. A lesson card's words are under the mark too.
 // T136 (part): a switch to a brain with no eval on record makes every change a button; once the eval has passed for this
 // brain and build, a clear change runs at once.
 import { test, describe, after } from 'node:test';
@@ -559,6 +560,25 @@ describe('the rail', { concurrency: 1 }, () => {
     await atOnce('the profile on record stands');
   });
 
+  // Review of E5b, item 3: the look at Docker a reply and a change wait for is bounded.
+  test('a Docker that doesn’t answer delays no reply: within a few seconds the reply comes, its change is a button, and sparkie_setup says why', { timeout: 240000 * SLOW }, async t => {
+    await atOnce('checked to begin with');
+    // (each docker inspect on Spark 2 takes 8 seconds, so a look at what the brain runs takes 16)
+    writeFileSync(mock('spark2', 'slow-inspect'), '8');
+    t.after(() => rmSync(mock('spark2', 'slow-inspect'), { force: true }));
+    await sleep(5500);
+    const started = Date.now();
+    await aButton('Docker slow: not checked for this reply');
+    const took = Date.now() - started;
+    assert.ok(took < 10000 * SLOW, `the reply took ${took} ms`);
+    const asked = Date.now(), changes = (await shown()).changes;
+    assert.ok(Date.now() - asked < 6000 * SLOW, `sparkie_setup took ${Date.now() - asked} ms`);
+    assert.match(changes, /^Sparkie asks before every change, one button each: Docker didn’t say within 3 seconds what Sparkie’s model runs \(its Spark may be busy or stuck\), so it counts as not checked\.$/);
+    rmSync(mock('spark2', 'slow-inspect'));
+    await waitFor(async () => /^Sparkie makes a change/.test((await shown()).changes), { timeout: 60000 * SLOW, what: 'Docker answering again' });
+    await atOnce('Docker answering again');
+  });
+
   // E5b, item 3: a carry-on turn meets the rail as any turn of the chat does.
   test('a carry-on turn with no eval kept: the change it asks for is one button, and nothing runs', { timeout: 240000 * SLOW }, async t => {
     await yes(await record());
@@ -766,7 +786,7 @@ test('a result waiting for the owner’s yes is forgotten at a restart: its old 
 });
 
 // E5b, item 2: what the brain is sent outside its prompt and tools is in the mark too.
-test('the mark covers the fixed words the brain is sent outside its prompt and tools: a build whose carry-on line differs has another', { timeout: 300000 * SLOW }, async () => {
+test('the mark covers the fixed words the brain is sent outside its prompt and tools: a build whose carry-on line, or a lesson card’s words, differ has another', { timeout: 300000 * SLOW }, async () => {
   const words = (await (await fetch(`${T.base}/actions`)).json()).brain.words;
   assert.deepEqual(Object.keys(words), ['carryOn', 'notRun', 'notShown', 'report', 'digest', 'cards', 'seenBefore']);
   assert.ok(Object.values(words).every(v => /^[0-9a-f]{16}$/.test(v)), JSON.stringify(words));
@@ -776,14 +796,18 @@ test('the mark covers the fixed words the brain is sent outside its prompt and t
   const chats = join(copy, 'service', 'src', '14-chats.mjs'), text = readFileSync(chats, 'utf8');
   assert.ok(text.includes('Carry on with that request:'));
   writeFileSync(chats, text.replace('Carry on with that request:', 'Carry on with the request:'));
+  // (and two of a lesson card's words, which "Seen before" says too: what was tried, and how an app failed)
+  const lessons = join(copy, 'service', 'src', '20-lessons.mjs'), said = readFileSync(lessons, 'utf8');
+  assert.ok(said.includes("'a run that worked here before'") && said.includes("'its image didn’t download'"));
+  writeFileSync(lessons, said.replace("'a run that worked here before'", "'a run that worked here earlier'").replace("'its image didn’t download'", "'its image did not download'"));
   const made = spawnSync(process.execPath, [join(copy, 'tools', 'build-server.mjs')], { cwd: copy, encoding: 'utf8' });
   assert.equal(made.status, 0, made.stdout + made.stderr);
   const { startMock: startCopy } = await import(pathToFileURL(join(copy, 'test', 'start-mock.mjs')).href);
   const other = await startCopy({ evalOnRecord: false });
   let theirs;
   try { theirs = (await (await fetch(`${other.base}/actions`)).json()).brain; } finally { await other.stop(); }
-  assert.notEqual(theirs.words.carryOn, words.carryOn, 'the carry-on line');
-  assert.deepEqual({ ...theirs.words, carryOn: null }, { ...words, carryOn: null }, 'the other words are the same');
+  for (const k of ['carryOn', 'cards', 'seenBefore']) assert.notEqual(theirs.words[k], words[k], k);
+  assert.deepEqual({ ...theirs.words, carryOn: null, cards: null, seenBefore: null }, { ...words, carryOn: null, cards: null, seenBefore: null }, 'the other words are the same');
   // (the catalog is in the mark: test/lock.mjs, brainReadsOf)
   const ours = (await (await fetch(`${T.base}/actions`)).json()).brain;
   assert.notEqual(brainReadsOf({ system: '', tools: [], catalog: { brain: ours } }), brainReadsOf({ system: '', tools: [], catalog: { brain: { ...ours, words: theirs.words } } }));
