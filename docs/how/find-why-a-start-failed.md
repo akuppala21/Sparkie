@@ -14,7 +14,8 @@ Look in this order, each a read through Sparkie, `POST /console/api/actions/<nam
 4. `fleet_events`: crashes, out of memory, a Spark going dark during the start.
 5. `spark_diagnostics` when the Spark itself looks wrong; `service_logs` (`console`) for the console's own errors.
 6. On Spark 2, `lessons.json` in the state folder (R48): whether this setup failed the same known way before, and
-   how often (`proven` from the second time).
+   how often (`proven` from the second time). A start's `passedOver` lines (and its log) name a setup it skipped for
+   that, or tried again anyway, and why (B3).
 
 Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFailure`, `causeLines` and `putBack`
 (`17-changes.mjs`); `deploy` (`07-jobs.mjs`); across two Sparks, `clusterDeploy` and `asideBack` (`08-cluster.mjs`).
