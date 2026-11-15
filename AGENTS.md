@@ -80,6 +80,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+| ask the owner before something dangerous (root, lock-out, a final delete) | `docs/how/raise-a-dangerous-ask.md` |
 | add a test file | `docs/how/add-a-test-file.md` |
 | land a step on main | `docs/how/land-a-step.md` |
 
