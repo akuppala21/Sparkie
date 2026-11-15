@@ -10,7 +10,7 @@
 //   tg-bad     /health says Telegram is "unreachable"
 // Every request is logged to $HOME/requests.log (method, path, the login, X-Spark-Console and Origin); chats are kept in
 // $HOME/standin-chats.json. $HOME/tg-state is Telegram's state for the other modes ("off" without it); $HOME/brain-down
-// makes /main say Sparkie's model isn't healthy.
+// makes /main say Sparkie's model isn't healthy; $HOME/standin-busy, a number, is the jobs /health says are running.
 import http from 'node:http';
 import { readFileSync, writeFileSync, appendFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -36,7 +36,7 @@ const server = http.createServer(async (req, res) => {
     xsc: req.headers['x-spark-console'] || null, origin: req.headers.origin || null, build: BUILD })}\n`);
   if (req.method === 'GET' && path === '/health') {
     const telegram = MODE === 'tg-bad' ? 'unreachable' : read(join(HOME, 'tg-state'), 'off').trim() || 'off';
-    return send(res, 200, { ok: true, build: BUILD, startedAt: STARTED_AT, jobsRunning: 0, replying: 0, telegram, workflows: {} });
+    return send(res, 200, { ok: true, build: BUILD, startedAt: STARTED_AT, jobsRunning: Number(read(join(HOME, 'standin-busy'), '0').trim()) || 0, replying: 0, telegram, workflows: {} });
   }
   const login = req.headers['tailscale-user-login'] || null, owner = MODE !== 'not-owner' && login === 'owner@test';
   if (req.method === 'GET' && path === '/whoami') return send(res, 200, { login, access: owner ? 'owner' : 'none' });
