@@ -397,6 +397,7 @@ async function powerOffJob(j, ids, ctx, why) {
   for (const id of up) if (!(await sudoReady(nodeById(id)))) throw new Error(setupWords(nodeById(id)));
   for (const id of up) { const unproven = await plugUnproven(id); if (unproven) throw new Error(unproven); }
   if (why === 'idle') for (const id of up) { const busy = await idleInUse(nodeById(id)); if (busy) throw new Error(`Not idle: ${busy}. Nothing was changed.`); }
+  await copyBeforeOff(j, up);   // (the state's copy first, if it changed: 20-state-copy.mjs)
   // Parking: Spark Console's models and kept apps there stop (both parts of a model across two Sparks), and stay on the
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));

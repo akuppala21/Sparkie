@@ -1,29 +1,29 @@
-/* ───────── a daily copy of the console's state on another Spark ───────── */
-// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, fleet.test.mjs, install.test.mjs
-// Owns: backup.json (writers: backupState)
-// Timers: backupIfDue (10 minutes after start, then hourly), needsMeTick (every 60 s), tick (every 0.5 s while a stop
-//   waits for running operations, 60 s at most)
+/* ───────── a copy of the console's state on another Spark ───────── */
+// Area: start        Rules: R10, R20, R22, R31, R40        Tests: state.test.mjs, copy.test.mjs, fleet.test.mjs,
+//   install.test.mjs
+// Owns: backup.json (writers: backupState, copyLate)
+// Timers: backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed),
+//   needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 // Wakes: none
-// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another
-// Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this
-// one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is
-// read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and
-// remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't
-// finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes one. backup.json
-// keeps the last try and the last good copy, so a restart forgets neither. A copy is due until one has worked today
-// (UTC): it is tried ten minutes after a start, then every hour. With no good copy today or yesterday, one notice a day
-// says so.
+// People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one
+// is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark
+// or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as
+// <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move
+// it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or
+// one tar couldn't finish (a file it couldn't read: a whole archive without it), never replaces a good one or prunes
+// one. backup.json keeps the last try and the last good copy, so a restart forgets neither. When a copy goes, and to
+// which awake Spark, is 20-state-copy.mjs's: only when the state changed, and never by waking a Spark.
 // To restore: stop the service, then untar one into ~/.local/state/spark-console (docs/sharing.md).
 const BACKUP_FILE = `${STATE_DIR}/backup.json`;
 const BACKUP_ON = !ALL_LOCAL || Boolean(process.env.SPARK_CONSOLE_BACKUP_MS);
 let lastBackup = null, backingUp = false;
 try { const kept = readKept(BACKUP_FILE); if (kept && typeof kept === 'object' && !Array.isArray(kept)) lastBackup = kept; } catch {}
 const dayOf = t => new Date(t).toISOString().slice(0, 10);
-// A try was made and no good copy is from today or yesterday (UTC): the notice and the open-problems list say so.
-const backupLate = () => BACKUP_ON && Boolean(lastBackup) && !(lastBackup.good && String(lastBackup.good.at).slice(0, 10) >= dayOf(Date.now() - 86400000));
-function backupTargets() {
-  const first = CONFIG.backupTo || 'spark3', brain = brainSparks();
-  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n)).sort((a, b) => (b.id === first) - (a.id === first));
+// Awake Sparks only (copyAwake, 20-state-copy.mjs). first: one that just came online or is about to be powered off, tried
+// first.
+function backupTargets(first = null) {
+  const pick = first || CONFIG.backupTo || 'spark3', brain = brainSparks();
+  return NODES.filter(n => n.host !== 'local' && !brain.includes(n.id) && !knownOffline(n) && (n.id === first || copyAwake(n.id))).sort((a, b) => (b.id === pick) - (a.id === pick));
 }
 // One tar stream from this Spark to a file on another, in two steps: the stream is kept there as <name>.part and read
 // back; then, once both ends are known, it is moved into place or removed. True only when tar, the far side, the
@@ -31,14 +31,15 @@ function backupTargets() {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
     // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
     // pattern that matches nothing is an error and no copy would land.)
-    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
-    sparkCalls.set(target.id, Date.now());
+    // (not use of that Spark: the idle power-off doesn't count a copy, and a power-off waits for one under way,
+    // copyBeforeOff in 20-state-copy.mjs)
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -61,30 +62,29 @@ function sendCopy(target, name) {
     dst.stdin.on('error', () => {});
   });
 }
-async function backupState() {
+async function backupState(first = null) {
   if (!BACKUP_ON || backingUp) return;
   backingUp = true;
   try {
-    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(), before = lastBackup;
+    const day = dayOf(Date.now()), file = `state-${day}.tgz`, targets = backupTargets(first), before = lastBackup, mark = stateMark();
     let to = null;
     for (const t of targets) if (await sendCopy(t, file)) { to = t; break; }
     const at = new Date().toISOString();
     lastBackup = to ? { at, ok: true, to: to.id, file, good: { at, to: to.id, file }, noticedOn: before?.noticedOn || null }
       : { at, ok: false, error: targets.length ? `${targets.map(n => sparkName(n)).join(', ').replace(/, ([^,]*)$/, ' and $1')} didn’t take it` : 'no other Spark was reachable', good: before?.good || null, noticedOn: before?.noticedOn || null };
-    // No good copy today or yesterday: one notice a day, never one per try.
-    if (!to && backupLate() && lastBackup.noticedOn !== day) {
-      const g = lastBackup.good;
-      lastBackup.noticedOn = day;
-      fleetEvent({ type: 'notice', text: `Spark Console’s state ${g ? `was last copied to another Spark on ${String(g.at).slice(0, 10)} (${sparkName(nodeById(g.to) || { id: g.to })} holds it)` : 'has never been copied to another Spark'}. Today ${lastBackup.error}. It tries again every hour.` });
-    }
+    keepMarks(lastBackup, before, mark);
+    // None newer than 7 days, with changes since: one notice (20-state-copy.mjs).
+    copyLate();
     try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the daily copy’s record: ${e.message}`); }
   } finally { backingUp = false; }
 }
-// Due until one has worked today: ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS: how often it checks).
-// (also when a Spark comes back on, 19-watcher.mjs: with Sparks powered off when idle, an hourly try could keep missing
-// the times one is on)
+// The hourly look, ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS): a copy only when the state
+// changed and a Spark is awake. With none awake nothing is sent and none is woken (only the very first try is recorded,
+// once the status check has looked, so the 7 days have a start). A Spark coming online, and one about to be powered
+// off, are 20-state-copy.mjs's.
 function backupIfDue() {
-  if (!BACKUP_ON || String(lastBackup?.good?.at).slice(0, 10) === dayOf(Date.now())) return;
+  if (!copyDue()) return;
+  if (!backupTargets().length && (lastBackup || !statusCache)) return copyLate();
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));
 }
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));
