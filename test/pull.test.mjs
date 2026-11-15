@@ -6,13 +6,16 @@
 // and log), and SPARK_CONSOLE_REPO_URL (with SPARK_CONSOLE_ALL_LOCAL=1) points pull.sh at the bare repository.
 // Covered: setup keeps the token in the secrets file beside what was there, never on a command line or in git's config;
 // check changes nothing; install puts in exactly the tagged tree through its own installer, kept, and only then copies
-// its pull.sh; every refusal (an untagged head, a tag that changes other files, a lock for another tree or build, a
-// link, a submodule, an export- attribute, an older tested tree, a tree only on another branch) changes nothing; a
-// build that dies goes back; nothing calls tailscale, sudo or ssh.
+// its pull.sh; the stand-in fleet's links under test/mock/root/ (as the repository has them) pass and stay links;
+// every refusal (an untagged head, a tag that changes other files, a lock for another tree or build, a link anywhere
+// else or pointing out of test/mock/root/, a submodule, an export- attribute, an older tested tree, a tree only on
+// another branch, a tree older than the installed one) changes nothing; a build that dies goes back; a tree with the
+// installed build's service code is "kept" only when its installer kept it; main moved the way tools/land.mjs moves it
+// (a merge, then a fast-forward) still names the newest tested build; nothing calls tailscale, sudo or ssh.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, copyFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, lstatSync, readlinkSync, copyFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -62,9 +65,10 @@ function commitOf(parent, files, subject) {
     gh(['update-index', '--add', '--cacheinfo', `${v.mode || '100644'},${obj},${path}`], { env });
   }
   const tree = gh(['write-tree'], { env });
-  const commit = gh(['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', subject]);
+  const commit = gh(['commit-tree', tree, ...[].concat(parent || []).flatMap(p => ['-p', p]), '-m', subject]);
   return { commit, tree, t12: tree.slice(0, 12), files };
 }
+const HF = 'test/mock/root/spark2/.cache/huggingface/hub/models--x--y', OVERLAY = 'test/mock/root/spark2/.cache/spark-console/overlay/m/config.json';
 const buildOf = files => sha12(files['service/server.mjs'].text, files['service/dig.mjs'].text, files['service/passkey.mjs'].text);
 // A whole tree: the stand-in console as the service, this tree's installer and pull.sh (marked with n, so a copy can
 // be told apart), and the page's files.
@@ -82,6 +86,9 @@ function treeFiles(n, mode = 'good') {
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
   };
   for (const u of UI_FILES) f[`public/${u}`] = { text: u === 'app.js' ? "const BUILD = 'dev';\n" : `${u} ${n}\n` };
+  // The stand-in fleet's links, shaped as the repository's: one into the cache's blobs, one at /hf/ (a container path).
+  Object.assign(f, { [`${HF}/blobs/cfg`]: { text: '{}\n' }, [`${HF}/snapshots/c1/config.json`]: { text: '../../blobs/cfg', mode: '120000' },
+    [OVERLAY]: { text: '/hf/models--x--y/snapshots/c1/config.json', mode: '120000' } });
   return f;
 }
 function push(files, subject) {
@@ -223,7 +230,7 @@ after(() => {
 
 const CASE = { timeout: 180000 * SLOW };
 describe('pull.sh against a bare repository standing in for GitHub', { concurrency: 1 }, () => {
-  let home, b1, b6;
+  let home, b1, b6, last;
 
   test('setup: the token is tried, then kept in the secrets file beside what was there; never on a command line or in git’s config', CASE, async () => {
     b1 = push(treeFiles(1), 'The first build');
@@ -290,6 +297,10 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.equal(fixedPull(home), b1.files['deploy/pull.sh'].text);
     assert.equal(statSync(join(home, '.local', 'share', 'spark-console', 'pull.sh')).mode & 0o777, 0o700);
     assert.ok(existsSync(join(home, 'spark-console-src', 'deploy', 'pull.sh')));
+    for (const [l, to] of [[`${HF}/snapshots/c1/config.json`, '../../blobs/cfg'], [OVERLAY, '/hf/models--x--y/snapshots/c1/config.json']]) {
+      assert.ok(lstatSync(join(home, 'spark-console-src', l)).isSymbolicLink(), l);
+      assert.equal(readlinkSync(join(home, 'spark-console-src', l)), to);
+    }
     assert.ok(!existsSync(join(home, 'never-called.log')), existsSync(join(home, 'never-called.log')) ? read(home, 'never-called.log') : '');
   });
 
@@ -311,10 +322,17 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     const was = installedNow(home);
     const b3 = push({ ...treeFiles(3), 'public/icon-192.png': { text: '/proc/self/environ', mode: '120000' } }, 'A link');
     mark(b3);
-    refused(home, await pull(home, ['install', b3.t12]), b3.t12, /isn't a plain file \(public\/icon-192\.png\)/, was);
+    refused(home, await pull(home, ['install', b3.t12]), b3.t12, /holds a link that isn't allowed \(public\/icon-192\.png\)/, was);
+    // Under test/mock/root/, but pointing out of it: by .. to elsewhere in the tree or out of it, outside /hf/, or out
+    // of /hf/ by .. (the link sits ten folders deep).
+    for (const [n, to] of [[30, `${'../'.repeat(10)}service/config.json`], [31, `${'../'.repeat(14)}etc/passwd`], [32, '/proc/self/environ'], [33, '/hf/../etc/passwd']]) {
+      const b = push({ ...treeFiles(n), [`${HF}/snapshots/c1/config.json`]: { text: to, mode: '120000' } }, `A link out, ${n}`);
+      mark(b);
+      refused(home, await pull(home, ['install', b.t12]), b.t12, new RegExp(`holds a link that isn't allowed \\(${HF.replace(/[.]/g, '\\.')}/snapshots/c1/config\\.json\\)`), was);
+    }
     const b4 = push({ ...treeFiles(4), 'vendor/thing': { mode: '160000', sha: b1.commit } }, 'A submodule');
     mark(b4);
-    refused(home, await pull(home, ['install', b4.t12]), b4.t12, /isn't a plain file \(vendor\/thing\)/, was);
+    refused(home, await pull(home, ['install', b4.t12]), b4.t12, /isn't a file or a link \(vendor\/thing\): a submodule/, was);
     const b5 = push({ ...treeFiles(5), 'public/.gitattributes': { text: 'app.js export-subst\n' } }, 'An attribute');
     mark(b5);
     refused(home, await pull(home, ['install', b5.t12]), b5.t12, /public\/\.gitattributes with export-/, was);
@@ -359,6 +377,56 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.equal(fixedPull(home), b6.files['deploy/pull.sh'].text, 'a build that was not kept never replaces pull.sh');
     const res = resultOf(home);
     assert.deepEqual([res.tree, res.build, res.result], [b7.t12, buildOf(b7.files), 'not kept']);
-    assert.match(res.why, new RegExp(`the build answering now is ${buildOf(b6.files)}$`));
+    assert.match(res.why, new RegExp(`the build answering now is ${buildOf(b6.files)}, installed from tree ${b6.t12}$`));
+
+    // The same service code (a page-only change): its installer refuses (Sparkie's model is down) and changes nothing,
+    // and the build answering is still that build. Not "kept": the installed lock names the old tree.
+    const b8 = push({ ...treeFiles(6), 'public/index.html': { text: 'a page-only change\n' } }, 'A page-only change');
+    mark(b8);
+    assert.equal(buildOf(b8.files), buildOf(b6.files));
+    writeFileSync(join(home, 'brain-down'), '');
+    r = await pull(home, ['install', b8.t12]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, new RegExp(`Not kept: the build answering now is ${buildOf(b6.files)}, installed from tree ${b6.t12}\\.`));
+    assert.deepEqual([resultOf(home).tree, resultOf(home).result], [b8.t12, 'not kept']);
+    assert.match(resultOf(home).why, /Sparkie's model isn't answering right now/);
+    unlinkSync(join(home, 'brain-down'));
+    r = await pull(home, ['install', b8.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual([resultOf(home).tree, resultOf(home).result], [b8.t12, 'kept']);
+    assert.equal(JSON.parse(read(home, 'spark-console-service', 'workflows.lock.json')).tree, b8.tree);
+    last = b8;
+  });
+
+  test('main moved as tools/land.mjs moves it (a merge onto the branch, then a fast-forward): the newest tested build is the head before; never older than the installed one', CASE, async () => {
+    // A step's branch starts from main; another step lands, tested, and is installed; the step then merges main in
+    // (first parent its own branch) and main fast-forwards to that merge, not tested yet.
+    const step = commitOf(last.commit, treeFiles(10), 'A step, on its own branch');
+    const h1 = push(treeFiles(11), 'Another step lands');
+    mark(h1);
+    let r = await pull(home, ['install', h1.t12]);
+    assert.equal(r.code, 0, r.out);
+    const merged = commitOf([step.commit, h1.commit], treeFiles(12), "Merge main into the step's branch");
+    gh(['update-ref', 'refs/heads/main', merged.commit]);
+    mainHead = merged.commit;
+    const was = installedNow(home);
+    r = await pull(home, ['check']);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, new RegExp(`main: commit ${merged.commit.slice(0, 12)}, tree ${merged.t12}, not tested yet`));
+    assert.match(r.out, new RegExp(`The newest tested build on main \\(tree ${h1.t12}\\) is the one installed\\.`));
+    assert.doesNotMatch(r.out, /To install it/);
+    // The build before it on the step's own line is older: refused, not installed over the newer one.
+    refused(home, await pull(home, ['install', last.t12]), last.t12, new RegExp(`older tested build\\. Only the newest tested build on main is installed from here: tree ${h1.t12}`), was);
+    // Installed from the Mac ahead of GitHub's mark (its lock names the merge): the newest tested build is older, so
+    // check offers nothing and install refuses it.
+    const lockFile = join(home, 'spark-console-service', 'workflows.lock.json'), lock = read(lockFile);
+    writeFileSync(lockFile, JSON.stringify({ ...JSON.parse(lock), tree: merged.tree, commit: merged.commit }));
+    try {
+      r = await pull(home, ['check']);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, new RegExp(`It is not newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\), so there is nothing to install from here\\.`));
+      assert.doesNotMatch(r.out, /To install it/);
+      refused(home, await pull(home, ['install', h1.t12]), h1.t12, new RegExp(`isn't newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\)`), was);
+    } finally { writeFileSync(lockFile, lock); }
   });
 });

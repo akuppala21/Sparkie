@@ -15,10 +15,12 @@
 #       it is the usual install: snapshot, checks as the owner, the previous files back on any miss.
 #
 # install refuses, with nothing changed: a <tree> that isn't the newest commit on main with a tested/<tree> tag (the
-# head of main before its full run passed, an older tested build, a tree only on another branch); a tag that does more
-# than add the lock to that commit; a lock for another tree or another build; a tree holding anything but plain files
-# and folders (a link, a submodule) or a .gitattributes with export-; a second install while one runs. Each install
-# leaves ~/.local/state/spark-console/update-result.json: {tree, build, result: kept | not kept | refused, why, at}.
+# head of main before its full run passed, an older tested build, a tree only on another branch); one older than the
+# build installed (going back is go-back.sh's job); a tag that does more than add the lock to that commit; a lock for
+# another tree or another build; a tree holding a submodule, a link other than the stand-in fleet's (below), or a
+# .gitattributes with export-; a second install while one runs. Each install leaves
+# ~/.local/state/spark-console/update-result.json: {tree, build, result: kept | not kept | refused, why, at}; kept
+# means the new build answers and the installed lock names this tree.
 # The token reaches git only through its environment, never a command line or git's config. A test may point at
 # another repository with SPARK_CONSOLE_REPO_URL, only with SPARK_CONSOLE_ALL_LOCAL=1.
 set -euo pipefail
@@ -101,13 +103,34 @@ ready() {  # sets REPO_NAME, URL and AUTH, then fetches
   fetch "$URL" "$AUTH" || refuse "GitHub couldn't be reached, or didn't accept the token (a new one: $ME setup $REPO_NAME)."
 }
 sha12() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-12; }
-# The newest commit on main (its own line of history) whose tree has a tested/ tag: "<commit> <tree>", or nothing.
+# links_ok: reads "<path>\0<target>\0" pairs and prints the first link that isn't allowed (nothing when all are). A link
+# is allowed only under test/mock/root/ (the stand-in fleet's Hugging Face caches, which only travel inside the source
+# copy, where a link stays a link), and only with a relative target that, read from the link's own folder, stays under
+# test/mock/root/, or an absolute target under /hf/ with no .. in it (that cache's path inside a model's container; on
+# Spark 2 it points at nothing).
+links_ok() {
+  python3 -c 'import os, sys
+f = sys.stdin.buffer.read().split(b"\0")
+if f and f[-1] == b"": f.pop()
+if len(f) % 2: print("(a link that could not be read)"); sys.exit()
+for i in range(0, len(f), 2):
+    p, t = f[i].decode("utf-8", "replace"), f[i + 1].decode("utf-8", "replace")
+    if p.startswith("test/mock/root/") and t and "\n" not in t:
+        if t.startswith("/"):
+            if t.startswith("/hf/") and ".." not in t.split("/"): continue
+        elif os.path.normpath(os.path.join(os.path.dirname(p), t)).startswith("test/mock/root/"):
+            continue
+    print(p); break'
+}
+# The newest commit on main whose tree has a tested/ tag: "<commit> <tree>", or nothing. Every commit main holds, in
+# topological order: main moves by fast-forward, often onto a merge whose second parent is the head before, so each
+# earlier head comes after every later one (first parents alone would miss them).
 newest_tested() {
   local tags c t
   tags=" $(g for-each-ref --format='%(refname:lstrip=3)' refs/tags/tested/ | tr '\n' ' ') "
   while read -r c t; do
     case "$tags" in *" ${t:0:12} "*) echo "$c $t"; return 0 ;; esac
-  done < <(g log --first-parent -n 2000 --format='%H %T' refs/heads/main)
+  done < <(g log --topo-order -n 5000 --format='%H %T' refs/heads/main)
 }
 # The installed build, from its lock: "<build> <tree or -> <commit or ->".
 installed() {
@@ -179,9 +202,13 @@ check_facts() {
   [ -n "${nt:-}" ] || { echo "  Nothing on main is tested yet."; return 0; }
   if [ "$nt" = "$it" ]; then echo "  The newest tested build on main (tree ${nt:0:12}) is the one installed."; return 0; fi
   echo "  Newest tested on main: tree ${nt:0:12}, commit ${nc:0:12}."
+  if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; then
+    echo "  It is not newer than the installed build (commit ${ic:0:12}), so there is nothing to install from here."
+    return 0
+  fi
   if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then
     echo "  Its commits since the installed one (subjects as written on GitHub, newest first):"
-    g log --first-parent -n 10 --format='    %h %s' "$ic..$nc" | cut -c1-160
+    g log --topo-order -n 10 --format='    %h %s' "$ic..$nc" | cut -c1-160
   fi
   echo "  To install it: $ME install ${nt:0:12}"
 }
@@ -197,10 +224,10 @@ install() {
   fi
   WANT="$1"
   ready
-  local c t tc lockf tab fields lbuild ltree lat code_build p txt note code=0 now why trees
+  local c t tc lockf tab fields lbuild ltree lat code_build p txt note code=0 now why trees ib it ic
   read -r c t <<<"$(newest_tested || true)"
   if [ -z "${c:-}" ] || [ "${t:0:12}" != "$WANT" ]; then
-    trees=$'\n'$(g log --first-parent -n 2000 --format=%T refs/heads/main)
+    trees=$'\n'$(g log --topo-order -n 5000 --format=%T refs/heads/main)
     if [ "$(g log -1 --format=%T refs/heads/main | cut -c1-12)" = "$WANT" ]; then
       refuse "Tree $WANT, the head of main, has no tested/$WANT tag: its full run on GitHub hasn't passed (yet)."
     elif [ -n "$(g for-each-ref "refs/tags/tested/$WANT")" ] && [[ "$trees" == *$'\n'"$WANT"* ]]; then
@@ -212,6 +239,11 @@ install() {
     else
       refuse "Nothing on main has a tested/ tag yet."
     fi
+  fi
+  # Never backwards: when the installed build's lock names a commit this copy holds, it is the one asked for or older.
+  read -r ib it ic <<<"$(installed)"
+  if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$c"; then
+    refuse "Tree $WANT (commit ${c:0:12}) isn't newer than the installed build (commit ${ic:0:12}). To go back a build: bash $SHARE/go-back.sh"
   fi
   # The tag: that commit plus the lock, nothing else.
   tc=$(g rev-parse -q --verify "refs/tags/tested/$WANT^{commit}") || refuse "tested/$WANT doesn't name a commit."
@@ -234,10 +266,16 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   code_build=$(for p in server.mjs dig.mjs passkey.mjs; do g cat-file blob "$c:service/$p" || exit 1; done | sha12) \
     || refuse "Tree $WANT has no service/server.mjs, dig.mjs or passkey.mjs."
   [ "$lbuild" = "$code_build" ] || refuse "The lock in tested/$WANT is for build $lbuild, but this code is build $code_build."
-  # Plain files and folders only (a link could copy a secret into the page folder; a submodule is code from elsewhere),
-  # and no .gitattributes that changes what git archive gives out.
-  p=$(g ls-tree -r "$tc" | awk -F'\t' '{ split($1, m, " ") } m[1] != "100644" && m[1] != "100755" && !n++ { print $2 }')
-  [ -z "$p" ] || refuse "Tree $WANT holds something that isn't a plain file ($p): a link or a submodule."
+  # Plain files and folders (a submodule is code from elsewhere), and no .gitattributes that changes what git archive
+  # gives out. Links only where links_ok allows them (a link elsewhere could copy a secret into the page folder).
+  p=$(g ls-tree -r "$tc" | awk -F'\t' '{ split($1, m, " ") } m[1] != "100644" && m[1] != "100755" && m[1] != "120000" && !n++ { print $2 }')
+  [ -z "$p" ] || refuse "Tree $WANT holds something that isn't a file or a link ($p): a submodule."
+  p=$(g ls-tree -r -z "$tc" | while IFS= read -r -d '' rec; do
+        [[ "$rec" == "120000 "* ]] || continue
+        meta=${rec%%$'\t'*}
+        printf '%s\0' "${rec#*$'\t'}"; g cat-file blob "${meta##* }"; printf '\0'
+      done | links_ok) || refuse "Tree $WANT's links couldn't be read."
+  [ -z "$p" ] || refuse "Tree $WANT holds a link that isn't allowed ($p): only links under test/mock/root/ that point inside it, or at /hf/."
   while IFS= read -r -d '' p; do
     case "$p" in .gitattributes|*/.gitattributes)
       txt=$(g cat-file blob "$tc:$p")
@@ -251,7 +289,10 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   trap 'rm -rf "$W"' EXIT
   mkdir "$W/tree"
   g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - || refuse "git archive of tested/$WANT failed."
-  [ -z "$(find "$W/tree" ! -type f ! -type d -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a plain file."
+  [ -z "$(find "$W/tree" ! -type f ! -type d ! -type l -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a file or a link."
+  p=$(cd "$W/tree" && find . -type l -print0 | while IFS= read -r -d '' f; do printf '%s\0%s\0' "${f#./}" "$(readlink "$f")"; done | links_ok) \
+    || refuse "Tree $WANT's links couldn't be read after unpacking."
+  [ -z "$p" ] || refuse "Tree $WANT unpacked with a link that isn't allowed ($p)."
 
   # Its own installer, on this Spark: no routes (no tailscale, sudo or ssh), the note built here. If work is running,
   # the installer asks on this terminal first; ASSUME_YES=1 skips the question, and with no terminal nothing changes.
@@ -260,15 +301,20 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   echo "Installing tree $WANT (commit ${c:0:12}, build $code_build) with its own installer …"
   ( cd "$W/tree" && NOTE="$note" SKIP_ROUTES=1 bash deploy/host-on-portal.sh local ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
   now=$(health_build)
-  if [ "$now" = "$code_build" ]; then
+  read -r ib it ic <<<"$(installed)"
+  # Kept only when the new build answers, the installed lock names this tree and its installer said it kept it: a tree
+  # with the same service code (only the page, documents or worker.py changed) answers with the same build even when
+  # its installer changed nothing or went back.
+  if [ "$now" = "$code_build" ] && [ "$it" = "$t" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; then
     why='it passed its checks'
     [ "$code" = 0 ] || why="it passed its checks, but the installer then ended with exit $code"
     result kept "$why" "$code_build"
     echo "  Kept: build $code_build (tree $WANT) is running."
   else
     why=$(grep -E 'STOP:|didn.t pass' "$W/install.log" | tail -n 1 | sed 's/^ *//' | cut -c1-400 || true)
-    result 'not kept' "${why:-the installer ended with exit $code}; the build answering now is ${now:-none}" "$code_build"
-    echo "  Not kept: the build answering now is ${now:-none}." >&2
+    now="the build answering now is ${now:-none}$([ "$it" = - ] || echo ", installed from tree ${it:0:12}")"
+    result 'not kept' "${why:-the installer ended with exit $code}; $now" "$code_build"
+    echo "  Not kept: $now." >&2
     return 1
   fi
 }
