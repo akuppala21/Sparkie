@@ -1,19 +1,26 @@
 // Covers: The owner's yes to a saved workflow covers the images its steps start (D6c): the owner's save names them, and a
 // run of exactly those steps starts them with no question; Sparkie's save of one is a button that lists the image, and
 // the owner's press is the yes. Asked as before: a step changed after the save (another tag, another digest), an image from an
-// input, a workflow an agent saved, an agent's run of the owner's workflow.
+// input, a workflow an agent saved, an agent's run of the owner's workflow. With the images running, D6a's chain end to
+// end: a new job placed where its /in file is, and the next one, naming no Spark, on the Spark the run's last step ran on.
 //
 // The stand-in fleet: on Spark 4 a job runs its command at once, to its end (~/.mock/jobs-run). A new image's job in a
 // saved step is a question for the owner without the yes (keep_running, R38), so a run that meets one fails with "needs
 // an answer first".
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
 
 const keys = {};
-useFleet({ watchMs: 60000, prepare: ({ root }) => writeFileSync(join(root, 'spark4', '.mock', 'jobs-run'), '') }, async () => { keys.act = await createActKey('images'); });
+useFleet({ watchMs: 60000, prepare: ({ root }) => {
+  for (const spark of ['spark3', 'spark4']) writeFileSync(join(root, spark, '.mock', 'jobs-run'), '');
+  // (a file only Spark 4's shared folder has, for the chain below)
+  const shared = join(root, 'spark4', '.local', 'share', 'spark-portal', 'workspaces', 'shared');
+  mkdirSync(shared, { recursive: true });
+  writeFileSync(join(shared, 'numbers.csv'), '1,2,3\n');
+} }, async () => { keys.act = await createActKey('images'); });
 
 const IMAGE = 'python:3.12-slim', DIGEST_A = `python@sha256:${'a'.repeat(64)}`, DIGEST_B = `python@sha256:${'b'.repeat(64)}`;
 const act = (name, body) => api(`/actions/${name}`, { method: 'POST', body });
@@ -101,5 +108,21 @@ describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
     const ok = await ownerRun('chat job');
     assert.equal(ok.status, 'completed', `${ok.error}\n${ok.log.join('\n')}`);
     assert.equal(stateOf('wl-i6'), 'exited');
+  });
+  // D6a's chain, end to end now that the images run: a new job placed where its /in file is, and the next one, which
+  // names no Spark and no file, placed on the Spark the run's last step ran on (not Spark 3, first in list order), where
+  // it reads the first one's folder. (The stand-in runs a job's command in its /out folder: ../wl-c1 is /in/jobs/wl-c1.)
+  test('a chain of new jobs with no Spark named: the second goes where the first ran, and reads its files', { timeout: 180000 * SLOW }, async () => {
+    const s = await act('save_workflow', { title: 'chain', steps: [
+      { action: 'keep_running', args: { container: 'wl-c1', image: IMAGE, once: true, command: ['sh', '-c', 'echo first > out.txt', '/in/numbers.csv'] } },
+      { action: 'keep_running', args: { container: 'wl-c2', image: IMAGE, once: true, command: ['sh', '-c', 'cat ../wl-c1/out.txt > read.txt'] } },
+    ] });
+    assert.equal(s.status, 200, s.text);
+    const run = await ownerRun('chain');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    const log = run.log.map(l => String(l).slice(10));
+    assert.ok(log.includes('Step 1: wl-c1 goes on Spark 4: it has room and the files its command names'), log.join('\n'));
+    assert.ok(log.includes('Step 2: wl-c2 goes on Spark 4: the run’s last step ran there, and it has room'), log.join('\n'));
+    assert.equal(readFileSync(join(T.fleet.root, 'spark4', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs', 'wl-c2', 'read.txt'), 'utf8').trim(), 'first');
   });
 });
