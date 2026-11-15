@@ -244,6 +244,9 @@ action({
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
+    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
+    const files = await runnerUndo(viewer, ctx, [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone)?.at || '');
+    if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
     // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).
