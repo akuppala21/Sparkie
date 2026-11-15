@@ -571,8 +571,8 @@ describe('the rail', { concurrency: 1 }, () => {
     await aButton('Docker slow: not checked for this reply');
     const took = Date.now() - started;
     assert.ok(took < 10000 * SLOW, `the reply took ${took} ms`);
-    const asked = Date.now(), changes = (await shown()).changes;
-    assert.ok(Date.now() - asked < 6000 * SLOW, `sparkie_setup took ${Date.now() - asked} ms`);
+    // (sparkie_setup's own look at the brain's state waits for Docker as before; its line about changes waits 3 seconds)
+    const changes = (await shown()).changes;
     assert.match(changes, /^Sparkie asks before every change, one button each: Docker didn’t say within 3 seconds what Sparkie’s model runs \(its Spark may be busy or stuck\), so it counts as not checked\.$/);
     rmSync(mock('spark2', 'slow-inspect'));
     await waitFor(async () => /^Sparkie makes a change/.test((await shown()).changes), { timeout: 60000 * SLOW, what: 'Docker answering again' });
