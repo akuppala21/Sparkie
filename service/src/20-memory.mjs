@@ -21,10 +21,17 @@ const memoryPast = () => { const f = readKept(MEMORY_PAST_FILE); return Array.is
 // The one writer of memory.json and memory-past.json (R22). The lines leaving the live list go into the past file first,
 // so a stop between the two saves leaves a line in both (the live one counts), never in neither. memory.json keeps its
 // shape, {entries}: the build before this one reads it as it is, and that build's own saves can't drop the past file.
-function saveMemory(entries, gone = []) {
-  if (gone.length) writePrivate(MEMORY_PAST_FILE, { past: [...memoryPast().filter(p => !gone.some(g => g.id === p.id)), ...gone] });
-  writePrivate(MEMORY_FILE, { entries });
+// An erase (`erased`, a line's id) takes every record of it out of the past file and saves both files twice, so neither
+// copy from before the last save (<file>.prev, writePrivate) still holds its words.
+function saveMemory(entries, gone = [], erased = null) {
+  const past = gone.length || erased ? [...memoryPast().filter(p => p.id !== erased && !gone.some(g => g.id === p.id)), ...gone] : null;
+  for (let n = erased ? 2 : 1; n > 0; n--) {
+    if (past) writePrivate(MEMORY_PAST_FILE, { past });
+    writePrivate(MEMORY_FILE, { entries });
+  }
 }
+// A line's words, live or retired, for its button (changeLabel); null when there is none or memory can't be read.
+const memoryText = id => { for (const read of [memoryEntries, memoryPast]) { try { const e = read().find(x => x.id === id); if (e) return e.text; } catch {} } return null; };
 // Who a line is from (contract 5.8): the owner, or an agent by its name: its own call or press over the agent door, or
 // Sparkie answering it in its own chat (whose words are the agent's, not the owner's).
 const lineBy = ctx => (ctx.via === 'agent' ? (ctx.actor || 'an agent') : ctx.agent ? (chatData().conversations.find(c => c.id === ctx.conv)?.agent?.name || 'an agent') : 'owner');
@@ -73,8 +80,11 @@ function memoryPrompt() {
   }
 }
 // memory {past: true}: the live lines, and the retired ones in the order they left, each with the line that replaced it.
-// A line in both files (a stop between saveMemory's two saves) is live.
-function memoryWithPast() {
+// A line in both files (a stop between saveMemory's two saves) is live. The retired lines are the owner's own, read in
+// Spark Console (their page chat, their own call): what they asked to be rid of is never handed to an agent (over the
+// agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14).
+function memoryWithPast(ctx) {
+  if (ctx.via === 'agent' || ctx.agent || ctx.channel) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
   const entries = memoryEntries(), live = new Set(entries.map(e => e.id)), past = memoryPast().filter(p => !live.has(p.id));
   const textOf = id => (entries.find(e => e.id === id) || past.find(p => p.id === id))?.text ?? null;
   return { entries, past: past.map(p => (p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
@@ -82,9 +92,9 @@ function memoryWithPast() {
 
 action({
   name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
-  description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true, also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
-  input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten.' } }, additionalProperties: false },
-  run: async ({ past } = {}) => (past ? memoryWithPast() : { entries: memoryEntries() }),
+  description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
+  input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten (the owner’s own, in Spark Console).' } }, additionalProperties: false },
+  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: memoryEntries() }),
 });
 action({
   name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
@@ -111,15 +121,41 @@ action({
 action({
   name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'memory',
   description: 'Use when the owner says to forget something Sparkie remembers ("forget that", "that’s not true any more"). Takes the line’s id from memory. The line is no longer used; memory {past: true} still lists it.',
-  input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{8}$', description: 'The line’s id, from memory.' } }, required: ['id'], additionalProperties: false },
-  run: async ({ id }, viewer, ctx) => {
+  input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{8}$', description: 'The line’s id, from memory.' }, erase: { type: 'boolean', description: 'true only when the owner asks to erase the line for good, words and history (a secret that slipped in): it is always a button the owner presses in Spark Console.' } }, required: ['id'], additionalProperties: false },
+  run: async ({ id, erase }, viewer, ctx) => {
+    if (erase) return eraseLine(id, viewer, ctx);
     const all = memoryEntries(), gone = all.find(e => e.id === id);
     if (!gone) return { outcome: 'already', note: 'There’s no such line in memory.' };
     notTheOwners(gone, ctx);
     saveMemory(all.filter(e => e.id !== id), [retired(gone, 'forgotten', ctx)]);
-    return { outcome: 'forgotten', note: `Forgotten: ${gone.text}` };
+    return { outcome: 'forgotten', note: `No longer used: “${gone.text}”. It is kept in memory’s history, which only the owner sees; it isn’t erased.` };
   },
 });
+// Erasing a line for good (contract 5.5, 8.2): the owner's alone, by their own call on the tailnet (POST /actions) or a
+// button pressed in Spark Console (with the passkey once one is set up). Anything else, Sparkie whatever the owner's
+// words and Telegram included, gets that button and nothing is changed; an agent is refused, for its own lines too. Every
+// record of the line leaves both files and their copies from before the last save (saveMemory), and a copy of either
+// file set aside as unreadable, or left half-written by a stop, has the words blanked.
+const ERASE_LEAVES = 'What it can’t reach: the chat (your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there), Spark Console’s journal and its record of changes (audit.jsonl), daily copies already sent to another Spark, and install snapshots already taken.';
+function eraseLine(id, viewer, ctx) {
+  if (ctx.via === 'agent' || ctx.agent) throw new HttpError(403, 'Only the owner erases a memory line for good, in Spark Console. Nothing was changed.');
+  const all = memoryEntries(), line = all.find(e => e.id === id) || memoryPast().find(p => p.id === id);
+  if (!line) return { outcome: 'already', note: 'There’s no such line in memory or its history.' };
+  if (!(ctx.via === 'api' && !viewer.session && !viewer.agentKey) && !ctx.ownerConfirmed) {
+    const label = changeLabel('forget_memory', { id, erase: true });
+    return question(viewer, ctx, `${label}? Its words leave memory and its history for good. That one waits for you in Spark Console: press it there, with your passkey.`,
+      [{ label, call: { action: 'forget_memory', args: { id, erase: true } } }, { label: 'No, keep it', call: null }], 'question', { ownerOnly: true });
+  }
+  saveMemory(all.filter(e => e.id !== id), [], id);
+  const words = JSON.stringify(String(line.text)).slice(1, -1);
+  for (const f of readdirSync(STATE_DIR).filter(x => /^memory(-past)?\.json\.(unreadable-.+|\d+\.tmp)$/.test(x))) {
+    try {
+      const file = `${STATE_DIR}/${f}`, text = readFileSync(file, 'utf8');
+      if (text.includes(words)) { writeFileSync(`${file}.erasing`, text.split(words).join('[erased]'), { mode: 0o600 }); renameSync(`${file}.erasing`, file); }
+    } catch (e) { console.error(`Couldn’t blank an erased memory line in ${f}: ${e.message}`); }
+  }
+  return { outcome: 'erased', note: `Erased for good: that line is gone from memory and its history. ${ERASE_LEAVES}` };
+}
 
 // Whether Sparkie may change memory straight away, without a button. The owner said to ("remember…", "forget that…")
 // or simply stated it, never asked it; and the line is about what they said. Sparkie rephrases ("I" becomes "the
@@ -179,6 +215,8 @@ function memoryClear(name, input, ctx, asked) {
   const about = text => shared(text).share;
   const entry = id => memoryEntries().find(e => e.id === id);
   notTheOwners(entry(name === 'forget_memory' ? input.id : input.replaces), ctx);
+  // (an erase always asks the owner itself, whatever the words: eraseLine)
+  if (name === 'forget_memory' && input.erase) return true;
   // Forgetting: the line exists, this message says to forget, and the line is what they're talking about (never skipped).
   if (name === 'forget_memory') { const e = entry(input.id); return Boolean(e) && saysForget(ctx.request) && about(e.text) >= 0.3; }
   if (refusesRemember(ctx)) return false;
