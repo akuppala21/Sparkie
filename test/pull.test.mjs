@@ -683,12 +683,14 @@ describe('the way back for an update from GitHub, armed by the build installed n
   const HAND = ['go-back.sh', 'RECOVERY.txt', 'pull.sh', 'update-guard.sh', 'watchdog.sh', 'install-mark'];
   const hand = () => Object.fromEntries(HAND.map(f => [f, existsSync(share(f)) ? read(share(f)) : null]));
   const bash = (...a) => spawnSync('bash', a, { env: envFor(home), encoding: 'utf8' });
+  // (a process group that is never this test's: inside a container the test's own can be 1)
+  const OTHER_PGID = '2147483646';
 
   test('a copy that isn\'t whole is never put back from: by hand it says so and changes nothing; a half-made one is cleared by the next install', CASE, async () => {
     needs('kept');
     const was = { server: read(home, 'spark-console-service', 'server.mjs'), hand: hand() };
     assert.ok(Object.values(was.hand).every(Boolean), JSON.stringify(Object.keys(was.hand).filter(f => !was.hand[f])));
-    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), '1');
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     // Cut off while it was being removed: its guard file, its by-hand files and its server.mjs already gone.
     rmSync(share('update-guard', 'guard'));
@@ -775,7 +777,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
 
   test('an install made outside an armed update (from the Mac, or by hand) disarms that update\'s way back first, so its timer can\'t undo it', CASE, async () => {
     needs('kept');
-    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), '1');
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const g = push(treeFiles(55), 'Installed by hand');
     const dir = join(home, 'tmp', 'by-hand');
