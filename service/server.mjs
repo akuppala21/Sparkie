@@ -6711,8 +6711,8 @@ async function jobModelEnv(j, n, args) {
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
 // keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
 // and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
-// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
-// copy ignores it (COPY_IGNORES).
+// operation or its steps' (savedRunCutOff): the notice above says what is true. No state copy holds the file (sendCopy,
+// COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
 const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
@@ -12446,8 +12446,8 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; what a saved workflow under way started; and
-// cloud.json and sessions.json, which no copy carries (so a sign-in alone sends none).
+// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json, sessions.json and what a saved
+// workflow under way started (saved-runs.json), which no copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
   'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json', 'saved-runs.json']);
 // What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
@@ -18883,8 +18883,9 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25)
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25; no saved-runs.json: a
+    // start from it would stop by name what a saved workflow ran back then, R57)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is

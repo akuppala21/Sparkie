@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 75 parts in `service/src/`, joined in name order into `service/server.mjs` (19008 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 75 parts in `service/src/`, joined in name order into `service/server.mjs` (19009 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1037,7 +1037,7 @@ Anyone may see the fleet's hardware and load, from the internet too. Internet (F
 People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar …
 
 - **Area:** start. **Rules:** R10, R20, R22, R31, R40. **Tests:** state.test.mjs, copy.test.mjs, fleet.test.mjs, install.test.mjs
-- **Lines:** 156
+- **Lines:** 157
 - **Owns:** backup.json (writers: backupState, copyLate)
 - **Timers:** backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed), needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 - **Wakes:** none

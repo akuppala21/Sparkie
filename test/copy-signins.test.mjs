@@ -1,5 +1,6 @@
 // Covers: No sign-in travels with the state (E2b; contract 6.25; design E 2.5): a copy of the state holds no
-// `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); state put back
+// `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); nor does it hold
+// `saved-runs.json` (a saved workflow's run under way: a start from the copy would stop what runs then, R57); state put back
 // from a copy onto a fresh Spark Console signs no device in (the old cookie gets 401) while the owner's access and
 // passkey are as the copy had them (the passkey signs in from the internet again once the owner, on the tailnet, has
 // kept what came back: E2c, the copy has a number and the new disk none); `restore.sh --with-state` puts an
@@ -85,6 +86,20 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
     assert.equal((await net(F, '/bootstrap', { headers: withCookie(again) })).status, 200, 'signed in');
     await sleep(10000);
     assert.equal((await record(F)).at, r1.at, 'no copy');
+  });
+
+  test('a copy holds no saved-runs.json (a saved workflow’s run under way when it was made)', { timeout: 300000 * SLOW }, async () => {
+    const r0 = await quiet(F), runs = join(F.stateDir, 'saved-runs.json');
+    // (written while the service runs: it reads the record only at its start)
+    writeFileSync(runs, JSON.stringify({ runs: { 'op-copy-test': { operation: 'op-copy-test', since: new Date().toISOString(), title: 'a run under way', steps: 2, step: 1,
+      started: [{ kind: 'model', spark: 'spark4', container: 'sc-RadixArk--Qwen3.8-27B-NVFP4' }] } } }), { mode: 0o600 });
+    try {
+      writeFileSync(join(F.stateDir, 'test-change-2.json'), JSON.stringify({ at: new Date().toISOString() }), { mode: 0o600 });
+      const c = await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r0.at && x; }, { timeout: 30000 * SLOW, what: 'a copy after a change' });
+      const names = listed(copyFile(F, c));
+      assert.ok(names.includes('./test-change-2.json'), names.join(' '));
+      assert.ok(!names.some(n => /(^|\/)saved-runs\.json$/.test(n)), `no saved-runs.json in the copy: ${names.join(' ')}`);
+    } finally { rmSync(runs, { force: true }); }
   });
 
   test('state put back from that copy onto a fresh Spark Console signs no device in; the owner’s access and passkey are as the copy had them', { timeout: 300000 * SLOW }, async () => {

@@ -31,8 +31,9 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25)
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25; no saved-runs.json: a
+    // start from it would stop by name what a saved workflow ran back then, R57)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '--exclude=./saved-runs.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is

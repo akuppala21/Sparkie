@@ -13,7 +13,8 @@
 // restore.sh --with-state over the state as it is (nothing emptied first), then a start: with the line that takes the
 // state's number away left out (as every snapshot made before this build has it), something removed since that is back
 // is a put-back all the same; with it, the start always holds, a key's narrowing comes back undone and is taken again,
-// and with nothing removed since nothing is removed and "Keep these" ends it. go-back.sh and an update's way back put
+// and with nothing removed since nothing is removed and "Keep these" ends it; a saved workflow's run on record in the
+// snapshot never comes back, so the start stops nothing of that name (R57). go-back.sh and an update's way back put
 // back program files only and never trip it.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -251,7 +252,7 @@ describe('state put back from a copy', { concurrency: 1 }, () => {
 // with a stand-in systemctl and curl, before the service starts. (RESTORE, the installer's text, is below.)
 describe('restore.sh --with-state over the state as it is, then a start', { concurrency: 1 }, () => {
   const K3 = new Authenticator(TAILNET, ORIGIN), K4 = new Authenticator(TAILNET, ORIGIN);
-  let R, Q, before, live, secrets, b1, b2, b3;
+  let R, Q, before, live, secrets, b1, b2, b3, same, now, kept;
   after(async () => { await R?.stop(); await Q?.stop(); });
   const startAfterRestore = (state, kept, snapshot, script) => startMock({ prepare: ({ dir, stateDir }) => {
     cpSync(state, stateDir, { recursive: true });
@@ -332,7 +333,7 @@ describe('restore.sh --with-state over the state as it is, then a start', { conc
   });
 
   test('nothing removed since the snapshot: the installer’s restore.sh still holds, nothing is removed, and “Keep these” ends it', { timeout: 180000 * SLOW }, async () => {
-    const same = copyState(Q, 'same'), now = copyState(Q, 'now'), kept = readFileSync(Q.secretsFile, 'utf8');
+    [same, now, kept] = [copyState(Q, 'same'), copyState(Q, 'now'), readFileSync(Q.secretsFile, 'utf8')];
     assert.ok(existsSync(join(same, 'auth-serial.json')), 'this snapshot has a number');
     await Q.stop(); Q = null;
     const C = await startAfterRestore(now, kept, same, RESTORE);
@@ -344,6 +345,23 @@ describe('restore.sh --with-state over the state as it is, then a start', { conc
       assert.equal((await net(C, '/whoami')).json.held, undefined);
       is(await signIn(C, K3, 80), 200, 'the internet signs in again');
     } finally { await C.stop(); }
+  });
+
+  test('a saved workflow’s run on record in the snapshot: restore.sh --with-state leaves it out, so the start stops nothing of that name', { timeout: 180000 * SLOW }, async () => {
+    const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', snap = join(COPIES, 'with-a-run');
+    cpSync(same, snap, { recursive: true });
+    writeFileSync(join(snap, 'saved-runs.json'), JSON.stringify({ runs: { 'op-from-then': { operation: 'op-from-then', since: '2026-11-10T08:00:00.000Z', title: 'the run from then',
+      chat: null, steps: 2, step: 2, started: [{ kind: 'model', spark: 'spark4', container: RADIX }], pending: [], awake: [] } } }), { mode: 0o600 });
+    const D = await startAfterRestore(now, kept, snap, RESTORE);
+    try {
+      const stateOf = (spark, name) => readFileSync(join(D.root, spark, '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+      assert.equal(existsSync(join(D.stateDir, 'saved-runs.json')), false, 'the record didn’t come back');
+      // (the start-up clean-up runs at once; a stop on the stand-in fleet takes a second or two)
+      const acted = await waitFor(() => stateOf('spark4', RADIX) !== 'running' || eventLines(D).some(e => e.type === 'notice' && /the run from then/.test(e.text || '')),
+        { timeout: 10000 * SLOW, every: 250, what: 'anything done about the run from then' }).catch(() => false);
+      assert.equal(acted, false, eventLines(D).filter(e => e.type === 'notice').map(e => e.text).join('\n'));
+      assert.equal(stateOf('spark4', RADIX), 'running');
+    } finally { await D.stop(); }
   });
 });
 

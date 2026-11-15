@@ -13,8 +13,8 @@
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
 // keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
 // and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
-// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
-// copy ignores it (COPY_IGNORES).
+// operation or its steps' (savedRunCutOff): the notice above says what is true. No state copy holds the file (sendCopy,
+// COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
 const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
