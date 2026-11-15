@@ -16,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -72,6 +72,10 @@ function spark({ installed = true, systemd, knobs = {} } = {}) {
   symlinkSync('/etc/shadow', join(R, h, '.ssh/config'));   // a link is never put back
   put(`${h}/.bashrc`);
   put(`${h}/.profile`);
+  // Every name the run wall holds that must be there (MUST_BE_THERE), as the one-time command leaves a home.
+  for (const f of ['.bash_profile', '.bash_logout', '.bash_aliases', '.pam_environment']) put(`${h}/${f}`);
+  for (const d of ['.docker', '.config/systemd', '.config/environment.d', '.config/autostart', '.config/user-tmpfiles.d',
+    '.local/share/systemd', '.local/share/user-tmpfiles.d', '.cache/spark-console']) dir(`${h}/${d}`);
   put(`${h}/.config/spark-console/secrets.json`, '{}');
   put(`${h}/.local/state/spark-console/api.sock`);
   put(`${h}/.local/state/spark-console/sessions.json`, '{}');
@@ -113,18 +117,26 @@ const refused = (r, why) => {
 };
 
 // The hidden list for the made-up Spark above, in the helper's order: folders, then single files, then what is put
-// back read-only. /home/owner/.ssh/config is a link, so it stays hidden; the run wall adds name look-up.
+// back read-only. /home/owner/.ssh/config is a link, so it stays hidden; the run wall adds name look-up. .docker is
+// hidden whole, and so is the state folder, with its plain files but the sign-in files and the sockets put back.
 const HIDDEN = (extra = []) => [
   ...['/home/owner/.ssh', '/home/owner/.config/spark-console', ...extra.filter(p => p.startsWith('/home/owner/')),
+    '/home/owner/.docker', '/home/owner/.local/state/spark-console',
     '/home/other/.ssh', '/run', '/root', '/var/lib/tailscale', '/var/lib/docker', ...extra.filter(p => p.startsWith('/var/'))]
     .flatMap(p => ['-p', `TemporaryFileSystem=${p}:ro`]),
-  ...['/home/owner/.cache/huggingface/token', '/home/owner/.local/state/spark-console/api.sock',
-    '/home/owner/.local/state/spark-console/sessions.json', '/home/other/.bash_history', '/etc/shadow', '/etc/gshadow',
+  ...['/home/owner/.cache/huggingface/token', '/home/other/.bash_history', '/etc/shadow', '/etc/gshadow',
     '/etc/ssh/ssh_host_ed25519_key', '/swap.img'].flatMap(p => ['-p', `InaccessiblePaths=${p}`]),
-  ...['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/known_hosts', '/home/owner/.ssh/id_ed25519.pub']
-    .flatMap(p => ['-p', `BindReadOnlyPaths=${p}`]),
+  ...['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/known_hosts', '/home/owner/.ssh/id_ed25519.pub',
+    '/home/owner/.local/state/spark-console/desired.json'].flatMap(p => ['-p', `BindReadOnlyPaths=${p}`]),
 ];
-const READ_ONLY = ['/home/owner/.profile', '/home/owner/.bashrc', '/home/owner/spark-console-src', '/usr/local/sbin/spark-console-root'];
+const READ_ONLY = ['/home/owner/.profile', '/home/owner/.bashrc', '/home/owner/.bash_profile', '/home/owner/.bash_logout',
+  '/home/owner/.bash_aliases', '/home/owner/.pam_environment', '/home/owner/.config/systemd', '/home/owner/.config/environment.d',
+  '/home/owner/.config/autostart', '/home/owner/.config/user-tmpfiles.d', '/home/owner/.local/share/systemd',
+  '/home/owner/.local/share/user-tmpfiles.d', '/home/owner/.cache/spark-console', '/home/owner/spark-console-src',
+  '/usr/local/sbin/spark-console-root'];
+// The folders above a held path in the owner's home, each bound onto itself (so none can be moved), in order.
+const PINS = ['/home/owner/.cache', '/home/owner/.cache/huggingface', '/home/owner/.config', '/home/owner/.local',
+  '/home/owner/.local/share', '/home/owner/.local/state'];
 // Every look: the same settings, whatever the command says.
 const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_READ_SEARCH',
   '-p', 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH', '-p', 'NoNewPrivileges=yes', '-p', 'SystemCallFilter=~open_by_handle_at',
@@ -138,11 +150,12 @@ function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/sp
     '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', 'MemoryMax=2G', '-p', 'TasksMax=512',
     '--', which(s, 'bash'), '--noprofile', '--norc', `/run/spark-console/${id}/start`];
 }
-function runCall(s, id, hash, secs, { protect = [], hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'] } = {}) {
+function runCall(s, id, hash, secs, { protect = [], pins = [], hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'] } = {}) {
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', 'IPAddressDeny=localhost',
     '-p', 'IPAddressAllow=127.0.0.53', ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
-    ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
+    ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]),
+    ...[...PINS, ...pins].sort().flatMap(p => ['-p', `BindPaths=${p}`]), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
     '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', 'MemoryMax=8G', '-p', 'TasksMax=4096',
     '--', which(s, 'unshare'), '--pid', '--fork', '--kill-child', '--mount-proc',
     which(s, 'setpriv'), '--reuid=1000', '--regid=1000', '--groups=1000,4,44,992', '--inh-caps=-all', '--bounding-set=-all',
@@ -227,7 +240,8 @@ describe('the walls asked for', () => {
     assert.deepEqual(unitCall(s, `sw-run-${r.id}`), ['systemd-run', `--unit=sw-run-${r.id}`,
       `--description=Spark Console run ${r.id} sha256 ${sha('true')}`, '--wait', '--pipe', '--collect', '--quiet',
       '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes',
-      ...[...READ_ONLY.slice(0, 3), '/home/owner/.ssh', READ_ONLY[3]].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]),
+      ...[...READ_ONLY.slice(0, -1), '/home/owner/.ssh', READ_ONLY.at(-1)].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]),
+      ...['/home/owner/.cache', '/home/owner/.config', '/home/owner/.local', '/home/owner/.local/share'].flatMap(p => ['-p', `BindPaths=${p}`]),
       '-p', `BindReadOnlyPaths=/run/spark-console/${r.id}`, '-p', 'RuntimeMaxSec=600', '-p', 'TimeoutStopSec=5',
       '-p', 'MemoryMax=8G', '-p', 'TasksMax=4096',
       '--', which(s, 'setpriv'), '--reuid=1000', '--regid=1000', '--groups=1000,4,27,44,999,998,992', '--inh-caps=-all',
@@ -339,6 +353,52 @@ describe('who may call it, and from where', () => {
   });
 });
 
+describe('what the run wall holds in the home', () => {
+  test('a name it must hold that is not there (.bashrc): run is refused by name and starts nothing; a look still runs', () => {
+    const s = proven();
+    rmSync(join(s.R, 'home/owner/.bashrc'));
+    const before = started(s).length;
+    for (const extra of [[], ['--open']]) refused(change(s, 'true', { extra }), '/home/owner/.bashrc is not there, so it cannot be held: run the one-time command again');
+    assert.equal(started(s).length, before, 'no unit');
+    assert.equal(look(s, 'true').status, 0);
+    const c = run(s, ['check', '--id', newId()]);
+    assert.match(c.stdout, / look ready\n.* run refuses: \/home\/owner\/\.bashrc is not there, so it cannot be held/s, c.stdout);
+  });
+  test('a held name that is a link (.config/systemd), or a held name under a linked folder: run is refused by name', () => {
+    const s = proven();
+    const d = join(s.R, 'home/owner/.config/systemd');
+    rmSync(d, { recursive: true });
+    mkdirSync(join(s.R, 'home/owner/elsewhere'));
+    symlinkSync(join(s.R, 'home/owner/elsewhere'), d);
+    refused(change(s, 'true'), '/home/owner/.config/systemd is a link, or under one, so the wall would hold only what it points at');
+    assert.equal(look(s, 'true').status, 0);
+    const t = proven();
+    const ui = join(t.R, 'home/owner/.local/share/user-tmpfiles.d');
+    rmSync(ui, { recursive: true });
+    symlinkSync(join(t.R, 'home/owner/.cache'), ui);
+    refused(change(t, 'true'), '/home/owner/.local/share/user-tmpfiles.d is a link');
+  });
+  test('each folder above a held path is pinned (BindPaths onto itself), names at the top of the home need none, and none is a held path', () => {
+    const s = proven();
+    const r = change(s, 'true');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const c = unitCall(s, `sw-run-${r.id}`);
+    assert.deepEqual(c.filter(a => a.startsWith('BindPaths=')).map(a => a.slice(10)), PINS);
+    for (const p of PINS) assert.ok(!c.some(a => a !== `BindPaths=${p}` && a.endsWith(`=${p}`) && !a.startsWith('BindReadOnlyPaths=')), `${p} is not also a held path`);
+    const l = look(s, 'true');
+    assert.ok(!unitCall(s, `sw-look-${l.id}`).some(a => a.startsWith('BindPaths=')), 'a look pins nothing: it is read-only everywhere');
+  });
+  test('.docker is hidden whole; the state folder is one empty folder with its plain files put back and no sign-in file or socket', () => {
+    const s = proven();
+    for (const f of ['passkeys.json', 'agents.json', 'telegram.json', 'access.json', 'access.json.good', 'door.sock', 'memory.json', 'chats.json']) s.put(`home/owner/.local/state/spark-console/${f}`, '{}');
+    const r = change(s, 'true');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const c = unitCall(s, `sw-run-${r.id}`).filter(a => a.includes('/home/owner/.docker') || a.includes('/.local/state/spark-console'));
+    assert.deepEqual(c, ['TemporaryFileSystem=/home/owner/.docker:ro', 'TemporaryFileSystem=/home/owner/.local/state/spark-console:ro',
+      ...['chats.json', 'desired.json', 'memory.json'].map(f => `BindReadOnlyPaths=/home/owner/.local/state/spark-console/${f}`)]);
+  });
+});
+
 describe('what a Spark must have', () => {
   test('systemd 247 is refused by name, 248 is enough', () => {
     const old = spark({ systemd: '247.3-7ubuntu3' });
@@ -385,8 +445,9 @@ describe('the proof of the walls', () => {
   const NAMES = ['', 'a write through a link', 'an open connection', "the Docker or Tailscale socket, api.sock or the door's socket",
     "another program's environment", 'a write that stays', "round the hiding, through another program's /proc",
     'a signal to a program outside the wall', 'more rights: sudo, the helper, a capability', 'starting something outside the wall',
-    'a hidden key file', 'a disk device or the GPU', 'something left behind'];
-  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
+    'a hidden key file', 'a disk device or the GPU', 'something left behind', 'root with no net',
+    'moving a folder above a held one, and making a new one in its place'];
+  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -411,13 +472,14 @@ describe('the proof of the walls', () => {
     const lookUnit = lookCall(s, p.id, 'x', 120, hidden);
     assert.deepEqual(unitCall(s, `sw-prove-look-${p.id}`), [...lookUnit.slice(0, 1), `--unit=sw-prove-look-${p.id}`,
       `--description=Spark Console wall proof look ${p.id}`, ...lookUnit.slice(3, lookUnit.indexOf('--') + 1), py, '-I', '-S', proof, 'look', ...LOOK.map(String)]);
-    const ro = `/home/owner/.cache/spark-console/proof-${p.id}-ro`;
-    const runUnit = runCall(s, p.id, 'x', 120, { protect: [ro], hiddenExtra: hidden });
+    const ro = `/home/owner/.sparkie-proof-${p.id}/held/ro`;
+    const runUnit = runCall(s, p.id, 'x', 120, { protect: [ro], hiddenExtra: hidden,
+      pins: [`/home/owner/.sparkie-proof-${p.id}`, `/home/owner/.sparkie-proof-${p.id}/held`] });
     assert.deepEqual(unitCall(s, `sw-prove-run-${p.id}`), [...runUnit.slice(0, 1), `--unit=sw-prove-run-${p.id}`,
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -430,6 +492,7 @@ describe('the proof of the walls', () => {
     ...LOOK.map(n => [n, 'look', '']), ...RUN.map(n => [n, 'run', '']),
     [1, 'look', 'child'], [2, 'look', 'child'], [3, 'run', 'child'], [4, 'run', 'child'],
     [1, 'look', 'after'], [1, 'run', 'after'], [5, 'run', 'after'],
+    [14, 'run', 'child'], [14, 'run', 'after'],
   ];
   for (const [n, wall, how] of cases) {
     test(`attempt ${n} gets through the ${wall} wall${how ? ` (${how === 'child' ? 'from a child process' : 'seen from outside afterwards'})` : ''}: the proof names it, writes no mark, and look and run refuse`, () => {
@@ -465,6 +528,13 @@ describe('the proof of the walls', () => {
       assert.match(p.stdout, FAILED(`attempt ${n} (${NAMES[n]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
     });
   }
+  test('attempt 14 not seen working outside the walls (the right to move its own folder): no mark, even with every wall holding', () => {
+    const s = proven();
+    s.put('standin/outside', '14 not-there stand-in\n');
+    const p = prove(s);
+    noMark(s, p);
+    assert.match(p.stdout, FAILED(`attempt 14 (${NAMES[14]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
+  });
   test('attempt 2 that reaches other things outside but not its own program on the loopback: no mark', () => {
     const s = proven();
     s.put('standin/outside', '2 works the tailnet\n');
@@ -717,6 +787,65 @@ describe("the owner's one-time command", () => {
     assert.match(f.cmd(['--check', '3']).stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): not there\n/);
   });
 
+  test('the names the run wall must hold are made before the password, as you; .bash_profile is one line; a second run makes nothing', () => {
+    const f = fleet(), home = join(f.T, 'spark3');
+    writeFileSync(join(home, '.bashrc'), '# mine\n');
+    const r = f.cmd(['3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const made = ['.profile', '.bash_profile', '.bash_logout', '.bash_aliases', '.pam_environment', '.ssh', '.docker',
+      '.config/systemd', '.config/environment.d', '.config/autostart', '.config/user-tmpfiles.d', '.local/share/systemd',
+      '.local/share/user-tmpfiles.d'];   // (.cache/spark-console is there already: the helper's copy came in it)
+    assert.ok(existsSync(join(home, '.cache/spark-console')));
+    const said = r.stdout.split('\n'), password = said.findIndex(l => l.includes('sudo asks for your password'));
+    for (const n of made) {
+      assert.ok(existsSync(join(home, n)), n);
+      const at = said.indexOf(`  made ${n} (it was not there, and the run wall holds it)`);
+      assert.ok(at >= 0 && at < password, `${n} is made, and said, before the password`);
+    }
+    assert.ok(!r.stdout.includes('made .bashrc'), 'what was there is left alone');
+    assert.equal(readFileSync(join(home, '.bashrc'), 'utf8'), '# mine\n');
+    assert.equal(readFileSync(join(home, '.bash_profile'), 'utf8'), '. "$HOME/.profile"\n');
+    assert.equal(statSync(join(home, '.ssh')).mode & 0o777, 0o700);
+    assert.ok(!sudoCalls(f).some(x => /mkdir|touch|\.bash_profile/.test(x)), 'none through sudo');
+    const was = tree(home);
+    const again = f.cmd(['3']);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.ok(!again.stdout.includes('  made '), again.stdout);
+    assert.deepEqual(tree(home), was, 'a second run makes nothing');
+  });
+
+  test('a .bash_login of yours: the .bash_profile made reads it, as bash would have', () => {
+    const f = fleet(), home = join(f.T, 'spark3');
+    writeFileSync(join(home, '.bash_login'), '');
+    assert.equal(f.cmd(['3']).status, 0);
+    assert.equal(readFileSync(join(home, '.bash_profile'), 'utf8'), '. "$HOME/.bash_login"\n');
+  });
+
+  test('--check names what is missing, what is a link, PAM, units that run a program from the home, and Tailscale SSH; it changes nothing', () => {
+    const f = fleet(), home = join(f.T, 'spark3');
+    mkdirSync(join(home, 'real-systemd'));
+    mkdirSync(join(home, '.config'));
+    symlinkSync(join(home, 'real-systemd'), join(home, '.config/systemd'));
+    mkdirSync(join(home, 'real-systemd/user/default.target.wants'), { recursive: true });
+    for (const u of ['editor.service', 'kept.service']) symlinkSync('/dev/null', join(home, 'real-systemd/user/default.target.wants', u));
+    f.target.put('standin/user-units', `editor.service ${home}/tools/editor\nkept.service ${home}/.local/opt/kept/bin/kept\n`);
+    writeFileSync(join(f.T, 'bin/tailscale'), `#!/bin/bash\n[ "$1 $2" = "debug prefs" ] && echo '{"RunSSH": '$(cat "$TEST_T/runssh" 2>/dev/null || echo false)'}'\n`, { mode: 0o755 });
+    const was = tree(home), wasR = tree(f.target.R);
+    const r = f.cmd(['--check', '3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /not there, made when you set up \(a change could make them\): \.bashrc \.profile \.bash_profile \.bash_logout \.bash_aliases \.pam_environment \.ssh \.docker \.config\/environment\.d/);
+    assert.match(r.stdout, / {2}links, which the run wall refuses until each is the real file or folder: \.config\/systemd\n/);
+    assert.match(r.stdout, / {2}PAM reads ~\/\.pam_environment: (yes \(.*\); the run wall holds it read-only|no)\n/);
+    assert.match(r.stdout, / {2}enabled units of yours that run a program a change could rewrite: editor\.service \(.*\/tools\/editor\)\n/);
+    assert.ok(!r.stdout.includes('kept.service'), 'a program on the read-only list is fine');
+    assert.match(r.stdout, / {2}Tailscale SSH: off\n/);
+    writeFileSync(join(f.T, 'runssh'), 'true');
+    assert.match(f.cmd(['--check', '3']).stdout, / {2}Tailscale SSH: on\. Any program on your tailnet signed in as you can open a shell here with no key, outside every\n {2}wall/);
+    const { [join(f.target.R, 'calls.log')]: _, ...nowR } = tree(f.target.R);
+    const { [join(f.target.R, 'calls.log')]: __, ...beforeR } = wasR;
+    assert.deepEqual([tree(home), nowR], [was, beforeR], 'nothing changed');
+  });
+
   test('Spark 2 only with --hub, and --hub only for Spark 2: by its number here, by its machine id there', () => {
     const f = fleet();
     for (const [args, why] of [[['2'], /Stopped: Spark 2 runs Spark Console: it is the hub, set up last, after a compute Spark, and only with --hub: bash ~\/spark-console-src\/deploy\/root-for-sparkie\.sh --hub 2\n/],
@@ -838,6 +967,24 @@ describe("the proof's own attempts", () => {
     } finally {
       target.kill('SIGKILL');
       server.close();
+    }
+  });
+
+  test('with no wall, attempt 14 is seen working outside and gets through: the folder above the read-only one is moved and a new one made', async t => {
+    const P = realProof('proofrunhere14');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    const target = spawn('python3', ['-I', '-S', join(P.held, 'proof.py'), 'target'], { env: { PATH: '/usr/bin:/bin', SPARK_PROOF_MARK: 'proofrunhere14' }, cwd: P.H, stdio: 'ignore' });
+    try {
+      writeFileSync(join(P.held, 'target'), String(target.pid));
+      assert.ok(lines(P.py('outside', 14)).some(l => l.startsWith('P 14 outside works ')));
+      const inside = lines(P.py('run', 14));
+      assert.ok(inside.some(l => l.startsWith('P 14 direct through ')), inside.join('\n'));
+      const post = lines(P.py('post'));
+      assert.ok(post.some(l => l.startsWith('V 14 run through ')) && post.some(l => l.startsWith('V 1 run through ')), post.join('\n'));
+      assert.ok(!existsSync(join(P.home, '.sparkie-proof-proofrunhere14')), 'the proof cleans up after itself');
+    } finally {
+      target.kill('SIGKILL');
     }
   });
 

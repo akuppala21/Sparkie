@@ -78,8 +78,7 @@ if unit.startswith('sw-prove-'):
     if part == 'prep':
         # What proof.py's prep makes and the helper looks for: the proof's folders in the owner's home.
         home = open(os.path.join(held, 'owner')).read().split('\n')[2]
-        for d in (f'.cache/spark-console/proof-{uid}', f'.cache/spark-console/proof-{uid}-ro',
-                  f'.local/share/spark-console/proof-{uid}'):
+        for d in (f'.sparkie-proof-{uid}/held/ro', f'.local/share/spark-console/proof-{uid}'):
             os.makedirs(R + home + '/' + d, exist_ok=True)
         say('S ok')
     elif part == 'setup':
@@ -96,7 +95,7 @@ if unit.startswith('sw-prove-'):
                 word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
                 say('P', n, how, word, 'stand-in')
     elif part == 'post':
-        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run')):
+        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     elif part == 'after':
         say('V', 5, 'outside', 'works', 'stand-in')
