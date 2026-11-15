@@ -121,6 +121,53 @@ test('Sparkie\'s turn: the owner\'s words, each tool call with its result, the t
   assert.deepEqual([turn?.chat, turn?.rounds, turn?.tools, turn?.toolErrors, turn?.ok], [chat, 2, 2, 0, true]);
 });
 
+// What the owner's calls carried (a line to remember, a file's name) comes back only on the owner's own call; another
+// caller sees who, what, when and whether it worked, and the arguments of its own calls (follow-up to the review of B1:
+// a line the owner remembered, forgot and erased stayed readable in the remember call's arguments).
+test('an agent sees who, what and when of the owner\'s calls but not what they carried; its own calls whole', { timeout: 120000 * SLOW }, async () => {
+  const line = 'the side door opens with code 4471', owner = (name, body) => api(`/actions/${name}`, { method: 'POST', body });
+  const kept = await owner('remember', { text: line, kind: 'fact' });
+  assert.equal(kept.json.outcome, 'remembered', kept.text);
+  assert.equal((await owner('forget_memory', { id: kept.json.id })).json.outcome, 'forgotten');
+  assert.equal((await owner('forget_memory', { id: kept.json.id, erase: true })).json.outcome, 'erased');
+  // A failed call of the owner's whose error names its file.
+  for (let i = 0; i < 2; i++) await owner('save_file', { spark: 'spark3', path: 'door-4471.md', text: 'x\n' });
+  const remembered = records().find(r => r.k === 'call' && r.act === 'remember' && r.via === 'api' && /4471/.test(JSON.stringify(r.args)));
+  const failed = records().find(r => r.k === 'call' && r.act === 'save_file' && r.end && /4471/.test(r.err || ''));
+  assert.ok(remembered && failed, 'the journal holds both, for the owner');
+  // Keys of their own, so each one's own calls (which it sees whole, these words too) are told apart by name.
+  const look = await createKey('recall-look'), act = await createActKey('recall-act'), asker = await createKey('recall-ask');
+  await ok('find_recipes', { query: 'zebra unicorn' }, look.token);
+  const asks = [{ kind: 'call', limit: 20 }, { about: 'side door' }, { about: '4471' }, { about: 'remember' }, { id: remembered.id }, { id: failed.id }];
+  const blind = text => !/4471|side door/.test(text);
+  for (const k of [look, act]) {
+    for (const args of asks) {
+      const r = await call(k.token, 'recall', args);
+      assert.equal(r.isError, false, r.text);
+      const others = (r.value.records || [r.value.record]).filter(v => v.actor !== k.name);
+      assert.ok(blind(JSON.stringify(others)), `${JSON.stringify(args)}: ${r.text}`);
+      for (const v of others) if (v.via === 'api') assert.ok(!('args' in v) && !('error' in v), JSON.stringify(v));
+    }
+    const probe = (await call(k.token, 'recall', { about: '4471', limit: 20 })).value.records.filter(v => v.actor !== k.name);
+    assert.deepEqual(probe, [], 'the owner\'s words match nothing of the owner\'s');
+  }
+  // Its own call it sees whole; another key doesn't.
+  const mine = (await call(look.token, 'recall', { kind: 'call', about: 'zebra' })).value.records;
+  assert.ok(mine.some(v => v.act === 'find_recipes' && /zebra unicorn/.test(v.args)), JSON.stringify(mine));
+  assert.equal((await call(act.token, 'recall', { kind: 'call', about: 'zebra' })).value.count, 0);
+  // Through ask_sparkie: no more than the agent's own call.
+  script([{ match: '^what did the owner keep', rounds: [[...asks.slice(0, 4), { id: 'j_000000000000' }].map(a => ({ name: 'recall', arguments: a })), asks.slice(4).map(a => ({ name: 'recall', arguments: a }))] }]);
+  const from = readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').length;
+  assert.equal((await call(asker.token, ASK, { message: 'what did the owner keep about doors?' })).isError, false);
+  await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('no record j_000000000000'), { what: 'the tool results at the brain' });
+  await sleep(1000);
+  assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
+  // A member may not call it; the owner reads everything.
+  assert.equal((await api('/actions/recall', { method: 'POST', body: { about: '4471' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
+  const all = (await owner('recall', { about: '4471', limit: 20 })).json.records;
+  assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-4471\.md/.test(v.error)), JSON.stringify(all));
+});
+
 // Part of acceptance test T123: with the journal unwritable, a file write (save_file, and an app from an image) runs
 // nothing and the owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
 // The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
@@ -142,7 +189,8 @@ test('words said to Sparkie and a chat\'s tool results: only the owner\'s own ca
   // Through ask_sparkie: Sparkie's recall for an agent gets no more than the agent's own call.
   script([{ match: '^recall what the owner said', rounds: [asks.slice(0, 4).map(arguments_ => ({ name: 'recall', arguments: arguments_ })), asks.slice(4).map(arguments_ => ({ name: 'recall', arguments: arguments_ }))] }]);
   const from = existsSync(join(T.fleet.dir, 'model-requests.jsonl')) ? readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').length : 0;
-  const v = await call(keys.look.token, ASK, { message: 'recall what the owner said about the NAS' });
+  // (a key of its own: an agent sees its own calls whole, and the keys above searched for these words)
+  const v = await call((await createKey('said-ask')).token, ASK, { message: 'recall what the owner said about the NAS' });
   assert.equal(v.isError, false, v.text);
   await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('Words said in a chat'), { what: 'the tool results at the brain' });
   assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
