@@ -420,6 +420,19 @@ describe('Telegram', { concurrency: 1 }, () => {
         const [m] = await sentAfter(from);
         assert.match(m.body.text, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
         assert.ok(!tgSent(from).some(x => String(x.body.text).includes(WORDS)), 'the words never went to Telegram');
+        // Nor through recall (the journal holds the call that kept it), or a question about that line, plain or to erase
+        // it: not in what the brain there is sent, not in a reply or on a button.
+        script([{ match: '^what do you have on my garage\\?$', calls: [{ name: 'recall', arguments: { about: 'garage code' } }, { name: 'recall', arguments: { id: kept.json.id } }] },
+          { match: '^drop the garage line$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id } }] },
+          { match: '^erase the garage line for good$', calls: [{ name: 'forget_memory', arguments: { id: kept.json.id, erase: true } }] }]);
+        for (const words of ['what do you have on my garage?', 'drop the garage line', 'erase the garage line for good']) {
+          const before = tgCalls().length;
+          await tgSay(words);
+          await sentAfter(before);
+          assert.ok(!tgCalls().slice(before).some(c => JSON.stringify(c.body).includes(WORDS)), `${words}: the words went to Telegram`);
+          const toBrain = requests().filter(x => x.words === words).flatMap(x => x.results.map(r => r.content)).join('\n');
+          assert.ok(toBrain && !toBrain.includes(WORDS), `${words}: the brain on Telegram was sent the words: ${toBrain.slice(0, 400)}`);
+        }
       } finally { noScript(); }
     });
 

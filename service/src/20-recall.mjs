@@ -90,7 +90,7 @@ function recallInAll({ about, when, live, lessons, proven, past, j }) {
 // One piece whole, by its id: a journal record (with its text), a lesson, or a line (live, or retired when this caller
 // may see it), with the line it replaced or that replaced it.
 async function recallOne(id, from, see, ctx, part = null) {
-  if (id.startsWith('j_')) return jRecord(id, from, see.own, see.who, see.looks, part);
+  if (id.startsWith('j_')) return jRecord(id, from, see.own, see.who, see.looks, see.channel, part);
   if (part) throw new HttpError(400, 'find and lines read a journal record (an id like j_…): a line or a lesson is shown whole.');
   if (id.startsWith('l_')) {
     const l = lessonsKept().find(x => x.id === id);
@@ -104,7 +104,7 @@ async function recallOne(id, from, see, ctx, part = null) {
   return { record: { ...recallLine(line, !live.includes(line), ctx), src: line.src ?? null }, ...(replaced ? { replaced } : {}), ...(by ? { replacedBy: by } : {}) };
 }
 async function recallAnswer({ about, id, kind, spark, when, since, until, limit = 8, next, find, lines: stretch }, viewer = {}, ctx = {}) {
-  const own = jOwnCall(viewer, ctx), see = { own, who: jWho(viewer, ctx), looks: own || mayRun(viewer, ctx) };
+  const own = jOwnCall(viewer, ctx), see = { own, who: jWho(viewer, ctx), looks: own || mayRun(viewer, ctx), channel: ctx.channel || null };
   const base = { observedAt: new Date().toISOString(), recordIsData: RECALL_DATA };
   if (id) return maskDeep({ ...base, ...(await recallOne(id, Number(String(next || '0').split('-')[0]), see, ctx, find || stretch ? { find, lines: stretch } : null)) });
   if (find || stretch) throw new HttpError(400, 'find and lines need the id of a journal record (j_…), from an earlier answer or a digest.');

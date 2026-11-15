@@ -13,6 +13,9 @@ One file per feature in `test/`, run against the stand-in fleet, never a real Sp
   undo`); its requirement reads partly until a test holds the whole of it.
 - A file that starts the service uses `useFleet` from `test/lib.mjs` (copy from below). One that starts no fleet, like
   `docs.test.mjs`, may run on the Mac; every other one runs on a compute Spark (`docs/how/land-a-step.md`).
+- Every wait has a deadline that fails saying what it waited for and what it last saw (`waitFor` in `test/lib.mjs`).
+  A file still running after 40 minutes times `SPARK_TEST_SLOW` ends itself and fails (`test/file-limit.mjs`, which
+  `lib.mjs` imports); one that starts a server without `lib.mjs` imports it itself: `import './file-limit.mjs';`.
 
 ## Also update
 
@@ -34,6 +37,7 @@ One file per feature in `test/`, run against the stand-in fleet, never a real Sp
 ## Tests
 
 - `docs.test.mjs` (the `Covers:` comment and the table, on made-up trees).
+- `file-limit.test.mjs` (a file past its limit ends itself, and `test/lock.mjs` names it).
 
 ## Copy from
 
