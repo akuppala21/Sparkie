@@ -281,6 +281,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   if (!conv.title || conv.title === 'New chat') conv.title = `${agent ? `${agent.name}: ` : ''}${kept.replace(/\s+/g, ' ')}`.slice(0, 60);
   conv.updatedAt = now;
   saveChats();
+  const turnId = journalSaid(conv, text, agent, channel, task);
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -461,6 +462,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
             ok = false;
             out = `[error] ${maskSecrets(e.message || String(e))}`;
           }
+          journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
           if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
           const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
           steps[i] = step;
@@ -511,6 +513,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
       emit({ type: 'error', error: why, message });
       return message;
     } finally {
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
       finish();
     }
   } finally { finish(); }

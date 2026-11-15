@@ -12,7 +12,7 @@ import { lookup as dnsLookup } from 'node:dns';
 import { isIP, BlockList } from 'node:net';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync, writeFileSync, appendFileSync, renameSync, mkdirSync, statSync, unlinkSync, chmodSync, readdirSync, openSync, fsyncSync, closeSync, copyFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, appendFileSync, renameSync, mkdirSync, statSync, unlinkSync, chmodSync, readdirSync, openSync, fsyncSync, closeSync, copyFileSync, writeSync, readSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -97,6 +97,9 @@ fi
 `;
 }
 const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/state/spark-console`;
+// The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
+// snapshot takes it. Under ALL_LOCAL a test names its own, else it sits next to that run's state folder.
+const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STATE_DIR.replace(/\/+[^/]*\/*$/, '')}/journal` : `${homedir()}/.local/share/spark-console/journal`;
 const PREAMBLE = 'export PATH="$PATH:$HOME/.local/bin:/usr/local/bin"\n';
 
 class HttpError extends Error {

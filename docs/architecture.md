@@ -28,6 +28,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address"]
+  JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off Spark 2, rewritten or deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -94,6 +95,10 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
+  RUN -->|"before a change written down first, its start line, synced (none written: nothing runs); each change's result; agents' looks; recall reads it"| JOURNAL
+  CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
+  JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
+  SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
   KNOW -->|"best setup for a start"| RUN

@@ -82,6 +82,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['why did my job on spark 3 fail?', 'dig'], ['what went wrong?', 'dig'], ['show me the log', 'dig'],
     ['spark 4 went dark, what\'s up with it?', 'dig'],
     ['what happened on the fleet yesterday?', 'past'], ['what changed while I was away?', 'past'],
+    ['what happened last time we started GLM?', 'past'], ['did we ever run gemma before the restart?', 'past'],
     ['show me the notes.md file in my shared folder', 'reading'], ['what\'s in my shared folder on spark 3?', 'reading'],
     ['save this as notes.md on spark 3', 'reading'], ['save that as settings.toml on spark 3', 'reading'],
     ['list my saved workflows', 'routines'], ['what workflows do I have?', 'routines'],
