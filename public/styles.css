@@ -638,6 +638,9 @@ dialog.modal[open] { animation: pop 0.14s ease-out; }
 .msg-tools .cmd-row { display: flex; gap: 6px; align-items: baseline; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .msg-tools .cmd-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-2); }
 .msg-tools .cmd-shown pre { margin: 4px 0 2px; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11.5px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 8px; color: var(--text-2); }
+.danger-cmd { margin: 6px 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-sunken); }
+.danger-cmd p { margin: 0; padding: 6px 10px 0; font-size: 12px; color: var(--text-3); }
+.danger-cmd pre { margin: 0; padding: 4px 10px 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--text); }
 .typing { display: inline-flex; gap: 4px; align-items: center; height: 22px; }
 .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: blink 1.2s infinite; }
 .typing i:nth-child(2) { animation-delay: 0.15s; }
