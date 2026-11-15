@@ -431,10 +431,10 @@ describe('Telegram', { concurrency: 1 }, () => {
         const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: save.id });
         is(pressed, 200, 'the save, pressed on the page with the passkey');
         assert.equal(pressed.json.outcome, 'saved', pressed.text);
-        assert.equal(pressed.json.message.content, 'Saved the workflow “tg web”. A run asks before it starts nginx:1.27: only your yes to a save’s button, which lists its steps, covers the images it names.');
         const w = (await api('/actions/workflows', { method: 'POST', body: {} })).json.saved.find(x => x.name === 'tg-web');
         assert.deepEqual(w?.steps.map(st => [st.action, st.args.container, st.args.image]), [['keep_running', 'wl-tg', IMAGE]], JSON.stringify(w));
         assert.equal(w.imagesApproved, undefined, 'no yes to the image');
+        assert.equal(pressed.json.message.content, 'Saved the workflow “tg web”. A run asks before it starts nginx:1.27: only your yes to a save’s button, which lists its steps, covers the images it names.');
       } finally {
         noScript();
         await api('/actions/forget_workflow', { method: 'POST', body: { name: 'tg web' } }).catch(() => {});
