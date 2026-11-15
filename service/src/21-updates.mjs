@@ -193,7 +193,7 @@ function updResultLook() {
   const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= Math.floor(at / 1000) * 1000;
   if (!done && Date.now() - at < UPD_WAIT_MS) return;
   try { unlinkSync(UPD_ASKED_FILE); } catch {}
-  const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 400)) : '';
+  const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 800)) : '';
   const line = !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
     : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
