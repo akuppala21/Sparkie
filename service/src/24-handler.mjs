@@ -444,7 +444,7 @@ const handler = async (req, res) => {
       if (!NAME_RE.test(model || '') || !nodeById(node)) throw new HttpError(400, 'Choose a model and a Spark.');
       notBrainsSpark([node]);
       if (!Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Invalid list of containers to keep.');
-      if ([...jobs.values()].some(j => j.status === 'running' && j.node === node && ['deploy', 'stop'].includes(j.type))) {
+      if ([...jobs.values()].some(j => j.status === 'running' && j.node === node && ['deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, `Something is already changing on ${node}. Wait for it to finish.`);
       }
       mustUse(viewer, [node]);
@@ -472,7 +472,7 @@ const handler = async (req, res) => {
       if (!NAME_RE.test(model || '') || !Array.isArray(nodes) || nodes.length !== 2 || !nodes.every(n => nodeById(n))) throw new HttpError(400, 'Choose a model and two Sparks.');
       notBrainsSpark(nodes);
       if (!Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Invalid list of containers to keep.');
-      if ([...jobs.values()].some(j => j.status === 'running' && (nodes.includes(j.node) || (j.nodes || []).some(n => nodes.includes(n))) && ['deploy', 'stop', 'deploy-cluster'].includes(j.type))) {
+      if ([...jobs.values()].some(j => j.status === 'running' && (nodes.includes(j.node) || (j.nodes || []).some(n => nodes.includes(n))) && ['deploy', 'stop', 'deploy-cluster', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, 'Something is already changing on one of those Sparks. Wait for it to finish.');
       }
       mustUse(viewer, nodes);
@@ -599,6 +599,8 @@ const handler = async (req, res) => {
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Ask for the check when that’s done.');
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
+    // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
+    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const kept = storeBrainEval(await readBody(req)); return send(res, kept.stored ? 201 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');

@@ -1,3 +1,8 @@
+// Covers: The needs-me line on Telegram (H5, R32): off by default; switching on needs the owner, the page and the
+// passkey, off needs none; one fixed line when something new is on the open-problems list, through `tell()`, with no
+// brain turn; not repeated while it stays or when it goes and comes back; at most 3 a day; disconnecting removes the
+// switch.
+//
 // The needs-me line on Telegram (H5; R32; the owner's decision 6, 2026-11-11). Off until the owner switches it on with
 // the passkey; then one fixed line ("Spark Console: N things need you. Send /status to see them.") when something new
 // joins the open-problems list (20-needs.mjs) and stays there (5 minutes for real, SETTLE here), not repeated while it

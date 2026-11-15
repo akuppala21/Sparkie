@@ -1,3 +1,16 @@
+// Covers: Web lookup (R39), on canned searches, pages and DNS answers in `test/mock/web` (`SPARK_CONSOLE_WEB_FIXTURE`;
+// without it, searches find nothing and no page is read, so no test reaches the web): `search_web` gives title, address
+// and snippet (ads left out) and says plainly when a robot check stops it; `read_page` gives the readable text (no
+// scripts, styles, menus or comments) 12,000 characters at a time with `more` and `next`, each part fitting one Sparkie
+// tool result; loopback, `localhost`, private, the tailnet, `::1`, metadata, a redirect to one and a name that answers
+// one are refused before anything connects; an address from neither the owner's words nor a search is refused (for
+// agents and `ask_sparkie`, the owner's words never count), one the owner wrote opens all through that chat, typed with
+// or without `https://`, and an address in a page's text doesn't; key shapes, `*.ts.net` names, the console's and the
+// Sparks' hosts, addresses that aren't public and `/home/<name>` or `/Users/<name>` in a query are hidden before the
+// 200-character cut; a page's `Content-Encoding` that can't be unpacked (`constructor`, `__proto__`) fails that read,
+// on the real fetch path (21-web.mjs run on its own against a server on this machine); a page saying to stop every
+// model leaves Sparkie's stop as a button.
+//
 // Looking things up on the web (service/src/21-web.mjs, R39): search_web and read_page. The stand-in fleet never reaches
 // the web: test/mock/web holds its canned searches (search.json, by query), pages (pages.json, by address) and DNS
 // answers (dns.json), read through SPARK_CONSOLE_WEB_FIXTURE. A search gives results; a page's readable text comes

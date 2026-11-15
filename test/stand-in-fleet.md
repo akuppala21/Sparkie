@@ -40,7 +40,7 @@ covers, is in `test/README.md`.
     end: what it prints is its log, its exit code the container's), `gpu-broken` (`nvidia-smi` answers as a driver
     that doesn't, exit 9) and `hf-hold` (`hf download` waits while the file is there).
   - `manifest.json` — what git can't hold: empty folders and the zero-filled weight files' sizes (recreated sparse).
-  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `ping`, `ss`, `tailscale`,
+  - `bin/` — stand-ins for `docker`, `nvidia-smi`, `curl`, `df`, `du`, `free`, `gzip` (the real one; `.mock/gzip-bad` above), `hf`, `ip`, `loginctl`, `ping`, `ss`, `tailscale`,
     and `ssh`/`scp` stubs that always fail. `docker` runs, stops, starts, kills (exit 137) and removes containers like the real one: the
     console's model containers share the serve port (a second can't start while one runs: "port is already
     allocated"), `*gemma*` models exit with code 1 as soon as they start, a stop frees the GPU memory `.mock/gpu` lists
@@ -52,6 +52,21 @@ covers, is in `test/README.md`.
     column and `--filter label=spark.gpu=1` keeps only those (A13). `curl` answers on the serve port once a console
     model on that Spark has run 4 seconds. `hf download` fills the Hugging Face cache. `tailscale ip` is 127.0.0.1 (or
     `.mock/tsip`), so model addresses reach the stand-in serve port; `tailscale serve status --json` (the console's route check) answers `$MOCK_DIR/serve.json`, or `{}` (nothing loaded, as right after a boot).
+    `tailscale status --json` (the console's look at the tailnet, R49) answers `$MOCK_DIR/status.json`, or Spark 2
+    running with a key that never expires; with `$MOCK_DIR/tailscale-hangs` every call hangs. `loginctl show-user`
+    (the linger look) answers Spark 2's `.mock/linger` (yes when there is none; `fail` fails). Both keep every call,
+    one line each, in `$MOCK_DIR/tailscale-calls` and `$MOCK_DIR/loginctl-calls`.
+  - `bin/sudo` — only `sudo -n` with the two commands `deploy/power-setup.sh` allows (and `-l` to ask): `systemctl
+    poweroff` makes every running container there exit and puts the Spark in the offline file (the stand-in plug reads
+    it); `.mock/no-sudo` makes it ask for a password (refused), `.mock/poweroff-refused` lets `-l` say yes but refuses the
+    shutdown itself, `.mock/poweroff-hangs` keeps the Spark answering. `bin/who` gives the sessions in `.mock/who` (none
+    otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more power-off looks answer, then fails
+    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one.
+  - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
+    marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
+    file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,
+    `setNames('upper')` for the other cases, and `setWatts(node, mW)` for a reading that stays put whatever the Spark
+    does (one the controller hasn't caught up with; `null` ends it).
   - `worker.py` — stands in for `service/worker.py` (workspace files go to the real one; status without the removed
     ray/model fields; logs for `editor`, `console` and `sparkie`).
   - `model.mjs` — Sparkie's model (streams like SGLang; offered tools, it calls them from patterns in the owner's words

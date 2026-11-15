@@ -1,3 +1,8 @@
+// Covers: One address for every model (`/v1`): running models listed and answered by name wherever they run; a call
+// marks a model in use for 30 minutes, so a start that would stop it asks first (naming who used it); a model that
+// isn't running starts when called if nothing has to stop (503 with Retry-After, then it answers); one that would need
+// a stop gets 409.
+//
 // One address for every model (docs/contract.md 9.9): /v1 serves Sparkie and every model Spark Console runs, by the name
 // it's served as, wherever it runs now; a model that isn't running starts when it's called, if nothing has to stop for
 // it (503 with Retry-After while it loads); a call marks that model in use for 30 minutes, so a start that would stop it

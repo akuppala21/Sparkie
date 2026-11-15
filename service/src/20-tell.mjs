@@ -71,11 +71,13 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
 
 // An operation's result on Telegram: a fixed line from its type, name, Spark and status. No error text, log line,
 // endpoint or address (the page's chat keeps the full notice).
-const TELL_OPS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting', 'self-test': 'The self-test with' };
+const TELL_OPS = { undo: 'Undoing the last change', deploy: 'Starting', 'deploy-cluster': 'Starting', 'start-model': 'Starting', stop: 'Stopping', 'stop-model': 'Stopping', restart: 'Restarting', 'restart-model': 'Restarting', 'self-test': 'The self-test with',
+  'power-off': 'Powering off', 'power-on': 'Turning on' };
 const tellName = s => String(s || '').replace(/[^A-Za-z0-9._/:-]/g, '').slice(0, 60);
 function tellWhat(job) {
   const name = tellName(job.model || job.container);
   const where = (job.nodes || [job.node]).filter(Boolean).map(id => sparkName(nodeById(id) || { id: tellName(id) })).join(' + ');
+  if (/^power-/.test(job.type)) return `${TELL_OPS[job.type]} ${where || 'a Spark'}${name ? ` for “${name}”` : ''}`;
   return `${TELL_OPS[job.type] || 'The operation'}${name ? ` “${name}”` : ''}${where ? ` on ${where}` : ''}`;
 }
 function tellResultLine(job) {

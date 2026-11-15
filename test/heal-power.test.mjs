@@ -1,3 +1,7 @@
+// Covers: Self-healing after a power-on decides from what the Sparks show now (gate, 2026-11-13), with the watcher's
+// one look from before the power went: the pair across Spark 3 and 4 comes back as "came back on", at least 3 s (the
+// settling) after the Sparks did; down again within 30 minutes of that, it is held ("may be what froze it").
+//
 // Self-healing after a power-on decides from what the Sparks show now (gate, 2026-11-13). Right after the owner powers
 // Sparks back on, the watcher may not have looked there yet: its last look, from before the power went, still says the
 // model's parts were running. Deciding from that brought the model back at once, as "a part stopped", before the Sparks
