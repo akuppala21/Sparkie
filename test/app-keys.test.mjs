@@ -168,7 +168,7 @@ describe('keys given once', { concurrency: 1 }, () => {
     assert.deepEqual(secretsOf().github, { repo: REPO_NAME, token: OLD });
     nowhereAtAll(BAD);
     const yes = await say(chat, `/key GITHUB\n${GOOD}`);
-    assert.match(yes.text, /^Kept the GitHub token: GitHub took it for someone\/spark-console/);
+    assert.match(yes.text, /^Kept the GitHub token\. GitHub took it for someone\/spark-console/);
     assert.deepEqual(secretsOf().github, { repo: REPO_NAME, token: GOOD });
     assert.deepEqual((await chatMessages(chat)).filter(m => m.role === 'user').map(m => m.content), ['/key GITHUB [not kept]', '/key GITHUB [kept]']);
     nowhere(GOOD);

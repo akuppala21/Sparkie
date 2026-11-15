@@ -8308,7 +8308,7 @@ async function keepGithub(value) {
   });
   // (pull.sh wrote the file: what maskSecrets hides is read again)
   Object.assign(keptSeen, { at: 0, mtime: null });
-  if (secretsRead()?.github?.token === value) return { kept: true, line: `Kept the GitHub token: GitHub took it for ${repo}, and the install from GitHub uses it from now on. It is never shown, not even to Sparkie.` };
+  if (secretsRead()?.github?.token === value) return { kept: true, line: `Kept the GitHub token. GitHub took it for ${repo}, and the install from GitHub uses it from now on. It is never shown, not even to Sparkie.` };
   return { kept: false, line: `The GitHub token wasn’t kept: ${ran ? `GitHub didn’t take it for ${repo}, or couldn’t be reached` : 'pull.sh couldn’t be run'}, and the one before stays. Make a new one (this repository only, Contents: read) and give it again: /key GITHUB, then the token.` };
 }
 // HEARTBEAT: the check the route makes, then the same save, and the beat starts (20-beat.mjs).
