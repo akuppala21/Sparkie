@@ -697,6 +697,20 @@ describe("the owner's one-time command", () => {
     }
   });
 
+  test('a proof stopped half way (Ctrl-C): --check says plainly the helper is set up but unproven, and --undo removes it', () => {
+    const f = fleet();
+    assert.equal(f.cmd(['3']).status, 0);
+    rmSync(join(f.target.R, 'var/lib/spark-console/proved'));   // as after an interrupted proof: the line and the helper, no mark
+    const c = f.cmd(['--check', '3']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, / {2}set up, but its walls are not proven \(a proof was stopped, failed, or is out of date\): look and run refuse here\n {2}until a proof passes\. Run this command again without --check to prove them, or --undo to remove the line and the helper\.\n/);
+    assert.match(c.stdout, / {4}proof none\n {4}look refuses: the wall proof is none on this Spark\n/);
+    const u = f.cmd(['--undo', '3']);
+    assert.equal(u.status, 0, u.stdout + u.stderr);
+    for (const p of ['usr/local/sbin/spark-console-root', 'etc/sudoers.d/spark-console-root', 'var/lib/spark-console/proved']) assert.ok(!has(f, p), p);
+    assert.match(f.cmd(['--check', '3']).stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): not there\n/);
+  });
+
   test('Spark 2 only with --hub, and --hub only for Spark 2: by its number here, by its machine id there', () => {
     const f = fleet();
     for (const [args, why] of [[['2'], /Stopped: Spark 2 runs Spark Console: it is the hub, set up last, after a compute Spark, and only with --hub: bash ~\/spark-console-src\/deploy\/root-for-sparkie\.sh --hub 2\n/],

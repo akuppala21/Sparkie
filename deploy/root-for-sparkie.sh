@@ -99,6 +99,11 @@ check() {
     if [ "$v" = "$1" ]; then note "the helper ($HELPER): there, this build's"
     else note "the helper ($HELPER): there, but not this build's (run the command again to replace it)"; fi
     note "its sudo line ($LINE): works, the helper runs without a password"
+    read -r _ _ v < <(grep -m1 "^$id proof " <<<"$out" || true) || true
+    if [ "$v" != current ]; then
+      note "set up, but its walls are not proven (a proof was stopped, failed, or is out of date): look and run refuse here"
+      note "until a proof passes. Run this command again without --check to prove them, or --undo to remove the line and the helper."
+    fi
     note "what the helper says:"
     grep "^$id " <<<"$out" | grep -v "^$id helper " | show
     return 0
