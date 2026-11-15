@@ -469,6 +469,9 @@ const ROWS = [
   ['mkdir -m 777 ~/.ssh', 'lockout'], ['hf download $X', 'risky'], ['hf download org/{a,b}', 'risky'],
   // (a redirection's path is a word like the others: quoted is a name, a pattern where it is placed)
   ['echo new > p2/[^a]digit.txt', 'change'], ["echo new > 'p4/{a,b}.log'", 'change'], ['echo new > p4/{a,b}.log', 'risky'], ['cat < /tmp/x*', 'look'],
+  // (the two commands the runner's tests ran at once before the shape, now asked; their tests run the same text from scripts)
+  ['sleep 30 & echo $! > notes/bg.pid; sleep 40', 'risky'], [`printf '%s refused: x\\n' "$(basename "$(dirname "$0")")"; echo printed > notes/printed.txt`, 'risky'],
+  ['bash notes/bg.sh', 'change'], ['bash notes/forge.sh', 'change'],
   // The sixth read's residue: 65 at once that should not be. 58 are asked now; 7 stay at once and are the wall's (A7b): a
   // reader through a key folder, a key file a tool keeps, a copy of the whole home, what the next terminal runs.
   ['chmod {777,.}', 'risky'], ['chmod {777,~}', 'risky'], ['chown {nobody,.}', 'risky'], ['chgrp {nogroup,.}', 'risky'], ['chattr {+i,.}', 'risky'],
