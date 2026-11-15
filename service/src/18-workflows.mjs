@@ -49,6 +49,11 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   wakeMayPair,
   wakePartner,
   wakeNeedsTwo,
+  wakeLiveStatus,
+  jobMountsReal,
+  jobNotReal,
+  JOB_NOT_REAL,
+  SHARED_AT,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',

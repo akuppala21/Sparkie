@@ -8,7 +8,8 @@
 // else its size and 15%), against a Spark's memory less the 8 GB kept free (a sleeping Spark's from its record, one
 // that is on from the live look); for one to download, the recipe's versions (`sparks`, `needGB`). Its partner is the
 // other end of a cable between two compute Sparks that passed its test: never the hub, which is never asleep and never
-// holds part of a model. A model that fits on one Spark wakes one, as before.
+// holds part of a model. A model that fits on one Spark wakes one, as before. After a wake, a download's version is
+// picked from the live look at the Sparks that just came on (wakeLiveStatus), not the cached status.
 
 // The model's own memory need in bytes, as plan() reckons it.
 function wakeNeedOf(m) {
@@ -30,4 +31,11 @@ function wakePartner(id) {
 function wakeNeedsTwo(m, inv) {
   const on = inv.sparks.filter(s => s.online && computeSparks().includes(s.id) && Number.isFinite(s.memTotal));
   return wakeMayPair(m) && on.length > 0 && on.every(s => s.memTotal - HEADROOM < wakeNeedOf(m));
+}
+// The live look, as the status a download's version is picked from (pickVersion: state, free memory and disk in GiB).
+// After a wake the start handed over decides from this: the cached status (the status loop looks every 30 s) can be from
+// before the Sparks that just came on, so it would find no room on them.
+function wakeLiveStatus(inv) {
+  return { nodes: inv.sparks.map(s => ({ id: s.id, state: s.online ? 'online' : 'unreachable',
+    memoryFreeGiB: Number.isFinite(s.memAvailable) ? s.memAvailable / 2 ** 30 : null, diskFreeGiB: Number.isFinite(s.diskFree) ? s.diskFree / 2 ** 30 : null })) };
 }

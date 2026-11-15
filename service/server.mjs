@@ -6183,8 +6183,10 @@ async function putBack(job, m, placed) {
   for (const x of stopped) {
     const [id, container] = x.split('/');
     consoleStopped.delete(x);
-    const r = await run(nodeById(id), `docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
-    note(job, r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+    // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
+    // a link while this start ran is refused by name, and the job isn't started)
+    const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
+    note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
   }
   job.ranHere = []; job.stoppedHere = [];
 }
@@ -6216,8 +6218,9 @@ async function resolveModelName(name, inv) {
 
 // For a model not on disk yet: the version to download (best quantization that fits now), and where. Spark Console's own
 // Spark isn't chosen; a repo from outside Recipes only goes on one Spark.
-async function pickVersion(recipe, repo, viewer, outside, only = null) {
-  const status = await statusFor(viewer, false);
+async function pickVersion(recipe, repo, viewer, outside, only = null, live = null) {
+  // (after a wake, the live look at the Sparks that just came on, not the cached status from before them: R56)
+  const status = live ? wakeLiveStatus(live) : await statusFor(viewer, false);
   const online = status.nodes.filter(n => n.state === 'online' && canUse(viewer, n.id) && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
   const free = id => gbOfGiB(online.find(n => n.id === id)?.memoryFreeGiB) ?? 0, disk = id => gbOfGiB(online.find(n => n.id === id)?.diskFreeGiB) ?? 0;
   const pairs = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.some(n => n.id === p.a) && online.some(n => n.id === p.b));
@@ -6388,7 +6391,7 @@ async function startModel(args, viewer, ctx) {
       { label: 'No', call: null },
     ]);
   }
-  const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
+  const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null, ctx.poweredOn ? inv : null);
   if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
   if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
@@ -7107,6 +7110,11 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   wakeMayPair,
   wakePartner,
   wakeNeedsTwo,
+  wakeLiveStatus,
+  jobMountsReal,
+  jobNotReal,
+  JOB_NOT_REAL,
+  SHARED_AT,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -12972,7 +12980,8 @@ action({
 // else its size and 15%), against a Spark's memory less the 8 GB kept free (a sleeping Spark's from its record, one
 // that is on from the live look); for one to download, the recipe's versions (`sparks`, `needGB`). Its partner is the
 // other end of a cable between two compute Sparks that passed its test: never the hub, which is never asleep and never
-// holds part of a model. A model that fits on one Spark wakes one, as before.
+// holds part of a model. A model that fits on one Spark wakes one, as before. After a wake, a download's version is
+// picked from the live look at the Sparks that just came on (wakeLiveStatus), not the cached status.
 
 // The model's own memory need in bytes, as plan() reckons it.
 function wakeNeedOf(m) {
@@ -12994,6 +13003,13 @@ function wakePartner(id) {
 function wakeNeedsTwo(m, inv) {
   const on = inv.sparks.filter(s => s.online && computeSparks().includes(s.id) && Number.isFinite(s.memTotal));
   return wakeMayPair(m) && on.length > 0 && on.every(s => s.memTotal - HEADROOM < wakeNeedOf(m));
+}
+// The live look, as the status a download's version is picked from (pickVersion: state, free memory and disk in GiB).
+// After a wake the start handed over decides from this: the cached status (the status loop looks every 30 s) can be from
+// before the Sparks that just came on, so it would find no room on them.
+function wakeLiveStatus(inv) {
+  return { nodes: inv.sparks.map(s => ({ id: s.id, state: s.online ? 'online' : 'unreachable',
+    memoryFreeGiB: Number.isFinite(s.memAvailable) ? s.memAvailable / 2 ** 30 : null, diskFreeGiB: Number.isFinite(s.diskFree) ? s.diskFree / 2 ** 30 : null })) };
 }
 /* ───────── power-aware Sparks (contract 9.22, R41) ───────── */
 // Area: features        Rules: R19, R22, R23, R32, R41        Tests: power.test.mjs, heal-status.test.mjs

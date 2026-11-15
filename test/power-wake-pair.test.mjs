@@ -3,9 +3,11 @@
 // cable (never Spark 2's) and it starts across both; with its files only on the sleeping Sparks, Spark 3 is woken, its
 // own need is read there, and its partner follows; Spark 3 on with it and Spark 4 asleep without it, Spark 4 is woken,
 // or, when its record has no room for half, nothing is and the answer says why; a download whose only versions run
-// across two wakes both. A model that fits on one Spark wakes one, and the start a wake hands over to carries the start's
-// version, so the same known failure with and without a wake makes one lesson. A saved workflow's run wakes a Spark
-// through power.wake, keeps it awake while it runs and lets it go at its end (D6a).
+// across two wakes both and starts across both. After a wake a download's version is picked from the live look, so one
+// that fits on one Spark starts there though the status hasn't caught up. A model that fits on one Spark wakes one, and
+// the start a wake hands over to carries the start's version, so the same known failure with and without a wake makes
+// one lesson. A saved workflow's run wakes a Spark through power.wake, keeps it awake while it runs and lets it go at
+// its end (D6a).
 //
 // T141 (part): only the Sparks a start needs are woken: two for a model across two, one for one that fits on one.
 //
@@ -183,17 +185,37 @@ describe('a start wakes the Sparks a model across two needs, and no more (R56)',
     } finally { for (const sp of ['spark3', 'spark4']) rmSync(join(T.fleet.root, sp, 'models', BIG, 'big.safetensors'), { force: true }); }
   });
 
-  test('both asleep, a model on no disk whose recipe’s only versions run across two: both are woken at once', { timeout: 420000 * SLOW }, async () => {
+  // (the stand-in worker's own status says Spark 3 has 66 GiB free, short of the 71.5 GB half of this version needs; the
+  // live look says 110 GiB: the start after the wake goes by the live look)
+  test('both asleep, a model on no disk whose recipe’s only versions run across two: both are woken at once, and it is downloaded and started across both', { timeout: 420000 * SLOW }, async () => {
     await sleepSpark('spark4');
     await sleepSpark('spark3');
     const { r, end, switched, ended } = await startNamingNone('laguna-s-2.1');
-    // (the download and the start that follow the wake are not what this checks: whichever way they ended)
-    console.log(`the start after the wake: ${ended}`);
     assert.deepEqual(r.json?.poweringOn, ['spark3', 'spark4'], ended);
-    assert.ok(end, ended);
+    assert.equal(end?.status, 'completed', ended);
     assert.deepEqual(byNode(switched), [{ node: 2, command: 'on' }, { node: 3, command: 'on' }], 'Sparks 3 and 4, never Spark 2');
+    const run = (await look('running_models')).models.find(x => /Laguna-S-2\.1/.test(x.container) && x.acrossSparks);
+    assert.deepEqual([...(run?.acrossSparks || [])].sort(), ['spark3', 'spark4'], JSON.stringify(run));
     await stopAllOn('spark3');
     await stopAllOn('spark4');
+  });
+
+  // (with ~/.mock/stall-worker the stand-in worker on Spark 3 answers no status, so the status loop never shows it as on
+  // again, as the real one, which looks every 30 s, doesn't yet when a start goes on just after the wake; SSH, Docker and
+  // the live look answer as usual)
+  test('both asleep, a model on no disk that fits on one Spark: Spark 3 is woken, and the download starts there from the live look, though the status hasn’t caught up', { timeout: 420000 * SLOW }, async () => {
+    await sleepSpark('spark4');
+    await sleepSpark('spark3');
+    const stall = join(T.fleet.root, 'spark3', '.mock', 'stall-worker');
+    writeFileSync(stall, '3');
+    let got;
+    try { got = await startNamingNone('qwen3.5-0.8b'); } finally { rmSync(stall, { force: true }); }
+    const { r, end, switched, ended } = got;
+    assert.deepEqual(r.json?.poweringOn, ['spark3'], ended);
+    assert.equal(end?.status, 'completed', ended);
+    assert.deepEqual(switched, [{ node: 2, command: 'on' }], 'only Spark 3');
+    assert.ok((await look('running_models')).models.some(x => x.spark === 'spark3' && /Qwen3\.5-0\.8B/.test(x.container)), 'it runs on Spark 3');
+    await stopAllOn('spark3');
   });
 
   test('a model that fits on one Spark, on both records and the hub’s disk, wakes one; the start it hands over to carries the start’s version, so the same known failure without a wake counts on its lesson', { timeout: 420000 * SLOW }, async () => {
