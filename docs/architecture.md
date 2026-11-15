@@ -27,14 +27,13 @@ flowchart TD
   APPS["Apps calling the model address /v1"]
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
-  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address"]
+  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address, named keys"]
   JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off Spark 2, rewritten or deleted"]
-  LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
+  LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP; every WebSocket upgrade refused"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
-  PGATE["Page checks: cross-site, member limits, passkeyGate"]
+  PGATE["Page checks: cross-site, passkeyGate"]
   V1["/v1 gateway (sparkieApi)"]
-  EDITOR["Editor proxy to code-server on 127.0.0.1"]
   APPDOOR["App door (21-door, R40): door.sock behind Tailscale :10000 on the same name, its own handler; the owner only, one kept app per browser"]
   CHAT["Sparkie turn (sparkieTurn, 14-chats, 14-rounds)"]
   BRAIN["Chat-route model: the brain (sparkie-main on Spark 2) by default"]
@@ -50,10 +49,11 @@ flowchart TD
   HEAL["Healing: maybeHeal, healPass every 60 s (bringBack, watchBrain, keepBrain)"]
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
   STATE["State files in ~/.local/state/spark-console"]
-  BACKUP["Daily copy on another Spark (25-backup-and-start)"]
+  BACKUP["Copy on another Spark that is awake (25-backup-and-start, 20-state-copy)"]
   INSTALL["test/lock.mjs (here, on a compute Spark or in GitHub's suite job), then deploy/host-on-portal.sh"]
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
+  GUARD["Update guard (pull.sh, update-guard.sh): the installed build's copy and one timer, for one install"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
@@ -61,28 +61,27 @@ flowchart TD
   INSTALL -->|"files, lock, config, restart. Keeps the update only if its checks hold 40 s later as one process (R30); on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
-  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
+  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses; go-back.sh once after 15 minutes silent within a day of an install"| LISTEN
+  GUARD -->|"armed before the incoming installer runs; kept only if the real address answers with the new build within 10 minutes, else the build from before goes back"| LISTEN
   ROLL -->|"puts back the newest whole snapshot not marked same (files, not state), restarts; ends with the unit started"| LISTEN
   LISTEN -->|"every request, /health aside"| GATE
-  LISTEN -->|"WebSocket upgrades skip the handler: editorUpgrade repeats the gate"| EDITOR
   PAGE -->|"an app's door link: GET /console/api/open/spark/app on :10000 reads the sign-in cookie (viewerFor) and gives a door ticket (its own cookie)"| APPDOOR
   APPDOOR -->|"each request and WebSocket: the Tailscale login, or the ticket's session as it is now; the app still on desired.json"| STATE
   APPDOOR -->|"HTTP and WebSockets to a kept app's port at its Spark's tailnet address (never the brain's Spark or a model's port); no console cookie or identity goes on, no console cookie comes back"| FLEET
   GATE -->|"/mcp"| MCP
-  GATE -->|"viewer: owner or member"| PGATE
-  GATE -->|"access asks, sessions, passkey counts: written before or at sign-in"| STATE
+  GATE -->|"the owner; anyone else 401"| PGATE
+  GATE -->|"sessions, passkey counts: written before or at sign-in"| STATE
   PGATE -->|"/v1, after JSON, same-origin and chat-permission checks"| V1
-  PGATE -->|"/connect/spark, owner only"| EDITOR
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
-  PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, editor restart, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
-  PGATE -->|"files, logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
+  PGATE -->|"Deploy, Stop, brain start, stop and switch, downloads, research, Test the changes: straight to jobs; the owner’s /restart sparkie when the brain’s container is gone"| JOBS
+  PGATE -->|"logs, diagnostics, /gpu, plans: worker calls and probes, no job"| SSH
   PGATE -->|"access, agent keys, passkeys, pause, routes, desired forget, chats: written directly"| STATE
   PGATE -->|"POST /rollback"| ROLL
   MCP -->|"registry actions, via agent, canChange from the key's fleet:act scope"| RUN
   MCP -->|"ask_sparkie: a turn, or a button press"| CHAT
   TG -->|"polled from Spark 2: the paired chat's words, a turn with ctx.channel telegram"| CHAT
-  TG -->|"a button pressed there: runChoice, via telegram, plain buttons only"| RUN
+  TG -->|"a button pressed there: runChoice, via telegram; an owner-only ask only while approvals from there are on"| RUN
   CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
   PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
@@ -118,7 +117,7 @@ flowchart TD
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
   SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
-  KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
+  KNOW -->|"research jobs (the four lists and the model's own card), search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
@@ -127,11 +126,11 @@ flowchart TD
   JOBS -->|"power jobs only: switchPlug, never Spark 2’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
-  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
+  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; sent when a Spark comes online, before a power-off and hourly, only if the state changed; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
-list (`docs/state.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
+list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
 
 ## 3. One sentence, start to finish
 
@@ -140,13 +139,13 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 1. **In.** The page posts `/console/api/chats/<id>/messages` (`sendConsole` in `public/app.js`). Tailscale serve hands
    it to `api.sock`, then `handler` (`24-handler.mjs`).
 2. **Gates.** `requestGate` (`24-handler.mjs`) judges transport and sender; `viewerFor` (`03-identity.mjs`) names the
-   owner; the cross-site check and the chat permission pass (`handler` in `24-handler.mjs`).
+   owner (anyone else gets 401); the cross-site check passes (`handler` in `24-handler.mjs`).
 3. **Turn.** `chatReply` calls `sparkieTurn` (`14-chats.mjs`): it saves the message, reads the intent from the owner’s
    own words (`changeIntent` in `16-actions.mjs`), adds fleet notes and memory, and streams the chat route’s model
    (`chatTarget` in `13-main-model.mjs`: the brain on 127.0.0.1 by default). A plain "yes" to exactly one open button
-   runs `runChoice` (`14-chats.mjs`) instead and never calls the brain. A member’s turn gets no tools and no fleet
-   notes. Once the chat is marked as answering, everything runs inside one `try` whose `finally` calls `finish()`
-   (once), so a throw while the turn is set up frees the chat and the owner's slot. A `memory.json` that can't be read
+   runs `runChoice` (`14-chats.mjs`) instead and never calls the brain. Once the chat is marked as answering,
+   everything runs inside one `try` whose `finally` calls `finish()` (once), so a throw while the turn is set up frees
+   the chat and the owner's slot. A `memory.json` that can't be read
    gives a turn without memory lines and one line in the prompt saying so.
 4. **Tool call.** The brain asks for `start_model`; `runOne` passes it straight to `runAction` as via `sparkie`, with
    the intent and the words in ctx (`runOne` in `14-rounds.mjs`).
@@ -189,7 +188,8 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
   the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
-  looked up daily. A model already on disk joins only through `find_setups`.
+  looked up again when a start or `recipe_detail` finds its setups over a week old (never by the clock). A model
+  already on disk joins only through `find_setups`.
 - **A GPU app or job and a model never share a Spark (A13).** Until memory is held for an app in `plan`, `deploy` and
   `restartChecked`, a GPU app refuses a Spark where a model runs, and a model start asks before it stops a GPU app.
   Whether `--memory` bounds what the GPU takes on GB10 wasn’t checked live. A job runs as root in its image, reads the
@@ -198,8 +198,7 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 - **Not every change is a workflow.** Only five are. The other change actions, and the brain start, stop and switch,
   have no tested-and-validated gate.
 - **Many page buttons skip `runAction`** (branches of `handler` in `24-handler.mjs`): Deploy, Stop, brain start, stop
-  and switch, downloads, research, editor restart, Test the changes. No `railsFor`, pause or audit line, and members
-  with run permission can use Deploy, Stop and download.
+  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line.
 - **Gates differ by door.** The passkey gate covers the owner’s page routes only; the intent gate only via `sparkie`.
   `POST /actions`, `/mcp` and `/v1` rely on `runAction` and each action’s rails.
 - **Trust is a header on a socket.** Anything running as the owner’s user on Spark 2 can open `api.sock`, send the

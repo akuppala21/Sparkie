@@ -23,7 +23,23 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  lessonOf,
+  lessonsKept,
+  PASS_OVER_FAILURES,
+  failedTwice,
+  bestHowNow,
+  passedWords,
+  passedOverLines,
+  askedByOwner,
+  passedOverAsk,
+  fullContext,
+  freeOn,
+  memNow,
+  HF_OWN,
+  hfEachFile,
+  copyModel,
+];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -49,7 +65,7 @@ const WORKFLOWS = [
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
     changes: 'Nothing on the Sparks. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps the setups it finds (each with its command, image and measured speed) in Recipes. A repo that isn’t in Recipes yet is added first.',
     takes: 'Under a minute.',
-    failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next daily look tries it again.' }],
+    failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next look tries it again.' }],
     code: () => [digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage,
       cardSetups, cardText, addModel, versionOf, hfFixture, namedInFull] },
   { id: 'restart_model', action: 'restart_model', title: 'Restart a model as it was',
@@ -153,7 +169,18 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
-const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file', 'self_test', 'power_settings']);
+const NOT_A_STEP = new Set([
+  'compare_models',
+  'forget_memory',
+  'forget_workflow',
+  'power_settings',
+  'remember',
+  'run',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
   if (Array.isArray(v)) return v.map(x => fillIn(x, inputs));
@@ -161,8 +188,8 @@ function fillIn(v, inputs) {
   return v;
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
-const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {} })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
+const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}), ...(w.best ? { best: w.best } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -173,11 +200,21 @@ function stepArgs(st) {
 }
 // The steps in plain words, built from their arguments (never from Sparkie's summary), for the button that saves them;
 // keys masked, as on every button (before the cut, so no piece of one shows).
-const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => {
+const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
+// One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
+// image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+// A control, direction or zero-width character is left out, so none turns how the rest of the label reads (the second
+// read's Later 2; a step holding one is never covered, stepCovered).
+const NOT_SHOWN = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+const notShown = t => t.replace(new RegExp(NOT_SHOWN.source, 'g'), '');
+function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return notShown(maskSecrets(changeLabel(action, a))).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}`;
-}).join('; ');
+  const words = notShown(maskSecrets(`${ACTIONS.get(action)?.title || notShown(action) || 'not a step'}${given ? ` (${given})` : ''}`));
+  if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
+  return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
+}
 // A saved step can't carry the answer to a question; that's given when it's asked.
 const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
 
@@ -214,7 +251,7 @@ async function checkSteps(w, inputs, inv) {
     if (!a) { line({ result: 'cannot run', why: `there’s no action called ${String(st.action).slice(0, 60)}` }); continue; }
     if (placeholders(st.args).some(k => !(k in inputs))) { line({ result: 'checked when reached', why: 'it needs the workflow’s inputs' }); continue; }
     let args;
-    try { args = checkInput(a.input, fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
+    try { args = checkInput(stepInput(st.action, st.args), fillIn(st.args || {}, inputs), st.action); } catch (e) { line({ result: 'cannot run', why: e.message }); continue; }
     ids = [args.spark, ...(args.sparks || [])].filter(Boolean).map(x => sparkIdOf(x) || String(x));
     // (R2-2: a step naming no target fails wherever it runs, so this comes before the other checks)
     const missing = missingTarget(st.action, args);
@@ -222,7 +259,9 @@ async function checkSteps(w, inputs, inv) {
     // Only looks at Spark Console's own record work with a Spark off; every other step there needs it on.
     // (a Spark an earlier step turns on is checked when reached, below)
     const off = !OWN_RECORD_READS.has(st.action) && !POWER_STEPS.has(st.action) && ids.find(id => !sparkOn(id)?.online && !turnedOn.has(id));
+    if (off && WAKES_FOR_STEP.has(st.action) && consoleOff(off)) { line({ result: 'checked when reached', why: `${sparkName(nodeById(off) || { id: off })} is asleep; it is turned on when this step is reached` }); continue; }
     if (off) { line({ result: 'cannot run', why: `${sparkName(nodeById(off) || { id: off })} is off or not answering` }); continue; }
+    if (placedStep(st.action, args) && !args.spark) { line({ result: 'checked when reached', why: 'Spark Console picks its Spark when the step is reached' }); continue; }
     if (changed.has('*') || ids.some(id => changed.has(id))) { line({ result: 'checked when reached', why: 'an earlier step changes things there first' }); continue; }
     if ((st.action === 'stop_model' || st.action === 'restart_model') && args.container) {
       const dep = sparkOn(ids[0])?.deployments.find(d => d.container === args.container);
@@ -252,18 +291,24 @@ async function checkSteps(w, inputs, inv) {
 
 action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
-  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. Changes nothing on the Sparks.',
+  description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
-    title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
+    title: { type: 'string', minLength: 2, maxLength: 80, pattern: '^[^\\x00-\\x1f\\x7f-\\x9f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff]+$', description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
-      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' } }, required: ['action'], additionalProperties: false } },
-  }, required: ['title', 'steps'], additionalProperties: false },
-  run: async (input, viewer) => {
+      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' },
+        keep: { type: 'boolean', description: 'For a step that starts something in a run with a job: leave it running when the run ends. Without it, a run with a job stops what it started at its end.' } }, required: ['action'], additionalProperties: false } },
+    from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
+  }, required: ['title'], additionalProperties: false },
+  run: async (input, viewer, ctx) => {
+    // (a call that carried `from` had a button that listed no steps, so pressing it is no yes to their images, D6c A1)
+    const carried = input.from !== undefined;
+    input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
     for (const [i, st] of input.steps.entries()) {
+      savedStepShape(st, i);
       if (!ACTIONS.has(st.action)) throw new HttpError(400, `Step ${i + 1}: there’s no action called ${String(st.action).slice(0, 60)}. The actions are the tools you can call.`);
       if (NOT_A_STEP.has(st.action)) throw new HttpError(400, `Step ${i + 1}: ${st.action} can’t be a step in a saved workflow.`);
       const unknown = placeholders(st.args).filter(k => !declared.includes(k));
@@ -272,16 +317,23 @@ action({
       if (approval) throw new HttpError(400, `Step ${i + 1}: ${approval} answers a question when it’s asked; a saved step can’t carry it.`);
       // Arguments with an {input} in them are checked in full when it runs.
       if (!placeholders(st.args).length) {
-        try { checkInput(ACTIONS.get(st.action).input, st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
+        try { checkInput(stepInput(st.action, st.args), st.args || {}, st.action); } catch (e) { throw new HttpError(400, `Step ${i + 1} (${st.action}): ${e.message}`); }
       }
       const missing = missingTarget(st.action, st.args || {});
       if (missing) throw new HttpError(400, `Step ${i + 1} (${st.action}): ${missing}`);
     }
-    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {} })),
+    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
-    const before = findSaved(id);
+    // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
+    // (and its answer, and the chat line after the press, say what that yes covers)
+    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it; one that carried
+    // `from` is no yes at all, and its words say so)
+    const { images, keys, asked } = savedCover(w.steps, ctx.button && !carried ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), covered: keys, by: viewer.login, at: w.at };
+    const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
+      ...(words ? { images: words, note: `${before ? 'Replaced' : 'Saved'} the workflow “${w.title}”. ${words}` } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -292,9 +344,13 @@ action({
     inputs: { type: 'object', description: 'Its inputs, name → value.', additionalProperties: { type: ['string', 'number', 'boolean'] } },
   }, required: ['name'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
-    const w = findSaved(input.name);
+    // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
+    const w = ctx.compare?.workflow || findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    const given = input.inputs || {}, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
+    const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
+    if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
@@ -309,32 +365,52 @@ action({
       throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
+    if (usedBest) job.usedBest = usedBest;
     const steps = JSON.stringify(w.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
+      if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
+      // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
+      const ran = [];
+      // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
+      savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
         for (const [i, st] of w.steps.entries()) {
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (ctx.compare) compareStep(j, i + 1, st, args, ctx.compare);
+          if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
+          if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
+          // (what was on the list of what should be running before this step: a step that starts one of those again
+          // leaves it on the list after the clean-up, stopWhatRan)
+          const listed = savedStepStarts(st.action, args) ? desired().running : [];
           try {
+            const yes = stepImagesYes(w, st, viewer, ctx);
+            if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
-            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null,
-              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
+            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
+              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
           if (out?.operation && out.outcome === 'started') {
-            const done = await waitJob(out.operation, 60 * 60000);
+            const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
+          ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
+          savedRunKeep(j, { started: ran, pending: [] });
+          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
+          if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
-      } catch (e) { record(false); throw e; }
+        await runEndWell(j, ran, viewer, ctx, w.title);
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
-    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
+    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
 });
 action({

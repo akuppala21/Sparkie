@@ -281,7 +281,7 @@ function powerTargets(input, viewer) {
   const ids = input.spark ? [input.spark] : input.sparks || [];
   if (!ids.length) throw new HttpError(400, 'Missing argument: spark (or sparks).');
   for (const id of ids) sparkOf(viewer, id);
-  mustUse(viewer, ids);
+  mustUse(viewer);
   for (const id of ids) {
     if (brainSparks().includes(id)) throw new HttpError(403, `${sparkWord(id)} runs Spark Console and Sparkie, so it is never powered off or on from here. Only you can, with its own plug in the Tapo app or its power button.`);
     if (!switchablePlug(id)) {
@@ -398,6 +398,7 @@ async function powerOffJob(j, ids, ctx, why) {
   for (const id of up) if (!(await sudoReady(nodeById(id)))) throw new Error(setupWords(nodeById(id)));
   for (const id of up) { const unproven = await plugUnproven(id); if (unproven) throw new Error(unproven); }
   if (why === 'idle') for (const id of up) { const busy = await idleInUse(nodeById(id)); if (busy) throw new Error(`Not idle: ${busy}. Nothing was changed.`); }
+  await copyBeforeOff(j, up);   // (the state's copy first, if it changed: 20-state-copy.mjs)
   // Parking: Spark Console's models and kept apps there stop (both parts of a model across two Sparks), and stay on the
   // list of what should be running, marked parked.
   const inv = await inventory(null), plan = powerPlan(up, inv), pairHeads = new Set(plan.models.filter(m => m.sparks.length > 1).map(m => m.head));
@@ -659,7 +660,7 @@ action({
 // needBytes or versions, and `why`, which says why none was when none was). A call (which never downloads) turns on only
 // a Spark whose record lists the model, or has no list.
 function powerFirst(args, viewer, ctx, mode = 'named', names = null, size = null) {
-  const off = Object.keys(powerState().off).filter(id => nodeById(id) && canUse(viewer, id) && switchablePlug(id) && !brainSparks().includes(id));
+  const off = Object.keys(powerState().off).filter(id => nodeById(id) && switchablePlug(id) && !brainSparks().includes(id));
   if (!off.length) return null;
   const named = [args.spark, ...(args.sparks || [])].filter(Boolean), call = ctx.via === 'gateway';
   const need = mode === 'all' ? wakeOne(off, names || [String(args.model)], { call }) : named.length ? named.filter(id => off.includes(id))
@@ -750,7 +751,7 @@ function powerSettingsClear(input, saidText) {
 
 action({
   name: 'power_settings', title: 'Idle power-off setting', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'power',
-  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, no call to its models at the model address and no open editor, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
+  description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, and no call to its models at the model address, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
   input: { type: 'object', properties: {
     idleMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: 'Minutes a Spark must be idle before it is powered off; 0 turns the idle power-off off.' },
   }, required: ['idleMinutes'], additionalProperties: false },
@@ -774,14 +775,14 @@ action({
 // Every minute (one round at a time; never while agents' changes are paused, an operation runs on that Spark, or a
 // validation run goes): a Spark (never Spark 2) with a switchable plug is idle when nothing changes there, nothing runs
 // there but Spark Console's own models and kept apps, its GPU is under 5% and its load low, nothing answers Sparkie's
-// chats or apps there, no call reached its models, no editor is open to it and no app door request reached it. Idle for
+// chats or apps there, no call reached its models and no app door request reached it. Idle for
 // the owner's minutes without a break (counted from this process's start: a restart or an install starts the count
 // again), it is powered off through power_off (why: idle), with both Sparks of a model across two together. A Spark it
 // powered off that answers again (turned on another way) has its record cleared and what was parked brought back.
 const idleSince = new Map();
 let powerTicking = false;
 const lastJobOn = id => Math.max(0, ...[...jobs.values()].filter(j => (j.nodes || [j.node]).includes(id)).map(j => Date.parse(j.finishedAt || j.createdAt) || 0));
-const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, editorUse.get(id)?.at || 0, lastJobOn(id),
+const lastUseOn = id => Math.max(sparkCalls.get(id) || 0, lastJobOn(id),
   ...[...doorTickets.values()].filter(t => t.spark === id).map(t => t.lastAt || 0),
   ...[...inUse].filter(([k]) => k.startsWith(`${id}/`)).map(([, u]) => u.at || 0));
 // May this Spark be shut down? Every reason it may not, in words; [] means it may sleep (d-fleet-workloads 2.6). The idle
@@ -799,7 +800,6 @@ function sparkNeeded(id, { recentUse = true, unseen = true } = {}) {
   if (!fresh) why.push('no fresh status');
   if (busySparks.has(id) || [...jobs.values()].some(j => j.status === 'running' && (j.nodes || [j.node]).includes(id))) why.push('an operation');
   if (routedSparks().has(id)) why.push('it answers Sparkie’s chats or apps');
-  if ((editorUse.get(id)?.open || 0) > 0) why.push('an editor is open');
   if ([...doorTickets.values()].some(t => t.spark === id && t.sockets?.size)) why.push('an app is open through the app door');
   const s = knowledge.sparks[id];
   if (!s?.watchedAt || Date.now() - Date.parse(s.watchedAt) > Math.max(3 * WATCH_EVERY, 180000)) why.push('not watched lately');

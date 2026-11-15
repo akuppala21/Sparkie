@@ -24,6 +24,7 @@ things go", row "A recipe source".
 - Fetch in tests.
 - Source kind `forum` (`bestHow` skips it).
 - Read a card's words; take a card's command for another repo.
+- Look on a timer: a look runs when asked, or when a start or `recipe_detail` finds the setups over a week old (R27).
 
 ## Rules
 
@@ -33,7 +34,7 @@ things go", row "A recipe source".
 
 ## Tests
 
-- `dig.test.mjs`; `change.test.mjs` (“Recipes knows each model’s best setup”).
+- `dig.test.mjs`; `change.test.mjs` (“Recipes knows each model’s best setup”); `setups-look.test.mjs`.
 
 ## Copy from
 

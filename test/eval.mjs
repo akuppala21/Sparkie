@@ -39,11 +39,42 @@
 //   is written: the real brain is never asked for it. A build from before the mark (its GET /actions shows no brain
 //   catalog) gets reads null.
 //   --cases <file>       another case file (its own version); --out <file> where the record goes.
+//   --set <name>         the case file test/eval/<name>.json (--set memory: the memory questions, design G 3.7). The
+//                        record names its file (setFile: its path in this tree, or its name alone when it is elsewhere).
+//   --memory-off <list>  memory additions switched off for the run (design G 3): names, past, time, digest, count, said.
+//                        Each case's stand-in console gets SPARK_CONSOLE_MEMORY_OFF; the record says which were on and
+//                        which off (memorySwitches), and so does the results file's name. A run with any off measures
+//                        them, not the build as it runs: --store refuses it.
+//
+// Besides say and expect, a case may have (design G 3.7):
+//   before    messages sent first, each in a new chat of its own (or a list of messages: one chat, in that order)
+//   seed      {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …its fields}]}: lines in memory.json and
+//             records in the journal before the console starts; at is an ISO date, or "-20d", "-3h", "-15m" before the run
+//             (and for the memory questions, test/eval/memory.json): a line may also have until (a date, kept as its day)
+//             and replaces; past: [{text, …, gone: {at?, why?, by?}}] (retired lines, memory-past.json); proven: [{model,
+//             engine, nodes, best: {decodeTokS}, runs?, at?}] (runs that worked, verified.json); newer: N made-up lines
+//             after the case's own, about nothing a question names, so memory is past its block; unreadable: true
+//             (memory.json can't be read); lessons: [{id: "l_…", kind, subject, tried, failure, failed, state, firstAt?,
+//             lastAt?}] (lessons.json, as Spark Console writes it); events: [{type, at?, …, errorLines?: {count, each,
+//             put}}] (events.jsonl; errorLines makes the event's error a long log: count lines of each, "{n}" its number,
+//             put: {"<line number>": its own text}). A date may also be "last-month" (its 15th) or "last-tuesday" (that
+//             day of last week, weeks starting on Monday as recall's)
+//   as        "agent": one of the owner's agents asks (a key made for it, ask_sparkie over the agent door), in its own
+//             chat; left out, the owner asks in a page chat
+//   has       words that must each be in a request the brain got for the case's turn (any round, any message; capitals
+//             or not); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
+//   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in; an
+//             argument "$record" is the record of the last digest the brain was sent (fillRecord)
+//   answerHas words that must each be in the answer (exact names, numbers); answerHasNot: words that must not be. Kept
+//             apart from has and hasNot, so what the brain is sent is graded exactly; a run's record lists those that
+//             failed (answerMissing, answerUnwanted)
+//   kind      what the question is about, and switch: the memory addition it measures (--memory-off). The record keeps
+//             both, and the run prints each case and each kind with its rounds and seconds
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
 //                        POST /main/eval, to keep it in the profile of the brain serving now. Nothing else runs.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { join, resolve, relative, isAbsolute, basename } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import http from 'node:http';
 import https from 'node:https';
@@ -70,6 +101,7 @@ const mask = (v, key = '') => (typeof v === 'string' ? (SECRET_FIELD.test(key.re
 const STORE = arg('store', null), CONSOLE = String(arg('console', 'https://akspark2.tailab9aa9.ts.net:8443/console/api')).replace(/\/$/, '');
 if (STORE) {
   const record = JSON.parse(readFileSync(STORE, 'utf8')), origin = arg('origin', new URL(CONSOLE).origin);
+  if (record?.memorySwitches?.off?.length) { console.error(`Not kept: that run had memory additions switched off (${record.memorySwitches.off.join(', ')}), so it measures them, not this build as it runs. Its results file has it.`); process.exit(1); }
   const r = await fetch(`${CONSOLE}/main/eval`, { method: 'POST', signal: AbortSignal.timeout(30000), headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin }, body: JSON.stringify(record) })
     .catch(e => { console.error(`Spark Console doesn’t answer at ${CONSOLE} (${e.cause?.code || e.message}).`); process.exit(1); });
   const text = await r.text();
@@ -91,27 +123,130 @@ const SETUP = arg('setup', null);
 // The tools offered a round (R46): a number, or "all"; without it, the service's own cap.
 const CAP = arg('cap', null);
 if (CAP !== null && !/^(?:all|\d{1,3})$/.test(CAP)) { console.error('--cap takes a number or "all".'); process.exit(1); }
+// Memory additions switched off for the run (design G 3); a feature reads its name in SPARK_CONSOLE_MEMORY_OFF.
+const MEMORY_SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
+const OFF = String(arg('memory-off', '')).split(',').map(s => s.trim()).filter(Boolean);
+if (OFF.some(s => !MEMORY_SWITCHES.includes(s))) { console.error(`--memory-off takes a list of: ${MEMORY_SWITCHES.join(', ')}.`); process.exit(1); }
 const TREE = arg('tree', null) ? resolve(arg('tree')) : null;
 if (TREE && !existsSync(join(TREE, 'test', 'start-mock.mjs'))) { console.error(`--tree ${TREE}: no test/start-mock.mjs there.`); process.exit(1); }
 const { startMock } = await import(TREE ? pathToFileURL(join(TREE, 'test', 'start-mock.mjs')).href : './start-mock.mjs');
 const ONLY = arg('only', null)?.split(',');
-const CASES_FILE = resolve(arg('cases', join(TEST_DIR, 'eval', 'cases.json'))), CASES_BYTES = readFileSync(CASES_FILE);
-const SET = createHash('sha256').update(CASES_BYTES).digest('hex'), ALL = JSON.parse(CASES_BYTES).length;
-const cases = JSON.parse(CASES_BYTES).filter(c => !ONLY || ONLY.includes(c.id));
+const SET_NAME = arg('set', null);
+if (SET_NAME !== null && (!/^[a-z][a-z0-9-]{0,40}$/.test(SET_NAME) || arg('cases', null))) { console.error('--set takes the name of a case file in test/eval/ (--set memory), and not with --cases.'); process.exit(1); }
+const CASES_FILE = resolve(arg('cases', join(TEST_DIR, 'eval', `${SET_NAME || 'cases'}.json`)));
+if (!existsSync(CASES_FILE)) { console.error(`No case file at ${CASES_FILE}.`); process.exit(1); }
+const CASES_BYTES = readFileSync(CASES_FILE);
+// The case file as the record names it: its path in this tree, or its name alone (no folder of this machine).
+const SET_FILE = (p => (p.startsWith('..') || isAbsolute(p) ? basename(CASES_FILE) : p))(relative(join(TEST_DIR, '..'), CASES_FILE));
+// A case file is a list of cases, or {about, cases}: the memory questions say what they are in their own file.
+const CASE_LIST = (j => (Array.isArray(j) ? j : j?.cases))(JSON.parse(CASES_BYTES));
+if (!Array.isArray(CASE_LIST)) { console.error(`${SET_FILE}: not a list of cases, nor {about, cases}.`); process.exit(1); }
+const SET = createHash('sha256').update(CASES_BYTES).digest('hex'), ALL = CASE_LIST.length;
+const cases = CASE_LIST.filter(c => !ONLY || ONLY.includes(c.id));
+// A seeded date: an ISO date, "-20d", "-3h", "-15m" before now, "last-month" (its 15th, at noon) or "last-tuesday" (that
+// day of last week, at 10:00), on this machine's calendar, which the stand-in console shares; null when it is none.
+const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+function when(at, now = Date.now()) {
+  const m = /^-(\d{1,5})([dhm])$/.exec(String(at));
+  if (m) return new Date(now - Number(m[1]) * { d: 86400000, h: 3600000, m: 60000 }[m[2]]).toISOString();
+  const d = new Date(now), last = /^last-([a-z]+)$/.exec(String(at))?.[1];
+  if (last === 'month') return new Date(d.getFullYear(), d.getMonth() - 1, 15, 12).toISOString();
+  if (WEEKDAYS.includes(last)) return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7) - 7 + WEEKDAYS.indexOf(last), 10).toISOString();
+  const t = Date.parse(at);
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+// What is wrong with a case's fields, said as what they take; null when they fit. Checked before anything starts.
+const listOf = (v, ok) => v === undefined || (Array.isArray(v) && v.every(ok));
+const filled = w => typeof w === 'string' && Boolean(w.trim());
+const seedLineOk = l => filled(l?.text) && [l.at, l.until, l.gone?.at].every(x => x === undefined || when(x));
+const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id and say'
+  : !listOf(c.before, b => filled(b) || (Array.isArray(b) && b.length > 0 && b.every(filled))) ? 'before: a list of messages (each a message, or a list of messages for one chat)'
+  : !listOf(c.has, filled) || !listOf(c.hasNot, filled) || !listOf(c.answerHas, filled) || !listOf(c.answerHasNot, filled) ? 'has, hasNot, answerHas and answerHasNot: lists of words'
+  : c.switch !== undefined && !MEMORY_SWITCHES.includes(c.switch) ? `switch: one of ${MEMORY_SWITCHES.join(', ')}`
+  : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
+    || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
+    || !listOf(c.seed.proven, v => filled(v?.model) && filled(v?.engine) && Array.isArray(v.nodes) && (v.at === undefined || when(v.at)))
+    || !listOf(c.seed.events, e => filled(e?.type) && (e.at === undefined || when(e.at)) && (e.errorLines === undefined
+      || (Number.isInteger(e.errorLines.count) && e.errorLines.count > 0 && e.errorLines.count <= 100000 && filled(e.errorLines.each))))
+    || !listOf(c.seed.lessons, l => /^l_[0-9a-f]{8}$/.test(String(l?.id)) && [l.firstAt, l.lastAt].every(x => x === undefined || when(x)))
+    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], lessons: [{id: l_…, …}], events: [{type, at?, errorLines?}], newer: N and unreadable'
+    : c.as !== undefined && c.as !== 'agent' ? 'as: "agent" (one of the owner\'s agents asks), or left out (the owner)'
+    : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
+for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
+
+// Before the console starts: the case's memory lines (memory.json, in the state folder), its journal records (the
+// journal folder beside it), and, with --stand-in, its rules for the stand-in brain (model-script.json).
+function seedCase(c, stateDir) {
+  const dir = join(stateDir, '..'), now = Date.now(), at = x => when(x, now) || new Date(now).toISOString();
+  if (c.standIn && STAND_IN) writeFileSync(join(dir, 'model-script.json'), JSON.stringify(c.standIn));
+  // (a line's day, as memory keeps an end: this machine's date)
+  const day = x => { if (/^\d{4}-\d\d-\d\d$/.test(x)) return x; const t = new Date(at(x)); return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const line = (l, i, from = 'm') => ({ id: l.id || createHash('sha256').update(`${c.id}:${from}${i}:${l.text}`).digest('hex').slice(0, 8),
+    kind: l.kind || 'fact', text: l.text, by: l.by || 'owner', at: at(l.at), src: { via: 'sparkie' }, ...(l.until ? { until: day(l.until) } : {}), ...(l.replaces ? { replaces: l.replaces } : {}) });
+  // (newer: made-up lines about nothing a question names, after the case's own, so its own are the oldest)
+  const lines = [...(c.seed?.memory || []).map((l, i) => line(l, i)), ...Array.from({ length: c.seed?.newer || 0 }, (_, i) => line({ text: NEWER_LINE(i + 1), at: '-1d' }, i, 'n'))];
+  if (c.seed?.unreadable) mkdirSync(join(stateDir, 'memory.json'));
+  else if (lines.length) writeFileSync(join(stateDir, 'memory.json'), JSON.stringify({ entries: lines }), { mode: 0o600 });
+  const past = (c.seed?.past || []).map((l, i) => ({ ...line(l, i, 'p'), gone: { at: at(l.gone?.at), why: l.gone?.why || 'replaced', who: 'owner', ...(l.gone?.by ? { by: l.gone.by } : {}) } }));
+  if (past.length) writeFileSync(join(stateDir, 'memory-past.json'), JSON.stringify({ past }), { mode: 0o600 });
+  const proven = (c.seed?.proven || []).map((v, i) => ({ key: `seeded-${c.id}-${i}`, model: v.model, repo: null, title: v.title || v.model, engine: v.engine, image: v.image || null,
+    args: [], env: {}, sparks: v.nodes.length, nodes: v.nodes, firstAt: at(v.at), lastAt: at(v.at), runs: v.runs || 1, ...(v.best ? { best: v.best } : {}) }));
+  if (proven.length) writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: proven }), { mode: 0o600 });
+  // (lessons as Spark Console writes them, lessons.json, newest first; firstAt and lastAt may be dates as above)
+  const lessons = (c.seed?.lessons || []).map(l => ({ ...l, firstAt: at(l.firstAt ?? l.lastAt), lastAt: at(l.lastAt ?? l.firstAt) })).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  if (lessons.length) writeFileSync(join(stateDir, 'lessons.json'), JSON.stringify({ lessons }), { mode: 0o600 });
+  // (fleet events, events.jsonl; errorLines makes a long error: count lines of each, "{n}" its number, put by number)
+  const events = (c.seed?.events || []).map(({ errorLines: e, ...ev }) => ({ ...ev, at: at(ev.at),
+    ...(e ? { error: Array.from({ length: e.count }, (_, i) => e.put?.[i + 1] ?? e.each.replaceAll('{n}', String(i + 1))).join('\n') } : {}) }));
+  if (events.length) writeFileSync(join(stateDir, 'events.jsonl'), events.map(e => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+  for (const r of c.seed?.journal || []) {
+    const t = at(r.at), folder = join(dir, 'journal');
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    appendFileSync(join(folder, `journal-${t.slice(0, 7)}.jsonl`), `${JSON.stringify({ id: `j_${randomBytes(6).toString('hex')}`, ...r, at: t })}\n`, { mode: 0o600 });
+  }
+}
+// "$record" in a case's stand-in rules is the record of the last digest the brain was sent (a long result, kept whole in
+// the journal): the relay fills it in before the stand-in reads its rules again, so its next call can be recall {id,
+// find}. With no digest sent (the switch digest off) it stays "$record", and that call is refused.
+function fillRecord(c, stateDir, msgs) {
+  const record = msgs.filter(m => m?.role === 'tool').map(m => { try { return JSON.parse(m.content)?.record; } catch { return null; } }).filter(x => /^j_[0-9a-f]{12}$/.test(String(x))).at(-1);
+  if (record) writeFileSync(join(stateDir, '..', 'model-script.json'), JSON.stringify(c.standIn).replaceAll('"$record"', JSON.stringify(record)));
+}
+// A made-up line for seed.newer: about a hallway clock, so no question's names or rare words are in it.
+const NEWER_LINE = n => `note ${n}: the hallway clock ran ${n} minutes fast after the storm, so the kitchen timer was set by hand again`;
+// A case one of the owner's agents asks (as: "agent"): ask_sparkie over the agent door with that agent's key, and its
+// answer as a turn's end (done, or error when it did not answer).
+async function askAsAgent(mcp, token, words) {
+  const res = await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask_sparkie', arguments: { message: words } } }) });
+  const text = await res.text();
+  let a = null;
+  try { a = JSON.parse(JSON.parse(text).result.content.find(x => x.type === 'text').text); } catch {}
+  return { status: res.status, text, chat: a?.conversation ?? null, done: a?.status === 'answered'
+    ? { type: 'done', message: { content: a.reply || '', tools: (a.looked || []).map(name => ({ name })), choices: a.choices || [] } }
+    : { type: 'error', message: { error: String(a?.error || a?.status || `HTTP ${res.status}: ${text.slice(0, 200)}`) } } };
+}
+// A turn's end, from its event stream: done or error.
+const turnEnd = text => text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
+
 const CHANGES = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'keep_running'];
 
 // A relay on this machine in front of the brain, one for each run: every request passes unchanged, and the requests
-// whose user message holds the case's words (one for each round of that turn) are counted.
-async function relay(target, words) {
+// whose user message holds the case's words (one for each round of that turn) are counted, and their messages kept for
+// has and hasNot.
+async function relay(target, words, onTurn = null) {
   const u = new URL(target), lib = u.protocol === 'https:' ? https : http, base = u.pathname.replace(/\/$/, '');
-  let rounds = 0;
+  let rounds = 0, seen = [];
   const server = http.createServer((req, res) => {
     const parts = [];
     req.on('data', d => parts.push(d));
     req.on('end', () => {
       const body = Buffer.concat(parts);
       if (req.method === 'POST' && /\/chat\/completions$/.test(req.url)) {
-        try { if (JSON.parse(body).messages?.some(m => m?.role === 'user' && String(m.content).includes(words))) rounds++; } catch {}
+        try {
+          const msgs = JSON.parse(body).messages;
+          if (msgs?.some(m => m?.role === 'user' && String(m.content).includes(words))) { rounds++; seen.push(msgs.map(m => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))).join('\n')); onTurn?.(msgs); }
+        } catch {}
       }
       const up = lib.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: `${base}${req.url}`, method: req.method,
         headers: { 'content-type': req.headers['content-type'] || 'application/json', 'content-length': body.length } }, r => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
@@ -121,7 +256,7 @@ async function relay(target, words) {
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   server.unref();
-  return { port: server.address().port, rounds: () => rounds, close: () => { server.closeAllConnections?.(); server.close(); } };
+  return { port: server.address().port, rounds: () => rounds, seen: () => seen, reset: () => { rounds = 0; seen = []; }, close: () => { server.closeAllConnections?.(); server.close(); } };
 }
 
 // The brain has to answer before anything is scored: a chat that fails changes nothing, which would look like a pass.
@@ -151,7 +286,7 @@ let BRAIN_SEEN = null;
 async function runCase(c) {
   let link = null, setup = null;
   const fleet = await startMock({
-    watchMs: 60000, statusMs: 5000, knowledge: true, env: CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {},
+    watchMs: 60000, statusMs: 5000, knowledge: true, env: { ...(CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {}), ...(OFF.length ? { SPARK_CONSOLE_MEMORY_OFF: OFF.join(',') } : {}) },
     // Sparkie's model is the real one (or the stand-in's), through the relay; everything else is the practice fleet.
     prepare: async ({ stateDir, root }) => {
       // An app on Spark 3 that isn't running (keep-app: keeping it running starts it).
@@ -164,10 +299,11 @@ async function runCase(c) {
         m.current = SETUP;
       }
       link?.close();
-      link = await relay(STAND_IN ? `http://127.0.0.1:${m.presets[m.current].port}` : BRAIN, c.say);
+      link = await relay(STAND_IN ? `http://127.0.0.1:${m.presets[m.current].port}` : BRAIN, c.say, STAND_IN && JSON.stringify(c.standIn || []).includes('"$record"') ? msgs => fillRecord(c, stateDir, msgs) : null);
       for (const p of Object.values(m.presets)) p.port = link.port;
       setup = { id: m.current, ...m.presets[m.current] };
       writeFileSync(f, JSON.stringify(m));
+      seedCase(c, stateDir);
     },
   });
   try {
@@ -175,11 +311,25 @@ async function runCase(c) {
       const r = await fetch(`${fleet.base}${path}`, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin }, body: body ? JSON.stringify(body) : undefined });
       return { status: r.status, text: await r.text() };
     };
-    const chat = JSON.parse((await api('/chats', {})).text).id;
+    // Earlier chats first (before), each turn to its end; one that fails makes the run no result, as the case's own would.
+    for (const said of (c.before || []).map(b => (Array.isArray(b) ? b : [b]))) {
+      const earlier = JSON.parse((await api('/chats', {})).text).id;
+      for (const text of said) {
+        const b = await api(`/chats/${earlier}/messages`, { text }), end = turnEnd(b.text);
+        if (b.status !== 200 || !end || end.type === 'error' || end.message?.error) {
+          const error = `an earlier chat (before) failed: ${String(end?.message?.error || end?.error || `HTTP ${b.status}`).slice(0, 200)}`;
+          return { pass: false, why: error, wrong: 0, asked: false, ms: 0, error, broken: true };
+        }
+      }
+    }
+    link.reset();
+    // (as: "agent": one of the owner's agents asks, with a key of its own, over the agent door: its own chat)
+    const agentToken = c.as === 'agent' ? JSON.parse((await api('/agents', { name: `eval ${c.id}`.slice(0, 60) })).text).token : null;
+    const chat = agentToken ? null : JSON.parse((await api('/chats', {})).text).id;
     const t0 = Date.now();
-    const r = await api(`/chats/${chat}/messages`, { text: c.say });
-    const ms = Date.now() - t0, rounds = link.rounds();
-    const done = r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
+    const r = agentToken ? await askAsAgent(fleet.mcp, agentToken, c.say) : await api(`/chats/${chat}/messages`, { text: c.say });
+    const ms = Date.now() - t0, rounds = link.rounds(), sent = link.seen().join('\n').toLowerCase();
+    const done = r.done || r.text.split('\n\n').map(b => b.trim()).filter(b => b.startsWith('data:')).map(b => JSON.parse(b.slice(5))).find(e => e.type === 'done' || e.type === 'error');
     // The chat itself failed (the brain didn't answer, say): not a result, whatever the case expected.
     if (r.status !== 200 || !done || done.type === 'error' || done.message?.error) {
       const error = String(done?.message?.error || done?.message || done?.error || `HTTP ${r.status}: ${r.text.slice(0, 200)}`).slice(0, 300);
@@ -194,7 +344,7 @@ async function runCase(c) {
         engine: inUse?.engine || setup.engine || null, image: inUse?.image || setup.image || null, flags: (inUse?.flags || setup.args || []).map(String) };
     }
     const msg = done.message || {};
-    const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.chat === chat) : [];
+    const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.chat === (chat ?? r.chat)) : [];
     const changed = audit.filter(l => CHANGES.includes(l.action) && l.ok && l.outcome === 'started');
     const asked = (msg.choices || []).length > 0;
     const used = (msg.tools || []).map(t => t.name);
@@ -214,10 +364,26 @@ async function runCase(c) {
         && (!c.usesEach || c.usesEach.every(list => list.some(u => used.includes(u)))) && (!c.noUnverified || !(msg.unverified || []).length);
       why = pass ? '' : `tools ${JSON.stringify(used)}, unverified ${JSON.stringify(msg.unverified || [])}${changed.length ? ', and it changed something' : ''}`;
     }
+    // What the brain's requests for this turn held (has, hasNot): any round, any message, capitals or not.
+    const missing = (c.has || []).filter(w => !sent.includes(w.toLowerCase())), unwanted = (c.hasNot || []).filter(w => sent.includes(w.toLowerCase()));
+    if (missing.length || unwanted.length) {
+      pass = false;
+      why = [why, missing.length ? `the brain’s requests lacked ${JSON.stringify(missing)}` : '', unwanted.length ? `the brain’s requests held ${JSON.stringify(unwanted)}` : ''].filter(Boolean).join('; ');
+    }
     const wrong = changed.filter(l => !(c.expect === 'act' && l.action === c.action));
     // (what the record keeps of this run: the grade's evidence, never the answer's words)
     const kept = { passed: pass, rounds, seconds: Math.round(ms / 100) / 10, called: used.map(n => (/^[a-z][a-z0-9_]{0,63}$/.test(n) ? n : '(not a tool name)')),
       changed: changed.map(l => ({ action: l.action, args: l.args ?? null })), asked, wrong: wrong.length, unverified: (msg.unverified || []).length };
+    if (c.has) kept.missing = missing;
+    if (c.hasNot) kept.unwanted = unwanted;
+    // What the answer says (answerHas, answerHasNot), graded apart from what the brain was sent.
+    const said = String(msg.content || '').toLowerCase();
+    if (c.answerHas) kept.answerMissing = c.answerHas.filter(w => !said.includes(w.toLowerCase()));
+    if (c.answerHasNot) kept.answerUnwanted = c.answerHasNot.filter(w => said.includes(w.toLowerCase()));
+    if (kept.answerMissing?.length || kept.answerUnwanted?.length) {
+      kept.passed = pass = false;
+      why = [why, kept.answerMissing?.length ? `the answer lacked ${JSON.stringify(kept.answerMissing)}` : '', kept.answerUnwanted?.length ? `the answer held ${JSON.stringify(kept.answerUnwanted)}` : ''].filter(Boolean).join('; ');
+    }
     return { pass, why, wrong: wrong.length, asked, ms, error: msg.error || null, kept };
   } finally { await fleet.stop(); link?.close(); }
 }
@@ -227,7 +393,7 @@ for (const c of cases) {
   const runs = [];
   for (let i = 0; i < RUNS; i++) runs.push(await runCase(c));
   const passed = runs.filter(r => r.pass).length;
-  results.push({ id: c.id, expect: c.expect, passed, runs: RUNS, wrong: runs.reduce((t, r) => t + r.wrong, 0), asked: runs.filter(r => r.asked).length, why: runs.filter(r => !r.pass).map(r => r.why || r.error), broken: runs.filter(r => r.broken).length, p95ms: runs.map(r => r.ms).sort((a, b) => a - b)[Math.ceil(0.95 * runs.length) - 1], kept: runs.map(r => r.kept) });
+  results.push({ id: c.id, expect: c.expect, ...(c.kind ? { kind: c.kind } : {}), ...(c.switch ? { switch: c.switch } : {}), passed, runs: RUNS, wrong: runs.reduce((t, r) => t + r.wrong, 0), asked: runs.filter(r => r.asked).length, why: runs.filter(r => !r.pass).map(r => r.why || r.error), broken: runs.filter(r => r.broken).length, p95ms: runs.map(r => r.ms).sort((a, b) => a - b)[Math.ceil(0.95 * runs.length) - 1], kept: runs.map(r => r.kept) });
   const last = results[results.length - 1];
   console.log(`${last.passed === RUNS ? 'pass' : 'FAIL'}  ${c.id.padEnd(18)} ${last.passed}/${RUNS}${last.wrong ? `  WRONG CHANGES: ${last.wrong}` : ''}${last.why.length ? `  ${last.why[0]}` : ''}`);
 }
@@ -236,6 +402,17 @@ if (broken) {
   console.error(`\n${broken} run(s) failed because the chat itself failed (see "the chat failed" above), so this isn't a score. Nothing was saved.`);
   process.exit(1);
 }
+// By case and by kind (the memory questions): runs passed, and a run's rounds and seconds (the mean of its runs).
+if (results.some(r => r.kind)) {
+  const mean = (xs, k) => (xs.length ? Math.round((xs.reduce((t, x) => t + (x?.[k] || 0), 0) / xs.length) * 10) / 10 : 0);
+  console.log('\nBy case: runs passed, rounds and seconds (the mean of its runs).');
+  for (const r of results) console.log(`  ${r.id.padEnd(30)} ${String(r.kind || '').padEnd(16)} ${String(r.switch || '').padEnd(7)} ${r.passed}/${RUNS}  ${mean(r.kept, 'rounds')} rounds  ${mean(r.kept, 'seconds')} s`);
+  console.log('By kind:');
+  for (const kind of [...new Set(results.map(r => r.kind || '(no kind)'))]) {
+    const of = results.filter(r => (r.kind || '(no kind)') === kind), runs = of.flatMap(r => r.kept);
+    console.log(`  ${kind.padEnd(16)} ${of.reduce((t, r) => t + r.passed, 0)}/${of.length * RUNS} runs passed  ${mean(runs, 'rounds')} rounds  ${mean(runs, 'seconds')} s`);
+  }
+}
 const once = results.reduce((t, r) => t + r.passed, 0) / (results.length * RUNS), all3 = results.filter(r => r.passed === RUNS).length / results.length;
 const wrong = results.reduce((t, r) => t + r.wrong, 0);
 // Clear requests (act, answer) shouldn't get a question: at most 5% of their runs may (10.1).
@@ -243,15 +420,15 @@ const clear = results.filter(r => ['act', 'answer'].includes(r.expect)), askedOn
 // The bar is judged only on every case, 3 runs each; anything less is a partial run, saved apart.
 const FULL = results.length === ALL && RUNS >= 3, met = once >= 0.95 && all3 >= 0.9 && !wrong && askedOnClear <= 0.05;
 const record = mask({ kind: 'spark-console-eval', at: new Date().toISOString(), startedAt: STARTED, build: MARK.build, reads: MARK.reads, ...(MARK.reads ? {} : { readsWhy: MARK.readsWhy }),
-  set: SET, setCases: ALL, cap: CAP, brain: BRAIN_SEEN, runs: RUNS, full: FULL,
+  set: SET, setFile: SET_FILE, setCases: ALL, cap: CAP, memorySwitches: { on: MEMORY_SWITCHES.filter(s => !OFF.includes(s)), off: OFF }, brain: BRAIN_SEEN, runs: RUNS, full: FULL,
   score: { passOnce: once, passAllRuns: all3, wrongChanges: wrong, askedOnClear, met: FULL ? met : null },
-  cases: results.map(r => ({ id: r.id, expect: r.expect, passed: r.passed, runs: r.kept })) });
-const file = resolve(arg('out', join(TEST_DIR, 'eval', `results-${record.at.slice(0, 10)}-${MARK.build}${CAP ? `-cap-${CAP}` : ''}${FULL ? '' : '-partial'}.json`)));
+  cases: results.map(r => ({ id: r.id, expect: r.expect, ...(r.kind ? { kind: r.kind } : {}), ...(r.switch ? { switch: r.switch } : {}), passed: r.passed, runs: r.kept })) });
+const file = resolve(arg('out', join(TEST_DIR, 'eval', `results-${record.at.slice(0, 10)}-${MARK.build}${CAP ? `-cap-${CAP}` : ''}${SET_NAME ? `-${SET_NAME}` : ''}${OFF.length ? `-off-${OFF.join('+')}` : ''}${FULL ? '' : '-partial'}.json`)));
 writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
 console.log(`\n${(once * 100).toFixed(0)}% passed per run, ${(all3 * 100).toFixed(0)}% passed all ${RUNS} runs, ${wrong} wrong changes.`);
 console.log(`Questions on clear requests: ${(askedOnClear * 100).toFixed(0)}% (at most 5%).`);
 console.log(FULL ? `The bar (10.1): 95% per run, 90% all runs, zero wrong changes, ≤5% questions on clear requests: ${met ? 'MET' : 'not met yet'}. Saved ${file}`
   : `A partial run (${results.length} of ${ALL} cases, ${RUNS} run${RUNS === 1 ? '' : 's'} each): not the bar, which needs every case 3 times. Saved ${file}`);
-console.log(`Build ${MARK.build}, what its brain reads ${MARK.reads ? MARK.reads.slice(0, 12) : 'not known'}, case set ${SET.slice(0, 12)}, ${STAND_IN ? 'the stand-in brain' : `the brain at ${BRAIN_URL || BRAIN}`}.`
-  + (STAND_IN || CAP || !MARK.reads ? '' : ` Once this build is installed, keep it with the brain's profile: node test/eval.mjs --store ${file}`));
+console.log(`Build ${MARK.build}, what its brain reads ${MARK.reads ? MARK.reads.slice(0, 12) : 'not known'}, case set ${SET_FILE} (${SET.slice(0, 12)})${OFF.length ? `, memory additions off: ${OFF.join(', ')}` : ''}, ${STAND_IN ? 'the stand-in brain' : `the brain at ${BRAIN_URL || BRAIN}`}.`
+  + (STAND_IN || CAP || OFF.length || !MARK.reads ? '' : ` Once this build is installed, keep it with the brain's profile: node test/eval.mjs --store ${file}`));
 process.exit(wrong ? 2 : 0);

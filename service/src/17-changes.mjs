@@ -18,7 +18,8 @@
 // Spark Console off. Anything that could lock the owner out isn't something an agent can even ask for.
 const HEADROOM = 8 * 2 ** 30;
 const SETTINGS_FILE = `${STATE_DIR}/agent-settings.json`;
-// The owner's two switches (Access → Agents): pause every agent's changes; restart crashed models by themselves.
+// The owner's two switches (the account menu's Agents and Telegram): pause every agent's changes; restart crashed models
+// by themselves.
 function agentSettings() {
   const v = readJson(SETTINGS_FILE);
   // Unreadable (not just missing): treat it as paused, never as "go ahead".
@@ -70,7 +71,9 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   const shown = choices.slice(0, 4).map(c => {
     if (!c.call && !ctx.conv) return { label: c.label, choice: null };
     const id = randomBytes(5).toString('hex');
-    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation });
+    // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
+    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
@@ -78,6 +81,8 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
+  // In one of the owner's own chats it is also asked in the paired Telegram chat (20-tg-approve.mjs, A10a).
+  if (ownerOnly && ctx.conv) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),
@@ -95,8 +100,12 @@ function changeLabel(name, input) {
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
-  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”`;
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
+  if (name === 'compare_models') {
+    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
+  }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
@@ -169,19 +178,21 @@ function railsFor(p, f, allowStop) {
 }
 // What a model on disk would run with, from its own spark.json: for an agent's start it has to be as safe as a recipe.
 const inRecipes = m => recipeCatalog().models.some(r => r.variants.some(v => onDiskAs(m, v.repo)));
+// Its refusal is read by agents and Sparkie, so it quotes nothing a change could have written into the folder as words:
+// flag names (40 characters at most), setting names shaped like one, an image name shaped like one.
 function agentSafeSetup(m) {
   const args = Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [];
   const own = args.filter(a => a.startsWith('-') && dig.OWN.has(dig.flagKey(a.split('=')[0])));
-  if (own.length) return `its spark.json sets flags Spark Console sets itself (${own.join(', ')}); the owner can start it from Deploy`;
+  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it from Deploy`;
   if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, from Spark Console’s Deploy`;
   const flags = dig.cleanFlags(args, m.repo || m.name);
-  if (flags.problems.length) return `its spark.json ${flags.problems[0]}; the owner can start it from Deploy`;
+  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it from Deploy`;
   const env = { ...(m.manifest?.env || {}), ...(m.manifest?.cluster?.env || {}) }, cleaned = dig.cleanEnv(env);
-  const dropped = Object.keys(env).filter(k => !(k in cleaned));
-  if (dropped.length) return `its spark.json sets ${dropped.join(', ')}; the owner can start it from Deploy`;
+  const dropped = Object.keys(env).filter(k => !(k in cleaned)), named = dropped.filter(k => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k));
+  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it from Deploy`;
   const image = m.manifest?.image;
   if (image && !(String(image).includes('@sha256:') && (CONFIG.imageSources || []).some(p => String(image).startsWith(p)))) {
-    return `its spark.json names its own image (${image}), which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
+    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
   }
   return null;
 }
@@ -193,7 +204,7 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
   if (sparks && !inRecipes(m)) return { ok: false, why: `${m.repo || m.name} isn’t in Recipes, and only models from Recipes run across two Sparks` };
   if (sparks) {
     const link = (lastCheck?.pairs || []).find(p => sparks.includes(p.a) && sparks.includes(p.b))?.fastLink || 'not tested';
-    if (link !== 'full') return { ok: false, why: `the ${sparks.join('–')} cable is “${link}”; it has to pass the connection test first (Clusters → Test connections)` };
+    if (link !== 'full') return { ok: false, why: `the ${sparks.join('–')} cable is “${link}”; it has to pass the cable check first (Check cables, on a Spark’s Checks tab)` };
     const cp = await clusterPlan(m.name, sparks, viewer, inv);
     const parts = cp.members.map(x => ({ x, r: railsFor({ node: x.node, steps: x.steps }, { fits: x.fits, stop: x.stop, spare: x.spare, unknown: !Number.isFinite(x.memory.available) }, allowStop) }));
     const bad = parts.find(y => !y.r.ok);
@@ -226,22 +237,39 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
 }
 
 // The setup to run it with: the fastest run that worked here before, else the best one-click setup, else defaults.
-function bestHow(m, sparks, viewer, library) {
+// over(how): true passes that one over (B3, bestHowNow); free: the least free memory on its Sparks now (fullContext).
+function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) {
   const runs = verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === sparks && (v.source !== 'seen' || v.approved === true))
     .sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
   const setups = recipeCatalog().models.flatMap(r => r.setups || []).filter(s => s.deployable !== false && s.sparks === sparks && m.repo && sameRepo(s.repo, m.repo) && s.source?.kind !== 'forum')
     .sort((a, b) => (CREDIBILITY[a.credibility] ?? 3) - (CREDIBILITY[b.credibility] ?? 3) || (b.perf?.decodeTokS || 0) - (a.perf?.decodeTokS || 0));
   const tryHow = body => { try { const how = resolveHow(body, viewer, m.name, sparks, library); return how && !dig.remoteCode(how.args) ? how : null; } catch { return null; } };
+  const ok = how => Boolean(how) && !over?.(how);
   // Ordinary runs first; then the brain's proven run, made ordinary (its draft model and stretched context are Spark
   // 2's); then Recipes' one-click setups. The brain runs on one Spark; across two, the same engine and settings split
   // the model over the cable (the start adds its own two-Spark flags), which beats the engine's defaults: those
   // couldn't start the brain's hybrid Qwen at all (2026-11-08).
-  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = tryHow({ verified: v.key }); if (how) return how; }
+  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = fullContext(tryHow({ verified: v.key }), v, free); if (ok(how)) return how; }
   const brainRuns = sparks === 1 ? runs : verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === 1 && (v.source !== 'seen' || v.approved === true)
     && ['sglang', 'vllm'].includes(v.engine)).sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
-  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (how) return how; }
-  for (const s of setups) { const how = tryHow({ setup: s.id }); if (how) return how; }
+  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (ok(how)) return how; }
+  for (const s of setups) { const how = tryHow({ setup: s.id }); if (ok(how)) return how; }
   return null;
+}
+// A run that worked only once its context was cut to fit (out of memory: startWithFixes notes the free memory then, and
+// recordVerified keeps it as contextCut) isn't locked into the shorter context: when its Sparks have more free memory
+// now, by the 8 GB kept free and more, it goes first with its full context (its setup's own, or the engine's). If that
+// runs out of memory, the start cuts it again, and the new figure is kept.
+function fullContext(how, v, free) {
+  const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
+  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+}
+// The least free memory on these Sparks right now, or null when one can't be read.
+async function freeOn(ids) {
+  const mem = await Promise.all(ids.map(id => memNow(nodeById(id)).catch(() => null)));
+  return mem.every(x => Number.isFinite(x?.available)) ? Math.min(...mem.map(x => x.available)) : null;
 }
 
 // Starts the model where placed; if it fails, stops the new parts and starts again what it stopped.
@@ -339,6 +367,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
+  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -355,6 +384,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      // (the context first cut to fit: the free memory then goes with the run that works, recordVerified's contextCut)
+      if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
         if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
@@ -422,7 +453,7 @@ async function resolveModelName(name, inv) {
 // Spark isn't chosen; a repo from outside Recipes only goes on one Spark.
 async function pickVersion(recipe, repo, viewer, outside, only = null) {
   const status = await statusFor(viewer, false);
-  const online = status.nodes.filter(n => n.state === 'online' && canUse(viewer, n.id) && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
+  const online = status.nodes.filter(n => n.state === 'online' && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
   const free = id => gbOfGiB(online.find(n => n.id === id)?.memoryFreeGiB) ?? 0, disk = id => gbOfGiB(online.find(n => n.id === id)?.diskFreeGiB) ?? 0;
   const pairs = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.some(n => n.id === p.a) && online.some(n => n.id === p.b));
   const versions = recipe.variants.filter(v => (!repo || sameRepo(v.repo, repo)) && v.needGB != null && v.sizeGB != null && (v.sparks ?? 1) <= (outside ? 1 : 2))
@@ -493,7 +524,7 @@ async function startModel(args, viewer, ctx) {
   // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
   const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
-  for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
+  mustUse(viewer);
   if (!ctx.poweredOn) {
     // (a Spark being turned on for this very model: that operation, not a second one)
     const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
@@ -565,12 +596,16 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ]);
     }
-    const how = setup ? resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library) : bestHow(m, placed.two ? 2 : 1, viewer, inv.library);
+    // (a setup that failed twice the same known way is passed over, and the result says so: B3, 20-lessons.mjs)
+    const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library), passed: [] } : bestHowNow(m, placed, viewer, inv, (across || ctx).workflowVersion, args.tryPassedOver === true);
+    const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
+    if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
-    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
+    for (const line of passedOver) note(job, line);
+    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };
   }
   // Not on disk yet: download the best version that fits now, then start it, in one operation. Never for a call at the
@@ -589,7 +624,7 @@ async function startModel(args, viewer, ctx) {
   if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
   if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
-  mustUse(viewer, pick.nodes);
+  mustUse(viewer);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
   const going = startingNow([v.repo, found.repo], spark ? [spark] : sparks);
   if (going) return alreadyStarting(going, v.repo);
@@ -621,7 +656,9 @@ async function startModel(args, viewer, ctx) {
     }
     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
     await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
-    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
+    const best = bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true), how = best.how;
+    if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
+    for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
     const release = claimSparks(placed.nodes, `starting ${v.repo}`);
     try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
@@ -663,7 +700,7 @@ action({
     sparkOf(viewer, spark);
     const dep = (await inventory(null)).sparks.find(sp => sp.id === spark)?.deployments.find(d => d.container === container);
     if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}. Only those can be stopped this way; running_models lists them.`);
-    if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model is started and stopped by the owner, on Models.');
+    if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model is started and stopped by the owner, with /main/start and /main/stop.');
     const label = await run(nodeById(spark), `docker inspect -f '{{index .Config.Labels "spark.protect"}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
     if (isProtected(container, label.out.trim())) throw new HttpError(403, `${container} is protected.`);
     if (dep.state !== 'running') return { outcome: 'already', note: `${container} isn’t running.` };
@@ -694,7 +731,7 @@ async function stoppedForSure(job, spark, container) {
 async function restartChecked(viewer, ctx, spark, container) {
   const inv = await inventory(null), sp = inv.sparks.find(x => x.id === spark), dep = sp?.deployments.find(d => d.container === container);
   if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}.`);
-  if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model restarts by itself; the owner manages it on Models.');
+  if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model restarts by itself; the owner starts and stops it with /main/start and /main/stop.');
   if (dep.cluster) throw new HttpError(409, 'It runs across two Sparks; use start_model to start it again.');
   if (dep.state === 'running') return null;
   notBrainsSpark([spark]);
@@ -764,7 +801,7 @@ action({
     const { spark, container } = input.choice ? redeemChoice(viewer, ctx, 'restart_model', input.choice) : input;
     if (!spark || !container) throw new HttpError(400, 'Missing argument: spark and container.');
     sparkOf(viewer, spark);
-    mustUse(viewer, [spark]);
+    mustUse(viewer);
     const job = await restartChecked(viewer, ctx, spark, container);
     if (!job) return { outcome: 'already', note: `${container} is running.` };
     return { outcome: 'started', operation: job.id, restarting: container, next: `wait_operation {"id":"${job.id}"}` };
@@ -776,7 +813,7 @@ action({
 // reads only maintained sources, and Recipes lists only setups that hold up (recipeCatalog).
 action({
   name: 'find_setups', title: 'Find setups for a model', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'find',
-  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also does this by itself every day, so usually recipe_detail already has them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
+  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also looks them up by itself when a start needs them and they are over a week old, so recipe_detail may already have them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
   input: { type: 'object', properties: { model: modelArg, choice: choiceArg }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (input.choice && Object.keys(input).length > 1) throw new HttpError(400, 'Send the choice alone: {"choice": id}.');

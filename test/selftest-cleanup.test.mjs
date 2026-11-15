@@ -54,6 +54,9 @@ test('cancelled during its first step while stop_model waits for its validation 
   const before = running('spark3');
   const r = await api('/actions/self_test', { method: 'POST', body: {} });
   assert.equal(r.status, 200, r.text);
+  // (cancelled once its first step is under way, as its log says, like the same test in selftest.test.mjs: under load
+  // a cancel can land before it starts its model, and then it ends with nothing started and no Model line)
+  await waitFor(async () => (await api(`/jobs/${r.json.operation}`)).json.log.some(l => l.endsWith(`Starting ${r.json.model} on Spark 3, stopping nothing`)), { what: 'the self-test\'s first step' });
   const c = await api(`/jobs/${r.json.operation}/cancel`, { method: 'POST', body: {} });
   assert.equal(c.status, 200, c.text);
   const j = await finished(r.json.operation);

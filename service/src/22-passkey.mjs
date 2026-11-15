@@ -2,9 +2,9 @@
 // Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)
 // Timers: none        Wakes: none
-// One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to
-// who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a
-// passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that
+// Tailscale, or a device the owner signed in, says the owner is asking, and for the few changes to who may act (agent
+// keys and their rights, resuming paused agents, new devices and passkeys) the owner also confirms with a passkey
+// (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that
 // exact request, so a program on the owner's device can't make those changes with Tailscale's identity alone. Until a
 // passkey is set up, these changes need none (nothing can lock the owner out).
 const PASSKEYS_FILE = `${STATE_DIR}/passkeys.json`;
@@ -45,18 +45,9 @@ function newChallenge(viewer, purpose, hash = null) {
 // What a confirmation is for, in plain words, from the service itself: shown before the owner confirms, so the page
 // can't pass one change off as another.
 function describeChange(method, path, body = {}) {
-  const who = id => accessList().members.find(u => u.id === id)?.login || 'someone';
-  const perms = p => (p && typeof p === 'object' ? [`uses ${(p.nodeIds || []).map(id => sparkName(nodeById(id) || { id })).join(', ') || 'no Sparks'}`,
-    p.deploy ? 'can run and stop models' : null, p.chat ? `chats with ${ASSISTANT_NAME}` : null, p.files && p.files !== 'none' ? `own files: ${p.files}` : null,
-    p.sharedFiles && p.sharedFiles !== 'none' ? `shared files: ${p.sharedFiles}` : null].filter(Boolean).join('; ') : '');
-  const member = path.match(/^\/access\/([a-f0-9]{16})$/), agent = path.match(/^\/agents\/([a-f0-9]{12})$/), pk = path.match(/^\/auth\/passkeys\/(.+)$/);
+  const agent = path.match(/^\/agents\/([a-f0-9]{12})$/), pk = path.match(/^\/auth\/passkeys\/(.+)$/);
   const agentName = id => { try { return agentKeys().find(k => k.id === id)?.name || 'an agent'; } catch { return 'an agent'; } };
   const keyName = id => { try { return passkeys().find(k => k.id === id)?.name || 'a passkey'; } catch { return 'a passkey'; } };
-  if (method === 'POST' && path === '/access') return `Give ${clean(body.login, 200)} access (${perms(body.permissions)})`;
-  if (method === 'PUT' && member) return `Change ${who(member[1])}’s access to: ${perms(body.permissions)}`;
-  if (method === 'DELETE' && member) return `Remove ${who(member[1])}’s access`;
-  if (method === 'POST' && path === '/access/requests') return `${body.decision === 'approve' ? 'Approve' : 'Decline'} ${clean(body.login, 200)}’s request${body.decision === 'approve' ? ` (${clean(body.preset, 20)})` : ''}`;
-  if (method === 'PUT' && path === '/access/invite') return body.url ? `Save the Tailscale share link ${clean(body.url, 400)}` : 'Remove the saved share link';
   if (method === 'POST' && path === '/agents') return `Create a key for a new agent, “${clean(body.name, 60)}”`;
   if (method === 'PUT' && agent) return [body.act === true ? `Let ${agentName(agent[1])} start, stop and restart models` : body.act === false ? `Make ${agentName(agent[1])} look-only` : null,
     body.internet === true ? `let ${agentName(agent[1])}’s key work from anywhere, without Tailscale` : body.internet === false ? `make ${agentName(agent[1])}’s key work on your tailnet only` : null].filter(Boolean).join(', ');
@@ -75,6 +66,7 @@ function describeChange(method, path, body = {}) {
   if (method === 'PUT' && path === '/telegram') return 'Connect a Telegram bot, so you can talk to Sparkie from Telegram once you pair your chat';
   if (method === 'POST' && path === '/telegram/pair') return 'Show a new code to pair your Telegram chat with Spark Console';
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true ? 'Let Spark Console send you one Telegram line when something new needs you (at most 3 a day)' : 'Stop the “needs you” lines on Telegram';
+  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true ? 'Let your yes come from your paired Telegram chat: a press there on a change Spark Console asks about (at most 3 an hour and 10 a day; /lock there turns it off)' : 'Stop approving changes from Telegram';
   if (method === 'PUT' && path === '/heartbeat') return 'Save your outside check’s address, so Spark Console sends it an empty request at hc-ping.com every 5 minutes';
   const chatGone = path.match(/^\/chats\/([^/]+)$/);
   if (method === 'DELETE' && chatGone) return `Delete the chat “${clean(chatData().conversations.find(c => c.id === chatGone[1])?.title || chatGone[1], 80)}”`;
@@ -86,11 +78,6 @@ function describeChange(method, path, body = {}) {
   const stops = Array.isArray(body.stop) && body.stop.length ? `, stopping ${body.stop.map(x => clean(x, 160)).join(', ')}` : '';
   if (method === 'POST' && path === '/deploy') return `Deploy ${clean(body.model, 200)} on ${sparkName(nodeById(body.node) || { id: clean(body.node, 40) })}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
   if (method === 'POST' && path === '/deploy/cluster') return `Deploy ${clean(body.model, 200)} across ${(Array.isArray(body.nodes) ? body.nodes : []).map(id => sparkName(nodeById(id) || { id: clean(id, 40) })).join(' + ')}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
-  const files = path.match(/^\/nodes\/([^/]+)\/files$/);
-  if (method === 'POST' && files) {
-    const where = `${clean(body.path, 1000)} (${body.area === 'shared' ? 'shared files' : 'your files'}) on ${sparkName(nodeById(files[1]) || { id: clean(files[1], 40) })}`;
-    return body.operation === 'rename' ? `Rename ${where} to ${clean(body.destination, 1000)}` : `${body.operation === 'delete' ? 'Delete' : 'Change'} ${where}`;
-  }
   return `${method} ${path}`;
 }
 function takeChallenge(id, viewer, purpose) {
@@ -100,23 +87,31 @@ function takeChallenge(id, viewer, purpose) {
   return c;
 }
 const passkeyNeeded = (kind, message) => Object.assign(new HttpError(428, message), { passkey: kind });
-const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path) || /^\/deploy(\/cluster)?$/.test(path) || path === '/stop' || /^\/chats\/[^/]+(\/choose)?$/.test(path)
-  || /^\/nodes\/[^/]+\/files$/.test(path) || path === '/workflows/validate' || path === '/rollback' || /^\/telegram(\/(pair|needs))?$/.test(path) || path === '/heartbeat';
-// Each kind of request keeps its own size limit when the passkey check reads it first.
-const bodyLimit = path => (path.startsWith('/agents') ? 4000 : path.startsWith('/telegram') || path === '/heartbeat' ? 2000 : path.startsWith('/auth') ? 50000 : /\/files$/.test(path) ? 400000 : 1e5);
+// The routes whose request may need the passkey: one a line, in name order.
+const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
+  || /^\/chats\/[^/]+(\/choose)?$/.test(path)
+  || /^\/deploy(\/cluster)?$/.test(path)
+  || path === '/heartbeat'
+  || path === '/rollback'
+  || path === '/stop'
+  || /^\/telegram(\/(pair|needs))?$/.test(path)
+  || path === '/telegram/approve'
+  || path === '/workflows/validate';
+// Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
+// first that fits gives the limit.)
+const bodyLimit = path => (path.startsWith('/agents') ? 4000
+  : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
+  : path.startsWith('/auth') ? 50000
+  : 1e5);
 // A deploy's stop list names something Spark Console didn't start (known to the watcher as not ours, or not known).
 function stopsOutside(stop) {
   if (!Array.isArray(stop)) return false;
   const ours = new Set(Object.values(knowledge.workloads || {}).filter(w => w.byConsole).map(w => `${w.spark}/${w.name}`));
   return stop.some(x => !ours.has(String(x)));
 }
-// Which requests need the owner's passkey. Taking access away (removing a person or an agent, declining, pausing
-// agents) never does.
+// Which requests need the owner's passkey. Taking a right away (removing an agent, pausing agents) never does.
 function needsPasskey(method, path, body, haveKeys) {
   if (method === 'GET') return false;
-  if (method === 'DELETE' && /^\/access\/[a-f0-9]{16}$/.test(path)) return false;
-  if (method === 'POST' && path === '/access/requests' && body?.decision === 'decline') return false;
-  if (/^\/access(\/|$)/.test(path)) return true;
   // A model that runs its own code could take over the Spark it runs on.
   if (method === 'POST' && (path === '/deploy' || path === '/deploy/cluster')) return body?.allowRemoteCode === true || stopsOutside(body?.stop);
   if (method === 'POST' && path === '/agents') return true;
@@ -124,8 +119,7 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/agents/settings') return !(body && Object.keys(body).length === 1 && body.halted === true);
   if (method === 'DELETE' && path.startsWith('/auth/passkeys/')) return true;
   if (method === 'POST' && path === '/auth/passkey/register') return haveKeys;
-  // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a file, a chat.
-  if (method === 'POST' && /^\/nodes\/[^/]+\/files$/.test(path)) return body?.operation === 'delete';
+  // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a chat.
   if (method === 'DELETE' && /^\/chats\/[^/]+$/.test(path)) return true;
   // Letting a new device in (4.10). Validation runs, "Test the changes" and going back to the last good build no longer
   // need it (v3.1, 6.3 and 8.7): the owner wants agents to do those by themselves.
@@ -136,19 +130,11 @@ function needsPasskey(method, path, body, haveKeys) {
   if ((method === 'PUT' && path === '/telegram') || (method === 'POST' && path === '/telegram/pair')) return true;
   // Switching the needs-me line on (H5); off never needs it.
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true;
+  // Approving changes from the paired Telegram chat (20-tg-approve.mjs, A10a); off never needs it.
+  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true;
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
   return false;
-}
-// Members never write hidden files or folders, nor does a terminal signed in from the internet: .git/hooks,
-// .vscode/tasks.json or .envrc run code when a folder is opened on a Spark.
-async function refuseHiddenFiles(req, path, terminal = false) {
-  if (req.method !== 'POST' || !/^\/nodes\/[^/]+\/files$/.test(path)) return;
-  const body = await readBody(req, bodyLimit(path));
-  if (!['write', 'mkdir', 'rename'].includes(body?.operation)) return;
-  const hidden = p => String(p || '').split(/[\\/]+/).some(part => part.startsWith('.'));
-  if (hidden(body.path) || hidden(body.destination)) throw new HttpError(403, terminal ? 'Hidden files and folders (names starting with a dot) aren’t changed from a terminal signed in from the internet: use the page, or Tailscale.'
-    : 'Hidden files and folders (names starting with a dot) can only be changed by the owner.');
 }
 // The owner confirms with a one-time challenge for exactly this change, signed by one of their passkeys. Until a
 // passkey is set up, these changes need none.

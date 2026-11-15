@@ -63,7 +63,7 @@ function pauseWord(via) {
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, Access → Agents, with your passkey. It can’t be resumed from Telegram.' : `To resume: Access → Agents, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
+${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
 }
 
 async function restartWord(via) {
@@ -113,7 +113,8 @@ function stopWord(conv) {
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
-// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt).
+// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt) and the rebuild steps
+// (deploy/REBUILD.txt).
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
@@ -130,14 +131,16 @@ async function undoWord(viewer, conv) {
 function helpWord() {
   const lines = ['These work even when Sparkie can’t answer. Type the word alone:',
     '/status: where things stand, from Spark Console’s own record',
-    '/pause: pause agents’ changes (resume in Access → Agents, with your passkey)',
+    '/pause: pause agents’ changes (resume in your account menu → Agents and Telegram, with your passkey)',
     '/restart sparkie: restart Sparkie’s model when it’s stuck, or start it again when it’s stopped',
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
     '/help: this list'];
+  lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
+  lines.push(`  bring ${consoleSparkWords().replace(/^on /, '')} back after its disk is lost: deploy/REBUILD.txt on GitHub (a copy: ${BY_HAND_DIR}/REBUILD.txt)`);
   lines.push(`  resume agents’ changes (${consoleSparkWords()}): set "halted": false in ${SETTINGS_FILE}`);
   return lines.join('\n');
 }

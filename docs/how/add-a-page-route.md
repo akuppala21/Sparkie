@@ -9,8 +9,8 @@ A route under `/console/api` that the page calls. From the map's "Where new thin
 ## Also update
 
 - When gated by the passkey: `mayNeedPasskey`, `needsPasskey`, `describeChange`, `bodyLimit` (`22-passkey.mjs`).
-- `runRoute` (in `handler`) if members may use it.
-- The tests R4 lists: the route as nobody, a member, cross-site, through Funnel, from a Spark's address.
+- The tests R4 lists: the route as nobody, cross-site, through Funnel, from a Spark's address; and the route in
+  `owner-only.test.mjs`'s list, which fails until it is there.
 
 ## Never
 

@@ -8,7 +8,7 @@
 // so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired
 // with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as
 // the page. Everyone else gets silence. Going back a build, memory and saved workflows wait as an owner-only button in
-// Spark Console; access, keys, passkeys and devices have no path from here at all. (docs/architecture.md R32,
+// Spark Console; access, agent keys, passkeys and devices have no path from here at all. (docs/architecture.md R32,
 // docs/analysis-2026-11-11/09-telegram-design.md.)
 const TG_HOST = 'https://api.telegram.org';
 // Tests point it at a stand-in on this machine; under ALL_LOCAL without one, Telegram is off.
@@ -22,7 +22,7 @@ const TG_TOKEN_RE = /^\d{6,12}:[A-Za-z0-9_-]{30,64}$/, TG_TOKEN_IN = /\b\d{6,12}
 const TG_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const TG_BRAIN_DOWN = 'Sparkie’s model isn’t answering. /status shows where things stand, and /restart sparkie restarts it from here.';
 // The pairing line, also the answer to /start and /help.
-const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /unpair disconnects this chat.';
+const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /lock stops approvals from here, /unpair disconnects this chat.';
 
 // The token and the paired chat live in the secrets file (03-secrets.mjs), never in the state folder.
 // Disconnecting turns Telegram off in memory at once, even if the file can't be changed (until a new token is pasted).
@@ -50,18 +50,18 @@ function tgSetState(state) {
   if (tg.state === state) return;
   tg.state = state;
   tg.since = new Date().toISOString();
-  if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under Access → Agents.' });
+  if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under your account menu → Agents and Telegram.' });
 }
 const TG_WORDS = {
-  off: 'Not connected.',
-  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
-  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
-  ok: 'Working.',
-  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
-  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
-  unreachable: 'Can’t reach Telegram. Trying again by itself.',
-  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
   'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
+  'in-use': 'Another program is using this bot. Make a new token in @BotFather and paste it.',
+  'not-paired': 'Connected to the bot, but no chat is paired. Show a new pairing code.',
+  off: 'Not connected.',
+  ok: 'Working.',
+  pairing: 'Connected to the bot; waiting for you to send it the pairing code.',
+  'secrets-unreadable': 'The secrets file can’t be read, so Telegram is off. Spark Console tries again every minute. If it stays off, fix or remove ~/.config/spark-console/secrets.json on Spark 2.',
+  'token-refused': 'The bot’s token stopped working. Make a new token in @BotFather and paste it.',
+  unreachable: 'Can’t reach Telegram. Trying again by itself.',
 };
 const tgProblem = () => ['token-refused', 'in-use', 'unreachable', 'secrets-unreadable', 'forget-failed'].includes(tg.state);
 // What the page (GET /telegram), /health and sparkie_setup show. Never the token; the pairing code only in the answer to
@@ -69,7 +69,7 @@ const tgProblem = () => ['token-refused', 'in-use', 'unreachable', 'secrets-unre
 function telegramView(withCode = false) {
   const b = tgBinding(), p = tgPaired();
   return { connected: Boolean(b), bot: b?.bot || null, paired: Boolean(p), name: p ? String(p.name || '').slice(0, 40) : null, pairedAt: p?.pairedAt || null,
-    state: tg.state, since: tg.since, whatToDo: TG_WORDS[tg.state] || null, lastMessageAt: tg.lastMessageAt, strangersIgnored: tg.strangers, needsMe: p?.needsMe === true,
+    state: tg.state, since: tg.since, whatToDo: TG_WORDS[tg.state] || null, lastMessageAt: tg.lastMessageAt, strangersIgnored: tg.strangers, needsMe: p?.needsMe === true, approve: tgApproveOn(),
     code: withCode && tg.code && tg.code.exp > Date.now() && b ? { link: `https://t.me/${b.bot}?start=${tg.code.value}`, expiresAt: new Date(tg.code.exp).toISOString() } : null };
 }
 
@@ -192,12 +192,17 @@ async function tgUpdate(u) {
   tgSave();
   tg.lastMessageAt = new Date().toISOString();
   tellOwnerAt = Date.now();
+  // /lock only ever turns approvals off, so it counts however late it is read and however full the minute is: neither
+  // rule below may drop it while approvals are on (20-tg-approve.mjs).
+  if (m && tgApproveOn() && typeof m.text === 'string' && /^\/lock(?:@\w+)?(?:\s|$)/i.test(m.text.trim())) return tell('system', tgLock());
   // At most 20 messages a minute from the owner's chat; then one line and silence until the minute frees.
   tg.inHits = tg.inHits.filter(t => Date.now() - t < 60000);
   if (tg.inHits.length >= TELL_LIMITS.in) { if (!tg.toldTooMany) { tg.toldTooMany = true; await tell('system', 'Too many messages. Wait a minute.'); } return; }
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
+  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
+  if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot) return tell('system', 'Type it in your own words: forwarded messages aren’t read here.');
@@ -210,8 +215,10 @@ async function tgUpdate(u) {
   if (word === '/pause') return tell('system', pauseWord('telegram'));
   if (word === '/restart sparkie') return tell('system', await restartWord('telegram'));
   if (word === '/stop') return tell('system', stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram')));
-  const cmd = /^\/(new|status|unpair|start|help)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
+  const cmd = /^\/(new|status|unpair|start|help|lock)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
   if (cmd === 'unpair') { tgForget(); return; }
+  // (approvals from here off at once, also while Sparkie answers: 20-tg-approve.mjs)
+  if (cmd === 'lock') return tell('system', tgLock());
   if (cmd === 'start' || cmd === 'help') return tell('system', TG_HELLO);
   if (cmd === 'status') return tell('system', await tgStatusText());
   if (tg.busy) { if (!tg.toldBusy) { tg.toldBusy = true; await tell('system', 'Still answering the last one. Send that again when I’m done.'); } return; }
@@ -231,12 +238,13 @@ function tgTryPair(m) {
   const a = Buffer.from(said), want = Buffer.from(tg.code.value);
   if (a.length !== want.length || !timingSafeEqual(a, want)) { tg.code.tries.set(from.id, tries + 1); return false; }
   const name = String(from.first_name || '').replace(/[\x00-\x1f]/g, '').slice(0, 40);
-  try { secretsWrite(s => ({ ...s, telegram: { ...s.telegram, chatId: chat.id, userId: from.id, name, pairedAt: new Date().toISOString() } })); } catch (e) {
+  try { secretsWrite(s => ({ ...s, telegram: { ...s.telegram, chatId: chat.id, userId: from.id, name, pairedAt: new Date().toISOString(), approve: true } })); } catch (e) {
     console.error(`Pairing Telegram wasn’t saved: ${e.message}`);
     fleetEvent({ type: 'notice', text: 'Pairing Telegram didn’t work: the secrets file couldn’t be written. Try again; the code still works.' });
     return true;
   }
   tg.code = null;
+  tgNewPairing();
   tgSave();
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-paired', args: { name }, ok: true });
   tgSetState('ok');
@@ -308,19 +316,25 @@ async function tgTurn(text) {
     tgSave();
   }
 }
-// A button pressed in Telegram: a plain button of the owner's Telegram chat, never an owner-only one (runChoice refuses
-// those for anyone but the page). The answer is a fixed line.
+// A button pressed in Telegram: a plain button of the owner's Telegram chat; or an owner-only one this console asked
+// here, which counts as the owner's yes only within 20-tg-approve.mjs's limits (runChoice refuses every other owner-only
+// press but the page's). The answer is a fixed line.
 async function tgPress(cq) {
   const b = tgPaired();
   tgCall(b.token, 'answerCallbackQuery', { callback_query_id: String(cq.id || '') }, { timeoutMs: 5000 }).catch(() => {});
   const choice = String(cq.data || '');
-  const conv = /^[a-f0-9]{10}$/.test(choice) ? chatData().conversations.find(c => c.channel === 'telegram' && c.login === accessList().owner && c.messages.some(m => (m.choices || []).some(x => x.id === choice))) : null;
+  const ask = tgApproving(choice);
+  if (ask?.answer) return tell('system', ask.answer);
+  const conv = ask ? ask.conv : /^[a-f0-9]{10}$/.test(choice) ? chatData().conversations.find(c => c.channel === 'telegram' && c.login === accessList().owner && c.messages.some(m => (m.choices || []).some(x => x.id === choice))) : null;
   if (!conv) return tell('system', 'That button has expired. Ask again.');
   if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Press it again when I’m done.');
   tg.busy = true;
   try {
-    const r = await runChoice(tgOwner(), conv, choice, { via: 'telegram', actor: 'owner on Telegram' });
-    if (r.outcome === 'question' || r.outcome === 'needs-ok') return await tell('reply', tellReplyText(r.message), { buttons: tellButtons(r.message) });
+    if (ask) tgApprovalCounted(ask);
+    const r = await runChoice(tgOwner(), conv, choice, { via: 'telegram', actor: 'owner on Telegram', ...(ask ? { approved: true } : {}) });
+    if (ask) tgApproved(ask, conv, r);
+    // (a question that went here as its own ask isn't said again)
+    if (r.outcome === 'question' || r.outcome === 'needs-ok') return tgAskedThere(r.message) || await tell('reply', tellReplyText(r.message), { buttons: tellButtons(r.message) });
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
@@ -330,7 +344,7 @@ async function tgPress(cq) {
   } finally { tg.busy = false; }
 }
 // /status: from Spark Console's own record, no brain.
-async function tgStatusText() { return statusText(); }
+async function tgStatusText() { return `${await statusText()}\n${tgApprovalsLine()}`; }
 // After a restart: a turn that was cut off, and operations started from Telegram that didn't report, get one line each.
 function tgAfterRestart() {
   const st = tgSaved(), cut = (st.awaiting || []).filter(x => !jobs.has(x.id));
@@ -362,7 +376,9 @@ async function telegramRoute(req, res, path, viewer) {
     audit({ via: 'page', actor: 'owner', action: 'telegram-needs-me', args: { on }, ok: true });
     return send(res, 200, telegramView());
   }
-  if (!passkeys().length) throw new HttpError(409, 'Set up your passkey first (Access → People): connecting Telegram needs it.');
+  // Approve from Telegram (20-tg-approve.mjs): on needs the passkey (the gate) and a paired chat; off never does.
+  if (req.method === 'PUT' && path === '/telegram/approve') return send(res, 200, await tgApproveRoute(req));
+  if (!passkeys().length) throw new HttpError(409, 'Set up your passkey first (your account menu → Your passkey): connecting Telegram needs it.');
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets, so Telegram can’t be connected here.');
   if (!TG_API) throw new HttpError(409, 'Telegram is off on this copy of Spark Console.');
   if (req.method === 'PUT' && path === '/telegram') {

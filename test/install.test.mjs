@@ -2,14 +2,20 @@
 // dies after answering, copy fails, chat or sign-in broken, brain down (and `SKIP_CHAT_CHECK=1`), no room, unfinished
 // snapshot, same update twice, Telegram, `restore.sh` with a failing copy, the watchdog counting `activating`, a cut
 // session; `go-back.sh`, `RECOVERY.txt` and the update note land where they should; nothing calls ssh, sudo, tailscale
-// or systemd-run; `install.sh verify` against the real service; which snapshot undo picks. On macOS it runs under bash
-// 3.2 with `tar` and `find` shims; a Linux run is the full proof.
+// or systemd-run; `install.sh verify` against the real service; which snapshot undo picks. R53: the watchdog reads its
+// miss count as text (what the file holds never runs); `path-check.sh` is asked before anything changes, and a miss
+// refuses check and install naming each program, with nothing changed; `restore.sh` and the watchdog take their
+// programs from the fixed path (`path-check.sh`'s); a `.curlrc` and a user-site `.pth` in the home are never read by
+// install.sh, restore.sh or the watchdog, and every Python and curl call in the three scripts says `-I` and `-q`. On
+// macOS it runs under bash 3.2 with `tar` and `find` shims; a Linux run is the full proof.
 //
 // The installer's Spark 2 half (the install.sh inside deploy/host-on-portal.sh), its restore.sh and its watchdog, run on
 // this machine (F4, H1, S5). Nothing real is touched: each case gets its own short HOME, stand-ins come first on PATH
 // (systemctl starts and stops a small runner for the stand-in console, test/mock/standin-console.mjs; ssh, sudo,
 // tailscale and systemd-run fail closed and are never called), and DBUS_SESSION_BUS_ADDRESS is empty so a real
-// `systemctl --user` couldn't reach a user manager. The Mac half (tailscale serve, sudo) is never run here.
+// `systemctl --user` couldn't reach a user manager. SPARK_CONSOLE_ALL_LOCAL=1, as on the stand-in fleet, keeps that PATH
+// in restore.sh and the watchdog, and has install.sh read ~/.mock/off-path-<program> for its path look; a case that
+// runs them as on Spark 2 sets it empty. The Mac half (tailscale serve, sudo) is never run here.
 // Part B runs `install.sh verify` against the real service on the stand-in fleet, and checks which snapshot undo picks.
 // On macOS, bash 3.2 runs it with small tar and find shims (GNU options); a Linux run is the full proof.
 import { test, describe, before, after } from 'node:test';
@@ -120,7 +126,7 @@ if [ -n "$base" ]; then PATH="\${PATH#*:}" find "\${args[@]}" | sed 's#.*/##'; e
   mkdirSync(join(IN, 'ui'), { recursive: true });
   mkdirSync(join(IN, 'service'));
   writeFileSync(join(IN, 'install.sh'), INSTALL_SH);
-  for (const f of ['go-back.sh', 'RECOVERY.txt']) copyFileSync(join(REPO, 'deploy', f), join(IN, f));
+  for (const f of ['go-back.sh', 'RECOVERY.txt', 'path-check.sh']) copyFileSync(join(REPO, 'deploy', f), join(IN, f));
   const S = join(IN, 'service');
   writeFileSync(join(S, 'dig.mjs'), '// stand-in dig.mjs\n');
   writeFileSync(join(S, 'passkey.mjs'), '// stand-in passkey.mjs\n');
@@ -144,7 +150,8 @@ function stage(home, mode, n) {
   return h.digest('hex').slice(0, 12);
 }
 const envFor = (home, extra = {}) => ({ HOME: home, USER: 'standin', PATH: `${join(home, 'bin')}:${NODE_DIR}:${process.env.PATH}`,
-  SPARK_CONSOLE_INSTALL_WAIT_S: '6', SPARK_CONSOLE_INSTALL_SETTLE_S: '3', DBUS_SESSION_BUS_ADDRESS: '', XDG_RUNTIME_DIR: join(home, 'run'), LANG: 'C.UTF-8', ...extra });
+  SPARK_CONSOLE_INSTALL_WAIT_S: '6', SPARK_CONSOLE_INSTALL_SETTLE_S: '3', DBUS_SESSION_BUS_ADDRESS: '', XDG_RUNTIME_DIR: join(home, 'run'), LANG: 'C.UTF-8',
+  SPARK_CONSOLE_ALL_LOCAL: '1', ...extra });
 function run(home, args, extra = {}) {
   return new Promise(resolve => {
     const p = spawn('bash', [join(home, 'in', 'install.sh'), ...args], { env: envFor(home, extra), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -394,6 +401,138 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.notEqual((await install(home, nextStamp(), stage(home, 'not-owner', 3))).code, 0);
     const g = spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'go-back.sh')], { env: envFor(home), encoding: 'utf8' });
     await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: `the last good build answering (go-back.sh: ${g.stdout}${g.stderr})` });
+  });
+
+  test('19. the watchdog goes back a build once after 15 minutes of silence within a day of an install; not sooner, not while an update\'s way back is armed, not a day after', { timeout: 300000 * SLOW }, async () => {
+    const home = makeHome(), good = await firstGood(home);
+    assert.equal((await install(home, nextStamp(), stage(home, 'good', 2))).code, 0);
+    const D = join(home, '.local', 'share', 'spark-console'), S = join(home, '.local', 'state', 'spark-console'), markFile = join(D, 'install-mark');
+    const mark = readFileSync(markFile, 'utf8');
+    assert.match(mark, /^\d+ [0-9a-f]{12}\n$/, 'the install left its mark');
+    // The kept build goes silent: its installed copy exits as it starts, and systemd keeps starting it.
+    writeFileSync(join(home, 'spark-console-service', 'server.mjs'), `const MODE = 'dead'; // 2\n${STANDIN}`);
+    spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', 'restart', 'spark-console-api'], { env: envFor(home) });
+    await new Promise(r => setTimeout(r, 1500));
+    const dog = () => spawnSync('bash', [join(D, 'watchdog.sh')], { env: envFor(home) });
+    const silentFor = minutes => writeFileSync(join(S, 'watchdog-silent-since'), `${Math.floor(Date.now() / 1000) - minutes * 60}\n`);
+    silentFor(14); dog();
+    assert.equal(await health(home), null, 'not after 14 minutes');
+    silentFor(16); mkdirSync(join(D, 'update-guard')); dog(); rmSync(join(D, 'update-guard'), { recursive: true });
+    assert.equal(await health(home), null, 'not while an update\'s way back is armed');
+    writeFileSync(markFile, `${Math.floor(Date.now() / 1000) - 25 * 3600} ${mark.split(' ')[1]}`);
+    silentFor(16); dog();
+    assert.equal(await health(home), null, 'not a day after the install');
+    writeFileSync(markFile, mark);
+    silentFor(16); dog();
+    await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: 'the build before, put back by the watchdog' });
+    assert.ok(!existsSync(markFile), 'once: the mark is gone');
+  });
+
+  test('20. a ps that fails doesn\'t end an install: with no update\'s way back armed, it goes on as before', CASE, async () => {
+    const home = makeHome();
+    sh(join(home, 'bin', 'ps'), '#!/bin/sh\nexit 1\n');
+    const b = stage(home, 'good', 1), r = await install(home, nextStamp(), b);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/);
+    assert.equal((await health(home))?.build, b);
+  });
+
+  // (E2d: the Mac half stages it with the other recovery files, RECOVERY_FILES; rebuild.test.mjs checks that list)
+  test('21. the rebuild steps (REBUILD.txt) land beside RECOVERY.txt at the fixed path, byte for byte', CASE, async () => {
+    const home = makeHome();
+    copyFileSync(join(REPO, 'deploy', 'REBUILD.txt'), join(home, 'in', 'REBUILD.txt'));
+    await firstGood(home);
+    assert.equal(read(home, '.local', 'share', 'spark-console', 'REBUILD.txt'), readFileSync(join(REPO, 'deploy', 'REBUILD.txt'), 'utf8'));
+    byHandFiles(home);
+  });
+
+  test('22. the watchdog reads its miss count as text: a file holding a[$(touch ran)] runs nothing, and the count goes to 1', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    stopRunner(home);
+    writeFileSync(join(home, 'unit-state'), 'active');
+    const S = join(home, '.local', 'state', 'spark-console');
+    writeFileSync(join(S, 'watchdog-misses'), 'a[$(touch ran)]\n');
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh')], { env: envFor(home), cwd: home });
+    assert.ok(!existsSync(join(home, 'ran')), 'what the file held ran');
+    assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '1');
+    unlinkSync(join(home, 'unit-state'));
+  });
+
+  test('23. install.sh asks path-check.sh first: a program missing from the fixed path refuses check and install, naming it, with nothing changed', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const before = installed(home), snapsBefore = snaps(home), calls = systemctlLog(home).length, b = stage(home, 'good', 2);
+    // As on Spark 2 (not the stand-in fleet): path-check.sh as it was staged, here one that finds two programs missing.
+    sh(join(home, 'in', 'path-check.sh'), '#!/bin/sh\necho "Not on the fixed path (/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin): docker tailscale"\nexit 1\n');
+    const onSpark2 = { SPARK_CONSOLE_ALL_LOCAL: '' };
+    const refused = /STOP: Spark 2 is missing programs Spark Console's commands call\. Not on the fixed path \([^)]*\): docker tailscale\. Nothing was changed\./;
+    const c = await run(home, ['check'], onSpark2);
+    assert.equal(c.code, 1, c.out);
+    assert.match(c.out, refused);
+    assert.doesNotMatch(c.out, /^busy /m);
+    const r = await install(home, nextStamp(), b, onSpark2);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, refused);
+    assert.deepEqual([installed(home), snaps(home), systemctlLog(home).length], [before, snapsBefore, calls]);
+    // On the stand-in fleet the list is path-check.sh's own, and ~/.mock/off-path-<program> marks one missing.
+    copyFileSync(join(REPO, 'deploy', 'path-check.sh'), join(home, 'in', 'path-check.sh'));
+    mkdirSync(join(home, '.mock'));
+    writeFileSync(join(home, '.mock', 'off-path-nvidia-smi'), '');
+    const m = await install(home, nextStamp(), b);
+    assert.equal(m.code, 1, m.out);
+    assert.match(m.out, /STOP: Spark 2 is missing programs Spark Console's commands call\. Not on the fixed path: nvidia-smi\. Nothing was changed\./);
+    assert.deepEqual([installed(home), snaps(home)], [before, snapsBefore]);
+    rmSync(join(home, '.mock'), { recursive: true });
+    const k = await install(home, nextStamp(), b);
+    assert.equal(k.code, 0, k.out);
+  });
+
+  test('24. restore.sh and the watchdog take their programs from the fixed path (path-check.sh\'s): a systemctl first on the PATH they are given never runs', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const stamp = nextStamp();
+    assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
+    const restore = join(snapDir(home, stamp), 'restore.sh'), dog = join(home, '.local', 'share', 'spark-console', 'watchdog.sh');
+    const fixed = /^PATH=(\S+)$/m.exec(readFileSync(join(REPO, 'deploy', 'path-check.sh'), 'utf8'))?.[1];
+    assert.ok(fixed);
+    for (const f of [restore, dog]) {
+      assert.equal(/^\[ "\$\{SPARK_CONSOLE_ALL_LOCAL:-\}" = 1 \] \|\| \{ PATH=(\S+); export PATH; \}$/m.exec(readFileSync(f, 'utf8'))?.[1], fixed, f);
+    }
+    // As on Spark 2: the stand-in systemctl is first on the PATH they are given (a real one can't reach a user manager).
+    const n = systemctlLog(home).length, onSpark2 = envFor(home, { SPARK_CONSOLE_ALL_LOCAL: '' });
+    spawnSync('bash', [dog], { env: onSpark2, cwd: home, timeout: 60000 * SLOW });
+    spawnSync('bash', [restore], { env: onSpark2, cwd: home, timeout: 60000 * SLOW });
+    assert.deepEqual(systemctlLog(home).slice(n), [], 'the systemctl in the home ran');
+  });
+
+  test('25. Python as -I and curl as -q: a .curlrc and a user-site .pth in the home are never read by install.sh (check, install, a put-back), restore.sh or the watchdog; every call in the three scripts says so', CASE, async () => {
+    for (const f of ['host-on-portal.sh', 'pull.sh', 'update-guard.sh']) {
+      for (const l of readFileSync(join(REPO, 'deploy', f), 'utf8').split('\n').filter(x => !/^\s*#/.test(x))) {
+        for (const m of l.matchAll(/\bpython3\b(?![\w.-])/g)) assert.match(l.slice(m.index), /^python3 -I /, `${f}: ${l}`);
+        for (const m of l.matchAll(/\bcurl\b(?![\w.-])/g)) assert.match(l.slice(m.index), /^curl -q /, `${f}: ${l}`);
+      }
+    }
+    const home = makeHome(), rc = join(home, 'curlrc-read'), pth = join(home, 'pth-ran');
+    writeFileSync(join(home, '.curlrc'), `trace-ascii = "${rc}"\n`);
+    const site = spawnSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], { env: envFor(home), encoding: 'utf8' }).stdout.trim();
+    mkdirSync(site, { recursive: true });
+    writeFileSync(join(site, 'zz-planted.pth'), `import os; open(${JSON.stringify(pth)}, 'a').close()\n`);
+    // (a plain python3 and curl here do read them)
+    spawnSync('python3', ['-c', 'pass'], { env: envFor(home) });
+    spawnSync('curl', ['-s', '-m', '2', 'http://127.0.0.1:1/'], { env: envFor(home) });
+    assert.deepEqual([existsSync(pth), existsSync(rc)], [true, true], 'the planted files are read on this machine');
+    rmSync(pth); rmSync(rc);
+    const good = stage(home, 'good', 1);
+    let r = await run(home, ['check']);
+    assert.equal(r.code, 0, r.out);
+    r = await install(home, nextStamp(), good);
+    assert.equal(r.code, 0, r.out);
+    r = await run(home, ['check']);
+    assert.match(r.out, /^busy 0 0$/m);
+    r = await install(home, nextStamp(), stage(home, 'not-owner', 2));
+    assert.notEqual(r.code, 0, r.out);
+    assert.equal((await health(home))?.build, good, r.out);
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh')], { env: envFor(home), cwd: home });
+    assert.ok(!existsSync(pth), 'a python3 without -I ran');
+    assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? readFileSync(rc, 'utf8').slice(0, 300) : ''}`);
   });
 });
 

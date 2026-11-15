@@ -154,8 +154,25 @@ function gpuAlone(sp, look, at) {
 // worker: its 64 MiB and 1,000-entry limit counts the shared folder's every file, jobs' outputs too, and would stop
 // every job on that Spark after one sizeable one.
 async function jobFolder(node, name) {
-  const r = await run(node, `umask 077 && mkdir -p ${jobDir(name)}`, { timeout: 20000 });
+  // (checked before it is made too, so nothing is made through a link)
+  const r = await run(node, `${jobMountsReal(name)}; umask 077; d=${jobDir(name)}; { [ -e "$d" ] || [ -L "$d" ] || mkdir -p -- "$d"; } || exit 1; ${jobMountsReal(name)}`, { timeout: 20000 });
+  if (r.code === JOB_NOT_REAL) throw jobNotReal(node, name, r);
   if (r.code) throw new Error(`The job’s folder jobs/${name} couldn’t be made in the shared folder on ${sparkName(node)}: ${maskSecrets(r.err || r.out).trim().slice(0, 300)}`);
+}
+// A job's two mounts must be the real folders at their fixed places. The shared folder is one a walled change may write
+// in (R42): it could swap jobs/<name> for a link to the home, and Docker follows a link, so the job would get the home
+// writable at /out. Shell text, run after the folder is made and again in the same command just before docker run or
+// docker start: the shared folder, its jobs folder and jobs/<name>, each when there, must be a folder that is not a link
+// and whose real path is the real home's plus its fixed path; else it names which and ends JOB_NOT_REAL, and nothing
+// starts. (Left open: a link planted in the moment between this check and Docker's own look at the path.)
+const SHARED_AT = '.local/share/spark-portal/workspaces/shared', JOB_NOT_REAL = 97;
+const jobMountsReal = name => `h=$(realpath -e -- "$HOME") || exit ${JOB_NOT_REAL}; for p in ${[SHARED_AT, `${SHARED_AT}/jobs`, `${SHARED_AT}/jobs/${name}`].map(q).join(' ')}; do `
+  + `d="$HOME/$p"; [ -e "$d" ] || [ -L "$d" ] || continue; { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(realpath -e -- "$d")" = "$h/$p" ]; } `
+  + `|| { echo "not real: $p"; exit ${JOB_NOT_REAL}; }; done`;
+function jobNotReal(node, name, r) {
+  const p = /not real: (\S+)/.exec(r.out || '')?.[1] || '';
+  const what = p === SHARED_AT ? 'The shared folder' : p === `${SHARED_AT}/jobs` ? 'The jobs folder in the shared folder' : `The job’s folder jobs/${name} in the shared folder`;
+  return new Error(`${what} on ${sparkName(node)} isn’t a real folder: it is a link, or inside one. Docker would follow it, so ${name} wasn’t started. Make it a real folder there, then ask again.`);
 }
 // A job's end, told once (the watcher, 19-watcher.mjs): one line built from its name, how it ended and when, never its
 // log. A notice on the record; in the chat it was asked in, when that is one of the owner's (and on Telegram when that
@@ -183,13 +200,13 @@ function jobEnded(node, w) {
 // returns how it ended: { state, exitCode, oomKilled, seconds } (state "exited" or "dead"; "created" is a container that
 // never ran). It changes nothing: a job still running at the limit is an error that says so (stillRunning), and the
 // caller decides whether to stop it. Gone from Docker is an error; so is a minute in which Docker there didn't answer.
-// With `job`, cancelling that operation ends the wait.
+// With `job`, cancelling that operation ends the wait at once: the look under way and the sleep between looks.
 const JOB_WAIT_MS = Number(process.env.SPARK_CONSOLE_JOB_WAIT_MS || 10000);
 async function waitJobEnd(node, container, { limitMs = 30 * 60000, job = null } = {}) {
   const began = Date.now(), at = sparkName(node);
   for (let unanswered = 0; ;) {
     if (job) cancelCheck(job);
-    const r = await run(node, `docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+    const r = await run(node, `docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000, signal: job?.abort?.signal });
     const [state, code, oom] = r.code === 0 ? r.out.trim().split(/\s+/) : [];
     if (state === 'missing') throw new Error(`${container} is gone from ${at}, so how it ended isn’t known.`);
     if (['exited', 'dead', 'created'].includes(state)) {
@@ -200,7 +217,7 @@ async function waitJobEnd(node, container, { limitMs = 30 * 60000, job = null } 
     if (Date.now() - began >= limitMs) {
       throw Object.assign(new Error(`${container} was still running on ${at} after ${Math.round(limitMs / 60000)} minutes.`), { stillRunning: true });
     }
-    await sleep(Math.max(0, Math.min(JOB_WAIT_MS, limitMs - (Date.now() - began))));
+    await sleepUnless(Math.max(0, Math.min(JOB_WAIT_MS, limitMs - (Date.now() - began))), job?.abort?.signal);
   }
 }
 // Up means its container is running and stays running: five looks in a row, 3 s apart. Its port only decides whether it
@@ -343,7 +360,7 @@ action({
     notBrainsSpark([spark]);
     if (input.port !== undefined && input.port.split(':').map(Number).some(n => n < 1 || n > 65535)) throw new HttpError(400, 'A port is a number from 1 to 65535, like "3000:8080".');
     const node = sparkOf(viewer, spark), at = sparkName(node);
-    mustUse(viewer, [spark]);
+    mustUse(viewer);
     // A Spark Spark Console powered off (21-power.mjs) is turned on first, in the same operation; a stop of an app there
     // only takes it off the list (below: its Spark is off).
     if (verb !== 'stop' && !ctx.poweredOn) { const first = powerThenKeep(viewer, ctx, input); if (first) return first; }
@@ -432,7 +449,7 @@ action({
       return { outcome: 'started', operation: job.id, restarting: container, spark, ...appLinks(spark, container, link), next: next(job.id) };
     }
     if (state === 'running' && look.job) {
-      return { outcome: 'already', spark, container, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
+      return { outcome: 'already', spark, container, job: true, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
     }
     if (state === 'running') {
       if (changed) keepIt();
@@ -468,7 +485,9 @@ action({
           if (look.gpu) gpuAlone((await inventory(null)).sparks.find(s => s.id === spark) || sp, await appLook(node, container, sp.tsip), at);
           await appRoom(node, gb, container);
           step(j, `Starting ${container} on ${at} again`);
-          const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
+          // (its two mounts checked again in the same command: something may have swapped one since the folder was made)
+          const r = await run(node, `${jobMountsReal(container)}; docker start ${q(container)}`, { timeout: 90000 });
+          if (r.code === JOB_NOT_REAL) throw jobNotReal(node, container, r);
           if (r.code) throw new Error(`Docker couldn’t start it: ${maskSecrets(r.err || r.out).slice(0, 400)}`);
           consoleStopped.delete(key);
           // (its end is told again, also when it ends before the watcher's next look: its row says running, so the next
@@ -520,7 +539,8 @@ action({
     // A new image is code that runs on a Spark: at once only for the owner on their tailnet (as undo_update), else an
     // owner-only button, pressed in Spark Console.
     const ownerHere = ['page', 'api', 'sparkie'].includes(ctx.via) && !viewer.session && !viewer.agentKey && !ctx.agent && !ctx.channel;
-    if (!ownerHere && !ctx.ownerConfirmed) {
+    // (or a saved workflow's step whose save was the owner's yes to exactly this image, D6c: 18-saved-yes.mjs)
+    if (!ownerHere && !ctx.ownerConfirmed && !(ctx.imagesApproved || []).includes(input.image)) {
       const label = changeLabel('keep_running', input);
       return question(viewer, ctx, `${label}? Starting a new image is the owner’s call.`,
         [{ label, call: { action: 'keep_running', args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
@@ -544,7 +564,9 @@ action({
       if (a.gpu) gpuAlone((await inventory(null)).sparks.find(s => s.id === spark) || sp, await appLook(node, container, sp.tsip), at);
       await appRoom(node, gb, container);
       step(j, `Starting ${container} on ${at}`);
-      const r = await run(node, appRunCommand(a, sp.tsip, ctx.conv || null), { timeout: 120000 });
+      // (a job's two mounts checked again in the same command, as for a run again)
+      const r = await run(node, `${a.once ? `${jobMountsReal(container)}; ` : ''}${appRunCommand(a, sp.tsip, ctx.conv || null)}`, { timeout: 120000 });
+      if (r.code === JOB_NOT_REAL && a.once) throw jobNotReal(node, container, r);
       if (r.code) {
         // docker run makes the container before it starts it: one that never started (its port was taken) holds no data
         // or log, and left there it would stand in the way of the next try under this name. Only that one goes: still

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+# Stand-in systemd-run for rehearsals of the root helper (deploy/spark-console-root; test/root-helper.test.mjs). Outside
+# a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails and starts nothing. Every call is one JSON line in
+# <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
+#   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
+#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first. WALL_VIEW
+#                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
+#                               folder empty, a hidden file gone, what is put back there), for a command to look in
+#   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
+#                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
+#                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
+#                               attempt shows outside, one per line: "<attempt> works|not-there [what]".
+#                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
+# <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
+import json, os, shutil, sys
+
+R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
+if not R.startswith('/') or not os.path.isdir(R):
+    sys.stderr.write('systemd-run: this stand-in only answers inside a rehearsal of the root helper\n')
+    sys.exit(1)
+args = sys.argv[1:]
+with open(os.path.join(R, 'calls.log'), 'a') as f:
+    f.write(json.dumps(['systemd-run'] + args) + '\n')
+
+
+def knob(name):
+    try:
+        with open(os.path.join(R, 'standin', name)) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+unit, cmd, i = '', [], 0
+while i < len(args):
+    a = args[i]
+    if a == '--':
+        cmd = args[i + 1:]
+        break
+    if a.startswith('--unit='):
+        unit = a[len('--unit='):]
+    elif a in ('-p', '--property'):
+        i += 1
+    elif not a.startswith('-'):
+        cmd = args[i:]
+        break
+    i += 1
+
+refuse = knob('refuse')
+if refuse is not None and unit.startswith(refuse.strip()):
+    sys.stderr.write('Failed to start transient service unit: Invalid argument\n')
+    sys.exit(1)
+
+LEFT = {(5, 'look'), (12, 'look'), (12, 'run')}
+through = set()
+for line in (knob('let-through') or '').splitlines():
+    w = line.split()
+    if len(w) >= 2:
+        n = int(w[0])
+        through.add((n, w[1], w[2] if len(w) > 2 else ('after' if (n, w[1]) in LEFT else 'direct')))
+
+
+def say(*words):
+    print(' '.join(str(x) for x in words), flush=True)
+
+
+outside = {}
+for line in (knob('outside') or '').splitlines():
+    w = line.split(None, 2)
+    if len(w) >= 2:
+        outside[int(w[0])] = (w[1], w[2] if len(w) > 2 else 'stand-in')
+
+if unit.startswith('sw-prove-'):
+    part, uid = unit[len('sw-prove-'):].split('-', 1)
+    held = os.path.join(R, 'run', 'spark-console', uid)
+    played = knob(f'play-{part}')
+    if played is not None:
+        sys.stdout.write(played)
+        sys.exit(0)
+    if part == 'prep':
+        # What proof.py's prep makes and the helper looks for: the proof's folders in the owner's home.
+        home = open(os.path.join(held, 'owner')).read().split('\n')[2]
+        for d in (f'.sparkie-proof-{uid}/held/ro', f'.local/share/spark-console/proof-{uid}'):
+            os.makedirs(R + home + '/' + d, exist_ok=True)
+        say('S ok')
+    elif part == 'setup':
+        say('S ok')
+    elif part in ('outside', 'look', 'run'):
+        at = next(k for k, a in enumerate(cmd) if a.endswith('/proof.py'))
+        mode, nums = cmd[at + 1], [int(n) for n in cmd[at + 2:]]
+        for n in nums:
+            if mode == 'outside':
+                word, what = outside.get(n, ('works', 'the loopback, stand-in' if n == 2 else 'stand-in'))
+                say('P', n, 'outside', word, what)
+                continue
+            for how in ('direct', 'child'):
+                word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
+                say('P', n, how, word, 'stand-in')
+    elif part == 'post':
+        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run')):
+            say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+    elif part == 'after':
+        say('V', 5, 'outside', 'works', 'stand-in')
+        say('V', 12, 'outside', 'works', 'stand-in')
+        for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
+            say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+    sys.exit(0)
+
+def wall_view():
+    # What the settings show of /home, emulated: hidden folders emptied and hidden files removed first, then what is
+    # put back copied in. Only /home; no wall is built.
+    view = os.path.join(R, 'standin', 'view', unit)
+    if os.path.isdir(os.path.join(R, 'home')):
+        shutil.copytree(os.path.join(R, 'home'), os.path.join(view, 'home'), symlinks=True)
+    props = [args[k + 1] for k, a in enumerate(args) if a in ('-p', '--property') and k + 1 < len(args)]
+    for kind, path in (p.split('=', 1) for p in props if '=' in p):
+        path = path.removesuffix(':ro')
+        if not path.startswith('/home/') or not os.path.lexists(view + path):
+            continue
+        if kind == 'TemporaryFileSystem' and os.path.isdir(view + path) and not os.path.islink(view + path):
+            shutil.rmtree(view + path)
+            os.mkdir(view + path)
+        elif kind == 'InaccessiblePaths':
+            if os.path.isdir(view + path) and not os.path.islink(view + path):
+                shutil.rmtree(view + path)
+            else:
+                os.unlink(view + path)
+    for kind, path in (p.split('=', 1) for p in props if '=' in p):
+        if kind == 'BindReadOnlyPaths' and path.startswith('/home/') and os.path.isfile(R + path):
+            os.makedirs(os.path.dirname(view + path), exist_ok=True)
+            shutil.copyfile(R + path, view + path)
+    return view
+
+
+if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
+    uid = unit.split('-', 2)[2]
+    held = os.path.join(R, 'run', 'spark-console', uid)
+    shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
+    os.environ['WALL_VIEW'] = wall_view()
+    cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
+    os.execv(cmd[0], cmd)
+
+sys.stderr.write(f'systemd-run: the stand-in does not know this unit ({unit or "no --unit"})\n')
+sys.exit(1)

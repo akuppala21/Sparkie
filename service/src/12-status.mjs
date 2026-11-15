@@ -11,7 +11,7 @@ const STATUS_EVERY = Number(process.env.SPARK_CONSOLE_STATUS_MS || 30000);
 function runWorker(node, payload, timeout = 30000) {
   if (knownOffline(node)) return Promise.reject(new Error(`${node.id} isn’t reachable (checked in the last minute).`));
   const code = readFileSync(WORKER).toString('base64');
-  const command = `python3 -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
+  const command = `${payload?.action === 'status' ? PATH_CHECK : ''}python3 -I -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
   return new Promise((resolve, reject) => {
     const child = spawnOn(node, { command });
     // (refused: the worker itself said no, as opposed to the Spark not answering; conflict: a name that's taken)
@@ -28,6 +28,7 @@ function runWorker(node, payload, timeout = 30000) {
           const ev = JSON.parse(line);
           if (ev.type === 'result') result = ev.result;
           else if (ev.type === 'error') { error = String(ev.error || 'The Spark couldn’t do that.').slice(0, 300); refused = true; conflict = ev.code === 'conflict'; }
+          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(p => PATH_PROGRAMS.split(' ').includes(p)));
         } catch {}
       }
     });
@@ -46,7 +47,7 @@ function runWorker(node, payload, timeout = 30000) {
 
 // The same cleaning the portal applied to the worker's report.
 const STATUS_KEYS = ['gpu', 'gpuUtilization', 'temperature', 'memoryTotalGiB', 'memoryFreeGiB', 'uptimeSeconds', 'load', 'load1Minute', 'cpuLogicalCount',
-  'editorReady', 'dockerAccessible', 'diskFreeGiB', 'gpuPowerWatts'];
+  'dockerAccessible', 'diskFreeGiB', 'gpuPowerWatts'];
 const sparkName = n => n.name || `Spark ${String(n.id).replace(/^spark/, '')}`;
 function cleanStatus(node, raw) {
   const value = { id: node.id, name: sparkName(node), configured: true, reachable: true, state: 'online' };
@@ -137,16 +138,17 @@ setTimeout(() => {
   setInterval(() => collectStatus().catch(() => {}), STATUS_EVERY);
 }, 3000);
 
-/* ───────── Spark pages: workloads, logs, diagnostics, files, actions (taking over from the portal) ───────── */
-// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics and runs
-// actions; files follow each person's permissions (personal and shared areas; members see only their own area).
-const LOG_SERVICES = ['editor', 'console', 'sparkie'];
-const FILE_OPS = ['list', 'read', 'write', 'mkdir', 'rename', 'delete'];
+/* ───────── Spark pages: workloads, logs, diagnostics; shared-folder files (from the portal) ───────── */
+// The same worker operations and checks the portal used, for the owner (the only one who gets past the handler). Files
+// are a Spark's shared folder only, for the files and save_file actions (R37): the page's file browser, its route and
+// the worker's delete, rename and new-folder calls are gone (E10e).
+const LOG_SERVICES = ['console', 'sparkie'];
+const FILE_OPS = ['list', 'read', 'write'];
 const fileBusy = new Map();
 
 function sparkFor(viewer, id) {
   const node = nodeById(id);
-  if (!node || !canUse(viewer, id)) throw new HttpError(403, 'This Spark isn’t shared with you.');
+  if (!node || !canUse(viewer)) throw new HttpError(403, 'There’s no such Spark on the list.');
   return node;
 }
 async function workerCall(node, payload, timeout) {
@@ -154,45 +156,23 @@ async function workerCall(node, payload, timeout) {
 }
 
 async function sparkFiles(viewer, node, data) {
-  const allowed = ['operation', 'path', 'data', 'revision', 'area', 'destination', 'offset', 'limit'];
+  const allowed = ['operation', 'path', 'data', 'area', 'offset', 'limit'];
   if (!data || typeof data !== 'object' || Object.keys(data).some(k => !allowed.includes(k))) throw new HttpError(400, 'Unsupported request settings.');
-  const area = data.area || 'personal';
-  if (!['personal', 'shared'].includes(area)) throw new HttpError(400, 'Choose personal or shared files.');
-  const permission = (viewer.permissions || ownerPermissions())[area === 'shared' ? 'sharedFiles' : 'files'];
-  if (permission === 'none' || (permission !== 'write' && ['write', 'mkdir', 'rename', 'delete'].includes(data.operation))) throw new HttpError(403, 'This file operation isn’t permitted.');
+  if (data.area !== 'shared') throw new HttpError(400, 'Only a Spark’s shared folder is read or written here.');
   if (!FILE_OPS.includes(data.operation) || typeof data.path !== 'string' || data.path.length > 1000) throw new HttpError(400, 'Choose a workspace file operation.');
-  if ((data.operation !== 'write' && data.data !== undefined) || (!['write', 'rename', 'delete'].includes(data.operation) && data.revision !== undefined)
-    || (data.operation !== 'rename' && data.destination !== undefined) || (data.operation !== 'list' && (data.offset !== undefined || data.limit !== undefined))) {
+  if ((data.operation !== 'write' && data.data !== undefined) || (data.operation !== 'list' && (data.offset !== undefined || data.limit !== undefined))) {
     throw new HttpError(400, 'Unexpected file settings.');
   }
-  const owner = viewer.role === 'owner';
-  const memberId = owner ? null : accessList().members.find(u => u.login === viewer.login)?.id;
-  if (!owner && area === 'personal' && !memberId) throw new HttpError(403, 'Your personal files aren’t set up.');
+  // (only the owner reaches here: canUse is the owner's alone, and Sparkie and agents act as the owner)
+  if (!canUse(viewer)) throw new HttpError(403, 'Only the owner can do that.');
   const { area: _area, ...settings } = data;
-  const scope = area === 'shared' ? { workspaceScope: 'shared' } : owner ? {} : { workspaceScope: 'member', memberId };
   const mine = fileBusy.get(viewer.login) || 0, all = [...fileBusy.values()].reduce((a, b) => a + b, 0);
   if (mine >= 2 || all >= 8) throw new HttpError(429, 'File operations are busy. Try again shortly.');
   fileBusy.set(viewer.login, mine + 1);
   try {
-    const { editorFolder, editorRoot, ...visible } = await workerCall(node, { action: 'workspace-files', ...settings, ...scope }, 30000);
-    if (owner && typeof (editorRoot || editorFolder) === 'string') visible.editorPath = `${editorPath(node.id)}?folder=${encodeURIComponent(editorRoot || editorFolder)}`;
-    return visible;
+    return await workerCall(node, { action: 'workspace-files', ...settings, workspaceScope: 'shared' }, 30000);
   } finally {
     fileBusy.set(viewer.login, Math.max(0, (fileBusy.get(viewer.login) || 1) - 1));
-  }
-}
-
-// Restarting a Spark's VS Code server, as a job (owner only).
-async function sparkAction(job, node, action) {
-  step(job, 'Restarting the VS Code server');
-  const result = await workerCall(node, { action }, 60000);
-  if (action === 'editor-restart' && result.editorReady === false) throw new Error('The VS Code server didn’t come back up.');
-  note(job, 'Done on the Spark');
-}
-async function checkSparkAction(node, action) {
-  if (action !== 'editor-restart') throw new HttpError(400, 'Unsupported Spark action.');
-  if ([...jobs.values()].some(j => j.status === 'running' && j.node === node.id && ['spark-action', 'deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
-    throw new HttpError(409, `Something is already changing on ${node.id}. Wait for it to finish.`);
   }
 }
 

@@ -6,7 +6,7 @@
 // place. Two more fleets: a brain that answers 4 at once (apps get 3; the 4th gets 429 saying one place stays) and one
 // whose setup doesn't say (no cap).
 //
-// Using Sparkie from an app (round two, item 4; service/src/16-actions.mjs pasteCard, 15-routes.mjs gateway). The owner
+// Using Sparkie from an app (round two, item 4; service/src/16-reads.mjs pasteCard, 15-routes.mjs gateway). The owner
 // chose one generic card: running_models {client} adds it, built by code from the console's own setup; Sparkie only
 // hears it's there and Spark Console puts the block under the answer exactly as built. Codex and Claude Code get a plain
 // "not yet". The /v1 address keeps one place on Sparkie's model for the owner's chat: apps get at most its
@@ -38,7 +38,7 @@ describe('a paste card for apps', { concurrency: 1 }, () => {
     assert.equal(v.paste.block, [`OPENAI_BASE_URL=${base}`, 'OPENAI_API_KEY=any', 'OPENAI_MODEL=sparkie', '',
       `curl ${base}/chat/completions -H 'content-type: application/json' -d '{"model":"sparkie","messages":[{"role":"user","content":"Say hi"}]}'`].join('\n'));
     assert.deepEqual(v.paste.notes, [
-      'Here, sparkie is Sparkie’s model alone: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (Access → Agents).',
+      'Here, sparkie is Sparkie’s model alone: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (your account menu → Agents and Telegram).',
       'Sparkie’s model answers 1 request at once, shared with your own chats; apps get at most 1, so an app’s request makes your chat wait.',
       'Context: give apps at most 262,144 tokens (its server allows 1,000,000).',
       'It works from your own devices on your tailnet, signed in to Tailscale as you. A network that blocks ts.net addresses can’t reach it, and Spark Console offers no way around that.',

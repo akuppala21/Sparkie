@@ -14,6 +14,7 @@ function newJob(type, meta) {
   // Cancelling ends the job's long commands (downloads, copies, pulls) straight away.
   Object.defineProperty(job, 'abort', { value: new AbortController(), enumerable: false });
   jobs.set(job.id, job);
+  opEnergyStart(job);
   // Its start goes on the fleet's record (on disk), so an operation cut off by a restart is reported, never forgotten.
   try { fleetEvent({ type: 'operation', id: job.id, operation: type, status: 'started', model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}),
     ...(job.actor ? { actor: job.actor } : {}), ...(Array.isArray(meta?.stops) && meta.stops.length ? { stops: meta.stops } : {}) }); } catch {}
@@ -86,7 +87,7 @@ function runJob(job, fn) {
     // (one started from Telegram whose chat is gone: off the list that restarts report)
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
-      ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
+      ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'Spark Console' });
     learnFrom(job, journalOp(job));
   });
   return job;
@@ -96,9 +97,17 @@ function runJob(job, fn) {
 // staging folder and moves into place only when complete, so an interrupted copy never looks like a model.
 // A Hugging Face cache entry goes into the target's cache as its served snapshot with the links followed (real
 // files, no blobs/), plus refs/ when there is one. That also works when blobs/ itself can't be listed.
-function copyModel(job, name, from, to, total, store = 'models') {
+// Following links hands their bytes over, so before anything is sent each file the copy would follow passes the
+// cache's link rule (hfEachFile, R17), with weight files that lead out at least 16 MiB: a link put in the entry must not
+// bring a key of this Spark onto the next one as an ordinary file.
+async function copyModel(job, name, from, to, total, store = 'models') {
   const [base, folder] = store === 'hf' ? [HF_HUB, `models--${name}`] : [`"$HOME/${CONFIG.modelsDir}"`, name];
   const staging = store === 'hf' ? `${HF_HUB}/.spark-console-incoming` : `"$HOME/${CONFIG.modelsDir}/.incoming"`;
+  const checked = store === 'hf' ? await run(from, `cd ${HF_HUB} || exit 0; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 0; dir=$PWD/${q(folder)}; ${HF_OWN}
+${hfEachFile('snapshots/$snap', ':', 16 * 2 ** 20)}
+[ -d "$dir/refs" ] || exit 0
+${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
+  if (checked.code) throw new Error(`${name} wasn’t copied from ${from.id}: ${String(checked.err || checked.out || '').trim().split('\n').pop() || 'its files couldn’t be checked'}`);
   return new Promise((resolve, reject) => {
     const src = spawnOn(from, { command: store === 'hf'
       ? `cd ${HF_HUB} || exit 1; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 1; tar -chf - ${q(folder)}/snapshots/"$snap" $([ -d ${q(folder)}/refs ] && echo ${q(folder)}/refs)`
@@ -223,7 +232,7 @@ async function stopContainer(job, nodeId, container, viewer = null) {
   const parts = dep?.cluster
     ? inv.sparks.flatMap(sp => sp.deployments.filter(d => d.cluster === dep.cluster && d.model === dep.model).map(d => [sp.id, d.container]))
     : [[nodeId, container]];
-  if (viewer) mustUse(viewer, parts.map(([id]) => id));
+  if (viewer) mustUse(viewer);
   for (const [id, name] of parts.sort((a, b) => b[0].localeCompare(a[0]))) {
     consoleStopped.set(`${id}/${name}`, Date.now());
     step(job, `Stopping ${name} on ${id}`);

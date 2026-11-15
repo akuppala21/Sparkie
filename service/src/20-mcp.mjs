@@ -4,7 +4,7 @@
 //   audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,
-// <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Access → Agents), so
+// <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Agents and Telegram), so
 // you can see what each one did and remove one without touching the others. A key only works together with its
 // owner's Tailscale identity, and never from the Sparks themselves (requestGate). Only the key's hash is kept.
 // Read-only for now; the key's scopes decide which actions it's offered once more kinds exist.
@@ -154,7 +154,7 @@ async function mcpDoor(req, res, viewer) {
   if (!String(req.headers['content-type'] || '').startsWith('application/json') || !sameOrigin(req)) return fail(403, null, -32600, 'Send JSON from an agent or tool, not from a web page on another site.');
   if (viewer.role !== 'owner') return fail(403, null, -32600, 'Agent access is only for the owner for now.');
   // 403 rather than 401: MCP clients take a 401 as "sign in with OAuth", which would hide this message.
-  const noKey = () => fail(403, null, -32600, 'This agent needs its own key: Spark Console → Access → Agents → Connect an agent. Send it as "Authorization: Bearer <key>". A removed agent’s key stops working.');
+  const noKey = () => fail(403, null, -32600, 'This agent needs its own key: Spark Console, your account menu → Agents and Telegram → Connect an agent. Send it as "Authorization: Bearer <key>". A removed agent’s key stops working.');
   let agent = agentFor(req, viewer);
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');
@@ -194,7 +194,7 @@ async function mcpDoor(req, res, viewer) {
     agentUseDirty = true;
     agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
     const started = Date.now(), args = msg.params?.arguments;
-    const said = { ...(typeof args?.conversation === 'string' ? { conversation: args.conversation } : {}), ...(typeof args?.message === 'string' ? { message: args.message.slice(0, 300) } : {}), ...(typeof args?.choice === 'string' ? { choice: args.choice } : {}) };
+    const said = { ...(typeof args?.conversation === 'string' ? { conversation: args.conversation } : {}), ...(typeof args?.message === 'string' ? { message: keysHidden(args.message).slice(0, 300) } : {}), ...(typeof args?.choice === 'string' ? { choice: args.choice } : {}) };
     try {
       const value = await askSparkie(agent, viewer, args);
       audit({ agent: agent.id, name: agent.name, action: ASK_SPARKIE.name, args: said, ok: true, ms: Date.now() - started, conversation: value.conversation });
@@ -282,8 +282,8 @@ const KEY_WORDS = new Set(['KEY', 'APIKEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASS
 const keyName = n => { const w = n.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase().split(/_+/).filter(Boolean); return !w.includes('PUBLIC') && KEY_WORDS.has(w.at(-1)); };
 const randomish = v => (v.length >= 8 && /[A-Za-z]/.test(v) && /\d/.test(v)) || (v.length >= 20 && /[a-z]/.test(v) && /[A-Z]/.test(v));
 // Key shapes: a known token format, a private key block, a key setting, a password inside an address. What a saved file
-// may never hold and what `files` hides (R37); plain words and code pass.
-const hideKeys = text => SECRET_PATTERNS.reduce((t, re) => t.replace(re, '[hidden]'), hidePrivateKeys(String(text)))
+// may never hold and what `files` hides (R37); plain words and code pass. First, every kept key by its exact value (R51).
+const hideKeys = text => SECRET_PATTERNS.reduce((t, re) => t.replace(re, '[hidden]'), hidePrivateKeys(keptHidden(text)))
   .replace(KEY_SETTING, (m, n, sep, v) => (keyName(n) && randomish(v) ? `${n}${sep}[hidden]` : m))
   .replace(/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]+:)[^\s@/]+@/gi, '$1[hidden]@');
 // Everything that goes out also hides a secret-named flag's value (quoted or not: `--api-key "x"`) and a labelled value.

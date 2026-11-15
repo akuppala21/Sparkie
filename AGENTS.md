@@ -33,7 +33,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
 | `docs/rules/`, `docs/rules.md` | One rule per file, and their index (generated). |
 | `docs/how/` | One card per kind of work. |
-| `docs/state.md`, `docs/glossary.md` | Who holds each fact; this project's words. |
+| `docs/state.md`, `docs/state-outside.md`, `docs/glossary.md` | Who holds each fact (in the state folder; anywhere else); this project's words. |
 | `docs/code-map.md`, `docs/registry.md` | Generated: parts and who uses what; actions, state files, timers. |
 | `docs/contract.md` | What the product must do and why. |
 | `docs/history/` | Dated records: plans, reviews, analyses. Never edited. |
@@ -72,10 +72,11 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | add a worker.py action | `docs/how/add-a-worker-action.md` |
 | fetch something from outside the Sparks | `docs/how/add-an-outbound-connection.md` |
 | add a messaging channel | `docs/how/add-a-messaging-channel.md` |
-| change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
+| give a new brain its setup (how it is asked) | `docs/how/add-a-brain-setup.md` |
 | add a self-test check | `docs/how/add-a-hardware-check.md` |
 | run the brain eval and keep its result | `docs/how/run-the-brain-eval.md` |
+| run something on a Spark through the root helper | `docs/how/call-the-root-helper.md` |
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
@@ -100,5 +101,6 @@ No card fits? Search `docs/rules.md`.
    change to what the installer reads keeps `test/install.test.mjs` passing.
 9. Before an install, `node test/lock.mjs` passed on that exact tree (again after a `worker.py` edit); after it,
     `/health` shows no workflow `untested`.
-10. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
-    rule's file in `docs/rules/` (its Today, Where and Checked by), a card in `docs/how/`.
+10. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md` (a file in
+    the state folder) or `docs/state-outside.md` (anything else), the rule's file in `docs/rules/` (its Today, Where and
+    Checked by), a card in `docs/how/`.

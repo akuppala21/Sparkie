@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import { join } from 'node:path';
 import { startMock, REPO, OWNER, MEMBER } from './start-mock.mjs';
+import { atFileLimit } from './file-limit.mjs';
 
 // A slower machine (one whose security software checks every process the stand-in fleet starts, say) gives the tests
 // more time: SPARK_TEST_SLOW=3 triples every time limit. 1 everywhere else.
@@ -19,6 +20,8 @@ export const SERVICE_FILE = join(REPO, 'service', 'server.mjs');
 // Filled in by useFleet's before hook: { fleet, base, mcp, origin }. Root-level before hooks of one file run
 // concurrently, so a file's own setup goes in useFleet's second argument (it runs once the service answers).
 export const T = {};
+// A file that runs past its limit (file-limit.mjs) stops its fleet before it ends.
+atFileLimit(() => T.fleet?.stop());
 export function useFleet(opts = {}, setup = null) {
   before(async () => {
     T.fleet = await startMock(opts);
@@ -36,14 +39,61 @@ export function useFleet(opts = {}, setup = null) {
 export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PRODUCT BUG: ${reason}` });
 
 // The agent door's actions: the ones that read (every key sees them) and the ones that change things (only keys the
-// owner let act, scope fleet:act).
-export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_recipes', 'recipe_detail', 'search_huggingface', 'where_it_fits',
-  'deploy_plan', 'cluster_plan', 'linked_sparks', 'spark_detail', 'recent_operations', 'operation_log', 'container_logs', 'spark_diagnostics',
-  'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
-  'search_web', 'read_page', 'guide', 'recall'];
-export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
-  'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test',
-  'power_off', 'power_on', 'power_settings'];
+// owner let act, scope fleet:act). One a line, in name order.
+export const TOOLS = [
+  'check_update',
+  'cluster_plan',
+  'container_logs',
+  'deploy_plan',
+  'files',
+  'find_recipes',
+  'fleet_events',
+  'fleet_status',
+  'guide',
+  'linked_sparks',
+  'memory',
+  'models_on_disk',
+  'operation_log',
+  'read_page',
+  'recall',
+  'recent_operations',
+  'recipe_detail',
+  'run',
+  'running_models',
+  'search_huggingface',
+  'search_web',
+  'service_logs',
+  'should_be_running',
+  'spark_detail',
+  'spark_diagnostics',
+  'sparkie_setup',
+  'wait_operation',
+  'where_it_fits',
+  'workflows',
+  'workloads',
+];
+export const CHANGE_TOOLS = [
+  'cancel_operation',
+  'compare_models',
+  'find_setups',
+  'forget_memory',
+  'forget_workflow',
+  'keep_running',
+  'power_off',
+  'power_on',
+  'power_settings',
+  'remember',
+  'restart_model',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+  'start_model',
+  'stop_model',
+  'test_changes',
+  'undo_last_change',
+  'undo_update',
+];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
 // Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), beside every
 // read action (a key that only looks) or every action (one that can act).
@@ -53,7 +103,7 @@ export const DOOR_READ = [...TOOLS, ASK], DOOR_ACT = [...ALL_TOOLS, ASK];
 export const SPARKIE_TOOLS = [...ALL_TOOLS];
 // What every round offers Sparkie (R46): the core, at most TOOL_CAP tools with the groups a request opens (TOOL_CAP in
 // 21-guide.mjs; test/tools.test.mjs checks the service agrees).
-export const CORE_TOOLS = ['fleet_status', 'running_models', 'workloads', 'should_be_running', 'sparkie_setup', 'start_model', 'stop_model', 'restart_model',
+export const CORE_TOOLS = ['fleet_status', 'running_models', 'workloads', 'run', 'sparkie_setup', 'start_model', 'stop_model', 'restart_model',
   'keep_running', 'remember', 'search_web', 'guide'];
 export const TOOL_CAP = 24;
 
@@ -204,22 +254,26 @@ export async function waitFor(fn, { timeout: limit = 45000, every = 500, what = 
 
 // A POST whose body reaches the server in two pieces, cut inside a character of several bytes (the first one that ends
 // at or after byte `from`), a moment apart so the server reads them separately: what a long body, or a slow sender,
-// does by chance. Resolves with the status, the answer's text and where the cut was.
-export function postInTwo(url, text, { from = 0, headers = {}, pause = 200 } = {}) {
+// does by chance. Resolves with the status, the answer's text and where the cut was; rejects when the answer hasn't
+// ended after `timeout` (times SLOW), saying what had come back.
+export function postInTwo(url, text, { from = 0, headers = {}, pause = 200, timeout = 120000 } = {}) {
   const bytes = Buffer.from(text);
   let cut = Math.max(1, from);
   while (cut < bytes.length && (bytes[cut] & 0xc0) !== 0x80) cut++;
   if (cut >= bytes.length) throw new Error(`no character of several bytes after byte ${from} to cut inside`);
   const u = new URL(url);
   return new Promise((resolve, reject) => {
+    let seen = 'nothing had come back';
+    const timer = setTimeout(() => { reject(new Error(`timed out after ${timeout * SLOW} ms waiting for the answer to a POST in two pieces to ${url} (cut at byte ${cut}): ${seen}`)); req.destroy(); }, timeout * SLOW);
     const req = http.request({ hostname: u.hostname, port: u.port, path: `${u.pathname}${u.search}`, method: 'POST',
       headers: { 'content-type': 'application/json', 'content-length': bytes.length, ...headers } }, res => {
       const chunks = [];
+      seen = `status ${res.statusCode} came back, and the answer had not ended`;
       res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), cut }));
-      res.on('error', reject);
+      res.on('end', () => { clearTimeout(timer); resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), cut }); });
+      res.on('error', e => { clearTimeout(timer); reject(e); });
     });
-    req.on('error', reject);
+    req.on('error', e => { clearTimeout(timer); reject(e); });
     req.on('socket', s => s.setNoDelay(true));
     req.write(bytes.subarray(0, cut));
     setTimeout(() => req.end(bytes.subarray(cut)), pause * SLOW);

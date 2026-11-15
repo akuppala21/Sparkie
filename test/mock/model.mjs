@@ -23,8 +23,15 @@
 // last user message (whole, record included), which round it is, the tool results it was sent, and how it was asked
 // (temperature, top_p, top_k, max_tokens, thinking). The first round of each turn with tools also leaves exactly what
 // the brain was sent, the system prompt and every tool in full, in $MOCK_DIR/brain-sent.json (test/lock.mjs hashes it).
+// With $MOCK_DIR/model-history there, each request's earlier messages go to $MOCK_DIR/model-history.jsonl too.
 // The brain check's requests (21-brain-check.mjs, known by its system line) are answered by checkReply instead, and
 // logged only to $MOCK_DIR/brain-check.jsonl: ~/.mock/brain-kind on spark2 picks the brain they meet (below).
+// Another brain's habits (B9), for Sparkie's model only, while $MOCK_DIR/model-habits.json says so: "alternating": true
+// answers 400, as a strict chat template does, to two user (or two assistant) messages in a row; "thinksAloud": true
+// prints its thinking at the start of the answer between <think> tags, in odd pieces, as a server with no reasoning
+// parser does; "reasoningField": true sends it as delta.reasoning (vLLM's newer name); "usage": N ends each answer with
+// usage {prompt_tokens: N} when the request asks for it (stream_options.include_usage). Each request's line in
+// model-requests.jsonl also has its messages' roles and whether it asked for usage.
 import http from 'node:http';
 import { readFileSync, appendFileSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 
@@ -77,11 +84,12 @@ function roundsFor(text) {
   return [];
 }
 
-function stream(res) {
+// (usage: what the answer's last event carries, as a server asked for it does)
+function stream(res, usage = null) {
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   return {
     send: (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`),
-    end: () => res.end('data: [DONE]\n\n'),
+    end: () => { if (usage) res.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`); res.end('data: [DONE]\n\n'); },
     words: async (text, ms) => { for (const w of text.split(/(?<= )/)) { res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: w }, finish_reason: null }] })}\n\n`); if (ms) await sleep(ms); } },
   };
 }
@@ -114,6 +122,8 @@ async function checkReply(b, msgs, tools, res) {
   s.end();
 }
 
+const habitsOf = () => { try { return JSON.parse(readFileSync(`${DIR}/model-habits.json`, 'utf8')) || {}; } catch { return {}; } };
+
 async function mainReply(b, port, res, log = true) {
   const msgs = Array.isArray(b.messages) ? b.messages : [], sys = msgs.find(m => m.role === 'system'), last = msgs.at(-1) || {};
   const tools = Array.isArray(b.tools) ? b.tools : [];
@@ -126,16 +136,24 @@ async function mainReply(b, port, res, log = true) {
     for (let k = msgs.length - 1; k >= 0 && msgs[k].role === 'tool'; k--) results.unshift({ id: msgs[k].tool_call_id, content: String(msgs[k].content).slice(0, 4000) });
     const entry = { at: new Date().toISOString(), tools: tools.map(t => t.function?.name), toolChoice: b.tool_choice || null, lastRole: last.role || null, messages: msgs.length,
       system: String(sys?.content || ''), lastUser: lastUser.slice(0, 8000), words: words.slice(0, 2000), round, results,
+      roles: msgs.map(m => m.role), usageAsked: b.stream_options?.include_usage === true,
       // how it was asked (the brain's setup decides these, contract 3.8)
       params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, top_k: b.top_k ?? null, max_tokens: b.max_tokens ?? null,
         thinking: b.chat_template_kwargs?.enable_thinking ?? null } };
     try { appendFileSync(`${DIR}/model-requests.jsonl`, `${JSON.stringify(entry)}\n`); } catch {}
+    // Only when a test asks ($MOCK_DIR/model-history there): the earlier messages as sent, to $MOCK_DIR/model-history.jsonl.
+    if (existsSync(`${DIR}/model-history`)) try { appendFileSync(`${DIR}/model-history.jsonl`, `${JSON.stringify({ at: entry.at, words: entry.words, history: msgs.slice(1, userAt).map(m => String(m.content ?? '')) })}\n`); } catch {}
     if (tools.length && round === 0) {
       try {
         writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools, params: entry.params }));
         renameSync(`${DIR}/brain-sent.json.tmp`, `${DIR}/brain-sent.json`);
       } catch {}
     }
+  }
+  const habits = DIR && log ? habitsOf() : {};
+  if (habits.alternating && msgs.some((m, i) => i > 0 && ['user', 'assistant'].includes(m.role) && m.role === msgs[i - 1].role)) {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ error: { message: 'Conversation roles must alternate user/assistant/user/assistant/...' } }));
   }
   // The one-time failures for the next request (above), once.
   const fail = DIR && log && existsSync(`${DIR}/model-fail`) ? readFileSync(`${DIR}/model-fail`, 'utf8') : '', mode = fail.split('\n')[0].trim();
@@ -162,8 +180,9 @@ async function mainReply(b, port, res, log = true) {
     res.writeHead(500, { 'content-type': 'application/json' });
     return res.end('{"error":{"message":"stand-in failure"}}');
   }
-  const s = stream(res);
-  s.send({ role: 'assistant', reasoning_content: 'Let me look at the snapshot.' });
+  const s = stream(res, habits.usage && b.stream_options?.include_usage ? { prompt_tokens: habits.usage, completion_tokens: 7, total_tokens: habits.usage + 7 } : null);
+  if (habits.thinksAloud) for (const piece of ['<thi', 'nk>Let me look', ' at the snapshot.</th', 'ink>\n\n']) s.send({ role: 'assistant', content: piece });
+  else s.send({ role: 'assistant', ...(habits.reasoningField ? { reasoning: 'Let me look at the snapshot.' } : { reasoning_content: 'Let me look at the snapshot.' }) });
   // The owner's words (or the results of the round before) call for tools: call them (offered or not, unless a call says
   // "offered": true). A turn with no tools at all (a member's) calls none.
   const calls = tools.length && ['user', 'tool'].includes(last.role) ? (roundsFor(words)[round] || []).filter(c => c.offered !== true || tools.some(t => t.function?.name === c.name)) : [];

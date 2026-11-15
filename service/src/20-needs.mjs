@@ -16,9 +16,10 @@ const tilde = p => String(p).replace(homedir(), '~');
 function openProblems() {
   const out = [], add = (key, text) => out.push({ key, text });
   const hereNode = NODES.find(n => n.host === 'local'), here = hereNode ? sparkName(hereNode) : 'the Spark that runs Spark Console';
+  // (In this order, which is the order they are said in: a new source goes at the end of its group, not of the list.)
   const sources = [
     // Lock-out: who may sign in, and the other ways in.
-    () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy and who has access can’t be changed. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
+    () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
     () => { if (SECRETS_FILE && secretsRead() === null) add('secrets', `The secrets file on ${here} can’t be read, so Telegram and recovery codes are off. Fix or remove ${tilde(SECRETS_FILE)} there; Spark Console never writes over it.`); },
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.
     () => { if (chatsUnsaved) add('chats', `Chats aren’t being saved: ${here}’s state folder can’t be written (full disk?). What you say now is lost at the next restart.`); },
@@ -37,15 +38,21 @@ function openProblems() {
       const names = [...new Set(readdirSync(STATE_DIR).map(f => /^([\w.-]+?\.jsonl?)\.unreadable-[\w-]+$/.exec(f)?.[1]).filter(Boolean))];
       if (names.length) add('aside', `Spark Console set aside ${names.length === 1 ? 'a file' : `${names.length} files`} it couldn’t read (${names.slice(0, 4).join(', ')}). What ${names.length === 1 ? 'it' : 'they'} held is kept in ${tilde(STATE_DIR)} on ${here}, with “.unreadable-” in the name. Look there; moving the kept file out of that folder clears this line.`);
     },
-    () => {
-      if (!backupLate()) return;
-      const g = lastBackup.good;
-      add('copy', `Spark Console’s state ${g ? `hasn’t been copied to another Spark since ${String(g.at).slice(0, 10)}` : 'has never been copied to another Spark'}. It tries every hour and needs another Spark on. Until then, losing ${here}’s disk would lose what changed since.`);
-    },
+    // The state's copy: none newer than 7 days, with changes since (20-state-copy.mjs).
+    () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
+    // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
+    () => memoryNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
       for (const n of NODES) if (knowledge.sparks[n.id]?.dockerDownAt && !sparkOff(n.id)) add(`docker:${n.id}`, `Docker isn’t answering on ${sparkName(n)}, so Spark Console can’t see or change its containers. If it doesn’t come back by itself, run this on ${sparkName(n)}: sudo systemctl restart docker. It stops every container there: Sparkie’s model comes back by itself, and the rest need bringing back.`);
+    },
+    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R53: each status round looks).
+    () => {
+      for (const [id, miss] of pathMissing) {
+        const them = miss.length > 1, names = `${miss.slice(0, 4).join(', ')}${miss.length > 4 ? ` and ${miss.length - 4} more` : ''}`;
+        if (miss.length && nodeById(id) && !sparkOff(id)) add(`path:${id}`, `${sparkName(nodeById(id))}: ${names} ${them ? 'aren’t' : 'isn’t'} on the fixed path Spark Console’s commands use there (${FIXED_PATH}), so whatever needs ${them ? 'them' : 'it'} fails. Install ${them ? 'them' : 'it'} for the whole system, not in your home folder.`);
+      }
     },
     // A Spark Spark Console shut down but couldn't power off cleanly (its plug still drew power, so it was never cut):
     // the owner's to look at. A Spark it powered off as planned is off on purpose, never a line here (21-power.mjs).
@@ -70,6 +77,8 @@ function openProblems() {
     () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
     // The ways in, watched ahead (20-ways-in.mjs): a Tailscale key near expiry, linger off, Funnel off.
     () => waysInNeeds(add, here),
+    // At the last check_update (21-updates.mjs): GitHub refused the install's token, or git isn't on Spark 2.
+    () => updNeeds(add),
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;

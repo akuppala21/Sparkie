@@ -11,6 +11,13 @@ the map's "Where new things go", row "A saved workflow".
 - Steps run via `workflow`: uncounted by the breaker, each its own validation run.
 - A stack (several apps that work together) is one of these: `keep_running` steps, one per piece with all its
   settings, and a second workflow that stops them (A13).
+- A `keep_running` step that runs a job waits for the job's end before the next step (`jobStepEnd`,
+  `18-step-jobs.mjs`); a job that ends badly ends the run and names the step (R35). A run that ends badly, or a run
+  with a job that ends well, stops what its own steps started, except a step saved with `keep: true` (R35).
+- A `keep_running` step may leave out its Spark: `pickSpark` places it when the run reaches it, waking one if it must.
+- “Save that as X” is `save_workflow {title, from: "this request"}`: the request's changes, from the journal (R35).
+- The owner's yes to a save covers the images its steps start (`approved`); a changed step asks again (R35, D6c).
+- `compare_models` runs one with each candidate model (a `model` input) and keeps the winner as `best` (R57).
 
 ## Also update
 

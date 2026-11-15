@@ -1,8 +1,8 @@
 # Spark Console
 
-One place to run, watch and share the DGX Sparks. It's a static UI plus a small service on Spark 2 that does
-everything itself: who's who, status, live metrics, the model library and deploys, Sparkie's model and chats, files,
-logs and VS Code in the browser. It replaced the original Spark Portal (see `docs/retire-portal.md`).
+One place to run and watch the DGX Sparks. It's a static UI plus a small service on Spark 2 that does everything
+itself: sign-in, status, live metrics, the model library and deploys, Sparkie's model and chats, files in each Spark's
+shared folder, and logs. It replaced the original Spark Portal (see `docs/retire-portal.md`).
 
 - **UI:** https://akspark2.tailab9aa9.ts.net:8443/ (also at `:8443/console/`), the console's one address: on the
   tailnet, or from the internet behind the owner's passkey (`docs/sharing.md`).
@@ -21,9 +21,9 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
 | change it (Sparkie, an agent or a person) | `AGENTS.md`, then one card in `docs/how/` |
 | know what it must do, and what is built | `docs/contract.md`, `docs/status.md` |
 | see how it fits together | `docs/architecture.md`, `docs/code-map.md`, `docs/registry.md` |
-| know what it keeps on Spark 2, and where | `docs/state.md` |
+| know what it keeps on Spark 2, and where | `docs/state.md`, `docs/state-outside.md` |
 | use it from your own agents and scripts | `docs/agent-door.md` |
-| share it with people | `docs/sharing.md` |
+| use it from your phone, or from anywhere | `docs/sharing.md` |
 | add models and the setups people published | `docs/recipes.md` |
 | serve one model across Sparks | `docs/multi-spark.md` |
 | run the tests | `test/README.md` |

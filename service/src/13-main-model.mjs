@@ -8,12 +8,13 @@
 // so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after
 // reboots until someone stops it here, and it's labeled protected, so deploys never stop it.
 // Setups come from config.json (`main`, or `main.presets`) plus any made from Library models in the console; the one
-// in use is saved in main.json next to the chats, so it survives restarts and installs.
+// in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its
+// brain is asked and read (13-ask.mjs, R50); its fields go over the same names beside it.
 const MAIN_FILE = `${STATE_DIR}/main.json`;
 const MAIN_DEFAULTS = { container: 'sparkie-main', port: 30100, engine: 'vllm', store: 'hf', shmGiB: 16, thinking: false, maxTokens: 4096, env: {}, args: [] };
 const configPresets = () => (!CONFIG.main ? {} : CONFIG.main.presets || { [CONFIG.main.id || 'default']: CONFIG.main });
 const mainPresets = () => ({ ...configPresets(), ...(readKept(MAIN_FILE)?.presets || {}) });
-const mainSetup = (id, preset = mainPresets()[id]) => (preset ? { ...MAIN_DEFAULTS, ...preset, id } : null);
+const mainSetup = (id, preset = mainPresets()[id]) => (preset ? withAsk({ ...MAIN_DEFAULTS, ...preset, id }) : null);
 function loadMainSetup() {
   const presets = mainPresets(), saved = readJson(MAIN_FILE)?.current;
   const id = presets[saved] ? saved : Object.keys(presets)[0];
@@ -246,7 +247,8 @@ docker logs --tail 1 ${q(m.container)} 2>&1 | tail -1`, { timeout: 20000 });
   throw new Error('It didn’t answer within 45 minutes. It may still be loading; check its logs.');
 }
 
-// A Library model as a Sparkie setup: its own serving settings (spark.json), served on Sparkie's Spark and port.
+// A Library model as a Sparkie setup: its own serving settings (spark.json), served on Sparkie's Spark and port. Its
+// spark.json's `ask` block, checked, is kept with it (B9): how this brain is asked and read.
 async function setupFromLibrary(name) {
   const node = MAIN?.node || CONFIG.modelsHost;
   const m = (await inventory(null)).library.find(x => x.name === name);
@@ -261,7 +263,7 @@ async function setupFromLibrary(name) {
     image: m.manifest?.image || CONFIG.images[engine], model: name, store: m.stores[node] || m.stores[copyFrom],
     args: Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [],
     about: [m.contextLength ? `${Math.round(m.contextLength / 1024)}k context` : null, m.dtype].filter(Boolean).join(' · ') || null,
-    copyFrom, sizeBytes: m.sizeBytes,
+    copyFrom, sizeBytes: m.sizeBytes, ...(MAIN?.port ? { port: MAIN.port } : {}), ...(m.manifest?.ask ? { ask: m.manifest.ask } : {}),
   });
 }
 

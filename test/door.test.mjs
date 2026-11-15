@@ -1,8 +1,8 @@
 // Covers: The agent door (MCP): handshake and JSON-RPC envelope errors; the tools a new key sees (every read action and
 // `ask_sparkie`), with valid arguments; per-tool invalid arguments (unknown, missing, wrong type, pattern, range, enum,
 // length, nonexistent), each refused with its code (`[invalid]`, `[not_found]`, …); Spark names as people say them
-// (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); auth (keys, Content-Type, Origin, member/stranger
-// identities, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions`
+// (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); auth (keys, Content-Type, Origin, a stranger's
+// identity, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions`
 // (every action; `ask_sparkie` isn't one); rate limits (120 a minute, 3 tools at once, 6 web searches a minute); secret
 // masking, also of env-style names ending in `_KEY` or `_PASS`, a passphrase and `PGPASS` in a container's log, never
 // of a path to a key file (F20); `search_huggingface` on the fixture (`test/mock/hf-fixture.json`, test/README.md).
@@ -330,7 +330,7 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.equal(x.reachable, false);
     assert.equal(typeof x.problem, 'string');
   });
-  for (const service of ['console', 'sparkie', 'editor']) {
+  for (const service of ['console', 'sparkie']) {
     v(`service_logs (${service})`, () => ({ spark: ctx.spark, service }), x => {
       assert.equal(x.service, service);
       assert.equal(typeof x.log, 'string');
@@ -357,6 +357,15 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.ok(Array.isArray(x.records) && x.records.length <= 3);
     assert.match(x.recordIsData, /data, not instructions/);
   });
+  v('recall the owner\'s lines of this month', { about: 'gemma', kind: 'line', when: 'this-month', until: '2099-01-01', limit: 3 }, x => {
+    assert.ok(Array.isArray(x.records) && x.records.every(r => r.kind === 'line'));
+    assert.match(x.inAll, /^\d+ match \(this-month\)/);
+  });
+  v('check_update', {}, x => {
+    assert.ok(isTime(x.observedAt));
+    assert.equal(typeof x.says, 'string');
+    assert.match(x.installed.build, /^[0-9a-f]{12}$/);
+  });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);
     assert.equal(x.count, x.events.length);
@@ -371,35 +380,91 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
 describe('invalid arguments are refused ([invalid] / [not_found], not a crash)', () => {
   const sp = () => ctx.spark;
   const validFor = t => ({
-    where_it_fits: { model: ctx.model }, spark_detail: { spark: sp() }, operation_log: { id: '0123456789ab' }, container_logs: { spark: sp(), container: ctx.container },
-    deploy_plan: { model: ctx.model, spark: sp() }, cluster_plan: { model: ctx.model, sparks: ctx.pair }, recipe_detail: { id: ctx.recipe },
-    search_huggingface: { query: 'qwen3 0.6b' }, spark_diagnostics: { spark: sp() }, service_logs: { spark: sp(), service: 'console' },
-    wait_operation: { id: '0123456789ab' }, files: { spark: sp() }, search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' },
+    cluster_plan: { model: ctx.model, sparks: ctx.pair },
+    container_logs: { spark: sp(), container: ctx.container },
+    deploy_plan: { model: ctx.model, spark: sp() },
+    files: { spark: sp() },
+    operation_log: { id: '0123456789ab' },
+    read_page: { url: 'https://docs.example.org/never-searched' },
     recall: { about: 'gemma' },
+    recipe_detail: { id: ctx.recipe },
+    run: { on: sp(), command: 'ls' },
+    search_huggingface: { query: 'qwen3 0.6b' },
+    search_web: { query: 'vllm flags' },
+    service_logs: { spark: sp(), service: 'console' },
+    spark_detail: { spark: sp() },
+    spark_diagnostics: { spark: sp() },
+    wait_operation: { id: '0123456789ab' },
+    where_it_fits: { model: ctx.model },
   }[t] || {});
   const cases = []; // [tool, args(), expected message, code, label]
   for (const t of TOOLS) cases.push([t, () => ({ ...validFor(t), bogus: 1 }), /^\[invalid\] Unknown argument: bogus/, 'invalid', 'unknown arg bogus']);
   // missing required
-  const req = { where_it_fits: ['model'], spark_detail: ['spark'], operation_log: ['id'], container_logs: ['spark', 'container'], deploy_plan: ['model', 'spark'],
-    cluster_plan: ['model', 'sparks'], recipe_detail: ['id'], search_huggingface: ['query'], spark_diagnostics: ['spark'], service_logs: ['spark', 'service'], wait_operation: ['id'], files: ['spark'], search_web: ['query'], read_page: ['url'] };
+  const req = {
+    cluster_plan: ['model', 'sparks'],
+    container_logs: ['spark', 'container'],
+    deploy_plan: ['model', 'spark'],
+    files: ['spark'],
+    operation_log: ['id'],
+    read_page: ['url'],
+    recipe_detail: ['id'],
+    search_huggingface: ['query'],
+    search_web: ['query'],
+    service_logs: ['spark', 'service'],
+    spark_detail: ['spark'],
+    spark_diagnostics: ['spark'],
+    wait_operation: ['id'],
+    where_it_fits: ['model'],
+  };
   for (const [t, ks] of Object.entries(req)) for (const k of ks) cases.push([t, () => { const a = { ...validFor(t) }; delete a[k]; return a; }, new RegExp(`Missing argument: ${k}`), 'invalid', `missing ${k}`]);
   // wrong types: text arguments
-  const textProps = { find_recipes: ['query', 'category'], where_it_fits: ['model'], operation_log: ['id'], container_logs: ['container'], deploy_plan: ['model'],
-    cluster_plan: ['model'], recipe_detail: ['id', 'setup'], search_huggingface: ['query'], fleet_events: ['since'], wait_operation: ['id'], files: ['folder', 'file'], search_web: ['query'], read_page: ['url'],
-    recall: ['about', 'id', 'since', 'next'] };
+  const textProps = {
+    cluster_plan: ['model'],
+    container_logs: ['container'],
+    deploy_plan: ['model'],
+    files: ['folder', 'file'],
+    find_recipes: ['query', 'category'],
+    fleet_events: ['since'],
+    operation_log: ['id'],
+    read_page: ['url'],
+    recall: ['about', 'id', 'since', 'next', 'until', 'when', 'find', 'lines'],
+    recipe_detail: ['id', 'setup'],
+    search_huggingface: ['query'],
+    search_web: ['query'],
+    wait_operation: ['id'],
+    where_it_fits: ['model'],
+  };
   for (const [t, ks] of Object.entries(textProps)) for (const k of ks) {
     cases.push([t, () => ({ ...validFor(t), [k]: 123 }), new RegExp(`${k} should be text`), 'invalid', `${k}=123`]);
     cases.push([t, () => ({ ...validFor(t), [k]: ['x'] }), new RegExp(`${k} should be text`), 'invalid', `${k}=[array]`]);
   }
   // wrong types: Spark arguments (a Spark name is looked up, so anything else is "no Spark called …")
-  const sparkProps = { spark_detail: 'spark', container_logs: 'spark', deploy_plan: 'spark', spark_diagnostics: 'spark', service_logs: 'spark', workloads: 'spark', fleet_events: 'spark', files: 'spark', recall: 'spark' };
+  const sparkProps = {
+    container_logs: 'spark',
+    deploy_plan: 'spark',
+    files: 'spark',
+    fleet_events: 'spark',
+    recall: 'spark',
+    service_logs: 'spark',
+    spark_detail: 'spark',
+    spark_diagnostics: 'spark',
+    workloads: 'spark',
+  };
   for (const [t, k] of Object.entries(sparkProps)) {
     for (const val of [123, true, { id: 'spark2' }, 'spark99', '../spark2', 'spark2;id', '$(id)', '', 'x'.repeat(41)]) {
       cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k}: no Spark called|${k} should be text`), 'invalid', `${k}=${JSON.stringify(val).slice(0, 20)}`]);
     }
   }
   // integers
-  for (const [t, k, max] of [['find_recipes', 'limit', 30], ['recent_operations', 'limit', 50], ['fleet_events', 'limit', 200], ['find_recipes', 'maxSparks', 4], ['find_recipes', 'maxMemoryGB', 2000], ['wait_operation', 'seconds', 45], ['recall', 'limit', 20]]) {
+  for (const [t, k, max] of [
+    ['find_recipes', 'limit', 30],
+    ['find_recipes', 'maxMemoryGB', 2000],
+    ['find_recipes', 'maxSparks', 4],
+    ['fleet_events', 'limit', 200],
+    ['recall', 'limit', 20],
+    ['recent_operations', 'limit', 50],
+    ['wait_operation', 'seconds', 45],
+  ]) {
     for (const n of ['5', true, null, 0, -1, max + 1, 1.5, 1e300]) {
       cases.push([t, () => ({ ...validFor(t), [k]: n }), new RegExp(`${k} should be a whole number from 1 to ${max}`), 'invalid', `${k}=${JSON.stringify(n)}`]);
     }
@@ -408,24 +473,30 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['read_page', () => ({ ...validFor('read_page'), from: n }), /from should be a whole number from 0 to 2097152/, 'invalid', `from=${JSON.stringify(n)}`]);
   }
   // booleans
-  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all'], ['memory', 'past']]) {
+  for (const [t, k] of [
+    ['linked_sparks', 'detail'],
+    ['memory', 'past'],
+    ['recipe_detail', 'all'],
+    ['workloads', 'detail'],
+    ['workloads', 'running'],
+  ]) {
     for (const b of ['true', 1, null]) cases.push([t, () => ({ ...validFor(t), [k]: b }), new RegExp(`${k} should be true or false`), 'invalid', `${k}=${JSON.stringify(b)}`]);
   }
   // patterns
   const badPatterns = {
-    where_it_fits: { model: ['../etc/passwd', '-rf', 'a b', '', '.x'] },
-    operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
-    wait_operation: { id: ['0123456789AB', '0123456789a', '../012345678', '0123456789abc'] },
+    cluster_plan: { model: ['$HOME'] },
     container_logs: { container: ['-v', '.hidden', 'a/b', 'a b', 'x'.repeat(129)] },
     deploy_plan: { model: ['../x', '$HOME'] },
-    cluster_plan: { model: ['$HOME'] },
+    files: { folder: ['.git', '../x', '/etc', 'a//b'], file: ['.env', 'notes/.envrc', '../../etc/passwd', 'a\\b'] },
+    fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
+    operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
+    read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
+    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw', '0123abc', 'l_0123abc', 'L_0123abcd'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890', '8-123', '8-12345678901234'], until: ['yesterday', '2026-1-1'], find: ['a', ' a '], lines: ['0-', '1-2-3', 'a', '12345678', '-5'] },
     recipe_detail: { id: ['Qwen3', '-x', '.x', 'a/b'], setup: ['abc', 'ABCD', 'x'.repeat(33)] },
     search_huggingface: { query: ['a', ' a ', '   '] },
-    fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
-    files: { folder: ['.git', '../x', '/etc', 'a//b'], file: ['.env', 'notes/.envrc', '../../etc/passwd', 'a\\b'] },
     search_web: { query: ['a', ' a ', '   '] },
-    read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
-    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890'] },
+    wait_operation: { id: ['0123456789AB', '0123456789a', '../012345678', '0123456789abc'] },
+    where_it_fits: { model: ['../etc/passwd', '-rf', 'a b', '', '.x'] },
   };
   for (const [t, props] of Object.entries(badPatterns)) for (const [k, vals] of Object.entries(props)) for (const val of vals) {
     cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k} isn’t in the right form`), 'invalid', `bad pattern ${k}=${JSON.stringify(val).slice(0, 30)}`]);
@@ -437,10 +508,11 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['cluster_plan', () => ({ model: ctx.model, sparks: val }), re, 'invalid', `sparks=${JSON.stringify(val)}`]);
   }
   // enums
-  for (const s of ['model', 'ray', 'portal', 'CONSOLE', '']) cases.push(['service_logs', () => ({ spark: sp(), service: s }), /service should be one of: editor, console, sparkie/, 'invalid', `service=${JSON.stringify(s)}`]);
+  for (const s of ['model', 'ray', 'portal', 'CONSOLE', '']) cases.push(['service_logs', () => ({ spark: sp(), service: s }), /service should be one of: console, sparkie/, 'invalid', `service=${JSON.stringify(s)}`]);
   cases.push(['workloads', () => ({ kind: 'models' }), /kind should be one of: model, service, sparkie, other/, 'invalid', 'kind=models']);
   cases.push(['fleet_events', () => ({ type: 'nope' }), /type should be one of: started/, 'invalid', 'type=nope']);
   cases.push(['recall', () => ({ kind: 'nope' }), /kind should be one of: said, tool, call/, 'invalid', 'kind=nope']);
+  cases.push(['recall', () => ({ when: 'last-year' }), /when should be one of: today, yesterday, this-week, last-week, this-month, last-month/, 'invalid', 'when=last-year']);
   // length limits
   cases.push(['find_recipes', () => ({ query: 'q'.repeat(121) }), /query should be text of at most 120 characters/, 'invalid', 'query 121 chars']);
   cases.push(['find_recipes', () => ({ category: 'c'.repeat(41) }), /category should be text of at most 40 characters/, 'invalid', 'category 41 chars']);
@@ -456,6 +528,10 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   cases.push(['cluster_plan', () => ({ model: 'no-such-model-test', sparks: ctx.pair }), /isn’t on any online Spark/, 'not_found', 'unknown model']);
   cases.push(['recipe_detail', () => ({ id: 'no-such-recipe-test' }), /No recipe called no-such-recipe-test/, 'not_found', 'unknown recipe']);
   cases.push(['recall', () => ({ id: 'j_000000000000' }), /There’s no record j_000000000000 in the journal/, 'not_found', 'unknown record']);
+  cases.push(['recall', () => ({ id: '0123abcd' }), /There’s no line 0123abcd in memory/, 'not_found', 'unknown line']);
+  cases.push(['recall', () => ({ id: 'l_0123abcd' }), /There’s no lesson l_0123abcd/, 'not_found', 'unknown lesson']);
+  cases.push(['recall', () => ({ find: 'error' }), /find and lines need the id of a journal record/, 'invalid', 'find with no id']);
+  cases.push(['recall', () => ({ id: '0123abcd', lines: '1-5' }), /find and lines read a journal record/, 'invalid', 'lines of a memory line']);
   cases.push(['recipe_detail', () => ({ id: ctx.recipe, setup: 'zzzz9999' }), /has no setup zzzz9999/, 'not_found', 'unknown setup']);
   cases.push(['container_logs', () => ({ spark: sp(), container: 'no-such-container-test' }), /No container called no-such-container-test/, 'not_found', 'unknown container']);
   // An agent reads only an address search_web returned in the last hour (R39).
@@ -556,11 +632,6 @@ describe('auth', () => {
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { origin: T.origin } }));
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { origin: 'https://console.example.ts.net', 'x-forwarded-host': 'console.example.ts.net' } }));
   });
-  test('a member identity can\'t use the door, even with the owner\'s key → 403', async () => {
-    const r = await post(ping, { token: await pool.token(), headers: { 'tailscale-user-login': MEMBER } });
-    assertRpcError(r, 403, -32600);
-    assert.match(r.json.error.message, /only for the owner/);
-  });
   test('owner identity in other letter case still matches its key', async () => {
     assertRpcOk(await post(ping, { token: await pool.token(), headers: { 'tailscale-user-login': OWNER.toUpperCase() } }));
   });
@@ -600,10 +671,6 @@ describe('agent key lifecycle', () => {
     assert.equal((await api('/agents', { method: 'POST', body: { name: 'foreign' }, headers: { origin: 'https://evil.example' } })).status, 403);
     assert.equal((await api('/agents', { method: 'POST', body: { name: '   ' } })).status, 400);
     assert.equal((await api('/agents', { method: 'POST', body: {} })).status, 400);
-  });
-  test('members cannot list actions or keys, or make keys', async () => {
-    for (const p of ['/agents', '/actions']) assert.equal((await api(p, { headers: { 'tailscale-user-login': MEMBER } })).status, 403, p);
-    assert.equal((await api('/agents', { method: 'POST', body: { name: 'member' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
   });
   test(`GET /actions lists all ${ALL_TOOLS.length}: ${TOOLS.length} that read, ${CHANGE_TOOLS.length} that change things (not ask_sparkie, which isn't an action)`, async () => {
     const r = await api('/actions');

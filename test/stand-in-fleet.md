@@ -4,8 +4,8 @@ The harness every test file uses and the stand-in fleet it runs against. How to 
 covers, is in `test/README.md`.
 
 - `start-mock.mjs` — `startMock()` starts the service on a fresh copy of the stand-in fleet: a temporary folder with a
-  copy of `mock/root`, a state folder seeded with `mock/access.json` (owner `owner@test`, member `member@test`, Sparks
-  1–4) and `mock/links.json` (the last cable test), its own socket and port, `SPARK_CONSOLE_WATCH_MS=3000`, and
+  copy of `mock/root`, a state folder seeded with `mock/access.json` (owner `owner@test`; a former member,
+  `member@test`, as an older build left it, never read; Sparks 1–4) and `mock/links.json` (the last cable test), its own socket and port, `SPARK_CONSOLE_WATCH_MS=3000`, and
   `SPARK_CONSOLE_SERVE_PORT` (where deploys are checked) on a free port. The state's `main.json` points Sparkie's model
   setup from `service/config.json` at the stand-in model. Everything runs in one process group, stopped (and the
   folder removed) by `stop()` or however the test process ends. Tests change the copied fleet freely; `test/mock` is
@@ -61,14 +61,16 @@ covers, is in `test/README.md`.
     it); `.mock/no-sudo` makes it ask for a password (refused), `.mock/poweroff-refused` lets `-l` say yes but refuses the
     shutdown itself, `.mock/poweroff-hangs` keeps the Spark answering. `bin/who` gives the sessions in `.mock/who` (none
     otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more power-off looks answer, then fails
-    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one.
+    them; `bin/curl` answers the serve port's `/metrics` with `.mock/metrics` when there is one, and with
+    `.mock/curl-first` there adds each call's first argument to it (the console's say `-q`, R53). `.mock/off-path-<name>`
+    makes the status round's look count that program as missing from the fixed path.
   - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,
     `setNames('upper')` for the other cases, and `setWatts(node, mW)` for a reading that stays put whatever the Spark
     does (one the controller hasn't caught up with; `null` ends it).
   - `worker.py` — stands in for `service/worker.py` (workspace files go to the real one; status without the removed
-    ray/model fields; logs for `editor`, `console` and `sparkie`).
+    ray/model fields; logs for `console` and `sparkie`).
   - `model.mjs` — Sparkie's model (streams like SGLang; offered tools, it calls them from patterns in the owner's words
     (the last user message, fleet record left out): "what's running", "start <model> [on spark N]", "stop/restart
     <container> on spark N", "restart <container> on spark N once you've read its logs" (two rounds: `container_logs`,
@@ -80,8 +82,7 @@ covers, is in `test/README.md`.
     `$MOCK_DIR/<that file>` is there; `$MOCK_DIR/model-fail` makes one request fail, once, in a way its head lists;
     every request goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last user message, the
     round and the tool results), an always-up benchmark server, and the serve-port server deploys are speed-tested on.
-  - `editor.mjs` — a code-server stand-in (`startMock({ editor: true })`); the service only reaches it if
-    `service/config.json` sets `editorPorts`. `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
+  - `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
     listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while

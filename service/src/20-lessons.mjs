@@ -1,5 +1,5 @@
 /* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
-// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs, lesson-cards.test.mjs
 // Owns: lessons.json (writers: recordLesson)
 // Timers: none        Wakes: none
 // A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
@@ -12,8 +12,11 @@
 // failure of an app leaves none. The same failure of the same setup again adds to its count: two or more of the same
 // known failure with no success between make it proven, while an unknown one stays seen. A later success of the same
 // setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
-// its proven run (verified.json). Nothing reads lessons to change what a start does yet: passing over a setup that
-// failed twice is B3, cards for the brain B4.
+// its proven run (verified.json). A start reads them before it picks a setup (B3): one that failed twice the same known
+// way is passed over while its image, Sparks and start code are what the start would use (failedTwice, bestHowNow).
+// The brain is shown lessons as one-line cards, built here from their typed fields (lessonCard), up to six about the
+// owner's words in the record block, never the system prompt (B4: picked in 20-memory-names.mjs); a failed result names
+// the lesson already on record for the same failure (lessonSeenBefore, in postResult).
 const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
 // (a cap, never reached in use: the newest are kept)
 const LESSONS_MAX = 500;
@@ -109,4 +112,117 @@ function learnFrom(job, evidence) {
     const l = lessonOf(job);
     if (l) recordLesson(l, job.status === 'completed', evidence);
   } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
+}
+
+// Which known failures count toward passing a setup over (B3, decided 2026-11-14). The setup's own count. One whose
+// cause is outside the setup never does: every setup meets the same wall, and the setup would stay passed over after
+// that was put right. A lesson still records it (R48); a failure not listed here doesn't count.
+const PASS_OVER_FAILURES = [
+  // [failure, counts, why]
+  ['out-of-memory', true, 'the setup asks for more memory than its Sparks have'],
+  ['bad-flag', true, 'the engine refuses one of its settings'],
+  ['garbage', true, 'its engine or image answers only garbage'],
+  ['no-answer', true, 'its engine or chat template doesn’t answer'],
+  ['gated', false, 'a Hugging Face sign-in or license, the same for every setup'],
+  ['port-busy', false, 'another program holds the model port'],
+  ['image', false, 'the network, while the image downloads'],
+  ['memory-share', false, 'other work holds the memory'],
+  ['never-connected', false, 'the cable between the two Sparks'],
+];
+// B3 (design B 2.4; contract 5.10): a setup that failed twice the same known way with no success between (a proven
+// lesson) is passed over while what that lesson was true of is what this start would use: its image, its Sparks and its
+// start code (the start workflow's version). When one differs, it is tried again. The lesson the setup would leave is
+// worked out as a failure would write it (setupTried, lessonOf) and looked for among the kept ones. Lessons that can't
+// be read pass nothing over: a lesson never stops a start by itself. Only failures of the setup's own count
+// (PASS_OVER_FAILURES).
+function failedTwice(m, how, placed, code) {
+  try {
+    const l = lessonOf({ type: 'deploy', status: 'failed', setupTried: setupTried(m, how, placed), workflowVersion: code });
+    if (!l?.subject.model || !l.tried.how || !l.tried.flags || !l.tried.on) return null;
+    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && PASS_OVER_FAILURES.some(([id, counts]) => counts && id === x.failure)
+      && JSON.stringify(x.subject) === JSON.stringify(l.subject)
+      && ['how', 'flags', 'image', 'on', 'code'].every(k => x.tried?.[k] === l.tried[k])) || null;
+  } catch { return null; }
+}
+// The setup a start runs with: bestHow's, each one that failed twice passed over while another is left. { how, passed:
+// [{ how, lesson }], only }: only when every setup there is failed twice, and how is then the best of them. again (the
+// yes to passedOverAsk): nothing is passed over, and what failed twice is still said. free: the least free memory on its
+// Sparks now, for a context that was cut to fit (fullContext).
+function bestHowNow(m, placed, viewer, inv, code, again = false) {
+  const passed = [], over = how => { const lesson = failedTwice(m, how, placed, code); if (lesson) passed.push({ how, lesson }); return Boolean(lesson) && !again; };
+  const free = Math.min(...placed.nodes.map(id => Number(inv.sparks.find(s => s.id === id)?.memAvailable) || NaN));
+  const how = bestHow(m, placed.two ? 2 : 1, viewer, inv.library, { over, free });
+  if (how || !over(null)) return { how, passed };
+  return { how: passed[0].how, passed, only: true };
+}
+// A setup that failed twice, in the owner's words: what it is, and how it failed.
+const passedWords = ({ how, lesson: l }) => ({
+  what: how?.setupId ? `recipe setup ${how.setupId}` : how?.fromBrain ? 'the brain’s proven setup' : how ? 'a run that worked here before' : 'its own setup (its spark.json, or the engine’s defaults)',
+  failed: `failed ${l.failed} times the same way on ${String(l.tried?.on || '').split('+').map(id => sparkName(nodeById(id) || { id })).join(' + ')} (${START_FAILURES.find(f => f.id === l.failure)?.title || l.failure}), last on ${String(l.lastAt).slice(0, 10)}` });
+// What the start's result and its operation's log say: each setup passed over, and the one tried again though it failed
+// twice, with why.
+function passedOverLines(best, args) {
+  return best.passed.map(p => {
+    const { what, failed } = passedWords(p), id = p.lesson.id;
+    if (p.how === best.how) return `Tried again ${args.tryPassedOver === true ? 'as asked' : 'at the owner’s own request'}, though ${what} ${failed}${best.only ? ': it is the only setup there is' : ''} (lesson ${id}).`;
+    return `Passed over ${what}: it ${failed}, with the image, Sparks and start code this start would use (lesson ${id}). ${p.how?.setupId ? `To try it anyway, ask for setup ${p.how.setupId}.` : 'It is tried again when its image, its Sparks or its start code change.'}`;
+  });
+}
+// The owner's own request: their own call (POST /actions), the page's own controls (the self-test too), or the yes to
+// passedOverAsk. A button pressed for another question isn't one.
+const askedByOwner = (viewer, ctx, args) => args.tryPassedOver === true || (viewer.role === 'owner' && (ctx.via === 'api' || (ctx.via === 'page' && !ctx.button)));
+// When every setup there is failed twice (design B 2.4): the owner's own request runs the best of them, and says so;
+// self-healing and a call to the model address leave it, saying why; Sparkie or an agent gets a question whose yes runs
+// it. null: run it.
+function passedOverAsk(viewer, ctx, args, m, placed, best) {
+  if (askedByOwner(viewer, ctx, args)) return null;
+  const title = m.repo || m.name, { what, failed } = passedWords(best.passed[0]);
+  if (ctx.via === 'watcher' || ctx.via === 'gateway') throw new HttpError(409, `${title}’s only setup here, ${what}, ${failed}, so it isn’t tried again by itself; the owner can ask for it.`);
+  return question(viewer, ctx, `${title}’s only setup here, ${what}, ${failed}, with the same image, Sparks and start code. Try it again anyway?`, [
+    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
+      ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
+    { label: 'No, leave it', call: null }]);
+}
+
+/* cards (B4): a lesson as the brain is shown it, and a failed result's "seen before" */
+// A lesson as one line of what happened, built by code from its typed fields only, each checked again as it is read, so
+// a damaged or hand-edited lessons.json can't put a line break, the record block's own markers, words or a key in front
+// of the brain: its id, its dates, how sure, what was tried and the known way it failed. What happened, never what to
+// do. null for anything this code didn't write.
+const LESSON_APP_FAILS = { image: 'its image didn’t download', docker: 'Docker wouldn’t start it', 'stopped-at-once': 'it stopped right after starting' };
+const lessonDay = v => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) ? v.slice(0, 10) : null);
+function lessonTried(l) {
+  const on = lSparks(l.tried?.on), where = on ? ` on ${on.split('+').map(id => sparkName(nodeById(id))).join(' + ')}` : '', image = lValue(l.tried?.image, L_IMAGE);
+  if (l.kind === 'app') {
+    const name = lValue(l.subject?.container, L_CONTAINER);
+    return name ? `the app ${name}${image ? ` (image ${image})` : ''}${where}` : null;
+  }
+  const model = lValue(l.subject?.model, L_MODEL), engine = Object.hasOwn(ENGINES, String(l.subject?.engine)) ? l.subject.engine : null;
+  const n = Number.isInteger(l.subject?.sparks) && l.subject.sparks > 0 && l.subject.sparks < 9 ? l.subject.sparks : null;
+  const how = lValue(l.tried?.how, L_HOW), setup = how?.startsWith('setup:') ? `recipe setup ${how.slice(6)}` : how === 'proven' ? 'a run that worked here before' : how === 'own' ? 'its own setup (its spark.json, or the engine’s defaults)' : 'a setup';
+  if (!model) return null;
+  const about = [engine, n ? `${n} Spark${n === 1 ? '' : 's'}` : null].filter(Boolean).join(', ');
+  return `a start of ${model}${about ? ` (${about})` : ''} with ${setup}${where}${image ? ` (image ${image})` : ''}`;
+}
+const lessonFailWords = l => (l.kind === 'app' ? LESSON_APP_FAILS[l.failure] : START_FAILURES.find(f => f.id === l.failure)?.title) || 'a way Spark Console doesn’t know';
+function lessonCard(l) {
+  if (!l || !/^l_[0-9a-f]{8}$/.test(String(l.id)) || !['start', 'app'].includes(l.kind)) return null;
+  const tried = lessonTried(l);
+  if (!tried) return null;
+  const n = Number.isInteger(l.failed) && l.failed > 0 && l.failed < 1e6 ? l.failed : 1, first = lessonDay(l.firstAt), last = lessonDay(l.lastAt);
+  const when = first && last && first !== last ? `${first} to ${last}` : last || first || 'when not known';
+  return maskSecrets(`- [${l.id}] (lesson, ${when}, ${l.state === 'proven' ? 'proven' : 'seen'}) ${tried.charAt(0).toUpperCase()}${tried.slice(1)} failed ${n} time${n === 1 ? '' : 's'}: ${lessonFailWords(l)}.`);
+}
+// A failed operation's result (postResult): the lesson already on record for this same known failure of this same setup
+// (learnFrom counts this one after the result is posted), named and said from its typed fields; null when there is none.
+function lessonSeenBefore(job) {
+  try {
+    const l = job.status === 'failed' ? lessonOf(job) : null;
+    if (!l?.failure || l.failure === 'unknown') return null;
+    const old = lessonsKept().find(x => x.kind === l.kind && JSON.stringify(x.subject) === JSON.stringify(l.subject) && x.tried?.how === l.tried.how
+      && x.tried?.flags === l.tried.flags && x.failure === l.failure), tried = old && /^l_[0-9a-f]{8}$/.test(String(old.id)) ? lessonTried(old) : null;
+    if (!tried) return null;
+    const n = Number.isInteger(old.failed) && old.failed > 0 && old.failed < 1e6 ? old.failed : 1, first = lessonDay(old.firstAt), last = lessonDay(old.lastAt);
+    return maskSecrets(`Seen before: ${tried} failed this same way ${n} time${n === 1 ? '' : 's'} before (${first && last && first !== last ? `${first} to ${last}` : last || first || 'when not known'}; lesson ${old.id}).`);
+  } catch { return null; }
 }

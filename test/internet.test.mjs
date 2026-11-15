@@ -4,8 +4,8 @@
 // another site's origin, a used, changed or made-up challenge, a made-up or misplaced token, and after 30 tries from
 // one address (every spelling of one IPv6 /64 counting as one); a fake cookie of the same name doesn't hide the real
 // one; signing out, which also ends the device's live stream; no device let in before a passkey exists; a terminal's
-// code typed and let in with the passkey (no approve link; its token comes once, works only in its header, never for
-// the editors or hidden files), a code from the internet marked so, at most 3 waiting per address, a browser let in by
+// code typed and let in with the passkey (no approve link; its token comes once and works only in its
+// header), a code from the internet marked so, at most 3 waiting per address, a browser let in by
 // code, turned away, or expired after 10 minutes; the signed-in devices list and signing one out; an agent's own key at
 // the agent door from the internet, and a look-only key not starting a model at the model address; "Test the changes"
 // and going back a build without the passkey; and an agent that may change things running a validation run by taking
@@ -239,16 +239,12 @@ describe('a device without the passkey: its code, let in from a signed-in device
     is(await poll(s.deviceCode), 410, 'only once');
   });
 
-  test('the terminal\'s token works from the internet in its header, not as a cookie, and never for the editors', async () => {
+  test('the terminal\'s token works from the internet in its header, not as a cookie', async () => {
     const st = await net('/status', { headers: bearer(token) });
     is(st, 200, 'status');
     is(await net('/status', { headers: withCookie(token) }), 401, 'as a cookie');
-    is(await net('/connect/spark3/', { headers: bearer(token) }), 403, 'the editor');
     const w = await net('/workflows', { headers: bearer(token) });
     is(w, 200, 'the workflows');
-    const hidden = await net('/nodes/spark3/files', { method: 'POST', body: { operation: 'write', area: 'own', path: '.vscode/tasks.json', content: '{}' }, headers: bearer(token) });
-    is(hidden, 403, 'no hidden files from a terminal');
-    assert.match(hidden.json.error, /terminal signed in from the internet/);
   });
 
   test('a code asked from the internet says so; one address can have at most 3 waiting', async () => {
@@ -391,44 +387,27 @@ describe('security fixes (audit, 2026-11-11)', () => {
     });
   }
 
-  test('from the internet, the editors open only within 12 hours of using the passkey on that device; never port forwarding', async () => {
+  test('a browser signs in with the passkey and another is let in by a code; 13 hours on, the console still answers', async () => {
     browser = cookieOf(await signIn());
     assert.ok(browser);
-    // No editor runs in the stand-in fleet: getting past every check is "isn't answering" (503), not 403.
-    is(await net('/connect/spark3/', { headers: withCookie(browser) }), 503, 'just signed in with the passkey');
-    // (its WebSocket gets past them too: with no editor there, the connection just closes, no 403)
-    assert.doesNotMatch(String(await upgrade('/connect/spark3/', withCookie(browser))), /403/, 'its WebSocket gets past the checks too');
-    for (const p of ['/connect/spark3/proxy/8080/', '/connect/spark3/absproxy/8080/', '/connect/spark3/%70roxy/8080/', '/connect/spark3/PROXY/8080/x',
-      '/connect/spark3//proxy/8080/', '/connect/spark3/%2Fproxy/8080/']) {
-      const r = await net(p, { headers: withCookie(browser) });
-      is(r, 400, p);
-      assert.match(r.json.error, /Port forwarding isn’t offered/);
-    }
-    is(await api('/connect/spark3/proxy/8080/'), 400, 'not on the tailnet either');
-    // A browser let in by its code hasn't used the passkey on that device.
+    // A browser let in by its code, for the tests below.
     const s = await startCode('browser', 'Borrowed laptop');
     is(await confirmed('POST', '/auth/device/approve', { code: s.code }), 200);
     coded = cookieOf(await poll(s.deviceCode));
     assert.ok(coded);
-    const no = await net('/connect/spark3/', { headers: withCookie(coded) });
-    is(no, 403, 'let in by a code');
-    assert.match(no.json.error, /within 12 hours of using your passkey/);
-    assert.match(await upgrade('/connect/spark3/', withCookie(coded)), /^HTTP\/1\.1 403/, 'its WebSocket neither');
-    // Thirteen hours on, the passkey sign-in is too old as well; the page itself still works.
+    // Thirteen hours on, the page itself still works.
     await setClock(13 * 3600000);
     try {
-      is(await net('/connect/spark3/', { headers: withCookie(browser) }), 403, '13 hours after the passkey');
       is(await net('/status', { headers: withCookie(browser) }), 200, 'the rest of the console');
     } finally { await setClock(0); }
   });
 
-  test('using the passkey on a device (confirming a change) opens the editors there again', async () => {
+  test('a device let in by a code confirms a change with the passkey from the internet', async () => {
     const via = withCookie(coded);
     const b = await net('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'PUT', path: `/agents/${agentId}`, body: { internet: true } }, headers: via });
     is(b, 200, 'begin confirm from the internet');
     const r = await net(`/agents/${agentId}`, { method: 'PUT', body: { internet: true }, headers: { ...via, 'x-spark-passkey': passkeyHeader(KEY.sign(b.json)) } });
     is(r, 200, 'confirmed with the passkey');
-    is(await net('/connect/spark3/', { headers: via }), 503, 'the editor, now');
   });
 
   test('a refused or reset WebSocket never ends the console', async () => {
@@ -437,7 +416,6 @@ describe('security fixes (audit, 2026-11-11)', () => {
       await upgrade('/connect/nowhere/', withCookie(browser), { reset: true });
       await upgrade('/status', {}, { reset: true });
     }
-    assert.match(await upgrade('/connect/spark3/'), /^HTTP\/1\.1 403/, 'not signed in');
     await sleep(500);
     // The stand-in fleet doesn't restart a service that ended: answering means it never did.
     is(await api('/health'), 200, 'still answering');

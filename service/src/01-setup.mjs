@@ -51,6 +51,8 @@ const CONFIG = {
   ...readJsonFile('config.json'),
 };
 if (process.env.PORT) CONFIG.port = Number(process.env.PORT);
+// Where the API sits on the console's address (the model address is <API_MOUNT>/v1, the agent door <API_MOUNT>/mcp).
+const API_MOUNT = CONFIG.apiMount || '/console/api';
 // Test switches: run every Spark's commands on this machine (each with its own HOME under MOCK_ROOT),
 // and accept requests without Tailscale headers as this login.
 const ALL_LOCAL = process.env.SPARK_CONSOLE_ALL_LOCAL === '1';
@@ -88,19 +90,58 @@ const hfSnap = dir => `snap=$(cat ${dir}/refs/main 2>/dev/null); { [ -n "$snap" 
 // folder (Spark 3, 2026-11-08: its big weight blobs were links to elsewhere on the disk, so SGLang found 3 shards
 // missing) gets each snapshot file mounted by itself at the same /hf/snapshots/<commit>/ path instead. --mount, not -v:
 // a link to nothing fails to start rather than leaving an empty folder in its place.
+// Docker mounts as root, so a link out of the entry is followed only for a weight file that is a plain file; any other
+// stops the start, naming it (a planted link must not put a key, a socket or a folder in the container). The entry is
+// judged as its own folder: a whole cache on another disk (the hub, or a folder above it, a link) is fine, but an entry
+// that is itself a link counts as outside, since it could point at the home. --mount misreads a comma, quote or line break.
 function hfMounts() {
-  return `hfmounts=(-v "$dir:/hf:ro"); hfreal=$(readlink -f "$dir")
-if [ -n "$(cd "$dir/snapshots/$snap" 2>/dev/null && find . \\( -type l -o -type f \\) -exec readlink -f {} \\; | awk -v p="$hfreal/" 'NF && index($0, p) != 1')" ]; then
+  return `hfmounts=(-v "$dir:/hf:ro"); ${HF_OWN}
+if [ -L "$dir" ] || [ -n "$(cd "$dir/snapshots/$snap" 2>/dev/null && find . \\( -type l -o -type f \\) -exec readlink -f {} \\; | awk -v p="$hfreal/" 'NF && index($0, p) != 1')" ]; then
   hfmounts=()
-  while IFS= read -r f; do hfmounts+=(--mount "type=bind,src=$(readlink -f "$dir/snapshots/$snap/$f"),dst=/hf/snapshots/$snap/$f,readonly"); done < <(cd "$dir/snapshots/$snap" && find . \\( -type l -o -type f \\) | sed 's#^\\./##')
+  ${hfEachFile('snapshots/$snap', 'hfmounts+=(--mount "type=bind,src=$t,dst=/hf/snapshots/$snap/$f,readonly")')}
 fi
 `;
+}
+// Shell (bash, $dir a cache entry): $hfreal, the entry's own folder (the folders above it resolved, the entry itself not),
+// and $nl, a line break.
+const HF_OWN = `hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}; nl=$'\\n'`;
+// Shell (bash, after HF_OWN): `each` for every file or link under "$dir/<under>", with $f its path there and $t where it
+// leads. The one rule for links in a cache entry (R17), for a start (hfMounts) and a copy to another Spark (copyModel):
+// a link leads to a plain file, and out of the entry's own folder only for a weight file. A copy hands the bytes over, so
+// there a weight file that leads out must also be `min` bytes or more (no key or settings file is 16 MiB). Anything
+// else, or a comma, quote or line break in a name or target, stops the script with one line naming the file.
+function hfEachFile(under, each, min = 0) {
+  return `while IFS= read -r -d '' f; do f=\${f#./}; t=$(readlink -f "$dir/${under}/$f"); say="\${f//$nl/ } in the Hugging Face cache copy of \${dir##*/models--}"
+    case "\${t}/${under}/$f" in *[,\\"]*|*"$nl"*) echo "$say has a comma, quote or line break in its name or where it links, which Spark Console doesn’t take." >&2; exit 1 ;; esac
+    case "$t" in "$hfreal"/*) [ -f "$t" ] || { echo "$say links to something that isn’t a file (\${t//$nl/ })." >&2; exit 1; } ;;
+      *) case "$f" in *.safetensors|*.gguf|*.bin|*.pt|*.pth) [ -f "$t" ]${min ? ` && [ -n "$(find "$t" -size +${min - 1}c 2>/dev/null)" ]` : ''} ;; *) false ;; esac || { echo "$say links outside the model’s folder (to \${t//$nl/ }). ${min ? 'A copy to another Spark' : 'A start'} follows such a link only for a weight file (.safetensors, .gguf, .bin, .pt or .pth) that is a plain file${min ? ` of at least ${min / 2 ** 20} MiB` : ''}." >&2; exit 1; } ;; esac
+    ${each}
+  done < <(cd "$dir/${under}" && find . \\( -type l -o -type f \\) -print0)`;
 }
 const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/state/spark-console`;
 // The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
 // snapshot takes it. Under ALL_LOCAL a test names its own, else it sits next to that run's state folder.
 const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STATE_DIR.replace(/\/+[^/]*\/*$/, '')}/journal` : `${homedir()}/.local/share/spark-console/journal`;
-const PREAMBLE = 'export PATH="$PATH:$HOME/.local/bin:/usr/local/bin"\n';
+// The console's own commands on a Spark (R53) take their programs from FIXED_PATH, which holds no folder of the
+// owner's home, and their Python and curl read nothing from the home (-I: no folder of its own, no user site; -q: no
+// ~/.curlrc). A change inside the run wall may write most of the home; nothing it writes there is obeyed by them. Under
+// ALL_LOCAL the tests' own PATH is kept, so the stand-ins are found.
+const FIXED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+// On Spark 2 the service's own PATH is that one too, whatever the service manager handed it (a desktop login there can
+// put ~/.local/bin first): ssh, bash, timeout and every local command Node starts are found on it.
+if (!ALL_LOCAL) process.env.PATH = FIXED_PATH;
+const PATH_FIRST = ALL_LOCAL ? '' : `PATH=${FIXED_PATH}; export PATH; `;
+const PREAMBLE = `export PATH=${ALL_LOCAL ? '"$PATH:/usr/local/bin"' : FIXED_PATH}
+python3() { command python3 -I "$@"; }
+curl() { command curl -q "$@"; }
+`;
+// What those commands call on a Spark, every one on FIXED_PATH on a stock DGX OS. Each status round looks for them
+// there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
+// (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
+// ~/.mock/off-path-<name> instead.)
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname';
+const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/off-path-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
+const pathMissing = new Map();
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }

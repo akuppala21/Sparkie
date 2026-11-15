@@ -1,7 +1,7 @@
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
-// Rules: R1, R11, R13, R19, R20, R22, R30, R38
-// Tests: selftest.test.mjs, selftest-cleanup.test.mjs
+// Rules: R1, R11, R13, R19, R20, R22, R30, R38, R42
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs, work.test.mjs
 // Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
 // Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
@@ -128,8 +128,8 @@ async function healDrill(j, node, container, id) {
 const inAbout = at => { const m = Math.max(1, Math.ceil((at - Date.now()) / 60000)); return `in about ${m} minute${m === 1 ? '' : 's'}`; };
 function drillHeldBack(node, container) {
   const s = agentSettings();
-  if (!s.selfHeal) return 'Automatic restarts are off (Access → Agents), so the drill didn’t run.';
-  if (s.halted && !s.autoPaused) return 'Agents’ changes are paused (Access → Agents), and self-healing waits too, so the drill didn’t run.';
+  if (!s.selfHeal) return 'Automatic restarts are off (your account menu → Agents and Telegram), so the drill didn’t run.';
+  if (s.halted && !s.autoPaused) return 'Agents’ changes are paused (your account menu → Agents and Telegram), and self-healing waits too, so the drill didn’t run.';
   const tries = healTriesThisHour(`${node.id}/${container}`);
   if (tries.length >= 2) return `Self-healing restarted ${container} twice in the last hour, the most it does, so the drill didn’t run. Ask again ${inAbout(Math.min(...tries) + 3600000)}.`;
   if (workflowStatus('restart_model').state === 'untested') return 'The restart workflow hasn’t passed Spark Console’s tests, so self-healing restarts nothing and the drill didn’t run.';
@@ -312,6 +312,10 @@ async function selfTest(j, asked, where, image) {
     else if (!a) say('Model address from a container', 'not tried', null, 'The job didn’t get that far.');
     else if (a.code === 0) say('Model address from a container', 'worked', Date.now() - a.seconds * 1000, `The job got the model list from ${address} from inside its container.`);
     else say('Model address from a container', 'failed', Date.now() - a.seconds * 1000, `The job couldn’t get the model list from ${address} from inside its container; what it said is in jobs/${job}/address.txt in the shared folder on ${at}.`);
+    // Walls: the root helper proves its walls again on every Spark that has it (R42, 21-work.mjs); no line while none has.
+    t = Date.now();
+    const walls = await selfTestWalls();
+    if (walls) say('Walls', walls.result, t, walls.words);
   } finally {
     // Whatever this run started that still runs is stopped (a step's operation still going is cancelled first).
     // (its own: its steps, and the drill's restart of its model)
@@ -355,7 +359,7 @@ action({
       const label = changeLabel('self_test', args);
       return question(viewer, ctx, `${label}? Running the self-test is the owner’s call.`, [{ label, call: { action: 'self_test', args } }, { label: 'No, not now', call: null }], 'question', { ownerOnly: true });
     }
-    if (spark) mustUse(viewer, [spark]);
+    if (spark) mustUse(viewer);
     if ([...jobs.values()].some(j => j.type === 'self-test' && j.status === 'running')) throw new HttpError(409, 'A self-test is running already. Its report is posted when it ends.');
     if (existsSync(SELF_TEST_FILE)) {
       let at = 'its Spark';
