@@ -1291,6 +1291,53 @@ describe('the lock-out net (R60)', () => {
     assert.ok(timerWaits(s, r.id), 'its timer still waits');
   });
 
+  test('a later try starts what an earlier try stopped and reloads what it put back (the review\'s S4)', () => {
+    const s = netted();
+    const r = net(s, 'true');
+    writeFileSync(join(G(s, r.id), 'stopped'), 'console tailscaled');
+    writeFileSync(join(G(s, r.id), 'put'), '/etc/ssh/sshd_config\n');
+    assert.equal(fire(s, r.id).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    for (const l of ['reload systemctl start tailscaled.service: ok', 'reload systemctl --machine=owner@.host --user start spark-console-api.service: ok',
+      'reload systemctl try-reload-or-restart ssh.service: ok']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
+    for (const f of ['stopped', 'put']) assert.ok(!existsSync(join(G(s, r.id), f)), `${f} is gone once the put-back is done`);
+  });
+
+  test('ufw is not turned on again while a file of its own could not be put back (S5)', () => {
+    const s = netted();
+    s.put('etc/ufw/user.rules', 'rules\n');
+    s.put('standin/ufw', 'active\n');
+    const env = binOf(s, { ufw: UFW });
+    const r = netIn(s, env, 'ufw disable; printf "changed\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ufw/user.rules"');
+    rmSync(join(G(s, r.id), 'files/etc/ufw/user.rules'));   // (its copy gone: that file cannot go back)
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.some(l => l.startsWith('not put back /etc/ufw/user.rules: ')), result.join('\n'));
+    assert.ok(!result.includes('put back ufw'), result.join('\n'));
+    assert.equal(readFileSync(join(s.R, 'standin/ufw'), 'utf8').trim(), 'inactive', 'off, rather than on with the change\'s rules');
+  });
+
+  test('a unit masked and stopped at the copy, unmasked and started in the window, is masked and stopped again (S6)', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'inactive masked\n');
+    const r = net(s, 'systemctl unmask ssh.service; systemctl start ssh.service');
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active disabled');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'inactive masked');
+  });
+
+  test('a unit counts as put back only when systemd said ok to each call (S9)', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'active enabled\n');
+    const r = net(s, 'systemctl stop ssh.service');
+    const env = binOf(s, { systemctl: `[ "$*" = "start ssh.service" ] && { echo "Job failed" >&2; exit 1; }; exec "${join(MOCKBIN, 'systemctl')}" "$@"` });
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.includes('not put back the unit ssh.service: systemctl said exit 1'), result.join('\n'));
+    assert.ok(!result.includes('put back the unit ssh.service'), result.join('\n'));
+    assert.match(result[0], /: 0 went back, 1 did not$/);
+  });
+
   test('a moved ssh port behind ssh.socket: after sshd_config goes back, systemd is told and the socket restarted', () => {
     const s = netted();
     s.put('standin/units/ssh.socket', 'active enabled\n');

@@ -1580,11 +1580,20 @@ def restore(why):
         if 'tailscale' in unsaid:
             notes.append("differs, not put back: Tailscale's settings or routes (its state file is as it was)")
     notes += [f'cannot be put back: {x}' for x in lost]
+    # (what this try put back is noted: a later try, should this one fail before its reloads, reloads it too)
+    try:
+        with open(os.path.join(HERE, 'put')) as f:
+            went = [x for x in f.read().splitlines() if x.startswith('/')]
+    except OSError:
+        went = []
+    went = sorted(set(went + done))
+    with open(os.path.join(HERE, 'put'), 'w') as f:
+        f.write(''.join(x + '\n' for x in went))
     # What was put back is read again: systemd first, then what reads those files. After a restart only systemd and
     # netplan's files (the units read them later); a moved ssh port behind ssh.socket needs the socket restarted.
     ssh_socket = (was_st.get('ssh.socket') or {}).get('active') == 'active'
     for top, cmds in RELOADS:
-        if not any(under(p, top) for p in done):
+        if not any(under(p, top) for p in went):
             continue
         if top in (TS_STATE, f'{HOME}/.config/systemd/user', STATE):
             continue   # (started again below)
@@ -1592,7 +1601,7 @@ def restore(why):
             cmds = [['netplan', 'generate']] if top == '/etc/netplan' else [['systemctl', 'daemon-reload']] if top == '/etc/systemd/system' else []
         for cmd in cmds:
             call(cmd)
-    if ssh_socket and any(under(p, '/etc/ssh') or under(p, '/etc/systemd/system/ssh.socket') or under(p, '/etc/systemd/system/ssh.socket.d') for p in done):
+    if ssh_socket and any(under(p, '/etc/ssh') or under(p, '/etc/systemd/system/ssh.socket') or under(p, '/etc/systemd/system/ssh.socket.d') for p in went):
         call(['systemctl', 'daemon-reload'])
         if not boot:
             call(['systemctl', 'restart', 'ssh.socket'])
@@ -1604,8 +1613,10 @@ def restore(why):
             call(CONSOLE_UNIT + ['start', 'spark-console-api.service'])
     # Then the ways in that are not files: each unit back to enabled, disabled or masked, and to running or not where
     # it was settled at the copy (started only if it ran and now does not, stopped only if it did not and now runs; a
-    # state passing then is left as it runs); ufw on or off. After a restart only a unit's file is put right: the units
-    # start by themselves then, and ufw reads its own restored file. A unit counts as gone back only when systemd said so.
+    # state passing then is left as it runs); ufw on or off. After a restart a unit's file is put right, and one that
+    # ran at the copy and whose file went back is queued to start (the restart had already chosen what starts); the
+    # others start by themselves, none is stopped, and ufw reads its own restored file. A unit counts as gone back only
+    # when systemd said so.
     if was_st:
         back, _ = moved(was_st, running())
         for u in [x for x in back if x != 'ufw']:
@@ -1625,6 +1636,8 @@ def restore(why):
                     mine.append(['systemctl', 'start', u])
                 elif a.get('active') in OFF and b.get('active') in ON:
                     mine.append(['systemctl', 'stop', u])
+            elif mine and a.get('active') in ON:   # (its file went back after the restart chose what starts: queued)
+                mine.append(['systemctl', '--no-block', 'start', u])
             if a.get('active') not in ON + OFF:
                 notes.append(f"left as it runs: {u} (it was {a.get('active')} at the copy)")
             if not mine:
@@ -1641,10 +1654,11 @@ def restore(why):
             call(['ufw', '--force', 'enable'] if was_st.get('ufw') == 'active' else ['ufw', 'disable'])
             done.append('ufw')
     # (what this try stopped is started again by the next, should this one fail before it started them)
-    try:
-        os.unlink(os.path.join(HERE, 'stopped'))
-    except FileNotFoundError:
-        pass
+    for x in ('stopped', 'put'):
+        try:
+            os.unlink(os.path.join(HERE, x))
+        except FileNotFoundError:
+            pass
     head = f'put back at {now()}: ' + (f'{len(done)} went back, {len(notes)} did not' if done or notes else 'nothing differed')
     lines = [head, {'timer': 'by its timer', 'boot': 'after a restart inside the window'}.get(why, "on the console's word")]
     lines += [f'put back {p}' for p in done] + notes + [f"reload {' '.join(c)}: {res}" for c, res in ran]
