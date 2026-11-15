@@ -38,7 +38,7 @@ describe('a paste card for apps', { concurrency: 1 }, () => {
     assert.equal(v.paste.block, [`OPENAI_BASE_URL=${base}`, 'OPENAI_API_KEY=any', 'OPENAI_MODEL=sparkie', '',
       `curl ${base}/chat/completions -H 'content-type: application/json' -d '{"model":"sparkie","messages":[{"role":"user","content":"Say hi"}]}'`].join('\n'));
     assert.deepEqual(v.paste.notes, [
-      'Here, sparkie is Sparkie’s model alone: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (Access → Agents).',
+      'Here, sparkie is Sparkie’s model alone: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (your account menu → Agents and Telegram).',
       'Sparkie’s model answers 1 request at once, shared with your own chats; apps get at most 1, so an app’s request makes your chat wait.',
       'Context: give apps at most 262,144 tokens (its server allows 1,000,000).',
       'It works from your own devices on your tailnet, signed in to Tailscale as you. A network that blocks ts.net addresses can’t reach it, and Spark Console offers no way around that.',
