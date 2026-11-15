@@ -3648,6 +3648,8 @@ async function runChoice(viewer, conv, id, by) {
   let asked = null, out, content;
   if (!c.action) {
     content = 'Okay, left as it is.';
+    // (a No ends the carrying on of the request it was asked in: review after the loop, Later 3)
+    endTask(conv);
   } else {
     // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
     // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
@@ -3931,8 +3933,10 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
     chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
     ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
-    // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
-    noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
+    // "Don't stop anything" holds for this message and the next, unless this one asks to stop something; a carry-on turn
+    // keeps it, and that its request's replies read outside text, from the task (keepTask).
+    noStops: Boolean(task?.noStops) || intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
+    ...(task?.readOutside ? { readOutside: true } : {}),
     onQuestion: q => { asked.push(q); } };
   return { asked, ctx };
 }
@@ -3952,12 +3956,34 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
-  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx }) {
+  // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
+  if (task?.ended) return;
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
+  // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
+  // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
+  if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
+}
+// A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
+// turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
+function endTask(conv, tell = true) {
+  const task = conv?.task;
+  if (!task) return false;
+  task.ended = true;
+  conv.task = null;
+  if (tell && task.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
+  return true;
+}
+// The tasks started by a way in that is gone (tgForget: channel 'telegram'; endSession: the device's session id).
+function endTasksFrom({ channel = null, session = null }) {
+  let n = 0;
+  for (const c of chatData().conversations) if (c.task && ((channel && c.task.channel === channel) || (session && c.task.session === session)) && endTask(c, false)) n++;
+  if (n) saveChats();
+  return n;
 }
 // The reply’s end when the rounds are done: the answer with keys hidden, its buttons, the numbers no tool said, a paste
 // card; saved in the chat, then the task kept, then told.
@@ -17436,6 +17462,8 @@ function tgForget() {
   const st = tgSaved();
   delete st.conv; delete st.answering;
   tgSave();
+  // (a task started from Telegram ends with it: its carry-on turns would go on with Telegram's rights)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Disconnecting Telegram: its tasks weren’t ended (${e.message}).`); }
   let removed = false;
   try {
     const now = secretsRead();
@@ -18735,6 +18763,8 @@ function holdForSession(viewer, closable) {
   closable.once?.('close', () => { sessionSockets.get(id)?.delete(closable); if (!sessionSockets.get(id)?.size) sessionSockets.delete(id); });
 }
 function endSession(id) {
+  // (and a task the device started: its carry-on turns would go on as that device, 14-chats.mjs)
+  try { endTasksFrom({ session: id }); } catch (e) { console.error(`Signing a device out: its tasks weren’t ended (${e.message}).`); }
   for (const c of sessionSockets.get(id) || []) { try { c.destroy ? c.destroy() : c.end(); } catch {} }
   sessionSockets.delete(id);
   for (const client of clients) if (client.viewer?.session?.id === id) { try { client.res.end(); } catch {} }
