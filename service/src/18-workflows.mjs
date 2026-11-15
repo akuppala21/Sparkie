@@ -349,7 +349,7 @@ action({
       throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
-    if (given.model === w.best?.model && !input.inputs?.model) job.usedBest = w.best.model;
+    if (w.best?.model && given.model === w.best.model && !input.inputs?.model) job.usedBest = w.best.model;
     const steps = JSON.stringify(w.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
