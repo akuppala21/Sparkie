@@ -1,4 +1,5 @@
-# Spark Console's per-Spark worker: status, workloads, logs, diagnostics, files and editor restart. It started as the
+# Spark Console's per-Spark worker: status, workloads, logs, diagnostics, and files in a Spark's shared folder (list, read
+# and write; never delete, rename or make a folder). It started as the
 # original Spark Portal's worker.py (hence the spark-portal paths and service names it still uses on each Spark).
 # Spark Console runs it on each Spark over SSH, like the portal did: one JSON request on stdin, JSON lines out.
 """Fixed owner-only node operations. No browser-provided shell, URL, or path."""
@@ -21,7 +22,6 @@ import sys
 import threading
 import time
 
-STATE = Path.home() / '.local/state/spark-portal'
 PRINT_LOCK = threading.Lock()
 
 
@@ -60,21 +60,6 @@ def emit(value):
             print(json.dumps(value, allow_nan=False), flush=True)
         except (BrokenPipeError, OSError):
             os._exit(0)
-
-
-def active(service):
-    # A failed inspection is an error, never a quiet "stopped".
-    output = run(['systemctl', '--user', 'show', service,
-                  '--property=LoadState', '--property=ActiveState'], timeout=5)
-    properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
-    state = properties.get('ActiveState')
-    if properties.get('LoadState') == 'not-found' and state == 'inactive':
-        return False
-    if state in ('inactive', 'failed'):
-        return False
-    if state in ('active', 'activating', 'deactivating', 'reloading', 'refreshing'):
-        return True
-    raise RuntimeError('Could not confirm service state.')
 
 
 def power_summary():
@@ -131,7 +116,6 @@ def status():
         'memory':('Memory',memory_values,(None,None)),
         'gpu':('GPU',gpu_values,(None,None,None)),
         'containers':('Docker',lambda:run(['docker','ps','-a','--format','{{.Names}}\t{{.State}}']).splitlines(),None),
-        'editor':('Editor',lambda:active('spark-portal-editor.service'),None),
         'network':('Network',network_summary,None),
         'disk':('Storage',lambda:round(shutil.disk_usage(Path.home()).free/2**30,1),None),
     }
@@ -146,7 +130,6 @@ def status():
             # Linux load includes runnable and uninterruptible tasks. It is
             # not a CPU utilization percentage.
             'load':load,'load1Minute':load,'cpuLogicalCount':os.cpu_count(),
-            'editorReady':values['editor'],
             'runningContainers':None if containers is None else [line.split('\t')[0] for line in containers if line.endswith('\trunning')][:40],
             'dockerAccessible':containers is not None,
             'diskFreeGiB':values['disk'],
@@ -170,7 +153,6 @@ def diagnostics():
     check('Memory',report['memoryFreeGiB'] is not None,
           str(report['memoryFreeGiB'])+' GiB available of '+str(report['memoryTotalGiB'])+' GiB.' if report['memoryFreeGiB'] is not None else 'Memory telemetry unavailable.')
     check('Docker',report['dockerAccessible'],'Container service accessible.' if report['dockerAccessible'] else 'Container service unavailable to this account.')
-    check('Editor',report['editorReady'] is True,'Editor service active.' if report['editorReady'] else 'Editor service stopped or unavailable.')
     network=report['network']
     check('Network',network is not None,
           str(network['highSpeedLinksUp'])+' high-speed links up; '+str(network['highSpeedLinksConfigured'])+' have IP addresses. Link status does not measure bandwidth.' if network else 'Network inspection unavailable.')
@@ -217,10 +199,10 @@ def redact_logs(text,truncated=False):
 
 def service_logs(config):
     service=config.get('service')
-    units={'editor':'spark-portal-editor.service','console':'spark-console-api.service'}
+    units={'console':'spark-console-api.service'}
     if service=='sparkie':args=['docker','logs','--tail','100','sparkie-main']
     elif isinstance(service,str) and service in units:args=['journalctl','--user','-u',units[service],'-n','100','--no-pager','--output=short-iso']
-    else:raise ValueError('Choose editor, console, or sparkie logs.')
+    else:raise ValueError('Choose console or sparkie logs.')
     text,truncated,ok=bounded_logs(args)
     text,truncated=redact_logs(text,truncated)
     return {'service':service,'text':text,'truncated':truncated,'ok':ok,'checkedAt':checked_at()}
@@ -314,7 +296,6 @@ def workloads():
     return result
 
 
-WORKSPACE_ROOT = Path.home()/'workspaces'
 WORKSPACE_STORAGE = Path.home()/'.local/share/spark-portal/workspaces'
 FILE_LIMIT = 256*1024
 
@@ -324,9 +305,10 @@ class WorkspaceConflict(ValueError):
 
 
 def workspace_files(config):
-    """Bounded file operations rooted at a server-selected workspace."""
+    """Bounded file operations in the Spark's shared folder: list, read, write. Nothing is deleted, renamed or made a
+    folder here."""
     operation = config.get('operation')
-    if operation not in ('list', 'read', 'write', 'mkdir', 'rename', 'delete'):
+    if operation not in ('list', 'read', 'write'):
         raise ValueError('Unsupported file operation.')
 
     def path_parts(value, allow_root=False):
@@ -343,29 +325,20 @@ def workspace_files(config):
 
     relative = config.get('path', '')
     parts = path_parts(relative, allow_root=operation=='list')
-    destination = config.get('destination')
-    destination_parts = path_parts(destination) if operation=='rename' else None
-    if operation=='rename' and destination==relative:
-        raise ValueError('Choose a different destination name.')
-    if operation!='rename' and destination is not None:
-        raise ValueError('A destination is only supported when renaming a file.')
     offset, limit = config.get('offset', 0), config.get('limit', 250)
     if type(offset) is not int or not 0<=offset<=10000 or type(limit) is not int or not 1<=limit<=250:
         raise ValueError('Choose a valid folder page.')
     if operation!='list' and ('offset' in config or 'limit' in config):
         raise ValueError('Folder pages are only supported for listing.')
-    scope = config.get('workspaceScope', 'personal')
-    if scope not in ('personal','member','shared') or (scope=='member' and not re.fullmatch('[a-f0-9]{16}', str(config.get('memberId','')))) or (scope!='member' and config.get('memberId') is not None):
+    if config.get('workspaceScope')!='shared':
         raise ValueError('Invalid workspace scope.')
-    workspace = WORKSPACE_ROOT
-    if scope!='personal':
-        workspace = WORKSPACE_STORAGE/('member-'+config['memberId'] if scope=='member' else 'shared')
-        for directory in reversed([workspace, *workspace.parents]):
-            if directory==Path.home() or Path.home() in directory.parents:
-                directory.mkdir(mode=0o700, exist_ok=True)
-                info=directory.lstat()
-                if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid():
-                    raise ValueError('Unsafe managed workspace directory.')
+    workspace = WORKSPACE_STORAGE/'shared'
+    for directory in reversed([workspace, *workspace.parents]):
+        if directory==Path.home() or Path.home() in directory.parents:
+            directory.mkdir(mode=0o700, exist_ok=True)
+            info=directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid():
+                raise ValueError('Unsafe managed workspace directory.')
     descriptors=[]
     try:
         root=os.open(workspace, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
@@ -382,7 +355,7 @@ def workspace_files(config):
             return hashlib.sha256(value.encode()).hexdigest()
         if operation=='list':
             entries=[];capped=False
-            scan_limit=10000 if scope=='personal' else 1000
+            scan_limit=1000
             with os.scandir(fd) as items:
                 for entry in items:
                     if entry.name.startswith('.portal-'):continue
@@ -398,16 +371,16 @@ def workspace_files(config):
             next_offset=offset+limit if offset+limit<total else None
             return {'path':relative,'entries':page,'offset':offset,'limit':limit,'total':total,
                     'totalExact':not capped,'nextOffset':next_offset,'truncated':capped or next_offset is not None,
-                    'maxFileBytes':FILE_LIMIT,'editorFolder':str(workspace.joinpath(*parts)),'editorRoot':str(workspace)}
+                    'maxFileBytes':FILE_LIMIT}
         name=parts[-1]
         def read_existing(parent=fd, leaf=name):
             file=os.open(leaf, os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK, dir_fd=parent)
             try:
                 info=os.fstat(file)
-                if not stat.S_ISREG(info.st_mode) or (scope!='personal' and info.st_nlink!=1):
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
                     raise ValueError('Only regular, unlinked workspace files can be opened.')
                 if info.st_size>FILE_LIMIT:
-                    raise ValueError('This file is larger than 256 KiB. Use the full editor for larger files.')
+                    raise ValueError('This file is larger than 256 KiB.')
                 data=bytearray()
                 while len(data)<=FILE_LIMIT:
                     chunk=os.read(file, min(65536, FILE_LIMIT+1-len(data)))
@@ -422,67 +395,6 @@ def workspace_files(config):
         lockfd=os.open('.portal-files.lock', os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW, 0o600, dir_fd=root)
         descriptors.append(lockfd);fcntl.flock(lockfd, fcntl.LOCK_EX|fcntl.LOCK_NB)
         revision=config.get('revision')
-        if operation in ('rename','delete'):
-            if not isinstance(revision,str) or not re.fullmatch('[a-f0-9]{64}',revision):
-                raise ValueError('Reload the file or folder before changing it.')
-            try:info=os.stat(name, dir_fd=fd, follow_symlinks=False)
-            except FileNotFoundError:raise WorkspaceConflict('This item no longer exists. Refresh the folder before trying again.') from None
-            if stat.S_ISDIR(info.st_mode):
-                if operation=='rename':raise ValueError('Folder rename is not supported here. Files can be renamed; empty folders can be deleted.')
-                if revision!=folder_revision(info):raise WorkspaceConflict('This folder changed. Refresh it before deleting.')
-                directory=os.open(name, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW, dir_fd=fd)
-                descriptors.append(directory)
-                if os.listdir(directory):raise ValueError('Only empty folders can be deleted. Remove their contents first.')
-                current=os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if folder_revision(current)!=revision:raise WorkspaceConflict('This folder changed before deletion. Refresh it and try again.')
-                os.rmdir(name, dir_fd=fd);os.fsync(fd)
-                return {'deleted':True,'path':relative,'kind':'folder'}
-            data,info=read_existing()
-            if hashlib.sha256(data).hexdigest()!=revision:
-                raise WorkspaceConflict('This file changed. Reload it before changing its name or deleting it.')
-            if operation=='delete':
-                current=os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if current.st_ino!=info.st_ino or current.st_dev!=info.st_dev:
-                    raise WorkspaceConflict('This file changed before deletion. Reload it and try again.')
-                os.unlink(name, dir_fd=fd);os.fsync(fd)
-                return {'deleted':True,'path':relative,'kind':'file'}
-            target_fd=directory_fd(destination_parts[:-1]);target_name=destination_parts[-1]
-            # A hard link provides portable, atomic create-if-absent behavior.
-            # It never replaces a destination, even when another process creates it concurrently.
-            linked=False
-            try:
-                os.link(name,target_name,src_dir_fd=fd,dst_dir_fd=target_fd,follow_symlinks=False);linked=True
-                target_info=os.stat(target_name,dir_fd=target_fd,follow_symlinks=False)
-                current=os.stat(name,dir_fd=fd,follow_symlinks=False)
-                if (not stat.S_ISREG(target_info.st_mode) or (target_info.st_dev,target_info.st_ino)!=(info.st_dev,info.st_ino)
-                        or (current.st_dev,current.st_ino)!=(info.st_dev,info.st_ino)):
-                    raise WorkspaceConflict('This file changed during rename. Refresh the folder and try again.')
-                # read_existing rejects temporary two-link files in managed scopes, so read the
-                # already-verified inode directly to check an editor's concurrent content change.
-                verify=os.open(target_name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=target_fd)
-                try:
-                    verified=os.fstat(verify)
-                    if not stat.S_ISREG(verified.st_mode) or (verified.st_dev,verified.st_ino)!=(info.st_dev,info.st_ino):
-                        raise WorkspaceConflict('The destination changed during rename. Refresh the folder and try again.')
-                    check=bytearray()
-                    while len(check)<=FILE_LIMIT:
-                        chunk=os.read(verify,min(65536,FILE_LIMIT+1-len(check)))
-                        if not chunk:break
-                        check.extend(chunk)
-                    if hashlib.sha256(check).hexdigest()!=revision:
-                        raise WorkspaceConflict('This file changed during rename. Reload it and try again.')
-                finally:os.close(verify)
-                os.unlink(name,dir_fd=fd);linked=False
-                os.fsync(fd);os.fsync(target_fd)
-            except Exception:
-                if linked:
-                    try:
-                        leftover=os.stat(target_name,dir_fd=target_fd,follow_symlinks=False)
-                        if (leftover.st_dev,leftover.st_ino)==(info.st_dev,info.st_ino):
-                            os.unlink(target_name,dir_fd=target_fd)
-                    except FileNotFoundError:pass
-                raise
-            return {'renamed':True,'path':destination,'previousPath':relative,'revision':revision,'size':len(data)}
         data=None
         if operation=='write':
             encoded=config.get('data')
@@ -492,21 +404,17 @@ def workspace_files(config):
             if len(data)>FILE_LIMIT:raise ValueError('Choose a file up to 256 KiB.')
             if revision is not None and (not isinstance(revision,str) or not re.fullmatch('[a-f0-9]{64}',revision)):
                 raise ValueError('Reload the file before saving.')
-        if scope!='personal':
-            total=0;count=0
-            for parent,folders,files in os.walk(workspace,followlinks=False):
-                for item in folders+files:
-                    if item.startswith('.portal-'):continue
-                    info=(Path(parent)/item).lstat();count+=1
-                    if stat.S_ISREG(info.st_mode):total+=info.st_size
-                    if count>1000:raise ValueError('Workspace entry limit reached. Delete unused items before adding more.')
-            existing=(workspace/relative).exists()
-            previous=(workspace/relative).lstat().st_size if existing and operation=='write' else 0
-            if (count>=1000 and not existing) or total-previous+len(data or b'')>64*1024*1024:
-                raise ValueError('Workspace limit reached: 64 MiB and 1,000 entries per space on each machine.')
-        if operation=='mkdir':
-            os.mkdir(name,mode=0o700,dir_fd=fd)
-            return {'created':True,'path':relative}
+        total=0;count=0
+        for parent,folders,files in os.walk(workspace,followlinks=False):
+            for item in folders+files:
+                if item.startswith('.portal-'):continue
+                info=(Path(parent)/item).lstat();count+=1
+                if stat.S_ISREG(info.st_mode):total+=info.st_size
+                if count>1000:raise ValueError('Workspace entry limit reached. Delete unused items before adding more.')
+        existing=(workspace/relative).exists()
+        previous=(workspace/relative).lstat().st_size if existing and operation=='write' else 0
+        if (count>=1000 and not existing) or total-previous+len(data or b'')>64*1024*1024:
+            raise ValueError('Workspace limit reached: 64 MiB and 1,000 entries per space on each machine.')
         try:old,info=read_existing()
         except FileNotFoundError:old,info=None,None
         if (old is not None and revision!=hashlib.sha256(old).hexdigest()) or (old is None and revision is not None):
@@ -539,9 +447,9 @@ def main(config):
     if not isinstance(config, dict):
         raise ValueError('Expected an operation object.')
     action = config.get('action')
-    allowed = {'workspace-files': {'action','operation','path','data','revision','destination','offset','limit','workspaceScope','memberId'},
+    allowed = {'workspace-files': {'action','operation','path','data','revision','offset','limit','workspaceScope'},
                'status': {'action'}, 'diagnostics': {'action'}, 'workloads': {'action'}, 'logs': {'action','service'},
-               'container-logs': {'action','containerId'}, 'editor-restart': {'action'}}
+               'container-logs': {'action','containerId'}}
     if not isinstance(action, str) or action not in allowed or set(config)-allowed[action]:
         raise ValueError('Unsupported operation settings.')
     if action == 'workspace-files':
@@ -556,20 +464,7 @@ def main(config):
         return service_logs(config)
     if action == 'container-logs':
         return container_logs(config)
-    # editor-restart: one change at a time on a Spark.
-    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if STATE.is_symlink():
-        raise ValueError('Unsafe owner state directory.')
-    lockpath = STATE/'operation.lock'
-    fd = os.open(lockpath, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'w') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ValueError('Another node-management operation is in progress.') from None
-        run(['systemctl', '--user', 'restart', 'spark-portal-editor.service'])
-        return {'requested': action, 'editorReady': active('spark-portal-editor.service')}
-
+    raise ValueError('Unsupported operation settings.')
 
 if __name__ == '__main__':
     os.umask(0o077)

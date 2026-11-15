@@ -156,6 +156,7 @@ async function runChoice(viewer, conv, id, by) {
     // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
+      ...(c.covers ? { covers: c.covers } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),

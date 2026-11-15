@@ -9,8 +9,8 @@
 // exactly as they answer a stranger; the removed routes (/access…, /access/ask, /public/ask) answer the owner as an
 // unknown path does; the app door and a WebSocket refuse them too. The checks that lived in member code now admit only
 // the owner (canUse, canManage, mustUse), and the owner's own paths through them still work. No answer, notice or page
-// names a view the page no longer has (Access → Agents, People, Models, Clusters), outside four strings in code the
-// workflow versions hash or in runAction, each named below. Starts a stand-in fleet: run it on a Spark.
+// names a view the page no longer has (Access → Agents, People, Models, Clusters), outside one string in runAction,
+// named below. Starts a stand-in fleet: run it on a Spark.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -77,11 +77,13 @@ const ROUTES = ['/actions', '/actions/fleet_status', '/agents', '/agents/0123456
   '/deploy/cluster-plan', '/deploy/options', '/deploy/plan', '/deploy/plans', '/desired', '/desired/bring-back', '/desired/forget', '/fabric', '/gpu',
   '/heartbeat', '/jobs', '/jobs/0123456789ab', '/jobs/0123456789ab/cancel', '/main', '/main/check', '/main/choices', '/main/eval', '/main/plan', '/main/route',
   '/main/start', '/main/stop', '/main/use', '/mcp', '/metrics', '/models', '/nodes/spark3/workloads', '/nodes/spark3/diagnostics', '/nodes/spark3/logs/console',
-  `/nodes/spark3/logs/container-${'a'.repeat(64)}`, '/nodes/spark3/files', '/recipes', '/recipes/add', '/recipes/add-list', '/recipes/dig', '/recipes/download',
+  `/nodes/spark3/logs/container-${'a'.repeat(64)}`, '/recipes', '/recipes/add', '/recipes/add-list', '/recipes/dig', '/recipes/download',
   '/recipes/search', '/rollback', '/status', '/stop', '/telegram', '/telegram/approve', '/telegram/needs', '/telegram/pair', '/verified', '/v1/models', '/v1/chat/completions',
   '/workflows', '/workflows/validate',
   // gone with members and sharing (E10d): unknown paths now
-  '/access', '/access/ask', '/access/requests', '/access/invite', '/access/0123456789abcdef', '/public/ask'];
+  '/access', '/access/ask', '/access/requests', '/access/invite', '/access/0123456789abcdef', '/public/ask',
+  // gone with the file browser (E10e): an unknown path now
+  '/nodes/spark3/files'];
 // Public: they answer whoever asks (the sign-in routes are how the owner signs in).
 const SIGNIN = ['/auth/signin/begin', '/auth/signin', '/auth/signin/recovery', '/auth/signout', '/auth/device/start', '/auth/device/poll'];
 const PUBLIC = ['/health', '/public/fleet', '/whoami', ...SIGNIN];
@@ -191,16 +193,11 @@ describe('no check that lived in member code lets anyone else through, and the o
     assert.ok(!/\brole: 'member'/.test(server), 'nothing makes a member');
   });
 
-  test('the owner’s paths through those checks still work: a deploy plan, a Spark’s files, every operation, four answers at once', { timeout: 120000 * SLOW }, async () => {
+  test('the owner’s paths through those checks still work: a deploy plan, every operation, four answers at once', { timeout: 120000 * SLOW }, async () => {
     // (was "the owner, or a member allowed to run models")
     assert.equal((await api('/deploy/options')).status, 200);
     const plan = await api('/deploy/plan?model=testorg--Qwen3.8-27B-abliterated-GGUF&node=spark3');
     assert.ok(![401, 403].includes(plan.status), plan.text);
-    // (was "the owner, or a member's own area")
-    const files = await api('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: '' } });
-    assert.ok(![401, 403].includes(files.status), files.text);
-    const shared = await api('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: '', area: 'shared' } });
-    assert.ok(![401, 403].includes(shared.status), shared.text);
     // (was "the owner sees every operation; a member the ones they started")
     const j = await api('/jobs');
     assert.equal(j.status, 200, j.text);
@@ -213,16 +210,12 @@ describe('no check that lived in member code lets anyone else through, and the o
 
 describe('no answer, notice or page names a view the page no longer has', () => {
   const GONE = /Access →|Access ->|→ People|→ Agents(?! and Telegram)|\bon Models\b|Models →|Clusters →|Preview as a member|Request access|\b(?:Home|Files|Models|Access|People) (?:page|view|tab)\b/;
-  // In code the five workflow versions hash, so changed with the next step that changes them (E10e), and in runAction,
-  // which the rail's builder holds: each known, and nothing else.
+  // In runAction, which the rail's builder holds: known, and nothing else.
   const KNOWN = [
-    'it has to pass the connection test first (Clusters → Test connections)',
-    'Sparkie’s own model is started and stopped by the owner, on Models.',
-    'Sparkie’s own model restarts by itself; the owner manages it on Models.',
     'The owner can resume them in Access → Agents.',
   ];
 
-  test('the service: nothing but the four known lines', () => {
+  test('the service: nothing but the one known line', () => {
     const server = read('service/server.mjs');
     const lines = server.split('\n').filter(l => GONE.test(l));
     const unknown = lines.filter(l => !KNOWN.some(k => l.includes(k)));
