@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
 import { checkDocs, rulesIndex, describe as say } from '../tools/check-docs.mjs';
 import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
+import { checkStatus, statusTable } from '../tools/status.mjs';
 
 test('this tree: the documents match the code', () => {
   const problems = checkDocs(REPO);
@@ -111,6 +112,7 @@ describe('typed counts', () => {
 
 describe('sizes', () => {
   test('AGENTS.md over 8 KB', () => fails({ 'AGENTS.md': `${BASE['AGENTS.md']}${'Short line.\n'.repeat(700)}` }, 'sizes', /over its limit of 8192/));
+  test('the contract over 120 KB: made flat, it has no higher ceiling', () => fails({ 'docs/contract.md': `${BASE['docs/contract.md']}${'Short line.\n'.repeat(10500)}` }, 'sizes', /over its limit of 122880/));
   test('a card over 4 KB', () => fails({ 'docs/how/add-an-action.md': CARD.replace('- A second route.', `${'- A second route.\n'.repeat(250)}`) }, 'sizes', /over its limit of 4096/));
   test('a line over 400 characters', () => fails(doc('word '.repeat(90)), 'sizes', /line of 45\d characters/));
 });
@@ -206,5 +208,60 @@ describe('headers', () => {
   test('comments, strings and regular expressions are not code', () => {
     const quiet = "// writePrivate(DESIRED_FILE, x); setInterval(watchHeld, 1);\nconst NOTE = 'newJob(\"power-off\") fleetEvent({ type: \"boom\" })';\nconst RE = /setInterval\\(x\\)|[/(]/g;\nconst T = `writeFileSync(${'${'}NOTE}) ${'${'}RE.source}`;\n";
     assert.deepEqual(partsProblems({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}${quiet}` }).map(say), []);
+  });
+});
+
+// docs/status.md (tools/status.mjs, the same code tools/make.mjs runs): one row per rule and per contract requirement,
+// made from the rule files' "Checked by" and "Today" and from the tests that hold an acceptance test (`// T54:`).
+test('this tree: docs/status.md is what the rule files and the tests make, and every test it names is here', () => {
+  assert.deepEqual(checkStatus(REPO).map(say), []);
+});
+
+// The made-up tree with its status table made; each test below adds one fault. A hand edit or a stale table is also
+// found as stale, so each test checks that its own fault is named and that only the status check fails.
+function statusTree(extra) {
+  const root = makeTree(extra);
+  if (!('docs/status.md' in extra)) writeFileSync(join(root, 'docs/status.md'), statusTable(root));
+  return root;
+}
+const statusProblems = extra => { const root = statusTree(extra); try { return checkStatus(root); } finally { rmSync(root, { recursive: true, force: true }); } };
+const statusOf = extra => { const root = statusTree(extra); try { return readFileSync(join(root, 'docs/status.md'), 'utf8'); } finally { rmSync(root, { recursive: true, force: true }); } };
+function statusFails(extra, pattern) {
+  const problems = statusProblems(extra);
+  assert.ok(problems.some(p => pattern.test(p.message)), problems.map(say).join('\n') || 'no problem found');
+  for (const p of problems) assert.equal(p.check, 'status', say(p));
+}
+const R1_ROW = /^\| \[R1\]\(rules\/R01\.md\) \|.*$/m;
+
+describe('status', () => {
+  test('the made-up tree passes as it is', () => assert.deepEqual(statusProblems({}).map(say), []));
+  test('a rule with no row', () => statusFails({ 'docs/rules/R02.md': RULE(2), 'docs/status.md': statusOf({}) }, /no row for R2\b/));
+  test('a contract requirement with no row', () => {
+    const contract = BASE['docs/contract.md'].replace('- 8.3 It never changes SSH.\n', '- 8.3 It never changes SSH.\n- 8.4 It asks before stopping what is in use.\n');
+    statusFails({ 'docs/contract.md': contract, 'docs/status.md': statusOf({}) }, /no row for 8\.4\b/);
+  });
+  test('a built row that names no test', () => statusFails({ 'docs/status.md': statusOf({}).replace(R1_ROW, '| [R1](rules/R01.md) | built |  |  |') }, /R1 built, but names no test/));
+  test('a test it names is gone', () => statusFails({ 'docs/status.md': statusOf({}).replace(R1_ROW, '| [R1](rules/R01.md) | built | `test/gone.test.mjs` |  |') }, /test\/gone\.test\.mjs, which is gone/));
+  test('a test name no test there has', () => statusFails({ 'docs/status.md': statusOf({}).replace('“a choice is used once”', '“a choice is used twice”') }, /a choice is used twice/));
+  test('a test that is skipped is no proof', () => {
+    statusFails({ 'test/change.test.mjs': "// T1: a start\ntest.skip('a choice is used once, alone, and only by whoever was asked', () => {});\n" }, /skipped or marked to-do/);
+  });
+  test('a version mark still in the contract', () => {
+    for (const mark of ['*(v3)*', '*(changed in v3)*', '*(2026-11-11)*', '*(changed 2026-11-12, the owner’s decision 6)*']) {
+      statusFails({ 'docs/contract.md': BASE['docs/contract.md'].replace('- 8.3 It never', `- 8.3 ${mark} It never`) }, new RegExp(`version mark \\(${mark.replace(/[.*()]/g, '\\$&')}\\)`));
+    }
+  });
+  test('a row the rule files and the tests do not make', () => statusFails({ 'docs/status.md': statusOf({}).replace('| partly |', '| no test yet |') }, /run node tools\/make\.mjs/));
+  test('a rule with no test says so; an acceptance test held by a test makes its requirement built', () => {
+    const contract = BASE['docs/contract.md']
+      .replace('| # | Request |\n|---|---|\n| T1 | "start a model" |', '| # | Request | Rules |\n|---|---|---|\n| T1 | "start a model" | 8.3 |\n| T2 | "stop it" | 8.4 |')
+      .replace('- 8.3 It never changes SSH.\n', '- 8.3 It never changes SSH.\n- 8.4 It asks first.\n');
+    const rule = RULE(2).replace('- test: `change.test.mjs` (“a choice is used once”)', '- review\n- test (to add): a stop list that is stale');
+    const table = statusOf({ 'docs/contract.md': contract, 'docs/rules/R02.md': rule });
+    assert.match(table, /^\| \[R1\]\(rules\/R01\.md\) \| partly \| `test\/change\.test\.mjs` \(“a choice is used once”\) \| falls short today: its file says where \|$/m);
+    assert.match(table, /^\| \[R2\]\(rules\/R02\.md\) \| no test yet \|  \| review; test \(to add\): a stop list that is stale; falls short today: its file says where \|$/m);
+    assert.match(table, /^\| 8\.3 \| built \| `test\/change\.test\.mjs` \(“a choice is used once, alone, and only by whoever was asked”\) \| holds T1 \|$/m);
+    assert.match(table, /^\| 8\.4 \| no test yet \|  \| T2: no test holds it yet \|$/m);
+    assert.deepEqual(statusProblems({ 'docs/contract.md': contract, 'docs/rules/R02.md': rule }).map(say), []);
   });
 });
