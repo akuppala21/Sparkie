@@ -6976,6 +6976,14 @@ async function stepOpEnd(j, id) {
   }
   return jobs.get(id);
 }
+// Who a saved step is, as the gates see it: a run an agent asked for (its key, its own call through the door, or its chat
+// with Sparkie) is that agent's in each of its steps too, so every rule that asks an agent (a job run again, a GPU app
+// started again, a power-off) asks in the step as in the agent's own call, and a key removed during the run stops its
+// next step (runAction reads the key again). The owner's run stays the owner's.
+function savedStepAgent(viewer, ctx) {
+  const agentId = ctx.agentId || viewer?.agentKey?.id || null;
+  return viewer?.agentKey || ctx.agent || agentId || ctx.via === 'agent' ? { agent: true, ...(agentId ? { agentId } : {}) } : {};
+}
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
 // part. Nothing for a step that answered anything else (already, kept, a stop).
@@ -6993,6 +7001,9 @@ function startedBy(action, args, out, keep = false) {
 // the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
   const stopped = [], kept = [], failed = [];
+  // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
+  // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
+  // never leaves the run's leftovers running for nobody, or a question no one can answer)
   const c = { via: 'workflow', actor: `${title} (saved workflow)`, request: `${title}, stopping what it started`, canChange: true, conv: ctx.conv || null, ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) };
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
@@ -7482,7 +7493,7 @@ action({
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
             out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null,
-              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
+              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
           savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
