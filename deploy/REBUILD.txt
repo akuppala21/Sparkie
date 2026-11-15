@@ -6,7 +6,7 @@ Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.lo
 1. On Spark 2, by hand: DGX OS, the same user name as before, Docker working, Node.js 18 or newer, Tailscale joined
    under the same machine name (the address and your passkeys depend on it), then
      sudo loginctl enable-linger $USER
-   and give Spark 2's new SSH key to Spark 3 and Spark 4 (ssh-copy-id from Spark 2 to each).
+   then ssh-keygen and ssh-copy-id from Spark 2 to Spark 3 and Spark 4, and ssh-copy-id from the Mac to Spark 2.
 
 2. Find the newest copy of the state. Turn Spark 3 and Spark 4 on (their buttons, or the Tapo app), then on each:
      ls -lt ~/.local/share/spark-console/backups/state-*.tgz | head -3
@@ -20,8 +20,11 @@ Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.lo
 
 4. Install it, from the Mac, as for any update: bash spark-console/deploy/host-on-portal.sh
    Then, once each, as before: deploy/cutover.sh, deploy/lock-api.sh, deploy/open-to-internet.sh.
-   Without the Mac, once Spark 2 has git, Node.js and a GitHub read token: clone the repository and run
+   Without the Mac, once Spark 2 has git and a GitHub read token: clone the repository, then in it
      bash deploy/pull.sh setup <owner>/<repository>; bash deploy/pull.sh check; bash deploy/pull.sh install <tree>
+   and add the two routes the Mac installer would:
+     sudo tailscale serve --bg --https=8443 --set-path=/console ~/spark-console
+     sudo tailscale serve --bg --https=8443 --set-path=/console/api unix:$HOME/.local/state/spark-console/api.sock
 
 5. Sign in. On the tailnet you are the owner at once. Every other device signs in again: no copy holds a sign-in.
    Your passkey came back with the state. Make new recovery codes under Your passkey.
