@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 65 parts in `service/src/`, joined in name order into `service/server.mjs` (16951 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 65 parts in `service/src/`, joined in name order into `service/server.mjs` (16963 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -86,7 +86,7 @@ Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data
 - **Wakes:** none
 - **Functions:** `spawnOn`, `knownOffline`, `noteReach`, `run`, `fields`, `b64json`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `PATH_FIRST`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
-- **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-memory`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-guide`, `21-power`, `21-selftest`, `21-web`, `21-work-shown`, `21-work`, `24-handler`, `25-backup-and-start`
+- **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-memory`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-guide`, `21-power`, `21-selftest`, `21-web`, `21-work-shown`, `21-work`, `24-handler`, `25-backup-and-start`
 
 ### `03-identity.mjs`: who's asking
 
@@ -454,15 +454,15 @@ The owner's list of what should be running on each Spark: every model a change s
 
 ### `20-digest.mjs`: the digest: a long tool result cut by code into its numbered lines that matter (G5)
 
-A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the text is seen as lines (textLines: a newline ends a line, and in JSON an escaped one too; a line past 300 characters goes on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at most, each with the line before and after it), then the first 5 and the last 15, then each run of 10 or more lines the same, …
+A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the text is seen as lines in one pass, whatever it holds (textLines: a newline ends a line, and in JSON an escaped one too; a line past 300 characters goes on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at most, each with the line before and after it), then the first 5 and the last 15, then each …
 
 - **Area:** record. **Rules:** R59. **Tests:** digest.test.mjs, work.test.mjs
-- **Lines:** 117
+- **Lines:** 129
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `digestFails`, `textLines`, `digestText`, `digestOut`, `recordPart`
-- **Uses:** `01-setup` (`HttpError`), `07-jobs` (`note`), `17-changes` (`START_FAILURES`), `20-journal` (`jFile`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySizes`), `21-web` (`readable`)
+- **Functions:** `digestFails`, `textSplit`, `textLines`, `digestText`, `digestOut`, `recordPart`
+- **Uses:** `01-setup` (`HttpError`), `02-ssh` (`run`), `07-jobs` (`note`), `17-changes` (`START_FAILURES`), `20-journal` (`jFile`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySizes`), `21-web` (`readable`)
 - **Used by:** `14-rounds`, `20-journal`
 
 ### `20-heal.mjs`: self-healing, more of it (v3.1, 2026-11-11)

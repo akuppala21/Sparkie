@@ -8,12 +8,14 @@
 // before it was masked). A caller other than the owner reads back no chat's tool result, and in an agent's chat the
 // digest says so; a command's lines only a caller that may run there. From the phone (Telegram, paired) and an agent's
 // key, find and lines give no more than recall {id} does there. The output a message may read counts the digest
-// (a setup of 20,000 tokens: 24,000 characters a message). With the switch digest off the 12,000 cut comes back.
+// (a setup of 20,000 tokens: 24,000 characters a message). With the switch digest off the 12,000 cut comes back. On a
+// console of its own, results of megabytes made to be slow to cut (a run of backslashes, one line with no space, a
+// million short lines, escaped backslashes before an n, one failure word repeated) are cut in time and within size.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, ASK, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sseEvents, ASK, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 const NOW = Date.now(), at = ms => new Date(ms).toISOString();
@@ -212,3 +214,56 @@ test('the switch: SPARK_CONSOLE_MEMORY_OFF=digest gives the 12,000 cut back; on,
   assert.ok(cut.startsWith('{"observedAt"') && !cut.includes('"digest"'), cut.slice(0, 200));
   assert.ok(D && content.startsWith('{"digest":"Spark Console cut this result by code'), 'on, the digest (the first test)');
 });
+
+// Results made to be slow to cut: each tool call (the lookup, its record written, its digest) and each recall over its
+// record take a second or two at most, and the digest stays within its size. (The splitter once searched back through
+// a run of backslashes at every place in it: 80,000 of them took 1.6 s.)
+const HEAVY = {
+  stopped: '\\'.repeat(4e6),
+  removed: 'x'.repeat(4e6),
+  created: 'a\n'.repeat(1e6),
+  learned: '\\n'.repeat(2e6),
+  crashed: 'error'.repeat(8e5),
+  started: 'KV cache '.repeat(4.5e5),
+};
+const PLAIN = 'j_c0de00000002', PLAIN_TEXT = `$ cat big\n${'\\n'.repeat(1e6)}\n${'\\'.repeat(2e6)}\n`;
+test('results of megabytes made to be slow to cut are cut in a second or two each, within the digest\'s size; recall reads them as fast', { timeout: 300000 * SLOW }, async () => {
+  const fleet = await startMock({ watchMs: 60000, prepare: ({ dir, stateDir }) => {
+    writeFileSync(join(stateDir, 'events.jsonl'), Object.entries(HEAVY).map(([type, error], i) => JSON.stringify({ at: at(NOW - 600000 + i * 1000), type, spark: 'spark1', container: `heavy-${type}`, error })).join('\n') + '\n', { mode: 0o600 });
+    const folder = join(dir, 'journal'), month = at(NOW - 120000).slice(0, 7);
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    writeFileSync(join(folder, `journal-${month}.out`), PLAIN_TEXT, { mode: 0o600 });
+    appendFileSync(join(folder, `journal-${month}.jsonl`), `${JSON.stringify({ id: PLAIN, at: at(NOW - 120000), k: 'cmd', act: 'run', via: 'api', actor: 'owner', ok: true, exit: 0, sub: ['spark3'], o: [0, Buffer.byteLength(PLAIN_TEXT)] })}\n`, { mode: 0o600 });
+  } });
+  later.push(fleet);
+  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
+  const recallThere = async body => {
+    const t0 = Date.now(), r = await fetch(`${fleet.base}/actions/recall`, { method: 'POST', headers, body: JSON.stringify(body) }), json = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(json).slice(0, 300));
+    return { json, ms: Date.now() - t0 };
+  };
+  for (const type of Object.keys(HEAVY)) {
+    const words = `g5 heavy ${type}`;
+    script([{ match: `^${words}$`, calls: [{ name: 'fleet_events', arguments: { spark: 'spark1', type, limit: 1 } }] }], fleet);
+    const { id } = await (await fetch(`${fleet.base}/chats`, { method: 'POST', headers, body: '{}' })).json();
+    const sse = await (await fetch(`${fleet.base}/chats/${id}/messages`, { method: 'POST', headers, body: JSON.stringify({ text: words }) })).text();
+    const step = sseEvents(sse).find(e => e.type === 'tool' && e.name === 'fleet_events');
+    assert.ok(step?.ok, `${type}: ${sse.slice(-300)}`);
+    assert.ok(step.ms < 2000 * SLOW, `${type}: the call, its record and its digest took ${step.ms} ms`);
+    const [content] = await resultsFor(words, fleet), d = JSON.parse(content);
+    assert.deepEqual(Object.keys(d), DIGEST_KEYS, `${type}: ${content.slice(0, 200)}`);
+    assert.ok(JSON.stringify(d.kept).length <= 6000 && content.length < 7000, `${type}: ${content.length}`);
+    for (const body of [{ id: d.record, find: 'zzz' }, { id: d.record, lines: `${Math.max(1, d.lines - 100)}-${d.lines}` }]) {
+      const r = await recallThere(body);
+      assert.ok(r.ms < 2000 * SLOW, `${type} ${JSON.stringify(body)}: ${r.ms} ms`);
+      assert.equal(r.json.of, d.lines, type);
+    }
+  }
+  // A command's record that is plain text: a backslash and an n are two letters there.
+  for (const body of [{ id: PLAIN, find: 'zzz' }, { id: PLAIN, lines: '1-5' }]) {
+    const r = await recallThere(body);
+    assert.ok(r.ms < 2000 * SLOW, `${JSON.stringify(body)}: ${r.ms} ms`);
+    assert.equal(r.json.of, 1 + Math.ceil(2e6 / 300) + Math.ceil(2e6 / 300), JSON.stringify(r.json).slice(0, 300));
+  }
+});
+
