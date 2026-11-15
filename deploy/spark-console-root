@@ -72,13 +72,23 @@ BOOT=/etc/systemd/system
 NET_MAX=1800    # seconds a change inside the net may take (30 minutes)
 NET_AFTER=600   # the timer: the command's own time limit plus ten minutes, so it never fires under a running command
 # The ways in, copied before the change: the system's (a missing one is copied as missing, and put back so) ...
-NET_SYSTEM='/etc/ssh /etc/sudoers /etc/sudoers.d /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/pam.d /etc/profile
-  /etc/profile.d /etc/bash.bashrc /etc/environment /etc/netplan /etc/NetworkManager/system-connections /etc/hosts
-  /etc/ufw /etc/iptables /etc/nftables.conf /var/lib/tailscale/tailscaled.state'
+NET_SYSTEM='/etc/ssh /etc/sudoers /etc/sudoers.d /etc/sudo.conf /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/pam.d
+  /etc/security /etc/nsswitch.conf /etc/nologin /etc/hosts.allow /etc/hosts.deny /etc/profile /etc/profile.d
+  /etc/bash.bashrc /etc/environment /etc/netplan /etc/systemd/network /etc/NetworkManager/system-connections /etc/hosts
+  /etc/ufw /etc/default/ufw /etc/default/ssh /etc/default/tailscaled /etc/iptables /etc/nftables.conf
+  /var/lib/tailscale/tailscaled.state
+  /etc/systemd/system/ssh.service /etc/systemd/system/ssh.service.d /etc/systemd/system/ssh.socket
+  /etc/systemd/system/ssh.socket.d /etc/systemd/system/sshd.service /etc/systemd/system/sshd.service.d
+  /etc/systemd/system/tailscaled.service /etc/systemd/system/tailscaled.service.d
+  /etc/systemd/system/multi-user.target.wants/ssh.service /etc/systemd/system/sockets.target.wants/ssh.socket
+  /etc/systemd/system/multi-user.target.wants/tailscaled.service'
+# (by name under /etc/systemd/system, never the whole folder: the guard's own restart unit is written there after the
+# copy. A path that is not there when copied is put back as not there: /etc/nologin made inside the window goes.)
 # ... the owner's (with the owner's service manager's units: on Spark 2, the console's) ...
-NET_HOME='.ssh/authorized_keys .ssh/config .bashrc .profile .bash_profile .bash_login .bash_logout .bash_aliases
+NET_HOME='.ssh/authorized_keys .ssh/authorized_keys2 .ssh/config .bashrc .profile .bash_profile .bash_login .bash_logout .bash_aliases
   .pam_environment .config/systemd/user'
-# ... and, where Spark Console's state folder is (Spark 2), its sign-in files (SIGNIN, but the sockets).
+# ... the owner's linger file (without it the owner's service manager, and on Spark 2 the console, stops at log-out),
+# and, where Spark Console's state folder is (Spark 2), its sign-in files (SIGNIN, but the sockets).
 # A path that may stand in a unit setting: no space, quote, %, $, backslash or colon; no . or .. part.
 SAFE='^(/[A-Za-z0-9._@+-]+)+$'
 
@@ -495,7 +505,7 @@ only_id() { [ -z "$SHA$SECS$DIR" ] && [ "$OPEN$STDIN$NET" = 000 ] && [ ${#PROTEC
   || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
-  local state why='' held look_why
+  local state why='' held look_why open timer
   prereqs
   state=$(proof_state)
   lists
@@ -520,6 +530,12 @@ do_check() {
   [ -n "$why" ] || why=$held
   if [ -z "$why" ]; then say "run ready"; else say "run refuses: $why"; fi
   say "root refuses: the put-back net is not built yet"
+  open=$(open_guard)
+  if [ -n "$open" ]; then
+    timer=$(systemctl show --property=ActiveState --value "sw-guard-$open.timer" 2>/dev/null) || timer=''
+    if [ "$timer" = active ]; then timer='its timer waits'; else timer="its timer is not waiting (${timer:-gone})"; fi
+    say "net open: guard $open goes back at $(guard_at "$R$GUARD/$open") unless it is kept; $timer"
+  fi
   exit 0
 }
 
@@ -600,12 +616,20 @@ do_unit() {
 # go back, pending. Only one guard is open on a Spark at a time.
 G=''
 open_guard() {   # the guard on this Spark whose put-back is still pending, if any
+  # (one kept or put back is done, whatever it left behind; the proof's own carry its mark and never count)
   local g n
   for g in "$R$GUARD"/*/pending; do
     [ -e "$g" ] || continue
     n=${g%/pending} n=${n##*/}
-    if [[ $n =~ ^[a-z0-9]{8,40}$ ]]; then printf '%s' "$n"; return; fi
+    [[ $n =~ ^[a-z0-9]{8,40}$ ]] || continue
+    [ -e "$R$GUARD/$n/kept" ] || [ -e "$R$GUARD/$n/result" ] || [ -e "$R$GUARD/$n/proof" ] && continue
+    printf '%s' "$n"
+    return
   done
+}
+guard_done() {   # $1 a guard's folder that is kept or put back: what may still be left of it is taken away
+  local id=${1##*/}
+  rm -f -- "$1/pending" "$R$BOOT/multi-user.target.wants/sw-guard-boot-$id.service" "$R$BOOT/sw-guard-boot-$id.service"
 }
 guard_at() {   # $1 a guard's folder: when its timer fires
   local at
@@ -615,10 +639,15 @@ guard_at() {   # $1 a guard's folder: when its timer fires
 boot_off() {   # the unit that would put back after a restart, taken away
   rm -f -- "$R$BOOT/multi-user.target.wants/sw-guard-boot-$ID.service" "$R$BOOT/sw-guard-boot-$ID.service"
 }
-net_refuse() {   # arming failed: what it made is taken away again, the held folder too, and nothing runs
-  systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1 || true
-  boot_off
-  if [ -n "$G" ]; then rm -rf -- "$G"; fi
+net_unmake() {   # what this call made while arming, taken away again: never a guard it did not make (G empty)
+  if [ -n "$G" ]; then
+    systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1 || true
+    boot_off
+    rm -rf -- "$G"
+  fi
+}
+net_refuse() {   # arming failed: what this call made is taken away again, the held folder too, and nothing runs
+  net_unmake
   rm -rf -- "$H"
   refuse "$1"
 }
@@ -642,6 +671,8 @@ UNIT
 }
 net_arm() {
   local other p f s n
+  # (a hang-up while arming takes the half-made guard away; once armed, the guard stays and the timer does the rest)
+  trap 'net_unmake; rm -rf -- "$H"; exit 129' HUP INT TERM
   mkdir -p -m 0755 -- "$R${GUARD%/*}" && mkdir -p -m 0700 -- "$R$GUARD" || net_refuse "the net could not be armed: no $GUARD, so nothing ran"
   exec 7> "$R$GUARD/.arming" || net_refuse "the net could not be armed: no lock, so nothing ran"
   flock -w 10 7 || net_refuse "another guard is being armed on this Spark, so nothing ran"
@@ -657,6 +688,7 @@ net_arm() {
   {
     for p in $NET_SYSTEM; do printf '%s\0' "$p"; done
     for p in $NET_HOME; do printf '%s\0' "$OWNER_HOME/$p"; done
+    printf '%s\0' "/var/lib/systemd/linger/$OWNER"
     s="$OWNER_HOME/.local/state/spark-console"
     if [ -d "$R$s" ] && [ ! -L "$R$s" ]; then
       for f in $SIGNIN; do case "$f" in *.sock) ;; *) printf '%s\0' "$s/$f" ;; esac; done
@@ -679,13 +711,27 @@ net_arm() {
   [ "$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null)" = active ] \
     || net_refuse "the net could not be armed: its timer is not waiting, so nothing ran"
   exec 7>&-
+  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
   say "net armed: the ways in go back at $(guard_at "$G") unless they are kept"
+}
+net_words() {   # $1 what guard.py's differs said, $2 when the timer fires: what goes back by itself, and what does not
+  local d n nb what=''
+  if [ "${1:0:1}" = '?' ]; then printf 'the ways in could not be compared; they go back at %s unless they are kept' "$2"; return; fi
+  d=$(printf '%s\n' "$1" | sed -n 's/^D //p')
+  n=$(printf '%s\n' "$1" | grep -c '^D ')
+  nb=$(printf '%s\n' "$1" | sed -n 's/^N //p')
+  case "$nb" in *firewall*) what='the live firewall rules' ;; esac
+  case "$nb" in *tailscale*) what="${what:+$what and }Tailscale's settings" ;; esac
+  if [ "$n" = 1 ]; then printf '1 of the ways in differs (%s) and goes back at %s unless it is kept' "$d" "$2"
+  elif [ "$n" -gt 1 ]; then printf '%s of the ways in differ (%s) and go back at %s unless they are kept' "$n" "$(printf '%s\n' "$d" | head -n 8 | paste -sd ' ' -)" "$2"; fi
+  if [ -n "$what" ] && [ "$n" -gt 0 ]; then printf '; %s differ too, and do not go back by themselves' "$what"
+  elif [ -n "$what" ]; then printf '%s differ, and do not go back by themselves; nothing else differs, so the timer at %s puts nothing back' "$what" "$2"; fi
 }
 net_after() {   # after the command: nothing differs, and the guard is disarmed by itself; else it stays, and says what
   local out n
   exec 8> "$G/lock" && flock -w 120 8 || { say "net open: the ways in go back at $(guard_at "$G") unless they are kept"; return; }
   out=$("$PY" -I -S "$G/guard.py" differs 2>/dev/null) || out='? the ways in could not be compared'
-  if [ -e "$G/result" ]; then say "net: already put back"
+  if [ -e "$G/result" ]; then guard_done "$G"; say "net: already put back"
   elif [ -z "$out" ]; then
     printf 'disarmed %s: nothing differs\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$G/kept"
     systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1 || true
@@ -693,9 +739,7 @@ net_after() {   # after the command: nothing differs, and the guard is disarmed 
     boot_off
     say "net disarmed: nothing differs"
   else
-    n=$(printf '%s\n' "$out" | wc -l)
-    out=$(printf '%s\n' "$out" | cut -c3- | head -n 8 | paste -sd ' ' -)
-    say "net open: $n of the ways in differ ($out); they go back at $(guard_at "$G") unless they are kept"
+    say "net open: $(net_words "$out" "$(guard_at "$G")")"
   fi
   exec 8>&-
 }
@@ -733,8 +777,8 @@ do_keep() {   # the owner's yes, through the console: counts only while the time
   [ -d "$G" ] && [ ! -L "$G" ] && [ -f "$G/restore.sh" ] || refuse "there is no guard $ID on this Spark"
   exec 8> "$G/lock" || refuse "cannot open the guard's lock"
   flock -w 120 8 || refuse "the put-back is running now: ask again in a minute"
-  if [ -e "$G/result" ]; then say "already put back at $(sed -n '1s/^put back at //p' -- "$G/result")"; exit 0; fi
-  if [ -e "$G/kept" ]; then say "kept already: $(head -n 1 -- "$G/kept")"; exit 0; fi
+  if [ -e "$G/result" ]; then guard_done "$G"; say "already put back at $(sed -n '1s/^put back at //p' -- "$G/result")"; exit 0; fi
+  if [ -e "$G/kept" ]; then guard_done "$G"; say "kept already: $(head -n 1 -- "$G/kept")"; exit 0; fi
   state=$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null) || state=''
   [ "$state" = active ] || refuse "its timer is not waiting (${state:-gone}), so keeping does not count: what was not kept goes back"
   # (written before the stop, under the lock: a put-back the timer starts now waits for the lock, then sees it)
@@ -764,7 +808,7 @@ why=${1-timer}
 case "$why" in timer|boot) ;; *) exit 2 ;; esac
 exec 9> "$here/lock" || exit 1
 flock 9
-if [ -e "$here/kept" ] || [ -e "$here/result" ]; then exit 0; fi
+if [ -e "$here/kept" ] || [ -e "$here/result" ]; then exec python3 -I -S "$here/guard.py" done; fi
 if [ "$why" = timer ]; then
   unit=$(cat -- "$here/unit")
   systemctl stop -- "$unit" > /dev/null 2>&1
@@ -788,8 +832,12 @@ guard_py() {
 #             ./manifest.json its kind, bytes' SHA-256, mode and owner; a link as a link, never followed; a folder and
 #             all in it; a path that is not there as not there; one under a folder that is a link, as that. Beside
 #             them, as text: Tailscale's settings and serve routes, and the live firewall rules.
-#   differs   one line per listed path where something differs now ("D <path>"), and "S tailscale" or "S firewall"
-#             when that text differs; nothing is changed
+#             Each folder above a listed path, up to the owner's home (and /var/lib/tailscale, /var/lib/systemd/linger),
+#             is kept as a folder: its mode and owner, none of what is in it.
+#   differs   what differs now: "D <path>" for each listed path or folder above one that goes back by itself, "N
+#             firewall" or "N tailscale" for what does not (the live rules; Tailscale's settings when its state file's
+#             bytes did not change); nothing is changed
+#   done      (restore.sh, kept or put back already) takes away what may be left: pending, the restart unit
 #   restore   (restore.sh, the command stopped) puts back exactly what differs, through folders opened one by one
 #             without following a link, and reloads what it put back; writes ./result
 import hashlib, json, os, re, shutil, stat, subprocess, sys, time
@@ -816,12 +864,15 @@ NOISE = re.compile(r'DOCKER|docker|br-[0-9a-f]|ts-input|ts-forward|ts-postroutin
 CONSOLE = [['systemctl', f'--machine={OWNER}@.host', '--user', 'daemon-reload'],
            ['systemctl', f'--machine={OWNER}@.host', '--user', 'try-restart', 'spark-console-api.service']]
 # What is reloaded when something under a path was put back (by the timer; after a restart they have not started yet).
-RELOADS = [('/etc/ssh', [['systemctl', 'try-reload-or-restart', 'ssh.service'], ['systemctl', 'try-reload-or-restart', 'sshd.service']]),
-           ('/etc/netplan', [['netplan', 'apply']]),
+SSH = [['systemctl', 'try-reload-or-restart', 'ssh.service'], ['systemctl', 'try-reload-or-restart', 'sshd.service']]
+RELOADS = [('/etc/systemd/system', [['systemctl', 'daemon-reload']]), ('/etc/ssh', SSH), ('/etc/default/ssh', SSH),
+           ('/etc/netplan', [['netplan', 'apply']]), ('/etc/systemd/network', [['networkctl', 'reload']]),
            ('/etc/NetworkManager/system-connections', [['nmcli', 'connection', 'reload']]),
-           ('/etc/ufw', [['ufw', 'reload']]),
+           ('/etc/ufw', [['ufw', 'reload']]), ('/etc/default/ufw', [['ufw', 'reload']]),
            (TS_STATE, [['systemctl', 'restart', 'tailscaled.service']]),
+           ('/etc/default/tailscaled', [['systemctl', 'restart', 'tailscaled.service']]),
            (f'{HOME}/.config/systemd/user', CONSOLE), (STATE, CONSOLE)]
+ABOVE_SYSTEM = ('/var/lib/tailscale', '/var/lib/systemd/linger')
 
 
 def listed():
@@ -859,6 +910,38 @@ def entry(full):   # lstat: never follows a link
     if stat.S_ISDIR(st.st_mode):
         return dict(e, kind='dir')
     return dict(e, kind='other')
+
+
+def above():   # the folders above the listed paths that are kept as folders (their mode and owner, not what is in them)
+    found = set()
+    for p in listed():
+        d = os.path.dirname(p)
+        while under(d, HOME):
+            found.add(d)
+            if d == HOME:
+                break
+            d = os.path.dirname(d)
+        found.update(d for d in ABOVE_SYSTEM if under(p, d) and p != d)
+    return sorted(found)
+
+
+def walk_above(a):   # a folder above a listed path: its kind, mode and owner, never what is in it
+    parent = os.path.dirname(a)
+    if os.path.realpath(R + parent) != os.path.realpath(R or '/').rstrip('/') + parent:
+        return {a: {'kind': 'under-link'}}
+    try:
+        return {a: entry(R + a)}
+    except (FileNotFoundError, NotADirectoryError):
+        return {a: dict(ABSENT)}
+
+
+def current(tops, aboves):
+    found = {}
+    for a in aboves:
+        found.update(walk_above(a))
+    for p in tops:
+        found.update(walk(p))
+    return found
 
 
 def walk(p):   # a listed path and all under it, as it is now
@@ -910,9 +993,8 @@ def same(a, b):
 
 
 def copy():
-    found, total = {}, 0
-    for p in listed():
-        found.update(walk(p))
+    aboves, total = above(), 0
+    found = current(listed(), aboves)
     for p, e in found.items():
         if e['kind'] != 'file':
             continue
@@ -935,31 +1017,44 @@ def copy():
             os.close(src)
         e['sha'] = h.hexdigest()   # (the bytes copied are the bytes compared)
     with open(os.path.join(HERE, 'manifest.json'), 'w') as f:
-        json.dump({'at': now(), 'entries': found, 'snap': {'tailscale': tailscale(), 'firewall': firewall()}}, f)
+        json.dump({'at': now(), 'entries': found, 'above': aboves, 'snap': {'tailscale': tailscale(), 'firewall': firewall()}}, f)
 
 
 def compare():
     with open(os.path.join(HERE, 'manifest.json')) as f:
         saved = json.load(f)
-    found = {}
-    for p in listed():
-        found.update(walk(p))
+    aboves = saved.get('above', [])
+    found = current(listed(), aboves)
     was = saved['entries']
     diff = sorted(p for p in set(was) | set(found) if not same(was.get(p), found.get(p)))
     snaps = [k for k, f in (('tailscale', tailscale), ('firewall', firewall)) if saved['snap'].get(k) != f()]
     # (tailscaled writes its state file by itself: it counts only when its settings or routes differ)
     if 'tailscale' not in snaps:
         diff = [p for p in diff if p != TS_STATE]
-    return was, found, diff, snaps
+    # (what does not go back by itself: the live firewall rules; Tailscale's settings when its state file is as it was)
+    unsaid = [k for k in snaps if not (k == 'tailscale' and TS_STATE in diff)]
+    return was, found, diff, unsaid, aboves
 
 
 def differs():
-    _, _, diff, snaps = compare()
-    for top in listed():
+    _, _, diff, unsaid, aboves = compare()
+    tops = listed()
+    for top in tops:
         if any(under(p, top) for p in diff):
             print('D', top)
-    for k in snaps:
-        print('S', k)
+    for a in aboves:
+        if a in diff and not any(under(a, top) for top in tops):
+            print('D', a)
+    for k in unsaid:
+        print('N', k)
+
+
+def done_():   # kept or put back already: what may be left of the guard goes
+    for p in [os.path.join(HERE, 'pending'), R + f'{BOOT}/multi-user.target.wants/sw-guard-boot-{ID}.service', R + f'{BOOT}/sw-guard-boot-{ID}.service']:
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
 
 
 def folder(root, path, was, make):   # the folder at path, opened one part at a time, never through a link
@@ -1031,7 +1126,7 @@ def put(fd, name, p, e):
 
 
 def restore(why):
-    was, found, diff, snaps = compare()
+    was, found, diff, unsaid, _ = compare()
     root = os.open(R or '/', os.O_RDONLY | os.O_DIRECTORY)
     done, notes = [], []
     depth = lambda p: p.count('/')
@@ -1068,10 +1163,12 @@ def restore(why):
     for p in diff:
         if was.get(p, ABSENT)['kind'] in ('other', 'under-link'):
             notes.append(f'not put back {p}: it was not a file, link or folder')
-    if 'firewall' in snaps:
-        notes.append('differs, not put back: the live firewall rules (the net loads no rules yet)')
-    if 'tailscale' in snaps and TS_STATE not in done:
-        notes.append("differs, not put back: Tailscale's settings or routes (its state file is as it was)")
+    # (after a restart the live rules and Tailscale have not started yet: nothing to say of them)
+    if why != 'boot':
+        if 'firewall' in unsaid:
+            notes.append('differs, not put back: the live firewall rules (the net loads no rules)')
+        if 'tailscale' in unsaid:
+            notes.append("differs, not put back: Tailscale's settings or routes (its state file is as it was)")
     ran = []
     for top, cmds in RELOADS:
         if not any(under(p, top) for p in done):
@@ -1086,30 +1183,22 @@ def restore(why):
                 ran.append((cmd, 'ok' if r.returncode == 0 else f'exit {r.returncode}'))
             except (OSError, subprocess.SubprocessError) as x:
                 ran.append((cmd, type(x).__name__))
-    lines = [f'put back at {now()}', 'by its timer' if why == 'timer' else 'after a restart inside the window']
+    head = f'put back at {now()}: ' + (f'{len(done)} went back, {len(notes)} did not' if done or notes else 'nothing differed')
+    lines = [head, 'by its timer' if why == 'timer' else 'after a restart inside the window']
     lines += [f'put back {p}' for p in done] + notes + [f"reload {' '.join(c)}: {res}" for c, res in ran]
     tmp = os.path.join(HERE, 'result.new')
     with open(tmp, 'w') as f:
         f.write('\n'.join(lines) + '\n')
     os.replace(tmp, os.path.join(HERE, 'result'))
-    for name in ('pending',):
-        try:
-            os.unlink(os.path.join(HERE, name))
-        except FileNotFoundError:
-            pass
-    for p in (f'{BOOT}/multi-user.target.wants/sw-guard-boot-{ID}.service', f'{BOOT}/sw-guard-boot-{ID}.service'):
-        try:
-            os.unlink(R + p)
-        except FileNotFoundError:
-            pass
+    done_()
 
 
 if __name__ == '__main__':
-    {'copy': copy, 'differs': differs}.get(sys.argv[1], lambda: restore(sys.argv[2] if len(sys.argv) > 2 else 'timer'))()
+    {'copy': copy, 'differs': differs, 'done': done_}.get(sys.argv[1], lambda: restore(sys.argv[2] if len(sys.argv) > 2 else 'timer'))()
 GUARDPY
 }
 
-# --- the proof of the walls (2.13): thirteen attempts; a mark only when every one is stopped ---------------------------
+# --- the proof of the walls (2.13; R60): attempts 1 to 20, 13 being root's; a mark only when every one is stopped ------
 NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale socket, api.sock or the door's socket"
        "another program's environment" 'a write that stays' "round the hiding, through another program's /proc"
        'a signal to a program outside the wall' 'more rights: sudo, the helper, a capability'
@@ -1153,15 +1242,28 @@ take() {   # $1 where the lines came from (outside, look, run, after); $2 the li
   done <<<"$2"
 }
 proof_guards() {   # $1 up or down: a guard of the net for each wall to try (15 to 18), with nothing in it to put back
-  local w g
+  # (each carries the mark "proof": no real guard counts it, and only a proof takes it away; up first takes away any
+  # an earlier proof left, power lost in the middle, say)
+  local w g old
+  if [ "$1" = up ]; then
+    for old in "$R$GUARD"/*/proof; do
+      [ -e "$old" ] || continue
+      old=${old%/proof} old=${old##*/}
+      [[ $old =~ ^[a-z0-9]{8,40}$ ]] || continue
+      systemctl stop "sw-guard-$old.timer" > /dev/null 2>&1 || true
+      rm -rf -- "$R$GUARD/$old"
+    done
+  fi
   for w in l r; do
     g="${ID:0:38}n$w"
     if [ "$1" = down ]; then
+      [ -e "$R$GUARD/$g/proof" ] || continue
       systemctl stop "sw-guard-$g.timer" > /dev/null 2>&1 || true
       rm -rf -- "$R$GUARD/$g"
       continue
     fi
     mkdir -p -m 0755 -- "$R${GUARD%/*}" && mkdir -p -m 0700 -- "$R$GUARD" && mkdir -m 0700 -- "$R$GUARD/$g" || continue
+    : > "$R$GUARD/$g/proof"
     restore_sh > "$R$GUARD/$g/restore.sh"
     guard_py > "$R$GUARD/$g/guard.py"
     printf 'sw-prove-none-%s.service' "$ID" > "$R$GUARD/$g/unit"
@@ -1963,7 +2065,7 @@ def after():
             guards = [line.split() for line in f.read().splitlines() if len(line.split()) == 3]
     except OSError:
         guards = []
-    mine = {'restore.sh', 'guard.py', 'unit', 'root', 'owner', 'paths', 'at', 'manifest.json', 'pending', 'files', 'lock'}
+    mine = {'restore.sh', 'guard.py', 'unit', 'root', 'owner', 'paths', 'at', 'manifest.json', 'pending', 'files', 'lock', 'proof'}
     for w, g, sha in guards:
         wall, d = ('look' if w == 'l' else 'run'), f'{GUARD}/{g}'
         try:

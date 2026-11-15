@@ -13,6 +13,7 @@
 #                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
 #   sw-guard-<id>               the lock-out net's timer: armed, never fired here (a test runs restore.sh itself, as the
 #                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
+#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
 import json, os, shutil, sys
 
@@ -112,6 +113,9 @@ if unit.startswith('sw-prove-'):
     sys.exit(0)
 
 if unit.startswith('sw-guard-'):
+    if knob('guard-sleep') is not None:   # (systemd slow to take the timer: a test hangs up the call meanwhile)
+        import time
+        time.sleep(float(knob('guard-sleep')))
     os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
     open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
     sys.exit(0)

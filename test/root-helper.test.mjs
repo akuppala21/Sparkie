@@ -804,7 +804,7 @@ function tree(dir) {
 describe('the lock-out net (R60)', () => {
   const G = (s, id) => join(s.R, 'var/lib/spark-console/guard', id);
   const net = (s, cmd, opts = {}) => change(s, cmd, { secs: 300, extra: ['--net'], ...opts });
-  const fire = (s, id, why = 'timer') => spawnSync('bash', [join(G(s, id), 'restore.sh'), why], { env: s.env, encoding: 'utf8', timeout: 120000 });
+  const fire = (s, id, why = 'timer', env = s.env) => spawnSync('bash', [join(G(s, id), 'restore.sh'), why], { env, encoding: 'utf8', timeout: 120000 });
   const keep = (s, id) => ({ ...run(s, ['keep', '--id', id]), id });
   const SSHD = 'etc/ssh/sshd_config';
   const BOOT = (s, id) => [join(s.R, `etc/systemd/system/sw-guard-boot-${id}.service`), join(s.R, `etc/systemd/system/multi-user.target.wants/sw-guard-boot-${id}.service`)];
@@ -837,7 +837,7 @@ describe('the lock-out net (R60)', () => {
     const s = netted(), file = join(s.R, SSHD), was = statSync(file);
     const r = net(s, 'printf "Port 2222\\n" >> "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"; chmod 0666 "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
     assert.match(r.stdout, ARMED(r.id));
-    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: 1 of the ways in differ \\(/etc/ssh\\); they go back at \\S+ unless they are kept\\n${r.id} end 0\\n$`));
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: 1 of the ways in differs \\(/etc/ssh\\) and goes back at \\S+ unless it is kept\\n${r.id} end 0\\n$`));
     assert.ok(existsSync(join(G(s, r.id), 'pending')) && timerWaits(s, r.id));
     for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
     assert.match(readFileSync(BOOT(s, r.id)[0], 'utf8'), new RegExp(`ConditionPathExists=/var/lib/spark-console/guard/${r.id}/pending\\n[\\s\\S]*ExecStart=/bin/bash /var/lib/spark-console/guard/${r.id}/restore.sh boot\\n`));
@@ -848,7 +848,7 @@ describe('the lock-out net (R60)', () => {
     const now = statSync(file);
     assert.deepEqual([now.mode & 0o7777, now.uid, now.gid], [was.mode & 0o7777, was.uid, was.gid]);
     const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
-    assert.match(result[0], /^put back at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.match(result[0], /^put back at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ: 1 went back, 0 did not$/);
     assert.equal(result[1], 'by its timer');
     assert.ok(result.includes('put back /etc/ssh/sshd_config'), result.join('\n'));
     assert.ok(result.includes('reload systemctl try-reload-or-restart ssh.service: ok'), result.join('\n'));
@@ -881,7 +881,7 @@ describe('the lock-out net (R60)', () => {
     assert.equal(fire(t, r2.id).status, 0);
     const late = keep(t, r2.id);
     assert.equal(late.status, 0, late.stdout + late.stderr);
-    assert.match(late.stdout, new RegExp(`^${r2.id} already put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ\\n$`));
+    assert.match(late.stdout, new RegExp(`^${r2.id} already put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ: 1 went back, 0 did not\\n$`));
     assert.equal(readFileSync(join(t.R, SSHD), 'utf8'), 'Port 22\n');
   });
 
@@ -994,6 +994,162 @@ describe('the lock-out net (R60)', () => {
     assert.equal(readFileSync(join(s.R, 'secret/hosts-target'), 'utf8'), 'SECRET-HOSTS');
   });
 
+  // Fix 1 (the review of 9fd3979): the same id sent again is refused and leaves the open guard as it was.
+  test('the same id sent again while its guard is open: refused, and the open guard keeps its timer, restart unit and pending', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    const again = net(s, 'true', { id: r.id });
+    refused(again, `another guard is open on this Spark (${r.id}): it is kept or goes back first, so nothing ran`);
+    assert.ok(timerWaits(s, r.id), 'its timer still waits');
+    for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
+    assert.ok(existsSync(join(G(s, r.id), 'pending')));
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n', 'and it still goes back');
+  });
+
+  // Fix 2: the folders above a way in are kept as folders (mode and owner), up to the owner's home.
+  test("the folders above a way in: ~/.ssh removed, swapped for a link or opened to all, and the console's state folder removed, each go back with exact bytes, mode and owner", () => {
+    const cases = [
+      ['removed', 'rm -rf "$R/home/owner/.ssh"', ['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/config', '/home/owner/.ssh'], 3],
+      // (authorized_keys2, not there, is now under a link: named as differing; it is not there again once .ssh is)
+      ['a link', 'mv "$R/home/owner/.ssh" "$R/home/owner/.ssh-aside"; mkdir "$R/home/owner/other"; printf "theirs" > "$R/home/owner/other/authorized_keys"; ln -s "$R/home/owner/other" "$R/home/owner/.ssh"',
+        ['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/authorized_keys2', '/home/owner/.ssh/config', '/home/owner/.ssh'], 3],
+      ['opened', 'chmod 777 "$R/home/owner/.ssh" "$R/home/owner"', ['/home/owner', '/home/owner/.ssh'], 2],
+      ['the state folder', 'rm -rf "$R/home/owner/.local/state/spark-console"', ['/home/owner/.local/state/spark-console/sessions.json', '/home/owner/.local/state/spark-console'], 2],
+    ];
+    for (const [what, cmd, named, back] of cases) {
+      const s = netted(), ssh = join(s.R, 'home/owner/.ssh'), state = join(s.R, 'home/owner/.local/state/spark-console');
+      chmodSync(ssh, 0o700);
+      chmodSync(join(ssh, 'authorized_keys'), 0o600);
+      const was = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'sessions.json')].map(f => { const x = statSync(f); return [x.mode & 0o7777, x.uid, x.gid]; });
+      const r = net(s, `R="$SPARK_CONSOLE_REHEARSAL"; ${cmd}`);
+      assert.match(r.stdout, new RegExp(`net open: ${named.length} of the ways in differ \\(${named.join(' ').replace(/[.]/g, '\\.')}\\) and go back at `), `${what}: ${r.stdout}`);
+      const f = fire(s, r.id);
+      assert.equal(f.status, 0, `${what}: ${f.stdout}${f.stderr}`);
+      assert.ok(!lstatSync(ssh).isSymbolicLink() && lstatSync(ssh).isDirectory(), what);
+      assert.equal(readFileSync(join(ssh, 'authorized_keys'), 'utf8'), 'keys', what);
+      assert.equal(readlinkSync(join(ssh, 'config')), '/etc/shadow', what);
+      assert.equal(readFileSync(join(state, 'sessions.json'), 'utf8'), '{}', what);
+      const now = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'sessions.json')].map(x => { const y = statSync(x); return [y.mode & 0o7777, y.uid, y.gid]; });
+      assert.deepEqual(now, was, `${what}: modes and owners as they were`);
+      if (what === 'a link') assert.equal(readFileSync(join(s.R, 'home/owner/other/authorized_keys'), 'utf8'), 'theirs', 'what the link pointed at is untouched');
+      assert.match(readFileSync(join(G(s, r.id), 'result'), 'utf8'), new RegExp(`^put back at \\S+: ${back} went back, 0 did not\\n`), what);
+      assert.ok(!existsSync(join(ssh, 'authorized_keys2')), what);
+    }
+  });
+
+  // Fix 3: guards that are done never block; arming cut off leaves nothing; the proof's own are marked and swept.
+  test('a guard kept or put back that still has pending (cut off before the end) blocks no new guard; keep and the put-back finish its clean-up', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.match(keep(s, r.id).stdout, / kept: /);
+    writeFileSync(join(G(s, r.id), 'pending'), '');
+    const second = net(s, 'true');
+    assert.match(second.stdout, ARMED(second.id), second.stdout);
+    assert.match(keep(s, r.id).stdout, / kept already: /);
+    assert.ok(!existsSync(join(G(s, r.id), 'pending')), 'keep finished it');
+    const t = netted();
+    const q = net(t, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.equal(fire(t, q.id).status, 0);
+    writeFileSync(join(G(t, q.id), 'pending'), '');
+    for (const f of BOOT(t, q.id)) { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, ''); }
+    assert.match(net(t, 'true').stdout, /net armed: /);
+    assert.equal(fire(t, q.id).status, 0);
+    assert.ok(!existsSync(join(G(t, q.id), 'pending')), 'the put-back finished it');
+    for (const f of BOOT(t, q.id)) assert.ok(!lstatExists(f), f);
+  });
+
+  test('a call hung up while it arms takes the half-made guard away: no folder, no restart unit, no timer, nothing ran', async () => {
+    const s = netted();
+    s.put('standin/guard-sleep', '20');
+    const id = newId(), cmd = 'touch "$SPARK_CONSOLE_REHEARSAL/it-ran"';
+    const child = spawn(join(s.R, 'usr/local/sbin/spark-console-root'), ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '300', '--dir', s.work, '--net', '--', cmd],
+      { env: s.env, detached: true, stdio: 'ignore' });
+    for (let i = 0; i < 200 && !existsSync(join(G(s, id), 'pending')); i++) await new Promise(res => setTimeout(res, 50));
+    assert.ok(existsSync(join(G(s, id), 'pending')), 'it was arming');
+    const ended = new Promise(res => child.on('exit', res));
+    process.kill(-child.pid, 'SIGTERM');
+    assert.equal(await ended, 129);
+    assert.ok(!existsSync(G(s, id)) && !existsSync(join(s.R, 'run/spark-console', id)) && !existsSync(join(s.R, 'it-ran')));
+    for (const f of BOOT(s, id)) assert.ok(!lstatExists(f), f);
+    assert.ok(!timerWaits(s, id));
+    rmSync(join(s.R, 'standin/guard-sleep'));
+    assert.match(net(s, 'true').stdout, /net armed: /, 'and the next guard is not blocked');
+  });
+
+  test("the proof's own guards carry its mark: one a cut-off proof left blocks no guard, and the next proof takes it away", () => {
+    const s = netted(), old = join(s.R, 'var/lib/spark-console/guard', 'leftoverproof01nl');
+    mkdirSync(old, { recursive: true });
+    for (const f of ['proof', 'pending', 'restore.sh']) writeFileSync(join(old, f), '');
+    assert.match(net(s, 'true').stdout, /net armed: /);
+    assert.equal(prove(s).status, 0);
+    assert.ok(!existsSync(old), 'swept');
+    // A guard without the mark is never taken away by a proof.
+    const real = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.equal(prove(s).status, 0);
+    assert.ok(existsSync(join(G(s, real.id), 'pending')) && timerWaits(s, real.id));
+  });
+
+  test('check names an open guard, when it goes back, and whether its timer still waits', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    const at = /go back at (\S+) unless/.exec(r.stdout)[1];
+    assert.ok(run(s, ['check', '--id', newId()]).stdout.endsWith(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer waits\n`));
+    rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));
+    assert.ok(run(s, ['check', '--id', newId()]).stdout.endsWith(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer is not waiting (inactive)\n`));
+  });
+
+  // Fix 4: what the helper says is what happens.
+  test('what does not go back by itself is named apart; the result and keep count what went back and what did not; after a restart the two notes are left out', () => {
+    const fw = s => {
+      const bin = join(s.R, 'standin', 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, 'iptables-save'), '#!/bin/bash\ncat "$SPARK_CONSOLE_REHEARSAL/standin/iptables"\n', { mode: 0o755 });
+      s.put('standin/iptables', '*filter\n:INPUT ACCEPT [10:200]\nCOMMIT\n');
+      return { ...s.env, PATH: `${bin}:${s.env.PATH}` };
+    };
+    const drop = 'printf -- "-A INPUT -p tcp --dport 22 -j DROP\\n" >> "$SPARK_CONSOLE_REHEARSAL/standin/iptables"';
+    const netEnv = (s, env, cmd) => { const id = newId(); return { ...run(s, ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '300', '--dir', s.work, '--net', '--', cmd], { env }), id }; };
+    // Only a live rule differs: said apart, and the timer puts nothing back.
+    let s = netted(), env = fw(s), r = netEnv(s, env, drop);
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: the live firewall rules differ, and do not go back by themselves; nothing else differs, so the timer at \\S+ puts nothing back\\n${r.id} end 0\\n$`), r.stdout);
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.match(result[0], /^put back at \S+: 0 went back, 1 did not$/);
+    assert.ok(result.includes('differs, not put back: the live firewall rules (the net loads no rules)'));
+    assert.match(keep(s, r.id).stdout, new RegExp(`^${r.id} already put back at \\S+: 0 went back, 1 did not\\n$`));
+    // A way in and a live rule: the first goes back, the second is said.
+    s = netted(); env = fw(s);
+    r = netEnv(s, env, `${drop}; printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"`);
+    assert.match(r.stdout, new RegExp(`${r.id} net open: 1 of the ways in differs \\(/etc/ssh\\) and goes back at \\S+ unless it is kept; the live firewall rules differ too, and do not go back by themselves\\n`));
+    // After a restart: the live rules are not said.
+    s = netted(); env = fw(s); r = netEnv(s, env, drop);
+    assert.equal(fire(s, r.id, 'boot', env).status, 0);
+    assert.equal(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n')[0].replace(/at \S+:/, 'at T:'), 'put back at T: nothing differed');
+    assert.ok(!readFileSync(join(G(s, r.id), 'result'), 'utf8').includes('differs'));
+    // Put right by hand before the timer: nothing differed, and keep says so.
+    s = netted(); r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    writeFileSync(join(s.R, SSHD), 'Port 22\n');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.match(keep(s, r.id).stdout, new RegExp(`^${r.id} already put back at \\S+: nothing differed\\n$`));
+  });
+
+  // Fix 6: more ways in, all files; one not there when copied and there after is taken away.
+  test('more ways in: a line in hosts.deny, /etc/nologin made, ssh.service masked and the linger file removed all go back; systemd is told', () => {
+    const s = netted();
+    s.put('etc/hosts.deny', '# nothing here\n', 0o644);
+    s.put('var/lib/systemd/linger/owner', '', 0o644);
+    const r = net(s, ['R="$SPARK_CONSOLE_REHEARSAL"', 'printf "sshd: ALL\\n" >> "$R/etc/hosts.deny"', ': > "$R/etc/nologin"',
+      'ln -s /dev/null "$R/etc/systemd/system/ssh.service"', 'rm "$R/var/lib/systemd/linger/owner"'].join('; '));
+    assert.match(r.stdout, /net open: 4 of the ways in differ \(\/etc\/nologin \/etc\/hosts\.deny \/etc\/systemd\/system\/ssh\.service \/var\/lib\/systemd\/linger\/owner\) and go back at /, r.stdout);
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, 'etc/hosts.deny'), 'utf8'), '# nothing here\n');
+    assert.ok(!existsSync(join(s.R, 'etc/nologin')), 'what was not there is taken away');
+    assert.ok(!lstatExists(join(s.R, 'etc/systemd/system/ssh.service')), 'the mask is taken away');
+    assert.equal(statSync(join(s.R, 'var/lib/systemd/linger/owner')).mode & 0o7777, 0o644);
+    assert.ok(readFileSync(join(G(s, r.id), 'result'), 'utf8').includes('reload systemctl daemon-reload: ok'));
+  });
+
   test('the proof tries the net in both walls (15 to 18, checked from outside afterwards); one that gets through fails the proof', () => {
     const s = spark();
     const p = prove(s);
@@ -1025,7 +1181,7 @@ describe('the lock-out net (R60)', () => {
     const id = 'guardcall' + Date.now().toString(36);
     const a = box.part.guardAnswer(id, call('run', { id, command: 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"', seconds: 300 }).stdout);
     assert.match(a.goesBackAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, JSON.stringify(a));
-    assert.deepEqual({ disarmed: a.disarmed, open: /^1 of the ways in differ \(\/etc\/ssh\)/.test(a.open), exit: a.exit }, { disarmed: false, open: true, exit: 0 });
+    assert.deepEqual({ disarmed: a.disarmed, open: /^1 of the ways in differs \(\/etc\/ssh\)/.test(a.open), exit: a.exit }, { disarmed: false, open: true, exit: 0 });
     const k = box.part.guardAnswer(id, call('keep', { id }).stdout);
     assert.equal(k.kept, true, JSON.stringify(k));
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 2222\n');
