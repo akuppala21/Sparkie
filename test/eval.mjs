@@ -160,7 +160,7 @@ const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id a
   : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
     || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
     || !listOf(c.seed.proven, v => filled(v?.model) && filled(v?.engine) && Array.isArray(v.nodes) && (v.at === undefined || when(v.at)))
-    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?, until?}], past, journal: [{k, at?, …}], proven: [{model, engine, nodes, …}], newer: N, unreadable}'
+    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], newer: N and unreadable'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
 for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
 
