@@ -15448,7 +15448,7 @@ function runnerRefuses(node, sorted, ctx) {
   if (brainSparks().includes(node.id)) throw new HttpError(403, `${at} holds the brain, so the runner changes nothing there.`);
   if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
   if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
-  if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (Access → Agents), so nothing ran.');
+  if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
   if (sorted?.class !== 'change') throw new HttpError(409, `That is not a plain change (the sorter calls it ${sorted?.class || 'nothing'}), so the runner didn’t run it.`);
 }
 // (a notice names the change by its record, never by its command: fleet events reach every agent, and a command is read

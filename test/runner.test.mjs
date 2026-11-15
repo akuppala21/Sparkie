@@ -328,13 +328,13 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
     assert.equal((await api('/agents')).json.settings.halted, true);
     const told = notices().slice(seen).filter(e => /way in/.test(e.text));
     assert.equal(told.length, 1, JSON.stringify(told));
-    assert.equal(told[0].text, `Agents’ changes were paused automatically: a change on Spark 3 (record ${r.json.record}) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in Access → Agents.`);
+    assert.equal(told[0].text, `Agents’ changes were paused automatically: a change on Spark 3 (record ${r.json.record}) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in your account menu → Agents and Telegram.`);
     const [, end] = pair('bash fix.sh');
     assert.deepEqual(end.putBack, ['~/.ssh/authorized_keys']);
     // Paused: the next change doesn't run, whoever asks.
     const next = await run('touch notes/paused.txt');
     assert.equal(next.status, 403, next.text);
-    assert.equal(next.json.error, 'Sparkie’s and agents’ changes are paused (Access → Agents), so nothing ran.');
+    assert.equal(next.json.error, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
     assert.ok(!existsSync(at3('notes/paused.txt')));
   } finally { await agentSettings({ halted: false }); }
 });
