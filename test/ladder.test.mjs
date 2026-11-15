@@ -36,7 +36,7 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUT
   } }, async () => {
   keys.act = await createActKey('ladder-act');
   // (the console's first look at the tailnet, 1.5 s after it starts: until then no change runs at once, A7c)
-  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').includes('status --json'), { what: 'the first look at the tailnet' });
+  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
   await sleep(500);
 });
 
@@ -95,7 +95,7 @@ test('a file this request wrote, then run, is asked (the sorter is told what it 
   const chat = await newChat();
   const r = await turn(chat, 'fix the script on spark 3', [[RUN("echo 'echo hi > notes/ran.txt' > notes/w.sh")], [RUN('bash notes/w.sh')]]);
   assert.equal(text('notes/w.sh'), 'echo hi > notes/ran.txt\n', 'the write ran at once');
-  const [, second] = sentBack('fix the script on spark 3');
+  const [second] = sentBack('fix the script on spark 3');
   assert.equal(second?.outcome, 'needs-ok', JSON.stringify(second));
   assert.match(second.question, /Asked because it is risky: “bash” runs the file “notes\/w\.sh”\. It runs a file this same command wrote/);
   assert.match(second.question, /\nIt runs notes\/w\.sh \(SHA-256 [0-9a-f]{12}…\); what that script reads later isn’t checked\./);

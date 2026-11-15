@@ -78,7 +78,7 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_
   } }, async () => {
   keys.act = await createActKey('runner-act');
   // (the console's first look at the tailnet, 1.5 s after it starts: until then no change runs at once, A7c)
-  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').includes('status --json'), { what: 'the first look at the tailnet' });
+  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
   await sleep(500);
 });
 
