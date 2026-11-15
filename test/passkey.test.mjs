@@ -1,23 +1,22 @@
 // Covers: The owner's passkey (WebAuthn, at the console's one address), answered by a software authenticator in the
-// test (P-256 or RSA, "none" attestation). Before one exists: changes to who has access, new agent keys and remote-code
-// deploys need none; the old relay routes are gone (404). Every access change is an audit line (`agent-added`,
-// `access-approved`, `invite-link-saved`, `agent-can-change`, `agent-settings`, …, via `page`). Setting one up: refused
+// test (P-256 or RSA, "none" attestation). Before one exists: new agent keys and remote-code deploys need none; the
+// old relay routes are gone (404). Every change to an agent's rights is an audit line (`agent-added`,
+// `agent-can-change`, `agent-settings`, …, via `page`). Setting one up: refused
 // for another origin, domain, type or challenge, without UP, UV or a credential, from inside another site; challenges
 // single use; RSA keys must be 2048–4096 bits with e = 65537. With one: every gated change without `X-Spark-Passkey`
 // gets 428 `confirm`; a confirmation works once, only for its exact method, path and body; refused for a wrong origin
 // or domain, a tampered or foreign signature, an unknown passkey, no UP/UV, after 3 minutes (the service's clock is
-// moved with `mock/clock.mjs`); a counter going backwards is noted, not refused. Pausing, removing an agent or a
-// person, declining, and resuming an automatic pause with exactly `{halted: false}` need none. Hidden files: never by
-// members; the owner can. One pool of 150 challenges, the oldest making way. Each route's body limit applies when the
-// check reads it. Members can't use `/auth`; an unreadable `passkeys.json` lets nothing sensitive through but still
-// lets access be taken away.
+// moved with `mock/clock.mjs`); a counter going backwards is noted, not refused. Pausing, removing an agent, and
+// resuming an automatic pause with exactly `{halted: false}` need none. Hidden files: the owner can. One pool of 150
+// challenges, the oldest making way. Each route's body limit applies when the check reads it. An unreadable
+// `passkeys.json` lets nothing sensitive through but still lets a right be taken away.
 //
 // The owner's passkey (WebAuthn), at Spark Console's one address (the main address). A change that needs it carries its
 // confirmation inline (X-Spark-Passkey: a one-time challenge for exactly that change, signed by one of the owner's
 // passkeys on the page). Passkeys are set up there too. Until one exists, nothing asks for one. There's no relay.
 // A software authenticator here (a P-256 or RSA key from node:crypto) answers like Touch ID would: "none" attestation,
 // user present and verified. Also: hidden files (only the owner), resuming an automatic pause without a passkey, and
-// every change to who has access as an audit line.
+// every change to an agent's rights as an audit line.
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,7 +96,6 @@ const header = assertion => b64(JSON.stringify(assertion));
 
 /* ───────── the address ───────── */
 const main = (path, opts = {}) => api(path, opts);
-const asMember = { 'tailscale-user-login': MEMBER };
 const is = (r, status, what = '') => assert.equal(r.status, status, `${what} → ${r.status} ${r.text}`);
 
 async function beginRegister(via = main) {
@@ -122,14 +120,8 @@ async function confirmed(via, method, path, body, { auth = KEY1, ...answer } = {
 const agentIds = async () => { const r = await main('/agents'); is(r, 200); return r.json.keys.map(k => k.id).sort(); };
 const agentSettingsNow = async () => (await main('/agents')).json.settings;
 const canAct = async id => (await main('/agents')).json.keys.find(k => k.id === id).scopes.includes('fleet:act');
-const memberLogins = async () => { const r = await main('/access'); is(r, 200); return r.json.members.map(m => m.login).sort(); };
-const memberNamed = async login => (await main('/access')).json.members.find(m => m.login === login);
-const requestLogins = async () => (await main('/access')).json.requests.map(r => r.login);
 const passkeyList = async () => { const r = await main('/auth/passkeys'); is(r, 200); return r.json.keys; };
 const agentName = () => `pk-${randomBytes(4).toString('hex')}`;
-const loginName = what => `pk-${what}-${randomBytes(3).toString('hex')}@test`;
-const MEMBER_ID = '0123456789abcdef'; // member@test in mock/access.json
-const MEMBER_PERMS = { nodeIds: ['spark2', 'spark3'], chat: true, files: 'read', sharedFiles: 'none', concurrentChats: 1, deploy: false };
 const NO_FILE = { operation: 'delete', path: 'pk-nothing-here.txt' }; // deleting a workspace file that isn't there
 // Moves the service's clock (mock/clock.mjs) ahead of the real time.
 const setClock = async ms => { writeFileSync(join(T.fleet.dir, 'clock-offset'), String(ms)); await sleep(400); };
@@ -137,11 +129,6 @@ const setClock = async ms => { writeFileSync(join(T.fleet.dir, 'clock-offset'), 
 async function forgetChallenges() {
   await setClock(20 * 60000);
   try { await beginRegister(); } finally { await setClock(0); }
-}
-// Someone on the tailnet asking for access (a request the owner can approve or decline).
-async function asked(login = loginName('ask')) {
-  is(await main('/access/ask', { method: 'POST', body: { note: 'passkey test' }, headers: { 'tailscale-user-login': login } }), 202, `${login} asks`);
-  return login;
 }
 // The last audit line for an action (after `from`, a count of lines seen before).
 const auditAfter = (from, action) => auditLines().slice(from).filter(l => l.action === action);
@@ -175,32 +162,15 @@ describe('before any passkey is set up', () => {
     is(await main('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/agents', body: { name: 'x' } } }), 409);
   });
 
-  test('changes to who has access, new agent keys and remote-code deploys need no passkey yet (nothing can lock the owner out)', async () => {
+  test('new agent keys and remote-code deploys need no passkey yet (nothing can lock the owner out)', async () => {
     const made = await main('/agents', { method: 'POST', body: { name: agentName() } });
     is(made, 201, 'POST /agents');
     is(await main(`/agents/${made.json.id}`, { method: 'PUT', body: { act: true } }), 200, 'PUT /agents/<id>');
     assert.equal(await canAct(made.json.id), true);
     is(await main(`/agents/${made.json.id}`, { method: 'DELETE' }), 200, 'DELETE /agents/<id>');
     for (const body of [{ selfHeal: true }, { halted: false }, { halted: false, selfHeal: true }]) is(await main('/agents/settings', { method: 'PUT', body }), 200, `PUT /agents/settings ${JSON.stringify(body)}`);
-    const login = loginName('pre');
-    const added = await main('/access', { method: 'POST', body: { login, permissions: MEMBER_PERMS } });
-    is(added, 201, 'POST /access');
-    is(await main(`/access/${added.json.id}`, { method: 'PUT', body: { permissions: { ...MEMBER_PERMS, deploy: true } } }), 200, 'PUT /access/<id>');
-    is(await main(`/access/${added.json.id}`, { method: 'DELETE' }), 200, 'DELETE /access/<id>');
-    const who = await asked();
-    is(await main('/access/requests', { method: 'POST', body: { login: who, decision: 'approve', preset: 'look' } }), 200, 'approving a request');
-    is(await main(`/access/${(await memberNamed(who)).id}`, { method: 'DELETE' }), 200, 'and removing them again');
-    is(await main('/access/invite', { method: 'PUT', body: { url: '' } }), 200, 'PUT /access/invite');
     // Not asked for a passkey: on to the deploy itself, which wants a model and a Spark.
     for (const path of ['/deploy', '/deploy/cluster']) is(await main(path, { method: 'POST', body: { allowRemoteCode: true } }), 400, `POST ${path} {allowRemoteCode}`);
-  });
-
-  test('members can\'t use the passkey routes', async () => {
-    is(await main('/auth/passkeys', { headers: asMember }), 403, 'member GET /auth/passkeys');
-    is(await main('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' }, headers: asMember }), 403, 'member begin register');
-    is(await main('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/agents', body: {} }, headers: asMember }), 403, 'member begin confirm');
-    is(await main('/auth/passkey/register', { method: 'POST', body: {}, headers: asMember }), 403, 'member register');
-    is(await main(`/auth/passkeys/${STRANGER.id}`, { method: 'DELETE', headers: asMember }), 403, 'member DELETE');
   });
 
   test('the two-step relay is gone: /auth/passkey/challenge/<id>, /status/<id> and /approve → 404', async () => {
@@ -223,16 +193,6 @@ describe('audit lines for changes to who has access (actor owner, via page)', ()
     const name = agentName(), made = await main('/agents', { method: 'POST', body: { name } });
     is(made, 201);
     is(await main(`/agents/${made.json.id}`, { method: 'DELETE' }), 200);
-    const login = loginName('audit');
-    const added = await main('/access', { method: 'POST', body: { login, permissions: MEMBER_PERMS } });
-    is(added, 201);
-    is(await main(`/access/${added.json.id}`, { method: 'PUT', body: { permissions: { ...MEMBER_PERMS, deploy: true } } }), 200);
-    is(await main(`/access/${added.json.id}`, { method: 'DELETE' }), 200);
-    const yes = await asked(), no = await asked();
-    is(await main('/access/requests', { method: 'POST', body: { login: yes, decision: 'approve', preset: 'chat' } }), 200);
-    is(await main('/access/requests', { method: 'POST', body: { login: no, decision: 'decline' } }), 200);
-    is(await main('/access/invite', { method: 'PUT', body: { url: 'https://login.tailscale.com/admin/invite/abcd1234' } }), 200);
-    is(await main('/access/invite', { method: 'PUT', body: { url: '' } }), 200);
     const one = action => {
       const lines = auditAfter(from, action);
       assert.equal(lines.length, 1, `${action}: ${JSON.stringify(lines)}`);
@@ -243,18 +203,6 @@ describe('audit lines for changes to who has access (actor owner, via page)', ()
     };
     assert.deepEqual(one('agent-added'), { agent: name });
     assert.deepEqual(one('agent-removed'), { agent: name });
-    const a = one('access-added');
-    assert.equal(a.login, login);
-    assert.deepEqual(a.permissions.nodeIds, MEMBER_PERMS.nodeIds);
-    const c = one('access-changed');
-    assert.equal(c.login, login);
-    assert.equal(c.permissions.deploy, true);
-    assert.deepEqual(one('access-removed'), { login });
-    assert.deepEqual(one('access-approved'), { login: yes, preset: 'chat' });
-    assert.deepEqual(one('access-declined'), { login: no });
-    assert.deepEqual(one('invite-link-saved'), {});
-    assert.deepEqual(one('invite-link-removed'), {});
-    is(await main(`/access/${(await memberNamed(yes)).id}`, { method: 'DELETE' }), 200, 'the approved one removed again');
   });
   test('letting an agent act, and the agents\' switches, are lines too',
     {}, async () => {
@@ -342,9 +290,7 @@ describe('setting up the first passkey (at the main address)', () => {
 const gated = (agent, settings, reg) => [['POST', '/agents', { name: agentName() }], ['PUT', `/agents/${agent}`, { act: true }],
   ['PUT', '/agents/settings', { halted: false }], ['PUT', '/agents/settings', { selfHeal: !settings.selfHeal }],
   ['PUT', '/agents/settings', { halted: true, selfHeal: settings.selfHeal }], ['PUT', '/agents/settings', {}],
-  ['POST', '/access', { login: 'pk-new@test', permissions: MEMBER_PERMS }], ['PUT', `/access/${MEMBER_ID}`, { permissions: { ...MEMBER_PERMS, deploy: true } }],
-  ['POST', '/access/requests', { login: 'x@test', decision: 'approve', preset: 'look' }], ['POST', '/access/requests', { login: 'x@test' }],
-  ['PUT', '/access/invite', { url: '' }], ['POST', '/deploy', { allowRemoteCode: true }], ['POST', '/deploy/cluster', { allowRemoteCode: true }],
+  ['POST', '/deploy', { allowRemoteCode: true }], ['POST', '/deploy/cluster', { allowRemoteCode: true }],
   ['DELETE', `/auth/passkeys/${KEY1.id}`], ['POST', '/auth/passkey/register', reg]];
 
 describe('once a passkey is set up, changes to who has access need it', () => {
@@ -352,14 +298,13 @@ describe('once a passkey is set up, changes to who has access need it', () => {
   before(async () => { agent = await newAgent(); });
 
   test('at the main address, without X-Spark-Passkey → 428 confirm, and nothing changes', async () => {
-    const before = await agentIds(), members = await memberLogins(), settings = await agentSettingsNow();
+    const before = await agentIds(), settings = await agentSettingsNow();
     for (const [method, path, body] of gated(agent, settings, KEY2.register(await beginRegister(), { rpId: MAIN_HOST }))) {
       const r = await main(path, { method, body });
       is(r, 428, `${method} ${path} ${JSON.stringify(body ?? '').slice(0, 80)}`);
       assert.equal(r.json?.passkey, 'confirm', r.text);
     }
     assert.deepEqual(await agentIds(), before);
-    assert.deepEqual(await memberLogins(), members);
     assert.deepEqual(await agentSettingsNow(), settings);
     assert.equal((await passkeyList()).length, 1);
     assert.equal(await canAct(agent), false);
@@ -401,13 +346,10 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     const other = await newAgent(), before = await agentIds();
     const swaps = [
       ['another body', ['POST', '/agents', { name: 'asked-for' }], ['POST', '/agents', { name: 'sent-instead' }]],
+      ['another method', ['POST', `/agents/${other}`, { act: true }], ['PUT', `/agents/${other}`, { act: true }]],
       ['another agent', ['PUT', `/agents/${agent}`, { act: true }], ['PUT', `/agents/${other}`, { act: true }]],
       ['act false → true', ['PUT', `/agents/${agent}`, { act: false }], ['PUT', `/agents/${agent}`, { act: true }]],
-      ['another method', ['POST', `/access/${MEMBER_ID}`, { permissions: { ...MEMBER_PERMS, deploy: true } }], ['PUT', `/access/${MEMBER_ID}`, { permissions: { ...MEMBER_PERMS, deploy: true } }]],
-      ['another path', ['PUT', '/access/invite', { url: '' }], ['PUT', `/access/${MEMBER_ID}`, { url: '' }]],
       ['pausing → resuming', ['PUT', '/agents/settings', { halted: true }], ['PUT', '/agents/settings', { halted: false }]],
-      ['removing a passkey → adding a person', ['DELETE', `/auth/passkeys/${KEY1.id}`], ['POST', '/access', { login: 'pk-swap@test', permissions: MEMBER_PERMS }]],
-      ['declining a request → approving it', ['POST', '/access/requests', { login: 'x@test', decision: 'decline' }], ['POST', '/access/requests', { login: 'x@test', decision: 'approve', preset: 'run' }]],
       ['another model running its own code', ['POST', '/deploy', { model: 'a/one', node: 'spark3', allowRemoteCode: true }], ['POST', '/deploy', { model: 'a/two', node: 'spark3', allowRemoteCode: true }]],
       ['another pair of Sparks running its own code', ['POST', '/deploy/cluster', { model: 'a/one', nodes: ['spark3', 'spark4'], allowRemoteCode: true }], ['POST', '/deploy/cluster', { model: 'a/one', nodes: ['spark2', 'spark4'], allowRemoteCode: true }]],
     ];
@@ -418,12 +360,10 @@ describe('once a passkey is set up, changes to who has access need it', () => {
       const r = await main(p2, { method: m2, body: b2, headers: { 'x-spark-passkey': h } });
       is(r, 409, what);
       // The asked-for change, with the same answer, is refused now too: it was spent.
-      if (!free(p1, b1)) is(await main(p1, { method: m1, body: b1, headers: { 'x-spark-passkey': h } }), 409, `${what}: the original after the mismatch`);
+      // (POST /agents/<id> is no route, so its original isn't sent again)
+      if (!free(p1, b1) && what !== 'another method') is(await main(p1, { method: m1, body: b1, headers: { 'x-spark-passkey': h } }), 409, `${what}: the original after the mismatch`);
     }
     assert.deepEqual(await agentIds(), before);
-    assert.ok((await memberLogins()).includes(MEMBER));
-    assert.ok(!(await memberLogins()).includes('pk-swap@test'));
-    assert.equal((await memberNamed(MEMBER)).permissions.deploy, false);
     assert.ok(!(await canAct(other)) && !(await canAct(agent)));
     assert.equal((await passkeyList()).length, 1);
   });
@@ -525,26 +465,10 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     } finally { is(await confirmed(main, 'PUT', '/agents/settings', { halted: false }), 200); }
   });
 
-  test('removing an agent or a person, and declining a request, need no passkey; approving one does', async () => {
+  test('removing an agent needs no passkey', async () => {
     const id = await newAgent();
     is(await main(`/agents/${id}`, { method: 'DELETE' }), 200, 'removing an agent');
     assert.ok(!(await agentIds()).includes(id));
-    const login = loginName('gone');
-    const person = await confirmed(main, 'POST', '/access', { login, permissions: MEMBER_PERMS });
-    is(person, 201, 'adding a person (confirmed)');
-    is(await main(`/access/${person.json.id}`, { method: 'DELETE' }), 200, 'removing them');
-    assert.ok(!(await memberLogins()).includes(login));
-    const no = await asked();
-    is(await main('/access/requests', { method: 'POST', body: { login: no, decision: 'decline' } }), 200, 'declining');
-    assert.ok(!(await requestLogins()).includes(no));
-    is(await main('/access/requests', { method: 'POST', body: { login: 'never-asked@test', decision: 'decline' } }), 404, 'declining a request that isn\'t there');
-    const yes = await asked(), approval = { login: yes, decision: 'approve', preset: 'look' };
-    is(await main('/access/requests', { method: 'POST', body: approval }), 428, 'approving without a passkey');
-    assert.ok(!(await memberLogins()).includes(yes));
-    const ok = await confirmed(main, 'POST', '/access/requests', approval);
-    is(ok, 200, 'approving, confirmed');
-    assert.equal(ok.summary, `Approve ${yes}’s request (look)`);
-    is(await main(`/access/${(await memberNamed(yes)).id}`, { method: 'DELETE' }), 200, 'and removed again');
   });
 
   test('a model running its own code needs the passkey (/deploy and /deploy/cluster with allowRemoteCode: true); nothing else about deploys does', async () => {
@@ -580,7 +504,7 @@ describe('once a passkey is set up, changes to who has access need it', () => {
   });
 
   test('reads, Sparkie, stopping and ordinary deploys never ask for a passkey', async () => {
-    for (const p of ['/agents', '/access', '/auth/passkeys', '/actions', '/connections', '/bootstrap']) is(await main(p), 200, `GET ${p}`);
+    for (const p of ['/agents', '/auth/passkeys', '/actions', '/connections', '/bootstrap']) is(await main(p), 200, `GET ${p}`);
     for (const [path, body] of [['/stop', {}], ['/deploy', {}], ['/deploy/cluster', {}]]) {
       const r = await main(path, { method: 'POST', body });
       assert.notEqual(r.status, 428, `POST ${path} → ${r.status} ${r.text}`);
@@ -588,15 +512,9 @@ describe('once a passkey is set up, changes to who has access need it', () => {
     }
   });
 
-  const LONG_LOGIN = `${'a'.repeat(180)}@example.test`, LONG_LINK = `https://login.tailscale.com/admin/invite/${'b'.repeat(340)}`;
   test('each change is described in plain words', async () => {
     const name = (await main('/agents')).json.keys.find(k => k.id === agent).name;
     const cases = [
-      [['POST', '/access', { login: 'x@y', permissions: { nodeIds: ['spark3'], deploy: true } }], 'Give x@y access (uses Spark 3; can run and stop models)'],
-      [['PUT', `/access/${MEMBER_ID}`, { permissions: MEMBER_PERMS }], 'Change member@test’s access to: uses Spark 2, Spark 3; chats with Sparkie; own files: read'],
-      [['POST', '/access/requests', { login: 'a@test', decision: 'approve', preset: 'run' }], 'Approve a@test’s request (run)'],
-      [['PUT', '/access/invite', { url: '' }], 'Remove the saved share link'],
-      [['PUT', '/access/invite', { url: 'https://login.tailscale.com/admin/invite/abcd' }], 'Save the Tailscale share link https://login.tailscale.com/admin/invite/abcd'],
       [['POST', '/agents', { name: 'Claude on my Mac' }], 'Create a key for a new agent, “Claude on my Mac”'],
       [['PUT', `/agents/${agent}`, { act: true }], `Let ${name} start, stop and restart models`],
       [['PUT', `/agents/${agent}`, { act: false }], `Make ${name} look-only`],
@@ -605,10 +523,6 @@ describe('once a passkey is set up, changes to who has access need it', () => {
       [['PUT', '/agents/settings', { selfHeal: false }], 'turn off automatic restarts'],
       [['DELETE', `/auth/passkeys/${KEY1.id}`], 'Remove the passkey “Touch ID on my Mac”'],
       [['POST', '/auth/passkey/register', { name: 'Phone' }], 'Add a new passkey, “Phone”'],
-      // Full values, not cut short: a login up to 200 characters, a share link up to 400.
-      [['POST', '/access', { login: LONG_LOGIN, permissions: { nodeIds: ['spark4'] } }], `Give ${LONG_LOGIN} access (uses Spark 4)`],
-      [['POST', '/access/requests', { login: LONG_LOGIN, decision: 'approve', preset: 'look' }], `Approve ${LONG_LOGIN}’s request (look)`],
-      [['PUT', '/access/invite', { url: LONG_LINK }], `Save the Tailscale share link ${LONG_LINK}`],
     ];
     for (const [[method, path, body], want] of cases) assert.equal((await beginConfirm(main, method, path, body)).summary, want, `${method} ${path}`);
     // A name can't hide or reorder text in them (bidi, zero-width, newlines).
@@ -628,36 +542,6 @@ describe('once a passkey is set up, changes to who has access need it', () => {
 
 /* ───────── hidden files ───────── */
 describe('hidden files and folders (names starting with a dot): only the owner', () => {
-  let writer, login;
-  before(async () => {
-    login = loginName('writer');
-    const r = await confirmed(main, 'POST', '/access', { login, permissions: { nodeIds: ['spark3'], chat: false, files: 'write', sharedFiles: 'write', concurrentChats: 1, deploy: false } });
-    is(r, 201);
-    writer = r.json.id;
-  });
-  after(async () => { if (writer) await main(`/access/${writer}`, { method: 'DELETE' }); });
-  const hidden = [
-    { operation: 'write', path: '.envrc', data: 'echo hi' },
-    { operation: 'write', path: 'proj/.vscode/tasks.json', data: '{}' },
-    { operation: 'write', path: 'proj\\.git\\hooks\\pre-commit', data: 'x' },
-    { operation: 'mkdir', path: '.git' },
-    { operation: 'mkdir', path: 'proj/../.ssh' },
-    { operation: 'write', path: '.envrc', data: 'echo hi', area: 'shared' },
-    { operation: 'rename', path: 'notes.txt', destination: '.bashrc' },
-    { operation: 'rename', path: 'proj/vscode', destination: 'proj/.vscode' },
-    { operation: 'rename', path: '.profile', destination: 'profile.txt' },
-  ];
-  const what = body => `${body.operation} ${body.path}${body.destination ? ` → ${body.destination}` : ''}`;
-  test('a member can\'t write, make or rename one (any part of the path)', async () => {
-    for (const body of hidden) {
-      const r = await main('/nodes/spark3/files', { method: 'POST', body, headers: { 'tailscale-user-login': login } });
-      is(r, 403, what(body));
-      assert.match(r.json.error, /Hidden files and folders/);
-    }
-    // Visible names are fine.
-    const ok = await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'mkdir', path: `pk-visible-${randomBytes(2).toString('hex')}` }, headers: { 'tailscale-user-login': login } });
-    assert.ok(![403, 428].includes(ok.status), `a member's mkdir of a visible folder → ${ok.status} ${ok.text}`);
-  });
   test('the owner can, with no passkey asked', async () => {
     const name = `.pk-hidden-${randomBytes(2).toString('hex')}`;
     const m = await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'mkdir', path: name } });
@@ -823,38 +707,30 @@ describe('request sizes: the passkey check reads each body with its route\'s lim
     is(await main('/auth/passkey/register', { method: 'POST', body: { pad: pad(55000) } }), 413, 'a 55 KB registration');
   });
 
-  test('workspace files: up to 400 000 bytes (a member\'s too, where hidden names are checked first)', async () => {
-    for (const headers of [{}, asMember]) {
-      const who = headers === asMember ? 'a member' : 'the owner';
+  test('workspace files: up to 400 000 bytes', async () => {
+    for (const headers of [{}]) {
+      const who = 'the owner';
       assert.notEqual((await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: pad(300000) }, headers })).status, 413, `300 KB, ${who}`);
       is(await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'write', path: pad(410000) }, headers }), 413, `410 KB, ${who}`);
     }
   });
 
-  test('everything else that may need a passkey (/access, /deploy): up to 100 000 bytes', async () => {
-    is(await main('/access', { method: 'POST', body: { login: 'pk-big@test', pad: pad(90000) } }), 428, 'POST /access, 90 KB');
-    is(await main('/access', { method: 'POST', body: { login: 'pk-big@test', pad: pad(110000) } }), 413, 'POST /access, 110 KB');
+  test('everything else that may need a passkey (/deploy): up to 100 000 bytes', async () => {
     is(await main('/deploy', { method: 'POST', body: { allowRemoteCode: false, pad: pad(90000) } }), 400, 'POST /deploy, 90 KB');
     is(await main('/deploy', { method: 'POST', body: { allowRemoteCode: true, pad: pad(110000) } }), 413, 'POST /deploy, 110 KB');
-    assert.ok(!(await memberLogins()).includes('pk-big@test'));
   });
 });
 
 /* ───────── an unreadable passkeys.json ───────── */
 describe('an unreadable passkeys.json', () => {
   const file = () => join(T.fleet.stateDir, 'passkeys.json');
-  let saved, agent, other, pending, person, request, members, settings;
+  let saved, agent, other, pending, settings;
   before(async () => {
     agent = await newAgent();
     other = await newAgent();
     // An answer made while the file was fine: it must not get through while it's broken.
     pending = { path: `/agents/${agent}`, body: { act: true } };
     pending.header = header(KEY1.sign(await beginConfirm(main, 'PUT', pending.path, pending.body)));
-    const p = await confirmed(main, 'POST', '/access', { login: loginName('broken'), permissions: MEMBER_PERMS });
-    is(p, 201);
-    person = p.json.id;
-    request = await asked();
-    members = await memberLogins();
     settings = await agentSettingsNow();
     saved = readFileSync(file(), 'utf8');
     writeFileSync(file(), '{"keys": [ broken', { mode: 0o600 });
@@ -867,8 +743,7 @@ describe('an unreadable passkeys.json', () => {
     is(r, 500, 'a valid answer');
     assert.match(r.json.error, /passkeys\.json/);
     for (const [method, path, body] of [['POST', '/agents', { name: agentName() }], ['PUT', `/agents/${agent}`, { act: true }],
-      ['PUT', '/agents/settings', { halted: false }], ['POST', '/access', { login: 'pk-broken@test', permissions: MEMBER_PERMS }],
-      ['PUT', `/access/${person}`, { permissions: { ...MEMBER_PERMS, deploy: true } }], ['POST', '/access/requests', { login: request, decision: 'approve', preset: 'run' }],
+      ['PUT', '/agents/settings', { halted: false }],
       ['POST', '/deploy', { allowRemoteCode: true }], ['POST', '/deploy/cluster', { allowRemoteCode: true }], ['DELETE', `/auth/passkeys/${KEY1.id}`], ['POST', '/auth/passkey/register', { challengeId: 'x' }]]) {
       const x = await main(path, { method, body });
       is(x, 500, `${method} ${path}`);
@@ -879,10 +754,8 @@ describe('an unreadable passkeys.json', () => {
     // Listing workspace files doesn't depend on it (deleting one does: it needs the passkey).
     assert.doesNotMatch((await main('/nodes/spark3/files', { method: 'POST', body: { operation: 'list', path: '' } })).text, /passkeys\.json/, 'listing files');
     assert.deepEqual(await agentIds(), before);
-    assert.deepEqual(await memberLogins(), members);
     assert.deepEqual(await agentSettingsNow(), settings);
     assert.equal(await canAct(agent), false);
-    assert.ok((await requestLogins()).includes(request));
     assert.equal(readFileSync(file(), 'utf8'), '{"keys": [ broken', 'the file is left for the owner to fix');
   });
 
@@ -892,14 +765,11 @@ describe('an unreadable passkeys.json', () => {
     assert.equal(r.json.passkeys, -1);
   });
 
-  test('taking access away still works: pausing agents, removing an agent or a person, declining a request', async () => {
+  test('taking a right away still works: pausing agents, removing an agent', async () => {
     const p = await main('/agents/settings', { method: 'PUT', body: { halted: true } });
     is(p, 200, 'pause');
     assert.equal(p.json.settings.halted, true);
     is(await main(`/agents/${other}`, { method: 'DELETE' }), 200, 'remove an agent');
-    is(await main(`/access/${person}`, { method: 'DELETE' }), 200, 'remove a person');
-    is(await main('/access/requests', { method: 'POST', body: { login: request, decision: 'decline' } }), 200, 'decline a request');
-    assert.ok(!(await requestLogins()).includes(request));
     is(await main('/agents/settings', { method: 'PUT', body: { halted: false } }), 500, 'resuming still can\'t');
   });
 

@@ -12,15 +12,15 @@ From the map's "Where new things go", row "Something through the app door".
 ## Also update
 
 - R40.
-- `test/app-door.test.mjs` (as nobody, a member, an agent key, a terminal, from a Spark's address, cross-site and from
-  another port, for HTTP and the WebSocket).
+- `test/app-door.test.mjs` (as nobody, an agent key, a terminal, from a Spark's address, cross-site and from another
+  port, for HTTP and the WebSocket).
 - `deploy/open-apps-to-internet.sh` if its route changes.
 
 ## Never
 
 - Pass a `/console/api` path or a console cookie to an app.
 - Forward to a host or port the request names, the brain's Spark or a model's port.
-- Let members or agent keys through.
+- Let anyone but the owner, or an agent key, through.
 - Serve the API or the page on it.
 - Let the console change Tailscale.
 

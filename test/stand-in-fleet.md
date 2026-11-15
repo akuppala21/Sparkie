@@ -4,8 +4,8 @@ The harness every test file uses and the stand-in fleet it runs against. How to 
 covers, is in `test/README.md`.
 
 - `start-mock.mjs` — `startMock()` starts the service on a fresh copy of the stand-in fleet: a temporary folder with a
-  copy of `mock/root`, a state folder seeded with `mock/access.json` (owner `owner@test`, member `member@test`, Sparks
-  1–4) and `mock/links.json` (the last cable test), its own socket and port, `SPARK_CONSOLE_WATCH_MS=3000`, and
+  copy of `mock/root`, a state folder seeded with `mock/access.json` (owner `owner@test`; a former member,
+  `member@test`, as an older build left it, never read; Sparks 1–4) and `mock/links.json` (the last cable test), its own socket and port, `SPARK_CONSOLE_WATCH_MS=3000`, and
   `SPARK_CONSOLE_SERVE_PORT` (where deploys are checked) on a free port. The state's `main.json` points Sparkie's model
   setup from `service/config.json` at the stand-in model. Everything runs in one process group, stopped (and the
   folder removed) by `stop()` or however the test process ends. Tests change the copied fleet freely; `test/mock` is

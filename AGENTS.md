@@ -72,7 +72,6 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | add a worker.py action | `docs/how/add-a-worker-action.md` |
 | fetch something from outside the Sparks | `docs/how/add-an-outbound-connection.md` |
 | add a messaging channel | `docs/how/add-a-messaging-channel.md` |
-| change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
 | give a new brain its setup (how it is asked) | `docs/how/add-a-brain-setup.md` |
 | add a self-test check | `docs/how/add-a-hardware-check.md` |

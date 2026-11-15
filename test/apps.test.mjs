@@ -24,7 +24,8 @@
 // GB rule; its command follows the image, a key in it is refused; a dev box says who can use it; a kept GPU app that
 // crashes while a model runs there isn't brought back; a job (`once`) mounts the shared folder at `/in` and its own
 // `jobs/<name>` at `/out`, never joins the list, is told once when it ends (also in the chat it was started from), runs
-// again and stops; Sparkie's button for a GPU app or a dev box shows every setting, and typed in full it runs at once;
+// again and stops, and is refused by name, new or run again, when its folder or the jobs folder is a link; Sparkie's
+// button for a GPU app or a dev box shows every setting, and typed in full it runs at once;
 // a stack of `keep_running` steps runs as a saved workflow, and one with a new image needs an answer first.
 //
 // Apps kept running (A12, R38): keep_running puts an app that isn't a model (Open WebUI, a database) on the list of what
@@ -38,7 +39,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
-import { readFileSync, writeFileSync, appendFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, statSync, symlinkSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, waitFor, auditLines, eventLines, newChat, say, chatMessages, SLOW } from './lib.mjs';
 
@@ -862,6 +863,56 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
       assert.equal(ends.length, 1, JSON.stringify(ends));
       assert.match(ends[0], /^rerun-job on Spark 4 finished(?: after [^.]*)?\. Its files are in jobs\/rerun-job/);
     } finally { rmSync(m('spark4', 'start-exits-rerun-job'), { force: true }); }
+  });
+
+  // A walled change may write in the shared folder (R42): it could swap a job's own folder for a link to the home, which
+  // Docker would follow (the home writable at /out). A new job and a run again check the job's mounts after the folder is
+  // made and again in the same command as Docker, and are refused by name; Docker runs and starts nothing (the stand-in
+  // keeps an app's run in run-<name>, and a start sets it running and writes up-<name>).
+  test('a job’s folder that is a link, or inside one: a new job and a run again are refused by name, and Docker runs and starts nothing', { timeout: 300000 * SLOW }, async () => {
+    const home = join(T.fleet.root, 'spark4'), jobs = join(home, '.local/share/spark-portal/workspaces/shared/jobs');
+    const failed = async (body, re) => {
+      const r = await keep(body);
+      assert.equal(r.json?.outcome, 'started', r.text);
+      const w = await finished(r.json.operation);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      assert.match(w.error, re, JSON.stringify(w));
+    };
+    const upAt = () => statSync(m('spark4', 'up-swapped')).mtimeMs;
+    const notStarted = (before, why) => { assert.equal(stateOf('spark4', 'swapped'), 'exited', why); assert.equal(upAt(), before, `${why}: no docker start`); };
+    const made = await keep({ spark: 'spark4', container: 'swapped', image: 'python:3.12-slim', once: true, command: ['python3', '/in/swapped.py'] });
+    assert.equal((await finished(made.json.operation)).status, 'completed');
+    setState('spark4', 'swapped', 'exited', 'Exited (0) just now');
+    mkdirSync(jobs, { recursive: true });
+    try {
+      // A new job whose folder is already there as a link to the home.
+      symlinkSync(home, join(jobs, 'planted'));
+      await failed({ spark: 'spark4', container: 'planted', image: 'python:3.12-slim', once: true, command: ['python3', '/in/planted.py'] },
+        /^The job’s folder jobs\/planted in the shared folder on Spark 4 isn’t a real folder: it is a link, or inside one\. Docker would follow it, so planted wasn’t started\. Make it a real folder there, then ask again\.$/);
+      assert.equal(stateOf('spark4', 'planted'), undefined, 'no container made');
+      assert.ok(!existsSync(m('spark4', 'run-planted')), 'no docker run');
+      // A job that ran, its folder moved aside and a link to the home put in its place: run again, refused.
+      renameSync(join(jobs, 'swapped'), join(jobs, 'swapped-aside'));
+      symlinkSync(home, join(jobs, 'swapped'));
+      let before = upAt();
+      await failed({ spark: 'spark4', container: 'swapped' }, /^The job’s folder jobs\/swapped in the shared folder on Spark 4 isn’t a real folder: it is a link, or inside one\./);
+      notStarted(before, 'its folder a link');
+      // The jobs folder itself a link (every job's folder then inside one): refused, naming it, before anything is made.
+      rmSync(join(jobs, 'swapped')); renameSync(join(jobs, 'swapped-aside'), join(jobs, 'swapped'));
+      renameSync(jobs, `${jobs}-real`); symlinkSync(`${jobs}-real`, jobs);
+      before = upAt();
+      await failed({ spark: 'spark4', container: 'swapped' }, /^The jobs folder in the shared folder on Spark 4 isn’t a real folder: it is a link, or inside one\./);
+      notStarted(before, 'the jobs folder a link');
+    } finally {
+      if (existsSync(`${jobs}-real`)) { rmSync(jobs, { force: true }); renameSync(`${jobs}-real`, jobs); }
+      rmSync(join(jobs, 'planted'), { force: true });
+      if (existsSync(join(jobs, 'swapped-aside'))) { rmSync(join(jobs, 'swapped'), { force: true }); renameSync(join(jobs, 'swapped-aside'), join(jobs, 'swapped')); }
+    }
+    // Put right, it runs again.
+    const again = await keep({ spark: 'spark4', container: 'swapped' });
+    assert.equal((await finished(again.json.operation)).status, 'completed');
+    assert.equal(stateOf('spark4', 'swapped'), 'running');
+    setState('spark4', 'swapped', 'exited', 'Exited (0) just now');
   });
 
   // A Spark the watcher has only ever seen empty (A-8): the first look Docker answered there is its first look, even

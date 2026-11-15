@@ -1,6 +1,6 @@
 // Covers: Sparkie in the owner's chats: the stream starts with `started`; `tool` events, results in the answer, `tools`
 // on the saved message; every action can be called (a tool that doesn't exist → `[error] No tool called …`); a static
-// system prompt, the fleet record in the last user message; members' chats offer none. Requests run at once (a polite
+// system prompt, the fleet record in the last user message. Requests run at once (a polite
 // "can you …" too), also after reading a log; questions, "if …", "whether to …", "could you tell me …", "don't …", "…,
 // actually don't", "keep … running", a model or container the words don't point to (a tie too), "everything on spark N"
 // said in another message and more than 4 changes become a question with a button (`needs-ok`, labels only, no ids for
@@ -8,8 +8,8 @@
 // that stops one of the console's models runs and says what it stopped. Buttons: `POST /chats/<id>/choose` (checks;
 // runs as the owner, a notice with the outcome, the operation's result posted later); a whole-message "yes" presses the
 // one open button without the model (also after an operation's result came in), "yes but …" doesn't; questions from
-// actions and follow-up questions are buttons; "no" puts them away; another chat's button can't be pressed. Busy (409),
-// more than 4 at once (429), a member's 1 (429) are plain HTTP errors.
+// actions and follow-up questions are buttons; "no" puts them away; another chat's button can't be pressed. Busy (409) and
+// more than 4 at once (429) are plain HTTP errors.
 //
 // Sparkie in the owner's chats. The model is offered the core and its request's groups (R46) as OpenAI tools; its
 // tool_calls run through the same checks as an agent's (runAction, via 'sparkie'), each shows on the page as a `tool`
@@ -83,15 +83,6 @@ describe('Sparkie in the owner\'s chats', { concurrency: true }, () => {
       const saved = (await api(`/chats/${chat}`)).json.messages;
       assert.equal(saved.length, 2);
       assert.deepEqual(saved[1].tools.map(x => x.name), ['running_models']);
-    });
-    test('a member\'s chat offers no tools, so nothing can be changed from it', { timeout: 60000 * SLOW }, async () => {
-      const headers = { 'tailscale-user-login': MEMBER };
-      const chat = await newChat(headers), from = requests().length;
-      const r = await say(chat, 'please start gpt-oss-20b on spark 3', headers);
-      assert.deepEqual(r.tools, []);
-      assert.ok(!r.message.tools);
-      assert.ok(requests().slice(from).filter(x => x.words === 'please start gpt-oss-20b on spark 3').every(x => x.tools.length === 0));
-      assert.notEqual(stateOf('spark3', 'sc-gpt-oss-20b'), 'running');
     });
     test('every action can be called, offered or not (workflows and service_logs too); a tool that doesn\'t exist → "[error] No tool called …"', { timeout: 60000 * SLOW }, async () => {
       const from = requests().length, words = 'use the other tools please';
@@ -268,9 +259,6 @@ describe('Sparkie in the owner\'s chats', { concurrency: true }, () => {
       assert.equal((await api(`/chats/${chat}/choose`)).status, 405);
       for (const choice of ['nope', 'ABCDEF0123', 42]) assert.equal((await choose(chat, choice)).status, 400, String(choice));
       assert.equal((await choose(chat, 'ffffffffff')).status, 409, 'an unknown button');
-      const memberChat = await newChat({ 'tailscale-user-login': MEMBER });
-      assert.equal((await choose(memberChat, c.id, { 'tailscale-user-login': MEMBER })).status, 403, 'a member\'s chat has no buttons');
-      assert.equal((await choose(chat, c.id, { 'tailscale-user-login': MEMBER })).status, 404, 'a member can\'t reach the owner\'s chat');
       const p = await choose(chat, c.id);
       assert.equal(p.status, 200, p.text);
       assert.equal(p.json.outcome, 'started');
@@ -373,7 +361,7 @@ describe('Sparkie in the owner\'s chats', { concurrency: true }, () => {
 
 describe('refused before the answer starts: plain HTTP errors, not a stream', () => {
   const send = (chat, text, headers = {}) => api(`/chats/${chat}/messages`, { method: 'POST', body: { text }, headers });
-  test('busy in that chat → 409; over the owner\'s 4 answers at once → 429; a member\'s 1 → 429', { timeout: 60000 * SLOW }, async () => {
+  test('busy in that chat → 409; over the owner\'s 4 answers at once → 429', { timeout: 60000 * SLOW }, async () => {
     const chat = await newChat();
     const first = send(chat, 'hello, take 1 seconds');
     await new Promise(r => setTimeout(r, 400));
@@ -386,9 +374,5 @@ describe('refused before the answer starts: plain HTTP errors, not a stream', ()
     const all = await Promise.all(chats.map((c, i) => new Promise(r => setTimeout(r, i * 150)).then(() => send(c, 'hello, take 1 seconds'))));
     assert.deepEqual(all.map(x => x.status).sort(), [200, 200, 200, 200, 429], all.map(x => x.text.slice(0, 80)).join(' | '));
     assert.match(all.find(x => x.status === 429).json.error, /4 answers coming/);
-    const headers = { 'tailscale-user-login': MEMBER };
-    const m1 = await newChat(headers), m2 = await newChat(headers);
-    const both = await Promise.all([send(m1, 'hello, take 1 seconds', headers), new Promise(r => setTimeout(r, 300)).then(() => send(m2, 'hello', headers))]);
-    assert.deepEqual(both.map(x => x.status), [200, 429]);
   });
 });

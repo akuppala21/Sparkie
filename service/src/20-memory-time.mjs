@@ -42,8 +42,13 @@ const SAID_AGAIN_SKIP = new Set(('a an the is are was were be been being am on i
   'they them their do does did done doing has have had having not no never don doesn didn isn aren wasn won cannot will would should could ' +
   'can may might must shall now just only also still too very really all any some each every more most what which who whom whose when ' +
   'where why how one ones thing things').split(' '));
-// A line's own words, to compare: lower case, a Spark said by number one word, no web address, no common word. Numbers stay.
-const lineWords = text => new Set(nameWords(text).filter(w => !SAID_AGAIN_SKIP.has(w) && !MEMORY_FILLER.has(w) && (w.length > 1 || /\d/.test(w))));
+// A line's numbers as written ("0.11.0", "10.0.0.5", "11/12"), a Spark said by number aside: two versions, two addresses
+// or two dates are two numbers, never runs of digits that happen to match (review of the memory steps, 2026-11-15).
+const LINE_NUMBER = /\d+(?:[.:/-]\d+)*/g;
+const lineNumbers = text => String(text).replace(/\bsparks?[\s_-]*\d+(?:\s*(?:,|and|&|\+|or)\s*\d+)*/gi, ' ').match(LINE_NUMBER) || [];
+// A line's own words, to compare: lower case, a Spark said by number one word, no web address, no common word; its
+// numbers as written.
+const lineWords = text => new Set([...nameWords(text).filter(w => !/^\d+$/.test(w) && !SAID_AGAIN_SKIP.has(w) && !MEMORY_FILLER.has(w) && w.length > 1), ...lineNumbers(text)]);
 const sameNames = (a, b) => [...new Set(a || [])].sort().join(' ') === [...new Set(b || [])].sort().join(' ');
 // The live line a new one says again, if any: about the same names, holding that line's numbers, and at least 0.8 of
 // its own words. The closest, the newest of equals. None with `time` off.
@@ -74,5 +79,20 @@ function memoryAlso(entry) {
 // How a kept line is said back: "I’ll remember: …", what it took the place of, its end, and the other lines to check.
 function memorySaid(line, { until = null, gone = null, also = [] } = {}) {
   const others = also.map(a => `“${a.text}” (${String(a.at).slice(0, 10)})`).join(' and ');
-  return `I’ll remember: ${line}${until ? ` (until ${until})` : ''}${gone ? ` (instead of: ${gone.text})` : ''}${others ? `${/[.!?]$/.test(line) ? '' : '.'} I also have: ${others}. Still true?` : ''}`;
+  return `I’ll remember: ${line}${until ? ` (until ${memoryDayWords(until)})` : ''}${gone ? ` (instead of: ${gone.text})` : ''}${others ? `${/[.!?]$/.test(line) ? '' : '.'} I also have: ${others}. Still true?` : ''}`;
+}
+// A day as the owner reads it at a glance: "Friday 20 November", with the year when it isn't this one.
+function memoryDayWords(day) {
+  const t = new Date(`${day}T12:00:00`);
+  if (Number.isNaN(t.getTime())) return day;
+  return t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', ...(day.slice(0, 4) === memoryDay().slice(0, 4) ? {} : { year: 'numeric' }) }).replace(',', '');
+}
+// The day as the brain is told it, one line of the turn's record (brainContext), where it decides a line's `until`:
+// Spark 2's weekday and date. Never in the system prompt or a tool's text, so what the brain reads is the same from one
+// day to the next. None with `time` off. (SPARK_CONSOLE_TODAY: a fixed day, on the stand-in fleet only.)
+function memoryTodayLine() {
+  if (memoryOffFor('time')) return null;
+  const fixed = ALL_LOCAL && /^\d{4}-\d\d-\d\d$/.test(process.env.SPARK_CONSOLE_TODAY || '') ? process.env.SPARK_CONSOLE_TODAY : null;
+  const day = fixed || memoryDay(), t = new Date(`${day}T12:00:00`);
+  return `Today on Spark 2: ${t.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '')} (${day}).`;
 }

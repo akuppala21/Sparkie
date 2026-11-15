@@ -65,7 +65,7 @@ function pauseWord(via) {
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, Access → Agents, with your passkey. It can’t be resumed from Telegram.' : `To resume: Access → Agents, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
+${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
 }
 
 async function restartWord(via) {
@@ -136,7 +136,7 @@ async function undoWord(viewer, conv) {
 function helpWord() {
   const lines = ['These work even when Sparkie can’t answer. Type the word alone:',
     '/status: where things stand, from Spark Console’s own record',
-    '/pause: pause agents’ changes (resume in Access → Agents, with your passkey)',
+    '/pause: pause agents’ changes (resume in your account menu → Agents and Telegram, with your passkey)',
     '/restart sparkie: restart Sparkie’s model when it’s stuck, or start it again when it’s stopped',
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
