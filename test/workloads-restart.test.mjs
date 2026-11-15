@@ -137,7 +137,7 @@ describe('a restart in the middle of a saved workflow\'s run (D6f)', { concurren
     await save('start and look', [{ action: 'start_model', args: { model: 'gpt-oss-20b', spark: 'spark3' } }, { action: 'should_be_running', args: {} }]);
     const id = await runIt('start and look');
     // (Docker has started the model's container; the start's own operation still waits for it to answer)
-    await waitFor(() => stateOf('spark3', GPT20) === 'running' && note()?.runs?.[id]?.starting || null, { timeout: 120000, what: 'the start under way', every: 100 });
+    await waitFor(() => (stateOf('spark3', GPT20) === 'running' && note()?.runs?.[id]?.step === 1) || null, { timeout: 120000, what: 'the start under way', every: 100 });
     const since = new Date().toISOString();
     await restart();
     const cut = await waitFor(() => noticesSince(since).find(e => /cut off the saved workflow “start and look”/.test(e.text)) || null, { timeout: 120000, what: 'the run’s notice' });

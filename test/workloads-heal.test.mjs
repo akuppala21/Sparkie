@@ -74,7 +74,6 @@ test('a listed pair a run started again and its clean-up stopped goes back on th
   assert.equal(ended.status, 'failed', JSON.stringify(ended.recentLog));
   assert.match(String(ended.error), /Stopped what this run had started: [^.]*sc-RadixArk--Qwen3\.8-27B-NVFP4 on Spark 3\. Still on the list of what should be running, as before this run: /, ended.error);
   assert.deepEqual(partsOf().map(p => p.state), ['exited', 'exited']);
-  assert.match(String((await entry())?.putBack), /^\d{4}-\d\d-\d\dT/, 'put back with its mark');
   // Automatic restarts on again, and Spark Console's memory of its own stop gone with a restart: nothing brings it back.
   await agentSettings({ selfHeal: true });
   const since = new Date().toISOString();
@@ -82,6 +81,7 @@ test('a listed pair a run started again and its clean-up stopped goes back on th
   await sleep(25000);
   assert.deepEqual(healing(since).map(e => e.why), [], 'self-healing left the put-back pair alone');
   assert.deepEqual(partsOf().map(p => p.state), ['exited', 'exited']);
+  assert.match(String((await entry())?.putBack), /^\d{4}-\d\d-\d\dT/, 'on the list with its mark');
   // The owner starts it again: it runs, and the mark goes.
   const again = await call(keys.act.token, 'start_model', { model: MODEL, sparks: ['spark3', 'spark4'] });
   assert.equal(again.isError, false, again.text);
