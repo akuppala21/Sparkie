@@ -41,6 +41,22 @@ PROTECT_MAX=4
 ROOTY=' docker lxd libvirt disk sudo '
 # Fixed limits of each wall.
 LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
+# What must be there in the owner's home before a change runs: a start file, or a folder that something outside the
+# walls reads, that is not there could be made from inside the run wall. The one-time command makes the missing ones.
+# (The start files are bash's: a change is refused unless the owner's login shell is bash, sh or dash.)
+MUST_BE_THERE='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_environment .ssh .docker .config/systemd
+  .config/environment.d .config/autostart .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d
+  .cache/spark-console .local/share/spark-console .local/share/spark-portal/workspaces/shared
+  .local/share/spark-portal/workspaces/shared/jobs'
+# Places a change may write in, but whose place is held: the jobs' shared folder and their output folders, which the
+# console mounts into containers. Each is bound onto itself (and the folders above it pinned), so it cannot be swapped
+# for a link to somewhere else.
+PLACES='.local/share/spark-portal/workspaces/shared .local/share/spark-portal/workspaces/shared/jobs'
+# The state folder's names that stay hidden: the sign-in files and the sockets. Its other plain files are put back.
+SIGNIN=' api.sock door.sock sessions.json passkeys.json agents.json telegram.json access.json access.json.good '
+# And what the owner and Sparkie said, which R43 keeps from every agent key: never put back in either wall, nor the
+# copies kept beside them (.prev, .1, .unreadable-...). (The journal is in ~/.local/share/spark-console, hidden whole.)
+WORDS='chats.json memory.json memory-past.json audit.jsonl saved-workflows.json'
 # A path that may stand in a unit setting: no space, quote, %, $, backslash or colon; no . or .. part.
 SAFE='^(/[A-Za-z0-9._@+-]+)+$'
 
@@ -110,7 +126,7 @@ parse() {
 
 # The owner: the account sudo says called (SUDO_UID and SUDO_USER, which sudo itself sets), checked against
 # /etc/passwd; its groups from /etc/group, with and without the ones that are root by another name.
-OWNER='' OWNER_UID='' OWNER_GID='' OWNER_HOME='' ALL_GIDS='' WALL_GIDS=''
+OWNER='' OWNER_UID='' OWNER_GID='' OWNER_HOME='' OWNER_SHELL='' ALL_GIDS='' WALL_GIDS=''
 caller() {
   local uid=${SUDO_UID-} name=${SUDO_USER-} line f pw puid pgid gecos home shell gname gid members
   [[ $uid =~ ^[0-9]{1,10}$ && $name =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || refuse "not called through sudo by an account"
@@ -120,7 +136,7 @@ caller() {
   [ -n "$line" ] && [ "$puid" = "$uid" ] || refuse "the account sudo names is not in /etc/passwd with that number"
   [[ $pgid =~ ^[0-9]{1,10}$ ]] && safe_path "$home" \
     || refuse "the account's group or home folder cannot stand in a setting"
-  OWNER=$name OWNER_UID=$uid OWNER_GID=$pgid OWNER_HOME=$home
+  OWNER=$name OWNER_UID=$uid OWNER_GID=$pgid OWNER_HOME=$home OWNER_SHELL=$shell
   ALL_GIDS=$pgid WALL_GIDS=$pgid
   while IFS=: read -r gname pw gid members || [ -n "$gname" ]; do
     [[ $gid =~ ^[0-9]{1,10}$ ]] && [ "$gid" != "$pgid" ] && [[ ",$members," == *",$name,"* ]] || continue
@@ -211,15 +227,32 @@ proof_state() {
 }
 
 # --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
-TMPFS=() GONE=() BACK=() RO=()
+TMPFS=() GONE=() BACK=() RO=() LINKED=()
+# A path in the owner's home that is a link, or under one, is left alone in both walls: not held, and never followed
+# (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem).
+real_here() {   # $1 a path that is there: is it the real thing, judged from the owner's home (whose own place is root's)?
+  local real home
+  in_home "$1" || return 0
+  real=$(realpath -e -- "$R$1" 2>/dev/null) || return 1
+  home=$(realpath -e -- "$R$OWNER_HOME" 2>/dev/null) || return 1
+  [ "$real" = "$home${1#"$OWNER_HOME"}" ]
+}
+unreal() {   # $1 a listed path: 0 (and noted) when it is a link in the owner's home, or under one; 1 when it is there and held
+  if in_home "$1"; then
+    [ -e "$R$1" ] || [ -L "$R$1" ] || return 0
+    real_here "$1" && return 1
+    LINKED+=("$1"); return 0
+  fi
+  [ -e "$R$1" ] && return 1 || return 0
+}
 hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
   local p=$1
-  [ -e "$R$p" ] || return 0
+  unreal "$p" && return 0
   safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
   if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then TMPFS+=("$p"); else GONE+=("$p"); fi
 }
 hide_home() {
-  local h=$1 p
+  local h=$1 p f w
   # .ssh is hidden, and its files that hold no private key are put back, read-only: plain files only, never a link.
   if [ -d "$R$h/.ssh" ] && [ ! -L "$R$h/.ssh" ]; then
     TMPFS+=("$h/.ssh")
@@ -229,21 +262,34 @@ hide_home() {
       if safe_path "$p"; then BACK+=("$p"); fi
     done
   else hide "$h/.ssh"; fi
-  for p in .gnupg .aws .kube .ngc .config/gh .config/spark-console .local/share/spark-console \
+  for p in .gnupg .aws .kube .ngc .config/gh .config/code-server .config/spark-console .local/share/spark-console \
            .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc .git-credentials \
-           .docker/config.json .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf \
+           .docker .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf \
            .bash_history .zsh_history .sh_history .python_history .node_repl_history .psql_history .mysql_history \
-           .local/share/fish/fish_history \
-           .local/state/spark-console/api.sock .local/state/spark-console/door.sock \
-           .local/state/spark-console/sessions.json .local/state/spark-console/passkeys.json \
-           .local/state/spark-console/agents.json .local/state/spark-console/telegram.json \
-           .local/state/spark-console/access.json .local/state/spark-console/access.json.good; do
+           .local/share/fish/fish_history; do
     hide "$h/$p"
   done
+  # Spark Console's state folder (on Spark 2 only), the same way in both walls: hidden, and its plain files put back
+  # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
+  # way or write the brain's memory, and no look or change reads what was said).
+  p="$h/.local/state/spark-console"
+  if [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p"; then
+    TMPFS+=("$p")
+    for f in "$R$p"/*; do
+      [ -f "$f" ] && [ ! -L "$f" ] && [[ $SIGNIN != *" ${f##*/} "* ]] || continue
+      for w in $WORDS; do [[ ${f##*/} == "$w"* ]] && continue 2; done
+      f=${f#"$R"}
+      if safe_path "$f"; then BACK+=("$f"); fi
+    done
+  else hide "$p"; fi
 }
-ro() { [ -e "$R$1" ] || return 0; safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"; RO+=("$1"); }
+ro() {
+  unreal "$1" && return 0
+  safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"
+  RO+=("$1")
+}
 lists() {
-  TMPFS=() GONE=() BACK=() RO=()
+  TMPFS=() GONE=() BACK=() RO=() LINKED=()
   local name pw uid gid gecos home shell p f kind
   while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
     [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
@@ -261,16 +307,55 @@ lists() {
   while read -r f kind _; do
     [ "$kind" = file ] && hide "$f"
   done < <(tail -n +2 -- "$R/proc/swaps" 2>/dev/null)
-  # The read-only list (the run wall): the owner's start files and service settings, Spark Console's code and source,
-  # the helper and its line. With --open, .ssh too (otherwise it is hidden, and what is put back is read-only).
-  for p in .profile .bashrc .bash_profile .bash_login .bash_logout .zshenv .zprofile .zshrc .zlogin .zlogout \
-           .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
-           spark-console-service spark-console-src; do
+  # The read-only list (the run wall): the owner's start files, what the owner's service manager reads, Spark
+  # Console's caches, set-up scripts, page, code and source, the editor's programs, the helper and its line. With
+  # --open, .ssh too (otherwise it is hidden, and what is put back is read-only).
+  for p in .profile .bashrc .bash_profile .bash_login .bash_logout .bash_aliases .zshenv .zprofile .zshrc .zlogin \
+           .zlogout .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
+           .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d .cache/spark-console .local/opt \
+           .local/share/code-server spark-console spark-console-service spark-console-src; do
     ro "$OWNER_HOME/$p"
   done
   [ "$OPEN" = 1 ] && ro "$OWNER_HOME/.ssh"
   ro "$HELPER"
   ro "$LINE"
+}
+
+# --- what the run wall holds in the owner's home: there, the real thing, and no folder above it movable -------------
+in_home() { case "$1" in "$OWNER_HOME"/*) return 0 ;; esac; return 1; }
+pins() {   # the folders between the owner's home and each path given that are not held already, each once, in order
+  # (a folder that is a held path, or lies under one, is read-only or hidden already, so it cannot be moved: never pinned,
+  # which would make a writable place inside it)
+  local p d l under
+  for p in "$@"; do
+    in_home "$p" || continue
+    d=${p%/*}
+    while [ "$d" != "$OWNER_HOME" ] && in_home "$d"; do
+      under=0
+      for l in "$@"; do case "$d/" in "$l"/*) under=1; break ;; esac; done
+      [ "$under" = 1 ] || printf '%s\n' "$d"
+      d=${d%/*}
+    done
+  done | LC_ALL=C sort -u
+}
+places() {   # the held places that are there (held_problem refuses a change when one is not, or is a link)
+  local n
+  for n in $PLACES; do [ -d "$R$OWNER_HOME/$n" ] && real_here "$OWNER_HOME/$n" && printf '%s\n' "$OWNER_HOME/$n"; done
+  return 0
+}
+held_problem() {   # why the run wall cannot hold the owner's home as listed, or nothing (the lists must be made first)
+  local n real shell=${OWNER_SHELL##*/}
+  real=$(realpath -e -- "$R$OWNER_HOME" 2>/dev/null) || real=''
+  [ "$real" = "$R$OWNER_HOME" ] || { printf '%s is a link, so nothing in it can be held' "$OWNER_HOME"; return; }
+  case "$shell" in
+    bash|sh|dash) ;;
+    *) [[ $shell =~ ^[A-Za-z0-9._+-]{1,40}$ ]] || shell='not one this helper can name'
+       printf "the owner's login shell is %s; the run wall holds bash's start files only" "$shell"; return ;;
+  esac
+  for n in $MUST_BE_THERE; do
+    [ -e "$R$OWNER_HOME/$n" ] || { printf '%s is not there, so it cannot be held: run the one-time command again' "$OWNER_HOME/$n"; return; }
+    real_here "$OWNER_HOME/$n" || { printf '%s is a link, or under one, so the wall would hold only what it points at: put the real file or folder there' "$OWNER_HOME/$n"; return; }
+  done
 }
 
 # --- the walls -------------------------------------------------------------------------------------------------------
@@ -298,6 +383,14 @@ wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-
   fi
   if [ "$wall" = run ]; then
     for p in "${RO[@]}" "${PROTECT[@]}"; do PROPS+=(-p "ReadOnlyPaths=$p"); done
+    # Each folder above a held path in the owner's home is bound onto itself: a mount point cannot be renamed or
+    # replaced, so a change cannot move a held path out of the way and make a new one. What is inside stays writable.
+    local held=() place=()
+    mapfile -t place < <(places)
+    if [ "$OPEN" = 0 ]; then mapfile -t held < <({ pins "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${PROTECT[@]}" "${place[@]}"
+                                                    for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u)
+    else mapfile -t held < <({ pins "${RO[@]}" "${PROTECT[@]}" "${place[@]}"; for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u); fi
+    for p in "${held[@]}"; do PROPS+=(-p "BindPaths=$p"); done
   fi
   PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
   if [ "$wall" = look ]; then PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$LOOK_MEMORY" -p "TasksMax=$LOOK_TASKS")
@@ -353,9 +446,11 @@ only_id() { [ -z "$SHA$SECS$DIR" ] && [ "$OPEN$STDIN" = 00 ] && [ ${#PROTECT[@]}
   || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
-  local state why=''
+  local state why='' held
   prereqs
   state=$(proof_state)
+  lists
+  held=$(held_problem)
   say "helper $HELPER_SHA"
   say "systemd ${SYSTEMD_VERSION:-?} $ST_SYSTEMD"
   say "first-process $ST_PID1"
@@ -365,10 +460,14 @@ do_check() {
   say "python3 $ST_PYTHON"
   say "files $ST_FILES"
   say "kernel ${KERNEL:-?}"
+  # Links at listed names in the owner's home are left alone in both walls (a change may have made them): named here.
+  [ ${#LINKED[@]} -eq 0 ] || say "links not held, left alone: ${LINKED[*]#"$OWNER_HOME/"}"
   say "proof $state"
   if [ ${#PROBLEMS[@]} -gt 0 ]; then why=${PROBLEMS[0]}
   elif [ "$state" != current ]; then why="the wall proof is $state on this Spark"; fi
-  if [ -z "$why" ]; then say "look ready"; say "run ready"; else say "look refuses: $why"; say "run refuses: $why"; fi
+  if [ -z "$why" ]; then say "look ready"; else say "look refuses: $why"; fi
+  [ -n "$why" ] || why=$held
+  if [ -z "$why" ]; then say "run ready"; else say "run refuses: $why"; fi
   say "root refuses: the put-back net is not built yet"
   exit 0
 }
@@ -401,6 +500,10 @@ do_unit() {
   local state; state=$(proof_state)
   [ "$state" = current ] || refuse "the wall proof is $state on this Spark: prove first"
   lists
+  if [ "$VERB" = run ]; then
+    p=$(held_problem)
+    [ -z "$p" ] || refuse "$p"
+  fi
   hold_folder
   # A hang-up or an interrupt (the caller's connection dropped) still removes the held folder; what the unit has
   # already opened stays readable to it.
@@ -436,18 +539,19 @@ NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale
        "another program's environment" 'a write that stays' "round the hiding, through another program's /proc"
        'a signal to a program outside the wall' 'more rights: sudo, the helper, a capability'
        'starting something outside the wall' 'a hidden key file' 'a disk device or the GPU' 'something left behind'
-       'root with no net')
+       'root with no net' 'moving a folder above a held one, and making a new one in its place')
 LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12'
-RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12'
-OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11'
+RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12 14'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
-AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12'
+AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14'
 # The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
 # use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
 # targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
-# read-only list (5), sudo with the helper's own line (8), its own key (10). Attempt 2 must reach its own program on the
-# loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be absent, for the reason the proof states.
-MUST_WORK='1 4 5 6 7 8 10'
+# read-only list (5), sudo with the helper's own line (8), its own key (10), its own folders' right to be renamed (14).
+# Attempt 2 must reach its own program on the loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be
+# absent, for the reason the proof states.
+MUST_WORK='1 4 5 6 7 8 10 14'
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -459,7 +563,7 @@ declare -A GOT=() DETAIL=()
 take() {   # $1 where the lines came from (outside, look, run, after); $2 the lines
   local from=$1 tag n how res rest
   while read -r tag n how res rest; do
-    [[ $n =~ ^(1[0-2]|[1-9])$ ]] || continue
+    [[ $n =~ ^(1[0-24]|[1-9])$ ]] || continue
     rest=${rest//[![:print:]]/}
     case "$tag:$how:$res" in
       P:outside:works|P:outside:not-there) GOT[outside:$n]=$res; DETAIL[outside:$n]=${rest:0:200} ;;
@@ -478,7 +582,9 @@ do_prove() {
   lists   # once before anything starts, so a name that cannot stand in a setting refuses here
   mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
   exec 9> "$R$HOLD/prove.lock" || refuse "cannot open the proof's lock"
-  flock -n 9 || refuse "another proof is running on this Spark"
+  # A look's check takes this lock shared for a moment (21-work.mjs, flock -n -s): wait a few seconds rather than refuse,
+  # so the one-time command's proof is never refused by a look; another proof holds it for minutes and still refuses.
+  flock -w 5 9 || refuse "another proof is running on this Spark"
   hold_folder
   trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; rm -rf -- "$H"; exit 129' HUP INT TERM
   rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
@@ -486,8 +592,9 @@ do_prove() {
   printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
   printf '0' > "$H/target"
   seal
-  # The proof's own --protect folder for the run wall: the same path proof.py calls P.
-  p="$OWNER_HOME/.cache/spark-console/proof-$ID-ro"
+  # The proof's own --protect folder for the run wall, two levels inside its folder at the top of the home (so the run
+  # wall pins the folder between them, which attempt 14 tries to move): the same path proof.py calls P.
+  p="$OWNER_HOME/.sparkie-proof-$ID/held/ro"
   out_prep=$(plain_unit owner prep 60 prep)
   out_setup=$(plain_unit root setup 60 setup)
   systemd-run "--unit=sw-prove-target-$ID" "--description=Spark Console wall proof target $ID" --collect --quiet \
@@ -624,9 +731,10 @@ HELPER = '/usr/local/sbin/spark-console-root'
 with open(os.path.join(HERE, 'owner')) as f:
     _uid, _gid, HOME = f.read().split('\n')[:3]
 UID, GID = int(_uid), int(_gid)
-S = f'{HOME}/.cache/spark-console/proof-{ID}'           # seen inside both walls
+S = f'{HOME}/.sparkie-proof-{ID}'                       # seen inside both walls; on no list, so writable in the run wall
 H = f'{HOME}/.local/share/spark-console/proof-{ID}'     # on the hidden list (~/.local/share/spark-console)
-P = f'{HOME}/.cache/spark-console/proof-{ID}-ro'        # the run wall's --protect folder (the helper names it too)
+HELD = f'{S}/held'                                      # the folder above P: the run wall pins it (attempt 14)
+P = f'{HELD}/ro'                                        # the run wall's --protect folder (the helper names it too)
 SHARE = f'{HOME}/.local/share/spark-console'
 KEY = b'SPARK-PROOF-KEY ' + ID.encode()
 SOCKETS = [('Docker', '/run/docker.sock'), ('Docker', '/var/run/docker.sock'),
@@ -945,6 +1053,22 @@ def a11(c):  # a disk device and the GPU
     return got
 
 
+def a14(c):  # moving the folder above a read-only folder out of the way, and making a new one in its place
+    if c.mode == 'outside':
+        # Outside the walls the owner may rename it (checked by rights, not done: the proof's files must stay as they are).
+        return ['may rename it'] if os.access(S, os.W_OK | os.X_OK) and os.path.isdir(P) else []
+    try:
+        os.rename(HELD, f'{HELD}-moved-{c.how}')
+    except OSError:
+        return []
+    try:
+        os.makedirs(P)
+        write(f'{P}/target-run', b'changed')
+    except OSError:
+        pass
+    return [f'renamed it ({c.how})']
+
+
 def a12(c):  # something left behind: a program put in the background, looked for from outside afterwards
     mark = f'{ID}-{c.mode}-{c.how}'
     subprocess.Popen(['sleep', '300'], env=dict(CLEAN, SPARK_PROOF_LEFT=mark), stdin=DEVNULL, stdout=DEVNULL,
@@ -952,7 +1076,7 @@ def a12(c):  # something left behind: a program put in the background, looked fo
     return [mark]
 
 
-ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12}
+ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12, 14: a14}
 
 
 def what(hits, n=0):
@@ -986,11 +1110,10 @@ def attempts(mode, nums):
 def prep():
     os.umask(0o077)
     made = not os.path.lexists(SHARE)
-    os.makedirs(f'{HOME}/.cache/spark-console', exist_ok=True)
     os.makedirs(SHARE, exist_ok=True)
-    for old in glob.glob(f'{HOME}/.cache/spark-console/proof-*') + glob.glob(f'{SHARE}/proof-*'):
+    for old in glob.glob(f'{HOME}/.sparkie-proof-*') + glob.glob(f'{SHARE}/proof-*'):
         shutil.rmtree(old, ignore_errors=True)
-    for d in (S, H, P):
+    for d in (S, H, HELD, P):
         os.mkdir(d, 0o700)
     write(f'{H}/key', KEY)
     for w in ('look', 'run'):
@@ -1010,7 +1133,7 @@ def prep():
         pass
     handle = handle_of(f'{H}/key')
     with open(f'{S}/fixtures.json', 'w') as f:
-        json.dump({'made_share': made, 'handle': handle, 'own': own}, f)
+        json.dump({'made_share': made, 'handle': handle, 'own': own, 'held': os.stat(HELD).st_ino}, f)
     # Without a handle the look wall's file-handle filter would be tried by nothing.
     out('S ok' if handle else 'S failed: no file handle for the proof key')
 
@@ -1073,10 +1196,18 @@ def post():
     out('V', 5, 'run', 'through' if made else 'blocked', 'a file in the read-only folder' if made else '-')
     try:
         with open(f'{S}/fixtures.json') as f:
-            made_share = json.load(f).get('made_share')
+            fx = json.load(f)
     except (OSError, ValueError):
-        made_share = False
-    for d in (S, H, P):
+        fx = {}
+    try:
+        same = os.stat(HELD).st_ino == fx.get('held')
+    except OSError:
+        same = False
+    moved = glob.glob(f'{HELD}-moved-*')
+    out('V', 14, 'run', 'blocked' if same and not moved else 'through', 'the folder above is the same one' if same and not moved
+        else 'the folder above was moved or replaced')
+    made_share = fx.get('made_share')
+    for d in (S, H):
         shutil.rmtree(d, ignore_errors=True)
     if made_share:
         try:
