@@ -1,6 +1,6 @@
-// run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root helper through
-// sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the one this
-// build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
+// Covers: run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root
+// helper through sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the
+// one this build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
 // as outside text (masked, cut for the brain, kept whole in one journal record).
 // The stand-in fleet, with the real helper (deploy/spark-console-root) as a rehearsal under each set-up Spark's home
 // (~/.rehearsal: a made-up /etc, /proc and /usr/local/sbin), driven by the stand-ins step 1a added in test/mock/bin

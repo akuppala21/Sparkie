@@ -1,3 +1,14 @@
+// Covers: What a Spark read before it went dark (round two, item 2): `fleet_status` shows the board's hottest sensor
+// and the NVMe drive beside the GPU's temperature, skipping a sensor out of range; a Spark with no sensor files is
+// still watched (a crash there still fires); going dark keeps the last reading (GPU load, watts, sensors, its age);
+// coming back carries `upSeconds`; `spark_diagnostics` lists dark periods with one finding worded "consistent with":
+// restarted under load, restarted idle, no GPU numbers ("can't tell"), stopped answering without restarting, still
+// dark. A second fleet starts as if the console restarted while Spark 4 was dark: the first time it went dark and its
+// reading stay, a 10-minute-old reading is never passed on, and a dark spell under the floor (20 s there) isn't listed.
+// While a Spark is dark, `workloads` shows its containers as `running: false`, `state: unknown (Spark off or not
+// answering)`, `lastSeenRunning: true`, with that Spark's own `observedAt`; Sparkie's record says so in one line, and
+// they read as running again when it is back (F16).
+//
 // What a Spark read before it went dark (service/src/19-watcher.mjs; round two, item 2: "why did Spark 4 go dark?").
 // The status check keeps the GPU's numbers, the watcher adds the board's hottest sensor, the NVMe drive and the fan from
 // sysfs (the stand-in fleet's $MOCK_ROOT/<spark>/sys). Going dark keeps the last reading if it is under three minutes

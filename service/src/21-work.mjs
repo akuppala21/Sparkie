@@ -17,7 +17,7 @@
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '6104e5e92d6457419fd26b2c7075e746a94d89095014fe0a9499f4bebe9f271f';
+const HELPER_SHA256 = '10b986b04e2ea5ae7d3b82a5b0a13b43f780ca10291e12daa748cfa83f0bd6a7';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;

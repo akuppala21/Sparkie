@@ -37,6 +37,8 @@ function sendCopy(target, name) {
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
     // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
     // pattern that matches nothing is an error and no copy would land.)
+    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
+    sparkCalls.set(target.id, Date.now());
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -79,6 +81,8 @@ async function backupState() {
   } finally { backingUp = false; }
 }
 // Due until one has worked today: ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS: how often it checks).
+// (also when a Spark comes back on, 19-watcher.mjs: with Sparks powered off when idle, an hourly try could keep missing
+// the times one is on)
 function backupIfDue() {
   if (!BACKUP_ON || String(lastBackup?.good?.at).slice(0, 10) === dayOf(Date.now())) return;
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));

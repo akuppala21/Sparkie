@@ -2,11 +2,14 @@
 // requirement, made from what the repository already states; tools/make.mjs writes it, never a hand.
 //   a rule                   the tests its file names under "Checked by"; its "Today" says whether the code falls short
 //   a contract requirement   the acceptance tests that list it (their last column); a test holds an acceptance test
-//                            when a comment in it starts with that test's id (`// T54: …`)
+//                            when a comment in it starts with that test's id (`// T54: …`), and part of one when the
+//                            comment says which part (`// T54 (part): the refusal, not the undo`). Built: every one of
+//                            its acceptance tests held whole, by at least one test; partly: some held, or only in part.
 //
 // checkStatus fails when a rule or a requirement has no row, a built or partly row names no test, a test a row names is
-// gone (no file, no test with those words, or skipped or marked to-do), or the table is not what this file makes; and
-// when the contract carries a version mark (`*(v3)*`, `*(changed)*`, `*(2026-11-11)*`): status lives here, not there.
+// gone (no file, no test with those words, or skipped or marked to-do), a part mark says no part, or the table is not
+// what this file makes; and when the contract carries a version mark (`*(v3)*`, `*(changed)*`, `*(2026-11-11)*`): status
+// lives here, not there.
 // tools/make.mjs runs it; so does test/docs.test.mjs, on this tree and on small made-up ones.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -19,6 +22,8 @@ const STATUSES = ['built', 'partly', 'no test yet'];
 const MARK = /\*\((?:v\d[\d.]*|new|changed\b[^)\n]*|\d{4}-\d{2}-\d{2}\b[^)\n]*)\)\*/g;
 // The checker's own test holds made-up faults on purpose: it is not read for acceptance tests.
 const SELF = ['docs.test.mjs'];
+// A test's comment that holds an acceptance test, whole (`// T54:`, `// T54, T55:`) or in part (`// T54 (part): …`).
+const HOLDS = /^\s*\/\/ (T\d+(?:, T\d+)*)( \(part\))?:(.*)$/;
 
 const read = (root, f) => readFileSync(join(root, f), 'utf8');
 const isFile = p => { try { return statSync(p).isFile(); } catch { return false; } };
@@ -55,6 +60,19 @@ function testAround(lines, i) {
   return name.length > 80 ? name.slice(0, 80).replace(/\s+\S*$/, '') : name;
 }
 
+// The test files read for acceptance tests.
+const testFiles = root => (existsSync(join(root, 'test')) ? readdirSync(join(root, 'test')).filter(f => /\.test\.mjs$/.test(f) && !SELF.includes(f)).sort() : []);
+
+// Which part a part mark holds: the words after its colon, run on over the comment lines below it, to the end of the
+// first sentence (at most 160 characters).
+function partWords(lines, i, rest) {
+  let text = rest.trim();
+  if (!text) return '';
+  for (let j = i + 1; j < lines.length && /^\s*\/\/ \S/.test(lines[j]) && !HOLDS.test(lines[j]) && !/[.!?]$/.test(text); j++) text += ` ${lines[j].replace(/^\s*\/\/ /, '').trim()}`;
+  const first = text.match(/^.*?[.!?](?=\s|$)/)?.[0] || text;
+  return first.length > 160 ? `${first.slice(0, 160).replace(/\s+\S*$/, '')} …` : first;
+}
+
 const proofCell = tests => tests.map(t => `\`${t.file}\`${t.names.length ? ` (${t.names.map(n => `“${n}”`).join(', ')})` : ''}`).join('; ');
 
 export function statusTable(root = ROOT) {
@@ -69,24 +87,32 @@ export function statusTable(root = ROOT) {
   const contract = contractOf(root);
   const lists = new Map();   // acceptance test → the requirements its last column names
   for (const m of contract.matchAll(/^\| T(\d+) \|(.*)\|[ \t]*$/gm)) lists.set(Number(m[1]), [...m[2].split('|').pop().matchAll(/\b(\d+\.\d+)\b/g)].map(x => x[1]));
-  const held = new Map();    // acceptance test → the tests that hold it
-  const tests = existsSync(join(root, 'test')) ? readdirSync(join(root, 'test')).filter(f => /\.test\.mjs$/.test(f) && !SELF.includes(f)).sort() : [];
-  for (const f of tests) {
+  const held = new Map();    // acceptance test → the tests that hold it whole
+  const parts = new Map();   // acceptance test → the tests that hold part of it, and the parts they say they hold
+  for (const f of testFiles(root)) {
     const lines = read(root, `test/${f}`).split('\n');
     lines.forEach((l, i) => {
-      const m = l.match(/^\s*\/\/ (T\d+(?:, T\d+)*):/);
+      const m = l.match(HOLDS);
       if (!m) return;
-      const name = testAround(lines, i);
-      for (const t of m[1].split(', ').map(x => Number(x.slice(1)))) testsIn(`\`${f}\`${name ? ` “${name}”` : ''}`, held.get(t) || held.set(t, []).get(t));
+      const name = testAround(lines, i), where = `\`${f}\`${name ? ` “${name}”` : ''}`;
+      for (const t of m[1].split(', ').map(x => Number(x.slice(1)))) {
+        if (!m[2]) { testsIn(where, held.get(t) || held.set(t, []).get(t)); continue; }
+        const p = parts.get(t) || parts.set(t, { tests: [], said: [] }).get(t), said = partWords(lines, i, m[3]);
+        testsIn(where, p.tests);
+        if (said && !p.said.includes(said)) p.said.push(said);
+      }
     });
   }
   const contractRows = requirements(contract).map(id => {
-    const acc = [...lists].filter(([, reqs]) => reqs.includes(id)).map(([t]) => t), on = acc.filter(t => held.has(t)), off = acc.filter(t => !held.has(t));
+    const acc = [...lists].filter(([, reqs]) => reqs.includes(id)).map(([t]) => t), on = acc.filter(t => held.has(t));
+    const part = acc.filter(t => !held.has(t) && parts.has(t)), off = acc.filter(t => !held.has(t) && !parts.has(t));
     const proof = [];
     for (const t of on) for (const x of held.get(t)) testsIn(`\`${x.file}\` ${x.names.map(n => `“${n}”`).join(', ')}`, proof);
-    const status = !on.length ? 'no test yet' : off.length ? 'partly' : 'built';
+    for (const t of part) for (const x of parts.get(t).tests) testsIn(`\`${x.file}\` ${x.names.map(n => `“${n}”`).join(', ')}`, proof);
+    const status = !on.length && !part.length ? 'no test yet' : !on.length || part.length || off.length ? 'partly' : 'built';
     const note = [
       on.length && `holds ${on.map(t => `T${t}`).join(', ')}`,
+      ...part.map(t => `holds part of T${t}: ${parts.get(t).said.map(s => `“${s}”`).join(', ')}`),
       off.length && `${off.map(t => `T${t}`).join(', ')}: no test holds ${off.length > 1 ? 'them' : 'it'} yet`,
       !acc.length && 'no acceptance test lists it',
     ].filter(Boolean);
@@ -97,11 +123,12 @@ export function statusTable(root = ROOT) {
     '',
     'Written by `node tools/make.mjs` from the rule files and the tests; don’t edit it by hand. One row per rule and per',
     'contract requirement. To change a row, change what it is made from: a rule file’s “Checked by” and “Today”, or a',
-    'test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`).',
+    'test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`), or part of one',
+    '(`// T54 (part): which part`).',
     '',
     '- **built**: a test that is here today holds it, and nothing is marked short.',
     '- **partly**: a test holds part of it. The rule’s file marks where the code falls short today or a test still to',
-    '  add, or only some of the requirement’s acceptance tests have a test.',
+    '  add, or only some of the requirement’s acceptance tests have a test, or a test holds only part of one.',
     '- **no test yet**: no test holds it. It may still be in the code; the note says what checks it instead, if anything.',
     '',
     '## Rules (`docs/rules/`)',
@@ -151,6 +178,12 @@ export function checkStatus(root = ROOT) {
     if (!STATUSES.includes(r.status)) say(`gives ${id} the status “${r.status}”, which is not one of ${STATUSES.join(', ')}`, r.line);
     if (['built', 'partly'].includes(r.status) && !r.tests.length) say(`marks ${id} ${r.status}, but names no test that holds it`, r.line);
     for (const t of r.tests) { const dead = deadTest(root, t); if (dead) say(`row ${id} ${dead}`, r.line); }
+  }
+  for (const f of testFiles(root)) {
+    read(root, `test/${f}`).split('\n').forEach((l, i) => {
+      const m = l.match(HOLDS);
+      if (m?.[2] && !m[3].trim()) out.push({ check: 'status', file: `test/${f}`, line: i + 1, message: `marks part of ${m[1]} with no words after “(part):”: say which part of the acceptance test this test holds` });
+    });
   }
   if (text !== statusTable(root)) say('is not what the rule files and the tests make: run node tools/make.mjs');
   const contract = contractOf(root);

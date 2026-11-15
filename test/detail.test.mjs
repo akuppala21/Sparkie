@@ -1,3 +1,7 @@
+// Covers: `running_models {detail}`: one running model's exact settings read from Docker now; secrets hidden; names
+// that match none or several; the setup named only for exactly recorded settings; Sparkie's turn counts as outside
+// text.
+//
 // "What is GLM running with?" (A7): running_models {detail} gives one running model server's exact settings, read from
 // Docker now (one docker inspect of that container, read the way the watcher reads it): image, engine, its command with
 // secrets hidden, context length, memory share, its Sparks, the port, when it started, and the Recipes setup those

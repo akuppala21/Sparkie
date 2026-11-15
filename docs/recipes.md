@@ -1,6 +1,6 @@
 # Recipes: adding any model, and how its setups are found
 
-**Status:** built 2026-11-04. Owner-only for adding and searching; everyone can browse.
+**Status:** built 2026-11-04, when the catalog held 80 models. Owner-only for adding and searching; everyone can browse.
 
 ## Adding a model: two ways
 

@@ -1,3 +1,11 @@
+// Covers: Sparkie's own model when a change goes wrong. Switching: a setup that can't start is refused before anything
+// stops; a failed switch says whether the old model came back, and leaves no half-started container when it didn't. The
+// brain keeper (R19): a brain the console left down itself (a brain start that fails after its container is removed)
+// comes back with the same setup once self-healing is on (a `healing` event, a `main-start` operation by Self-healing,
+// the mark gone from `main.json`); a second try that would have to stop a container refuses and stops nothing, then one
+// notice and never a third; the owner's Stop clears the mark, and so does the brain answering again; nothing is started
+// then.
+//
 // Sparkie's own model (the brain) when a change of Spark Console's goes wrong. Switching it: a setup that can't start is
 // refused before anything stops; a failed switch says whether the old model came back, and leaves no half-started
 // container when it didn't (F3). The brain keeper (H2): a brain Spark Console left down itself (its `leftDown` mark in

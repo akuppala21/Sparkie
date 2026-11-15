@@ -1,3 +1,9 @@
+// Covers: More self-healing, for a model across Spark 3 and Spark 4 (a pass every 2 s, Sparks settled after 3 s here):
+// a part that crashes while its Sparks stay on: what's left stops and it starts again across both ("a part stopped");
+// powered off and on, it comes back once they have settled ("came back on"); a Spark down again within 30 minutes of
+// that: nothing comes back (`heal-skipped`, "may be what froze it"). Sparkie's model running but silent for 4 s is
+// restarted.
+//
 // More self-healing (2026-11-11: "most importantly self healing and being able to fix things by itself"). Every pass
 // (2 s here) of the list of what should be running: a model across two Sparks that lost a part stops what's left and
 // starts again across the same Sparks; when the owner powers Sparks back on, what should run there comes back once they

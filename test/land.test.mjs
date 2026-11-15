@@ -1,3 +1,5 @@
+// Covers: `tools/land.mjs` with a stand-in runner: lands, refuses, never interleaves, catches up.
+//
 // tools/land.mjs, one step onto main, against a made-up repository with its own work folders and a stand-in for the
 // Spark runner (SPARK_LAND_RUNNER: a script that notes what it was asked and answers as the test says). A passing pick
 // lands and logs; a failing test lands nothing; a branch behind main, a dirty folder and a failing make check are

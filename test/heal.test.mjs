@@ -1,3 +1,9 @@
+// Covers: Self-healing (`SPARK_CONSOLE_HEAL_MIN_RUN_MS` = 1 minute here): a console model that crashes is restarted (a
+// `healing` event, an operation as the owner, an audit line), at most twice an hour, counted in `heal-tries.json`
+// (tries from before the service started count; then `heal-skipped`); left alone: killed for memory, a log saying out
+// of memory, exit 255, ran less than the minimum, a Spark that went offline or came back in the last 30 minutes, a
+// two-Spark part, Spark 2, a container the console didn't start or stopped itself, self-healing off, agents paused.
+//
 // Self-healing: the watcher starts one of Spark Console's crashed models again (restart, after the same memory check as
 // a start), at most twice an hour per container (counted in heal-tries.json, so a restart of the service doesn't reset
 // it), and records 'healing' / 'heal-skipped' fleet events and audit lines. Never: a model that ran out of memory (killed

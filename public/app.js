@@ -211,6 +211,15 @@ const fmt = {
       : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
   },
 };
+// A Spark's smart plug (deploy/plugs.sh), when it has one: has is a current wall reading; words says what the plug
+// shows for a Spark that isn't answering (its plug off, shut down, or powered but not answering).
+const wallState = n => {
+  const w = n?.wall, live = Boolean(w?.answering) && !isStale();
+  const words = !live ? null : w.on === false ? 'Its smart plug is off, so it has no power.'
+    : num(w.watts) && w.watts < 15 ? `Shut down: its plug is on and it draws ${fmt.watts(w.watts)}.`
+    : num(w.watts) ? `Powered on (${fmt.watts(w.watts)} at the wall) but Spark Console can’t reach it over Tailscale.` : null;
+  return { has: live && num(w.watts), words };
+};
 
 function initials(name) {
   return String(name || '?').split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(s => s[0].toUpperCase()).join('') || '?';
@@ -2143,6 +2152,9 @@ const SVC_LABEL = {
   'main-switch': j => `Switch ${ASSISTANT} to ${j.model}`,
   dig: j => `Find setups for ${j.model}`,
   'add-list': j => `Add ${j.model} from Hugging Face`,
+  // Turning a Spark off or on (the smart plugs, contract 9.22); a start that needed one turned on says which model.
+  'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
+  'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
   'self-test': j => `Self-test on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
@@ -2384,6 +2396,7 @@ function nodeLine(n, host = portalHostId()) {
     `memory ${fmt.gib(used)} of ${fmt.gib(n.memoryTotalGiB)} GB used`,
     fmt.temp(n.temperature),
     `${fmt.watts(n.gpuPowerWatts)} GPU`,
+    wallState(n).has ? `${fmt.watts(n.wall.watts)} at the wall` : null,
     `disk ${fmt.disk(n.diskFreeGiB)} free`,
     n.runningContainers?.length ? `containers: ${n.runningContainers.join(', ')}` : 'no containers running',
     num(net.highSpeedLinksConfigured) ? `${net.highSpeedLinksUp} of ${net.highSpeedLinksConfigured} direct cables up` : null,
@@ -2405,7 +2418,7 @@ function fleetSnapshot() {
   return [
     `${SNAPSHOT_MARK}, ${new Date().toLocaleString()}]`,
     ...lines,
-    `Fleet: ${up.length} of ${list.length} online; ${fmt.gib(used)} of ${fmt.gib(total)} GB unified memory in use; ${sum(up, 'gpuPowerWatts').toFixed(1)} W GPU power${control ? `; control network ${control}` : ''}.`,
+    `Fleet: ${up.length} of ${list.length} online; ${fmt.gib(used)} of ${fmt.gib(total)} GB unified memory in use; ${sum(up, 'gpuPowerWatts').toFixed(1)} W GPU power${(w => (w.length ? `; ${w.reduce((a, x) => a + x.wall.watts, 0).toFixed(0)} W at the wall from ${plural(w.length, 'plug')}` : ''))(list.filter(x => wallState(x).has))}${control ? `; control network ${control}` : ''}.`,
     `Sparks with a direct link to each other: ${linked.length ? linked.join('; ') : 'none known'}.`,
     main?.configured ? `${ASSISTANT}'s own model: ${main.title} on ${nodeName(main.node)} (${main.healthy ? 'ready' : main.state || 'unknown'}).` : null,
   ].filter(Boolean).join('\n');
