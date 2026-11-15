@@ -7,7 +7,8 @@
 // declared-but-absent writer, a state file nobody owns, a helper writing a file it is given, an undeclared repeating
 // timer, an unlisted event or job type, a part outside its band, brackets it can't read). Each test file's “Covers:”
 // comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't have, a stale
-// table.
+// table. `docs/status.md` (`tools/status.mjs`): a row per rule and contract requirement; built, partly from tests that
+// hold part of an acceptance test (`// T2 (part): …`), and a part mark that says no part fails.
 //
 // The documents match the code: tools/check-docs.mjs, the same code tools/make.mjs runs. File reads only, no server.
 // First on this tree; then on a small made-up tree that passes, with one fault added at a time, so each check is
@@ -354,4 +355,22 @@ describe('status', () => {
     assert.match(table, /^\| 8\.4 \| no test yet \|  \| T2: no test holds it yet \|$/m);
     assert.deepEqual(statusProblems({ 'docs/contract.md': contract, 'docs/rules/R02.md': rule }).map(say), []);
   });
+  // A test that holds part of an acceptance test says which part (`// T2 (part): …`); its requirement is partly built.
+  const PARTS = '| # | Request | Rules |\n|---|---|---|\n| T1 | "start a model" | 8.3 |\n| T2 | "stop it" | 8.3 |\n| T3 | "ask first" | 8.4 |';
+  const partsContract = BASE['docs/contract.md'].replace('| # | Request |\n|---|---|\n| T1 | "start a model" |', PARTS)
+    .replace('- 8.3 It never changes SSH.\n', '- 8.3 It never changes SSH.\n- 8.4 It asks first.\n');
+  const stopTests = "// T2 (part): the stop is confirmed, not the put-back\ntest('a stop is confirmed', () => {});\n// T3 (part): it asks first, then\n// stops nothing. The rest waits.\ntest('asks before stopping', () => {});\n";
+  test('only part marks: partly, with the tests and the parts they hold; a whole mark and a part mark for another of its acceptance tests: partly', () => {
+    const extra = { 'docs/contract.md': partsContract, 'test/stop.test.mjs': stopTests };
+    const table = statusOf(extra);
+    assert.match(table, /^\| 8\.4 \| partly \| `test\/stop\.test\.mjs` \(“asks before stopping”\) \| holds part of T3: “it asks first, then stops nothing\.” \|$/m);
+    assert.match(table, /^\| 8\.3 \| partly \| `test\/change\.test\.mjs` \(“a choice is used once, alone, and only by whoever was asked”\); `test\/stop\.test\.mjs` \(“a stop is confirmed”\) \| holds T1; holds part of T2: “the stop is confirmed, not the put-back” \|$/m);
+    assert.deepEqual(statusProblems(extra).map(say), []);
+  });
+  test('whole marks alone: built', () => {
+    const extra = { 'docs/contract.md': partsContract, 'test/stop.test.mjs': stopTests.replace('// T2 (part): the stop is confirmed, not the put-back', '// T2: the stop') };
+    assert.match(statusOf(extra), /^\| 8\.3 \| built \| `test\/change\.test\.mjs` \(“a choice is used once, alone, and only by whoever was asked”\); `test\/stop\.test\.mjs` \(“a stop is confirmed”\) \| holds T1, T2 \|$/m);
+    assert.deepEqual(statusProblems(extra).map(say), []);
+  });
+  test('a part mark with no words after it', () => statusFails({ 'test/change.test.mjs': "// T1 (part):\ntest('a choice is used once, alone, and only by whoever was asked', () => {});\n" }, /^marks part of T1 with no words after “\(part\):”/));
 });

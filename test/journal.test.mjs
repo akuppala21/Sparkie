@@ -169,8 +169,6 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
   assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-4471\.md/.test(v.error)), JSON.stringify(all));
 });
 
-// Part of acceptance test T123: with the journal unwritable, a file write (save_file, and an app from an image) runs
-// nothing and the owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
 // The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
 // to an agent's key that looks or acts, an agent through ask_sparkie, or a member.
 test('words said to Sparkie and a chat\'s tool results: only the owner\'s own call reads them back', { timeout: 120000 * SLOW }, async () => {
@@ -202,6 +200,8 @@ test('words said to Sparkie and a chat\'s tool results: only the owner\'s own ca
   assert.equal((await api('/actions/recall', { method: 'POST', body: { id: tool.id } })).json.text, textOf(tool).slice(0, 8000));
 });
 
+// T123 (part): with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the
+// owner is told why. Undo restoring a file waits for the copies the command runner makes (milestone 2).
 test('with the journal\'s disk full, a change written down first answers "couldn\'t write the record, nothing was changed" and nothing runs; a look, /stop and stop_model still work', { timeout: 180000 * SLOW }, async () => {
   const file = join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'full-disk.md');
   const size = () => readdirSync(T.fleet.journalDir).reduce((n, f) => n + statSync(join(T.fleet.journalDir, f)).size, 0);
@@ -257,8 +257,8 @@ const copyTo = (from, events = []) => ({ dir, stateDir }) => {
 const CUT_PREFIX = 'A restart of Spark Console cut off deploy ';
 const CUT_OP = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'fedcba987654', operation: 'deploy', status: 'started', model: `${'m'.repeat(584 - CUT_PREFIX.length)}-${EVKEY}`, spark: 'spark3' };
 const env = { SPARK_CONSOLE_JOURNAL_MAX_BYTES: '2048', SPARK_CONSOLE_JOURNAL_NEEDS_BYTES: '1' };
-// Part of acceptance test T123: killed while a file write changes a Spark, after the restart one "cut off" notice, and
-// it is never run again.
+// T123 (part): killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run
+// again.
 test('a console killed between a start line and its end: after the restart, one "cut off" notice in the chat that asked and one needs-you line; it isn\'t run again', { timeout: 180000 * SLOW }, async () => {
   writeFileSync(mock('spark3', 'stall-worker'), '120');
   script([{ match: '^save this as cut-note\\.md on spark 3$', calls: [{ name: 'save_file', arguments: { spark: 'spark3', path: 'cut-note.md', text: 'cut off\n' } }] }]);

@@ -9,7 +9,8 @@ One file per feature in `test/`, run against the stand-in fleet, never a real Sp
   few, run on over the lines below that start with `// ` (a line that is `//` alone, or code, ends it). That comment
   is the file's row in `test/covers.md`, and the only place its description is written.
 - A test that holds one of the contract's acceptance tests starts a comment with its id (`// T54: …`), so
-  `docs/status.md` counts it.
+  `docs/status.md` counts it. One that holds only part of it says which part (`// T54 (part): the refusal, not the
+  undo`); its requirement reads partly until a test holds the whole of it.
 - A file that starts the service uses `useFleet` from `test/lib.mjs` (copy from below). One that starts no fleet, like
   `docs.test.mjs`, may run on the Mac; every other one runs on a compute Spark (`docs/how/land-a-step.md`).
 
