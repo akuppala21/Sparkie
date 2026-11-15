@@ -8,13 +8,15 @@ messaging channel".
 - An adapter like `21-telegram.mjs`: a fixed host behind an ALL_LOCAL switch, a loop started in the listen callback,
   the owner's words through `sparkieTurn` with `channel`, presses through `runChoice` with its own `via`, every send
   through `tell()` (`20-tell.mjs`).
+- Its door takes a key out before anything reads the words, as `tgKeys` does (`20-keys.mjs`): `keysGiven`, delete the
+  message there if it can, then `giveKey` in the owner's chat of that channel.
 - The owner's yes from it: an owner-only ask goes out through `tgAsk` and its press comes back through
   `tgApproving` (`20-tg-approve.mjs`), with the switch, the caps and `/lock`; `runChoice` takes it as the owner's yes
   only after `tgAskOpen`.
 
 ## Also update
 
-- R32.
+- R32; R51 (keys given once).
 - `PAGE_ONLY` (`16-actions.mjs`).
 - `sparkie_setup` and `fleetNotes` for its state.
 - A mock in `test/mock` started by `startMock` (`test/start-mock.mjs`).
@@ -27,6 +29,7 @@ messaging channel".
 - A second sender.
 - A second way for a channel's press to count as the owner's yes, or one for a `PAGE_ONLY` action.
 - Its token anywhere but the secrets file.
+- The owner's words to `sparkieTurn` before the key door has seen them.
 
 ## Rules
 
@@ -34,7 +37,7 @@ messaging channel".
 
 ## Tests
 
-- `telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `tg-approve.test.mjs`.
+- `telegram.test.mjs`, `needs-me.test.mjs`, `words.test.mjs`, `app-keys.test.mjs`, `tg-approve.test.mjs`.
 
 ## Copy from
 
