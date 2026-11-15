@@ -9,8 +9,10 @@
 // work steps in all, one started on Telegram that is no longer paired and one from a device whose sign-in is gone do
 // not; a record from before these limits is dropped with no word; a request made just after the start is no survivor
 // (no line about a restart), and once it has run to its end its task is off the record. A state put back from a copy
-// ends every task in it, also at a second put-back under the hold. The brain here has a context of 1,000 tokens, so one
-// long lookup ends a reply at the output budget and the request carries on.
+// ends every task in it, also at a second put-back under the hold. (E6b) After the restart a task at its limit says
+// which in a line of its own, a task whose chat is full stops with a line and a needs-you line, and the owner's "carry
+// on" gives a stopped one a fresh budget of its size. The brain here has a context of 1,000 tokens, so one long lookup
+// ends a reply at the output budget and the request carries on.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
@@ -122,6 +124,11 @@ test('set-up: killed with every carry-on turn due, started again from that disk;
   chats.push({ id: made.old, login: chats[0].login, title: 'from before', spark: null, createdAt: ago(4 * 3600000), updatedAt: ago(3 * 3600000),
     messages: [{ role: 'user', content: words, createdAt: ago(4 * 3600000) }, { role: 'assistant', content: 'I looked: night mode stops a model.', createdAt: ago(3 * 3600000) }],
     task: { request: words, at: ago(4 * 3600000), continuations: 1 } });
+  // (E6b) A task whose chat is full, owed a carry-on turn: no turn can come there.
+  made.full = 'sc_00000000000000f1';
+  chats.push({ id: made.full, login: chats[0].login, title: 'full', spark: null, createdAt: ago(600000), updatedAt: ago(60000),
+    messages: Array.from({ length: 200 }, (_, i) => (i % 2 ? { role: 'assistant', content: `answer ${i}`, createdAt: ago(100000) } : { role: 'user', content: `question ${i}`, createdAt: ago(120000) })),
+    task: { request: `${words} on your own`, at: ago(60000), continuations: 3, hours: 4, turns: 60, carry: true } });
   const saved = readFileSync(join(T.fleet.stateDir, 'saved-workflows.json'));
   // (the look for tasks comes 30 seconds after the start, after the watcher's first look at 15; a stop on Spark 3 takes
   // 40 seconds there)
@@ -138,7 +145,7 @@ test('set-up: killed with every carry-on turn due, started again from that disk;
   await waitFor(async () => (JSON.parse((await bPost('/actions/workloads', { spark: 'spark3' })).text).workloads || []).some(w => w.name === GGUF && w.state === 'running'), { timeout: 60000 * SLOW, what: 'B’s watcher seeing Spark 3' });
   const run = { name: 'run_workflow', arguments: { name: 'night mode' } };
   script([{ match: `^${esc(STOP)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }] },
-    { match: `${CARRIED}.*run night mode`, rounds: [[run]] }, { match: CARRIED, calls: [] }, { match: FINISHED, calls: [] }], B);
+    { match: `${CARRIED}.*run night mode`, rounds: [[run]] }, { match: CARRIED, calls: [] }, { match: FINISHED, calls: [] }, { match: '^carry on$', rounds: [[LONG]] }], B);
   // A request made after the start and before the look, whose stop is still under way when the look comes.
   made.fresh = JSON.parse((await bPost('/chats', {})).text).id;
   const asked = await bPost(`/chats/${made.fresh}/messages`, { text: STOP });
@@ -189,6 +196,35 @@ test('a request that has run to its end is off the record: its stop’s result, 
   await waitFor(async () => { const m = await messagesOn(made.fresh), i = m.findIndex(x => x.auto); return i > 0 && m[i + 1]?.role === 'assistant'; }, { timeout: 180000 * SLOW, what: 'the carry-on turn after the stop' });
   await waitFor(() => (chatsOf(B).find(c => c.id === made.fresh).task ?? null) === null, { timeout: 15000 * SLOW, what: 'the done request off the record' });
   assert.ok(!(await messagesOn(made.fresh)).some(x => String(x.content).startsWith(RESTARTED)));
+});
+
+test('(E6b) after the restart the two at a limit say which, once, in a line of their own: no reply of theirs reached it', { timeout: 60000 * SLOW }, async () => {
+  assert.ok(made.g, 'set-up');
+  for (const [id, which, line] of [[made.long, 'turns', /^Stopped carrying on with your request: it reached its 1080 carry-on turns\. .* Say “carry on” for another 72 hours and 1080 turns\.$/],
+    [made.six, 'steps', /^Stopped carrying on with your request: it reached its 120 commands\. .* Say “carry on” for another 6 hours and 90 turns\.$/]]) {
+    const s = (await messagesOn(id)).filter(x => x.stopped);
+    assert.deepEqual(s.map(x => [x.notice, x.stopped]), [[true, which]], id);
+    assert.match(s[0].content, line);
+  }
+  const after = chatsOf(B);
+  assert.deepEqual([after.find(c => c.id === made.long).task.stopped, after.find(c => c.id === made.six).task.stopped], ['turns', 'steps']);
+});
+
+test('(E6b) a task whose chat is full stops, said in a line of its own past its 200 messages, and stands as one needs-you line', { timeout: 60000 * SLOW }, async () => {
+  assert.ok(made.g, 'set-up');
+  assert.equal(chatsOf(B).find(c => c.id === made.full).task?.stopped, 'full');
+  const m = await messagesOn(made.full);
+  assert.deepEqual([m.length, m.filter(x => x.auto).length], [201, 0]);
+  assert.match(m.at(-1).content, /^Stopped carrying on with your request: this chat is full, so no turn can come here\. .* Start a new chat and ask again there\.$/);
+  assert.ok(JSON.parse((await bPost('/actions/fleet_status', {})).text).needsOwner.includes('Sparkie stopped carrying on with one of your requests: its chat is full. Start a new chat and ask again there.'));
+});
+
+test('(E6b) the owner’s “carry on” in a chat stopped at its 120 commands: the same request, a fresh 6 hours and 90 turns', { timeout: 120000 * SLOW }, async () => {
+  assert.ok(made.g, 'set-up');
+  const said = await bPost(`/chats/${made.six}/messages`, { text: 'carry on' });
+  assert.equal(said.status, 200, said.text);
+  const t = chatsOf(B).find(c => c.id === made.six).task;
+  assert.deepEqual([t?.request, t?.continuations, t?.steps, t?.stopped ?? null, t?.hours, t?.turns], ['read the workflows again for 6 hours, then tell me which one stops a model', 0, 0, null, 6, 90]);
 });
 
 test('a state put back from a copy ends every task in it, also at a second put-back under the hold: a line in each chat, and nothing carries on', { timeout: 200000 * SLOW }, async () => {

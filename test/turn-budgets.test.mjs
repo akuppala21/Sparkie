@@ -219,6 +219,19 @@ test('three refused calls in a row put the tools away, the answer says what was 
   assert.doesNotMatch(s.text, /Stopped/);
 });
 
+// (review after the loop, Later 11: the twelfth command set "steps" before the three refusals of its own round came
+// back, so that reply carried on once more)
+test('three refusals in the round whose command reached the twelfth end the carrying on: the task waits for the owner', { timeout: 300000 * SLOW }, async () => {
+  const FOUR = [RUN('spark3'), RUN('spark3'), RUN('spark4'), RUN('spark4')], THREE = [RUN('spark3'), RUN('spark3'), RUN('spark4')];
+  const BOGUS = { name: 'stop_model', arguments: { spark: 'spark4', container: 'nothing-here', bogus: true } };
+  const words = 'look and then refuse, then tell me', chat = await newChat();
+  const r = await saying([{ match: `^${words}$`, rounds: [FOUR, FOUR, THREE, [RUN('spark4'), BOGUS, BOGUS, BOGUS]] }], chat, words);
+  assert.deepEqual(calls(r), [...Array(12).fill(['run', true]), ['stop_model', false], ['stop_model', false], ['stop_model', false]], errors(words));
+  assert.match(r.text, /\n\nStopped asking: 3 calls in a row were refused/, r.text.slice(-400));
+  await noCarryOn(chat, 2);
+  assert.deepEqual(budgetsIn(chat), [{ steps: 12, output: 39321, spent: 'refused', carried: false }]);
+});
+
 test('a setup\'s own budgets apply and change the tested mark; its ask block can\'t raise them; lookups are no work steps; two chats at once each have their own', { timeout: 400000 * SLOW }, async () => {
   // A setup that states neither (its context flag aside): the brain's catalog (part of the tested mark) is as it was.
   assert.ok(!('workSteps' in (await api('/actions')).json.brain.setup) && !('contextTokens' in (await api('/actions')).json.brain.setup));

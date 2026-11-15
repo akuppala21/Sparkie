@@ -69,7 +69,10 @@ function workStep(turn) {
 function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
   const why = ok ? nothing : out.replace(/^\[error\] /, '');
   if (why == null) turn.refusedRow.length = 0;
-  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW && !turn.spent) {
+  // (three refusals end the carrying on even in the round whose command reached the steps: the brain was spinning; calls
+  // the steps left unrun are no refusals of their own)
+  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW
+    && (!turn.spent || (turn.spent === 'steps' && !turn.refusedRow.some(x => /^Not run: one message may run /.test(x.why))))) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }

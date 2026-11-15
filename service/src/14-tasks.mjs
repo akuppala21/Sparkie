@@ -1,5 +1,5 @@
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
-// Area: brain        Rules: R50        Tests: tasks.test.mjs, tasks-telegram.test.mjs, carry-keeps.test.mjs
+// Area: brain        Rules: R50        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, carry-keeps.test.mjs
 // Owns: none        Timers: none        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
@@ -87,3 +87,64 @@ function tasksAfterRestart() {
 }
 // (a few seconds after start: the journal's and the watcher's start-up notices go first)
 setTimeout(tasksAfterRestart, Number(process.env.SPARK_CONSOLE_TASKS_AFTER_MS || 5000)).unref?.();
+
+/* E6b: at a limit, a job's end, a turn that can't start, and "carry on" */
+// The limit a task reached (and on Telegram when the request began there, R32): which one, that what is running
+// finishes, and how to go on. A reply that reached it carries the mark (it already ends "Say “go on”"); when none did
+// (a wake found it over), one line in its chat says it. A chat that is full stops it too: no turn can come there, so the
+// line says to ask again in a new chat. The task stays, stopped, with one needs-you line (tasksNeeds), until the owner
+// writes in that chat: "carry on" (or "go on", as the reply says) gives it a fresh budget of its own size (taskAgain),
+// anything else is a new request.
+function taskStopped(conv, t, which, reply = null) {
+  if (!t || t.stopped) return;
+  t.stopped = which;
+  const { hours, turns } = taskLimits(t);
+  const line = which === 'full' ? 'Stopped carrying on with your request: this chat is full, so no turn can come here. What is already running finishes. Start a new chat and ask again there.'
+    : `Stopped carrying on with your request: it reached ${which === 'turns' ? `its ${turns} carry-on turns` : which === 'hours' ? `its ${hours} hours` : `its ${TASK_STEPS} commands`}. What is already running finishes, and its result comes here. Say “carry on” for another ${hours} hour${hours === 1 ? '' : 's'} and ${turns} turns.`;
+  if (reply) reply.stopped = which;
+  else conv.messages.push({ role: 'assistant', content: line, createdAt: new Date().toISOString(), notice: true, stopped: which });
+  conv.updatedAt = new Date().toISOString();
+  saveChats();
+  if (t.channel === 'telegram') tell('carry', line, { last: true }).catch(() => {});
+}
+// "carry on", "go on", "continue", "keep going" (the whole message): a task stopped at a limit starts again with a fresh
+// budget of the same size, and the turn that said it is its carry-on. null for anything else.
+const CARRY_ON = /^\s*(?:ok(?:ay)?[\s,]+)?(?:please\s+)?(?:carry\s+on|go\s+on|continue|keep\s+going)(?:\s+please)?\s*[.!]*\s*$/i;
+function taskAgain(conv, text) {
+  const t = conv?.task;
+  if (!t?.stopped || t.stopped === 'full' || !CARRY_ON.test(normQuotes(text))) return null;
+  Object.assign(t, { at: new Date().toISOString(), continuations: 0, steps: 0, stopped: null });
+  delete t.carry;
+  return t;
+}
+// The needs-you lines (openProblems): one for each task stopped at a limit, until the owner writes in its chat. No words
+// of the request: agents read this list too (fleet_status).
+function tasksNeeds(add) {
+  for (const c of chatData().conversations) {
+    if (c.task?.stopped === 'full') add(`task:${c.id}`, 'Sparkie stopped carrying on with one of your requests: its chat is full. Start a new chat and ask again there.');
+    else if (c.task?.stopped) add(`task:${c.id}`, `Sparkie stopped carrying on with one of your requests at its limit (${c.task.stopped === 'steps' ? `${TASK_STEPS} commands` : c.task.stopped}). Say “carry on” in that chat to go on, or anything else to leave it.`);
+  }
+}
+// The jobs a task started whose end is still to come (jobEnded takes each off when it is told; one the watcher saw end,
+// after the task noted it, also counts as ended: its end may have come while Spark Console was down).
+const taskJobsOwed = t => (t?.jobs || []).some(j => {
+  const w = knowledge.workloads?.[`${j.spark}/${j.container}`];
+  return !(w && ['exited', 'dead'].includes(w.state) && w.endTold && String(w.lastSeenAt) > String(j.at));
+});
+// A carry-on turn that couldn't start (four answers already coming, the chat answering, no brain set up) or that the
+// brain never answered (it isn't up: loading after a start, refused, cut off before a word): the turn isn't counted, the
+// failed try's two lines give way to the next one's, and it is tried again in a minute, then every five, while its
+// hours last (continueTask asks them each time).
+const TASK_RETRY_MS = Number(process.env.SPARK_CONSOLE_TASK_RETRY_MS || 60000);
+function taskRetry(conv, t, { carried, answered }) {
+  if (carried) t.carry = true;
+  if (answered) t.answered = true;
+  t.retries = (Number(t.retries) || 0) + 1;
+  saveChats();
+  setTimeout(() => wakeWork(conv.id), t.retries === 1 ? TASK_RETRY_MS : 5 * TASK_RETRY_MS).unref?.();
+}
+// (the last try's own two lines, Spark Console's carry-on line and the error that answered it, when nothing came after)
+function taskRetryLines(conv) {
+  const m = conv.messages, last = m.at(-1), line = m.at(-2);
+  if (last?.role === 'assistant' && last.error && !String(last.content || '').trim() && !last.tools?.length && line?.role === 'user' && line.auto) m.splice(-2, 2);
+}
