@@ -45,7 +45,7 @@ timer_off() {
   return 0
 }
 socket_build() {
-  curl -s -m 3 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
+  curl -q -s -m 3 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(d.get("build") or "" if d.get("ok") is True else "")' 2>/dev/null || true
 }
@@ -168,7 +168,7 @@ put_back() {
   if [ -n "$now" ] && { [ "$now" = "$from" ] || [ -z "$restart" ]; }; then back=yes; fi
   timer_off
   if [ "$by" != pull ]; then
-    python3 -c 'import datetime, json, os, sys, tempfile
+    python3 -I -c 'import datetime, json, os, sys, tempfile
 path, tree, build, why = sys.argv[1:5]
 d = {"tree": tree or None, "build": build or None, "result": "not kept", "why": why[:600],
      "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
