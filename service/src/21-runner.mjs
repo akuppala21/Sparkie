@@ -65,7 +65,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds,
+      prune: { days: COPIES_DAYS, sets: COPIES_SETS, bytes: COPIES_BYTES, most: COPIES_PRUNE_MOST, marks: COPIES_MARK_DAYS, ...runnerKeep() } });
+    runnerPruned(node, copied, ctx);
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -141,9 +143,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   } finally { release(); }
 }
 
-// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
-function runnerLatest(conv) {
-  const undone = new Set(), never = new Set(), starts = [];
+// The runner's lines in the journal's two newest months: the sets an undo put back, the commands the helper never
+// started, every start line, and each start's end line.
+function runnerScan() {
+  const undone = new Set(), never = new Set(), starts = [], ends = new Map();
   for (const f of journalFiles().slice(0, 2)) {
     for (const line of jLinesOf(f)) {
       if (!line.includes('"set":"') || !line.includes('"k":"cmd"')) continue;
@@ -152,11 +155,47 @@ function runnerLatest(conv) {
       // (an undo that ended well; one that failed may be asked for again; a command the helper never started)
       if (r.act === 'undo_last_change' && r.end && r.ok) undone.add(r.set);
       else if (r.act === 'run' && r.end && r.ran === false) never.add(r.id);
-      else if (r.start && r.act === 'run' && r.chat === conv && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      else if (r.start && r.act === 'run' && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      if (r.act === 'run' && r.end) ends.set(r.id, r);
     }
   }
-  const best = starts.filter(r => !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
+  return { undone, never, starts, ends };
+}
+// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
+function runnerLatest(conv, scan = runnerScan()) {
+  const { undone, never, starts } = scan;
+  const best = starts.filter(r => r.chat === conv && !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
   return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id, unit: /^sw-run-[0-9a-f]{24}$/.test(best.unit || '') ? best.unit : null } : null;
+}
+// What pruning never takes (A8): the newest set of each chat that can still undo it, as runnerUndo would find it (newer
+// than that chat's last model change not undone); and every set whose change may still run (no end line, or one that
+// neither says it finished nor that it never started), which the Spark keeps while systemd says its unit runs or can't
+// tell (a set with no unit of its own name is kept).
+function runnerKeep() {
+  const scan = runnerScan(), keep = [], units = {};
+  let revisions = [];
+  try { revisions = desired().revisions || []; } catch {}
+  for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
+    if (last && last.at > since) keep.push(last.set);
+  }
+  for (const r of scan.starts) {
+    const end = scan.ends.get(r.id);
+    if (scan.never.has(r.id) || ['ran', 'ended', 'cut'].includes(end?.outcome)) continue;
+    if (/^sw-run-[0-9a-f]{24}$/.test(r.unit || '')) units[r.set] = r.unit;
+    else keep.push(r.set);
+  }
+  return { keep, units };
+}
+// What a new set's opening pruned on that Spark: one journal line names each set that went, why, and what it held (the
+// owner's files' paths, in its text): their copies are gone for good.
+function runnerPruned(node, copied, ctx) {
+  if (copied.pruneProblem) console.error(`Pruning the copies on ${sparkName(node)}: ${copied.pruneProblem}`);
+  const gone = Array.isArray(copied.pruned) ? copied.pruned : [];
+  if (!gone.length) return;
+  journal('cmd', { act: 'prune', where: 'host', class: 'prune', via: ctx.via || null, actor: ctx.actor || null, chat: ctx.chat || null, args: { spark: node.id }, ok: true,
+    outcome: 'pruned', sub: jSub(node.id), pruned: gone.map(p => ({ set: p.set, why: p.why, files: p.files, bytes: p.bytes })) },
+  gone.map(p => `${p.set} (${p.why}): ${p.files} file${p.files === 1 ? '' : 's'}, ${sizeWords(p.bytes)}${(p.paths || []).map(x => `\n  ${x}`).join('')}${p.files > (p.paths || []).length ? `\n  and ${p.files - p.paths.length} more` : ''}`).join('\n'));
 }
 const runnerSparkOf = r => (r.args && typeof r.args === 'object' ? r.args.spark : null) || (r.sub || []).find(x => nodeById(x)) || null;
 // undo_last_change for files (20-desired.mjs): the chat's newest set, when it is newer than the chat's last model
@@ -175,13 +214,14 @@ async function runnerUndo(viewer, ctx, since = '') {
     if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
     // (not beside the change's own unit while it still runs: a cut-off change may)
     const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true, unit: last.unit, slack: RUNNER_CUT_SLACK });
-    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome: r.notRestored.length ? 'partly' : 'restored', set: last.set,
+    const outcome = r.pruned ? 'pruned' : r.notRestored.length ? 'partly' : 'restored';
+    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome, set: last.set,
       restored: r.restored.length, notRestored: r.notRestored.length, ms: Date.now() - t0 });
     const said = p => maskSecrets(String(p)).slice(0, 300);
     return {
-      outcome: r.notRestored.length ? 'partly' : 'restored', spark: node.id, set: last.set,
+      outcome, spark: node.id, set: last.set, ...(r.pruned ? { pruned: r.pruned } : {}),
       restored: r.restored.map(said), alreadyAsBefore: r.same.map(said), notRestored: r.notRestored.map(x => ({ path: said(x.path), why: x.why })),
-      note: `${r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
+      note: `${r.pruned ? `Nothing was put back on ${at}: the copies of that change were pruned on ${r.pruned.at} (${r.pruned.why}).` : r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
     };
   } catch (e) {
     if (rid) journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: false, outcome: 'failed', err: jErr(e), ms: Date.now() - t0 });
