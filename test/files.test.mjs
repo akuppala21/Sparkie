@@ -1,3 +1,17 @@
+// Covers: Files in a Spark's shared folder (R37): `files` lists it (hidden names left out, links shown as links) and
+// reads one text file (masked through `POST /actions` and the agent door, the first 8,000 characters); refused: hidden
+// names, `..`, absolute paths, a link, a binary file, a key file, a file passed as a folder and the other way round, a
+// missing file (`[not_found]`), an offline Spark. `save_file` writes one new file (an audit line naming it), never
+// replaces one, never makes a folder, refuses hidden names, over 64 KB, text with a key, empty text; a look-only key or
+// a paused agent can't; from Sparkie it runs at once only when the words name the Spark (this message's; "there" from
+// the message before) and the whole path as one word, else a button (a piece of a word, a folder they ruled out, the
+// Spark from the message before when this one names another); never a saved-workflow step. A look at a Spark with no
+// shared folder says so and makes none. Plain notes and code save as they are; key shapes (PGP and other private keys,
+// `SECRET_KEY=<random>`, WireGuard's `PrivateKey =`, a password in an address, known token formats) are refused and
+// hidden when read, plain words never; a refused key never reaches `audit.jsonl`, even across the cut of the request's
+// words. A saved name has no invisible or direction-changing characters, and its button shows it whole. Four reads at
+// once: the ones over the cap say they were busy and to try again.
+//
 // Files in a Spark's shared folder (A8, R37). `files` lists that folder or reads one text file there (the first 8,000
 // characters, keys and passwords hidden, labelled as data); `save_file` writes one new small text file there and never
 // replaces one. Both go through the worker's own workspace-files (the real service/worker.py runs them here, with the

@@ -1,3 +1,8 @@
+// Covers: What should be running: a finished start is on the list; one stopped outside the console becomes held (a
+// notice), Bring back starts it again, Forget takes it off; the owner's cancel puts back what a start stopped; the
+// owner's stop on a Spark with a start loading cancels the start first; "undo that" in a chat reverses that chat's last
+// change.
+//
 // What should be running (docs/contract.md 6.13, 8.8–8.10): finished starts and stops change the owner's list; one that
 // should be running but isn't is held (a notice, Sparkie's notes, Activity) with Bring back and Forget; an operation can
 // be cancelled (it puts back what it did); a stop never waits behind a start; "undo" in a chat reverses that chat's last

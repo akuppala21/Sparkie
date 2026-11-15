@@ -1,7 +1,7 @@
-// tools/page-preview.mjs, the page preview: public/ served against the stand-in console, as Tailscale serves it on
-// Spark 2. Started twice side by side: as the owner on the repo's public/ (stopped with Ctrl-C), and as a visitor from
-// the internet on a copy of public/ that holds links out of it (stopped by ending what started it). Each start runs its
-// own stand-in fleet with TMPDIR set to a folder of its own, so its leftovers can be looked for.
+// Covers: tools/page-preview.mjs, the page preview: public/ served against the stand-in console, as Tailscale serves it
+// on Spark 2. Started twice side by side: as the owner on the repo's public/ (stopped with Ctrl-C), and as a visitor
+// from the internet on a copy of public/ that holds links out of it (stopped by ending what started it). Each start
+// runs its own stand-in fleet with TMPDIR set to a folder of its own, so its leftovers can be looked for.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';

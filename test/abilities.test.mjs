@@ -1,6 +1,9 @@
-// “What can you do?” (A3): sparkie_setup {about: "abilities"} answers from Spark Console's own action list (every action
-// by its title, so a new one shows up by itself) and the limits written in the code; the same text through POST
-// /actions and the agent door (masking changes nothing); in chat it is one lookup, no change and no button.
+// Covers: “What can you do?” (A3): `sparkie_setup {about: "abilities"}` lists every action by its title straight from
+// the registry (the same set as `TOOLS` and `CHANGE_TOOLS`), with the limits (what Sparkie never changes, when a change
+// asks first, Sparkie's own Spark, what waits in the console from Telegram); the same text through `POST /actions` and
+// the agent door (masking changes nothing); without `about` the answer is as before; in chat the stand-in brain makes
+// one lookup, no change and no button, and Sparkie's prompt carries the same never-list and the line that says to call
+// it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';

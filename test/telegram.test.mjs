@@ -1,3 +1,15 @@
+// Covers: Telegram (R32) on the stand-in Bot API: connecting needs the owner, the page and the passkey, a refused token
+// stores nothing, and the token lives only in the 0600 secrets file (never in the state folder, log, API or Sparkie's
+// tools); strangers, wrong codes, groups and bots get silence and never burn the code; the paired chat talks to Sparkie
+// (typing, plain text, previews off, split under 4,096, `/new`, `/status`), a change reports once as a fixed line,
+// buttons press as `telegram`, one turn at a time; forwarded, photo, old and token-shaped messages aren't read; going
+// back a build, memory and saved workflows wait in the console with the passkey; pause, injection, masking;
+// unreachable, 409, a secrets file that can't be read (read again by itself, answered once it's back, no restart),
+// brain down (the line names `/restart sparkie`), revoked token, disconnect and `/unpair`; the owner's words there
+// (`/help`, `/pause` with no file path, `/restart sparkie`, `/stop` while Sparkie answers) answered by code, and
+// `/resume` and `/undo update` resuming or undoing nothing; the lines after a restart; floods with the real limits; the
+// build in `sparkie_setup`; Telegram's address and sender in one place. `/undo update` is not a word there.
+//
 // Telegram (docs/architecture.md R32, docs/analysis-2026-11-11/09-telegram-design.md). The owner pairs one private
 // Telegram chat with a code only the passkey page shows; after that, text from that chat is a turn in the owner's Sparkie
 // chat with the same gates as the page, and everyone else gets silence. tell() is the only sender. The service talks to

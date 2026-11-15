@@ -5,7 +5,9 @@
 // current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
 // header cut short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
 // declared-but-absent writer, a state file nobody owns, a helper writing a file it is given, an undeclared repeating
-// timer, an unlisted event or job type, a part outside its band, brackets it can't read).
+// timer, an unlisted event or job type, a part outside its band, brackets it can't read). Each test file's “Covers:”
+// comment and `test/covers.md` made from them: no comment, an empty one, a name in it the code doesn't have, a stale
+// table.
 //
 // The documents match the code: tools/check-docs.mjs, the same code tools/make.mjs runs. File reads only, no server.
 // First on this tree; then on a small made-up tree that passes, with one fault added at a time, so each check is
@@ -17,7 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
-import { checkDocs, rulesIndex, describe as say } from '../tools/check-docs.mjs';
+import { checkDocs, rulesIndex, coversOf, coversTable, describe as say } from '../tools/check-docs.mjs';
 import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
 import { codeMap } from '../tools/code-map.mjs';
 import { checkStatus, statusTable } from '../tools/status.mjs';
@@ -165,6 +167,49 @@ describe('what is never checked', () => {
     assert.deepEqual(problemsWith({ 'REVIEW-GUIDE.md': '# Review\n\nThe service is 37 parts; `16-actions.mjs:286`.\n' }).map(say), []);
     fails({ 'REVIEW-GUIDE.md': '# Review\n\nRead `docs/reviews-2026-11-11.md`.\n' }, 'paths', /docs\/reviews-2026-11-11\.md/);
   });
+});
+
+// test/covers.md (tools/check-docs.mjs, the same code tools/make.mjs runs): one row per test file, the comment at its
+// very top (“// Covers: …”), which is the only place a test file's description is written.
+test('this tree: test/covers.md is what the test files’ “Covers:” comments make', () => {
+  assert.equal(readFileSync(join(REPO, 'test/covers.md'), 'utf8'), coversTable(REPO));
+});
+
+// The made-up tree with its test file headed and its table made; each test below adds one fault.
+const HEADED = { 'test/change.test.mjs': `// Covers: A choice is used once, alone, by whoever was asked (\`runAction\` in\n// \`16-actions.mjs\`).\n//\n${BASE['test/change.test.mjs']}` };
+function coversTree(extra) {
+  const root = makeTree({ ...HEADED, ...extra });
+  if (!('test/covers.md' in extra)) writeFileSync(join(root, 'test/covers.md'), coversTable(root));
+  return root;
+}
+const coversProblems = extra => { const root = coversTree(extra); try { return checkDocs(root); } finally { rmSync(root, { recursive: true, force: true }); } };
+const coversMade = extra => { const root = coversTree(extra); try { return readFileSync(join(root, 'test/covers.md'), 'utf8'); } finally { rmSync(root, { recursive: true, force: true }); } };
+function coversFail(extra, check, pattern) {
+  const problems = coversProblems(extra);
+  assert.ok(problems.length > 0, `no problem found for ${JSON.stringify(Object.keys(extra))}`);
+  for (const p of problems) {
+    assert.equal(p.check, check, say(p));
+    assert.match(`${p.file}: ${p.message}`, pattern, say(p));
+  }
+}
+
+describe('what each test file covers', () => {
+  test('the made-up tree passes as it is, and its table has the comment as the file’s row', () => {
+    assert.deepEqual(coversProblems({}).map(say), []);
+    assert.match(coversMade({}), /^\| `change\.test\.mjs` \| A choice is used once, alone, by whoever was asked \(`runAction` in `16-actions\.mjs`\)\. \|$/m);
+  });
+  test('the comment is the first line and the lines below it that start with “// ”, up to “//” alone or code', () => {
+    assert.equal(coversOf('// Covers: one\n// two\n//\n// three\ntest();\n'), 'one two');
+    assert.equal(coversOf('// Covers: one\n// two\ntest();\n'), 'one two');
+    assert.equal(coversOf("import x from 'y';\n// Covers: too late\n"), null);
+    assert.equal(coversOf('// Covers:\n//\ntest();\n'), '');
+  });
+  test('a test file with no “Covers:” comment', () => coversFail({ 'test/change.test.mjs': BASE['test/change.test.mjs'] }, 'covers', /^test\/change\.test\.mjs: has no “Covers:” comment at its top/));
+  test('a comment at the top that isn’t “Covers:”', () => coversFail({ 'test/change.test.mjs': `// A choice is used once.\n${BASE['test/change.test.mjs']}` }, 'covers', /^test\/change\.test\.mjs: has no “Covers:” comment/));
+  test('a “Covers:” comment with nothing after it', () => coversFail({ 'test/change.test.mjs': `// Covers:\n//\n${BASE['test/change.test.mjs']}` }, 'covers', /^test\/change\.test\.mjs: .*nothing after it/));
+  test('a name in the comment that the code doesn’t have', () => coversFail({ 'test/change.test.mjs': `// Covers: \`noSuchThing\` is used once.\n${BASE['test/change.test.mjs']}` }, 'names', /^test\/change\.test\.mjs: .*noSuchThing/));
+  test('a table made before a test file was added', () => coversFail({ 'test/stop.test.mjs': "// Covers: A stop is confirmed.\ntest('a stop', () => {});\n", 'test/covers.md': coversMade({}) }, 'covers', /^test\/covers\.md: is not what .* make: run node tools\/make\.mjs/));
+  test('a table edited by hand', () => coversFail({ 'test/covers.md': coversMade({}).replace('used once', 'used twice') }, 'covers', /^test\/covers\.md: is not what/));
 });
 
 // The parts' headers (tools/parts.mjs, the same code tools/make.mjs runs): what a header declares by hand (its area,

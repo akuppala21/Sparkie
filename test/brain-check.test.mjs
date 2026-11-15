@@ -1,12 +1,13 @@
-// The brain check (21-brain-check.mjs; design E 2.3, cut by the one page to two outcomes): a few requests to Sparkie's
-// model with a toy tool, and a profile in brain-profiles.json kept per brain setup and shown in sparkie_setup; nothing
-// acts on it yet. Three stand-in brains (~/.mock/brain-kind on spark2: good, bad-arguments, no-tools) give checked, not
-// checked and not checked, each with what was tried and what came back. The profile belongs to what was checked: the
-// model, engine, image and flags (its key; another flag is another profile) and this build's "what the brain reads" hash
-// from the lock, and a new check keeps the eval results stored with it. It runs once, a minute after the service
-// starts, for a brain in use with no profile; as the last step of a switch; and on POST /main/check, the owner's alone
-// (refused as nobody, a member, cross-site, through Funnel and from a Spark's address). A brain that doesn't answer
-// keeps nothing and says why. A check waits while a chat is on the brain and is no part of the chat's turn.
+// Covers: The brain check (21-brain-check.mjs; design E 2.3, cut by the one page to two outcomes): a few requests to
+// Sparkie's model with a toy tool, and a profile in brain-profiles.json kept per brain setup and shown in
+// sparkie_setup; nothing acts on it yet. Three stand-in brains (~/.mock/brain-kind on spark2: good, bad-arguments,
+// no-tools) give checked, not checked and not checked, each with what was tried and what came back. The profile belongs
+// to what was checked: the model, engine, image and flags (its key; another flag is another profile) and this build's
+// "what the brain reads" hash from the lock, and a new check keeps the eval results stored with it. It runs once, a
+// minute after the service starts, for a brain in use with no profile; as the last step of a switch; and on POST
+// /main/check, the owner's alone (refused as nobody, a member, cross-site, through Funnel and from a Spark's address).
+// A brain that doesn't answer keeps nothing and says why. A check waits while a chat is on the brain and is no part of
+// the chat's turn.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync, mkdtempSync } from 'node:fs';

@@ -1,17 +1,17 @@
-// deploy/pull.sh (design C 2.3, step 4; R29, R30): installing a tested build on Spark 2 from GitHub, without the Mac.
-// A bare repository on this machine stands in for GitHub; each commit on its main is a small tree whose service is the
-// stand-in console (test/mock/standin-console.mjs) and whose deploy/ is this tree's own installer and pull.sh, and its
-// tested/<tree> tags are made as the mark job makes them (the commit plus the lock). A short HOME stands in for Spark 2:
-// stand-ins come first on PATH (systemctl runs the stand-in console; ssh, sudo, tailscale and systemd-run fail closed
-// and log), and SPARK_CONSOLE_REPO_URL (with SPARK_CONSOLE_ALL_LOCAL=1) points pull.sh at the bare repository.
-// Covered: setup keeps the token in the secrets file beside what was there, never on a command line or in git's config;
-// check changes nothing; install puts in exactly the tagged tree through its own installer, kept, and only then copies
-// its pull.sh; the stand-in fleet's links under test/mock/root/ (as the repository has them) pass and stay links;
-// every refusal (an untagged head, a tag that changes other files, a lock for another tree or build, a link anywhere
-// else or pointing out of test/mock/root/, a submodule, an export- attribute, an older tested tree, a tree only on
-// another branch, a tree older than the installed one) changes nothing; a build that dies goes back; a tree with the
-// installed build's service code is "kept" only when its installer kept it; main moved the way tools/land.mjs moves it
-// (a merge, then a fast-forward) still names the newest tested build; nothing calls tailscale, sudo or ssh.
+// Covers: deploy/pull.sh (design C 2.3, step 4; R29, R30): installing a tested build on Spark 2 from GitHub, without
+// the Mac. A bare repository on this machine stands in for GitHub; each commit on its main is a small tree whose
+// service is the stand-in console (test/mock/standin-console.mjs) and whose deploy/ is this tree's own installer and
+// pull.sh, and its tested/<tree> tags are made as the mark job makes them (the commit plus the lock). A short HOME
+// stands in for Spark 2: stand-ins come first on PATH (systemctl runs the stand-in console; ssh, sudo, tailscale and
+// systemd-run fail closed and log), and SPARK_CONSOLE_REPO_URL (with SPARK_CONSOLE_ALL_LOCAL=1) points pull.sh at the
+// bare repository. Covered: setup keeps the token in the secrets file beside what was there, never on a command line or
+// in git's config; check changes nothing; install puts in exactly the tagged tree through its own installer, kept, and
+// only then copies its pull.sh; the stand-in fleet's links under test/mock/root/ (as the repository has them) pass and
+// stay links; every refusal (an untagged head, a tag that changes other files, a lock for another tree or build, a link
+// anywhere else or pointing out of test/mock/root/, a submodule, an export- attribute, an older tested tree, a tree
+// only on another branch, a tree older than the installed one) changes nothing; a build that dies goes back; a tree
+// with the installed build's service code is "kept" only when its installer kept it; main moved the way tools/land.mjs
+// moves it (a merge, then a fast-forward) still names the newest tested build; nothing calls tailscale, sudo or ssh.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';

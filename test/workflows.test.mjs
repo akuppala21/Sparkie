@@ -1,3 +1,13 @@
+// Covers: Workflows (docs/contract.md, sections 6 and 15), with nothing counted as validated here: the list (versions,
+// when to use each, known problems; also through the door and `/health`); an agent's plain call doesn't run an
+// unvalidated workflow but is offered the validation run as a choice (v3.1); the owner's first run from a button (428,
+// then `X-Spark-Validate`) validates it and has to answer a test prompt; then agents can; starting across two Sparks is
+// validated on its own; a version not in the lock is off everywhere; a model that loads but doesn't answer fails and
+// what it stopped runs again; out of memory → tried again with the context capped, and that setup recorded; 3 failed
+// attempts → put back, with what was tried; a rejected setting is dropped by name and the result says so; a stop is
+// checked; from the owner's chat the first restart asks once (a button, not a typed "yes"), one that doesn't answer is
+// stopped again, and the next validates it.
+//
 // Workflows (docs/contract.md, section 6): every change is a named workflow with a version (a fingerprint of its code),
 // and runs only once that version is tested (the suite passed with it: workflows.lock.json) and validated (a run on the
 // Sparks passed its check). The first run, taken on purpose, is the validation run: the owner's, or (v3.1) an agent's

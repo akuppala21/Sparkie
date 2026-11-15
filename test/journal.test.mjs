@@ -1,14 +1,14 @@
-// The journal (B1, R43): Spark Console's own record of what was said, called, run and seen, in a folder of its own
-// outside the state folder (here each stand-in fleet's own journal/), read back with recall. A look writes one line;
-// keys are hidden before anything is written, also where a key falls across two pieces of a long text (pieces shortened
-// here with SPARK_CONSOLE_JOURNAL_PIECE); a failed start leaves its log, its attempt and its operation, and recall still
-// finds them after a restart (operation_log says expired); text recall returned isn't the owner's words, so remember
-// needs a button after it. A change that is written down first (save_file, keep_running with an image) answers
-// "couldn't write the record, nothing was changed" when the journal can't be written (mock/disk-full.mjs: a full disk
-// under the journal only), and nothing runs, while a look, /stop and stop_model still work. A console killed between a
-// start line and its end leaves, after the restart, one "cut off" notice in the chat that asked and one needs-you line,
-// and a second restart adds neither. Past its limit (shortened with SPARK_CONSOLE_JOURNAL_MAX_BYTES) a record's text
-// stops and the record says so.
+// Covers: The journal (B1, R43): Spark Console's own record of what was said, called, run and seen, in a folder of its
+// own outside the state folder (here each stand-in fleet's own journal/), read back with recall. A look writes one
+// line; keys are hidden before anything is written, also where a key falls across two pieces of a long text (pieces
+// shortened here with SPARK_CONSOLE_JOURNAL_PIECE); a failed start leaves its log, its attempt and its operation, and
+// recall still finds them after a restart (operation_log says expired); text recall returned isn't the owner's words,
+// so remember needs a button after it. A change that is written down first (save_file, keep_running with an image)
+// answers "couldn't write the record, nothing was changed" when the journal can't be written (mock/disk-full.mjs: a
+// full disk under the journal only), and nothing runs, while a look, /stop and stop_model still work. A console killed
+// between a start line and its end leaves, after the restart, one "cut off" notice in the chat that asked and one
+// needs-you line, and a second restart adds neither. Past its limit (shortened with SPARK_CONSOLE_JOURNAL_MAX_BYTES) a
+// record's text stops and the record says so.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, cpSync, rmSync } from 'node:fs';
