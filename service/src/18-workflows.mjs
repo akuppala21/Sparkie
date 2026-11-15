@@ -325,8 +325,9 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
     // (and its answer, and the chat line after the press, say what that yes covers)
-    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it)
-    const { images, keys, asked } = savedCover(w.steps, ctx.button ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
+    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it; one that carried
+    // `from` is no yes at all, and its words say so)
+    const { images, keys, asked } = savedCover(w.steps, ctx.button && !carried ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
     if (yes) w.approved = { images, steps: savedStepsHash(w.steps), covered: keys, by: viewer.login, at: w.at };
     const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
