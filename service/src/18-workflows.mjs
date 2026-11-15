@@ -171,6 +171,7 @@ const NOT_A_STEP = new Set([
   'forget_workflow',
   'power_settings',
   'remember',
+  'run',
   'run_workflow',
   'save_file',
   'save_workflow',
