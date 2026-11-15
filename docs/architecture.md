@@ -28,7 +28,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes"]
-  JOURNAL["The journal (20-journal, R43): outside the state folder; never copied or deleted"]
+  JOURNAL["The journal (20-journal, R43): ~/.local/share/spark-console/journal, outside the state folder; never copied off Spark 2, rewritten or deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -56,7 +56,7 @@ flowchart TD
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
   APPS -->|"OpenAI-style calls"| LISTEN
-  INSTALL -->|"files, lock, config, restart. Keeps the update only if every check R30 lists passes; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
+  INSTALL -->|"files, lock, config, restart. Keeps the update only if /health names the build, the same process still answers 40 s later, the owner is the owner on the socket, /mcp and /v1/models answer, one chat turn calls a tool and answers, and Telegram polls again if it did before; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
   DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
@@ -95,10 +95,10 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
-  RUN -->|"a synced start line before a change written down first (else it won't run); results; recall"| JOURNAL
-  CHAT -->|"the owner's words, tool calls with results, turns"| JOURNAL
-  JOBS -->|"operations' ends and logs; start attempts"| JOURNAL
-  SENSE -->|"each event"| JOURNAL
+  RUN -->|"before a change written down first, its start line, synced (none written: nothing runs); each change's result; agents' looks; recall reads it"| JOURNAL
+  CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
+  JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
+  SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
   KNOW -->|"best setup for a start"| RUN
@@ -121,7 +121,7 @@ flowchart TD
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
   STATE -->|"desired list, heal tries, the brain's left-down mark"| HEAL
-  STATE -->|"tar, read back (gzip -t) and moved in (the oldest beyond 14 pruned) only once tar ended well too; hourly until one lands that day (backup.json)"| BACKUP
+  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
