@@ -15,7 +15,8 @@
 //
 // By hand: node test/start-mock.mjs [--editor] [--keep]   (prints the addresses; Ctrl-C stops it)
 import { spawn } from 'node:child_process';
-import { mkdtempSync, cpSync, rmSync, readFileSync, writeFileSync, truncateSync, mkdirSync, renameSync, existsSync, openSync, closeSync } from 'node:fs';
+import { mkdtempSync, cpSync, rmSync, readFileSync, writeFileSync, truncateSync, mkdirSync, renameSync, existsSync, openSync, closeSync, appendFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -128,6 +129,13 @@ export const serviceConfig = () => JSON.parse(readFileSync(join(REPO, 'service',
 // freePorts() hands out ports that are free now; with four files at once another fleet can take one before this
 // start's server listens on it. That attempt is thrown away, folder and all, and made again from scratch on new ports
 // (a new folder, prepare run again), up to three in all. Any other failure is the same error as before, never retried.
+//
+// The rail (R51): Sparkie changes things at once only while its brain is checked, so every start, unless the test
+// brings its own lock (SPARK_CONSOLE_WORKFLOW_LOCK), gets the lock test/lock.mjs would write for this tree (this build,
+// what its brain reads, measured once on a stand-in fleet of its own, and the eval's case set) and, with evalOnRecord
+// (the default), a recorded eval of the stand-in brain, kept the way the owner keeps one: the brain check
+// (POST /main/check), then a full run of today's cases that met the bar, sent to POST /main/eval. Nothing turns the rail
+// off: evalOnRecord: false leaves the fleet with no eval on record, where every change is a button.
 export async function startMock(opts = {}) {
   for (let attempt = 1; ; attempt++) {
     const fleet = await startOnce(opts, attempt);
@@ -137,8 +145,89 @@ export async function startMock(opts = {}) {
 // The service's refusal of a used port, or a stand-in's listen that failed the same way.
 const PORT_TAKEN = /Port \d+ is in use|EADDRINUSE: address already in use 127\.0\.0\.1:\d+/;
 
-async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null } = {}, attempt) {
+// What the brain is sent at the start of the owner's chat turn, as the stand-in model received it (mock/model.mjs
+// keeps the latest in brain-sent.json): the system prompt, the tools that turn offers and how it was asked (sampling,
+// limit, thinking). With it, what other rounds can be sent (R46): GET /actions, every action with its group and the
+// brain's catalog (the cap, the groups and their words, the lines that follow tools, the setup's sampling and limits).
+export async function brainSent(fleet) {
+  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
+  let last = '';
+  for (let i = 0; i < 5; i++) {
+    const words = `Hello from test/lock.mjs (${randomBytes(4).toString('hex')}).`;
+    const chat = await fetch(`${fleet.base}/chats`, { method: 'POST', headers, body: '{}' });
+    const { id } = await chat.json();
+    last = await (await fetch(`${fleet.base}/chats/${id}/messages`, { method: 'POST', headers, body: JSON.stringify({ text: words }) })).text();
+    let sent = null;
+    try { sent = JSON.parse(readFileSync(join(fleet.dir, 'brain-sent.json'), 'utf8')); } catch {}
+    if (sent?.words === words && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) {
+      const catalog = await (await fetch(`${fleet.base}/actions`)).json();
+      if (!Array.isArray(catalog?.actions) || !catalog.brain) throw new Error('GET /actions didn’t give the actions and the brain’s catalog, so what the brain reads couldn’t be marked.');
+      return { system: sent.system, tools: sent.tools, params: sent.params ?? null, catalog };
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error(`The stand-in brain wasn’t sent a chat turn, so what it reads couldn’t be marked: ${last.slice(-500)}`);
+}
+export const brainReadsOf = ({ system, tools, params = null, catalog = null }) => createHash('sha256').update(JSON.stringify({ system, tools, params, catalog })).digest('hex');
+
+// The eval's case set this tree holds (test/eval/cases.json): its version, the sha256 of the file as read (the eval's own
+// `set`), and each case's id and expect, so the installed build reads its own set even after going back a build (R51).
+export function evalSetOf(file = join(REPO, 'test', 'eval', 'cases.json')) {
+  const bytes = readFileSync(file);
+  return { version: createHash('sha256').update(bytes).digest('hex'), file: 'test/eval/cases.json', cases: JSON.parse(bytes).map(c => [c.id, c.expect]) };
+}
+
+// This tree's build id, as the service computes it (buildOf, 01-setup.mjs).
+const sha = b => createHash('sha256').update(b).digest('hex');
+const treeBuild = () => sha(Buffer.concat(['server.mjs', 'dig.mjs', 'passkey.mjs'].map(f => readFileSync(join(REPO, 'service', f))))).slice(0, 12);
+// What this tree's brain reads (the lock's brainReads): once, on a stand-in fleet of its own with no lock, as
+// test/lock.mjs measures it, and kept in the temporary folder for this build, its config and its stand-in brain.
+let markOnce = null;
+function treeMark(build) {
+  return (markOnce ||= (async () => {
+    const kept = join(tmpdir(), `sct-mark-${build}-${sha(Buffer.concat([readFileSync(join(REPO, 'service', 'config.json')), readFileSync(join(MOCK, 'model.mjs'))])).slice(0, 12)}.json`);
+    try { const v = JSON.parse(readFileSync(kept, 'utf8')).reads; if (/^[0-9a-f]{64}$/.test(v)) return v; } catch {}
+    const helper = await startMock({ lock: false, evalOnRecord: false });
+    try {
+      const reads = brainReadsOf(await brainSent(helper)), tmp = `${kept}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ reads }));
+      renameSync(tmp, kept);
+      return reads;
+    } finally { await helper.stop(); }
+  })());
+}
+// The recorded eval (above): the brain check, then the record. Each step that can't be made leaves a line in
+// <dir>/harness.txt and nothing else: a fleet whose brain is down at the start simply has no eval on record.
+async function recordEval(f, lock, waitMs) {
+  const note = t => { try { appendFileSync(join(f.dir, 'harness.txt'), `${t}\n`); } catch {} };
+  const m = JSON.parse(readFileSync(join(f.stateDir, 'main.json'), 'utf8')), setup = m.presets?.[m.current];
+  if (!setup) return note('no brain setup');
+  if (!await fetch(`http://127.0.0.1:${setup.port}/v1/models`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok).catch(() => false)) return note('the brain does not answer');
+  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: f.origin }, since = new Date().toISOString();
+  const asked = await fetch(`${f.base}/main/check`, { method: 'POST', headers, body: '{}' });
+  if (asked.status !== 202) return note(`the check: ${asked.status} ${await asked.text()}`);
+  const profiles = () => { try { return Object.values(JSON.parse(readFileSync(join(f.stateDir, 'brain-profiles.json'), 'utf8')).profiles); } catch { return []; } };
+  let p = null;
+  for (const until = Date.now() + waitMs; !p && Date.now() < until;) { p = profiles().find(x => x.at >= since); if (!p) await sleep(100); }
+  if (!p) return note('no profile from the check');
+  const runs = expect => [1, 2, 3].map(() => ({ passed: true, asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] }));
+  const record = { kind: 'spark-console-eval', at: new Date().toISOString(), build: lock.build, reads: lock.brainReads, set: lock.evalSet.version, setFile: lock.evalSet.file,
+    setCases: lock.evalSet.cases.length, cap: null, memorySwitches: { on: ['names', 'past', 'time', 'digest', 'count', 'said'], off: [] }, runs: 3,
+    brain: { standIn: true, key: p.key, setup: p.setup.id, model: p.model, engine: p.engine, image: p.image, flags: p.flags },
+    cases: lock.evalSet.cases.map(([id, expect]) => ({ id, expect, runs: runs(expect) })) };
+  const kept = await fetch(`${f.base}/main/eval`, { method: 'POST', headers, body: JSON.stringify(record) });
+  if (kept.status !== 201) note(`the record: ${kept.status} ${await kept.text()}`);
+}
+
+async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null,
+  lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000 } = {}, attempt) {
   hookExit();
+  // This build's lock (above), unless the test brings its own: made before this start's ports are chosen.
+  let lock = null;
+  if (withLock && !extraEnv.SPARK_CONSOLE_WORKFLOW_LOCK) {
+    const build = treeBuild();
+    lock = { build, versions: {}, brainReads: await treeMark(build), evalSet: evalSetOf() };
+  }
   const dir = mkdtempSync(join(tmpdir(), 'sct-'));
   const root = join(dir, 'root'), stateDir = join(dir, 'state'), socket = join(dir, 'api.sock'), offlineFile = join(dir, 'offline'), log = join(dir, 'service.log');
   const ports = await freePorts(6);
@@ -160,6 +249,8 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   writeFileSync(offlineFile, readFileSync(join(MOCK, 'offline')));
   if (knowledge) writeFileSync(join(stateDir, 'knowledge.json'), JSON.stringify(knownContainers(root, readFileSync(offlineFile, 'utf8'))), { mode: 0o600 });
   await prepare?.({ dir, root, stateDir });
+  const lockFile = join(dir, 'workflows.lock.json');
+  if (lock) writeFileSync(lockFile, JSON.stringify(lock));
 
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(SPARK_CONSOLE_|MOCK_|NODE_TEST_CONTEXT$|NODE_OPTIONS$)/.test(k)));
   Object.assign(env, {
@@ -190,6 +281,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
     SPARK_CONSOLE_CABLE_SECS: String(3 * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1)),
     // Hugging Face is never reached: searches and repo look-ups answer from this list (mock/hf-fixture.json).
     SPARK_CONSOLE_HF_FIXTURE: join(MOCK, 'hf-fixture.json'),
+    ...(lock ? { SPARK_CONSOLE_WORKFLOW_LOCK: lockFile } : {}),
     ...extraEnv,
   });
   const scripts = [SERVICE, join(MOCK, 'model.mjs'), ...(editor ? [join(MOCK, 'editor.mjs')] : []), ...(telegram ? [join(MOCK, 'telegram.mjs')] : [])];
@@ -243,6 +335,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   }
   // The service's own process id (to send it SIGTERM), and whether (and how) it has exited.
   const pids = () => { try { return JSON.parse(readFileSync(join(dir, 'pids.json'), 'utf8')); } catch { return {}; } };
+  if (lock && evalOnRecord) await recordEval({ base, dir, stateDir, origin: cfg.origin }, lock, evalWaitMs * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1));
   return {
     base, mcp: `${base}/mcp`, origin: cfg.origin, port, socket, dir, root, stateDir, offlineFile, log,
     modelPort, benchPort, servePort, editorPort: editor ? editorPort : null, pid: guard.pid, keep, logText, stop, env,

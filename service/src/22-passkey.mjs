@@ -76,6 +76,7 @@ function describeChange(method, path, body = {}) {
   if (method === 'POST' && path === '/telegram/pair') return 'Show a new code to pair your Telegram chat with Spark Console';
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true ? 'Let Spark Console send you one Telegram line when something new needs you (at most 3 a day)' : 'Stop the “needs you” lines on Telegram';
   if (method === 'PUT' && path === '/heartbeat') return 'Save your outside check’s address, so Spark Console sends it an empty request at hc-ping.com every 5 minutes';
+  if (method === 'POST' && path === '/main/eval') return `Keep the brain eval’s result of ${clean(body?.at, 40)} (build ${clean(body?.build, 12)}, ${clean(body?.brain?.setup, 60) || 'its setup'}): with it, Sparkie makes the changes your words clearly ask for without asking`;
   const chatGone = path.match(/^\/chats\/([^/]+)$/);
   if (method === 'DELETE' && chatGone) return `Delete the chat “${clean(chatData().conversations.find(c => c.id === chatGone[1])?.title || chatGone[1], 80)}”`;
   if (method === 'POST' && /^\/chats\/[^/]+\/choose$/.test(path)) {
@@ -105,6 +106,7 @@ const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path)
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
+  || path === '/main/eval'
   || /^\/nodes\/[^/]+\/files$/.test(path)
   || path === '/rollback'
   || path === '/stop'
@@ -151,6 +153,8 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true;
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
+  // A brain eval result that would let Sparkie change things without asking (21-brain-rail.mjs, R51); others never.
+  if (method === 'POST' && path === '/main/eval') return evalCouldUnlock(body);
   return false;
 }
 // Members never write hidden files or folders, nor does a terminal signed in from the internet: .git/hooks,
@@ -197,5 +201,6 @@ async function passkeyGate(req, path, viewer) {
   if (ok.counterWentBack) counterNote(k);
   audit({ via: 'page', actor: 'owner', action: 'passkey-confirmed', args: { method: req.method, path, passkey: k.name }, ok: true });
   if (viewer.session?.id) markPasskey(viewer.session.id);
+  req.passkeyConfirmed = true;
 }
 

@@ -6,10 +6,11 @@
 // can run or change), and a profile of what came back in brain-profiles.json, kept per brain setup and shown in
 // sparkie_setup. Two outcomes, not three grades (the one page): "checked" when it answers, calls the tool with
 // arguments that fit three times out of three, and answers from the tool's result; "not checked" otherwise, with why.
-// Nothing acts on the outcome yet: no change becomes a button because of it (design E, build step 5, does that).
+// The rail (21-brain-rail.mjs, R51) reads it: while it says not checked, every change Sparkie asks for is a button.
 // A profile belongs to what was checked (P-4 in the ledger): it is keyed by a hash of everything that changes how the
-// brain answers (model, draft, engine, image, flags, environment, rope settings, and how it is asked), never by its
-// name, and names the "what the brain reads" hash of this build's lock (brainReads, test/lock.mjs) it ran against.
+// brain answers (model, draft, engine, image, flags, environment, rope settings, how it is asked, the console's limits
+// for it, its name, and what runs: the image's id and the weights' snapshots), never by its name, and names the "what
+// the brain reads" hash of this build's lock (brainReads, test/lock.mjs) it ran against. A server error is no answer.
 // When: the last step of a switch (after it, so the switch never waits on it), POST /main/check, and once, a minute after
 // Spark Console starts, when the brain in use has no profile (adoptRunning's one look). No timer of its own. One check
 // at a time and one request at a time; a request waits while a chat, an app or a switch is on the brain, so a chat is
@@ -25,7 +26,9 @@ const CHECK_ASKS = { plain: 'Say hello in five words.', one: 'What is the temper
 // What a profile belongs to: everything that changes how the brain answers, never its name or where it runs.
 const brainSetupOf = m => ({ model: repoOf(m.model), draft: m.draft ? repoOf(m.draft) : null, engine: m.engine, image: m.image, imageId: m.imageId || null,
   flags: (m.args || []).map(String), env: m.env || {}, ropeScaling: m.ropeScaling || null,
-  asked: { thinking: Boolean(m.thinking), maxTokens: m.maxTokens || 4096, sampling: m.sampling || null, templateKwargs: m.templateKwargs || null, ...askSet(m) } });
+  asked: { thinking: Boolean(m.thinking), maxTokens: m.maxTokens || 4096, sampling: m.sampling || null, templateKwargs: m.templateKwargs || null, ...askSet(m) },
+  // (the console's own limits for it, its name, and what runs now: its image's id and the weights' snapshots; R51)
+  limits: brainLimits(m), assistant: m.assistant || null, ran: brainRanOf(m) });
 const brainKey = m => createHash('sha256').update(JSON.stringify(brainSetupOf(m))).digest('hex').slice(0, 16);
 // What this build's brain reads: the lock's brainReads, when the lock is this build's; null when that isn't known.
 const brainReadsNow = () => (WORKFLOW_LOCK?.build === BUILD && /^[0-9a-f]{64}$/.test(String(WORKFLOW_LOCK?.brainReads || '')) ? WORKFLOW_LOCK.brainReads : null);
@@ -114,12 +117,17 @@ async function brainCheckAsk(m, key, messages, tools) {
   const r = await brainAsk(m, messages, tools);
   // (still loading or overloaded: not an answer to judge)
   if (r.status === 503) throw new Error('Sparkie’s model answered 503 (loading or busy)');
+  // (a server error is no answer either: never "it never calls a tool", R51)
+  if (r.status >= 500) throw new Error(`Sparkie’s model answered ${r.status}, a server error, so the check couldn’t be made: ${r.error || 'no reason given'}`);
   return r;
 }
 
 // The check itself. It throws, and nothing is kept, when the brain can't be asked or doesn't answer at all: a brain that
 // doesn't answer says nothing about how it calls tools.
 async function brainCheck(m, why) {
+  // (what it runs is part of its key: looked at first, and a brain whose image or weights can't be seen isn't checked)
+  await brainRanLook();
+  if (!brainRanOf(m)) throw new Error('What Sparkie’s model runs (its image and weights) couldn’t be seen, so nothing was kept');
   const key = brainKey(m), started = Date.now(), node = mainNode(m);
   if (!node || !(ALL_LOCAL || node.host === 'local')) throw new Error(`Sparkie’s model runs on ${m.node}, and Spark Console can only reach a model on its own Spark`);
   const ask = (words, tools = null, more = []) => brainCheckAsk(m, key, [{ role: 'system', content: CHECK_SYSTEM }, { role: 'user', content: words }, ...more], tools);
@@ -163,7 +171,9 @@ async function brainCheck(m, why) {
 let brainChecking = null, brainCheckNext = null, brainCheckLast = null;
 function checkBrainSoon(why, { ifNone = false } = {}) {
   try {
-    if (!MAIN || (ifNone && brainProfileOf(MAIN))) return false;
+    if (!MAIN) return false;
+    // (whether it has a profile depends on what it runs, so that is looked at first)
+    if (ifNone) { brainRanLook().then(() => { if (MAIN && !brainProfileOf(MAIN)) checkBrainSoon(why); }).catch(() => {}); return true; }
     if (brainChecking) { brainCheckNext ||= why; return true; }
     brainChecking = { why, since: new Date().toISOString(), setup: MAIN.id };
     brainCheck(MAIN, why).then(p => { brainCheckLast = { at: p.at, why, kept: true }; },

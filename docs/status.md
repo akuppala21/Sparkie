@@ -63,6 +63,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”) | falls short today: its file says where |
+| [R51](rules/R51.md) | partly | `test/brain-rail.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -80,7 +81,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 3.8 | no test yet |  | T100: no test holds it yet |
 | 3.9 | no test yet |  | T86: no test holds it yet |
 | 3.10 | no test yet |  | no acceptance test lists it |
-| 3.11 | no test yet |  | T136: no test holds it yet |
+| 3.11 | partly | `test/brain-rail.test.mjs` | holds part of T136: “a switch to a brain with no eval on record makes every change a button; once the eval has passed for this brain and build, a clear change runs at once.” |
 | 3.12 | no test yet |  | T142: no test holds it yet |
 | 4.1 | no test yet |  | no acceptance test lists it |
 | 4.2 | no test yet |  | T58: no test holds it yet |

@@ -10,8 +10,12 @@
 // console, a real brain's on a stand-in console, or another setup: model, engine, image, flags, how it is asked); and
 // one for a brain with no profile yet (409). sparkie_setup's brainCheck shows the brain serving now (inUse) and
 // whether an eval is on record for what this build's brain reads (the lock's brainReads) on today's case set, or
-// which of the two is missing. Today's case set is test/eval/cases.json beside this build: on Spark 2 the copy of the
-// source every install keeps (~/spark-console-src). Nothing acts on the result yet (design E, build step 5).
+// which of the two is missing. Today's case set is the one this build's lock names (evalSet, test/lock.mjs), else
+// test/eval/cases.json beside this build: on Spark 2 the copy of the source every install keeps (~/spark-console-src).
+// The rail (21-brain-rail.mjs, R51) acts on it. A record that could let Sparkie change things without asking (a full
+// run of the main set that met the bar) needs the owner's passkey once one is set up, says how it was kept, and is
+// sealed; a slot keeps five of those and five of the rest (partial runs, other sets, memory additions off), so neither
+// kind pushes out the other, and the slot this build counts on is kept first.
 const EVAL_KEEP = 5;    // limit: results kept for one brain, one version of what it reads and one case set
 const EVAL_SLOTS = 6;   // limit: versions of what the brain reads and case sets kept for one brain
 const EVAL_CASES_FILE = ALL_LOCAL ? fileURLToPath(new URL('../test/eval/cases.json', import.meta.url)) : `${homedir()}/spark-console-src/test/eval/cases.json`;
@@ -27,7 +31,7 @@ function evalSetNow() {
 }
 // The brain setup serving now, as a record names it (masked: a flag's value can be a key).
 const brainInUse = () => (MAIN ? maskDeep({ key: brainKey(MAIN), setup: MAIN.id, model: repoOf(MAIN.model), engine: MAIN.engine || null, image: MAIN.image || null,
-  flags: (MAIN.args || []).map(String) }) : null);
+  flags: (MAIN.args || []).map(String), setupKey: brainSetupKey(MAIN), ran: brainRanOf(MAIN) }) : null);
 
 // What a record lacks, said as what it needs; null when its shape fits.
 function evalRecordProblem(r) {
@@ -37,6 +41,9 @@ function evalRecordProblem(r) {
   if (!/^[0-9a-f]{64}$/.test(String(r.set))) return 'set: the case set’s version (64 hex digits)';
   if (!/^[0-9a-f]{12}$/.test(String(r.build))) return 'build: the build that answered (12 hex digits)';
   if (r.cap !== null && !/^(?:all|\d{1,3})$/.test(String(r.cap))) return 'cap: null (the build’s own), "all" or a number';
+  if (r.setFile !== undefined && !text(r.setFile, 200)) return 'setFile: the case file, as the runner names it';
+  const sw = r.memorySwitches, names = v => Array.isArray(v) && v.length <= 20 && v.every(n => text(n, 40));
+  if (sw !== undefined && !(sw && typeof sw === 'object' && names(sw.on) && names(sw.off))) return 'memorySwitches: {on, off}, the memory additions on and off for the run';
   if (!text(r.at, 40) || Number.isNaN(Date.parse(r.at)) || Date.parse(r.at) > Date.now() + 300000) return 'at: when it ran';
   const b = r.brain;
   if (!b || typeof b !== 'object' || typeof b.standIn !== 'boolean' || !/^[0-9a-f]{16}$/.test(String(b.key)) || !['setup', 'model', 'engine', 'image'].every(k => b[k] == null || text(b[k], 300))
@@ -70,11 +77,12 @@ function evalScore(r) {
 const evalLine = (rec, of) => {
   const s = rec.score || {}, pct = n => `${Math.round((Number(n) || 0) * 100)}%`, day = String(rec.at).slice(0, 10);
   return `${pct(s.passOnce)} of runs passed, ${s.wrongChanges || 0} wrong change${s.wrongChanges === 1 ? '' : 's'}, ${s.full ? `the bar ${s.met ? 'met' : 'not met'}`
-    : `a partial run (${rec.cases?.length || 0} of ${of || rec.setCases} cases, ${rec.runs} run${rec.runs === 1 ? '' : 's'} each)`} (${day}, build ${rec.build})`;
+    : `a partial run (${rec.cases?.length || 0} of ${of || rec.setCases} cases, ${rec.runs} run${rec.runs === 1 ? '' : 's'} each)`} (${day}, build ${rec.build}${rec.setFile ? `, ${clean(rec.setFile, 200)}` : ''})`;
 };
 
 // POST /main/eval: keeps one record in the profile of the brain serving now. Throws the refusal; nothing is written then.
-function storeBrainEval(r) {
+// passkey: the owner confirmed this request with a passkey (passkeyGate). The caller looks at what runs first.
+function storeBrainEval(r, { passkey = false } = {}) {
   if (!MAIN) throw new HttpError(404, 'No main model is configured.');
   if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Keep the result once that’s done.');
   const problem = evalRecordProblem(r);
@@ -84,22 +92,36 @@ function storeBrainEval(r) {
   const now = brainInUse();
   if (r.brain.key !== now.key) {
     const differ = ['model', 'engine', 'image'].filter(k => r.brain[k] !== now[k]).concat(JSON.stringify(r.brain.flags) === JSON.stringify(now.flags) ? [] : ['flags']);
-    throw new HttpError(409, `That result is for another brain setup than the one serving now (${now.setup}): ${differ.length ? `its ${differ.join(', ')} differ` : 'how it is asked, its draft, environment or rope settings differ'}. It isn’t kept.`);
+    throw new HttpError(409, `That result is for another brain setup than the one serving now (${now.setup}): ${differ.length ? `its ${differ.join(', ')} differ` : 'how it is asked, its limits, what it runs (its image’s id, its weights), its draft, environment or rope settings differ'}. It isn’t kept.`);
   }
   const p = brainProfileOf(MAIN);
   if (!p) throw new HttpError(409, 'No brain check is on record for the brain serving now, and its result is kept in that profile. Ask for a check first (POST /console/api/main/check), then keep the result.');
-  const set = evalSetNow();
+  // (one that could let Sparkie change things without asking takes the passkey once one is set up: R51)
+  let keys = 1;
+  try { keys = passkeys().length; } catch {}
+  const unlocks = evalCouldUnlock(r);
+  if (unlocks && keys && !passkey) throw passkeyNeeded('confirm', 'Confirm it’s you with your passkey: with this result kept, Sparkie makes the changes your words clearly ask for without asking.');
+  const set = evalSetToday();
   if (set && r.set === set.version && r.setCases !== set.cases) throw new HttpError(400, `That result says its case set has ${r.setCases} cases; today’s, with the same version, has ${set.cases}.`);
-  const keep = ({ kind, at, build, reads, set: v, setCases, cap, brain, runs, cases }) => ({ kind, at, build, reads, set: v, setCases, cap, runs,
+  const keep = ({ kind, at, build, reads, set: v, setFile, memorySwitches, setCases, cap, brain, runs, cases }) => ({ kind, at, build, reads, set: v,
+    ...(setFile !== undefined ? { setFile } : {}), ...(memorySwitches !== undefined ? { memorySwitches: { on: memorySwitches.on, off: memorySwitches.off } } : {}), setCases, cap, runs,
     brain: { standIn: brain.standIn, key: brain.key, setup: brain.setup ?? null, model: brain.model ?? null, engine: brain.engine ?? null, image: brain.image ?? null, flags: brain.flags },
     cases: cases.map(c => ({ id: c.id, expect: c.expect, runs: c.runs.map(x => ({ passed: x.passed, rounds: x.rounds, seconds: x.seconds, called: x.called, changed: x.changed, asked: x.asked, wrong: x.wrong, unverified: x.unverified })) })) });
-  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString() }, slot = `${r.reads}:${r.set}`;
+  // How it was kept, and the seal over it and its profile (21-brain-rail.mjs): the rail counts only a sealed record.
+  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString(), keptWith: unlocks ? (passkey ? 'passkey' : 'no passkey set up') : 'owner' }, slot = `${r.reads}:${r.set}`;
+  const sealKey = evalSealKey(true);
+  if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
   const kept = Object.fromEntries(Object.entries(p.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v)));
-  kept[slot] = [rec, ...(kept[slot] || []).filter(x => !(x?.at === rec.at && x?.build === rec.build))].sort((a, b) => String(b?.at).localeCompare(String(a?.at))).slice(0, EVAL_KEEP);
-  const evals = Object.fromEntries(Object.entries(kept).sort(([, a], [, b]) => String(b[0]?.at).localeCompare(String(a[0]?.at))).slice(0, EVAL_SLOTS));
+  // (a slot keeps the newest five full runs of the main set and the newest five of the rest: neither pushes out the other)
+  const newest = list => list.sort((a, b) => String(b?.at).localeCompare(String(a?.at))), counts = x => evalMainSet(x) && x?.score?.full === true;
+  const all = [rec, ...(kept[slot] || []).filter(x => !(x?.at === rec.at && x?.build === rec.build))];
+  kept[slot] = newest([...newest(all.filter(counts)).slice(0, EVAL_KEEP), ...newest(all.filter(x => !counts(x))).slice(0, EVAL_KEEP)]);
+  // (the slot this build counts on is kept first, then the newest)
+  const ours = `${brainReadsNow()}:${set?.version}`;
+  const evals = Object.fromEntries(Object.entries(kept).sort(([ka, a], [kb, b]) => (kb === ours) - (ka === ours) || String(b[0]?.at).localeCompare(String(a[0]?.at))).slice(0, EVAL_SLOTS));
   const stored = Boolean(evals[slot]?.includes(rec));
   if (stored) saveBrainProfile(p, evals);
-  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: r.reads, set: r.set, build: r.build, setup: now.setup, passOnce: rec.score.passOnce, full: rec.score.full }, ok: stored });
+  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: r.reads, set: r.set, build: r.build, setup: now.setup, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
   return { stored, slot, kept: evals[slot]?.length || 0, setup: now.setup,
     says: stored ? `Kept with the profile of ${now.setup}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
@@ -108,18 +130,21 @@ function storeBrainEval(r) {
 // build's brain reads on today's case set, or which of the two is missing. Never throws.
 function brainEvalView(p) {
   try {
-    const reads = brainReadsNow(), set = evalSetNow(), all = Object.entries(p?.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v))
+    const reads = brainReadsNow(), set = evalSetToday(), all = Object.entries(p?.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v))
       .flatMap(([, v]) => v).filter(x => x && typeof x === 'object').sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const run = 'Run node test/eval.mjs on the real brain, then keep its result with node test/eval.mjs --store <its results file>.';
     if (!reads) return { state: 'not known', says: 'What this build’s brain reads isn’t known (there is no lock for this build), so no eval on record can count for it.', results: all.length };
     if (!set) return { state: 'not known', says: `Today’s case set isn’t known (no test/eval/cases.json beside this build), so no eval on record can count for it.`, results: all.length };
-    const here = all.find(x => x.reads === reads && x.set === set.version);
+    // (in today's slot: a run with memory additions switched off never stands for it, and a full run before a partial one)
+    const off = x => (Array.isArray(x.memorySwitches?.off) ? x.memorySwitches.off : []), inSlot = all.filter(x => x.reads === reads && x.set === set.version && !off(x).length);
+    const here = inSlot.find(x => x.score?.full === true) || inSlot[0];
     if (here) {
-      return { state: 'on record', at: here.at, build: here.build, score: here.score, cases: here.cases?.length || 0, of: set.cases, runs: here.runs,
+      return { state: 'on record', at: here.at, build: here.build, score: here.score, cases: here.cases?.length || 0, of: set.cases, runs: here.runs, setFile: here.setFile || null,
         says: `An eval is on record for what this build’s brain reads, on today’s case set: ${evalLine(here, set.cases)}.` };
     }
     const sameReads = all.find(x => x.reads === reads);
-    if (sameReads) return { state: 'another case set', at: sameReads.at, says: `The eval on record for what this build’s brain reads ran on another case set (${String(sameReads.at).slice(0, 10)}), not today’s. ${run}` };
+    if (sameReads && sameReads.set === set.version) return { state: 'memory additions off', at: sameReads.at, says: `The eval on record for what this build’s brain reads ran with memory additions switched off (${off(sameReads).map(n => clean(n, 40)).join(', ')}): it measures them, not this build as it runs. ${run}` };
+    if (sameReads) return { state: 'another case set', at: sameReads.at, setFile: sameReads.setFile || null, says: `The eval on record for what this build’s brain reads ran on another case set (${sameReads.setFile ? `${clean(sameReads.setFile, 200)}, ` : ''}${String(sameReads.at).slice(0, 10)}), not today’s. ${run}` };
     if (all.length) return { state: 'another version of what the brain reads', at: all[0].at, says: `The newest eval on record for this brain (${String(all[0].at).slice(0, 10)}, build ${all[0].build}) was for another version of what the brain reads, not this build’s. ${run}` };
     return { state: 'none', says: `No eval is on record for this brain. ${run}` };
   } catch (e) { return { state: 'not known', says: `The eval’s record couldn’t be read: ${e.message}` }; }
