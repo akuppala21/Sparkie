@@ -16,9 +16,11 @@
 // gone after either ending; refused with nothing changed when its timer can't start or the real address doesn't answer
 // for the build running now; the build from before back and answering when the new one never answers, when its own
 // installer keeps a dead build or its own put-back does nothing, when it calls tailscale despite SKIP_ROUTES, when the
-// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle. R53: with
-// a `.curlrc` and a user-site `.pth` in Spark 2's home, setup, check, an install kept through the way back and one put
-// back by it read neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q).
+// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle (which
+// comes only once every process the power cut stopped is gone). The stand-in systemd counts a runner that has ended
+// but isn't reaped yet (ps shows Z) as stopped, so a start then brings the console up. R53: with a `.curlrc` and a
+// user-site `.pth` in Spark 2's home, setup, check, an install kept through the way back and one put back by it read
+// neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -154,10 +156,18 @@ if [ "$unit" = spark-console-update-guard.timer ]; then
 fi
 [ "$unit" = spark-console-api ] || [ "$unit" = spark-console-api.service ] || exit 0
 pidf="$HOME/runner.pid"
-alive() { [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; }
+# Running: the pid is there and hasn't ended. One that has ended but isn't reaped yet (ps shows Z: the runner killed by
+# the power cut, for a moment) is stopped, as systemd sees it; kill -0 alone still finds it, and a start then did
+# nothing (pull.test's restart case, 2026-11-15). One that ps no longer finds (reaped in between) is stopped too.
+running() {
+  local st
+  kill -0 "$1" 2>/dev/null && st=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  case "$st" in *Z*|*X*) return 1 ;; esac
+}
+alive() { [ -f "$pidf" ] && running "$(cat "$pidf")"; }
 stop_it() {
   if alive; then p=$(cat "$pidf"); kill -TERM "$p" 2>/dev/null
-    for _ in $(seq 1 60); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; fi
+    for _ in $(seq 1 60); do running "$p" || break; sleep 0.1; done; fi
   rm -f "$pidf"
 }
 start_it() { alive && return 0; nohup node "$HOME/bin/runner.mjs" </dev/null >>"$HOME/runner.log" 2>&1 & echo $! > "$pidf"; }
@@ -683,6 +693,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
     // The power goes: pull.sh and everything it started stop at once, the console and the timer's wait included.
     process.kill(-child.pid, 'SIGKILL');
     await done;
+    // (and the restart comes only once all of it is gone: for a few milliseconds a killed process is still there, ending
+    // or ended but not reaped, and a start in that moment took the old console for running, 2026-11-15)
+    await waitFor(() => { try { process.kill(-child.pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } },
+      { timeout: 10000, every: 10, what: 'every process the power cut stopped gone' });
     unlinkSync(down);
     // The restart: the user's services start again, the console (the new build's files are in place) and the timer,
     // which was enabled.
@@ -1056,5 +1070,23 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal((await pull(h, ['check', '--json'])).code, 0);
     assert.ok(!existsSync(pth), 'a python3 without -I ran');
     assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? read(rc).slice(0, 300) : ''}`);
+  });
+
+  // (the stand-in systemd itself: after the restart case's power cut, the killed runner is for a moment ended, not reaped,
+  // and kill -0 still finds it; a start that took it for running did nothing, 2026-11-15)
+  test('the stand-in systemd: a runner that has ended but isn\'t reaped yet is stopped, so a start brings the console up', CASE, async () => {
+    needs('kept');
+    sysctl('stop', 'spark-console-api');
+    assert.equal(await health(home), null, 'stopped');
+    // A process that has ended and is never reaped: its parent became sleep, which doesn't wait for it.
+    const zf = join(home, 'tmp', 'unreaped.pid');
+    const holder = spawn('bash', ['-c', `sleep 0 & echo $! > '${zf}'; exec sleep 600`], { stdio: 'ignore' });
+    try {
+      const stat = () => (existsSync(zf) ? spawnSync('ps', ['-o', 'stat=', '-p', read(zf).trim()], { encoding: 'utf8' }).stdout.trim() : '');
+      await waitFor(() => stat().startsWith('Z'), { timeout: 10000, what: 'a process that has ended and isn\'t reaped' });
+      writeFileSync(join(home, 'runner.pid'), read(zf));
+      sysctl('start', 'spark-console-api');
+      await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 15000, what: 'the console, started by systemctl start' });
+    } finally { holder.kill('SIGKILL'); }
   });
 });

@@ -101,6 +101,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['save that as settings.toml on spark 3', 'reading'],
     ['list my saved workflows', 'routines'],
     ['what workflows do I have?', 'routines'],
+    ['run my workload on whatever is best and keep the winner', 'routines'],
     ['cancel the operation that is running', 'control'],
     ['cancel that', 'control'],
     ['stop the download', 'control'],
