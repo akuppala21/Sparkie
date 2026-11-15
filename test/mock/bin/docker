@@ -335,6 +335,9 @@ case "$cmd" in
     case "$*" in *'"spark.protect"'*) [ "$(echo "$line" | cut -d'|' -f6)" = 1 ] && echo true || echo '<no value>'; exit 0 ;; esac
     case "$*" in
       *'{{.Id}}'*) cid "$name" ;;
+      # The image a container runs, as docker's own id: ~/.mock/imageid-<name> if a test gave one (Sparkie's brain check
+      # and rail read it: R52).
+      *'{{.Image}}'*) cat "$M/imageid-$name" 2>/dev/null || echo sha256:abc ;;
       # (exactly waitJobEnd's format: the brain's status check reads ExitCode too, with StartedAt, below)
       *'{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}'*) code=0; [ "$st" = running ] || code=$(lineOf "$name" | cut -d'|' -f3 | sed -nE 's/^Exited \(([0-9]+)\).*/\1/p'); echo "$st ${code:-1} false" ;;
       *StartedAt*) echo "$st|$(cat "$M/started-$name" 2>/dev/null || echo 2026-11-04T01:00:00Z)|0|0" ;;

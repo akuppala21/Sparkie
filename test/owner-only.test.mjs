@@ -72,7 +72,7 @@ const NOT_OWNER = () => ({
 // One concrete path for each way 24-handler.mjs matches a path; checked against the source below, so a route added
 // there without a line here fails this file.
 const ROUTES = ['/actions', '/actions/fleet_status', '/agents', '/agents/0123456789ab', '/agents/settings', '/auth/passkey/begin', '/auth/passkey/register',
-  '/auth/passkeys', `/auth/passkeys/${'A'.repeat(20)}`, '/auth/recovery', '/auth/device/approve', '/auth/sessions', '/auth/anything-else', '/bootstrap', '/chats',
+  '/auth/passkeys', `/auth/passkeys/${'A'.repeat(20)}`, '/auth/putback', '/auth/putback/keep', '/auth/recovery', '/auth/device/approve', '/auth/sessions', '/auth/anything-else', '/bootstrap', '/chats',
   '/chats/sc_0123456789abcdef', '/chats/sc_0123456789abcdef/messages', '/chats/sc_0123456789abcdef/choose', '/connections', '/deploy', '/deploy/cluster',
   '/deploy/cluster-plan', '/deploy/options', '/deploy/plan', '/deploy/plans', '/desired', '/desired/bring-back', '/desired/forget', '/fabric', '/gpu',
   '/heartbeat', '/jobs', '/jobs/0123456789ab', '/jobs/0123456789ab/cancel', '/main', '/main/check', '/main/choices', '/main/eval', '/main/plan', '/main/route',

@@ -1,7 +1,7 @@
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
-// Owns: agents.json (writers: handler, top level; the top-level one is the last-use timer), audit.jsonl (writers:
-//   audit)
+// Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
+//   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,
 // <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Agents and Telegram), so
@@ -39,6 +39,7 @@ setInterval(() => {
 function keyViewer(req) {
   const m = /^Bearer\s+(\S+)\s*$/i.exec(String(req.headers.authorization || ''));
   if (!m || !AGENT_KEY_RE.test(m[1])) return null;
+  if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   const hash = keyHash(m[1]);
   const key = agentKeys().find(k => timingSafeEqual(Buffer.from(k.hash, 'hex'), hash));
   // A key works from the internet only if the owner let it (internet: true). Keys made before that switch existed

@@ -45,29 +45,26 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 
 // What may come before a program: a name that decides what runs, what it loads or where it fetches from (risky), and
 // the few a look may carry.
-const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
+const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
 function sortAssign(name, ctx, r, prefix) {
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
 // Each pipeline's first part reads what the command was handed (a group's commands inside a pipe too); the later parts
-// read the part before them. ctx.piped says an earlier part of this pipeline fetched from the network. A cd narrows the
-// folders the command may be in to its own only when it stands first in its && / || chain or right after &&, with no
-// !, in a chain not sent off with &: for the rest of the chain when && follows it, for good when || exit does. Anywhere
-// else, and when the chain ends, every folder a cd in it reached is added to where the chain started (a cd may fail).
-// A subshell, a $( ) or a pipe's part changes no folder after it (the folders it may be in only grow).
+// read the part before them. ctx.piped says an earlier part of this pipeline fetched from the network. One form alone
+// narrows where the command stands: its very first word is cd, with one plain folder and no option, and && follows; then
+// the rest of that && chain stands there. Any other cd (a second one, after ||, with an option, a later chain) narrows
+// nothing: the command stands in every folder a cd may have left it in, the start included. A subshell, a $( ) or a
+// pipe's part changes no folder after it (the folders it may be in only grow).
 const sortIsCd = p => p.length === 1 && !p[0].group && /^(?:cd|pushd)$/.test(p[0].words[0]?.text ?? '') && !p[0].words[0].unknown;
-const sortIsExit = p => p?.length === 1 && !p[0].group && p[0].words[0]?.text === 'exit' && !p[0].words[0].unknown;
-function sortList(items, ctx, r, inPipe = false) {
+const sortOneCd = p => sortIsCd(p) && !p[0].neg && p[0].words[0].text === 'cd' && p[0].words.length === 2 && !p[0].assigns.length && !p[0].redirs.length
+  && !/^-/.test(p[0].words[1].text) && !p[0].words[1].unknown && !p[0].words[1].glob && !p[0].words[1].brace;
+function sortList(items, ctx, r, inPipe = false, top = false) {
   if (items.length > 1) r.simple = false;
-  let start = null, reached = [], pinned = false;
+  let start = new Set(ctx.cwds), reached = [], narrowed = false;
   items.forEach((pipe, n) => {
     if (pipe.length > 1) r.simple = false;
-    const prev = items[n - 1]?.op ?? null, first = !/^(?:&&|\|\|)$/.test(prev ?? '');
-    if (first) { start = new Set(ctx.cwds); reached = []; pinned = false; }
-    let e = n;
-    while (e < items.length - 1 && /^(?:&&|\|\|)$/.test(items[e].op ?? '')) e++;
     const was = ctx.piped;
     if (!inPipe) ctx.piped = false;
     ctx.cdTo = null;
@@ -75,13 +72,14 @@ function sortList(items, ctx, r, inPipe = false) {
     ctx.piped = was;
     if (sortIsCd(pipe) && ctx.cdTo) {
       reached.push(...ctx.cdTo);
-      const may = (first || prev === '&&') && !pipe[0].neg && items[e].op !== '&';
-      if (may && pipe.op === '&&') ctx.cwds = new Set(ctx.cdTo);
-      else if (may && pipe.op === '||' && sortIsExit(items[n + 1])) { ctx.cwds = new Set(ctx.cdTo); pinned = true; }
+      let e = n;
+      while (e < items.length - 1 && /^(?:&&|\|\|)$/.test(items[e].op ?? '')) e++;
+      if (top && n === 0 && pipe.op === '&&' && sortOneCd(pipe) && items[e].op !== '&') { ctx.cwds = new Set(ctx.cdTo); narrowed = true; }
       else ctx.cwds = new Set([...ctx.cwds, ...ctx.cdTo]);
     }
-    // (after ||, the next part may run where the chain started; at its end, anywhere a cd in it reached)
-    if ((n === e || pipe.op === '||') && !pinned) ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]);
+    // (once the && chain after the first cd is left, or after ||, it may stand anywhere a cd reached, or where it began)
+    if (narrowed && pipe.op !== '&&') { ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]); narrowed = false; }
+    else if (!narrowed) ctx.cwds = new Set([...start, ...reached, ...ctx.cwds]);
   });
 }
 const sortKeep = (ctx, f) => { const was = new Set(ctx.cwds); try { f(); } finally { ctx.cwds = new Set([...was, ...ctx.cwds]); } };
@@ -89,9 +87,13 @@ function sortCmd(cmd, ctx, r, inPipe) {
   const c = sortFresh(), all = [...cmd.assigns, ...cmd.words, ...cmd.redirs.map(d => d.w)], later = [];
   if (++ctx.steps > SORT_STEPS) unsure('It holds more commands than the sorter reads.');
   ctx.words.push(...all);
+  // (a {…} bash expands that the sorter can't spell out as bash does: with quoted or $ parts, or one inside another)
+  const odd = all.find(w => (w.brace && !w.plain) || sortNested(w.bare ?? ''));
   const was = ctx.cmd;
   // (the files its own output redirections write are not code it runs: they are written after it is sorted)
   ctx.cmd = [...cmd.assigns, ...cmd.words, ...cmd.redirs.filter(d => /^<(?!>)/.test(d.op)).map(d => d.w)];
+  const wasIn = ctx.inputs;
+  ctx.inputs = cmd.redirs.filter(d => d.op === '<').map(d => d.w);
   // (what was found before a doubt is kept: the doubt only adds "risky")
   try {
     for (const w of all.filter(x => x.subs.length)) {
@@ -103,10 +105,16 @@ function sortCmd(cmd, ctx, r, inPipe) {
       ctx.fetchSeen ||= seen;
     }
     if (cmd.group) { c.simple = false; if (cmd.sub || inPipe) sortKeep(ctx, () => sortList(cmd.group, ctx, c, inPipe)); else sortList(cmd.group, ctx, c, inPipe); }
-    let stdin = null;
+    let stdin = null, opaque = false;
     for (const d of cmd.redirs) {
       c.simple = false;
-      if (/^<</.test(d.op)) { raise(c, 'change', 'It hands a program text to read (a here-document).'); stdin = d.op === '<<<' ? (d.w.unknown ? null : d.w.text) : d.body; continue; }
+      if (/^<</.test(d.op)) {
+        raise(c, 'change', 'It hands a program text to read (a here-document).');
+        // (text with a $ or a ` the sorter can't read as written: a shell or an interpreter reading it is a doubt)
+        opaque = d.op === '<<<' ? d.w.unknown : !d.quoted && /[$`]/.test(d.body ?? '');
+        stdin = opaque ? null : d.op === '<<<' ? d.w.text : d.body;
+        continue;
+      }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
@@ -115,8 +123,10 @@ function sortCmd(cmd, ctx, r, inPipe) {
       later.push(d.w);
     }
     for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0);
-    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin }); } finally { for (const w of later) sortTouch(w, ctx, c); }
-  } finally { ctx.cmd = was; sortMerge(r, c); }
+    try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
+    // (after what it does, so the more dangerous answer stands)
+    if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
+  } finally { ctx.cmd = was; ctx.inputs = wasIn; sortMerge(r, c); }
 }
 
 // Code runs: a script file, a one-liner, a build. A change; asked when an earlier part of this command fetched from the
@@ -131,8 +141,10 @@ function sortRuns(file, ctx, r, why, dir = null) {
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
   if (file) r.scripts.push(file);
   raise(r, 'change', why);
+  // (a file to run named by a pattern or a {…}, or a shell's input by one: what it names can't be matched to what was written)
+  if ((file && /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(file)) || (ctx.inputs ?? []).some(w => w.glob || w.brace)) unsure(`${why} It names the file it runs by a pattern or a {…}.`);
   if (ctx.fetched || ctx.piped) raise(r, 'risky', `${why} This command fetched from the network before it: code fetched and run is always asked.`);
-  if (file && !/^<\(/.test(file) && sortPaths(file, ctx).some(p => sortWrote(p, ctx))) raise(r, 'risky', `${why} It runs a file this same command wrote, whose text the sorter never read.`);
+  if (file && !/^<\(/.test(file) && sortPaths(file, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx))) raise(r, 'risky', `${why} It runs a file this same command wrote, whose text the sorter never read.`);
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
@@ -149,7 +161,7 @@ function sortInline(text, ctx, r, via) {
   if (ctx.depth >= SORT_DEPTH) unsure(`It nests commands in commands more than ${SORT_DEPTH} deep.`);
   const c = sortFresh();
   ctx.depth++;
-  try { sortKeep(ctx, () => sortList(shellParse(shellLex(text).toks), ctx, c)); } finally { ctx.depth--; sortMerge(r, c); }
+  try { sortKeep(ctx, () => sortList(shellParse(shellLex(text).toks), ctx, c, false, true)); } finally { ctx.depth--; sortMerge(r, c); }
   if (ctx.root && c.class !== 'look') raise(r, 'risky', `As root, ${via} with a command in it is always asked.`);
   r.simple = false;
 }
@@ -167,7 +179,10 @@ function sortProgram(words, ctx, r, x) {
   const [w0, ...args] = words;
   if (w0.unknown || w0.glob || w0.brace) unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
   if (++ctx.wraps > SORT_WRAPS || ++ctx.steps > SORT_STEPS) unsure('It wraps commands in commands more than the sorter reads.');
+  const gitTouch = ctx.gitTouch;
+  ctx.gitTouch = false;
   ctx.programs.add(w0);
+
   for (const a of args) if (!a.unknown) for (const t of [a.text, /=(.+)$/.exec(a.text)?.[1], /@([~/].*)$/.exec(a.text)?.[1], /^file:\/\/(\/.*)$/.exec(a.text)?.[1]].filter(Boolean)) ctx.seen.push(t, ...[...ctx.cwds].filter(d => d && !/^[~/]/.test(t)).map(d => `${d}/${t}`));
   try {
     let name = w0.text;
@@ -194,12 +209,14 @@ function sortProgram(words, ctx, r, x) {
     else raise(r, g.cls, `${sortQ(name)}: ${g.why}.`);
     // (after what it does, so the more dangerous answer stands; a handler that runs another program reads its own words)
     const so = SORT_OPTS[name] && sortOpts(SORT_OPTS[name], args.slice(0, own), SORT_MODES[name]), u = so?.unknown;
+    // (a {…} that makes an option word: what the program gets is not the words the sorter read; after what it does)
+    for (const a of args.slice(0, own)) if (a.brace && sortBraces(a.text).some(t => t.startsWith('-'))) unsure(`A {…} makes ${sortQ(a.text)} into option words, which the sorter does not read as the program would.`);
     // (a file an option names to write, and a folder it writes names of its own into, from the same table)
     for (const w of so?.writes ?? []) { raise(r, 'change', `${sortQ(name)} writes ${sortQ(w.text)}.`); r.deletes = true; sortTouch(w, ctx, r); }
     for (const w of so?.dirs ?? []) { raise(r, 'change', `${sortQ(name)} writes into ${sortQ(w.text)}.`); sortInto(w, ctx, r); }
     if (u) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(u)}: an option it doesn’t read could take the next word, write a file or run a program.`);
     if (ctx.root && r.class !== 'look' && SORT_ROOT_OPTS[name] && args.some(a => a.text.startsWith('-') && !SORT_ROOT_OPTS[name].test(a.text))) raise(r, 'risky', `As root, ${sortQ(name)} with an option the sorter doesn't know as safe is asked.`);
-  } finally { ctx.wraps--; }
+  } finally { ctx.wraps--; ctx.gitTouch = gitTouch; }
 }
 // A program that only reads, unless a flag in its list (a long one also by the letters that begin it) or more plain
 // words than #n makes it write or run something; then it is a change, and the files it names are checked. A flag
@@ -236,7 +253,7 @@ function sortFile(name, kind, args, ctx, r) {
   const into = /^(?:cp|install)$/.test(name) && o.has('r', 'R', 'a', 'recursive', 'archive') ? dir : null;
   // (a backup is the name it replaces with a suffix, ~ unless -S says; --parents keeps the source's whole path)
   const bk = /^(?:cp|mv|install|ln)$/.test(name) && o.has('b', 'backup', 'S', 'suffix') ? o.all('S', 'suffix').at(-1)?.text ?? '~' : null;
-  const to = (w, text) => { const x = { ...w, text, glob: w.glob || !!dir?.glob, unknown: w.unknown || !!dir?.unknown }; sortTouch(x, ctx, r, false); if (bk != null) sortTouch({ ...x, text: text + bk }, ctx, r, false); };
+  const to = (w, text) => { const x = { ...w, text, glob: w.glob || !!dir?.glob, unknown: w.unknown || !!dir?.unknown, tilde: dir?.tilde ?? w.tilde }; sortTouch(x, ctx, r, false); if (bk != null) sortTouch({ ...x, text: text + bk }, ctx, r, false); };
   for (const a of files) {
     if (a === dir) continue;
     const src = !!dir, at = dir?.text.replace(/\/+$/, '');
@@ -247,93 +264,6 @@ function sortFile(name, kind, args, ctx, r) {
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
-// Programs that only read: the string lists what makes one write or run something (see sortReads).
-const SORT_READS = {
-  ...Object.fromEntries(('ls dir vdir cat tac nl head tail wc du df free uptime uname arch whoami id groups logname pwd echo true false seq '
-    + 'sleep nproc getconf locale printenv tty stat readlink realpath basename dirname which whereis type lsblk lscpu lspci lsusb lsmod modinfo lsof ps '
-    + 'pgrep pidof pstree vmstat iostat mpstat sensors md5sum sha1sum sha224sum sha256sum sha384sum sha512sum b2sum cksum sum base32 base64 cut tr '
-    + 'paste join comm column fold fmt expand unexpand strings od hexdump grep egrep fgrep zgrep zcat bzcat xzcat more jq diff cmp last '
-    + 'lastlog w who users getent lsattr getfacl findmnt namei numfmt expr ldd lsb_release apt-cache dpkg-query top cd wait : exit return shift '
-    + 'break continue umask ulimit times').split(' ').map(n => [n, ''])),
-  less: '-o -O --log-file --LOG-FILE', sort: '-o -T --output !--compress-program --temporary-directory', uniq: '#1', rg: '!--pre !--pre-glob', tree: '-o',
-  zstdcat: '-o --output #1', lz4cat: '#1',
-  file: '-C --compile', xxd: '-r --revert #1', date: '-s --set', dmesg: '-c -C -D -E -n --clear --read-clear --console-off --console-on --console-level',
-  journalctl: '--setup-keys --rotate --flush --sync --relinquish-var --smart-relinquish-var --update-catalog --vacuum-size --vacuum-time --vacuum-files',
-};
-const SORT_FILES = Object.fromEntries(Object.entries({ over: 'cp mv ln install tee', del: 'rm rmdir unlink shred truncate', wide: 'chmod chown chgrp chattr setfacl',
-  '': 'mkdir touch mkfifo mktemp split csplit zip' }).flatMap(([k, v]) => v.split(' ').map(n => [n, k])));
-// Programs past a change, by class: open (needs what the run wall hides), device (needs a device or the network a look
-// lacks: a change), delete (a disk: risky, kind delete), and the rest by name.
-const SORT_PROGS = {};
-for (const [cls, names, why] of [
-  ['risky', 'shutdown reboot poweroff halt telinit rtcwake pm-suspend pm-hibernate', 'power, so what runs on that Spark stops'],
-  ['risky', 'modprobe insmod rmmod depmod update-grub grub-install grub-mkconfig update-initramfs mkinitramfs dracut dkms fwupdmgr fwupdtool ubuntu-drivers do-release-upgrade mokutil efibootmgr kexec', 'the kernel, a driver, firmware or a release upgrade'],
-  ['delete', 'mkfs mke2fs mkswap fdisk sfdisk gdisk sgdisk cfdisk parted partprobe wipefs blkdiscard hdparm sdparm nvme losetup cryptsetup mdadm pvcreate pvremove vgcreate vgremove vgextend vgreduce lvcreate lvremove lvextend lvresize lvreduce fsck e2fsck tune2fs resize2fs xfs_repair xfs_growfs btrfs zpool zfs debugfs fstrim umount swapoff smartctl', 'a disk'],
-  ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
-  ['risky', 'dockerd containerd chroot unshare setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
-  ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice nsenter snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
-  ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
-  ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
-  ['risky', 'npx pnpx bunx uvx', 'it downloads a package and runs it'],
-  ['lockout', 'useradd adduser userdel deluser usermod passwd chpasswd chage chsh chfn groupadd addgroup groupdel delgroup groupmod gpasswd newusers vipw vigr visudo pwconv pwunconv grpconv grpunconv pam-auth-update faillock ssh-copy-id sshd tailscaled iptables ip6tables iptables-legacy iptables-nft iptables-restore ip6tables-restore ebtables arptables nft ufw firewall-cmd netplan nmcli nmtui ifup ifdown ifconfig route iw iwconfig wpa_cli wpa_supplicant tc resolvectl systemd-resolve ethtool', 'users and passwords, SSH, the firewall or the network settings, ways in'],
-]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
-// The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
-const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
-const sortShows = (a, from = 0) => {
-  const p = a.filter(t => !t.startsWith('-')), v = p[from + 1];
-  return !a.some(t => /[;\n]/.test(t)) && !p.slice(from + 2).some(t => SORT_VERBS.includes(t))
-    && (v === undefined || ((['show', 'list', 'get', 'help'].some(s => s.startsWith(v)) || /^l(?:s|st)$/.test(v)) && !SORT_VERBS.some(s => s.startsWith(v))));
-};
-const SORT_LOCK_READS = {
-  iptables: a => a.every(t => /^(?:-[LSnvx]+|-t|--(?:list|list-rules|numeric|verbose|line-numbers|exact)|filter|nat|mangle|raw|security|[A-Z][A-Z_-]*)$/.test(t)),
-  nft: a => a.find(t => !t.startsWith('-')) === 'list' && !a.some(t => /[;\n]|^-\w*f/.test(t)), ufw: a => /^(?:status|show)$/.test(a[0] ?? '') && !a.some(t => /[;\n]/.test(t)), route: a => a.every(t => /^-[nev]+$/.test(t)),
-  ifconfig: a => a.length <= 1 && !/^-[^as]/.test(a[0] ?? ''), tc: a => !a.some(t => /^-(?:b|ba\w*|force)$/.test(t)) && a.filter(t => !t.startsWith('-')).length > 1 && /^(?:show|list|ls)$/.test(a.filter(t => !t.startsWith('-'))[1]) && sortShows(a), sshd: a => a.length > 0 && a.every(t => /^-[tT]$/.test(t)),
-  ethtool: a => a.length === 1 || (a.length === 2 && /^-[iSkgaclTPm]$|^--(?:driver|statistics|show-\w+)$/.test(a[0])),
-  hostname: a => a.every(t => /^-[aAdfiIsy]+$|^--(?:all-fqdns|all-ip-addresses|domain|fqdn|ip-address|short|long|alias)$/.test(t)),
-};
-SORT_LOCK_READS.ip6tables = SORT_LOCK_READS['iptables-legacy'] = SORT_LOCK_READS['iptables-nft'] = SORT_LOCK_READS.iptables;
-
-// Wrappers run the command after their own options: [flags, flags that take a word, plain words first, long options
-// (name= takes its value attached)]. An option the sorter doesn't know is a doubt: it could take the next word, or
-// change where the command runs (env -C).
-const SORT_WRAP = {
-  env: ['i0v', 'u', 0, 'ignore-environment null unset='], nice: ['', 'n', 0, 'adjustment='], ionice: ['t', 'cn', 0, 'class= classdata='],
-  nohup: ['', '', 0, ''], timeout: ['v', 'sk', 1, 'signal= kill-after= preserve-status foreground verbose'], stdbuf: ['', 'ioe', 0, 'input= output= error='],
-  time: ['pv', 'f', 0, 'portability verbose format='], command: ['p', '', 0, ''], exec: ['cl', 'a', 0, ''], builtin: ['', '', 0, ''],
-  setsid: ['cfw', '', 0, 'ctty fork wait'], unbuffer: ['p', '', 0, ''], flock: ['senuxo', 'wE', 1, 'shared exclusive unlock nonblock close wait= conflict-exit-code='],
-  watch: ['bcdeghtpwx', 'nq', 0, 'interval= differences beep color errexit chgexit exec no-title precise no-wrap'], busybox: ['', '', 0, ''],
-  xargs: ['0prtxiel', 'aEILnPsd', 0, 'null no-run-if-empty verbose interactive exit open-tty arg-file= delimiter= replace= max-lines= max-args= max-procs= max-chars= eof='],
-};
-function sortWrap(args, ctx, r, x, name) {
-  const [flags, takes, pos, longs] = SORT_WRAP[name];
-  r.simple = false;
-  if (name === 'command' && /^-[vV]$/.test(args[0]?.text)) return;
-  let k = 0;
-  for (; k < args.length; k++) {
-    const a = args[k], t = a.text;
-    if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
-    if (t === '--') { k++; break; }
-    if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
-    if (!t.startsWith('-') || t === '-') break;
-    if (name === 'nice' && /^-\d+$/.test(t)) continue;
-    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }
-    for (let j = 1; j < t.length; j++) {
-      if (takes.includes(t[j])) { if (j === t.length - 1) k++; break; }
-      if (!flags.includes(t[j])) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`);
-    }
-  }
-  const rest = args.slice(k + pos);
-  if (name === 'flock') { raise(r, 'change', 'flock makes its lock file.'); sortTouch(args[k], ctx, r); }
-  if (name === 'xargs') raise(r, 'change', 'xargs runs the command after it with words it reads, which the sorter can’t see.');
-  if (!rest.length) return;
-  if (name === 'watch' && !args.slice(0, k).some(a => /^-\w*x$|^--exec$/.test(a.text))) {
-    if (rest.some(a => a.unknown)) unsure('watch runs words that hold a $ or a command.');
-    const text = rest.map(a => a.text).join(' ');
-    if (text.includes('&>')) unsure('watch hands its words to sh, which reads &> another way than bash.');
-    return sortInline(text, ctx, r, 'watch');
-  }
-  sortProgram(rest, ctx, r, { ...x, unknownArgs: x.unknownArgs || name === 'xargs' });
-}
 // After the parts: on Spark 2 a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
 function sortAt(r, ctx) {
   if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', 'It changes Spark 2, which runs the console and the brain: anything that changes Spark 2 is asked first.');
@@ -341,7 +271,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], cloned: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -355,7 +285,7 @@ function sortCommand(command, opts) {
     // (what earlier commands of the task wrote or fetched, as placed lists them: counted as written by this one)
     if (o.written != null && (!Array.isArray(o.written) || o.written.length > SORT_PLACED * 4)) unsure('The paths written before are not a list the sorter reads.');
     for (const b of o.written ?? []) {
-      if (typeof b !== 'string' || !/^[~/]/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
+      if (typeof b !== 'string' || !/^(?:~(?:\/|$)|\/)/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
       ctx.before.push(sortNorm(b, null, home));
     }
     if (ctx.at !== 'compute' && ctx.at !== 'hub') { ctx.at = 'hub'; unsure('Where it runs is not one the sorter knows.'); }
@@ -370,7 +300,7 @@ function sortCommand(command, opts) {
       const odd = /[^\t\n\x20-\x7e]/u.exec(text);
       if (odd) unsure(`It holds the sign U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, which isn’t plain ASCII: such a sign can look like ; | > or a quote and not be one.`);
       form = lookForm(text);
-      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r);
+      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r, false, true);
       if (r.class !== 'look') sortSee(ctx.words, ctx, r);
     }
   } catch (e) {

@@ -31,7 +31,10 @@
 //                        words with the stand-in fleet's record, the stand-in Sparks' tool results) go through a relay on
 //                        this machine to 127.0.0.1:--brain-port (30100: the tunnel above).
 //   --brain-url <url>    the same, but the relay sends them to <url>/v1/… (the installed console's one model address,
-//                        which passes them to the brain). Nothing else reaches the installed console.
+//                        which passes them to the brain). Besides those, one read of the installed console's
+//                        GET /v1/models (--console, else the --brain-url console) names the brain serving: the run is
+//                        refused when it would ask as another setup, and its stand-in consoles run what that brain runs
+//                        (its image's id, its weights' snapshots), so the record's key is the serving brain's (R52).
 //   --stand-in           the stand-in console's own stand-in brain: nothing leaves this machine (to try the runner).
 //   --tree <dir>         the stand-in console and stand-in Sparks of another checkout (the installed build's tree, say):
 //                        that build's prompt and tools, with these cases and this grading. The record names its build.
@@ -72,7 +75,7 @@
 //             both, and the run prints each case and each kind with its rounds and seconds
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
 //                        POST /main/eval, to keep it in the profile of the brain serving now. Nothing else runs.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, renameSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute, basename } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -109,7 +112,7 @@ if (STORE) {
   try { json = JSON.parse(text); } catch {}
   if (!r.ok) { console.error(`Not kept (${r.status}): ${json?.error || text.slice(0, 300)}`); process.exit(1); }
   console.log(json?.says || 'Kept.');
-  process.exit(json?.stored === false ? 1 : 0);
+  process.exit(json?.stored === false && !json?.waiting ? 1 : 0);
 }
 
 // --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api: no tunnel needed. The relay below passes the stand-in
@@ -277,16 +280,45 @@ async function markOf() {
     const { build } = await (await fetch(`${fleet.base}/health`)).json();
     const catalog = await fetch(`${fleet.base}/actions`).then(r => r.json()).catch(() => null);
     if (!catalog?.brain) return { build, reads: null, readsWhy: 'This build shows no brain catalog (GET /actions), so what its brain reads can’t be marked: it is from before the mark.' };
-    return { build, reads: brainReadsOf(await brainSent(fleet)) };
+    return { build, reads: brainReadsOf(await brainSent(fleet, { start: startMock })) };
   } finally { await fleet.stop(); }
 }
+// The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
+// what it runs (its image's id, its weights' snapshots), from that console's GET /v1/models (--console, else the
+// --brain-url console, else the one address): the one route a compute Spark may reach. The stand-in consoles below run what it runs, so their key is its key and
+// the record can be kept there; a run asked as another setup than the one serving is refused before anything runs.
+const SERVING = STAND_IN ? null : await (async () => {
+  const at = String(arg('console', BRAIN_URL || CONSOLE)).replace(/\/$/, '');
+  const seen = await fetch(`${at}/v1/models`, { signal: AbortSignal.timeout(60000) }).then(r => r.json()).catch(() => null);
+  const inUse = seen?.spark_console?.brain, cfg = JSON.parse(readFileSync(join(TREE || join(TEST_DIR, '..'), 'service', 'config.json'), 'utf8')).main?.presets || {};
+  const asked = SETUP || Object.keys(cfg)[0];
+  if (inUse?.setup && inUse.setup !== asked) { console.error(`Spark Console at ${at} serves ${inUse.setup}, and this run would ask the brain as ${asked}: the record would be for the wrong brain. Run it with --setup ${inUse.setup}.`); process.exit(1); }
+  const ran = inUse?.ran && /^sha256:[0-9a-f]{1,64}$/.test(String(inUse.ran.image)) && /^[\w.-]{1,100}$/.test(String(inUse.ran.model)) ? inUse.ran : null;
+  if (!ran || !/^[0-9a-f]{16}$/.test(String(inUse.key))) console.error(`Spark Console at ${at} doesn't say what its brain runs (a build from before R52, or its model isn't up): this run's record can't be kept there.`);
+  return { at, setup: inUse?.setup || null, key: inUse?.key || null, setupKey: inUse?.setupKey || null, ran };
+})();
+// A stand-in console runs what the serving brain runs: its container's image id and its weights' snapshot names.
+function runAs(root, setup, ran) {
+  if (!ran) return;
+  writeFileSync(join(root, 'spark2', '.mock', `imageid-${setup.container || 'sparkie-main'}`), ran.image);
+  if (setup.store === 'models') return;
+  for (const [repo, snap] of [[setup.model, ran.model], [setup.draft, ran.draft]]) {
+    const d = join(root, 'spark2', '.cache', 'huggingface', 'hub', `models--${repo}`);
+    if (!repo || !/^[\w.-]{1,100}$/.test(String(snap || '')) || !existsSync(join(d, 'refs', 'main'))) continue;
+    const now = readFileSync(join(d, 'refs', 'main'), 'utf8').trim();
+    if (now !== snap) { renameSync(join(d, 'snapshots', now), join(d, 'snapshots', snap)); writeFileSync(join(d, 'refs', 'main'), snap); }
+  }
+}
+
 const STARTED = new Date().toISOString(), MARK = await markOf();
 let BRAIN_SEEN = null;
 
 async function runCase(c) {
   let link = null, setup = null;
   const fleet = await startMock({
-    watchMs: 60000, statusMs: 5000, knowledge: true, env: { ...(CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {}), ...(OFF.length ? { SPARK_CONSOLE_MEMORY_OFF: OFF.join(',') } : {}) },
+    // (its own recorded eval, start-mock.mjs: the rail lets a clear change run at once there, as on a checked brain; the
+    // real brain's check takes longer than the stand-in's)
+    watchMs: 60000, statusMs: 5000, knowledge: true, evalWaitMs: STAND_IN ? 20000 : 300000, env: { ...(CAP ? { SPARK_CONSOLE_TOOL_CAP: CAP } : {}), ...(OFF.length ? { SPARK_CONSOLE_MEMORY_OFF: OFF.join(',') } : {}) },
     // Sparkie's model is the real one (or the stand-in's), through the relay; everything else is the practice fleet.
     prepare: async ({ stateDir, root }) => {
       // An app on Spark 3 that isn't running (keep-app: keeping it running starts it).
@@ -302,6 +334,7 @@ async function runCase(c) {
       link = await relay(STAND_IN ? `http://127.0.0.1:${m.presets[m.current].port}` : BRAIN, c.say, STAND_IN && JSON.stringify(c.standIn || []).includes('"$record"') ? msgs => fillRecord(c, stateDir, msgs) : null);
       for (const p of Object.values(m.presets)) p.port = link.port;
       setup = { id: m.current, ...m.presets[m.current] };
+      runAs(root, setup, SERVING?.ran);
       writeFileSync(f, JSON.stringify(m));
       seedCase(c, stateDir);
     },
@@ -342,6 +375,12 @@ async function runCase(c) {
       try { inUse = JSON.parse((await api('/actions/sparkie_setup', {})).text)?.brainCheck?.inUse || null; } catch {}
       BRAIN_SEEN = { standIn: STAND_IN, key: /^[0-9a-f]{16}$/.test(String(inUse?.key)) ? inUse.key : null, setup: inUse?.setup || setup.id, model: inUse?.model || (setup.model ? String(setup.model).replace('--', '/') : null),
         engine: inUse?.engine || setup.engine || null, image: inUse?.image || setup.image || null, flags: (inUse?.flags || setup.args || []).map(String) };
+      // (the serving brain's own setup, as this tree has it: the same key, or this run is for another brain)
+      if (SERVING?.ran && (inUse?.setupKey !== SERVING.setupKey || inUse?.key !== SERVING.key)) {
+        await fleet.stop();
+        console.error(`The brain ${SERVING.at} serves (${SERVING.setup}, key ${SERVING.key}) isn't the one this tree's ${setup.id} describes (key ${inUse?.key || 'not known'}): its model, engine, image, flags, how it is asked or its limits differ. Nothing was scored.`);
+        process.exit(1);
+      }
     }
     const msg = done.message || {};
     const audit = existsSync(join(fleet.stateDir, 'audit.jsonl')) ? readFileSync(join(fleet.stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(l => l.chat === (chat ?? r.chat)) : [];
