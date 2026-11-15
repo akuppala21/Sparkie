@@ -190,7 +190,7 @@ async function runCase(c) {
     if (!BRAIN_SEEN) {
       let inUse = null;
       try { inUse = JSON.parse((await api('/actions/sparkie_setup', {})).text)?.brainCheck?.inUse || null; } catch {}
-      BRAIN_SEEN = { standIn: STAND_IN, key: /^[0-9a-f]{16}$/.test(String(inUse?.key)) ? inUse.key : null, setup: inUse?.setup || setup.id, model: inUse?.model || setup.model || null,
+      BRAIN_SEEN = { standIn: STAND_IN, key: /^[0-9a-f]{16}$/.test(String(inUse?.key)) ? inUse.key : null, setup: inUse?.setup || setup.id, model: inUse?.model || (setup.model ? String(setup.model).replace('--', '/') : null),
         engine: inUse?.engine || setup.engine || null, image: inUse?.image || setup.image || null, flags: (inUse?.flags || setup.args || []).map(String) };
     }
     const msg = done.message || {};

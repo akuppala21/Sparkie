@@ -177,10 +177,11 @@ describe('the brain eval’s record, and where it is kept', { concurrency: 1 }, 
     const older = await keep({ ...A, at: at(3600) });
     assert.deepEqual([older.status, older.json.stored, older.json.kept], [200, false, 5]);
     assert.match(older.json.says, /5 newer results are kept/);
-    for (let i = 1; i <= 6; i++) assert.equal((await keep({ ...A, reads: `${'ab'.repeat(31)}0${i}`, at: at(86400 + i) })).status, 201);
+    for (let i = 6; i >= 1; i--) assert.equal((await keep({ ...A, reads: `${'ab'.repeat(31)}0${i}`, at: at(86400 + i) })).status, 201, String(i));
     const slots = Object.keys(profiles(fleet)[mine.key].evals);
     assert.equal(slots.length, 6);
     assert.ok(slots.includes(slot) && slots.includes(`${A.reads}:${B.set}`), slots.join(' '));
+    assert.deepEqual(slots.filter(s => s.startsWith('abab')).map(s => s.slice(62, 64)).sort(), ['01', '02', '03', '04'], 'the two oldest went');
     assert.equal((await brainCheck()).eval.state, 'on record');
   });
 
