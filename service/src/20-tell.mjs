@@ -4,11 +4,13 @@
 // Timers: none        Wakes: none
 // tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13,
 // docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on
-// with a request made there, and Spark Console's own fixed lines (pairing, /status, "restarted while answering"). Never
+// with a request made there, Spark Console's own fixed lines (pairing, /status, "restarted while answering"), and an ask
+// that waits for the owner's yes, with its buttons (20-tg-approve.mjs, only while approvals from Telegram are on). Never
 // heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the
 // needs-me line at the end of this part. Every send is plain text with link previews off and secrets hidden, and is on
 // the record (its kind and size, never its text).
 const TELL_WHY = new Set([
+  'ask',
   'carry',
   'needs',
   'reply',
@@ -134,9 +136,10 @@ async function tellCarry(convId, message) {
   if (held.length) return tell('result', held.join('\n'));
   return false;
 }
-// What a Sparkie answer says on Telegram: its words, and a line for anything that waits in Spark Console.
+// What a Sparkie answer says on Telegram: its words, and a line for anything that waits in Spark Console (an owner-only
+// button that went to Telegram as its own ask doesn't).
 function tellReplyText(message) {
-  const waiting = (message.choices || []).some(c => c.state === 'open' && pendingChoices.get(c.id)?.ownerOnly);
+  const waiting = (message.choices || []).some(c => c.state === 'open' && pendingChoices.get(c.id)?.ownerOnly && !tgAsks.has(c.id));
   return `${String(message.content || '').trim()}${waiting ? '\n\nThat one waits for you in Spark Console.' : ''}`;
 }
 // Its buttons on Telegram: only the plain ones (never an owner-only one), at most 4.
