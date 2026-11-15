@@ -349,8 +349,10 @@ holds it for the command and everything the command starts. The helper runs no w
   it). In every home folder: `.ssh` but for `authorized_keys`, `known_hosts`, `config` and `*.pub` (plain files,
   put back read-only); `.gnupg`; `.docker` whole (a change could steer every `docker` the console runs through its
   `config.json`); `.config/code-server`; the token files of 2.3; shell histories; Spark Console's secrets folder;
-  its state folder whole, with every plain file in it put back read-only but the sign-in files and the sockets
-  (`api.sock`, the door's), so a name the console later renames into place there is never seen; and
+  its state folder whole, with every plain file in it put back read-only but the sign-in files, the sockets
+  (`api.sock`, the door's) and the owner's words (`chats.json`, `memory.json`, `memory-past.json`, `audit.jsonl`,
+  `saved-workflows.json` and the copies beside them: R43 keeps them from every agent key, and a look must not be the
+  way round), so a name the console later renames into place there is never seen; and
   `~/.local/share/spark-console` (old texts, state copies, snapshots). On the system: `/run`; `/root`;
   `/etc/shadow*` and `/etc/gshadow*`; the host keys in `/etc/ssh`; `/etc/ssl/private`; `/etc/netplan` and
   NetworkManager's connections; `/var/lib/tailscale`; Docker's and containerd's data folders;
