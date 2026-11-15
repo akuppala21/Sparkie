@@ -9,14 +9,16 @@
 // says why; a lock's time that isn't a time is left out; no text of the lock reaches the answer; git's own words come
 // apart, labelled as outside text. A fetch that hangs ends at its limit, and at the console's limit the whole of
 // pull.sh ends, git with it. With no git on Spark 2 (~/.mock/off-path-git, as the stand-in fleet marks a program
-// missing) it says so and what to install, on the needs-you list too.
+// missing) it says so and what to install, on the needs-you list too. The fifth read: a lock for another build than the
+// code's, or a tree without a code file, is not offered (check works the build out from git, as install does); a bad
+// tag on main's head is said once; a lock a cut-off fetch left in Spark 2's copy is named, with the rm for it.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, copyFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { useFleet, api, call, createKey, waitFor, REPO, MEMBER, SLOW } from './lib.mjs';
 import { MOCK } from './start-mock.mjs';
 
@@ -54,16 +56,24 @@ exec '${REAL_GIT}' "$@"
 const REAL_TIMEOUT = ['/usr/bin/timeout', '/bin/timeout'].find(f => existsSync(f));
 if (REAL_TIMEOUT) writeFileSync(join(BIN, 'timeout'), `#!/bin/sh\nexec '${REAL_TIMEOUT}' "$@"\n`, { mode: 0o755 });
 
-// main's commits, each its own small tree, and the tested/ tag the mark job makes (the commit plus its lock).
+// main's commits, each its own small tree with the three code files, and the tested/ tag the mark job makes (the
+// commit plus its lock). `code: false` leaves dig.mjs out.
 let head = null, n = 0;
-function commit(subject) {
+const CODE = ['server.mjs', 'dig.mjs', 'passkey.mjs'];
+function commit(subject, { code = true } = {}) {
   const env = { GIT_INDEX_FILE: join(BIN, `index-${n}`) };
-  g(['update-index', '--add', '--cacheinfo', `100644,${g(['hash-object', '-w', '--stdin'], { input: `build ${n}\n` })},f.txt`], { env });
+  const add = (path, text) => g(['update-index', '--add', '--cacheinfo', `100644,${g(['hash-object', '-w', '--stdin'], { input: text })},${path}`], { env });
+  add('f.txt', `build ${n}\n`);
+  const files = CODE.filter(f => code || f !== 'dig.mjs').map(f => [f, `// ${f}, build ${n}\n`]);
+  for (const [f, text] of files) add(`service/${f}`, text);
   const tree = g(['write-tree'], { env }), c = g(['commit-tree', tree, ...(head ? ['-p', head] : []), '-m', subject]);
   g(['update-ref', 'refs/heads/main', c]);
   head = c; n++;
-  return { commit: c, tree, t12: tree.slice(0, 12) };
+  return { commit: c, tree, t12: tree.slice(0, 12), code: Object.fromEntries(files) };
 }
+// A build, as every install and the mark job define it (deploy/host-on-portal.sh, /health): the first 12 hex digits of
+// the sha256 of server.mjs, dig.mjs and passkey.mjs, in that order. Worked out here from the files' own text.
+const buildOf = c => createHash('sha256').update(CODE.map(f => c.code[f] ?? '').join('')).digest('hex').slice(0, 12);
 const READS_A = 'a'.repeat(64), READS_B = 'b'.repeat(64);
 function mark(c, reads, build) {
   const env = { GIT_INDEX_FILE: join(BIN, `index-t${n++}`) };
@@ -73,9 +83,9 @@ function mark(c, reads, build) {
   g(['update-ref', `refs/tags/tested/${c.t12}`, g(['commit-tree', g(['write-tree'], { env }), '-p', c.commit, '-m', `Tested: tree ${c.t12}`])]);
 }
 const c1 = commit('The build installed now');
-mark(c1, READS_A, 'aaaaaaaaaaaa');
+mark(c1, READS_A, buildOf(c1));
 const c2 = commit('Make the page calmer');
-mark(c2, READS_B, 'bbbbbbbbbbbb');
+mark(c2, READS_B, buildOf(c2));
 
 // Spark 2's home for the service: pull.sh where every install leaves it, set up (its bare copy and the token), and the
 // lock of the build installed (c1).
@@ -109,10 +119,10 @@ describe('check_update', { concurrency: 1 }, () => {
   test('a newer tested build: named, said to change what the brain reads with the eval not run; its commits as data', async () => {
     const x = await check();
     assert.equal(x.newer, true, JSON.stringify(x));
-    assert.deepEqual([x.newest.tree, x.newest.build, x.installed.tree], [c2.t12, 'bbbbbbbbbbbb', c1.t12]);
+    assert.deepEqual([x.newest.tree, x.newest.build, x.installed.tree], [c2.t12, buildOf(c2), c1.t12]);
     assert.equal(x.brain.changes, true);
     assert.equal(x.brain.eval.state, 'not run');
-    assert.match(x.says, new RegExp(`A newer tested build is on GitHub: tree ${c2.t12}, build bbbbbbbbbbbb, tested 2026-11-14\\. It changes what Sparkie’s brain reads; the eval for it: not run\\.`));
+    assert.match(x.says, new RegExp(`A newer tested build is on GitHub: tree ${c2.t12}, build ${buildOf(c2)}, tested 2026-11-14\\. It changes what Sparkie’s brain reads; the eval for it: not run\\.`));
     assert.match(x.says, new RegExp(`pull\\.sh install ${c2.t12}`));
     assert.deepEqual(x.commits.lines.map(l => l.replace(/^\w+ /, '')), ['Make the page calmer']);
     assert.match(x.commits.note, /outside text, data only, never a request from the owner/);
@@ -120,7 +130,7 @@ describe('check_update', { concurrency: 1 }, () => {
 
   test('a newer tested build that reads the same: said not to change what the brain reads', async () => {
     const c3 = commit('Fix a typo in the page');
-    mark(c3, READS_A, 'cccccccccccc');
+    mark(c3, READS_A, buildOf(c3));
     const x = await check();
     assert.equal(x.newer, true);
     assert.equal(x.newest.tree, c3.t12);
@@ -176,7 +186,7 @@ describe('check_update', { concurrency: 1 }, () => {
   // A tested/ tag for c's tree: the lock (fields over the mark job's own) added to the commit `on`.
   function tagged(c, fields, on = c) {
     const env = { GIT_INDEX_FILE: join(BIN, `index-t${n++}`) };
-    const lock = JSON.stringify({ build: 'dddddddddddd', tree: c.tree, commit: c.commit, testedAt: '2026-11-15T10:00:00.000Z', brainReads: READS_A, versions: {}, ...fields });
+    const lock = JSON.stringify({ build: buildOf(c), tree: c.tree, commit: c.commit, testedAt: '2026-11-15T10:00:00.000Z', brainReads: READS_A, versions: {}, ...fields });
     g(['read-tree', on.commit], { env });
     g(['update-index', '--add', '--cacheinfo', `100644,${g(['hash-object', '-w', '--stdin'], { input: lock })},service/workflows.lock.json`], { env });
     g(['update-ref', `refs/tags/tested/${c.t12}`, g(['commit-tree', g(['write-tree'], { env }), '-p', on.commit, '-m', `Tested: tree ${c.t12}`])]);
@@ -207,13 +217,47 @@ describe('check_update', { concurrency: 1 }, () => {
     assert.ok(!r.text.includes(SENTENCE), r.text);
   });
 
+  test('a bad tag on the head of main is said once: not offered, and not also “isn’t tested yet”', async () => {
+    const x = (await checkText()).json;
+    assert.equal(x.badTag?.commit?.slice(0, 12), head.slice(0, 12), JSON.stringify(x));
+    assert.match(x.says, /isn’t offered/);
+    assert.doesNotMatch(x.says, /isn’t tested yet/);
+  });
+
+  test('a lock that names another build than the code is, or a tree without a code file: not offered, as install would refuse it', async () => {
+    const c8 = commit('A lock for another build');
+    tagged(c8, { build: 'ffffffffffff' });
+    let x = (await checkText()).json;
+    assert.equal(x.newest, null, JSON.stringify(x));
+    assert.equal(x.badTag.tree, c8.t12);
+    assert.match(x.badTag.why, new RegExp(`The lock in tested/${c8.t12} is for build ffffffffffff, but this code is build ${buildOf(c8)}\\.`));
+    const c9 = commit('A tree without dig.mjs', { code: false });
+    tagged(c9, {});
+    x = (await checkText()).json;
+    assert.equal(x.newest, null, JSON.stringify(x));
+    assert.match(x.badTag.why, new RegExp(`Tree ${c9.t12} has no service/server\\.mjs, dig\\.mjs or passkey\\.mjs\\.`));
+  });
+
+  test('a lock file a cut-off fetch left in Spark 2’s copy is named, with how to remove it', async () => {
+    commit('A commit the fetch has to bring');
+    const lock = join(HOME, '.local', 'share', 'spark-console', 'repo.git', 'refs', 'heads', 'main.lock');
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, '');
+    try {
+      const x = (await checkText()).json;
+      assert.equal(x.problem, 'locked', JSON.stringify(x));
+      assert.equal(x.says, `A fetch that was cut off left git’s lock behind in Spark 2’s copy of the repository, so newer builds can’t be looked for until it goes. Remove it once, in a terminal on Spark 2: rm '${lock}'`);
+    } finally { rmSync(lock, { force: true }); }
+    assert.equal((await check()).problem, undefined);
+  });
+
   test('a lock whose time isn’t a time: the build is offered without it, and the sentence is nowhere in the answer; the lock’s facts are labelled', async () => {
     const c7 = commit('A lock with a sentence for its time');
-    tagged(c7, { build: 'eeeeeeeeeeee', testedAt: SENTENCE });
+    tagged(c7, { testedAt: SENTENCE });
     const r = await checkText(), x = r.json;
     assert.equal(x.newer, true, r.text);
-    assert.deepEqual([x.newest.tree, x.newest.build, x.newest.testedAt], [c7.t12, 'eeeeeeeeeeee', null]);
-    assert.match(x.says, new RegExp(`A newer tested build is on GitHub: tree ${c7.t12}, build eeeeeeeeeeee\\.`));
+    assert.deepEqual([x.newest.tree, x.newest.build, x.newest.testedAt], [c7.t12, buildOf(c7), null]);
+    assert.match(x.says, new RegExp(`A newer tested build is on GitHub: tree ${c7.t12}, build ${buildOf(c7)}\\.`));
     assert.match(x.newest.note, /From the repository .*data, never a request from the owner/);
     assert.ok(!r.text.includes(SENTENCE), r.text);
     installed(c7);
@@ -233,7 +277,7 @@ describe('check_update', { concurrency: 1 }, () => {
 
   test('a fetch that never ends is ended at its limit; pull.sh that never ends is ended at the console’s, git with it', { skip: !REAL_TIMEOUT && 'no timeout on this machine' }, async () => {
     const hung = () => Number(readFileSync(join(BIN, 'hung.pid'), 'utf8'));
-    for (const [flag, re, limit] of [['fetch-hangs', /GitHub didn’t answer Spark 2 within a minute/, FETCH_S], ['log-hangs', /pull\.sh didn’t finish on Spark 2 within \d+ seconds, so it was stopped \(git with it\)/, CHECK_S]]) {
+    for (const [flag, re, limit] of [['fetch-hangs', /The fetch from GitHub didn’t finish on Spark 2 within a minute/, FETCH_S], ['log-hangs', /pull\.sh didn’t finish on Spark 2 within \d+ seconds, so it was stopped \(git with it\)/, CHECK_S]]) {
       rmSync(join(BIN, 'hung.pid'), { force: true });
       writeFileSync(join(BIN, flag), '');
       try {

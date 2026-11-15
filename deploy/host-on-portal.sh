@@ -24,6 +24,8 @@
 #   (the saved snapshots, chats included, stay in ~/.local/share/spark-console on Spark 2 until you delete them)
 set -euo pipefail
 HOST="${1:-akuppala@100.79.155.126}"
+# (--stand-in, after the host: the stand-in fleet's tests, through pull.sh; it reaches install.sh as an argument only)
+STAND_IN=''; [ "${2:-}" != --stand-in ] || STAND_IN=' --stand-in'
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # The page's files, one a line in this order: the page's build stamp is the hash of them read in this order.
 UI_FILES=(
@@ -89,7 +91,9 @@ cp "$HERE/deploy/path-check.sh" "$STAGE/"
 API_BUILD="$(cd "$STAGE/service" && cat server.mjs dig.mjs passkey.mjs | shasum -a 256 | cut -c1-12)"
 # The whole source goes along and is kept on Spark 2 (~/spark-console-src), so Spark 2 can rebuild, test and install
 # without this Mac (2026-11-11, reviews: "truly standalone").
-COPYFILE_DISABLE=1 tar -C "$HERE" --exclude='.DS_Store' --exclude='node_modules' -cf "$STAGE/source.tar" \
+# The eval's held-out set (test/eval/memory-held-out.json) is never sent: it tests a brain, so the brain must never be
+# able to read it once commands reach Spark 2. Nothing the console runs reads it (the eval runs it from this machine).
+COPYFILE_DISABLE=1 tar -C "$HERE" --exclude='.DS_Store' --exclude='node_modules' --exclude='test/eval/memory-held-out.json' -cf "$STAGE/source.tar" \
   $(cd "$HERE" && ls -d AGENTS.md README.md agentbar deploy docs public service test tools 2>/dev/null)
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 # The lock has to be for THIS code: a tree one change ahead of its test run would install with every workflow off
@@ -117,12 +121,15 @@ API="$STATE/api.sock"
 UNIT="$HOME/.config/systemd/user/spark-console-api.service"
 REL="$HOME/.local/share/spark-console/releases"
 fail() { echo "  STOP: $*" >&2; exit 1; }
+# The stand-in fleet's tests say --stand-in, last (an argument only: the environment never switches it, R53).
+STAND_IN=''
+if [ $# -gt 0 ] && [ "${!#}" = --stand-in ]; then STAND_IN=1; set -- "${@:1:$(($# - 1))}"; fi
 # Every program the console's commands call has to be on the fixed path (R53): path-check.sh, beside this script, says
-# which isn't. Asked before anything changes; a miss refuses, naming each. (On the stand-in fleet a test marks one
-# missing with ~/.mock/off-path-<program>, as the console's own look reads it; the list is path-check.sh's.)
+# which isn't. Asked before anything changes; a miss refuses, naming each. (With --stand-in a test marks one missing
+# with ~/.mock/off-path-<program>, as the console's own look reads it; the list is path-check.sh's.)
 path_check() {
   local out p
-  if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -f "$IN/path-check.sh" ]; then
+  if [ -n "$STAND_IN" ] && [ -f "$IN/path-check.sh" ]; then
     out=''
     for p in $(sed -n 's/^for p in \(.*\); do$/\1/p' "$IN/path-check.sh"); do [ ! -e "$HOME/.mock/off-path-$p" ] || out="$out $p"; done
     [ -z "$out" ] && return 0
@@ -232,7 +239,7 @@ if [ "${1:-}" = verify ]; then
   exit 0
 fi
 
-[ "${1:-}" = install ] && [ $# = 4 ] || fail "Usage: install.sh check | verify | install <stamp> <build> <host>"
+[ "${1:-}" = install ] && [ $# = 4 ] || fail "Usage: install.sh check | verify | install <stamp> <build> <host>   (tests add --stand-in)"
 STAMP="$2" API_BUILD="$3" HOST="$4"
 [[ "$STAMP" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] && [[ "$API_BUILD" =~ ^[0-9a-f]{12}$ ]] || fail "Unexpected snapshot name or build: $STAMP $API_BUILD"
 path_check
@@ -294,7 +301,10 @@ on_exit() {
   if [ "$code" != 0 ] && [ "$PHASE" = changing ]; then
     if [ -n "$SNAP" ] && [ -f "$SNAP/restore.sh" ]; then
       echo "  Putting the previous install back (its files only; state stays as it is) ..." >&2
+      # (with --stand-in, its restore.sh is told so by a mark beside it, there only while this put-back runs)
+      [ -z "$STAND_IN" ] || : > "$SNAP/stand-in"
       bash "$SNAP/restore.sh" > "$SNAP/restore.log" 2>&1; back=$?
+      rm -f "$SNAP/stand-in"
       sed 's/^/  /' "$SNAP/restore.log" >&2
       if [ "$back" = 0 ]; then echo "  STOP: The update was not kept. The previous version is running again. Fix the problem above and run this again." >&2
       else echo "  STOP: The update was not kept, and the previous version isn't answering either. Its snapshot is $SNAP." >&2; fi
@@ -345,9 +355,14 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 #   bash restore.sh [--with-state]
 set -euo pipefail
 # Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH.
+# They say so with --stand-in (or the installer that runs this, by a mark beside it): never the environment.
+WITH_STATE='' SPARK_CONSOLE_ALL_LOCAL=''
+for a in "$@"; do
+  case "$a" in --with-state) WITH_STATE=1 ;; --stand-in) SPARK_CONSOLE_ALL_LOCAL=1 ;; *) echo "Usage: bash $0 [--with-state]" >&2; exit 2 ;; esac
+done
+[ ! -e "${0%/*}/stand-in" ] || SPARK_CONSOLE_ALL_LOCAL=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$(cd "$(dirname "$0")" && pwd)"
-case "${1:-}" in ''|--with-state) ;; *) echo "Usage: bash $0 [--with-state]" >&2; exit 2 ;; esac
 # put_back <saved> <live>: the live folder's contents become exactly the saved ones. It stays the same folder, so
 # Tailscale's routes keep pointing at it.
 put_back() { if [ -d "$1" ]; then mkdir -p "$2"; find "$2" -mindepth 1 -delete; cp -a "$1/." "$2/"; fi; }
@@ -361,7 +376,7 @@ put_back "$S/spark-console-service" "$HOME/spark-console-service"
 if [ -f "$S/spark-console-api.service" ]; then
   mkdir -p "$HOME/.config/systemd/user"; cp -p "$S/spark-console-api.service" "$HOME/.config/systemd/user/"
 fi
-if [ "${1:-}" = --with-state ] && [ -d "$S/state" ]; then
+if [ -n "$WITH_STATE" ] && [ -d "$S/state" ]; then
   mkdir -p "$HOME/.local/state/spark-console"
   for f in "$S/state"/* "$S/state"/.[!.]* "$S/state"/..?*; do
     [ -e "$f" ] && [ "${f##*/}" != sessions.json ] || continue
@@ -524,36 +539,44 @@ fi
 mkdir -p "$HOME/.local/share/spark-console"
 cat > "$HOME/.local/share/spark-console/watchdog.sh" <<'DOG'
 #!/usr/bin/env bash
-# Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH.
+# Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH,
+# and say so with --stand-in (never the environment).
+SPARK_CONSOLE_ALL_LOCAL=''; [ "${1:-}" != --stand-in ] || SPARK_CONSOLE_ALL_LOCAL=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$HOME/.local/state/spark-console"; U=spark-console-api; D="$HOME/.local/share/spark-console"
+# put <file> <text>: the file becomes that text whole, by a new file renamed over it, never written through a link that
+# is there; read <file>: its text, or nothing when it is a link.
+put() { local t; t=$(mktemp "$S/.watchdog.XXXXXX") || return 0; if printf '%s\n' "$2" > "$t"; then mv -f "$t" "$1"; else rm -f "$t"; fi; }
+read_plain() { [ -L "$1" ] || cat "$1" 2>/dev/null; }
 state=$(systemctl --user show -p ActiveState --value "$U" 2>/dev/null)
 restart() {
-  now=$(date +%s); recent=$(awk -v n="$now" 'n - $1 < 3600' "$S/watchdog-restarts" 2>/dev/null | wc -l)
+  now=$(date +%s); recent=$(read_plain "$S/watchdog-restarts" | awk -v n="$now" '$1 ~ /^[0-9]+$/ && n - $1 < 3600' | wc -l)
   [ "$recent" -lt 3 ] || { logger -t spark-console-watchdog "not restarting: 3 restarts in the last hour already"; return 0; }
-  echo "$now" >> "$S/watchdog-restarts"; echo 0 > "$S/watchdog-misses"
+  # (the restarts of the last day, kept as numbers; the console counts them for its needs-you line)
+  put "$S/watchdog-restarts" "$( { read_plain "$S/watchdog-restarts" | awk -v n="$now" '$1 ~ /^[0-9]+$/ && n - $1 < 86400 { print $1 }'; echo "$now"; } )"
+  put "$S/watchdog-misses" 0
   logger -t spark-console-watchdog "restarting Spark Console: $1"
   systemctl --user reset-failed "$U" 2>/dev/null; systemctl --user restart "$U"
 }
 case "$state" in
   failed) restart "systemd gave up on it" ;;
   active|activating)
-    if curl -q -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then echo 0 > "$S/watchdog-misses"; rm -f "$S/watchdog-silent-since"; exit 0; fi
+    if curl -q -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then put "$S/watchdog-misses" 0; rm -f "$S/watchdog-silent-since"; exit 0; fi
     # (read as text first: only plain digits count, so nothing in the file is ever worked out as an expression)
-    m=$(cat "$S/watchdog-misses" 2>/dev/null); [[ "$m" =~ ^[0-9]+$ ]] || m=0
-    m=$((10#$m + 1)); echo "$m" > "$S/watchdog-misses"
+    m=$(read_plain "$S/watchdog-misses"); [[ "$m" =~ ^[0-9]+$ ]] || m=0
+    m=$((10#$m + 1)); put "$S/watchdog-misses" "$m"
     [ "$m" -lt 3 ] || restart "it didn't answer /health 3 minutes in a row" ;;
   *) rm -f "$S/watchdog-silent-since"; exit 0 ;;
 esac
 # Silent for 15 minutes within a day of an install (install-mark): go back a build, once. Never while an update's own
 # way back is armed (update-guard.sh decides then), and never for a console stopped on purpose (above).
-now=$(date +%s); since=$(cat "$S/watchdog-silent-since" 2>/dev/null)
-[[ "$since" =~ ^[0-9]+$ ]] || { echo "$now" > "$S/watchdog-silent-since"; exit 0; }
+now=$(date +%s); since=$(read_plain "$S/watchdog-silent-since")
+[[ "$since" =~ ^[0-9]+$ ]] || { put "$S/watchdog-silent-since" "$now"; exit 0; }
 mark=$(cut -d' ' -f1 "$D/install-mark" 2>/dev/null)
 if [ $((now - since)) -ge 900 ] && [[ "$mark" =~ ^[0-9]+$ ]] && [ $((now - mark)) -lt 86400 ] && [ ! -e "$D/update-guard" ]; then
   rm -f "$D/install-mark" "$S/watchdog-silent-since"
   logger -t spark-console-watchdog "going back a build: silent for 15 minutes within a day of an install"
-  bash "$D/go-back.sh" >/dev/null 2>&1
+  bash "$D/go-back.sh" ${SPARK_CONSOLE_ALL_LOCAL:+--stand-in} >/dev/null 2>&1
 fi
 DOG
 chmod 700 "$HOME/.local/share/spark-console/watchdog.sh"
@@ -621,7 +644,7 @@ echo "Connecting to $HOST. Your password is asked once and reused for the steps 
 
 echo "Copying build $BUILD to a holding folder on Spark 2 (nothing installed changes yet) and checking it …"
 PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh path-check.sh source.tar "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
-  'I="$HOME/.cache/spark-console/incoming"; rm -rf "$I" && mkdir -p "$I" && tar --warning=no-unknown-keyword -C "$I" -xf - && bash "$I/install.sh" check')
+  'I="$HOME/.cache/spark-console/incoming"; rm -rf "$I" && mkdir -p "$I" && tar --warning=no-unknown-keyword -C "$I" -xf - && bash "$I/install.sh" check'"$STAND_IN")
 PRE="${PRE##*$'\n'}"
 case "$PRE" in
   'busy down') echo "  The service isn't answering right now (expected on a first install)." ;;
@@ -642,7 +665,7 @@ esac
 printf -v HOST_Q '%q' "$HOST"
 SKIP=''; if [ "${SKIP_CHAT_CHECK:-}" = 1 ]; then SKIP='SKIP_CHAT_CHECK=1 '; fi
 if [ "${SKIP_ROUTES:-}" = 1 ]; then SKIP="${SKIP}SKIP_ROUTES=1 "; fi
-"${SSH[@]}" "$HOST" "${SKIP}bash \"\$HOME/.cache/spark-console/incoming/install.sh\" install $STAMP $API_BUILD $HOST_Q" \
+"${SSH[@]}" "$HOST" "${SKIP}bash \"\$HOME/.cache/spark-console/incoming/install.sh\" install $STAMP $API_BUILD $HOST_Q$STAND_IN" \
   || { echo; echo "The install stopped (see above). The routes on port 8443 weren't touched." >&2; exit 1; }
 
 if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "The /console routes on port 8443 weren't checked (SKIP_ROUTES=1: no tailscale or sudo)."
