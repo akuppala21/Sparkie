@@ -7353,16 +7353,16 @@ function noteSparkStates(nodes) {
       if (n.wall?.answering && typeof n.wall.watts === 'number') s.wall = { at: now, watts: n.wall.watts };
     }
     // Going dark keeps the last readings (under three minutes old); coming back says how long it has been up.
-    const flipped = s.online !== undefined && s.online !== online;
+    const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
     if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
-    // (a Spark back on gets the state's copy if the state changed: with idle Sparks powered off, one may be on only now
-    // and then, 20-state-copy.mjs)
-    if (flipped && online) try { copyOnWake(n.id); } catch {}
+    // (a Spark back on, or seen on for the first time, gets the state's copy if the state changed: with idle Sparks
+    // powered off, one may be on only now and then, 20-state-copy.mjs)
+    if (cameOn) try { copyOnWake(n.id); } catch {}
   }
 }
 function saveKnowledge() {
@@ -9145,16 +9145,18 @@ function needsLines(list = openProblems()) {
 // What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says
 // when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5,
 // contract 6.25):
-// - a compute Spark comes online (the status check sees it come back: by itself, by the owner's hand, or turned on by
-//   Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs);
+// - a compute Spark comes online (the status check sees it come back, or sees it on for the first time: by itself, by
+//   the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy
+//   (copyOnWake, from 19-watcher.mjs);
 // - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one
 //   first, inside the power-off's operation (copyBeforeOff, from 21-power.mjs). It waits for a copy already under way
 //   and then for its own, each no longer than a copy may take (sendCopy: 3 minutes for the stream, 1 for the move). A
 //   copy that fails is on the record (backup.json's last try, and a line in the operation's log), and the power-off
 //   goes ahead;
 // - the hourly look (backupIfDue): it sends only while a Spark is on and the state changed.
-// A copy goes only to a Spark that is awake (copyAwake): never one Spark Console powered off or is powering off, nor
-// one the status check last saw off. Nothing here turns a Spark on.
+// A copy is not use of a Spark: the idle power-off doesn't count it, so copies never keep a Spark on.
+// A copy goes only to a Spark that is awake (copyAwake): one the status check's last look saw on, and never one Spark
+// Console powered off or is powering off. Nothing here turns a Spark on.
 // "Changed" is one mark of the state folder (stateMark): each file's name, size and time, less what Spark Console
 // rewrites by itself as it watches and logs (COPY_IGNORES). The newest good copy keeps its mark (goodMark in
 // backup.json). No copy newer than 7 days, with changes since: one needs-you line (copyLateWords) and one notice
@@ -9195,8 +9197,9 @@ function keepMarks(rec, before, mark) {
   rec.goodMark = rec.ok ? mark : before?.goodMark ?? null;
   if (!rec.good) rec.since = before?.since || rec.at;
 }
-// Awake for a copy: not powered off by Spark Console, not being powered off now, and not seen off by the status check.
-const copyAwake = id => !consoleOff(id) && !sparkOff(id) && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
+// Awake for a copy: the status check's last look saw it on, Spark Console didn't power it off, and isn't powering it off.
+const copyAwake = id => statusCache?.value.nodes.find(x => x.id === id)?.state === 'online' && !consoleOff(id)
+  && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
 
 // A Spark came online: if it may take a copy and the state changed, it gets one (another awake Spark if it fails).
 function copyOnWake(id) {
@@ -9211,7 +9214,14 @@ async function copyBeforeOff(j, ids) {
   try {
     for (const id of ids) {
       for (let i = 0; i < 3 && copyDue(); i++) {
-        for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+        if (backingUp) {
+          step(j, 'Waiting for the copy of Spark Console’s state that is under way');
+          const was = lastBackup;
+          for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+          const b = lastBackup;
+          note(j, backingUp ? 'That copy is still going after 5 minutes; powering off without waiting longer.'
+            : b !== was && b?.ok ? `That copy landed on ${sparkName(nodeById(b.to) || { id: b.to })}` : 'That copy didn’t land');
+        }
         if (backingUp || !copyDue()) break;
         const name = sparkName(nodeById(id) || { id }), before = lastBackup;
         step(j, `Copying Spark Console’s state to ${name} first`);
@@ -14740,8 +14750,8 @@ function sendCopy(target, name) {
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
     // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
     // pattern that matches nothing is an error and no copy would land.)
-    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
-    sparkCalls.set(target.id, Date.now());
+    // (not use of that Spark: the idle power-off doesn't count a copy, and a power-off waits for one under way,
+    // copyBeforeOff in 20-state-copy.mjs)
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -14782,10 +14792,11 @@ async function backupState(first = null) {
 }
 // The hourly look, ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS): a copy only when the state
 // changed and a Spark is awake. With none awake nothing is sent and none is woken (only the very first try is recorded,
-// so the 7 days have a start). A Spark coming online, and one about to be powered off, are 20-state-copy.mjs's.
+// once the status check has looked, so the 7 days have a start). A Spark coming online, and one about to be powered
+// off, are 20-state-copy.mjs's.
 function backupIfDue() {
   if (!copyDue()) return;
-  if (lastBackup && !backupTargets().length) return copyLate();
+  if (!backupTargets().length && (lastBackup || !statusCache)) return copyLate();
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));
 }
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));

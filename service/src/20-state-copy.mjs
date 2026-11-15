@@ -5,16 +5,18 @@
 // What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says
 // when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5,
 // contract 6.25):
-// - a compute Spark comes online (the status check sees it come back: by itself, by the owner's hand, or turned on by
-//   Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs);
+// - a compute Spark comes online (the status check sees it come back, or sees it on for the first time: by itself, by
+//   the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy
+//   (copyOnWake, from 19-watcher.mjs);
 // - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one
 //   first, inside the power-off's operation (copyBeforeOff, from 21-power.mjs). It waits for a copy already under way
 //   and then for its own, each no longer than a copy may take (sendCopy: 3 minutes for the stream, 1 for the move). A
 //   copy that fails is on the record (backup.json's last try, and a line in the operation's log), and the power-off
 //   goes ahead;
 // - the hourly look (backupIfDue): it sends only while a Spark is on and the state changed.
-// A copy goes only to a Spark that is awake (copyAwake): never one Spark Console powered off or is powering off, nor
-// one the status check last saw off. Nothing here turns a Spark on.
+// A copy is not use of a Spark: the idle power-off doesn't count it, so copies never keep a Spark on.
+// A copy goes only to a Spark that is awake (copyAwake): one the status check's last look saw on, and never one Spark
+// Console powered off or is powering off. Nothing here turns a Spark on.
 // "Changed" is one mark of the state folder (stateMark): each file's name, size and time, less what Spark Console
 // rewrites by itself as it watches and logs (COPY_IGNORES). The newest good copy keeps its mark (goodMark in
 // backup.json). No copy newer than 7 days, with changes since: one needs-you line (copyLateWords) and one notice
@@ -55,8 +57,9 @@ function keepMarks(rec, before, mark) {
   rec.goodMark = rec.ok ? mark : before?.goodMark ?? null;
   if (!rec.good) rec.since = before?.since || rec.at;
 }
-// Awake for a copy: not powered off by Spark Console, not being powered off now, and not seen off by the status check.
-const copyAwake = id => !consoleOff(id) && !sparkOff(id) && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
+// Awake for a copy: the status check's last look saw it on, Spark Console didn't power it off, and isn't powering it off.
+const copyAwake = id => statusCache?.value.nodes.find(x => x.id === id)?.state === 'online' && !consoleOff(id)
+  && ![...jobs.values()].some(j => j.status === 'running' && j.type === 'power-off' && (j.nodes || [j.node]).includes(id));
 
 // A Spark came online: if it may take a copy and the state changed, it gets one (another awake Spark if it fails).
 function copyOnWake(id) {
@@ -71,7 +74,14 @@ async function copyBeforeOff(j, ids) {
   try {
     for (const id of ids) {
       for (let i = 0; i < 3 && copyDue(); i++) {
-        for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+        if (backingUp) {
+          step(j, 'Waiting for the copy of Spark Console’s state that is under way');
+          const was = lastBackup;
+          for (const until = Date.now() + COPY_WAIT_MS; backingUp && Date.now() < until;) await sleep(500);
+          const b = lastBackup;
+          note(j, backingUp ? 'That copy is still going after 5 minutes; powering off without waiting longer.'
+            : b !== was && b?.ok ? `That copy landed on ${sparkName(nodeById(b.to) || { id: b.to })}` : 'That copy didn’t land');
+        }
         if (backingUp || !copyDue()) break;
         const name = sparkName(nodeById(id) || { id }), before = lastBackup;
         step(j, `Copying Spark Console’s state to ${name} first`);

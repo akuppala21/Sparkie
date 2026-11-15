@@ -260,16 +260,16 @@ function noteSparkStates(nodes) {
       if (n.wall?.answering && typeof n.wall.watts === 'number') s.wall = { at: now, watts: n.wall.watts };
     }
     // Going dark keeps the last readings (under three minutes old); coming back says how long it has been up.
-    const flipped = s.online !== undefined && s.online !== online;
+    const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
     if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
-    // (a Spark back on gets the state's copy if the state changed: with idle Sparks powered off, one may be on only now
-    // and then, 20-state-copy.mjs)
-    if (flipped && online) try { copyOnWake(n.id); } catch {}
+    // (a Spark back on, or seen on for the first time, gets the state's copy if the state changed: with idle Sparks
+    // powered off, one may be on only now and then, 20-state-copy.mjs)
+    if (cameOn) try { copyOnWake(n.id); } catch {}
   }
 }
 function saveKnowledge() {

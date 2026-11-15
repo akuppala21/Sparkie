@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 51 parts in `service/src/`, joined in name order into `service/server.mjs` (14855 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 51 parts in `service/src/`, joined in name order into `service/server.mjs` (14866 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -302,7 +302,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 - **Wakes:** none
 - **Functions:** `runningChoices`, `servedModel`, `setRoute`, `routeView`, `usedRecently`, `runningModels`, `proxyModel`, `startOnCall`, `sparkieApi`, `proxyBrain`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `CONFIG`, `HttpError`), `03-identity` (`canUse`), `05-library` (`inventory`, `containerName`), `12-status` (`sparkName`), `13-main-model` (`MAIN`, `mainStatus`, `ROUTES`, `saveRoutes`, `routeTarget`, `agentTarget`), `16-actions` (`recentInventory`, `recent`, `runAction`, `mainArg`), `17-changes` (`resolveModelName`, `inRecipes`), `18-workflows` (`consoleStopped`), `20-desired` (`desired`, `waitJob`), `21-power` (`parkedFor`, `offFor`, `powerState`, `wakeNames`), `23-http` (`send`, `readBody`, `sparkAddresses`, `blockedAddresses`), `24-handler` (`clientAddress`), `25-backup-and-start` (`local`)
-- **Used by:** `07-jobs`, `09-verified`, `16-reads`, `17-changes`, `18-workflows`, `21-brain-check`, `21-power`, `24-handler`, `25-backup-and-start`
+- **Used by:** `07-jobs`, `09-verified`, `16-reads`, `17-changes`, `18-workflows`, `21-brain-check`, `21-power`, `24-handler`
 
 ### `16-actions.mjs`: actions: what the console can do, as one list for people, Sparkie and agents
 
@@ -481,15 +481,15 @@ One list of open problems, built by code each time it is asked for, from facts S
 
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
 
-What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5, contract 6.25): - a compute Spark comes online (the status check sees it come back: by itself, by the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs); - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one …
+What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5, contract 6.25): - a compute Spark comes online (the status check sees it come back, or sees it on for the first time: by itself, by the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs); - just before Spark Console powers a Spark off: if the state changed since the newest …
 
 - **Area:** safety. **Rules:** R23, R41. **Tests:** copy.test.mjs, state.test.mjs
-- **Lines:** 114
+- **Lines:** 124
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `stateMark`, `copyDue`, `keepMarks`, `copyAwake`, `copyOnWake`, `copyBeforeOff`, `copyLateNow`, `copyLateWords`, `copyLate`
-- **Uses:** `01-setup` (`STATE_DIR`, `sleep`, `nodeById`, `NODES`), `03-identity` (`writePrivate`), `07-jobs` (`jobs`, `step`, `note`), `12-status` (`sparkName`), `19-watcher` (`sparkOff`, `fleetEvent`), `21-power` (`consoleOff`), `25-backup-and-start` (`BACKUP_ON`, `lastBackup`, `backupTargets`, `backupState`, `backingUp`, `dayOf`, `BACKUP_FILE`)
+- **Uses:** `01-setup` (`STATE_DIR`, `sleep`, `nodeById`, `NODES`), `03-identity` (`writePrivate`), `07-jobs` (`jobs`, `step`, `note`), `12-status` (`statusCache`, `sparkName`), `19-watcher` (`fleetEvent`), `21-power` (`consoleOff`), `25-backup-and-start` (`BACKUP_ON`, `lastBackup`, `backupTargets`, `backupState`, `backingUp`, `dayOf`, `BACKUP_FILE`)
 - **Used by:** `19-watcher`, `20-needs`, `21-power`, `25-backup-and-start`
 
 ### `20-tell.mjs`: telling the owner on Telegram
@@ -721,10 +721,10 @@ Anyone may see the fleet's hardware and load, from the internet too. Internet (F
 People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar …
 
 - **Area:** start. **Rules:** R10, R20, R22, R31, R40. **Tests:** state.test.mjs, copy.test.mjs, fleet.test.mjs, install.test.mjs
-- **Lines:** 152
+- **Lines:** 153
 - **Owns:** backup.json (writers: backupState, copyLate)
 - **Timers:** backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed), needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 - **Wakes:** none
 - **Functions:** `dayOf`, `backupTargets`, `sendCopy`, `backupState`, `backupIfDue`, `refuseUpgrade`, `openSockets`
-- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `CONFIG`, `NODES`, `VERSION`, `BUILD`), `02-ssh` (`knownOffline`, `spawnOn`, `run`), `03-identity` (`readKept`, `writePrivate`), `04-metrics` (`stopSamplers`), `07-jobs` (`draining`, `jobs`), `12-status` (`sparkName`), `15-routes` (`sparkCalls`), `17-changes` (`brainSparks`), `18-workflows` (`noteUpdate`), `20-beat` (`beatStart`, `BEAT_FIRST_MS`), `20-journal` (`journalAfterRestart`), `20-state-copy` (`copyAwake`, `stateMark`, `keepMarks`, `copyLate`, `copyDue`), `20-tell` (`needsMeTick`, `NEEDS_MS`), `21-door` (`doorHandler`, `doorUpgrade`, `DOOR_SOCKET`), `21-editor` (`editorUpgrade`), `21-telegram` (`tgAfterRestart`, `tgLoop`, `tgStop`), `23-http` (`tcpApiOff`, `API_SOCKET`, `recordFault`, `recordCrash`), `24-handler` (`handler`)
+- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `CONFIG`, `NODES`, `VERSION`, `BUILD`), `02-ssh` (`knownOffline`, `spawnOn`, `run`), `03-identity` (`readKept`, `writePrivate`), `04-metrics` (`stopSamplers`), `07-jobs` (`draining`, `jobs`), `12-status` (`sparkName`, `statusCache`), `17-changes` (`brainSparks`), `18-workflows` (`noteUpdate`), `20-beat` (`beatStart`, `BEAT_FIRST_MS`), `20-journal` (`journalAfterRestart`), `20-state-copy` (`copyAwake`, `stateMark`, `keepMarks`, `copyLate`, `copyDue`), `20-tell` (`needsMeTick`, `NEEDS_MS`), `21-door` (`doorHandler`, `doorUpgrade`, `DOOR_SOCKET`), `21-editor` (`editorUpgrade`), `21-telegram` (`tgAfterRestart`, `tgLoop`, `tgStop`), `23-http` (`tcpApiOff`, `API_SOCKET`, `recordFault`, `recordCrash`), `24-handler` (`handler`)
 - **Used by:** `02-ssh`, `03-identity`, `08-cluster`, `09-verified`, `13-main-model`, `15-routes`, `20-state-copy`, `21-door`, `24-handler`

@@ -37,8 +37,8 @@ function sendCopy(target, name) {
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
     // the ssh command itself, so the far user's login shell reads it: find takes the pattern quoted, since under zsh a
     // pattern that matches nothing is an error and no copy would land.)
-    // (the Spark it goes to is in use while it does: the idle power-off counts this like a call, 21-power.mjs)
-    sparkCalls.set(target.id, Date.now());
+    // (not use of that Spark: the idle power-off doesn't count a copy, and a power-off waits for one under way,
+    // copyBeforeOff in 20-state-copy.mjs)
     const dst = spawnOn(target, { command: `umask 077 && mkdir -p ${dir} && find ${dir} -maxdepth 1 -name 'state-*.tgz.part' -delete && cat > ${part} && { gzip -t < ${part}; g=$?; [ $g = 0 ] || [ $g = 2 ]; }` });
     let tarCode = null, farCode = null, done = false;
     const timer = setTimeout(() => { src.kill('SIGKILL'); dst.kill('SIGKILL'); }, 180000);
@@ -79,10 +79,11 @@ async function backupState(first = null) {
 }
 // The hourly look, ten minutes after a start, then every hour (SPARK_CONSOLE_BACKUP_MS): a copy only when the state
 // changed and a Spark is awake. With none awake nothing is sent and none is woken (only the very first try is recorded,
-// so the 7 days have a start). A Spark coming online, and one about to be powered off, are 20-state-copy.mjs's.
+// once the status check has looked, so the 7 days have a start). A Spark coming online, and one about to be powered
+// off, are 20-state-copy.mjs's.
 function backupIfDue() {
   if (!copyDue()) return;
-  if (lastBackup && !backupTargets().length) return copyLate();
+  if (!backupTargets().length && (lastBackup || !statusCache)) return copyLate();
   backupState().catch(e => console.error(`The daily copy: ${e.message}`));
 }
 if (BACKUP_ON) setTimeout(() => { backupIfDue(); setInterval(backupIfDue, Number(process.env.SPARK_CONSOLE_BACKUP_MS || 3600000)); }, Number(process.env.SPARK_CONSOLE_BACKUP_FIRST_MS || 600000));

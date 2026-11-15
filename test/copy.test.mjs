@@ -2,9 +2,11 @@
 // half). A Spark coming online with the state unchanged gets no copy, also through a power-off and on; one that wakes
 // after the state changed gets one while it is awake. With every compute Spark off and the state changing for three
 // days (the clock stand-in), nothing is woken and nothing is sent, and no needs line shows before day 7; at day 7 one
-// line and one notice; the Spark that comes back gets one copy, not three, and the line goes. Before Spark Console powers
-// off the Spark that holds the newest copy, it copies the state there first, inside the power-off; a copy that fails is
-// on the record and the power-off still happens.
+// line and one notice; the Spark that comes back gets one copy, not three, and the line goes. A copy is not use: an idle
+// Spark that keeps receiving copies is still powered off at its idle limit. Before Spark Console powers off the Spark
+// that holds the newest copy, it copies the state there first, inside the power-off; a copy that fails is on the record
+// and the power-off still happens; a power-off that arrives while a copy goes to that Spark waits for it, then goes
+// ahead.
 //
 // Two stand-in fleets, each with the stand-in plug controller tied to Sparks 3 and 4 (test/mock/plugs.mjs) and the
 // stand-in sudo, as in power.test.mjs; nothing runs on Sparks 3 and 4, so a power-off stops nothing. The first looks
@@ -12,7 +14,8 @@
 // looks only once, 2 s after it starts, so a copy before a power-off can only come from the power-off itself.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { request, eventLines, waitFor, sleep, REPO, SLOW } from './lib.mjs';
@@ -75,6 +78,14 @@ async function done(F, r) {
       assert.equal(w.status, 'completed', JSON.stringify(w));
       return { ...w, log: (await ownerOn(F, `/jobs/${r.json.operation}`)).json.log };
     }
+    assert.ok(Date.now() < until, `still running: ${JSON.stringify(w)}`);
+  }
+}
+// An operation found by id, to its end, completed.
+async function ended(F, id) {
+  for (const until = Date.now() + 240000 * SLOW; ;) {
+    const w = (await act(F, 'wait_operation', { id, seconds: 20 })).json;
+    if (w.status !== 'running') { assert.equal(w.status, 'completed', JSON.stringify(w)); return w; }
     assert.ok(Date.now() < until, `still running: ${JSON.stringify(w)}`);
   }
 }
@@ -183,6 +194,31 @@ describe('the copy of the state', { concurrency: true }, () => {
       assert.equal(inCopy(F, 'spark4', c.file, 'agent-settings.json').selfHeal, false, 'the last change is in it');
       assert.deepEqual(await needsCopy(F), [], 'the line goes');
     });
+
+    test('a copy is not use: an idle Spark that keeps receiving copies is still powered off at its idle limit', { timeout: 300000 * SLOW }, async () => {
+      // Spark 4 is on, idle (GPU 0%, load 0.1, nothing running there), and the idle power-off is 10 "minutes" of a second
+      // each. The state changes every 2 s, so the look (every 3 s) keeps sending Spark 4 a copy.
+      const status = join(F.root, 'spark4', '.mock', 'status.json');
+      writeFileSync(status, JSON.stringify({ gpuUtilization: 0, load1Minute: 0.1 }));
+      try {
+        assert.equal((await act(F, 'power_settings', { idleMinutes: 10 })).json.outcome, 'saved');
+        const landed = new Set();
+        let op = null, flip = false;
+        for (const until = Date.now() + 120000 * SLOW; !op;) {
+          assert.ok(Date.now() < until, `not powered off while it took ${landed.size} copies`);
+          await change(F, flip = !flip);
+          await sleep(2000);
+          const b = await record(F);
+          if (b?.ok && b.to === 'spark4') landed.add(b.at);
+          op = (await act(F, 'recent_operations', { limit: 50 })).json.operations.find(o => o.type === 'power-off' && o.actor === 'Idle power-off');
+        }
+        assert.ok(landed.size >= 3, `copies landed on Spark 4 while it waited out its idle minutes: ${landed.size}`);
+        assert.equal(op.spark, 'spark4');
+        await ended(F, op.id);
+        assert.ok(offline(F).includes('spark4'));
+        assert.equal(JSON.parse(readFileSync(join(F.stateDir, 'power.json'), 'utf8')).off.spark4?.why, 'idle');
+      } finally { await act(F, 'power_settings', { idleMinutes: 0 }); rmSync(status, { force: true }); }
+    });
   });
 
   describe('before a power-off', { concurrency: 1 }, () => {
@@ -234,6 +270,31 @@ describe('the copy of the state', { concurrency: true }, () => {
         const p = JSON.parse(readFileSync(join(F.stateDir, 'power.json'), 'utf8')).off.spark3;
         assert.equal(p?.plugCut, true, JSON.stringify(p));
       } finally { rmSync(join(F.dir, 'tar-fails'), { force: true }); }
+    });
+
+    test('a power-off that arrives while a copy goes to that Spark waits for it to land, then goes ahead', { timeout: 300000 * SLOW }, async () => {
+      // Spark 4 goes dark; meanwhile the state grows by 192 MB of random bytes (they don't shrink), so its copy takes
+      // seconds; Spark 4 comes back and the copy goes to it; the owner's power-off of Spark 4 arrives during it.
+      const big = join(F.stateDir, 'big.bin');
+      setOffline(F, 'spark4', true);
+      await seenOnline(F, 'spark4', false);
+      try {
+        for (let i = 0; i < 12; i++) appendFileSync(big, randomBytes(16 * 1024 * 1024));
+        const was = await record(F);
+        setOffline(F, 'spark4', false);
+        await waitFor(() => copies(F, 'spark4').some(f => f.endsWith('.part')), { timeout: 30000 * SLOW, every: 100, what: 'the copy to Spark 4 under way' });
+        const w = await done(F, await act(F, 'power_off', { spark: 'spark4' }));
+        const b = await record(F);
+        assert.equal(b.ok, true, JSON.stringify(b));
+        assert.equal(b.to, 'spark4');
+        assert.notEqual(b.at, was.at);
+        const down = eventLines(F).find(e => e.type === 'spark-powered-off' && e.spark === 'spark4');
+        assert.ok(down && b.at < down.at, `the copy landed (${b.at}) before Spark 4 went down (${down?.at})`);
+        assert.ok(execFileSync('tar', ['-tzf', join(F.root, 'spark4', '.local', 'share', 'spark-console', 'backups', b.file)], { encoding: 'utf8', maxBuffer: 1 << 26 }).split('\n').includes('./big.bin'));
+        assert.ok(w.log.some(l => /Waiting for the copy of Spark Console’s state that is under way$/.test(l)), JSON.stringify(w.log));
+        assert.ok(w.log.some(l => /That copy landed on Spark 4$/.test(l)), JSON.stringify(w.log));
+        assert.ok(offline(F).includes('spark4'), 'it went down');
+      } finally { rmSync(big, { force: true }); }
     });
   });
 });
