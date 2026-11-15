@@ -48,9 +48,8 @@ function app(name) {
   return new Promise(r => s.listen(0, '127.0.0.1', () => r({ s, port: s.address().port, seen })));
 }
 const A = await app('webui'), B = await app('notebook');
-// A model server someone started by hand on Spark 4 (the stand-in curl answers /v1/models there for it). Its port is held
-// (taking no connection) until this file's stand-in fleet has its own ports, so the fleet is never handed it.
-const pvHeld = await new Promise(r => { const x = http.createServer(q => q.socket.destroy()); x.listen(0, '127.0.0.1', () => r(x)); x.unref(); }), PV = pvHeld.address().port;
+// A model server someone started by hand on Spark 4 (the stand-in curl answers /v1/models there for it).
+const PV = await new Promise(r => { const x = http.createServer(); x.listen(0, '127.0.0.1', () => { const p = x.address().port; x.close(() => r(p)); }); });
 after(() => { for (const x of [A, B]) { x.s.closeAllConnections?.(); x.s.close(); } });
 
 // Two signed-in devices of the owner's: a browser (its cookie) and a terminal (its bearer token), as sign-in made them.
@@ -87,7 +86,6 @@ useFleet({
       Web: { [DOOR_HOST]: { Handlers: { '/': { Proxy: `unix:${join(stateDir, 'door.sock')}` } } } }, AllowFunnel: { [DOOR_HOST]: true } }));
   },
 }, async () => {
-  await new Promise(r => pvHeld.close(r));
   // On the list beside what keep_running puts there: a model; and an "app" on Spark 2, one at the model port and one
   // that is a model server, which keep_running never writes but the door must refuse anyway.
   writeFileSync(join(T.fleet.stateDir, 'desired.json'), JSON.stringify({ revision: 1, revisions: [], running: [
