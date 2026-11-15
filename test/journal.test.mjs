@@ -70,7 +70,6 @@ test('its folder is outside the state folder (0700, files 0600); a look writes o
   for (const f of readdirSync(T.fleet.journalDir)) assert.equal(statSync(join(T.fleet.journalDir, f)).mode & 0o777, 0o600, f);
 });
 
-// T120: a failed start's log, keys hidden, is still there after a restart (with the tests after it).
 test('a failed start: its log (keys hidden, also across two pieces), its attempt and the operation, with the events', { timeout: 300000 * SLOW }, async () => {
   writeFileSync(mock('spark4', `logs-${GEMMA}`), `${KEYS.join('\n')}\n`);
   try {
@@ -112,6 +111,8 @@ test('Sparkie\'s turn: the owner\'s words, each tool call with its result, the t
   assert.deepEqual([turn?.chat, turn?.rounds, turn?.tools, turn?.toolErrors, turn?.ok], [chat, 2, 2, 0, true]);
 });
 
+// T123: the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the owner is told why.
+// (undo restoring a file waits for the copies the command runner makes, milestone 2)
 test('with the journal\'s disk full, a change written down first answers "couldn\'t write the record, nothing was changed" and nothing runs; a look, /stop and stop_model still work', { timeout: 180000 * SLOW }, async () => {
   const file = join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'full-disk.md');
   const size = () => readdirSync(T.fleet.journalDir).reduce((n, f) => n + statSync(join(T.fleet.journalDir, f)).size, 0);
@@ -148,6 +149,7 @@ const copyTo = from => ({ dir, stateDir }) => {
   cpSync(from.journalDir, join(dir, 'journal'), { recursive: true });
 };
 const env = { SPARK_CONSOLE_JOURNAL_MAX_BYTES: '2048', SPARK_CONSOLE_JOURNAL_NEEDS_BYTES: '1' };
+// T123: killed while a file write changes a Spark: after the restart one "cut off" notice, and it is never run again.
 test('a console killed between a start line and its end: after the restart, one "cut off" notice in the chat that asked and one needs-you line; it isn\'t run again', { timeout: 180000 * SLOW }, async () => {
   writeFileSync(mock('spark3', 'stall-worker'), '120');
   script([{ match: '^save this as cut-note\\.md on spark 3$', calls: [{ name: 'save_file', arguments: { spark: 'spark3', path: 'cut-note.md', text: 'cut off\n' } }] }]);
