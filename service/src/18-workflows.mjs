@@ -39,6 +39,21 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   HF_OWN,
   hfEachFile,
   copyModel,
+  offHolds,
+  powerThenStart,
+  powerThen,
+  powerOnSparks,
+  powerOnOne,
+  bringBackParked,
+  wakeNeedOf,
+  wakeMayPair,
+  wakePartner,
+  wakeNeedsTwo,
+  wakeLiveStatus,
+  jobMountsReal,
+  jobNotReal,
+  JOB_NOT_REAL,
+  SHARED_AT,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -395,14 +410,15 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
+            starting: st.action === 'start_model' && out?.outcome === 'started' && out.operation ? out.operation : null });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
-          savedRunKeep(j, { started: ran, pending: [] });
+          savedRunKeep(j, { started: ran, pending: [], starting: null });
           j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }

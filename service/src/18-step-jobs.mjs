@@ -74,13 +74,15 @@ function savedStepAgent(viewer, ctx) {
   return viewer?.agentKey || ctx.agent || agentId || ctx.via === 'agent' ? { agent: true, ...(agentId ? { agentId } : {}) } : {};
 }
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
-// models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
-// part. Nothing for a step that answered anything else (already, kept, a stop).
+// models are what its operation ran (ranHere) and every operation it handed over to, in turn (a power-on, a second
+// power-on inside it for a model across two whose files are only on sleeping Sparks, then the start, R56), each once,
+// by its first part. Nothing for a step that answered anything else (already, kept, a stop).
 function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
-  const op = jobs.get(out.operation), inner = op?.inner ? jobs.get(op.inner) : null, id = v => sparkIdOf(v) || String(v);
+  const id = v => sparkIdOf(v) || String(v), ops = [];
   if (action === 'start_model') {
-    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
+    for (let o = jobs.get(out.operation); o && !ops.includes(o) && ops.length < 5; o = o.inner ? jobs.get(o.inner) : null) ops.push(o);
+    return [...new Set(ops.flatMap(o => o.ranHere || []))].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
   }
   if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
@@ -109,6 +111,9 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
+      // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
+      // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
+      const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
         : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
@@ -117,7 +122,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
-      if (x.listed && desiredPutBack([x.listed]).length) back.push(name);
+      if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
@@ -125,10 +130,14 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
 // An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
-// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's),
+// but only while it is running: one that isn't (the owner stopped it by hand, which took it off) has nothing to stop, and
+// keeping it would start it (the workloads review, C2).
 async function stopAppStarted(viewer, x, c) {
   try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
+    if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }

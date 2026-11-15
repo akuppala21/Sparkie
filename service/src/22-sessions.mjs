@@ -75,6 +75,7 @@ function sessionFor(req) {
 function sessionViewer(req) { return ownerSessionView(sessionFor(req)); }
 // A signed-in device's session as a viewer: only the owner's (the app door reads its ticket's session with it, R40).
 function ownerSessionView(s) {
+  if (putBackHeld()) return null;   // (state put back from a copy: no device until the owner has looked, 22-putback.mjs)
   const owner = accessList().owner;
   if (!s || !owner || String(s.login).toLowerCase() !== String(owner).toLowerCase()) return null;
   return { login: owner, role: 'owner', nodeIds: null, chat: true, permissions: ownerPermissions(),
@@ -172,6 +173,8 @@ function holdForSession(viewer, closable) {
   closable.once?.('close', () => { sessionSockets.get(id)?.delete(closable); if (!sessionSockets.get(id)?.size) sessionSockets.delete(id); });
 }
 function endSession(id) {
+  // (and a task the device started: its carry-on turns would go on as that device, 14-chats.mjs)
+  try { endTasksFrom({ session: id }); } catch (e) { console.error(`Signing a device out: its tasks weren’t ended (${e.message}).`); }
   for (const c of sessionSockets.get(id) || []) { try { c.destroy ? c.destroy() : c.end(); } catch {} }
   sessionSockets.delete(id);
   for (const client of clients) if (client.viewer?.session?.id === id) { try { client.res.end(); } catch {} }
@@ -243,11 +246,13 @@ async function signinRoute(req, res, path, viewer) {
     if (s) {
       saveSessions(sessionList().filter(x => x.id !== s.id));
       endSession(s.id);
+      putBackRemoved('session', s.id, s.name);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
     return send(res, 200, { ok: true });
   }
+  if (putBackHeld()) throw new HttpError(403, PUTBACK_LINE);
   if (!owner) throw new HttpError(409, 'No owner is set up on this Spark yet.');
   if (path === '/auth/signin/begin') {
     limited(signinHits, req, 30);
@@ -349,6 +354,7 @@ async function sessionRoute(req, res, path, viewer) {
     saveSessions(list.filter(x => x !== s));
     if (s.id === viewer.session?.id) clearSessionCookie(res);
     endSession(s.id);
+    putBackRemoved('session', s.id, s.name);
     audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     return send(res, 200, { ok: true });
   }
