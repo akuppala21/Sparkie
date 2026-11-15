@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { T, request, call, newChat, say, eventLines, waitFor, SLOW } from './lib.mjs';
+import { T, request, call, newChat, say, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
 import { startMock, serviceConfig, REPO } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
@@ -132,7 +132,8 @@ describe('state put back from a copy', { concurrency: 1 }, () => {
     for (const r of [await signIn(G, K1, 11), await net(G, '/auth/signin/recovery', { method: 'POST', body: { code: codes[0] } }),
       await net(G, '/auth/device/start', { method: 'POST', body: { kind: 'terminal', name: 'T' } }), await net(G, '/v1/models', { headers: { authorization: `Bearer ${a1.token}` } })]) {
       is(r, 403);
-      assert.equal(r.json.error, LINE);
+      // (the model address answers errors in its own shape: { error: { message, type } })
+      assert.equal(r.json.error?.message ?? r.json.error, LINE);
     }
     is(await net(G, '/bootstrap', { headers: withCookie(oldCookie) }), 401, 'the cookie the copy held');
   });
@@ -166,12 +167,14 @@ describe('state put back from a copy', { concurrency: 1 }, () => {
     assert.equal(serialIn(G), 4);
     assert.equal(secretsOf(G).auth.hold, undefined);
     const went = () => eventLines(G).filter(e => e.type === 'notice' && /lower count than before/.test(e.text || '')).length;
-    // (the copy holds 5; the passkey itself had reached 10)
+    // (the copy holds 5, the passkey itself had reached 10; the confirmation above was signed at 0, and was noted)
+    const before = went();
     const c = await signIn(G, K1, 7);
     is(c, 200, 'a count above the copy’s');
-    assert.equal(went(), 0, 'not noted');
-    is(await signIn(G, K1, 3), 200, 'a count below the copy’s: accepted');
-    await waitFor(() => went() === 1, { timeout: 10000, what: 'the counter note' });
+    await sleep(500);
+    assert.equal(went(), before, 'not noted');
+    is(await signIn(G, K1, 3), 200, 'a count below the one kept now: accepted');
+    await waitFor(() => went() === before + 1, { timeout: 10000, what: 'the counter note' });
     is(await net(G, '/auth/signin/recovery', { method: 'POST', body: { code: codes[1] } }), 200, 'a recovery code');
     const k2 = await signIn(G, K2, 50);
     is(k2, 403, 'the passkey removed since');
