@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22014 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22018 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -432,7 +432,7 @@ Every change Spark Console makes is a workflow: a named procedure with checked i
 Every minute the console looks at every container on every Spark (models, services, dev boxes, anything started by hand) and remembers how each was started: image, command (secrets hidden), ports, mounts, GPU use, and the names (never the values) of its environment variables. Changes become events: started, stopped, crashed, removed, a Spark going offline or coming back, and the console's own operations. A model server someone started by hand, from an image source the console trusts, is saved as a recipe ("worked before"), so it can be started again like any other. Sparkie and agents read all …
 
 - **Area:** core. **Rules:** R7, R19, R21, R23, R24, R38. **Tests:** fleet.test.mjs, dark.test.mjs, docker-down.test.mjs, state.test.mjs
-- **Lines:** 340
+- **Lines:** 341
 - **Owns:** knowledge.json (writers: saveKnowledge), events.jsonl (writers: fleetEvent)
 - **Timers:** watchFleet (15 s after start, then every 60 s)
 - **Wakes:** none
@@ -1036,7 +1036,7 @@ A start that names no Spark and has to wake one (wakeOne, 21-power.mjs; startMod
 The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idle, or when I tell chat, an agent or the API"; idle models are parked. A Spark with a plug Spark Console may switch (switchablePlug, 12-plugs.mjs) is powered off cleanly and on again: - power_off: refused for Spark 2 (brainSparks) always, for a Spark without a switchable plug, and while anything runs there that Spark Console didn't start or keeps protected (hand-started benchmarks, spark.protect=true, a job that hasn't ended): those are never stopped by this. Spark Console's own models and kept apps there are …
 
 - **Area:** features. **Rules:** R19, R22, R23, R32, R41. **Tests:** power.test.mjs, heal-status.test.mjs
-- **Lines:** 1061
+- **Lines:** 1064
 - **Actions:** `power_off`, `power_on`, `power_settings`
 - **Owns:** power.json (writers: savePower)
 - **Timers:** powerTick (every 60 s, first 5 minutes after start)

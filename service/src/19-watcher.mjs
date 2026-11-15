@@ -318,7 +318,8 @@ function fleetNotes(viewer) {
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
     // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
-    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
+    // (a record with a problem, a wake that failed, is said as that: no "asleep")
+    if (off) return `${sparkName(n)}: ${off.problem ? '' : 'asleep, on purpose (not a fault). '}${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
