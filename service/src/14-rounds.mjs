@@ -5,6 +5,7 @@
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
 // how much it may do, the tools each round offers, one streamed model call, the loop of rounds, one round’s tool
 // calls, and one tool call. They share the turn’s state in one object, `turn`.
+
 // The brain's setup decides how it's asked (contract 3.8): a setup with its own sampling (the agent setup: thinking on,
 // the model card's sampling) keeps it with tools too; older setups answer tool rounds at temperature 0.3.
 function howAsked({ target, tuned, tools }) {
