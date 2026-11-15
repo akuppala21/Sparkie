@@ -9,7 +9,10 @@
 # active while <rehearsal>/standin/timers/<unit> is there, as the stand-in systemd-run leaves it; any other unit is
 # inactive, but one a test marks running with <rehearsal>/standin/active/<unit>); stop of a net's timer takes that away
 # (it fails with <rehearsal>/standin/timer-stop-fails); stop and kill of a unit end it; and try-reload-or-restart,
-# restart, daemon-reload and try-restart, the user manager's too, which do nothing.
+# restart, daemon-reload and try-restart, the user manager's too, which do nothing. A way-in unit (A13b) a test
+# writes as <rehearsal>/standin/units/<unit> ("<active> <file>", as "active enabled") is shown by show
+# --property=ActiveState,UnitFileState,LoadState, and start, stop, restart, enable, disable, mask and unmask change it
+# (--no-block too); one with no such file is not-found.
 import json, os, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -19,7 +22,24 @@ if not R.startswith('/') or not os.path.isdir(R):
 args = sys.argv[1:]
 with open(os.path.join(R, 'calls.log'), 'a') as f:
     f.write(json.dumps(['systemctl'] + args) + '\n')
-args = [a for a in args if a != '--']
+args = [a for a in args if a not in ('--', '--no-block')]
+units = os.path.join(R, 'standin', 'units')
+
+
+def unit(name):
+    try:
+        with open(os.path.join(units, name)) as f:
+            return f.read().split()
+    except OSError:
+        return None
+
+
+def set_unit(name, active=None, file=None):
+    u = unit(name)
+    if u is None:
+        return
+    with open(os.path.join(units, name), 'w') as f:
+        f.write(f'{active or u[0]} {file or u[1]}\n')
 timers, running = os.path.join(R, 'standin', 'timers'), os.path.join(R, 'standin', 'active')
 
 
@@ -39,8 +59,16 @@ elif args[:3] == ['show', '--property=MainPID', '--value'] and len(args) == 4:
     print(0 if os.path.exists(os.path.join(R, 'standin', 'no-pid')) else 4242)
 elif args[:2] == ['is-active', '--quiet'] and len(args) == 3:
     sys.exit(3 if os.path.exists(os.path.join(R, 'standin', 'target-dead')) else 0)
+elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and len(args) == 3:
+    u = unit(args[2])
+    print(f'ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState=loaded' if u else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4:
-    print('active' if os.path.exists(os.path.join(timers, args[3])) or os.path.exists(os.path.join(running, args[3])) else 'inactive')
+    print('active' if os.path.exists(os.path.join(timers, args[3])) or os.path.exists(os.path.join(running, args[3]))
+          or (unit(args[3]) or ['inactive'])[0] == 'active' else 'inactive')
+elif args[:1] in (['start'], ['restart']) and len(args) == 2 and unit(args[1]):
+    set_unit(args[1], active='active')
+elif args[:1] in (['enable'], ['disable'], ['mask'], ['unmask']) and len(args) == 2:
+    set_unit(args[1], file={'enable': 'enabled', 'disable': 'disabled', 'mask': 'masked', 'unmask': 'disabled'}[args[0]])
 elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-'):
     if os.path.exists(os.path.join(R, 'standin', 'timer-stop-fails')):
         sys.stderr.write('Failed to stop: Access denied\n')
@@ -51,9 +79,12 @@ elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-')
         pass
 elif args[:1] == ['stop'] and len(args) == 2:
     ended(args[1])
+    set_unit(args[1], active='inactive')
 elif args[:1] == ['kill']:
     ended(args[-1])
-elif args[:1] in (['try-reload-or-restart'], ['restart'], ['daemon-reload'], ['try-restart']) \
+elif args[:1] and args[0].startswith('--machine=') and 'is-active' in args:
+    print('active')   # (the console runs, as the owner's service manager says)
+elif args[:1] in (['start'], ['try-reload-or-restart'], ['restart'], ['daemon-reload'], ['try-restart']) \
         or (args[:1] and args[0].startswith('--machine=') and args[1:2] == ['--user']):
     pass
 elif args[:4] == ['show', '--user', '--property=ExecStart', '--value'] and len(args) == 5:

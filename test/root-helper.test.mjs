@@ -160,13 +160,13 @@ function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/sp
     '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', 'MemoryMax=2G', '-p', 'TasksMax=512',
     '--', which(s, 'bash'), '--noprofile', '--norc', `/run/spark-console/${id}/start`];
 }
-function runCall(s, id, hash, secs, { protect = [], pins = [], hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'] } = {}) {
+function runCall(s, id, hash, secs, { protect = [], pins = [], hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'], memory = '8G' } = {}) {
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', 'IPAddressDeny=localhost',
     '-p', 'IPAddressAllow=127.0.0.53', ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
     ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]),
     ...[...PINS, ...pins].sort().flatMap(p => ['-p', `BindPaths=${p}`]), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
-    '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', 'MemoryMax=8G', '-p', 'TasksMax=4096',
+    '-p', `RuntimeMaxSec=${secs}`, '-p', 'TimeoutStopSec=5', '-p', `MemoryMax=${memory}`, '-p', 'TasksMax=4096',
     '--', which(s, 'unshare'), '--pid', '--fork', '--kill-child', '--mount-proc',
     which(s, 'setpriv'), '--reuid=1000', '--regid=1000', '--groups=1000,4,44,992', '--inh-caps=-all', '--bounding-set=-all',
     which(s, 'bash'), '--noprofile', '--norc', `/run/spark-console/${id}/start`];
@@ -564,8 +564,8 @@ describe('the proof of the walls', () => {
     'a hidden key file', 'a disk device or the GPU', 'something left behind', 'root with no net',
     'moving a folder above a held one, and making a new one in its place', "stopping or changing the net's timer",
     "writing the net's copies or restore.sh", "taking away the net's pending mark", 'making keep count',
-    "swapping a job's own output folder for a link", 'ending a unit through the helper'];
-  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 17, 18, 19, 20];
+    "swapping a job's own output folder for a link", 'ending a unit through the helper', 'more memory than the change was given (--memory)'];
+  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 17, 18, 19, 20, 21];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -596,7 +596,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof look ${p.id}`, ...lookUnit.slice(3, lookUnit.indexOf('--') + 1), py, '-I', '-S', proof, 'look', ...LOOK.map(String)]);
     const ro = `/home/owner/.sparkie-proof-${p.id}/held/ro`;
     const runUnit = runCall(s, p.id, 'x', 120, { protect: [ro], hiddenExtra: hidden,
-      pins: [`/home/owner/.sparkie-proof-${p.id}`, `/home/owner/.sparkie-proof-${p.id}/held`] });
+      pins: [`/home/owner/.sparkie-proof-${p.id}`, `/home/owner/.sparkie-proof-${p.id}/held`], memory: '2G' });
     assert.deepEqual(unitCall(s, `sw-prove-run-${p.id}`), [...runUnit.slice(0, 1), `--unit=sw-prove-run-${p.id}`,
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
@@ -814,23 +814,24 @@ describe('the lock-out net (R60)', () => {
   const ARMED = id => new RegExp(`^${id} net armed: the ways in go back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ unless they are kept\\n`);
   const netted = () => { const s = proven(); s.put(SSHD, 'Port 22\n', 0o640); return s; };
 
-  test('armed before the change: its timer (the time limit plus 600 s) and restart unit come first; a change that cannot start differs in nothing, and the guard disarms itself', () => {
+  test('armed before the change: its timer (the time limit plus 600 s) and restart unit come first; a change that cannot start differs in nothing, and the guard waits for the console\'s word (A13b: never disarmed by itself)', () => {
     const s = netted();
     s.put('standin/refuse', 'sw-run-');
     const before = calls(s).length;
     const r = net(s, 'true');
     assert.match(r.stdout, ARMED(r.id));
-    assert.match(r.stdout, new RegExp(`\\n${r.id} net disarmed: nothing differs\\n${r.id} end 1\\n$`));
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: nothing differs now; it is kept on the console's word, else at \\S+ what differs then goes back\\n${r.id} end 1\\n$`));
     const asked = calls(s).slice(before).map(at);
     const timer = asked.indexOf(`--unit=sw-guard-${r.id}`), change_ = asked.indexOf(`--unit=sw-run-${r.id}`);
     assert.ok(timer >= 0 && change_ > timer, `the timer is asked for before the change: ${asked.join(', ')}`);
-    assert.ok(asked.indexOf(`systemctl stop sw-guard-${r.id}.timer`) > change_, 'and stopped after it');
+    assert.equal(asked.indexOf(`systemctl stop sw-guard-${r.id}.timer`), -1, 'and not stopped after it');
     assert.deepEqual(unitCall(s, `sw-guard-${r.id}`), ['systemd-run', `--unit=sw-guard-${r.id}`, `--description=Spark Console net ${r.id}: what was not kept goes back`,
       '--on-active=900s', '--timer-property=AccuracySec=1s', '--quiet', '-p', 'Type=oneshot', '--', which(s, 'bash'),
       `/var/lib/spark-console/guard/${r.id}/restore.sh`, 'timer']);
+    assert.ok(existsSync(join(G(s, r.id), 'pending')) && timerWaits(s, r.id), 'it waits');
+    for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
+    assert.match(keep(s, r.id).stdout, / kept: /, "the console's word disarms it");
     assert.ok(!existsSync(join(G(s, r.id), 'pending')) && !timerWaits(s, r.id));
-    for (const f of BOOT(s, r.id)) assert.ok(!existsSync(f) && !lstatExists(f), f);
-    assert.match(readFileSync(join(G(s, r.id), 'kept'), 'utf8'), /^disarmed \S+: nothing differs\n$/);
   });
 
   test('a change that breaks a way in stays armed and says what; the timer stops the change first, puts back the exact bytes, mode and owner, reloads ssh and leaves a result; once is all', () => {
@@ -948,7 +949,8 @@ describe('the lock-out net (R60)', () => {
     const b = fire(s, r.id, 'boot');
     assert.equal(b.status, 0, b.stdout + b.stderr);
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
-    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl'), [], 'no unit stopped, nothing reloaded');
+    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl'), [['systemctl', 'stop', '--no-block', '--', `sw-run-${r.id}.service`]],
+      'only the command\'s unit stopped (not there after a restart), without waiting; nothing reloaded');
     assert.equal(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n')[1], 'after a restart inside the window');
     writeFileSync(join(s.R, SSHD), 'Port 4444\n');
     assert.equal(fire(s, r.id, 'boot').status, 0);
@@ -1015,13 +1017,14 @@ describe('the lock-out net (R60)', () => {
       ['a link', 'mv "$R/home/owner/.ssh" "$R/home/owner/.ssh-aside"; mkdir "$R/home/owner/other"; printf "theirs" > "$R/home/owner/other/authorized_keys"; ln -s "$R/home/owner/other" "$R/home/owner/.ssh"',
         ['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/authorized_keys2', '/home/owner/.ssh/config', '/home/owner/.ssh'], 3],
       ['opened', 'chmod 777 "$R/home/owner/.ssh" "$R/home/owner"', ['/home/owner', '/home/owner/.ssh'], 2],
-      ['the state folder', 'rm -rf "$R/home/owner/.local/state/spark-console"', ['/home/owner/.local/state/spark-console/sessions.json', '/home/owner/.local/state/spark-console'], 2],
+      ['the state folder', 'rm -rf "$R/home/owner/.local/state/spark-console"', ['/home/owner/.local/state/spark-console/passkeys.json', '/home/owner/.local/state/spark-console'], 2],
     ];
     for (const [what, cmd, named, back] of cases) {
       const s = netted(), ssh = join(s.R, 'home/owner/.ssh'), state = join(s.R, 'home/owner/.local/state/spark-console');
+      s.put('home/owner/.local/state/spark-console/passkeys.json', '{}');
       chmodSync(ssh, 0o700);
       chmodSync(join(ssh, 'authorized_keys'), 0o600);
-      const was = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'sessions.json')].map(f => { const x = statSync(f); return [x.mode & 0o7777, x.uid, x.gid]; });
+      const was = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'passkeys.json')].map(f => { const x = statSync(f); return [x.mode & 0o7777, x.uid, x.gid]; });
       const r = net(s, `R="$SPARK_CONSOLE_REHEARSAL"; ${cmd}`);
       assert.match(r.stdout, new RegExp(`net open: ${named.length} of the ways in differ \\(${named.join(' ').replace(/[.]/g, '\\.')}\\) and go back at `), `${what}: ${r.stdout}`);
       const f = fire(s, r.id);
@@ -1029,8 +1032,8 @@ describe('the lock-out net (R60)', () => {
       assert.ok(!lstatSync(ssh).isSymbolicLink() && lstatSync(ssh).isDirectory(), what);
       assert.equal(readFileSync(join(ssh, 'authorized_keys'), 'utf8'), 'keys', what);
       assert.equal(readlinkSync(join(ssh, 'config')), '/etc/shadow', what);
-      assert.equal(readFileSync(join(state, 'sessions.json'), 'utf8'), '{}', what);
-      const now = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'sessions.json')].map(x => { const y = statSync(x); return [y.mode & 0o7777, y.uid, y.gid]; });
+      assert.equal(readFileSync(join(state, 'passkeys.json'), 'utf8'), '{}', what);
+      const now = [join(s.R, 'home/owner'), ssh, join(ssh, 'authorized_keys'), state, join(state, 'passkeys.json')].map(x => { const y = statSync(x); return [y.mode & 0o7777, y.uid, y.gid]; });
       assert.deepEqual(now, was, `${what}: modes and owners as they were`);
       if (what === 'a link') assert.equal(readFileSync(join(s.R, 'home/owner/other/authorized_keys'), 'utf8'), 'theirs', 'what the link pointed at is untouched');
       assert.match(readFileSync(join(G(s, r.id), 'result'), 'utf8'), new RegExp(`^put back at \\S+: ${back} went back, 0 did not\\n`), what);
@@ -1041,6 +1044,7 @@ describe('the lock-out net (R60)', () => {
   // The second read: a link at the home, or at a folder between it and a way in, is left as it stands.
   test('a link at the home is left: what it points at is untouched, what is under it is named not put back, ways in elsewhere still go back, and no console restart is fired', () => {
     const s = netted();
+    s.put('home/owner/.local/state/spark-console/passkeys.json', '{}');
     const r = net(s, ['R="$SPARK_CONSOLE_REHEARSAL"', 'printf "Port 2222\\n" > "$R/etc/ssh/sshd_config"', 'mv "$R/home/owner" "$R/home/owner-moved"',
       'ln -s "$R/home/owner-moved" "$R/home/owner"'].join('; '));
     const before = calls(s).length;
@@ -1051,7 +1055,7 @@ describe('the lock-out net (R60)', () => {
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n', 'a way in outside the home still goes back');
     const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
     for (const l of ['not put back /home/owner: it is a link now', 'not put back /home/owner/.ssh/authorized_keys: /home/owner is a link now',
-      'not put back /home/owner/.local/state/spark-console/sessions.json: /home/owner is a link now']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
+      'not put back /home/owner/.local/state/spark-console/passkeys.json: /home/owner is a link now']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
     assert.ok(!calls(s).slice(before).some(c => c[0] === 'systemctl' && c.some(a => a.startsWith('--machine='))), 'no console restart');
   });
 
@@ -1131,7 +1135,9 @@ describe('the lock-out net (R60)', () => {
     const s = netted(), old = join(s.R, 'var/lib/spark-console/guard', 'leftoverproof01nl');
     mkdirSync(old, { recursive: true });
     for (const f of ['proof', 'pending', 'restore.sh']) writeFileSync(join(old, f), '');
-    assert.match(net(s, 'true').stdout, /net armed: /);
+    const first = net(s, 'true');
+    assert.match(first.stdout, /net armed: /);
+    assert.match(keep(s, first.id).stdout, / kept: /);
     assert.equal(prove(s).status, 0);
     assert.ok(!existsSync(old), 'swept');
     // A guard without the mark is never taken away by a proof.
@@ -1146,7 +1152,9 @@ describe('the lock-out net (R60)', () => {
     const at = /go back at (\S+) unless/.exec(r.stdout)[1];
     assert.ok(run(s, ['check', '--id', newId()]).stdout.endsWith(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer waits\n`));
     rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));
-    assert.ok(run(s, ['check', '--id', newId()]).stdout.endsWith(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer is not waiting (inactive)\n`));
+    const left = run(s, ['check', '--id', newId()]).stdout;
+    assert.ok(left.includes(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer is not waiting (inactive)\n`), left);
+    assert.ok(left.endsWith(` net left: guard ${r.id} waits for no timer; putback --id ${r.id} puts it back now, keep --id ${r.id} keeps it\n`), left);
   });
 
   // Fix 4: what the helper says is what happens.
@@ -1200,6 +1208,189 @@ describe('the lock-out net (R60)', () => {
     assert.ok(readFileSync(join(G(s, r.id), 'result'), 'utf8').includes('reload systemctl daemon-reload: ok'));
   });
 
+  // A13b, the helper's half: the running state, putback, what cannot be put back, and the put-back's failure paths.
+  const binOf = (s, files) => {
+    const bin = join(s.R, 'standin', 'bin');
+    mkdirSync(bin, { recursive: true });
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    return { ...s.env, PATH: `${bin}:${s.env.PATH}` };
+  };
+  const netIn = (s, env, cmd, extra = []) => { const id = newId(); return { ...run(s, ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '300', '--dir', s.work, '--net', ...extra, '--', cmd], { env }), id }; };
+  const UFW = 'f="$SPARK_CONSOLE_REHEARSAL/standin/ufw"; case "$*" in status) echo "Status: $(cat "$f")" ;; "--force enable") echo active > "$f" ;; disable) echo inactive > "$f" ;; esac';
+  const SSH_CHANGE = 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"';
+
+  test('the running state is a way in: a unit masked and stopped and ufw turned off go back (unmask, enable, start; ufw on); after a restart the units are queued, never waited for', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'active enabled\n');
+    s.put('standin/ufw', 'active\n');
+    const env = binOf(s, { ufw: UFW });
+    const r = netIn(s, env, 'systemctl mask ssh.service; systemctl stop ssh.service; ufw disable');
+    assert.match(r.stdout, new RegExp(`${r.id} net open: 2 of the ways in differ \\(ssh\\.service ufw\\) and go back at \\S+ unless they are kept\\n`), r.stdout);
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active enabled');
+    assert.equal(readFileSync(join(s.R, 'standin/ufw'), 'utf8').trim(), 'active');
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    for (const c of ['unmask ssh.service', 'enable ssh.service', 'start ssh.service']) assert.ok(asked.includes(c), asked.join(' | '));
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.includes('put back the unit ssh.service') && result.includes('put back ufw'), result.join('\n'));
+    const t = netted();
+    t.put('standin/units/ssh.service', 'active enabled\n');
+    const q = net(t, 'systemctl mask ssh.service; systemctl stop ssh.service');
+    const b0 = calls(t).length;
+    assert.equal(fire(t, q.id, 'boot').status, 0);
+    const queued = calls(t).slice(b0).filter(c => c[0] === 'systemctl').map(c => c.slice(1).join(' '));
+    assert.ok(queued.includes('unmask ssh.service') && queued.includes('--no-block start ssh.service'), queued.join(' | '));
+  });
+
+  test('a moved ssh port behind ssh.socket: after sshd_config goes back, systemd is told and the socket restarted', () => {
+    const s = netted();
+    s.put('standin/units/ssh.socket', 'active enabled\n');
+    const r = net(s, SSH_CHANGE);
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id).status, 0);
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.ok(asked.indexOf('daemon-reload') >= 0 && asked.indexOf('restart ssh.socket') > asked.indexOf('daemon-reload'), asked.join(' | '));
+  });
+
+  test('what cannot be put back is said by name, in the net\'s line and the result: Tailscale signed out or signed in as another key, a unit whose package went', () => {
+    const TS = '[ "$1 $2" = "status --json" ] && cat "$SPARK_CONSOLE_REHEARSAL/standin/ts-status"';
+    const ts = (state, key) => JSON.stringify({ BackendState: state, Self: { PublicKey: key } });
+    for (const [what, cmd, said] of [
+      ['signed out', `printf '%s' '${ts('NeedsLogin', 'nodekey:one')}' > "$SPARK_CONSOLE_REHEARSAL/standin/ts-status"`, 'Tailscale was signed out'],
+      ['another key', `printf '%s' '${ts('Running', 'nodekey:two')}' > "$SPARK_CONSOLE_REHEARSAL/standin/ts-status"`, 'Tailscale was signed in again, as another key'],
+      ['a package', 'rm "$SPARK_CONSOLE_REHEARSAL/standin/units/ssh.service"', 'ssh.service is gone (its package removed?)'],
+    ]) {
+      const s = netted();
+      s.put('standin/ts-status', ts('Running', 'nodekey:one'));
+      s.put('standin/units/ssh.service', 'active enabled\n');
+      const env = binOf(s, { tailscale: TS });
+      const r = netIn(s, env, cmd);
+      assert.match(r.stdout, new RegExp(`${r.id} net open: cannot be put back: ${said.replace(/[().?]/g, '\\$&')}\\n${r.id} end 0\\n$`), `${what}: ${r.stdout}`);
+      assert.equal(fire(s, r.id, 'timer', env).status, 0);
+      assert.ok(readFileSync(join(G(s, r.id), 'result'), 'utf8').includes(`cannot be put back: ${said}\n`), what);
+    }
+  });
+
+  test("putback puts back now, on the console's word, also when the timer is gone; after a keep it puts nothing back", () => {
+    const s = netted();
+    const r = net(s, SSH_CHANGE);
+    assert.ok(existsSync(join(G(s, r.id), 'lock')), 'the lock is made when arming');
+    rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));
+    const p = run(s, ['putback', '--id', r.id]);
+    assert.equal(p.status, 0, p.stdout + p.stderr);
+    assert.match(p.stdout, new RegExp(`^${r.id} put back at \\S+: 1 went back, 0 did not\\n$`));
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+    assert.equal(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n')[1], "on the console's word");
+    assert.match(run(s, ['putback', '--id', r.id]).stdout, / already put back at /);
+    const t = netted(), q = net(t, SSH_CHANGE);
+    keep(t, q.id);
+    assert.equal(run(t, ['putback', '--id', q.id]).stdout, `${q.id} kept already: nothing goes back\n`);
+    assert.equal(readFileSync(join(t.R, SSHD), 'utf8'), 'Port 2222\n');
+    refused({ ...run(t, ['putback', '--id', 'nosuchguard1']), id: 'nosuchguard1' }, 'there is no guard nosuchguard1 on this Spark');
+  });
+
+  test('copies older than 7 days go when a guard is armed; an open guard\'s never', () => {
+    const s = netted();
+    const r = net(s, SSH_CHANGE);
+    keep(s, r.id);
+    const old = new Date(Date.now() - 8 * 86400000), open = join(s.R, 'var/lib/spark-console/guard', 'oldopenguard1');
+    mkdirSync(open);
+    for (const f of ['pending', 'proof', 'restore.sh']) writeFileSync(join(open, f), '');
+    utimesSync(G(s, r.id), old, old);
+    utimesSync(open, old, old);
+    const n = net(s, 'true');
+    assert.match(n.stdout, /net armed: /);
+    assert.ok(!existsSync(G(s, r.id)), 'the kept one, 8 days old, is gone');
+    assert.ok(existsSync(open) && existsSync(G(s, n.id)), 'an open one never');
+  });
+
+  test('its timer stopped while the command ran (systemctl isolate, say): what differs goes back at once, and it says so', () => {
+    const s = netted();
+    const r = net(s, `${SSH_CHANGE}; rm -f "$SPARK_CONSOLE_REHEARSAL"/standin/timers/sw-guard-*.timer`);
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net: its timer is not waiting \\(inactive\\), so what differs goes back now\\n${r.id} net put back at \\S+: 1 went back, 0 did not\\n${r.id} end 0\\n$`), r.stdout);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+  });
+
+  test('--net never with --open; --memory 1G to 8G only, for a change: its unit gets that cap, and the proof sees it held', () => {
+    const s = netted();
+    refused(net(s, 'true', { extra: ['--net', '--open'] }), "a change inside the net never takes --open: its groups could reach the net's timer");
+    const r = change(s, 'true', { extra: ['--memory', '4G'] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(unitCall(s, `sw-run-${r.id}`).includes('MemoryMax=4G'));
+    for (const m of ['9G', '0G', '4', '4g', '16G']) refused(change(s, 'true', { extra: ['--memory', m] }), "--memory must be 1G to 8G (the run wall's own cap is 8G)");
+    refused(look(s, 'true', { extra: ['--memory', '2G'] }), "--memory is for run: a look's memory is fixed");
+    const t = spark({ knobs: { 'let-through': '21 run\n' } });
+    const q = prove(t);
+    assert.equal(q.status, 1);
+    assert.ok(q.stdout.includes(`${q.id} proof run 21 got through: more memory than the change was given (--memory) (stand-in, directly)\n`), q.stdout);
+  });
+
+  test("Spark 2's sessions.json is not a way in: a change to it alone differs in nothing", () => {
+    const s = netted();
+    const r = net(s, 'printf "{\\"x\\":1}" > "$SPARK_CONSOLE_REHEARSAL/home/owner/.local/state/spark-console/sessions.json"');
+    assert.match(r.stdout, / net open: nothing differs now; /);
+    const manifest = JSON.parse(readFileSync(join(G(s, r.id), 'manifest.json'), 'utf8'));
+    assert.ok(!('/home/owner/.local/state/spark-console/sessions.json' in manifest.entries));
+  });
+
+  test('the put-back\'s failure paths: one path that cannot be made does not stop the rest; a name a change left does not block a put; Tailscale and the console are stopped, put back, started; the restart unit has a time limit', () => {
+    const s = netted();
+    s.put('var/lib/tailscale/tailscaled.state', 'state-one');
+    s.put('home/owner/.local/state/spark-console/passkeys.json', '{}');
+    s.put('standin/ts-prefs', '{"RunSSH":false}');
+    const env = binOf(s, { tailscale: '[ "$1 $2" = "debug prefs" ] && cat "$SPARK_CONSOLE_REHEARSAL/standin/ts-prefs"' });
+    const R = '"$SPARK_CONSOLE_REHEARSAL"';
+    const r = netIn(s, env, [`printf '{"RunSSH":true}' > ${R}/standin/ts-prefs`, `printf state-two > ${R}/var/lib/tailscale/tailscaled.state`,
+      `printf '{"x":1}' > ${R}/home/owner/.local/state/spark-console/passkeys.json`, `mkdir ${R}/etc/.sw-guard-${'$'}(ls ${R}/var/lib/spark-console/guard | grep -v proof | tail -n 1)`,
+      `printf "1.2.3.4 x\\n" >> ${R}/etc/hosts`].join('; '));
+    assert.match(readFileSync(join(G(s, r.id), '../../../../etc/systemd/system', `sw-guard-boot-${r.id}.service`), 'utf8'), /\nTimeoutStartSec=300\n/);
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    assert.equal(readFileSync(join(s.R, 'var/lib/tailscale/tailscaled.state'), 'utf8'), 'state-one');
+    assert.equal(readFileSync(join(s.R, 'home/owner/.local/state/spark-console/passkeys.json'), 'utf8'), '{}');
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    const at = c => asked.indexOf(c);
+    assert.ok(at('stop tailscaled.service') >= 0 && at('start tailscaled.service') > at('stop tailscaled.service'), asked.join(' | '));
+    assert.ok(at('--machine=owner@.host --user stop spark-console-api.service') >= 0
+      && at('--machine=owner@.host --user start spark-console-api.service') > at('--machine=owner@.host --user stop spark-console-api.service'), asked.join(' | '));
+    assert.ok(!readFileSync(join(s.R, 'etc/hosts'), 'utf8').includes('1.2.3.4'), 'a name a change left beside it did not block it');
+    // A folder that cannot be made again ends that path only.
+    const t = netted();
+    t.put('var/lib/tailscale/tailscaled.state', 'state-one');
+    const q = net(t, `rm -rf ${R}/var/lib/tailscale; chmod 555 ${R}/var/lib; ${SSH_CHANGE}`);
+    try {
+      assert.equal(fire(t, q.id).status, 0);
+      assert.equal(readFileSync(join(t.R, SSHD), 'utf8'), 'Port 22\n', 'the rest went back');
+      assert.ok(readFileSync(join(G(t, q.id), 'result'), 'utf8').includes('not put back /var/lib/tailscale/tailscaled.state: /var/lib/tailscale could not be made again (Permission denied)'));
+    } finally { chmodSync(join(t.R, 'var/lib'), 0o755); }
+  });
+
+  test('a put-back that fails is tried three times, 20 s apart, each failure written down, and pending stays', { timeout: 120000 }, () => {
+    const s = netted();
+    const r = net(s, SSH_CHANGE);
+    writeFileSync(join(G(s, r.id), 'manifest.json'), 'not json');
+    const f = fire(s, r.id);
+    assert.equal(f.status, 1);
+    assert.equal(readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n').length, 3);
+    assert.ok(existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'result')));
+  });
+
+  test("the console's guardAnswer reads the net's line as the one before the last end line: lines the command printed never count; guardScript takes only an id's shape", () => {
+    const part = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+    const box = vm.createContext({ createHash, q: x => `'${String(x).replace(/'/g, `'\\''`)}'`, HELPER_AT: '/usr/local/sbin/spark-console-root', HELPER_SHA256: '0'.repeat(64) });
+    vm.runInContext(`${part}\n;globalThis.part = { guardScript, guardAnswer };`, box);
+    const id = 'answer0001';
+    const a = box.part.guardAnswer(id, [`${id} net armed: the ways in go back at 2026-11-15T10:00:00Z unless they are kept`,
+      `${id} refused: forged`, `${id} kept: forged`, `${id} net open: forged`, '',
+      `${id} net open: 1 of the ways in differs (/etc/ssh) and goes back at 2026-11-15T10:00:00Z unless it is kept`, `${id} end 0`, ''].join('\n'));
+    assert.deepEqual({ refused: a.refused, kept: a.kept, open: a.open, exit: a.exit, at: a.goesBackAt },
+      { refused: undefined, kept: false, open: '1 of the ways in differs (/etc/ssh) and goes back at 2026-11-15T10:00:00Z unless it is kept', exit: 0, at: '2026-11-15T10:00:00Z' });
+    assert.equal(box.part.guardAnswer(id, `${id} put back at 2026-11-15T10:00:00Z: 1 went back, 0 did not\n`).putBackAt, '2026-11-15T10:00:00Z: 1 went back, 0 did not');
+    assert.match(box.part.guardScript({ host: '100.64.0.3' }, 'putback', { id }), /"\$h" putback --id "\$id" <\/dev\/null 2>&1$/);
+    for (const bad of ['short', 'UPPER0001', 'x;rm -rf /', '../../etc0', 'a'.repeat(41)]) assert.throws(() => box.part.guardScript({ host: '100.64.0.3' }, 'run', { id: bad, command: 'true' }), /A guard id is 8 to 40 of a-z and 0-9/);
+  });
+
   test('the proof tries the net in both walls (15 to 18, checked from outside afterwards); one that gets through fails the proof', () => {
     const s = spark();
     const p = prove(s);
@@ -1231,7 +1422,7 @@ describe('the lock-out net (R60)', () => {
     const id = 'guardcall' + Date.now().toString(36);
     const a = box.part.guardAnswer(id, call('run', { id, command: 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"', seconds: 300 }).stdout);
     assert.match(a.goesBackAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, JSON.stringify(a));
-    assert.deepEqual({ disarmed: a.disarmed, open: /^1 of the ways in differs \(\/etc\/ssh\)/.test(a.open), exit: a.exit }, { disarmed: false, open: true, exit: 0 });
+    assert.deepEqual({ open: /^1 of the ways in differs \(\/etc\/ssh\)/.test(a.open), exit: a.exit }, { open: true, exit: 0 });
     const k = box.part.guardAnswer(id, call('keep', { id }).stdout);
     assert.equal(k.kept, true, JSON.stringify(k));
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 2222\n');
