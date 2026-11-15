@@ -10443,7 +10443,8 @@ async function recallAnswer({ about, id, kind, spark, when, since, until, limit 
 // A copy goes only to a Spark that is awake (copyAwake): one the status check's last look saw on, and never one Spark
 // Console powered off or is powering off. Nothing here turns a Spark on.
 // "Changed" is one mark of the state folder (stateMark): each file's name, size and time, less what Spark Console
-// rewrites by itself as it watches and logs (COPY_IGNORES). The newest good copy keeps its mark (goodMark in
+// rewrites by itself as it watches and logs (COPY_IGNORES), and with only the last use of a passkey or an agent key left
+// out of theirs (COPY_USE_FIELDS). The newest good copy keeps its mark (goodMark in
 // backup.json). No copy newer than 7 days, with changes since: one needs-you line (copyLateWords) and one notice
 // (copyLate), until a copy lands. Never before day 7: the owner takes up to a week of changes over waking a Spark.
 const COPY_LATE_MS = 7 * 86400000;
@@ -10451,9 +10452,13 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json, which no copy carries.
+// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json and sessions.json, which no
+// copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
-  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json']);
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json']);
+// What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
+// to it alone makes no copy due. (A counter put back from an older copy is lower than the passkey's own: accepted.)
+const COPY_USE_FIELDS = { 'passkeys.json': ['signCount', 'lastUsedAt'], 'agents.json': ['lastUsedAt', 'lastAction'] };
 
 // The state folder as one mark: each file's name, size and time, in name order, less COPY_IGNORES, sockets, a save under
 // way (.tmp) and the copy from before a save (.prev). null when it can't be read: a copy is then due.
@@ -10466,6 +10471,15 @@ function stateMark() {
         if (COPY_IGNORES.has(name) || /\.(sock|tmp|prev)$/.test(e.name)) continue;
         if (e.isDirectory()) { if (depth < 4) walk(`${dir}/${e.name}`, name, depth + 1); continue; }
         if (!e.isFile()) continue;
+        const use = COPY_USE_FIELDS[name];
+        if (use) {
+          try {
+            const v = JSON.parse(readFileSync(`${dir}/${e.name}`, 'utf8'));
+            const keys = (Array.isArray(v?.keys) ? v.keys : []).map(k => Object.fromEntries(Object.entries(k || {}).filter(([f]) => !use.includes(f))));
+            h.update(`${name}\0${JSON.stringify({ ...v, keys })}\n`);
+            continue;
+          } catch {}
+        }
         const s = statSync(`${dir}/${e.name}`);
         h.update(`${name}\0${s.size}\0${s.mtimeMs}\n`);
       }
@@ -16459,7 +16473,8 @@ function backupTargets(first = null) {
 function sendCopy(target, name) {
   const dir = '"$HOME/.local/share/spark-console/backups"', part = `${dir}/${name}.part`;
   return new Promise(resolve => {
-    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    // (no sessions.json in any copy: state put back from one signs no device in, contract 6.25)
+    const src = spawn('tar', ['-C', STATE_DIR, '--exclude=*.sock', '--exclude=./cloud.json', '--exclude=./sessions.json', '-czf', '-', '.'], { stdio: ['ignore', 'pipe', 'ignore'] });
     // gzip reads the .part from stdin (GNU gzip refuses a file name ending .part) and answers 2 for a warning only (macOS
     // tar pads its output with zeros); a copy cut short answers 1. Either way the .part stays for the second step: how
     // tar ended isn't known there. (A .part an earlier try left, its second step never run, goes first. This command is
