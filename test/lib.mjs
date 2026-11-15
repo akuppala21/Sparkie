@@ -40,16 +40,21 @@ export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PROD
 export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_recipes', 'recipe_detail', 'search_huggingface', 'where_it_fits',
   'deploy_plan', 'cluster_plan', 'linked_sparks', 'spark_detail', 'recent_operations', 'operation_log', 'container_logs', 'spark_diagnostics',
   'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
-  'search_web', 'read_page'];
+  'search_web', 'read_page', 'guide'];
 export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
   'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test'];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
-// Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), so a key that
-// only looks sees 27 tools and one that can act 43.
+// Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), beside every
+// read action (a key that only looks) or every action (one that can act).
 export const ASK = 'ask_sparkie';
 export const DOOR_READ = [...TOOLS, ASK], DOOR_ACT = [...ALL_TOOLS, ASK];
-// The tools Sparkie itself is offered in the owner's chats: every action (lookups and workflows), the same as agents.
+// Every tool Sparkie can call in the owner's chats: every action (lookups and workflows), the same as agents.
 export const SPARKIE_TOOLS = [...ALL_TOOLS];
+// What every round offers Sparkie (R46): the core, at most TOOL_CAP tools with the groups a request opens (TOOL_CAP in
+// 21-guide.mjs; test/tools.test.mjs checks the service agrees).
+export const CORE_TOOLS = ['fleet_status', 'running_models', 'workloads', 'should_be_running', 'sparkie_setup', 'start_model', 'stop_model', 'restart_model',
+  'keep_running', 'remember', 'search_web', 'guide'];
+export const TOOL_CAP = 24;
 
 let rpcId = 1;
 export const nextId = () => rpcId++;

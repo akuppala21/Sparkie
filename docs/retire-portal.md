@@ -115,6 +115,8 @@ off, and the console moves from `:8443/console/` to `:8443/`.
 7. **Clean up** after a week without problems, narrower than first planned: remove `spark-portal.service` and the
    portal's web server code on Spark 2. Keep everything listed under "Not touched" above, plus the portal's config and
    state files as a small backup.
+   First the look, on Spark 2: `bash ~/spark-console-src/deploy/clear-spark2.sh --check` lists what runs there and
+   what the cleanup would change (design E 2.6); it changes nothing.
 
 ## Rollback
 
