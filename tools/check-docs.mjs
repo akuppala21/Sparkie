@@ -28,7 +28,7 @@ const KB = 1024;
 // docs/review-astra/ holds a review with an outside reviewer (its evidence quotes line numbers and old names on purpose).
 const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//, /^docs\/review-astra\//];
 // Written by tools: never edited by hand. tools/make.mjs rebuilds them; build.test.mjs and this checker compare them.
-const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md'];
+const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md', 'docs/status.md'];
 // Not the app's documents: the agent bar (a separate trial harness that names its own run outputs) and anything inside
 // the stand-in fleet.
 const NOT_DOCS = [/^agentbar\//, /^test\/mock\//];
@@ -44,7 +44,7 @@ const LIMITS = [
   [/^docs\/state\.md$/, 24 * KB],
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
-  [/^docs\/contract\.md$/, 120 * KB, 139 * KB],
+  [/^docs\/contract\.md$/, 120 * KB],
   [/^README\.md$/, 4 * KB, 15 * KB],
   [/^test\/README\.md$/, 12 * KB, 48 * KB],
   [/^docs\/agent-door\.md$/, 16 * KB, 17 * KB],
@@ -68,6 +68,7 @@ const NOT_PATHS = {
   'deploy/short-address.sh': 'retired 2026-11-11; the contract names it as gone',
   'deploy/web-page.sh': 'retired 2026-11-11; the contract names it as gone',
   'service/workflows.lock.json': 'written by node test/lock.mjs; not kept in git',
+  'test/affected-map.json': 'written by node test/lock.mjs with SPARK_TEST_MAP=1; not kept in git',
 };
 
 // The brain's tool groups (R46): every round carries the core, and at most two groups beside it.

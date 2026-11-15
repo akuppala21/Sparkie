@@ -91,7 +91,7 @@ flowchart TD
   V1 -->|"model sparkie or the brain's served name: the agents route's model"| BRAIN
   V1 -->|"a running model's name: its own server, HTTP over the tailnet"| FLEET
   V1 -->|"a model that isn't running: startOnCall, via gateway, nothing may stop"| RUN
-  CHAT -->|"prompt, fleet notes, memory, tool groups (R46). Text and tool calls back"| BRAIN
+  CHAT -->|"prompt, fleet notes, memory. Text and tool calls back"| BRAIN
   CHAT -->|"each tool call, via sparkie, with the intent and the asker's words in ctx"| RUN
   RUN -->|"finds the action"| REG
   RUN -->|"untested: refused. Not validated: a validation run, or a question"| WF
@@ -198,11 +198,11 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a checkout of a `tested/` tag holds one, and the installer refuses a build without it. Any edit
-  to a part changes the build; a `worker.py` edit changes every workflow version but not the build. After an install
-  `/health` names the workflows whose version waits for a validation run (the hub guard, 2026-11-14, changed
-  `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the
-  restart; one `find_setups` covers that one.
+  whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
+  tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard
+  changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
+  the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.

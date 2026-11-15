@@ -13,6 +13,11 @@
 // brain reads has changed. Without git (a copy with no .git
 // folder) tree and commit are left out; off GitHub, run is. After the suite it prints the seconds each test file took.
 //
+// SPARK_TEST_MAP=1 also records which test files run each function of the service's parts, for picking the tests a
+// change needs (tools/affected.mjs): every file runs with Node's own coverage, and a passing run writes
+// test/affected-map.json beside the lock, named by the same tree (SPARK_TEST_TREE names it where there is no git: the
+// Spark runner sends it). Nothing else about the run changes; it takes longer (test/README.md has the figure).
+//
 // test/lock.test.mjs imports lockFor and the rest; importing this file runs nothing.
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
@@ -21,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startMock, REPO } from './start-mock.mjs';
+import { buildMap, testFiles, MAP_FILE } from '../tools/affected.mjs';
 
 const SERVICE = join(REPO, 'service');
 const LOCK_PATH = 'service/workflows.lock.json';
@@ -88,6 +94,10 @@ export async function lockFor(fleet, { git = gitFields(), env = process.env } = 
     ...git, ...(run ? { run } : {}), brainReads: brainReadsOf(await brainSent(fleet)) };
 }
 
+// Run in each test file's process before the file itself (Node's test runner passes --import on to every file): the
+// coverage of that process and of everything it starts (the service too) goes to a folder named after the file.
+export const EACH_FILE = `data:text/javascript,${encodeURIComponent("const f = process.argv[1] || ''; if (process.env.NODE_V8_COVERAGE && /\\.test\\.mjs$/.test(f)) process.env.NODE_V8_COVERAGE += '/' + f.slice(f.lastIndexOf('/') + 1);")}`;
+
 // By hand (not when a test imports this file, nor when a bare `node --test` picks it up). The paths are compared as real
 // paths: a folder reached through a link must still run.
 const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
@@ -101,10 +111,16 @@ if (isMain() && !process.env.NODE_TEST_CONTEXT) {
   const built = spawnSync(process.execPath, [join(REPO, 'tools', 'build-server.mjs'), '--check'], { stdio: 'inherit' });
   if (built.status !== 0) process.exit(1);
   const before = fingerprint(), git = gitFields();
+  const cover = process.env.SPARK_TEST_MAP === '1' ? mkdtempSync(join(tmpdir(), 'cover-')) : null;
+  if (cover) {
+    rmSync(join(REPO, MAP_FILE), { force: true });   // a map from an earlier run never stands for this one
+    process.on('exit', () => rmSync(cover, { recursive: true, force: true }));
+  }
   // (SPARK_TEST_CONCURRENCY: fewer test files at once on a slow machine, e.g. one whose security software checks every
   // process the stand-in fleet starts.) The usual report, then the seconds each file took (test/file-times.mjs).
   const reporters = ['--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=./test/file-times.mjs', '--test-reporter-destination=stdout'];
-  const suite = spawnSync(process.execPath, ['--test', `--test-concurrency=${Number(process.env.SPARK_TEST_CONCURRENCY) || 4}`, ...reporters, 'test/*.test.mjs'], { cwd: REPO, stdio: 'inherit', env: { ...process.env, SPARK_TEST_STRICT: '1' } });
+  const suite = spawnSync(process.execPath, ['--test', ...(cover ? [`--import=${EACH_FILE}`] : []), `--test-concurrency=${Number(process.env.SPARK_TEST_CONCURRENCY) || 4}`, ...reporters, 'test/*.test.mjs'],
+    { cwd: REPO, stdio: 'inherit', env: { ...process.env, SPARK_TEST_STRICT: '1', ...(cover ? { NODE_V8_COVERAGE: cover } : {}) } });
   if (suite.status !== 0) {
     console.error('\nThe suite didn’t pass, so nothing was marked as tested.');
     process.exit(1);
@@ -119,4 +135,10 @@ if (isMain() && !process.env.NODE_TEST_CONTEXT) {
     writeFileSync(join(SERVICE, 'workflows.lock.json'), `${JSON.stringify(lock, null, 2)}\n`);
     console.log(`\nMarked build ${lock.build} as tested: ${Object.entries(lock.versions).map(([id, v]) => `${id} ${v}`).join(', ')}`);
   } finally { await fleet.stop(); }
+  if (cover) {
+    const t0 = Date.now(), tree = git.tree || (/^[0-9a-f]{40}$/.test(process.env.SPARK_TEST_TREE || '') ? process.env.SPARK_TEST_TREE : null);
+    const map = buildMap(cover, { root: REPO, tests: testFiles(REPO), tree });
+    writeFileSync(join(REPO, MAP_FILE), `${JSON.stringify(map)}\n`);
+    console.log(`Wrote ${MAP_FILE}: ${Object.keys(map.fns).length} functions, ${map.tests.length} test files, tree ${tree || 'not known'} (${((Date.now() - t0) / 1000).toFixed(1)} s).`);
+  }
 }
