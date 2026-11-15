@@ -1,0 +1,13 @@
+#!/bin/bash
+# Stand-in loginctl: Spark Console's look at linger on Spark 2 (`loginctl show-user <uid> -p Linger --value`, as the
+# installer reads it) answers with ~/.mock/linger (yes, no, or anything else: an answer that can't be read), or yes.
+# With "fail" there, it fails as loginctl does for a user it doesn't know. Every call is kept, one line each, in
+# $MOCK_DIR/loginctl-calls, so a test can see that only reads were asked; anything but show-user fails.
+[ -n "$MOCK_DIR" ] && printf '%s\n' "$*" >> "$MOCK_DIR/loginctl-calls"
+case "$1" in
+  show-user)
+    v=$(cat "$HOME/.mock/linger" 2>/dev/null || echo yes)
+    if [ "$v" = fail ]; then echo "Failed to get user: User ID $2 is not logged in or lingering" >&2; exit 1; fi
+    echo "$v" ;;
+  *) echo "stand-in loginctl: only show-user is stood in for" >&2; exit 1 ;;
+esac
