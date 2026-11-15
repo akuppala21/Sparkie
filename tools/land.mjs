@@ -120,7 +120,10 @@ export function settle(p, say = console.log) {
     const rc = read(join(e.out, `${name}.done`));
     if (rc === null) continue;
     const log = read(join(e.out, `${name}.log`)) || '';
-    if (rc.trim() === '0' && /^exit=0$/m.test(log)) {
+    if (/^(?:The copy failed|Not run:|Couldn’t bring the log back)/m.test(log)) {
+      note(p, { kind: 'whole run', name, main: e.main, result: 'not run', why: log.trim().split('\n')[0] });
+      say(`The whole run of main at ${short(e.main)} didn’t run (${log.trim().split('\n')[0]}); the next landing asks again.`);
+    } else if (rc.trim() === '0' && /^exit=0$/m.test(log)) {
       const lock = readJson(join(e.out, `${name}.lock.json`)), map = readJson(join(e.out, `${name}.affected-map.json`));
       note(p, { kind: 'whole run', name, main: e.main, result: 'passed', build: lock?.build ?? null, tree: map?.tree ?? null, map: !!map });
       say(`The whole run of main at ${short(e.main)} passed: build ${lock?.build ?? 'not named'}, the tested record from now on${map ? '' : ' (no map came back: a watcher restarted with this version of the runner records one)'}.`);
@@ -226,6 +229,7 @@ export function status(here = process.cwd(), n = 12) {
       : e.kind === 'not landed' ? `not landed ${e.branch} (${e.result})`
       : e.kind === 'whole run asked' ? `whole run of main at ${short(e.main)} asked (${e.name})${done.has(e.name) ? '' : ', not finished yet'}`
       : e.result === 'passed' ? `whole run of main at ${short(e.main)} passed: build ${e.build}${e.map ? '' : ', no map'}`
+      : e.result === 'not run' ? `whole run of main at ${short(e.main)} didn’t run: ${e.why}`
       : `whole run of main at ${short(e.main)} failed: ${e.failed.join(', ') || 'see its log'}; landings since the last tested build: ${e.landings.join(', ') || 'none'}${e.missed.length ? `; missed by the pick: ${e.missed.join(', ')}` : ''}`;
     console.log(`${when}  ${what}`);
   }

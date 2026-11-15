@@ -12,9 +12,9 @@
 //   node tools/affected.mjs pick [--landing] [base]   the test files this folder's change needs against base (main
 //                                              when not given): one per line, or the one word all; why on stderr
 //   node tools/affected.mjs build <coverage folder> [--tree <hash>] [--out <file>]
-//   node tools/affected.mjs missed <a whole run's log> [ref]    the files that failed there but the pick for the change
-//                                              since the last tested build would not have run, printed and kept in
-//                                              that build's map, so the next pick adds them for those functions
+//   node tools/affected.mjs missed [--landing] <a whole run's log> [ref]
+//        the files that failed there but the pick for the change since the last tested build would not have run,
+//        printed and kept in that build's map, so the next pick adds them for those functions
 //
 // The pick is the files that ran the changed functions, every changed test file, and always the short check. It is
 // all whenever 2.4 says so: no map for the base or a commit before it, a part added or removed, a changed line
@@ -345,12 +345,13 @@ if (isMain()) {
       const map = buildMap(rest[0], { tests, tree });
       writeFileSync(out, JSON.stringify(map) + '\n');
       console.log(`Wrote ${out}: ${Object.keys(map.fns).length} functions, ${tests.length} test files.`);
-    } else if (cmd === 'missed' && rest[0]) {
-      const r = noteMissed({ failed: failedIn(readFileSync(rest[0], 'utf8')), ref: rest[1] || 'HEAD' });
+    } else if (cmd === 'missed' && rest.some(a => a !== '--landing')) {
+      const landing = rest[0] === '--landing', [log, ref] = rest.filter(a => a !== '--landing');
+      const r = noteMissed({ failed: failedIn(readFileSync(log, 'utf8')), ref: ref || 'HEAD', landing });
       for (const f of r.missed) console.log(`missed by the pick: ${f}`);
       console.error(r.missed.length ? `Kept in ${basename(r.tested.file)}: the next pick adds them for ${list(r.fns)}.` : `Nothing missed by the pick: ${r.why}.`);
     } else {
-      console.error('Use: node tools/affected.mjs pick [--landing] [base] | build <coverage folder> [--tree <hash>] [--out <file>] | missed <log> [ref]');
+      console.error('Use: node tools/affected.mjs pick [--landing] [base] | build <coverage folder> [--tree <hash>] [--out <file>] | missed [--landing] <log> [ref]');
       process.exit(2);
     }
   } catch (e) { console.error(e.message); process.exit(1); }
