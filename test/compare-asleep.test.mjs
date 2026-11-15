@@ -9,7 +9,8 @@
 //
 // The stand-in fleet as in power-wake.test.mjs: plugs on Sparks 3 (node 2) and 4 (node 3), the stand-in sudo shuts a
 // Spark down, each power-off writes its record. Spark 1 is off with no record and no plug. On Spark 3 a job runs its
-// command to its end (jobs-run) and writes result.json with a score that depends on the model it was given.
+// command to its end (jobs-run) and writes result.json with a score that depends on the model it was given in its
+// settings (SPARK_MODEL_NAME).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -68,7 +69,7 @@ describe('T141: whatever is best, the winner kept, the Sparks asleep (D8)', { co
     const words = 'make a workflow called best work';
     const steps = [
       { action: 'start_model', args: { model: '{model}' } },
-      { action: 'keep_running', args: { container: 't141', image: IMAGE, once: true, command: ['sh', '-c', `case "{model}" in *gpt*) s=0.9;; *) s=0.6;; esac; printf '{"score": %s, "ok": true, "items": %s}' "$s" "{sample}" > result.json`] } },
+      { action: 'keep_running', args: { container: 't141', image: IMAGE, once: true, command: ['sh', '-c', `case "$SPARK_MODEL_NAME" in *gpt*) s=0.9;; *) s=0.6;; esac; printf '{"score": %s, "ok": true, "items": %s}' "$s" "$SPARK_SAMPLE" > result.json`] } },
     ];
     script([{ match: `^${esc(words)}$`, calls: [{ name: 'save_workflow', arguments: { title: 'best work', inputs: { model: 'the model', sample: 'how many items' }, steps } }] }]);
     try { const chat = await newChat(), r = await say(chat, words); assert.equal((await choose(chat, r.message.choices[0].id)).status, 200); } finally { noScript(); }
