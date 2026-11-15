@@ -16,6 +16,8 @@
 # turn (for when Sparkie's model is down).
 # If Spark Console ever stops answering, on Spark 2: bash ~/.local/share/spark-console/go-back.sh puts the last build
 # back (every install copies it there; RECOVERY.txt beside it lists the other by-hand steps).
+# On Spark 2 without the Mac, deploy/pull.sh installs a tested build from GitHub with `local` and SKIP_ROUTES=1: then
+# nothing here calls tailscale, sudo or ssh (the routes on 8443 and the other Sparks' reach aren't checked).
 # To remove Spark Console:
 #   ssh -t <host> 'sudo tailscale serve --https=8443 --set-path=/console/ off; sudo tailscale serve --https=8443 --set-path=/console/api off;
 #                  systemctl --user disable --now spark-console-api'
@@ -28,6 +30,8 @@ UI_FILES=(index.html app.js styles.css theme.js qr.js favicon.svg nvidia-logo-wh
 SERVICE_FILES=(server.mjs dig.mjs passkey.mjs config.json catalog.json worker.py workflows.lock.json)
 # The by-hand way back, kept at a fixed path on Spark 2 (~/.local/share/spark-console/): deploy/RECOVERY.txt says how.
 RECOVERY_FILES=(go-back.sh RECOVERY.txt)
+# pull.sh (the install from GitHub) goes there too, but only once the build it came with is kept: it judges the next.
+RECOVERY_FILES+=(pull.sh)
 # server.mjs is built from service/src/*.mjs (tools/build-server.mjs): install only one that matches its parts.
 cat "$HERE"/service/src/[0-9][0-9]-*.mjs | cmp -s - "$HERE/service/server.mjs" || { echo "service/server.mjs doesn't match service/src: run node tools/build-server.mjs, then node test/lock.mjs." >&2; exit 1; }
 # Which workflow versions passed the whole test suite (test/lock.mjs writes it). Without it every workflow is off.
@@ -412,6 +416,13 @@ fi
 same_process || miss "it restarted by itself during the checks"
 PHASE=done
 echo "  kept: build $API_BUILD passed its checks"
+# pull.sh judges the next install, so this build's copy takes over only now. Renamed into place: the pull.sh that may be
+# running this install keeps reading its own copy.
+if [ -f "$IN/pull.sh" ]; then
+  cp "$IN/pull.sh" "$HOME/.local/share/spark-console/.pull.sh.new" && chmod 700 "$HOME/.local/share/spark-console/.pull.sh.new" \
+    && mv -f "$HOME/.local/share/spark-console/.pull.sh.new" "$HOME/.local/share/spark-console/pull.sh" \
+    || echo "  NOTE: couldn't copy pull.sh to ~/.local/share/spark-console (the install itself is fine)."
+fi
 # The source, kept here too (swapped in whole; the old copy goes once the new one is in place).
 if [ -f "$IN/source.tar" ]; then
   SRC="$HOME/spark-console-src"
@@ -474,6 +485,8 @@ for k, v in (json.load(sys.stdin).get("workflows") or {}).items(): print(f"  wor
 ' 2>/dev/null || true
 python3 -c 'import yaml' 2>/dev/null && echo "  recipe files: readable" || echo "  NOTE: Find setups reads recipe files with PyYAML, which isn't installed here. Install it with: sudo apt install python3-yaml"
 
+if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "  Not checked here: whether this machine reaches the other Sparks (SKIP_ROUTES=1: no ssh)."
+else
 echo "Checking that this machine can reach the other Sparks without a password:"
 python3 - <<'PY'
 import json, os, subprocess
@@ -489,6 +502,7 @@ for n in cfg['nodes']:
         ok, why = False, 'timed out'
     print(f"  {n['id']}: " + ('ok' if ok else 'NOT reachable without a password: ' + why))
 PY
+fi
 REMOTE
 
 echo "Connecting to $HOST. Your password is asked once and reused for the steps below."
@@ -516,9 +530,12 @@ esac
 
 printf -v HOST_Q '%q' "$HOST"
 SKIP=''; if [ "${SKIP_CHAT_CHECK:-}" = 1 ]; then SKIP='SKIP_CHAT_CHECK=1 '; fi
+if [ "${SKIP_ROUTES:-}" = 1 ]; then SKIP="${SKIP}SKIP_ROUTES=1 "; fi
 "${SSH[@]}" "$HOST" "${SKIP}bash \"\$HOME/.cache/spark-console/incoming/install.sh\" install $STAMP $API_BUILD $HOST_Q" \
   || { echo; echo "The install stopped (see above). The routes on port 8443 weren't touched." >&2; exit 1; }
 
+if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "The /console routes on port 8443 weren't checked (SKIP_ROUTES=1: no tailscale or sudo)."
+else
 echo "Checking the /console routes on port 8443 …"
 "${SSH[@]}" -t "$HOST" 'set -e
   status=$(tailscale serve status 2>&1)
@@ -527,6 +544,7 @@ echo "Checking the /console routes on port 8443 …"
   if need "/console/ +path"; then echo "  adding /console/ (sudo may ask for your password)"; serve --set-path=/console "$HOME/spark-console"; fi
   if need "/console/api"; then echo "  adding /console/api (sudo may ask for your password)"; serve --set-path=/console/api "unix:$HOME/.local/state/spark-console/api.sock"; fi
   echo; tailscale serve status'
+fi
 
 echo
 echo "Done: https://akspark2.tailab9aa9.ts.net:8443/"

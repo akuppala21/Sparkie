@@ -25,9 +25,9 @@ flowchart TD
   PAGE["The page (public/, served as files by Tailscale) and tools/console.mjs"]
   AGENT["Agents over MCP (tools/spark.mjs, Claude Code)"]
   APPS["Apps calling the model address /v1"]
-  WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup"]
+  WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
-  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes"]
+  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -84,7 +84,7 @@ flowchart TD
   TG -->|"a button pressed there: runChoice, via telegram, plain buttons only"| RUN
   CHAT -->|"tell(): a reply, a result of work started there, a carry-on line, fixed lines, the needs-me line when the owner switched it on (R32)"| TG
   SECRETS -->|"token and binding, written only from the passkey page and by pairing"| TG
-  PGATE -->|"PUT /telegram and POST /telegram/pair with the passkey; DELETE without"| SECRETS
+  PGATE -->|"PUT /telegram, POST /telegram/pair, PUT /heartbeat with the passkey; DELETE without"| SECRETS
   V1 -->|"model sparkie or the brain's served name: the agents route's model"| BRAIN
   V1 -->|"a running model's name: its own server, HTTP over the tailnet"| FLEET
   V1 -->|"a model that isn't running: startOnCall, via gateway, nothing may stop"| RUN
