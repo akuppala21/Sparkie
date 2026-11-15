@@ -13,7 +13,7 @@
 //   ...
 //   await fleet.stop();
 //
-// By hand: node test/start-mock.mjs [--editor] [--keep]   (prints the addresses; Ctrl-C stops it)
+// By hand: node test/start-mock.mjs [--keep]   (prints the addresses; Ctrl-C stops it)
 import { spawn } from 'node:child_process';
 import { mkdtempSync, cpSync, rmSync, readFileSync, writeFileSync, truncateSync, mkdirSync, renameSync, existsSync, openSync, closeSync, appendFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -219,7 +219,7 @@ async function recordEval(f, lock, waitMs) {
   if (kept.status !== 201) note(`the record: ${kept.status} ${await kept.text()}`);
 }
 
-async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null,
+async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null,
   lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000 } = {}, attempt) {
   hookExit();
   // This build's lock (above), unless the test brings its own: made before this start's ports are chosen.
@@ -230,9 +230,9 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   }
   const dir = mkdtempSync(join(tmpdir(), 'sct-'));
   const root = join(dir, 'root'), stateDir = join(dir, 'state'), socket = join(dir, 'api.sock'), offlineFile = join(dir, 'offline'), log = join(dir, 'service.log');
-  const ports = await freePorts(6);
+  const ports = await freePorts(5);
   if (firstPort && attempt === 1) ports[0] = firstPort;
-  const [port, modelPort, benchPort, editorPort, servePort, telegramPort] = ports;
+  const [port, modelPort, benchPort, servePort, telegramPort] = ports;
   const secretsFile = join(dir, 'secrets', 'secrets.json'), journalDir = join(dir, 'journal');
   copyFleet(root, benchPort);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -256,7 +256,6 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   Object.assign(env, {
     PATH: `${join(MOCK, 'bin')}:${process.env.PATH}`,
     MOCK_ROOT: root, MOCK_DIR: dir, MOCK_KEEP: keep ? '1' : '0', MOCK_MODEL_PORT: String(modelPort), MOCK_BENCH_PORT: String(benchPort), MOCK_SERVE_PORT: String(servePort),
-    ...(editor ? { MOCK_EDITOR_PORT: String(editorPort) } : {}),
     // Every start keeps its secrets (recovery codes, Telegram's token) and its journal in its own folder, never the
     // developer's home.
     SPARK_CONSOLE_SECRETS_FILE: secretsFile, SPARK_CONSOLE_JOURNAL_DIR: journalDir,
@@ -284,7 +283,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
     ...(lock ? { SPARK_CONSOLE_WORKFLOW_LOCK: lockFile } : {}),
     ...extraEnv,
   });
-  const scripts = [SERVICE, join(MOCK, 'model.mjs'), ...(editor ? [join(MOCK, 'editor.mjs')] : []), ...(telegram ? [join(MOCK, 'telegram.mjs')] : [])];
+  const scripts = [SERVICE, join(MOCK, 'model.mjs'), ...(telegram ? [join(MOCK, 'telegram.mjs')] : [])];
   const out = openSync(log, 'a');
   const guard = spawn(process.execPath, ['-e', GUARD, ...scripts], { cwd: REPO, env, detached: true, stdio: ['pipe', out, out] });
   closeSync(out);
@@ -338,7 +337,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
   if (lock && evalOnRecord) await recordEval({ base, dir, stateDir, origin: cfg.origin }, lock, evalWaitMs * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1));
   return {
     base, mcp: `${base}/mcp`, origin: cfg.origin, port, socket, dir, root, stateDir, offlineFile, log,
-    modelPort, benchPort, servePort, editorPort: editor ? editorPort : null, pid: guard.pid, keep, logText, stop, env,
+    modelPort, benchPort, servePort, pid: guard.pid, keep, logText, stop, env,
     telegramPort: telegram ? telegramPort : null, secretsFile, journalDir,
     servicePid: () => pids()['server.mjs'] || null, serviceExit: () => /^server\.mjs (\S+)$/m.exec(exits())?.[1] ?? null,
   };
@@ -346,8 +345,8 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
 
 // By hand (not when a test runner loads this file).
 if (process.argv[1] === fileURLToPath(import.meta.url) && !process.env.NODE_TEST_CONTEXT) {
-  const fleet = await startMock({ editor: process.argv.includes('--editor'), keep: process.argv.includes('--keep') });
-  console.log(JSON.stringify({ base: fleet.base, mcp: fleet.mcp, origin: fleet.origin, dir: fleet.dir, log: fleet.log, modelPort: fleet.modelPort, editorPort: fleet.editorPort }, null, 2));
+  const fleet = await startMock({ keep: process.argv.includes('--keep') });
+  console.log(JSON.stringify({ base: fleet.base, mcp: fleet.mcp, origin: fleet.origin, dir: fleet.dir, log: fleet.log, modelPort: fleet.modelPort }, null, 2));
   console.log(`\nSpark Console (stand-in fleet) is up as ${OWNER}. Try: curl ${fleet.base}/health\nCtrl-C stops it${fleet.keep ? '' : ' and removes its folder'}.`);
   const bye = async () => { await fleet.stop(); process.exit(0); };
   process.removeAllListeners('SIGINT'); process.removeAllListeners('SIGTERM');

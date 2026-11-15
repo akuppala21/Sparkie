@@ -23,6 +23,7 @@
 // last user message (whole, record included), which round it is, the tool results it was sent, and how it was asked
 // (temperature, top_p, top_k, max_tokens, thinking). The first round of each turn with tools also leaves exactly what
 // the brain was sent, the system prompt and every tool in full, in $MOCK_DIR/brain-sent.json (test/lock.mjs hashes it).
+// With $MOCK_DIR/model-history there, each request's earlier messages go to $MOCK_DIR/model-history.jsonl too.
 // The brain check's requests (21-brain-check.mjs, known by its system line) are answered by checkReply instead, and
 // logged only to $MOCK_DIR/brain-check.jsonl: ~/.mock/brain-kind on spark2 picks the brain they meet (below).
 // Another brain's habits (B9), for Sparkie's model only, while $MOCK_DIR/model-habits.json says so: "alternating": true
@@ -142,6 +143,8 @@ async function mainReply(b, port, res, log = true) {
       params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, top_k: b.top_k ?? null, max_tokens: b.max_tokens ?? null,
         thinking: b.chat_template_kwargs?.enable_thinking ?? null } };
     try { appendFileSync(`${DIR}/model-requests.jsonl`, `${JSON.stringify(entry)}\n`); } catch {}
+    // Only when a test asks ($MOCK_DIR/model-history there): the earlier messages as sent, to $MOCK_DIR/model-history.jsonl.
+    if (existsSync(`${DIR}/model-history`)) try { appendFileSync(`${DIR}/model-history.jsonl`, `${JSON.stringify({ at: entry.at, words: entry.words, history: msgs.slice(1, userAt).map(m => String(m.content ?? '')) })}\n`); } catch {}
     if (tools.length && round === 0) {
       try {
         writeFileSync(`${DIR}/brain-sent.json.tmp`, JSON.stringify({ at: entry.at, words: entry.words, system: entry.system, tools, params: entry.params }));

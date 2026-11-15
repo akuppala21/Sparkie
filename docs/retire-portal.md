@@ -95,8 +95,7 @@ off, and the console moves from `:8443/console/` to `:8443/`.
    `bash spark-console/deploy/cutover.sh --rollback` puts `/` back on `127.0.0.1:8800` and starts the portal again.
    Before changing anything it saves `tailscale serve status --json` to
    `~/.local/state/spark-console/serve-before-cutover.json`. If `/` doesn't end up on the console's files, it stops
-   before touching the portal. Afterwards it also checks that VS Code for Spark 3 still opens (its tunnel should run
-   without the portal) and that the Funnel on 443 still answers.
+   before touching the portal. Afterwards it also checks that the Funnel on 443 still answers.
 
    Then a read-only check from the Mac:
    - `:8443/` and `:8443/console/` both open Spark Console, and the portal's `/api` is gone.
@@ -107,7 +106,8 @@ off, and the console moves from `:8443/console/` to `:8443/`.
 
    **Not touched:** the VS Code servers on each Spark (`spark-portal-editor.service`), the editor tunnels on Spark 2 for
    Spark 3 and 4, and the file storage (`~/workspaces`, `~/.local/share/spark-portal/workspaces`). They still carry the
-   portal's name, but Spark Console uses them.
+   portal's name. Spark Console uses the file storage; since 2026-11-14 (E10c) it has no editor of its own: no VS Code
+   button and nothing at `/console/api/connect/<spark>/`. The editors and tunnels run until the clearing stops them.
    **After the switch (2026-11-04):** the console's remaining portal leftovers were removed: the Nemotron panel,
    Start/Stop Nemotron buttons and its log source, the portal's model and Ray checks in diagnostics, and the code that
    read the portal's files and copied its chats (both one-time jobs, done). The console is about general models, AI
