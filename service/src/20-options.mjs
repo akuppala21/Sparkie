@@ -24,10 +24,14 @@ const sortSpec = s => {
   return { short: map, long: longs.filter(Boolean).map(l => [l.replace(/^!?--|[=>}]$/g, ''), l.startsWith('!') ? '!' : /[=>}]$/.test(l) ? l.slice(-1).replace('=', ':') : false]) };
 };
 const SORT_NOOPTS = sortSpec('');
+// A word bash may split into more words (an unquoted $ or `): a doubt where an option or its value stands, unless all
+// that is unknown in it is $(nproc), a number.
+const sortSplits = w => !!w?.split && !(!w.vars && w.subs?.length && w.subs.every(s => s.length === 1 && s[0].length === 1 && /^(?:nproc|getconf)$/.test(s[0][0].words?.[0]?.text ?? '')));
 function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const opts = [], plain = [], val = (w, text) => ({ ...w, text, subs: [] });
   let unknown = null, end = args.length;
   const rest = k => { end = k; plain.push(...args.slice(k)); };
+  const next = (w, k) => { const v = args[k] ?? val(w, ''); if (sortSplits(v)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
     if (t === '--' && !w.unknown) { rest(k + 1); break; }
@@ -39,15 +43,16 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
     }
     if (spec.re) {
       const takes = !!spec.takes?.test(t);
-      if (!spec.re.test(t) || (w.unknown && !takes)) unknown ??= w.text || t;
-      opts.push([t, takes ? (w.unknown ? val(w, '') : args[++k] ?? val(w, '')) : true, takes ? ':' : false]);
+      if (!spec.re.test(t) || (w.unknown && !takes) || sortSplits(w)) unknown ??= w.text || t;
+      opts.push([t, takes ? (w.unknown ? val(w, '') : next(w, ++k)) : true, takes ? ':' : false]);
       continue;
     }
     if (t.startsWith('--')) {
       const eq = t.indexOf('='), n = t.slice(2, eq < 0 ? undefined : eq), hits = spec.long.filter(([l]) => l.startsWith(n));
       const h = hits.find(([l]) => l === n) ?? (hits.length === 1 ? hits[0] : null);
       if (!h || !n || h[1] === '!' || (w.unknown && eq < 0)) { unknown ??= w.text || t; continue; }
-      opts.push([h[0], !h[1] ? true : eq >= 0 ? val(w, t.slice(eq + 1)) : args[++k] ?? val(w, ''), h[1]]);
+      if (sortSplits(w)) unknown ??= w.text || t;
+      opts.push([h[0], !h[1] ? true : eq >= 0 ? val(w, t.slice(eq + 1)) : next(w, ++k), h[1]]);
       if (first?.includes(h[0])) { rest(k + 1); break; }
       continue;
     }
@@ -55,7 +60,7 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
     for (let j = 1; j < t.length; j++) {
       const takes = spec.short.get(t[j]);
       if (takes === undefined) { unknown ??= w.text || t; break; }
-      if (takes) { took = true; opts.push([t[j], j < t.length - 1 || w.unknown ? val(w, t.slice(j + 1)) : args[++k] ?? val(w, ''), takes]); stop = !!first?.includes(t[j]); break; }
+      if (takes) { took = true; if (sortSplits(w)) unknown ??= w.text || t; opts.push([t[j], j < t.length - 1 || w.unknown ? val(w, t.slice(j + 1)) : next(w, ++k), takes]); stop = !!first?.includes(t[j]); break; }
       opts.push([t[j], true, false]);
     }
     if (w.unknown && !took) unknown ??= w.text || t;

@@ -109,7 +109,8 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
-      // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then, C3)
+      // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
+      // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
       const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
         : await stopAppStarted(viewer, x, c);
@@ -119,7 +120,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
-      if (was && out?.outcome !== 'already' && desiredPutBack([was]).length) back.push(name);
+      if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
