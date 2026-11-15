@@ -90,11 +90,19 @@ const hfSnap = dir => `snap=$(cat ${dir}/refs/main 2>/dev/null); { [ -n "$snap" 
 // folder (Spark 3, 2026-11-08: its big weight blobs were links to elsewhere on the disk, so SGLang found 3 shards
 // missing) gets each snapshot file mounted by itself at the same /hf/snapshots/<commit>/ path instead. --mount, not -v:
 // a link to nothing fails to start rather than leaving an empty folder in its place.
+// Docker mounts as root, so a link out of the entry is followed only for a weight file that is a plain file; any other
+// stops the start, naming it (a planted link must not put a key, a socket or a folder in the container). The entry is
+// judged as its own folder: a whole cache on another disk (the hub, or a folder above it, a link) is fine, but an entry
+// that is itself a link counts as outside, since it could point at the home. --mount misreads a comma, quote or line break.
 function hfMounts() {
-  return `hfmounts=(-v "$dir:/hf:ro"); hfreal=$(readlink -f "$dir")
-if [ -n "$(cd "$dir/snapshots/$snap" 2>/dev/null && find . \\( -type l -o -type f \\) -exec readlink -f {} \\; | awk -v p="$hfreal/" 'NF && index($0, p) != 1')" ]; then
-  hfmounts=()
-  while IFS= read -r f; do hfmounts+=(--mount "type=bind,src=$(readlink -f "$dir/snapshots/$snap/$f"),dst=/hf/snapshots/$snap/$f,readonly"); done < <(cd "$dir/snapshots/$snap" && find . \\( -type l -o -type f \\) | sed 's#^\\./##')
+  return `hfmounts=(-v "$dir:/hf:ro"); hfreal=$(readlink -f "$(dirname "$dir")")/\${dir##*/}
+if [ -L "$dir" ] || [ -n "$(cd "$dir/snapshots/$snap" 2>/dev/null && find . \\( -type l -o -type f \\) -exec readlink -f {} \\; | awk -v p="$hfreal/" 'NF && index($0, p) != 1')" ]; then
+  hfmounts=(); nl=$'\\n'
+  while IFS= read -r -d '' f; do f=\${f#./}; t=$(readlink -f "$dir/snapshots/$snap/$f"); say="\${f//$nl/ } in the Hugging Face cache copy of \${dir##*/models--}"
+    case "$t$snap$f" in *[,\\"]*|*"$nl"*) echo "$say has a comma, quote or line break in its name or link, which Docker would misread." >&2; exit 1 ;; esac
+    case "$t" in "$hfreal"/*) ;; *) case "$f" in *.safetensors|*.gguf|*.bin|*.pt|*.pth) [ -f "$t" ] ;; *) false ;; esac || { echo "$say links outside the model’s folder (to \${t//$nl/ }). A start follows such a link only for a weight file (.safetensors, .gguf, .bin, .pt or .pth) that is a plain file." >&2; exit 1; } ;; esac
+    hfmounts+=(--mount "type=bind,src=$t,dst=/hf/snapshots/$snap/$f,readonly")
+  done < <(cd "$dir/snapshots/$snap" && find . \\( -type l -o -type f \\) -print0)
 fi
 `;
 }
