@@ -444,7 +444,7 @@ const handler = async (req, res) => {
       if (!NAME_RE.test(model || '') || !nodeById(node)) throw new HttpError(400, 'Choose a model and a Spark.');
       notBrainsSpark([node]);
       if (!Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Invalid list of containers to keep.');
-      if ([...jobs.values()].some(j => j.status === 'running' && j.node === node && ['deploy', 'stop'].includes(j.type))) {
+      if ([...jobs.values()].some(j => j.status === 'running' && j.node === node && ['deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, `Something is already changing on ${node}. Wait for it to finish.`);
       }
       mustUse(viewer, [node]);
@@ -472,7 +472,7 @@ const handler = async (req, res) => {
       if (!NAME_RE.test(model || '') || !Array.isArray(nodes) || nodes.length !== 2 || !nodes.every(n => nodeById(n))) throw new HttpError(400, 'Choose a model and two Sparks.');
       notBrainsSpark(nodes);
       if (!Array.isArray(keep) || !keep.every(k => NAME_RE.test(String(k)))) throw new HttpError(400, 'Invalid list of containers to keep.');
-      if ([...jobs.values()].some(j => j.status === 'running' && (nodes.includes(j.node) || (j.nodes || []).some(n => nodes.includes(n))) && ['deploy', 'stop', 'deploy-cluster'].includes(j.type))) {
+      if ([...jobs.values()].some(j => j.status === 'running' && (nodes.includes(j.node) || (j.nodes || []).some(n => nodes.includes(n))) && ['deploy', 'stop', 'deploy-cluster', 'power-off', 'power-on'].includes(j.type))) {
         throw new HttpError(409, 'Something is already changing on one of those Sparks. Wait for it to finish.');
       }
       mustUse(viewer, nodes);

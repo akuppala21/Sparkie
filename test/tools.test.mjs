@@ -1,11 +1,11 @@
-// The brain's tool list (R46, design F 2.4): each round Sparkie's brain is offered the core and the groups the request
-// opened, at most TOOL_CAP tools, never every action. The owner's words open groups (GROUP_WORDS), and so does state (an
-// operation of the chat running, its last operation failing, a web search this turn); with a third group the oldest
-// one opened by words closes; groups last through the request's carry-on turns. Hidden is not forbidden: a call to an
-// action that wasn't offered still runs through runAction and opens its group, and guide {tools} opens one. Prompt lines
-// follow their tools. The agent door hides nothing. The tested mark (brainReads) covers every group, not just one turn.
-// The stand-in brain calls a scripted tool whether or not it was offered, so what is offered is checked here, from what
-// the stand-in brain logged (model-requests.jsonl).
+// Covers: The brain's tool list (R46, design F 2.4): each round Sparkie's brain is offered the core and the groups the
+// request opened, at most TOOL_CAP tools, never every action. The owner's words open groups (GROUP_WORDS), and so does
+// state (an operation of the chat running, its last operation failing, a web search this turn); with a third group the
+// oldest one opened by words closes; groups last through the request's carry-on turns. Hidden is not forbidden: a call
+// to an action that wasn't offered still runs through runAction and opens its group, and guide {tools} opens one.
+// Prompt lines follow their tools. The agent door hides nothing. The tested mark (brainReads) covers every group, not
+// just one turn. The stand-in brain calls a scripted tool whether or not it was offered, so what is offered is checked
+// here, from what the stand-in brain logged (model-requests.jsonl).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdtempSync } from 'node:fs';
@@ -91,6 +91,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['roll back spark console', 'control'], ['go back to the previous version', 'control'],
     ['what do you remember about me?', 'memory'], ['forget that I prefer gemma', 'memory'], ['what\'s in your memory?', 'memory'],
     ['run the self-test please', 'checks'], ['test spark 3', 'checks'],
+    ['is spark 4 asleep?', 'power'], ['shut down spark 4', 'power'], ['turn on spark 3', 'power'],
     // (longer: more groups match than fit, and the ones it began with stay)
     ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
     ['why did it fail? check the logs and the config file', 'dig', 'find'],
@@ -103,7 +104,8 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
     await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/ };
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/,
+      power_off: /To shut a Spark down or turn it on, call power_off/ };
     for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(...groups), `“${words}”: ${groups.join(' + ') || 'the core'}`);

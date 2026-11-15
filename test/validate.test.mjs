@@ -1,3 +1,8 @@
+// Covers: One tap ("Validate changed workflows"): start, stop and restart validated with a small model on Spark 3 or 4,
+// what was running there runs again, Spark 2 untouched; "Auto-restart is OFF" until then; no earlier build to roll back
+// to on the stand-in fleet. A model whose only proven setup is the brain's starts with it made plain; a cached copy
+// whose files link outside its folder starts with each file mounted by itself.
+//
 // One tap after an install (docs/contract.md 6.3): "Test the changes" runs each workflow that isn't validated
 // with a small model on Spark 3 or 4 (never Spark 2), and starts again whatever had to stop. Auto-restart works before
 // that (its first run validates it). Going back to the last good build needs a snapshot from the installer.

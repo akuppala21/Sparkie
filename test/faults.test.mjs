@@ -1,8 +1,8 @@
-// Spark Console's own errors on the record (H3), caused inside the service by mock/fault.mjs: a route that throws answers
-// 500 and is counted in sparkie_setup's console.faults (the route without ids, how often, the top frame, secrets hidden);
-// a refusal isn't; an agent's tool and ask_sparkie that fail unexpectedly are; a promise nobody caught is; an uncaught
-// error writes last-crash.json (0600, masked) before the service exits 1, and the next start shows it as lastCrash, with
-// the watchdog's last five restarts.
+// Covers: Spark Console's own errors on the record (H3), caused inside the service by `mock/fault.mjs`: a route that
+// throws answers 500 and is counted in `sparkie_setup`'s `console.faults` (the route without ids, how often, the top
+// frame, secrets hidden); a refusal isn't; an agent's tool and `ask_sparkie` that fail unexpectedly are; a promise
+// nobody caught is; an uncaught error writes `last-crash.json` (0600, masked) before the service exits 1, and the next
+// start shows it as `lastCrash` with the watchdog's last five restarts.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

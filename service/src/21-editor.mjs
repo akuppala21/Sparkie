@@ -9,6 +9,10 @@
 const EDITOR_PORTS = CONFIG.editorPorts || { spark1: 8803, spark2: 8801, spark3: 8802, spark4: 8804 };
 const API_MOUNT = CONFIG.apiMount || '/console/api';
 const editorPath = id => `${API_MOUNT}/connect/${id}/`;
+// Editor use on each Spark, for the idle power-off (21-power.mjs): when a request last went to its editor, and how many
+// of its WebSockets (an open editor tab) are open now. In memory only.
+const editorUse = new Map();   // spark → { at, open }
+const editorSeen = (id, open = 0) => { const u = editorUse.get(id) || { at: 0, open: 0 }; editorUse.set(id, { at: Date.now(), open: Math.max(0, u.open + open) }); };
 
 function editorTarget(path) {
   const m = /^\/connect\/([a-z0-9-]+)\/(.*)$/.exec(path);
@@ -66,6 +70,7 @@ function editorAllowed(req, strict) {
 function editorHttp(req, res, target) {
   if (Number(req.headers['content-length'] || 0) > 100 * 1024 * 1024) throw new HttpError(413, 'Workspace upload is too large.');
   if (!editorAllowed(req, !['GET', 'HEAD'].includes(req.method))) throw new HttpError(403, 'Open the editor from Spark Console.');
+  editorSeen(target.id);
   const up = http.request({ host: '127.0.0.1', port: target.port, path: target.path, method: req.method, headers: editorRequestHeaders(req, false) }, r => {
     let headers;
     try { headers = editorResponseHeaders(r.headers, target); } catch { r.destroy(); return send(res, 502, { error: 'Workspace redirect was rejected.' }); }
@@ -97,6 +102,9 @@ async function editorUpgrade(req, socket, head) {
     up.on('upgrade', (response, remote, upHead) => {
       let headers;
       try { headers = editorResponseHeaders(response.headers, target); } catch { remote.destroy(); socket.destroy(); return; }
+      // (an open editor tab: its Spark is in use until the socket closes)
+      editorSeen(target.id, 1);
+      socket.once('close', () => editorSeen(target.id, -1));
       socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(headers).flatMap(([k, v]) => (Array.isArray(v) ? v.map(x => `${k}: ${x}`) : [`${k}: ${v}`])).join('\r\n')}\r\n\r\n`);
       if (upHead.length) socket.write(upHead);
       if (head.length) remote.write(head);
