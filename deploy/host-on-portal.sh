@@ -588,7 +588,7 @@ python3 -I - <<'PY'
 import json, os, subprocess
 cfg = json.load(open(os.path.expanduser('~/spark-console-service/config.json')))
 # (a Spark Spark Console powered off on purpose is asleep, not unreachable: its record in power.json, R41)
-try: asleep = json.load(open(os.path.expanduser('~/.local/state/spark-console/power.json'))).get('off') or {}
+try: asleep = {k: v for k, v in json.load(open(os.path.expanduser('~/.local/state/spark-console/power.json')))['off'].items() if isinstance(v, dict)}
 except Exception: asleep = {}
 for n in cfg['nodes']:
     if n['host'] == 'local':

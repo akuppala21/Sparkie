@@ -104,7 +104,7 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
   test('the installer’s reach check says asleep for a Spark Spark Console powered off, and still says NOT reachable for one that isn’t', () => {
     const sh = readFileSync(join(ROOT, 'deploy/host-on-portal.sh'), 'utf8');
     const at = sh.indexOf('echo "Checking that this machine can reach the other Sparks without a password:"');
-    const start = sh.indexOf("python3 - <<'PY'\n", at) + "python3 - <<'PY'\n".length, end = sh.indexOf('\nPY\n', start);
+    const open = /python3(?: -I)? - <<'PY'\n/.exec(sh.slice(at)), start = open ? at + open.index + open[0].length : -1, end = sh.indexOf('\nPY\n', start);
     assert.ok(at > 0 && start > at && end > start, 'the reach check is in the installer');
     const home = mkdtempSync(join(tmpdir(), 'reach-')), bin = join(home, 'bin');
     try {
@@ -122,6 +122,13 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
         '  spark4: asleep (Spark Console powered it off at 2026-11-14 10:00 UTC; a start or power_on turns it on)',
       ]);
       assert.ok(existsSync(join(home, 'reach.py')));
+      // (a record that isn't one, as a power.json edited by hand: that Spark is read as not asleep, and the check still
+      // ends well, so an install that worked never ends in an error here)
+      writeFileSync(join(home, '.local/state/spark-console/power.json'), JSON.stringify({ off: { spark3: null, spark4: 'asleep' } }));
+      const bad = spawnSync('python3', [join(home, 'reach.py')], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+      assert.equal(bad.status, 0, bad.stderr);
+      assert.deepEqual(bad.stdout.replace(/\n+$/, '').split('\n').map(l => l.replace(/: .*/, '')), ['  spark2', '  spark3', '  spark4']);
+      assert.match(bad.stdout, /spark4: NOT reachable without a password/);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
