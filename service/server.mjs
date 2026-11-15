@@ -3012,7 +3012,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
   return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
@@ -7723,9 +7723,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
 // A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
-// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills. A
+// planned sleep or wake (Spark Console's own, `planned` on the event, D4) isn't an outage, so it doesn't count.
 const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
-const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
@@ -8219,7 +8220,10 @@ function noteSparkStates(nodes) {
     const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
+    // (planned: a sleep Spark Console put it to, or a wake from one (its record still there, a power operation on it, or a
+    // power-on since it went dark), never an outage: crash restarts aren't held back after it, maybeHeal, D4)
+    const wake = online && flipped && (consoleOff(n.id) || powerOpOn([n.id]) || plannedWake(n.id));
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null, ...(wake ? { planned: true } : {}) } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked', planned: true } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
@@ -8253,6 +8257,11 @@ setTimeout(() => { watchFleet(); setInterval(watchFleet, WATCH_EVERY).unref(); }
 // saw there stays in the record as it was (healing, the passkey gate and the intent gate read it), but no view calls
 // it running now (F16). Called only at run time, never at load.
 const sparkOff = id => knowledge.sparks[id]?.online === false;
+// A Spark Spark Console turned on since it last went dark (a spark-powered-on after its last spark-offline): a planned wake.
+function plannedWake(id) {
+  const dark = Math.max(0, ...events.filter(e => e.type === 'spark-offline' && e.spark === id).map(e => Date.parse(e.at) || 0));
+  return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
+}
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
@@ -8260,8 +8269,8 @@ function fleetNotes(viewer) {
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
-    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
-    if (off) return `${sparkName(n)}: ${off.words}`;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
+    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
@@ -16782,8 +16791,9 @@ function powerMark(id) {
   const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+  // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words };
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
