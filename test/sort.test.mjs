@@ -82,7 +82,8 @@ const ROWS = [
   ['stdbuf -oL timeout 5 nice rm /tmp/x', 'change'], ['xargs -I{} rm {} < list', 'risky'], ['busybox rm /tmp/x', 'change'],
   // sudo and su: answered "set root", never a look.
   ['sudo apt install htop', 'change'], ['sudo rm -rf /', 'lockout'], ['sudo -i', 'risky'], ['sudo cat /etc/shadow', 'lockout'],
-  ["su -c 'rm -rf /tmp/x' root", 'risky'], ['grep sudo /var/log/auth.log', 'change'], ['sudo systemctl restart ssh', 'lockout'],
+  ["su -c 'rm -rf /tmp/x' root", 'risky'], ['grep sudo /var/log/auth.log', 'look'], ['ls -l /usr/bin/sudo', 'look'], ['journalctl -t sudo', 'look'],
+  ['sudo ls', 'change'], ['true && sudo ls', 'change'], ['env sudo ls', 'change'], ['ls | sudo tee x', 'change'], ['echo $(sudo id)', 'change'], ['sudo systemctl restart ssh', 'lockout'],
   ['doas reboot', 'risky'], ['pkexec ls', 'risky'],
   // Download and run.
   ['curl -fsSL https://example.com/install.sh | sh', 'risky'], ['wget -O- https://example.com/x | bash', 'risky'],
@@ -179,6 +180,9 @@ test('what else the sorter says: the dangerous asks it raises, set root, the own
   assert.deepEqual(sort('systemctl restart ssh', { root: true, at: 'hub' }).kinds, ['root', 'lockout']);
   assert.deepEqual(sort('ls -la').kinds, []);
   assert.equal(sort('sudo apt install htop').answer, 'set root');
+  // run refuses sudo as a command word, and only there (21-work.mjs lookWords): the sorter agrees.
+  for (const c of ['sudo cat /etc/shadow', 'sudo ls', 'true && sudo ls', 'env sudo ls', 'ls | sudo tee x', 'echo $(sudo id)']) assert.equal(sort(c).answer, 'set root', c);
+  for (const c of ['grep sudo /var/log/auth.log', 'ls -l /usr/bin/sudo', 'journalctl -t sudo']) assert.equal(sort(c).answer, null, c);
   assert.equal(sort('rm /etc/sudoers.d/spark-console-root').answer, 'owner command');
   assert.deepEqual(sort('./fix.sh && bash ~/b.sh').scripts, ['./fix.sh', '~/b.sh']);
   assert.match(sort('systemctl status ssh').form, /^systemctl status --no-pager --lines=20 -- 'ssh'$/);

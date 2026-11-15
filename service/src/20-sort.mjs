@@ -341,7 +341,7 @@ function sortCommand(command, opts = {}) {
   if (r.class !== 'notdone') {
     // run's own look checks (21-work.mjs), so a look is one definition: no sudo word, no key word.
     const lw = lookWords(text), key = [...lw.words, ...ctx.seen].find(keyWord);
-    if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It holds the word sudo, which a look refuses: a command becomes root only by setting root.');
+    if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
     if (key && r.class === 'look') raise(r, 'notdone', `It would show ${key}, which is a key or holds one: a key is never shown back.`);
     else if (key) sortOpen(ctx, r, `It names ${key}, key material the run wall hides, so it would run outside the wall.`);
   }

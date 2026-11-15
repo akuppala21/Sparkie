@@ -137,9 +137,9 @@ setTimeout(() => {
   setInterval(() => collectStatus().catch(() => {}), STATUS_EVERY);
 }, 3000);
 
-/* ───────── Spark pages: workloads, logs, diagnostics, files, actions (taking over from the portal) ───────── */
-// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics and runs
-// actions; files follow each person's permissions (personal and shared areas; members see only their own area).
+/* ───────── Spark pages: workloads, logs, diagnostics, files (taking over from the portal) ───────── */
+// The same worker operations and checks the portal used. Only the owner sees workloads, logs and diagnostics; files
+// follow each person's permissions (personal and shared areas; members see only their own area).
 const LOG_SERVICES = ['editor', 'console', 'sparkie'];
 const FILE_OPS = ['list', 'read', 'write', 'mkdir', 'rename', 'delete'];
 const fileBusy = new Map();
@@ -175,24 +175,9 @@ async function sparkFiles(viewer, node, data) {
   fileBusy.set(viewer.login, mine + 1);
   try {
     const { editorFolder, editorRoot, ...visible } = await workerCall(node, { action: 'workspace-files', ...settings, ...scope }, 30000);
-    if (owner && typeof (editorRoot || editorFolder) === 'string') visible.editorPath = `${editorPath(node.id)}?folder=${encodeURIComponent(editorRoot || editorFolder)}`;
     return visible;
   } finally {
     fileBusy.set(viewer.login, Math.max(0, (fileBusy.get(viewer.login) || 1) - 1));
-  }
-}
-
-// Restarting a Spark's VS Code server, as a job (owner only).
-async function sparkAction(job, node, action) {
-  step(job, 'Restarting the VS Code server');
-  const result = await workerCall(node, { action }, 60000);
-  if (action === 'editor-restart' && result.editorReady === false) throw new Error('The VS Code server didn’t come back up.');
-  note(job, 'Done on the Spark');
-}
-async function checkSparkAction(node, action) {
-  if (action !== 'editor-restart') throw new HttpError(400, 'Unsupported Spark action.');
-  if ([...jobs.values()].some(j => j.status === 'running' && j.node === node.id && ['spark-action', 'deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
-    throw new HttpError(409, `Something is already changing on ${node.id}. Wait for it to finish.`);
   }
 }
 
