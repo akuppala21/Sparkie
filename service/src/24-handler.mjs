@@ -533,9 +533,10 @@ const handler = async (req, res) => {
         if (req.method !== 'POST') throw new HttpError(405, 'Use POST to press a button.');
         if (!owner) throw new HttpError(403, 'Only the owner’s conversations have buttons.');
         if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
-        const { choice } = await readBody(req, 2000);
+        // (pair: a dangerous ask's two digits, in the same request as its press, 20-danger.mjs)
+        const { choice, pair } = await readBody(req, 2000);
         if (typeof choice !== 'string' || !/^[a-f0-9]{10}$/.test(choice)) throw new HttpError(400, 'Which button?');
-        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner' });
+        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner', ...(typeof pair === 'string' ? { pair: pair.slice(0, 8) } : {}) });
         return send(res, 200, { outcome: r.outcome, operation: r.operation || null, message: r.message, ...chatSummary(conv), messages: conv.messages });
       }
       if (chatMatch[2] && req.method === 'POST') {
@@ -553,7 +554,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: conv.messages });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);
