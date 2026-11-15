@@ -1184,6 +1184,7 @@ function newJob(type, meta) {
   // Cancelling ends the job's long commands (downloads, copies, pulls) straight away.
   Object.defineProperty(job, 'abort', { value: new AbortController(), enumerable: false });
   jobs.set(job.id, job);
+  opEnergyStart(job);
   // Its start goes on the fleet's record (on disk), so an operation cut off by a restart is reported, never forgotten.
   try { fleetEvent({ type: 'operation', id: job.id, operation: type, status: 'started', model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}),
     ...(job.actor ? { actor: job.actor } : {}), ...(Array.isArray(meta?.stops) && meta.stops.length ? { stops: meta.stops } : {}) }); } catch {}
@@ -8655,7 +8656,7 @@ function journalOp(job) {
     }
     return journal('op', { op: job.id, act: job.type, ok: job.status === 'completed', outcome: job.status, err: jErr(job.error), chat: job.conv || null, via: job.via || null,
       actor: job.actor || null, model: job.model || null, fixed: job.fixed || null, speed: job.measured?.decodeTokS ?? null, workflow: job.workflow || null,
-      version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub }, jOpText(job));
+      version: job.workflowVersion || null, ms: Date.parse(job.finishedAt) - Date.parse(job.createdAt), sub, ...opWh(job) }, jOpText(job));
   } catch (e) { console.error(`The journal (operation ${job?.id}): ${e.message}`); }
 }
 function journalEvent(e) {
@@ -8689,7 +8690,7 @@ const jWhere = r => { const n = (r.sub || []).map(nodeById).find(Boolean); retur
 const jTitle = r => ACTIONS.get(r.act)?.title || r.act || r.k;
 // How a record is shown by recall: short, its own text one call away. A call's or a tool call's arguments and error only
 // when the caller may read them (open, jOpen).
-const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt']
+const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt', 'wh', 'noWh']
   .filter(k => r[k] != null).map(k => [k, r[k]])), ...(r.words ? { said: String(r.words).slice(0, 300) } : {}),
   ...(open && r.args != null ? { args: (typeof r.args === 'string' ? r.args : JSON.stringify(r.args)).slice(0, 300) } : {}), ...(open && r.err ? { error: String(r.err).slice(0, 300) } : {}),
   ...(r.text ? { text: String(r.text).slice(0, 300) } : {}), ...(r.sub?.length ? { about: r.sub } : {}),
@@ -10048,6 +10049,55 @@ function openProblems() {
 function needsLines(list = openProblems()) {
   const lines = list.map(p => p.text);
   return lines.length > NEEDS_MAX ? [...lines.slice(0, NEEDS_MAX - 1), `And ${lines.length - (NEEDS_MAX - 1)} more. Fix the ones above first.`] : lines;
+}
+/* ───────── an operation's energy at the wall (D9 as cut: one number, on its journal end line) ───────── */
+// Area: record        Rules: R41, R43        Tests: op-energy.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// When an operation ends, its journal end line (journalOp) says how much electricity its Sparks drew at the wall while
+// it ran: wh, in watt-hours, the sum over its Sparks from its start (createdAt) to its end (finishedAt). It comes from
+// the wall counter the status loop already keeps (sampleEnergy, 12-status.mjs: each plug's watts every 30 s, added up
+// between readings), read twice: as the operation begins (newJob) and as it ends. No timer and no plug read of its own.
+// Each end is moved to the operation's own moment with the watts read last there. When the readings in hand can't cover
+// the operation's time on every one of its Sparks, there is no number: noWh says why, in a few words (no plug, a plug
+// not answering or giving no watts, its newest reading older than the operation, no reading counted while it ran, or
+// readings that stopped part-way). Nothing is guessed, and a part of the Sparks is never summed as if it were all.
+// Nothing reads the number to decide anything yet; recall shows it (operations are readable to agents, R43).
+
+// Readings further apart than this aren't added up by the counter (addEnergy), so they can't anchor an operation's ends.
+const OP_WALL_GAP_MS = 120000;
+// Each Spark's wall counter as it stands now: watt-hours added so far (kWh), the seconds that had readings, the last
+// reading counted ({t, w}, or null when the plug gave none then).
+const opWallNow = () => Object.fromEntries(Object.entries(energy?.nodes || {}).map(([id, e]) => [id,
+  { kWh: e.wallKWh || 0, s: e.wallCoverageSeconds || 0, last: e.wallLast ? { t: e.wallLast.t, w: e.wallLast.w } : null }]));
+// newJob: the counter as the operation begins, kept on the job where neither publicJob nor a saved copy carries it.
+function opEnergyStart(job) {
+  try { Object.defineProperty(job, 'wallAtStart', { value: opWallNow(), enumerable: false }); } catch {}
+}
+// journalOp: { wh } or { noWh: why }, for the Sparks the operation ran on (its node and nodes).
+function opWh(job) {
+  try {
+    const ids = [...new Set([job.node, ...(Array.isArray(job.nodes) ? job.nodes : [])])].filter(id => typeof id === 'string' && nodeById(id));
+    if (!ids.length) return { noWh: 'it ran on no Spark' };
+    const t0 = Date.parse(job.createdAt), t1 = Date.parse(job.finishedAt), at0 = job.wallAtStart || {}, now = opWallNow();
+    let wh = 0;
+    for (const id of ids) {
+      const name = sparkName(nodeById(id)), w = wallFor(id), a = at0[id], b = now[id];
+      const why = !w ? `${name} has no plug Spark Console reads`
+        : !w.answering ? `${name}’s plug isn’t answering`
+        : typeof w.watts !== 'number' ? `${name}’s plug gives no watts`
+        : !(Date.parse(w.at) >= t0) ? `${name}’s newest plug reading is older than the operation`
+        : !b?.last || b.last.t < t0 ? `no reading of ${name}’s plug was counted while it ran`
+        : !a?.last || t0 - a.last.t > OP_WALL_GAP_MS ? `no reading of ${name}’s plug was counted as it began`
+        : b.kWh < a.kWh || (b.last.t - a.last.t) / 1000 - (b.s - a.s) > 1 || t1 - b.last.t > OP_WALL_GAP_MS ? `${name}’s plug readings stopped for a while during it`
+        : null;
+      if (why) return { noWh: why };
+      // (what the counter added between the two readings, less the stretch before the start, plus the stretch after the
+      // last reading, each at the watts read at its end)
+      wh += (b.kWh - a.kWh) * 1000 - (a.last.w * (t0 - a.last.t)) / 3.6e6 + (b.last.w * (t1 - b.last.t)) / 3.6e6;
+    }
+    return { wh: Math.max(0, Math.round(wh * 100) / 100) };
+  } catch { return { noWh: 'it couldn’t be worked out' }; }
 }
 /* ───────── recall: one look back over memory, lessons, proven runs and the journal (G3) ───────── */
 // Area: record        Rules: R43, R45        Tests: recall.test.mjs, journal.test.mjs, door.test.mjs, fuzz.test.mjs
