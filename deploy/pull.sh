@@ -168,7 +168,7 @@ os.replace(tmp, path)' "$SECRETS" "$1" \
 }
 
 check_facts() {
-  local ib it ic head ht nt nc subj
+  local ib it ic head ht nt nc
   read -r ib it ic <<<"$(installed)"
   echo "  Installed: build $ib$([ "$it" = - ] || echo ", tree ${it:0:12}")$([ "$ic" = - ] || echo ", commit ${ic:0:12}")"
   read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
@@ -253,8 +253,8 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - || refuse "git archive of tested/$WANT failed."
   [ -z "$(find "$W/tree" ! -type f ! -type d -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a plain file."
 
-  # Its own installer, on this Spark: no routes (no tailscale, sudo or ssh), the note built here. Asked before it
-  # interrupts running work only if ASSUME_YES=1 isn't set (on this terminal; with none, nothing is changed).
+  # Its own installer, on this Spark: no routes (no tailscale, sudo or ssh), the note built here. If work is running,
+  # the installer asks on this terminal first; ASSUME_YES=1 skips the question, and with no terminal nothing changes.
   note="Installed from GitHub with pull.sh: tree $WANT, commit ${c:0:12}$([ "$lat" = - ] || echo ", tested at $lat")."
   [ -z "${NOTE:-}" ] || note="$note ${NOTE}"
   echo "Installing tree $WANT (commit ${c:0:12}, build $code_build) with its own installer …"
