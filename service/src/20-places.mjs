@@ -18,8 +18,8 @@ const SORT_CWDS = 8, SORT_STEPS = 20000, SORT_PLACED = 256, SORT_PATH = 1000;
 const sortQ = s => { const t = String(s ?? '').replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').trim(); return `“${t.length > 60 ? `${t.slice(0, 59)}…` : t}”`; };
 
 // Paths, as ~/… or /…; /proc/<id>/root is the same tree, and /proc/<id>/cwd or /fd lead somewhere the text can't show.
-// Only the owner's home (home) becomes ~, and root's (/root, whose ways in count the same); another user's home, /home
-// itself, or a path that climbs out of the home stays what it is. With no home known, ~ is a home no path spells.
+// Only the owner's home (home) becomes ~; root's (/root), another user's home, /home itself, or a path that climbs out
+// of the home stays what it is (root's ways in are listed under /root too). With no home known, ~ is a home no path spells.
 function sortNorm(p, r = null, home = null) {
   const out = [], h = home ?? '/home/~';
   for (const s of String(p).replace(/^~(?=\/|$)/, h).split('/').slice(1)) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); }
@@ -29,13 +29,14 @@ function sortNorm(p, r = null, home = null) {
     if (r && (LOCK_NAMES.has(n.slice(n.lastIndexOf('/') + 1)) || SIGNIN.test(n))) raise(r, 'lockout', `It names ${sortQ(n)}, one of the ways in.`);
     unsure(`It reaches a file through ${sortQ(n)}, which the sorter can't place.`);
   }
-  return n === h || n.startsWith(`${h}/`) ? `~${n.slice(h.length)}` : n.replace(/^\/root(?=\/|$)/, '~');
+  return n === h || n.startsWith(`${h}/`) ? `~${n.slice(h.length)}` : n;
 }
 // (a glob that could match the owner's home, /home/*, is that home too)
 const sortAtHome = (p, home) => {
   if (!home || !/[*?[]/.test(p)) return [p];
-  const hs = home.split('/'), ps = p.split('/');
-  return ps.length >= hs.length && hs.every((s, i) => sortSeg(ps[i], s)) ? [p, ['~', ...ps.slice(hs.length)].join('/')] : [p];
+  const hs = home.split('/'), ps = p.split('/'), k = Math.min(ps.length, hs.length);
+  if (!hs.slice(0, k).every((s, i) => sortSeg(ps[i], s))) return [p];
+  return [p, ps.length >= hs.length ? ['~', ...ps.slice(hs.length)].join('/') : hs.slice(0, k).join('/')];
 };
 const sortPaths = (c0, ctx, r = null) => {
   const c = String(c0).replace(/^\/proc\/(?:self|thread-self)(?:\/task\/\d+)?\/cwd(?:\/|$)/, '').replace(/^$/, '.');
@@ -66,8 +67,9 @@ function sortSeg(p, s) {
   return i === p.length;
 }
 function sortClass(p, i, ch) {
-  const inner = p.indexOf('[', i + 1), first = p.indexOf(']', i + 2);
-  if (inner > i && (first < 0 || inner < first)) {
+  // (a ] first in the set, after ! or ^ too, is one of its signs; a [ is a class only before : . or =)
+  const neg0 = p[i + 1] === '!' || p[i + 1] === '^', inner = p.indexOf('[', i + 1), first = p.indexOf(']', i + (neg0 ? 3 : 2));
+  if (inner > i && (first < 0 || inner < first) && /[:.=]/.test(p[inner + 1] ?? '')) {
     const c = p.slice(inner).search(/[:.=]\]/), end = c < 0 ? -1 : p.indexOf(']', inner + c + 2);
     return end < 0 ? (ch === '[' ? i + 1 : -1) : end + 1;
   }
@@ -103,9 +105,9 @@ function sortBraces(s) {
 function sortReach(p, glob, wide, loose = true) {
   if (!glob) return q => p === q || p.startsWith(`${q}/`) || (wide && (q.startsWith(`${p}/`) || p === '/' || (p === '/home' && q.startsWith('~'))));
   const g = sortGlob(p), fixed = p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/', dir = sortGlob(p.slice(0, p.lastIndexOf('/')) || '/');
-  const last = loose && !/[*?[]/.test(p.slice(0, p.lastIndexOf('/'))), segs = p.split('/');
+  const last = loose && !/[*?[]/.test(p.slice(0, p.lastIndexOf('/'))), segs = p.split('/'), at = fixed === '/' ? 1 : fixed.split('/').length;
   const under = q => { const n = q.split('/').length; return n < segs.length && sortGlob(segs.slice(0, n).join('/')).test(q); };
-  return q => g.test(q) || dir.test(q) || under(q) || fixed === q || fixed.startsWith(`${q}/`) || (last && q.startsWith(`${fixed === '/' ? '' : fixed}/`)) || (wide && sortUp(q).some(a => g.test(a)));
+  return q => g.test(q) || dir.test(q) || under(q) || fixed === q || fixed.startsWith(`${q}/`) || (last && q.startsWith(`${fixed === '/' ? '' : fixed}/`) && sortSeg(segs[at] ?? '', q.split('/')[at] ?? '')) || (wide && sortUp(q).some(a => g.test(a)));
 }
 
 // The ways in (design A 2.8's lock-out class): SSH, users and sudo, PAM and the shell's start files, the network and the
@@ -120,6 +122,7 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '/etc/systemd/system/multi-user.target.wants/ssh.service', '/etc/systemd/system/multi-user.target.wants/tailscaled.service',
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
+LOCK_PATHS.push(...LOCK_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
 const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
@@ -142,13 +145,17 @@ const LATER_PATHS = ['~/.local/bin', '~/bin', '~/.config/systemd', '~/.config/au
   '~/.config/code-server', '~/.local/share/code-server', '~/.cache/spark-console', '~/.gitconfig', '~/.config/git', '~/.npmrc', '~/.pip',
   '~/.config/pip', '~/.condarc', '~/.pypirc', '/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin', '/etc/ld.so.preload',
   '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/apt/sources.list', '/etc/apt/sources.list.d', '/etc/apt/apt.conf.d', '/etc/pip.conf', '/etc/gitconfig'];
-// Where a root command may write at once: a home, /etc less the lists above, /opt, /srv, /mnt, /data, /tmp, /var/tmp,
+LATER_PATHS.push(...LATER_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
+// Where a root command may write at once: a home (the owner's, root's), /etc less the lists above, /opt, /srv, /mnt, /data, /tmp, /var/tmp,
 // /var/www, and below /usr/local but its bin and sbin.
-const ROOT_OK = /^(?:~(?:\/|$)|\/(?:etc|opt|srv|mnt|data|tmp|var\/tmp|var\/www)\/|\/usr\/local\/(?!s?bin(?:\/|$)))/;
+const ROOT_OK = /^(?:~(?:\/|$)|\/root(?:\/|$)|\/(?:etc|opt|srv|mnt|data|tmp|var\/tmp|var\/www)\/|\/usr\/local\/(?!s?bin(?:\/|$)))/;
 
-// Names that are risky wherever they stand in a change: Spark Console's own files and units, the brain's names.
+// Names that are risky wherever they stand in a change: Spark Console's own files and units, the brain's names (a
+// folder that is only a * counts where they live).
+const SORT_HOLDERS = /^(?:~\/\.config(?:\/systemd\/user)?|~\/\.local\/(?:state|share)|~\/\.cache(?:\/huggingface\/hub)?|~\/models|\/etc\/systemd\/system|\/opt|\/var\/lib\/docker\/\w+)$/;
 function sortNames(p, ctx, r, glob = false) {
-  const segs = glob ? p.split('/').filter(s => /[*?[]/.test(s)) : [], bits = segs.flatMap(s => s.split(/[*?[\]]/)).filter(b => b.length >= 4);
+  const segs = glob ? p.split('/').filter((s, i, a) => /[*?[]/.test(s) && (/[^*?]/.test(s.replace(/\[[^\]]*\]/g, '')) || SORT_HOLDERS.test(a.slice(0, i).join('/')))) : [];
+  const bits = segs.flatMap(s => s.split(/[*?[\]]/)).filter(b => b.length >= 4);
   const names = n => p.includes(n) || bits.some(b => n.includes(b)) || segs.some(s => sortSeg(s, n) || sortSeg(s, `models--${n}`));
   if (/spark-console-root|root-for-sparkie/.test(p)) { r.answer = 'owner command'; raise(r, 'notdone', 'It names the root helper or its sudo line, which only the owner’s one-time command puts in place or changes.'); }
   if (SIGNIN.test(p)) raise(r, 'lockout', `${sortQ(p)} is Spark Console’s own unit or one of its sign-in files, a way in.`);
@@ -162,7 +169,7 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   sortNames(p, ctx, r, glob);
   const hits = sortReach(p, glob, wide), base = p.slice(p.lastIndexOf('/') + 1);
   if (HELPER_PATHS.some(sortReach(p, glob, wide, false))) { r.answer = 'owner command'; raise(r, 'notdone', `It reaches ${sortQ(p)}, the root helper or its sudo line, which only the owner’s one-time command changes.`); }
-  if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortGlob(base).test(`${u}.${x}`)))) || (glob ? base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2 && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
+  if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortGlob(base).test(`${u}.${x}`)))) || (glob ? (base.startsWith('.') || base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2) && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);

@@ -202,11 +202,15 @@ function stepArgs(st) {
 const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
 // One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
 // image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+// A control, direction or zero-width character is left out, so none turns how the rest of the label reads (the second
+// read's Later 2; a step holding one is never covered, stepCovered).
+const NOT_SHOWN = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+const notShown = t => t.replace(new RegExp(NOT_SHOWN.source, 'g'), '');
 function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
-  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return maskSecrets(changeLabel(action, a)).slice(0, 140);
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return notShown(maskSecrets(changeLabel(action, a))).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  const words = maskSecrets(`${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`);
+  const words = notShown(maskSecrets(`${ACTIONS.get(action)?.title || notShown(action) || 'not a step'}${given ? ` (${given})` : ''}`));
   if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
   return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
 }
@@ -288,7 +292,7 @@ action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
-    title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
+    title: { type: 'string', minLength: 2, maxLength: 80, pattern: '^[^\\x00-\\x1f\\x7f-\\x9f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff]+$', description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
@@ -321,8 +325,10 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
     // (and its answer, and the chat line after the press, say what that yes covers)
-    const images = savedImages(w.steps), yes = !carried && savedImagesYes(viewer, ctx, images), asked = savedStepsAsked(w.steps);
-    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
+    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it; one that carried
+    // `from` is no yes at all, and its words say so)
+    const { images, keys, asked } = savedCover(w.steps, ctx.button && !carried ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), covered: keys, by: viewer.login, at: w.at };
     const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
     return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
@@ -370,6 +376,9 @@ action({
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
+          // (what was on the list of what should be running before this step: a step that starts one of those again
+          // leaves it on the list after the clean-up, stopWhatRan)
+          const listed = savedStepStarts(st.action, args) ? desired().running : [];
           try {
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
@@ -378,13 +387,13 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
-          ran.push(...startedBy(st.action, args, out, st.keep === true));
+          ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
           savedRunKeep(j, { started: ran, pending: [] });
           j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);

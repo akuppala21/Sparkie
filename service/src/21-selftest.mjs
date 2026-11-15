@@ -359,7 +359,7 @@ action({
       const label = changeLabel('self_test', args);
       return question(viewer, ctx, `${label}? Running the self-test is the owner’s call.`, [{ label, call: { action: 'self_test', args } }, { label: 'No, not now', call: null }], 'question', { ownerOnly: true });
     }
-    if (spark) mustUse(viewer, [spark]);
+    if (spark) mustUse(viewer);
     if ([...jobs.values()].some(j => j.type === 'self-test' && j.status === 'running')) throw new HttpError(409, 'A self-test is running already. Its report is posted when it ends.');
     if (existsSync(SELF_TEST_FILE)) {
       let at = 'its Spark';
