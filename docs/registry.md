@@ -43,7 +43,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
-| `undo_update` | change | `18-workflows` | updates | undo | yes | yes | — |
+| `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
 | `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
@@ -111,6 +111,8 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
+| `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
+| `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |

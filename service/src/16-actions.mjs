@@ -105,6 +105,8 @@ const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:
 // "Do not …" and "didn't …" are statements, not questions.
 const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
 // What asks for a change (base forms: "start gemma", "bring it up") …
+// A file's name, by its ending: one list for the gate's file words and the reading group's (R46).
+const FILE_ENDINGS = 'md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css';
 const CHANGE_WORDS = [
   ['start', /\b(start|launch|relaunch|deploy|redeploy|serve|run|rerun|load|spin(?:\s+\w+)?\s+up|fire(?:\s+\w+)?\s+up|boot(?:\s+\w+)?\s+up|get(?:\s+[\w.:/-]+){1,4}\s+(?:going|running|up)|put(?:\s+[\w.:/-]+){1,4}\s+on|bring(?:\s+(?!back\b)[\w.:/-]+){0,4}\s+up\b(?!\s+again)|switch(?:\s+[\w.:/-]+){0,4}\s+(?:to|over\s+to)|swap|replace|set(?:\s+[\w.:/-]+){0,3}\s+up|install)\b/gi],
   // "use qwen coder on spark 3" as an instruction (at the start, or after "please" / "let's" / "I want to").
@@ -123,7 +125,7 @@ const CHANGE_WORDS = [
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
   ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
-  ['file', /\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css))\b/gi],
+  ['file', new RegExp(String.raw`\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:${FILE_ENDINGS}))\b`, 'gi')],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
 ];
@@ -139,15 +141,15 @@ const CHANGE_FORMS = [
 // groups this request opened (21-guide.mjs); these words in the owner's request open them, in the order they come.
 // [group, what it holds (guide's description lists it), its words]
 const GROUP_WORDS = [
-  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?)\b/i],
+  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
-  ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*)\b/i],
-  ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
-  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', /https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:md|txt|json|csv|ya?ml|log|py|sh|html|org|com|io|ai|dev|net))\b/i],
+  ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
+  ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
-  ['control', 'operations under way: follow one, cancel it, undo the last change', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|wait\s+for|operations?|progress)\b/i],
-  ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:memory|memories|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
-  ['updates', 'Spark Console’s own updates: go back a build', /\b(?:updates?|upgrade\w*|builds?|go\s+back\s+a\s+build)\b/i],
+  // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
+  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
+  ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
   ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
