@@ -1,6 +1,6 @@
 // Look at the page in a browser before it is installed: public/ served against the stand-in console, on this computer.
 //
-//   node tools/page-preview.mjs [--port 4430] [--as owner|member|public]
+//   node tools/page-preview.mjs [--port 4430] [--as owner|public]
 //
 // Then open the address it prints (one line, "Page preview: http://127.0.0.1:4430/") in a browser. Ctrl-C stops it,
 // with the stand-in fleet, and removes the fleet's temporary folder; so does closing the terminal or ending whatever
@@ -11,7 +11,6 @@
 // real service, and this tool serves public/ and passes /console/api/* to that service's socket, with the headers
 // Tailscale would add for the visitor chosen:
 //   --as owner    (the default) the owner on the tailnet: Tailscale-User-Login: owner@test, so no passkey is asked
-//   --as member   member@test on the tailnet (Sparks 2 and 3 shared, chat on, no starting models)
 //   --as public   from the internet: Tailscale-Funnel-Request, no identity (the page shows its public face)
 // Headers the browser itself sends under those names are dropped, as Tailscale drops them. The browser's Origin (this
 // address) is replaced by the configured one (config.json's origin), which is what the page sends on Spark 2, so the
@@ -19,7 +18,7 @@
 //
 // What the page has to show (seeded through the service's own API and the stand-in fleet's own switches, never by
 // writing the service's state files): the stand-in Sparks and their running models; Spark 2's disk nearly full (the
-// needs-you line); and the owner's chat with Sparkie (a member or the public sees none), in which a question used a
+// needs-you line); and the owner's chat with Sparkie (the public sees none), in which a question used a
 // tool, a stop of gpt-oss-20b on Spark 2 was offered as a button, pressed, ran and finished, a stop of the model on
 // Spark 4 is offered as a button still open, and /status says what needs you. The stand-in brain answers any message
 // with one tool call (fleet_status) and a short reply saying what the tool said, except its own patterns: "start …",
@@ -35,7 +34,7 @@
 import http from 'node:http';
 import { readFileSync, writeFileSync, realpathSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { startMock, REPO, API_MOUNT, OWNER, MEMBER } from '../test/start-mock.mjs';
+import { startMock, REPO, API_MOUNT, OWNER } from '../test/start-mock.mjs';
 
 const HOST = '127.0.0.1';
 // Where a visitor seems to come from (the service rate-limits and blocks by it): a device on the tailnet, or one on the
@@ -44,7 +43,6 @@ const TAILNET_VISITOR = '100.100.7.7', INTERNET_VISITOR = '203.0.113.9';
 // What Tailscale adds for each visitor.
 const FACES = {
   owner: { 'tailscale-user-login': OWNER, 'tailscale-user-name': 'Test Owner', 'x-forwarded-for': TAILNET_VISITOR },
-  member: { 'tailscale-user-login': MEMBER, 'tailscale-user-name': 'Test Member', 'x-forwarded-for': TAILNET_VISITOR },
   public: { 'tailscale-funnel-request': '?1', 'x-forwarded-for': INTERNET_VISITOR },
 };
 // The content types Spark 2's route gives (Go's file server, with Ubuntu's mime.types for the manifest).
@@ -61,7 +59,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function usage(problem) {
   if (problem) console.error(`page-preview: ${problem}`);
-  console.error('Use: node tools/page-preview.mjs [--port 4430] [--as owner|member|public]');
+  console.error('Use: node tools/page-preview.mjs [--port 4430] [--as owner|public]');
   process.exit(problem ? 2 : 0);
 }
 function options(argv) {
@@ -78,7 +76,7 @@ function options(argv) {
   }
   if (o.host !== HOST) usage(`listens on ${HOST} only, never ${o.host}`);
   if (!/^\d{1,5}$/.test(String(o.port)) || Number(o.port) > 65535) usage(`--port takes a port number (0 picks a free one), not ${o.port}`);
-  if (!FACES[o.as]) usage(`--as takes owner, member or public, not ${o.as}`);
+  if (!FACES[o.as]) usage(`--as takes owner or public, not ${o.as}`);
   try { if (!statSync(o.public).isDirectory()) throw new Error(); } catch { usage(`${o.public} isn't a folder`); }
   return { ...o, port: Number(o.port), public: realpathSync(o.public) };
 }
