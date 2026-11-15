@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { blank } from './parts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const MAP_FILE = 'test/affected-map.json';
@@ -177,8 +178,8 @@ function parsePatch(text) {
       continue;
     }
     if (!cur) continue;
-    const h = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(line);
-    if (h) { hunk = { s: Number(h[1]), n: h[2] === undefined ? 1 : Number(h[2]), add: [] }; cur.hunks.push(hunk); continue; }
+    const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (h) { hunk = { s: Number(h[1]), n: h[2] === undefined ? 1 : Number(h[2]), t: Number(h[3]), add: [] }; cur.hunks.push(hunk); continue; }
     if (hunk) { if (line.startsWith('+')) hunk.add.push(line.slice(1)); continue; }
     if (line.startsWith('new file mode')) cur.status = 'A';
     else if (line.startsWith('deleted file mode')) cur.status = 'D';
@@ -194,10 +195,13 @@ const DECL = /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\b|^\s*(?:ex
 const CLOSE = /^\s*\}\s*[;,]?\s*$/;
 // In a landing only: a hunk of comments and blank lines changes nothing that runs, and one that only adds whole
 // functions at the top level (a declaration at the margin, its body indented, its closing brace) runs only when a
-// changed caller calls it. Both are still all in the plain pick (2.4: a changed line outside any function).
+// changed caller calls it. Both are still all in the plain pick (2.4: a changed line outside any function). Lines are
+// read as tools/parts.mjs reads code (blank: comments, strings and regular expressions made spaces, positions kept),
+// so a brace in a string or a comment is not code; a comment is a line that blanks to nothing and starts as one.
 const COMMENT = /^\s*(?:\/\/|\/\*|\*\/|\*(?:\s|$)|$)/;
-function onlyNewFunctions(add) {
-  const code = add.filter(l => !COMMENT.test(l));
+const isComment = (line, blanked) => !blanked.trim() && COMMENT.test(line);
+function onlyNewFunctions(blanked) {
+  const code = blanked.filter(l => l.trim());
   return code.length > 0 && /^\S/.test(code[0]) && DECL.test(code[0])
     && code.every(l => /^\s/.test(l) || DECL.test(l) || CLOSE.test(l)) && (CLOSE.test(code.at(-1)) || /;\s*$/.test(code.at(-1)));
 }
@@ -231,9 +235,10 @@ const fnsByPart = map => {
 const plainKey = key => key.replace(/@\d+-\d+$/, '');
 const list = xs => (xs.length > 3 ? `${xs.slice(0, 3).join(', ')} and ${xs.length - 3} more` : xs.join(', '));
 
-// The pick for changes measured from the map's own tree. oldText(path) gives a part as it was there. missed: every
+// The pick for changes measured from the map's own tree. oldText(path) gives a part as it was there, newText(path) as it
+// is now (a landing reads both). missed: every
 // map's missed entries (a file that failed once though not picked for these functions).
-export function choose({ map, changes, oldText, missed = [], landing = false }) {
+export function choose({ map, changes, oldText, newText, missed = [], landing = false }) {
   const all = why => ({ all: true, files: null, fns: [], why });
   const always = landing ? LANDING_ALWAYS : ALWAYS, alwaysParts = landing ? LANDING_ALWAYS_PARTS : ALWAYS_PARTS;
   const byPart = fnsByPart(map), owners = new Map(), tests = new Set(), parts = new Set();
@@ -245,11 +250,14 @@ export function choose({ map, changes, oldText, missed = [], landing = false }) 
       if (c.status !== 'M') return all(`a part was ${c.status === 'A' ? 'added' : 'removed'}: ${part}`);
       if (alwaysParts.includes(part)) return all(`${part} is on the list that always runs everything`);
       parts.add(part);
-      const old = oldText(c.path).split('\n'), fns = byPart.get(part) || [];
+      const was = oldText(c.path), old = was.split('\n'), fns = byPart.get(part) || [];
+      const now = landing ? newText(c.path) : '', oldB = landing ? blank(was).split('\n') : [], nowB = landing ? blank(now).split('\n') : [];
       for (const h of c.hunks) {
-        if (landing && [...old.slice(h.s - 1, h.s - 1 + h.n), ...h.add].every(l => COMMENT.test(l))) continue;
+        const gone = [h.s - 1, h.s - 1 + h.n], came = [h.t - 1, h.t - 1 + h.add.length];
+        if (landing && old.slice(...gone).every((l, k) => isComment(l, oldB[gone[0] + k]))
+          && now.split('\n').slice(...came).every((l, k) => isComment(l, nowB[came[0] + k]))) continue;
         const f = ownerOf(fns, old, h);
-        if (!f && landing && h.n === 0 && onlyNewFunctions(h.add)) { added++; continue; }
+        if (!f && landing && h.n === 0 && onlyNewFunctions(nowB.slice(...came))) { added++; continue; }
         if (!f) return all(`a changed line outside any function: ${part} line ${h.s}`);
         owners.set(f.key, f);
       }
@@ -294,6 +302,7 @@ export function pick({ top = gitTop(), base = 'main', to = null, maps = findMaps
   const r = choose({
     map: tested.map, changes: changesBetween(top, tested.commit, to),
     oldText: p => git(top, ['show', `${tested.commit}:${p}`]),
+    newText: p => (to ? git(top, ['show', `${to}:${p}`]) : readFileSync(join(top, p), 'utf8')),
     missed: maps.flatMap(m => (Array.isArray(m.map.missed) ? m.map.missed : [])), landing,
   });
   const from = `from ${short(tested.commit)}, the last tested build${tested.behind ? ` (${tested.behind} commit${tested.behind === 1 ? '' : 's'} before ${base})` : ''}`;
