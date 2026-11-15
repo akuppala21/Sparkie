@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 49 parts in `service/src/`, joined in name order into `service/server.mjs` (14615 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 49 parts in `service/src/`, joined in name order into `service/server.mjs` (14628 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -524,11 +524,11 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 A few fixed requests to the brain's own port, with one toy tool written here (never the action registry, so nothing can run or change), and a profile of what came back in brain-profiles.json, kept per brain setup and shown in sparkie_setup. Two outcomes, not three grades (the one page): "checked" when it answers, calls the tool with arguments that fit three times out of three, and answers from the tool's result; "not checked" otherwise, with why. Nothing acts on the outcome yet: no change becomes a button because of it (design E, build step 5, does that). A profile belongs to what was checked …
 
 - **Area:** features. **Rules:** R22, R24, R26, R36. **Tests:** brain-check.test.mjs
-- **Lines:** 195
+- **Lines:** 208
 - **Owns:** brain-profiles.json (writers: saveBrainProfile)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `brainSetupOf`, `brainKey`, `brainReadsNow`, `brainProfiles`, `brainProfileOf`, `saveBrainProfile`, `brainAsk`, `argsProblem`, `toolCameBack`, `brainCheckAsk`, `brainCheck`, `checkBrainSoon`, `brainCheckView`
+- **Functions:** `brainSetupOf`, `brainKey`, `brainReadsNow`, `brainProfiles`, `brainProfileOf`, `saveBrainProfile`, `brainAsk`, `argsProblem`, `toolCameBack`, `brainCheckAsk`, `brainCheck`, `checkBrainSoon`, `checkWhen`, `checkSetupWords`, `checkWords`, `brainCheckView`
 - **Uses:** `01-setup` (`STATE_DIR`, `BUILD`, `sleep`, `ALL_LOCAL`), `03-identity` (`readKept`, `writePrivate`, `clean`), `13-main-model` (`repoOf`, `mainBusy`, `MAIN`, `mainNode`), `14-chats` (`modelInUse`), `15-routes` (`gatewayBrainCalls`, `inUse`), `18-workflows` (`WORKFLOW_LOCK`), `20-heal` (`cameBack`), `20-mcp` (`maskSecrets`), `21-brain-eval` (`brainInUse`, `brainEvalView`)
 - **Used by:** `09-verified`, `13-main-model`, `16-reads`, `21-brain-eval`, `24-handler`
 
