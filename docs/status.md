@@ -66,6 +66,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “a member's /key and an agent's”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “a value typed in plain words, then given with /key”, “a kept key that reached the secrets file another way”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
 | [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”) | falls short today: its file says where |
 | [R57](rules/R57.md) | partly | `test/workloads-restart.test.mjs`; `test/workloads-address.test.mjs` | falls short today: its file says where |
+| [R59](rules/R59.md) | partly | `test/digest.test.mjs`; `test/work.test.mjs` (“recall {id, find} on a look's record”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -97,7 +98,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 4.10 | no test yet |  | no acceptance test lists it |
 | 5.1 | no test yet |  | T1: no test holds it yet |
 | 5.2 | no test yet |  | no acceptance test lists it |
-| 5.3 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”); `test/memory-said.test.mjs` (“said outright, with a brain that never calls remember: one line, said in the”); `test/recall.test.mjs` (““What did I tell you about Spark 4 last month?”) | holds T138; holds part of T9: “"remember I prefer SGLang" with a brain that never calls remember: the reply says "I'll remember: …" and the next chat's prompt holds the line.”; holds part of T137: “"what did I tell you about Spark 4 last month?" returns the retired line with its date and its source.”; T21: no test holds it yet |
+| 5.3 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”); `test/memory-said.test.mjs` (“said outright, with a brain that never calls remember: one line, said in the”); `test/digest.test.mjs` (“a 3,000-line log enters the turn as its digest: the cause at line 1,871 with”); `test/recall.test.mjs` (““What did I tell you about Spark 4 last month?”) | holds T138; holds part of T9: “"remember I prefer SGLang" with a brain that never calls remember: the reply says "I'll remember: …" and the next chat's prompt holds the line.”; holds part of T137: “a 3,000-line log with its cause in the middle enters as a digest that holds the cause.”, “"what did I tell you about Spark 4 last month?" returns the retired line with its date and its source.”; T21: no test holds it yet |
 | 5.4 | no test yet |  | T10: no test holds it yet |
 | 5.5 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”); `test/memory-said.test.mjs` (“said outright, with a brain that never calls remember: one line, said in the”) | holds T138; holds part of T9: “"remember I prefer SGLang" with a brain that never calls remember: the reply says "I'll remember: …" and the next chat's prompt holds the line.”; T22: no test holds it yet |
 | 5.6 | no test yet |  | no acceptance test lists it |
@@ -108,7 +109,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
 | 5.13 | partly | `test/journal.test.mjs` (“with the journal's disk full, a change written down first answers "couldn't”, “a console killed between a start line and its end: after the restart, one "cut”) | holds part of T123: “with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the owner is told why.”, “killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run again.” |
-| 5.14 | partly | `test/recall.test.mjs` (““What did I tell you about Spark 4 last month?”) | holds part of T137: “"what did I tell you about Spark 4 last month?" returns the retired line with its date and its source.” |
+| 5.14 | partly | `test/digest.test.mjs` (“a 3,000-line log enters the turn as its digest: the cause at line 1,871 with”); `test/recall.test.mjs` (““What did I tell you about Spark 4 last month?”) | holds part of T137: “a 3,000-line log with its cause in the middle enters as a digest that holds the cause.”, “"what did I tell you about Spark 4 last month?" returns the retired line with its date and its source.” |
 | 6.1 | no test yet |  | no acceptance test lists it |
 | 6.2 | no test yet |  | T2, T17: no test holds them yet |
 | 6.3 | no test yet |  | T20, T41: no test holds them yet |
