@@ -15,7 +15,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
   if (nest > SHELL_NEST) unsure(`It nests $( … ) or backticks more than ${SHELL_NEST} deep.`);
   const toks = [], heres = [];
   let i = start, w = null, depth = 0, want = null;
-  const word = () => (w ??= { text: '', lit: '', bare: '', plain: true, quoted: false, glob: false, unknown: false, subs: [] });
+  const word = () => (w ??= { text: '', lit: '', bare: '', plain: true, quoted: false, glob: false, unknown: false, tilde: false, vars: false, subs: [] });
   const opaque = () => { const x = word(); x.plain = false; return x; };
   const end = () => {
     if (!w) return;
@@ -26,7 +26,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
     w = null;
   };
   const sub = j => { if (want) unsure('Its here-document’s end word holds <( … ), which bash reads as it is written and the sorter does not.'); const r = shellLex(src, true, j, nest + 1), x = opaque(); x.subs.push(shellParse(r.toks)); x.unknown = true; return r.end; };
-  const named = (name, j) => { const x = opaque(); if (name === 'HOME' && !x.text) x.text = '~'; else x.unknown = true; return j; };
+  const named = (name, j) => { const x = opaque(); if (name === 'HOME' && !x.text) { x.text = '~'; x.tilde = true; } else x.unknown = x.vars = true; return j; };
   const dollar = j => {
     const n = src[j + 1];
     if (want) unsure('Its here-document’s end word holds a $, which bash reads as it is written and the sorter does not.');
@@ -37,7 +37,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
     if (n === '{') { const k = src.indexOf('}', j), v = src.slice(j + 2, k); if (k < 0 || !/^[A-Za-z_]\w*$/.test(v)) unsure('It holds a ${ … } form the sorter does not read.'); return named(v, k + 1); }
     const m = /[A-Za-z_]\w*/y; m.lastIndex = j + 1;
     if (m.exec(src)) return named(src.slice(j + 1, m.lastIndex), m.lastIndex);
-    if (n && '0123456789@*#?$!-'.includes(n)) { opaque().unknown = true; return j + 2; }
+    if (n && '0123456789@*#?$!-'.includes(n)) { const x = opaque(); x.unknown = x.vars = true; return j + 2; }
     word().text += '$'; return j + 1;
   };
   const tick = (j, inQuotes = false) => {
@@ -107,6 +107,8 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
       continue;
     }
     if (c === '~' && !w && src[i + 1] !== undefined && !/[/\s;&|()<>:]/.test(src[i + 1])) opaque().unknown = true;
+    // (a ~ bash reads as the home: unquoted, first in the word; a quoted one is a folder named ~)
+    if (c === '~' && !w) word().tilde = true;
     const x = word();
     if ('*?['.includes(c)) x.glob = true;
     x.text += c; x.bare += c; if (x.plain) x.lit += c;
@@ -146,7 +148,7 @@ function shellParse(toks) {
   }
   function command() {
     const cmd = { assigns: [], words: [], redirs: [] };
-    while (bare('!')) k++;
+    while (bare('!')) { k++; cmd.neg = true; }
     if (bare('time')) { k++; if (bare('-p')) k++; }
     if (is('(') && toks[k + 1]?.op === '(') unsure('It holds (( … )), arithmetic the sorter does not read.');
     if (is('(')) { k++; cmd.group = list(')'); cmd.sub = true; k++; } else if (bare('{')) { k++; cmd.group = list('}'); k++; }
