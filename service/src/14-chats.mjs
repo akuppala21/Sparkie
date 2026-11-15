@@ -224,7 +224,8 @@ const waking = new Set();
 function wakeWork(id) {
   try {
     const conv = chatData().conversations.find(c => c.id === id);
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !resultSince(conv)) return;
+    // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
+    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -235,6 +236,8 @@ async function continueTask(id) {
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || chatBusy(id)) return;
+  const carried = Boolean(t.carry);
+  delete t.carry;
   if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
@@ -243,7 +246,7 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] What you started for the owner’s request has finished (the results are above). Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
@@ -323,7 +326,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }
   } finally { finish(); }
@@ -441,8 +444,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups }) {
-  if (!agent && used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+  // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
+  if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
 }
