@@ -3655,9 +3655,10 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
     `You are ${MAIN?.assistant || 'Sparkie'}, the assistant for this team's NVIDIA DGX Spark machines.`,
     tools ? [
       'Be concise and practical. You have tools: use them to look things up instead of guessing, and say what you found.',
-      // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
-      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
-        : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
+      // From Telegram (R32): saved workflows and updates are changed in Spark Console, so those tools aren't offered;
+      // memory is remembered and forgotten there as here (R25).
+      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.' : null,
+      'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
       'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
@@ -3810,7 +3811,8 @@ const waking = new Set();
 function wakeWork(id) {
   try {
     const conv = chatData().conversations.find(c => c.id === id);
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !resultSince(conv)) return;
+    // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
+    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -3821,6 +3823,8 @@ async function continueTask(id) {
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || chatBusy(id)) return;
+  const carried = Boolean(t.carry);
+  delete t.carry;
   if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
@@ -3829,7 +3833,7 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] What you started for the owner’s request has finished (the results are above). Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
@@ -3881,7 +3885,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   // or memory that can't be read) frees the chat and the slot too. No catch: the caller still gets the error.
   try {
     emit({ type: 'started' });
-    // From Telegram, memory and saved workflows aren't offered (R32: they're changed in Spark Console).
+    // From Telegram, saved workflows aren't offered (R32: they're changed in Spark Console); memory is (R25).
     const tools = viewer.role === 'owner' ? sparkieTools().filter(t => !(channel && PAGE_ONLY_TOOLS.has(t.function.name))) : [];
     const said = normQuotes(text);
     Object.assign(turn, { tools, said });
@@ -3909,7 +3913,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }
   } finally { finish(); }
@@ -4027,8 +4031,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups }) {
-  if (!agent && used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+  // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
+  if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
 }
@@ -4095,7 +4101,7 @@ async function chatReply(req, res, viewer, conv, text, context) {
 }
 
 /* ───────── Sparkie’s rounds ───────── */
-// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs
+// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
@@ -4112,10 +4118,88 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
+// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
+// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
+// its rounds, at most 30); the tool output it may read (40% of its context, budgetContext, at 3 characters a token);
+// and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const CONTEXT_TOKENS = 32768;      // limit: the context of a setup that says none
+const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
+// (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
+const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
 function turnBudgets({ tuned }) {
   const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
-  return { ROUNDS, CHANGES };
+  const steps = Number(tuned.workSteps);
+  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
+  const TOOL_OUTPUT = Math.floor(budgetContext(tuned) * 12 / 10);
+  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+}
+// A setup's context in tokens: its contextTokens, else the number after its serving flag (--context-length for SGLang,
+// --max-model-len for vLLM, --ctx-size for llama.cpp; the flag is the setup saying it); one from 1,000 to 1,048,576, or
+// else 32,768.
+const BUDGET_CONTEXT_FLAG = /^(?:--context-length|--max-model-len|--ctx-size)(?:=(.*))?$/;
+function budgetContext(setup) {
+  const fits = n => Number.isInteger(n) && n >= 1000 && n <= 1048576, args = Array.isArray(setup?.args) ? setup.args.map(String) : [];
+  if (fits(Number(setup?.contextTokens))) return Number(setup.contextTokens);
+  const at = args.findIndex(a => BUDGET_CONTEXT_FLAG.test(a)), n = at < 0 ? NaN : Number(BUDGET_CONTEXT_FLAG.exec(args[at])[1] ?? args[at + 1]);
+  return fits(n) ? n : CONTEXT_TOKENS;
+}
+// Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
+// (continueTask: CONTINUE_MAX turns in CONTINUE_HOURS, not while agents are paused): only the owner's request that is a
+// task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
+function budgetCarries({ spent, agent, task, text, now }) {
+  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text))) return false;
+  const t = task || { continuations: 0, at: now };
+  return t.continuations < CONTINUE_MAX && Date.now() - Date.parse(t.at) <= CONTINUE_HOURS * 3600000 && !(agentSettings().halted && !agentSettings().autoPaused);
+}
+// What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
+const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
+// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
+// step that reaches them makes the next round the last.
+function workStep(turn) {
+  if (turn.works >= turn.WORK_STEPS) {
+    turn.notRun++;
+    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left.`);
+  }
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+}
+// After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
+// refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
+// sent of the result (budgetCut).
+function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
+  const why = ok ? nothing : out.replace(/^\[error\] /, '');
+  if (why == null) turn.refusedRow.length = 0;
+  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW && !turn.spent) {
+    turn.spent = 'refused';
+    turn.refused.push(...turn.refusedRow);
+  }
+  if (name === 'run' && ok && nothing == null) turn.ran++;
+  return budgetCut(turn, out, jid);
+}
+// The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
+// by its record (journalTool keeps it whole), and the next round is the last. (Kept apart: how a long result is cut may
+// change, design G step 5.)
+function budgetCut(turn, out, jid) {
+  if (!turn.unread.length && turn.outChars + out.length <= turn.TOOL_OUTPUT) { turn.outChars += out.length; return out; }
+  turn.unread.push(jid);
+  turn.spent ||= 'output';
+  return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${jid ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : 'It wasn’t kept: the record couldn’t be written.'} Answer now with what you have.`;
+}
+// A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
+// results weren't read and where they are kept, or which calls were refused and why; then that the task carries on in
+// a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+function budgetReport(turn) {
+  if (!turn.spent) return;
+  turn.carry = budgetCarries(turn);
+  const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
+  if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
+  lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
+  const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
+  turn.answer += text;
+  turn.emit({ type: 'delta', text });
 }
 // The tools of each round (R46): the core and this request's groups, opened by its words (a carry-on turn starts
 // from the groups its request kept), by state, by a call to a tool that wasn't offered, and by guide.
@@ -4193,8 +4277,9 @@ async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs)
-    const last = round >= ROUNDS || overBudget(turn);
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
+    // or at one of the loop's budgets, turnBudgets)
+    const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
     turn.usage = r.usage || turn.usage;
@@ -4204,6 +4289,7 @@ async function turnRounds(turn) {
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
   }
+  budgetReport(turn);
 }
 // One round’s tool calls (at most 4): on the record first; lookups together, then changes one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
@@ -4237,12 +4323,14 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null;
+  let nothing = null;   // (why a call that answered ran nothing: a run where the helper can't run it; budgetsAfter)
   try {
     // (the owner's /stop came while another call of this round ran: nothing more is handed to runAction)
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
+    if (c.name === 'run') workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
     let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -4255,13 +4343,15 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     out = JSON.stringify(maskDeep(value));
     outcome = typeof value?.outcome === 'string' ? value.outcome : null;
     if (value?.plan) plan = value.plan;
+    if (value?.ran === false) nothing = maskSecrets(String(value.why || 'Nothing ran.'));
   } catch (e) {
     ok = false;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
-  journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
   const shown = commandShown(c, ok, out);
   if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
+  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
   const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
   steps[i] = step;
@@ -4706,7 +4796,8 @@ function changeIntent(text) {
   return { asked: [...asked], negated: [...negated], mixed, keepOnly: negated.has('stop') && !worded.has('stop') };
 }
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
-// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
+// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
+// owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
@@ -4718,12 +4809,10 @@ const PAGE_ONLY = new Set([
   'forget_workflow',
 ]);
 const PAGE_ONLY_TOOLS = new Set([
-  'forget_memory',
   'forget_workflow',
-  'remember',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}${input.from ? '' : savedImagesLabel(input.steps)}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -4981,7 +5070,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
-  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed) {
+  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
     const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
@@ -5671,7 +5760,7 @@ function abilities() {
       `Sparkie never changes ${NEVER_CHANGES}, and never turns Spark Console off. The owner does those by hand.`,
       'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.',
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
-      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}.`,
+      `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
@@ -6840,41 +6929,54 @@ function requestSteps(viewer, ctx) {
 // A new image is code that runs on a Spark, so keep_running starts one at once only for the owner on their tailnet, and
 // otherwise asks the owner (R38). A saved workflow's steps run as `workflow`, so until now a step with a new image always
 // asked. Now the owner's yes to a save is also the yes to the images its steps name (contract 9.27; design D 2.3, and
-// its question 2 as recommended). The yes is a button the owner presses, whose label lists every step with its image
-// (pageOnlyLabel, stepWords): Sparkie's save button pressed on the page by the owner on their tailnet, or an owner-only
-// button pressed there with the passkey (a save from Telegram waits for one). A save with no button (the owner's own
-// POST /actions, a save Sparkie makes at once) showed nobody the images, so it isn't the yes; nor is anything an agent,
-// an agent's chat or a device signed in over the internet without the passkey does. Then save_workflow keeps
-// `approved: {images, steps, by, at}` on the workflow, and its answer says which images it covers (savedImagesWords).
+// its question 2 as recommended). The yes is a button the owner presses, whose label lists every step, a keep_running
+// step with an image whole, and says the press is also the yes to those images and that a tag can change (pageOnlyLabel,
+// stepWords, savedImagesLabel): Sparkie's save button pressed on the page by the owner on their tailnet, or an
+// owner-only button pressed there with the passkey (a save from Telegram waits for one), never one whose call carried
+// `from` (its label listed no steps). A save with no button (the owner's own POST /actions, a save Sparkie makes at
+// once) showed nobody the images, so it isn't the yes; nor is anything an agent, an agent's chat or a device signed in
+// over the internet without the passkey does. Then save_workflow keeps `approved: {images, steps, by, at}` on the
+// workflow, and its answer and the chat line after the press say which images it covers (savedImagesWords). It covers
+// only what the button showed whole (stepCovered): a step with an {input} in any argument, or with part of its line
+// hidden as a key, is asked on every run (the workloads review, A1 and A2).
 // What the yes binds to: each image reference exactly as the button showed it, the tag as typed, or the digest when the
 // reference carries one (name@sha256:…), compared as text; and `steps`, a hash of the saved steps exactly as they were
 // saved. A run of that workflow passes a step's image as approved (stepImagesYes) only when the steps still hash the same,
-// that step's image is literal (not from an input) and on the list, and the run is the owner's own (never an agent's
-// key or an agent's chat). Anything else asks as before: a changed step, another tag or digest, an image from an input, a
-// workflow saved with no button or by an agent, an agent's run. A tag is a name: if it later points at another image, a
+// that step is covered and its image on the list, and the run is the owner's own (never an agent's key or an agent's
+// chat). Anything else asks as before: a changed step, another tag or digest, an input in the step, a workflow saved
+// with no button or by an agent, an agent's run. A tag is a name: if it later points at another image, a
 // Spark that already has the old one runs that copy (keep_running pulls only an image the Spark doesn't have), and a
 // Spark that pulls gets what the tag names then; the owner pins one exactly by saving name@sha256:… .
 const savedStepsHash = steps => createHash('sha256').update(JSON.stringify(steps)).digest('hex').slice(0, 16);
-// The literal images a save's steps start from (a keep_running step that names one; one with an {input} isn't literal).
-const savedImages = steps => [...new Set(steps.filter(st => st.action === 'keep_running' && typeof st.args?.image === 'string' && !placeholders(st.args.image).length).map(st => st.args.image))];
-const savedImagesFromInputs = steps => steps.filter(st => st.action === 'keep_running' && typeof st.args?.image === 'string' && placeholders(st.args.image).length).map(st => st.args.image);
+// A step the yes covers: keep_running from a literal image, with no {input} in any of its arguments (a run's input is on
+// no button, the workloads review's A2), and its line on the button whole: nothing in it hidden as a key (A1).
+const stepCovered = st => st?.action === 'keep_running' && typeof st.args?.image === 'string' && !placeholders(st.args).length && !stepLine(st).includes('[hidden]');
+// The images a save's yes covers, and the steps naming an image that a run asks about all the same.
+const savedImages = steps => [...new Set(steps.filter(stepCovered).map(st => st.args.image))];
+const savedStepsAsked = steps => steps.map((st, i) => (st?.action === 'keep_running' && st.args?.image !== undefined && !stepCovered(st) ? i + 1 : 0)).filter(Boolean);
+const TAG_WORDS = 'a tag is a name and can later point at another image (name@sha256:… pins one)';
+// What the save button adds when its press would cover images: that runs then start them without asking again.
+function savedImagesLabel(steps) {
+  const images = Array.isArray(steps) ? savedImages(steps) : [];
+  return images.length ? `. Pressing it is also your yes to ${images.join(', ')}: runs of exactly these steps start ${images.length > 1 ? 'them' : 'it'} without asking again, and ${TAG_WORDS}` : '';
+}
 // Whether this save is the owner's own yes to `images`: a pressed button that listed them (see above).
 function savedImagesYes(viewer, ctx, images) {
   if (!images.length) return false;
   if (ctx.ownerConfirmed) return true;
   return Boolean(ctx.button) && ctx.via === 'page' && !viewer?.session && !viewer?.agentKey && !ctx.agent && !ctx.agentId;
 }
-// What the save's answer says of its images: those its yes covers, or that a run asks.
-function savedImagesWords(images, fromInputs, yes) {
+// What the save's answer, and the chat line after its press, say of its images: those its yes covers, or that a run asks.
+function savedImagesWords(images, asked, yes) {
   const one = list => list.length > 1 ? 'them' : 'it';
-  return [...(images.length ? [yes ? `Your yes to this save covers ${images.join(', ')}: a run of exactly these steps starts ${one(images)} without asking again.`
+  return [...(images.length ? [yes ? `Your yes to this save covers ${images.join(', ')}: a run of exactly these steps starts ${one(images)} without asking again; ${TAG_WORDS}.`
     : `A run asks before it starts ${images.join(', ')}: only your yes to a save’s button, which lists its steps, covers the images ${one(images)} names.`] : []),
-    ...(fromInputs.length ? [`${fromInputs.join(', ')} ${fromInputs.length > 1 ? 'come' : 'comes'} from an input, so a run asks for ${one(fromInputs)}.`] : [])].join(' ');
+    ...(asked.length ? [`A run asks before ${asked.length > 1 ? 'steps' : 'step'} ${asked.join(', ')} ${asked.length > 1 ? 'start' : 'starts'} an image: a step that takes an input, or with part of it hidden as a key, isn’t covered by a yes.`] : [])].join(' ');
 }
 // The images step `st` of saved workflow `w` may start without asking, in a run by this caller: [] or [its image].
 function stepImagesYes(w, st, viewer, ctx) {
   const a = w.approved, img = st.args?.image;
-  if (st.action !== 'keep_running' || !a || typeof img !== 'string' || placeholders(img).length || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img)) return [];
+  if (!a || !stepCovered(st) || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img)) return [];
   return viewer?.agentKey || ctx.agent || ctx.agentId || !['page', 'api', 'sparkie'].includes(ctx.via) ? [] : [img];
 }
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
@@ -7290,11 +7392,17 @@ function stepArgs(st) {
 }
 // The steps in plain words, built from their arguments (never from Sparkie's summary), for the button that saves them;
 // keys masked, as on every button (before the cut, so no piece of one shows).
-const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => {
+const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
+// One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
+// image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return maskSecrets(changeLabel(action, a)).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}${st?.keep === true ? ', kept running' : ''}`;
-}).join('; ');
+  const words = maskSecrets(`${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`);
+  if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
+  return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
+}
 // A saved step can't carry the answer to a question; that's given when it's asked.
 const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
 
@@ -7382,6 +7490,8 @@ action({
     from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
   }, required: ['title'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
+    // (a call that carried `from` had a button that listed no steps, so pressing it is no yes to their images, D6c A1)
+    const carried = input.from !== undefined;
     input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
@@ -7403,12 +7513,13 @@ action({
     const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
     // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
-    const images = savedImages(w.steps), yes = savedImagesYes(viewer, ctx, images), fromInputs = savedImagesFromInputs(w.steps);
+    // (and its answer, and the chat line after the press, say what that yes covers)
+    const images = savedImages(w.steps), yes = !carried && savedImagesYes(viewer, ctx, images), asked = savedStepsAsked(w.steps);
     if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
-    const before = findSaved(id);
+    const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
     return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
-      ...(images.length || fromInputs.length ? { images: savedImagesWords(images, fromInputs, yes) } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+      ...(words ? { images: words, note: `${before ? 'Replaced' : 'Saved'} the workflow “${w.title}”. ${words}` } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -8904,11 +9015,11 @@ function journalSaid(conv, text, agent, channel, task) {
 }
 function journalTool({ turn, chat, brain, call, ok, outcome, ms }, out) {
   const a = jArgs(call.args || '{}'), n = a && typeof a === 'object' ? a : {};
-  journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
+  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
 }
-function journalTurn({ id, conv, brain, messages, used, since }) {
+function journalTurn({ id, conv, brain, messages, used, since, budgets = null }) {
   journal('turn', { turn: id, chat: conv.id, brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
-    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since) });
+    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since), budgets });
 }
 // A start's failed attempt that has a next fix (startWithFixes notes it; the hook is note(), outside the workflows' code).
 function journalNote(job, line) {
@@ -10078,6 +10189,22 @@ function keepSaid(turn) {
   } catch (e) {
     console.error(`A line the owner said outright wasn’t kept (${e.message}).`);
   }
+}
+/* ───────── memory from the paired Telegram chat: the owner's own words remember and forget there (G6b) ───────── */
+// Area: safety        Rules: R25, R32, R45        Tests: memory-tg.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// Contract 4.10 and 5.5, the one page's section 8, ledger 5c clean-up 3: a line the owner states in the paired Telegram
+// chat is remembered or forgotten as on the page, marked as said there (`src.channel`). `remember` and `forget_memory`
+// stay in PAGE_ONLY; runAction lets them through from a channel in this one case only: Sparkie answering the owner's own
+// words in the chat paired now (via sparkie, channel telegram, from the paired user; not an agent's conversation, not a
+// button, not an erase). Everything after that check holds as on the page: the rest of runAction, sparkieCheck and
+// memoryClear (the forget gate, the owner's-words share), an agent never replacing an owner's line. A press from
+// Telegram on a memory button, an erase for good (eraseLine) and memory's history (memoryWithPast) still wait for the
+// page, and the approvals from Telegram (20-tg-approve.mjs) still never ask about a PAGE_ONLY action.
+const TG_MEMORY = new Set(['remember', 'forget_memory']);
+function tgOwnMemory(name, input, ctx) {
+  if (!TG_MEMORY.has(name) || input?.erase || ctx.via !== 'sparkie' || ctx.channel !== 'telegram' || ctx.agent || ctx.button || ctx.trusted) return false;
+  try { const p = tgPaired(); return Boolean(p) && ctx.from === `telegram:${p.userId}`; } catch { return false; }
 }
 /* ───────── memory's lines in time: an end date, a fact said again, the other lines about the same thing ───────── */
 // Area: record        Rules: R45        Tests: memory-time.test.mjs
@@ -11381,7 +11508,8 @@ function stopWord(conv) {
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
-// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt).
+// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt) and the rebuild steps
+// (deploy/REBUILD.txt).
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
@@ -11407,6 +11535,7 @@ function helpWord() {
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
+  lines.push(`  bring ${consoleSparkWords().replace(/^on /, '')} back after its disk is lost: deploy/REBUILD.txt on GitHub (a copy: ${BY_HAND_DIR}/REBUILD.txt)`);
   lines.push(`  resume agents’ changes (${consoleSparkWords()}): set "halted": false in ${SETTINGS_FILE}`);
   return lines.join('\n');
 }
@@ -12859,7 +12988,7 @@ function brainCatalog() {
   return { toolCap: TOOL_CAP, groupSize: GROUP_SIZE, groups: GROUP_WORDS.map(([group, about, re]) => ({ group, about, words: re.source, tools: groupActions(group).map(a => a.name) })),
     core: groupActions('core').map(a => a.name), lines: TOOL_LINES.map(([tools, text]) => ({ tools, text })),
     setup: { sampling: s.sampling || null, thinking: Boolean(s.thinking), templateKwargs: s.templateKwargs || null, maxTokens: s.maxTokens || null,
-      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...askSet(s) } };
+      toolRounds: s.toolRounds || null, maxChanges: s.maxChanges || null, toolCap: s.toolCap || null, ...budgetsSet(s), ...askSet(s) } };
 }
 
 action({
@@ -15275,7 +15404,9 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
+    // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
+    // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
+    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`

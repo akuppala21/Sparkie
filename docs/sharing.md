@@ -92,7 +92,7 @@ copy of the state folder under `~/.local/share/spark-console/releases/<time>/sta
 taken while it was on under `~/.local/share/spark-console/backups/` (one a day, the last 14). To put one back: stop the
 service, untar it into `~/.local/state/spark-console` leaving out `sessions.json` (`tar -xzf <copy> -C
 ~/.local/state/spark-console --exclude=./sessions.json`: an older copy may hold one), start the service. Every
-device signs in again.
+device signs in again. A new Spark 2 after a lost disk: `deploy/REBUILD.txt`, step by step.
 
 **If the API lock gets in the way**, `bash spark-console/deploy/lock-api.sh --undo` points Tailscale back at the local
 port, removes the lock and restarts the service.

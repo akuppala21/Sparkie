@@ -164,11 +164,11 @@ function journalSaid(conv, text, agent, channel, task) {
 }
 function journalTool({ turn, chat, brain, call, ok, outcome, ms }, out) {
   const a = jArgs(call.args || '{}'), n = a && typeof a === 'object' ? a : {};
-  journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
+  return journal('tool', { turn, chat, brain, act: call.name, args: call.args || '{}', ok, outcome, ms, sub: jSub(n.spark, n.sparks, n.container, n.model) }, out);
 }
-function journalTurn({ id, conv, brain, messages, used, since }) {
+function journalTurn({ id, conv, brain, messages, used, since, budgets = null }) {
   journal('turn', { turn: id, chat: conv.id, brain, rounds: messages.filter(m => m.tool_calls).length, tools: used.length,
-    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since) });
+    toolErrors: used.filter(u => !u.ok).length, ok: !conv.messages.at(-1)?.error, ms: Date.now() - Date.parse(since), budgets });
 }
 // A start's failed attempt that has a next fix (startWithFixes notes it; the hook is note(), outside the workflows' code).
 function journalNote(job, line) {

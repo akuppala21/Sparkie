@@ -1,16 +1,19 @@
 // Covers: The owner's yes to a saved workflow covers the images its steps start (D6c): the yes is Sparkie's save button,
 // which lists each step with its image, pressed by the owner on the page; a run of exactly those steps starts them with
 // no question. Asked as before: the same steps saved with no button (the owner's POST /actions), a step changed after
-// the save (another tag, another digest), an image from an input, a workflow an agent saved, an agent's run of the
-// owner's workflow. With the images running, D6a's chain end to end: a new job placed where its /in file is, and the
-// next one, naming no Spark, on the Spark the run's last step ran on, where it reads the first one's folder.
+// the save (another tag, another digest, another command), an image from an input, a workflow an agent saved, an
+// agent's run of the owner's workflow. The yes is what the button showed, whole (the workloads review, A1 to A3): a job
+// step is never cut, so its image shows after a long command, and the button and the chat line after the press say runs
+// start it without asking again and that a tag can change; an image shown part-hidden as a key isn't covered, nor is a
+// step with an input in its command. With the images running, D6a's chain end to end: a new job placed where its /in
+// file is, and the next one, naming no Spark, on the Spark the run's last step ran on, where it reads its folder.
 //
 // The stand-in fleet: on Sparks 3 and 4 a job runs its command at once, to its end (~/.mock/jobs-run). A new image's job
 // in a saved step is a question for the owner without the yes (keep_running, R38), so a run that meets one fails with
 // "needs an answer first".
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, SLOW } from './lib.mjs';
 
@@ -29,6 +32,7 @@ const opEnd = (id, what) => waitFor(async () => { const o = (await api(`/jobs/${
 const job = (container, image = IMAGE) => ({ action: 'keep_running', args: { spark: 'spark4', container, image, once: true, command: ['sh', '-c', `echo ${container}`] } });
 const stateOf = name => readFileSync(join(T.fleet.root, 'spark4', '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
 const savedFile = () => join(T.fleet.stateDir, 'saved-workflows.json');
+const jobFile = (container, file) => join(T.fleet.root, 'spark4', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs', container, file);
 const ASKED = /^Step 1 \(keep_running\) needs an answer first: Run wl-[a-z0-9-]+ on Spark 4 once from the image /;
 async function ownerRun(name, inputs) {
   const r = await act('run_workflow', { name, ...(inputs ? { inputs } : {}) });
@@ -36,27 +40,32 @@ async function ownerRun(name, inputs) {
   return opEnd(r.json.operation, `the run of ${name}`);
 }
 // A saved step changed by hand afterwards (as an older build, or a hand edit, could leave it).
-function editStep(id, image) {
+function editStep(id, image, key = 'image') {
   const f = JSON.parse(readFileSync(savedFile(), 'utf8'));
-  f.workflows.find(w => w.id === id).steps[0].args.image = image;
+  f.workflows.find(w => w.id === id).steps[0].args[key] = image;
   writeFileSync(savedFile(), JSON.stringify(f));
 }
 
 const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const saved = async name => (await act('workflows', {})).json.saved.find(w => w.name === name) || null;
-// The owner's yes: Sparkie's save button (its label lists each step with its image), pressed on the page.
-async function ownerSaves(title, steps, inputs) {
+// The owner's yes: Sparkie's save button (its label lists each step with its image), pressed on the page. Its label,
+// the chat line after the press, and what was saved.
+async function pressSave(title, steps, inputs) {
   const words = `make a workflow called ${title}`;
   writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'save_workflow', arguments: { title, steps, ...(inputs ? { inputs } : {}) } }] }]));
   try {
     const chat = await newChat(), r = await say(chat, words);
     assert.deepEqual(r.message.tools.map(x => [x.name, x.outcome ?? null]), [['save_workflow', 'needs-ok']], JSON.stringify(r.message.tools));
     const label = r.message.choices?.[0]?.label || '';
-    for (const st of steps) assert.ok(label.includes(`image ${st.args.image}`), `the button names ${st.args.image}: ${label}`);
     const p = await choose(chat, r.message.choices[0].id);
     assert.equal(p.status, 200, p.text);
-    return saved(title.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+    return { label, after: p.json?.message?.content, workflow: await saved(title.toLowerCase().replace(/[^a-z0-9]+/g, '-')) };
   } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+}
+async function ownerSaves(title, steps, inputs) {
+  const s = await pressSave(title, steps, inputs);
+  for (const st of steps) assert.ok(s.label.includes(`image ${st.args.image}`), `the button names ${st.args.image}: ${s.label}`);
+  return s.workflow;
 }
 
 describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
@@ -117,6 +126,53 @@ describe('the yes at save covers its images (D6c)', { concurrency: 1 }, () => {
     assert.equal(agentRun.status, 'failed');
     assert.match(agentRun.error, ASKED);
     assert.equal(stateOf('wl-i5'), undefined, 'nothing started');
+  });
+
+  // The workloads review's A1: the button showed the yes whole, or there's none. (Its P1: a command before the image cut
+  // the image off the label, and the press still covered it.)
+  test('a job step is never cut on the save button: its image shows after a long command, and the button and the chat line after the press say runs start it without asking again', { timeout: 240000 * SLOW }, async () => {
+    const command = ['sh', '-c', `echo ran >> runs.txt; echo ${'x'.repeat(100)}`];
+    const s = await pressSave('cut label', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-p1', once: true, command, image: IMAGE } }]);
+    assert.ok(s.label.includes(JSON.stringify(command)) && s.label.includes(`image ${IMAGE}`), s.label);
+    assert.match(s.label, /\. Pressing it is also your yes to python:3\.12-slim: runs of exactly these steps start it without asking again, and a tag is a name and can later point at another image \(name@sha256:… pins one\)$/);
+    assert.equal(s.after, 'Saved the workflow “cut label”. Your yes to this save covers python:3.12-slim: a run of exactly these steps starts it without asking again; a tag is a name and can later point at another image (name@sha256:… pins one).');
+    assert.deepEqual(s.workflow?.imagesApproved, [IMAGE]);
+    const run = await ownerRun('cut label');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.equal(readFileSync(jobFile('wl-p1', 'runs.txt'), 'utf8'), 'ran\n');
+  });
+
+  test('an image the button shows part-hidden, as a key would be, is not covered: a run asks', { timeout: 180000 * SLOW }, async () => {
+    const s = await pressSave('hidden tag', [job('wl-i6', 'someone/api_key:v1.2.3-build')]);
+    assert.ok(s.label.includes('image someone/api_key:[hidden]') && !s.label.includes('v1.2.3') && !/Pressing it/.test(s.label), s.label);
+    assert.equal(s.workflow?.imagesApproved, undefined, JSON.stringify(s.workflow));
+    assert.equal(s.after, 'Saved the workflow “hidden tag”. A run asks before step 1 starts an image: a step that takes an input, or with part of it hidden as a key, isn’t covered by a yes.');
+    const run = await ownerRun('hidden tag');
+    assert.equal(run.status, 'failed');
+    assert.match(run.error, ASKED);
+    assert.equal(stateOf('wl-i6'), undefined, 'nothing started');
+  });
+
+  // A2 (its P2: a step with a literal image whose command came from an input ran whatever the run's input said).
+  test('a step with an input in its command is asked, though the yes covers its image in another step: the command never runs', { timeout: 240000 * SLOW }, async () => {
+    const w = await ownerSaves('any command', [job('wl-q0'), { action: 'keep_running', args: { spark: 'spark4', container: 'wl-q{n}', image: IMAGE, once: true, command: ['sh', '-c', '{cmd}'] } }], { n: 'a number', cmd: 'what to run' });
+    assert.deepEqual(w?.imagesApproved, [IMAGE], JSON.stringify(w));
+    const run = await ownerRun('any command', { n: '1', cmd: 'echo never-on-a-button > unseen.txt' });
+    assert.equal(run.status, 'failed', run.log.join('\n'));
+    assert.match(run.error, /^Step 2 \(keep_running\) needs an answer first: Run wl-q1 on Spark 4 once from the image python:3\.12-slim, running sh -c echo never-on-a-button > unseen\.txt;/);
+    assert.ok(run.log.some(l => String(l).endsWith('Step 1: python:3.12-slim was approved when “any command” was saved')), run.log.join('\n'));
+    assert.ok(!existsSync(jobFile('wl-q1', 'unseen.txt')) && stateOf('wl-q1') === undefined, 'the command from the input never ran');
+  });
+
+  // A3 (its P4): the yes binds to the steps as saved, not only to the image.
+  test('a step\'s command changed after the yes, with the same image, is asked again: the changed command never runs', { timeout: 180000 * SLOW }, async () => {
+    const w = await ownerSaves('same image', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-p4', image: IMAGE, once: true, command: ['sh', '-c', 'echo as-saved > as-saved.txt'] } }]);
+    assert.deepEqual(w?.imagesApproved, [IMAGE]);
+    editStep('same-image', ['sh', '-c', 'echo changed > changed.txt'], 'command');
+    const run = await ownerRun('same image');
+    assert.equal(run.status, 'failed', run.log.join('\n'));
+    assert.match(run.error, ASKED);
+    assert.ok(!existsSync(jobFile('wl-p4', 'changed.txt')) && stateOf('wl-p4') === undefined, 'the changed command never ran');
   });
 
   // D6a's chain, end to end now that the images run: a new job placed where its /in file is, and the next one, which

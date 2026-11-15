@@ -69,9 +69,10 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
     `You are ${MAIN?.assistant || 'Sparkie'}, the assistant for this team's NVIDIA DGX Spark machines.`,
     tools ? [
       'Be concise and practical. You have tools: use them to look things up instead of guessing, and say what you found.',
-      // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
-      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
-        : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
+      // From Telegram (R32): saved workflows and updates are changed in Spark Console, so those tools aren't offered;
+      // memory is remembered and forgotten there as here (R25).
+      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.' : null,
+      'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
       'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
@@ -224,7 +225,8 @@ const waking = new Set();
 function wakeWork(id) {
   try {
     const conv = chatData().conversations.find(c => c.id === id);
-    if (!conv?.task || waking.has(id) || chatBusy(id) || !resultSince(conv)) return;
+    // (or the reply that ended at one of the loop's budgets asked for it: budgetCarries, 14-rounds.mjs)
+    if (!conv?.task || waking.has(id) || chatBusy(id) || !(resultSince(conv) || conv.task.carry)) return;
     waking.add(id);
     setTimeout(() => { waking.delete(id); continueTask(id).catch(e => console.error(`Carrying on in ${id}: ${e.message}`)); }, CONTINUE_DELAY_MS).unref?.();
   } catch (e) { console.error(`Carrying on in ${id}: ${e.message}`); }
@@ -235,6 +237,8 @@ async function continueTask(id) {
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || chatBusy(id)) return;
+  const carried = Boolean(t.carry);
+  delete t.carry;
   if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
@@ -243,7 +247,7 @@ async function continueTask(id) {
   const owner = { login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions(), ...(t.away ? { session: { kind: 'carried' } } : {}) };
   let message;
   try {
-    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] What you started for the owner’s request has finished (the results are above). Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
+    message = await sparkieTurn({ viewer: owner, conv, task: t, channel: t.channel || null, text: `[Spark Console] ${carried ? 'Your last reply stopped at the limit of one message (its last lines say which).' : 'What you started for the owner’s request has finished (the results are above).'} Carry on with that request: “${t.request}”. Do the next step if one is left, or say briefly that it’s done, or what failed and what you tried. Don’t redo finished steps.` });
   } catch (e) {
     if (t.channel === 'telegram') await tellCarry(conv.id, null);
     throw e;
@@ -295,7 +299,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   // or memory that can't be read) frees the chat and the slot too. No catch: the caller still gets the error.
   try {
     emit({ type: 'started' });
-    // From Telegram, memory and saved workflows aren't offered (R32: they're changed in Spark Console).
+    // From Telegram, saved workflows aren't offered (R32: they're changed in Spark Console); memory is (R25).
     const tools = viewer.role === 'owner' ? sparkieTools().filter(t => !(channel && PAGE_ONLY_TOOLS.has(t.function.name))) : [];
     const said = normQuotes(text);
     Object.assign(turn, { tools, said });
@@ -323,7 +327,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
     } catch (e) {
       return turnFailed(turn, e);
     } finally {
-      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now });
+      journalTurn({ id: turnId, conv, brain: target.model, messages, used, since: now, budgets: budgetsOf(turn) });
       finish();
     }
   } finally { finish(); }
@@ -441,8 +445,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups }) {
-  if (!agent && used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+  // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
+  if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
   if (!agent && conv.task && (!task || conv.task === task)) conv.task.groups = groups.open.filter(o => o.by !== 'state').map(o => ({ ...o }));
 }
