@@ -47,7 +47,9 @@ const POWER_WHY = { idle: 'idle', asked: 'asked', start: 'a start needed it', ou
 function powerState(strict = false) {
   let v = null;
   try { v = readKept(POWER_FILE); } catch (e) { if (strict) throw e; }
-  const off = v && typeof v.off === 'object' && v.off && !Array.isArray(v.off) ? v.off : {};
+  // (a record that isn't one, as in a power.json edited by hand, is passed over by every reader, and left out at the next
+  // save: R56)
+  const off = v && typeof v.off === 'object' && v.off && !Array.isArray(v.off) ? Object.fromEntries(Object.entries(v.off).filter(([, r]) => r && typeof r === 'object' && !Array.isArray(r))) : {};
   return { ...(v && typeof v === 'object' && !Array.isArray(v) ? v : {}), idleMinutes: Number.isInteger(v?.idleMinutes) ? v.idleMinutes : IDLE_DEFAULT_MINUTES, off };
 }
 function savePower(change) {
@@ -159,7 +161,8 @@ function powerMark(id) {
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
   // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
+    // (not asleep when its record carries a problem, a wake that failed: the problem is said instead, in words)
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: r.problem ? null : asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
