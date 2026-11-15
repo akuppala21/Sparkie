@@ -142,7 +142,7 @@ const RESTORE = (() => {
 })();
 describe('restore.sh --with-state', () => {
   // A made-up home: the live install and state, and a snapshot that holds its own state. systemctl and curl are
-  // stand-ins (the service "answers" at once), kept first on the PATH as on the stand-in fleet (SPARK_CONSOLE_ALL_LOCAL).
+  // stand-ins (the service "answers" at once), kept first on the PATH as on the stand-in fleet (--stand-in).
   function home({ liveSessions }) {
     const h = mkdtempSync(join(tmpdir(), 'sct-restore-')), snap = join(h, 'snap'), live = join(h, '.local', 'state', 'spark-console'), bin = join(h, 'bin');
     for (const d of [join(snap, 'state'), join(snap, 'spark-console'), join(snap, 'spark-console-service'), live, bin, join(h, 'spark-console'), join(h, 'spark-console-service')]) mkdirSync(d, { recursive: true });
@@ -157,7 +157,7 @@ describe('restore.sh --with-state', () => {
     for (const f of ['systemctl', 'curl']) chmodSync(join(bin, f), 0o755);
     return { h, snap, live, bin };
   }
-  const run = ({ h, snap, bin }) => spawnSync('bash', [join(snap, 'restore.sh'), '--with-state'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
+  const run = ({ h, snap, bin }) => spawnSync('bash', [join(snap, 'restore.sh'), '--with-state', '--stand-in'], { env: { ...process.env, HOME: h, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8', timeout: 60000 * SLOW });
 
   // (E2c, contract 6.25: until then the devices signed in at the time stayed signed in)
   test('the snapshot’s state comes back but never its sessions.json, and every device signs in again', () => {
