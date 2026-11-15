@@ -1,0 +1,15 @@
+{
+  "build": "8c8db9ba6363",
+  "testedAt": "2026-11-15T02:10:55.163Z",
+  "versions": {
+    "start_model": "24486d74dd19",
+    "start_model_across": "79920e6cdea2",
+    "stop_model": "958b338b426d",
+    "find_setups": "f807e08bdd5d",
+    "restart_model": "bb7ffe5e4224"
+  },
+  "tree": "bbb311ef23d9beeca95a8f7d57b3dfbdd42ea3cf",
+  "commit": "6187b95792727f4e85fae56d624205afa5742ee4",
+  "run": "https://github.com/akuppala21/Sparkie/actions/runs/43663947485",
+  "brainReads": "81e3b9ab064ba7a383b0b12233a416bc3649407fb18ef11c58cbd64dcaf81fd1"
+}
