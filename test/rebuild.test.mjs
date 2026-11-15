@@ -3,7 +3,7 @@
 // `~/.local/share/spark-console/` before anything is replaced); every repository path, script, chat word and page label
 // they name exists in the tree; every command line they give uses only tools a fresh Spark 2 has; the 7 days and the
 // left-out `sessions.json` are the code's own; plain size. The copy landing at the fixed path is install.test.mjs's
-// case 20; `/help` naming it is words.test.mjs's.
+// case 21; `/help` naming it is words.test.mjs's.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync } from 'node:fs';
