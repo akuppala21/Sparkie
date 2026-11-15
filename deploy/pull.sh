@@ -160,7 +160,11 @@ ready() {  # sets REPO_NAME, URL and AUTH, then fetches
   s=$(from_secrets) && [ -d "$REPO" ] || refuse "pull.sh isn't set up on this Spark yet. Run once: $ME setup <owner>/<repository>"
   read -r REPO_NAME AUTH <<<"$s"
   URL=$(url_for "$REPO_NAME")
-  fetch "$URL" "$AUTH" || refuse "GitHub couldn't be reached, or didn't accept the token (a new one: $ME setup $REPO_NAME)."
+  if ! fetch "$URL" "$AUTH"; then
+    [ -z "$FETCH_LOCK" ] || refuse "A fetch that was cut off left git's lock behind in this Spark's copy of the repository. Remove it once (rm '$FETCH_LOCK'), then run this again."
+    [ -z "$FETCH_SLOW" ] || refuse "The fetch from GitHub didn't finish in $FETCH_S seconds. Try again in a while."
+    refuse "GitHub couldn't be reached, or didn't accept the token (a new one: $ME setup $REPO_NAME)."
+  fi
 }
 sha12() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-12; }
 # links_ok: reads "<path>\0<target>\0" pairs and prints the first link that isn't allowed (nothing when all are). A link
@@ -470,7 +474,8 @@ install() {
   W=$(mktemp -d "${TMPDIR:-/tmp}/spark-console-pull.XXXXXX")
   trap 'rm -rf "$W"' EXIT
   mkdir "$W/tree"
-  g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - || refuse "git archive of tested/$WANT failed."
+  # (never the eval's held-out set: it tests a brain, so it is not unpacked on Spark 2 even for these minutes, R47)
+  g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - --exclude='test/eval/memory-held-out.json' || refuse "git archive of tested/$WANT failed."
   [ -z "$(find "$W/tree" ! -type f ! -type d ! -type l -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a file or a link."
   p=$(cd "$W/tree" && find . -type l -print0 | while IFS= read -r -d '' f; do printf '%s\0%s\0' "${f#./}" "$(readlink "$f")"; done | links_ok) \
     || refuse "Tree $WANT's links couldn't be read after unpacking."

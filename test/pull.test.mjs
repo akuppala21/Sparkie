@@ -567,6 +567,8 @@ const NO_PUT_BACK = variant(INSTALLER_TEXT, 'bash "$SNAP/restore.sh" > "$SNAP/re
 // (it leaves no version.json: the page isn't served as the new one)
 const NO_VERSION = variant(INSTALLER_TEXT, 'cp "$IN/ui/version.json" "$HOME/spark-console/"', 'rm -f "$HOME/spark-console/version.json"');
 // (it checks the routes whatever SKIP_ROUTES says)
+// (an installer that says whether the eval's held-out set is in the tree it runs from)
+const HELD_LOOK = variant(INSTALLER_TEXT, 'HERE="$(cd "$(dirname "$0")/.." && pwd)"\n', 'HERE="$(cd "$(dirname "$0")/.." && pwd)"\n[ ! -e "$HERE/test/eval/memory-held-out.json" ] || : > "$HOME/held-out-seen"\n');
 const ROUTES_ANYWAY = variant(INSTALLER_TEXT, 'if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "The /console routes', 'if false; then echo "The /console routes');
 
 describe('the way back for an update from GitHub, armed by the build installed now', { concurrency: 1 }, () => {
@@ -1134,5 +1136,32 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.match(resultOf(home).why, why);
       await fromBefore(r, mk);
     }
+  });
+
+  // (the sixth read of C4b: the held-out set isn't unpacked on Spark 2 even for the install's minutes; a lock left in
+  // the copy is said as one by hand too)
+  test('the tree pull.sh unpacks for its installer has no held-out eval set', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(72, 'good', { installer: HELD_LOOK }), 'Is the held-out set unpacked?');
+    mark(g);
+    const r = await pull(home, ['install', g.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.ok(!existsSync(join(home, 'held-out-seen')), 'the held-out set was unpacked on Spark 2');
+    base = g;
+  });
+
+  test('by hand, a lock a cut-off fetch left in the copy is said as one, with how to remove it; nothing changed', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(73), 'A fetch has to bring this');
+    mark(g);
+    const lock = join(home, '.local', 'share', 'spark-console', 'repo.git', 'refs', 'heads', 'main.lock');
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, '');
+    try {
+      const was = read(home, 'spark-console-service', 'server.mjs'), r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, new RegExp(`A fetch that was cut off left git's lock behind in this Spark's copy of the repository\\. Remove it once \\(rm '[^']*refs/heads/main\\.lock'\\), then run this again\\. Nothing was changed\\.`));
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+    } finally { rmSync(lock, { force: true }); }
   });
 });

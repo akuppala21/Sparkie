@@ -13,7 +13,7 @@ import { isIP, BlockList, createServer as createNetServer } from 'node:net';
 import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, writeFileSync, appendFileSync, renameSync, mkdirSync, statSync, unlinkSync, chmodSync, readdirSync, openSync, fsyncSync, closeSync, copyFileSync, writeSync, readSync, fstatSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { randomBytes, randomInt, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as dig from './dig.mjs';
@@ -18136,9 +18136,13 @@ async function updInstallRun(viewer, ctx, tree) {
   writePrivate(UPD_ASKED_FILE, { tree, build: x.newest.build, conv: ctx.conv || null, channel: ctx.channel || null, at: new Date().toISOString() });
   try {
     if (!ALL_LOCAL) {
-      // (outside this service, so its restart doesn't end it; one at a time; the busy question is the ask's yes)
+      // (outside this service, so its restart doesn't end it; one at a time; the busy question is the ask's yes. Its
+      // environment is only these, never the service manager's: no SPARK_CONSOLE_* test setting can reach it)
       const r = await new Promise(resolve => {
-        const p = spawn('systemd-run', ['--user', '--collect', '--unit', 'spark-console-pull-install', '--setenv=ASSUME_YES=1', 'bash', script, 'install', tree], { stdio: ['ignore', 'ignore', 'pipe'] });
+        // (and what systemctl --user needs to reach the owner's service manager, which the install restarts)
+        const run = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`, user = userInfo().username;
+        const p = spawn('systemd-run', ['--user', '--collect', '--unit', 'spark-console-pull-install', '/usr/bin/env', '-i', `HOME=${home}`, `PATH=${FIXED_PATH}`, 'LANG=C.UTF-8', 'ASSUME_YES=1',
+          `USER=${user}`, `LOGNAME=${user}`, `XDG_RUNTIME_DIR=${run}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${run}/bus`, 'bash', script, 'install', tree], { stdio: ['ignore', 'ignore', 'pipe'] });
         let err = '';
         p.stderr.on('data', d => { err += d; });
         p.on('error', e => resolve({ code: -1, err: e.message }));

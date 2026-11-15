@@ -539,9 +539,9 @@ cat > "$HOME/.local/share/spark-console/watchdog.sh" <<'DOG'
 SPARK_CONSOLE_ALL_LOCAL=''; [ "${1:-}" != --stand-in ] || SPARK_CONSOLE_ALL_LOCAL=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$HOME/.local/state/spark-console"; U=spark-console-api; D="$HOME/.local/share/spark-console"
-# put <file> <text>: the file becomes that text whole, by a new file renamed over it, never written through a link that
-# is there; read <file>: its text, or nothing when it is a link.
-put() { local t; t=$(mktemp "$S/.watchdog.XXXXXX") || return 0; if printf '%s\n' "$2" > "$t"; then mv -f "$t" "$1"; else rm -f "$t"; fi; }
+# put <file> <text>: the file becomes that text whole, by a new file renamed over it (mv -T: never into a folder of that
+# name), never written through a link that is there; read <file>: its text, or nothing when it is a link.
+put() { local t; t=$(mktemp "$S/.watchdog.XXXXXX") || return 0; if printf '%s\n' "$2" > "$t" && mv -f -T "$t" "$1"; then :; else rm -f "$t"; fi; }
 read_plain() { [ -L "$1" ] || cat "$1" 2>/dev/null; }
 state=$(systemctl --user show -p ActiveState --value "$U" 2>/dev/null)
 restart() {
