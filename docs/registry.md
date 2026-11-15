@@ -86,6 +86,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `heal-tries.json` | `18-workflows` | `saveHealTries`; `saveHealTries` is called by `maybeHeal`, `healMark` | yes | no |
 | `knowledge.json` | `19-watcher` | `saveKnowledge`; `saveKnowledge` is called by `watchSpark`, `noteSparkStates`, `watchFleet` | yes | no |
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
+| `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |

@@ -20,7 +20,7 @@ something the next phase builds (`docs/design-2026-11-13/README.md`).
 | box | A throwaway container that one command runs in, on a compute Spark (`on: "box"`). Not built yet (milestone 5) | none yet | sandbox, workspace |
 | memory line | One line of the owner's own words that Sparkie keeps across chats | `memory.json`, `remember`, `forget_memory`, `memoryPrompt` | memory for lessons or the journal |
 | journal | The raw record of everything said, called, run and seen; never rewritten (R43). `recall` reads it | `journal`, `JOURNAL_DIR` | log; memory |
-| lesson | A fact code drew from the console's own runs, such as a setup that failed twice. Not built yet (milestone 3); today a memory line may have the kind lesson | `MEMORY_KINDS` (today) | skill, learned fix |
+| lesson | Code's record of a failure from the console's own runs: the setup tried, on which Sparks, the known way it failed and how often (R48). A memory line may also have the kind lesson | `lessons.json`, `recordLesson`, `MEMORY_KINDS` | skill, learned fix |
 | asleep | Powered off or paused on purpose; wakes by itself when needed. A compute Spark: the idle power-off or `power_off`, turned on again by a start or a call (R41). The brain: not built yet. Dark is different: off without being asked | `power.json` (`off`), `consoleOff`; `darkPeriods` (dark) | off, resting |
 | parked | Stopped by Spark Console so its Spark could be powered off: still on the should-run list, back once that Spark is on | `parked` in `desired.json`, `parkDesired` | held (that waits for the owner) |
 | wall power | What a Spark draws at the wall, read from its smart plug. Not the GPU’s power | `wall`, `wallFor`, `plugs.json` | power, for either alone |
