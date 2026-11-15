@@ -110,6 +110,8 @@ local.listen(CONFIG.port, '127.0.0.1', () => {
   tgLoop().catch(e => console.error(`Telegram: ${e.message}`));
   // The needs-me line's tick (20-tell.mjs): started here, like the loop, so a second copy never sends.
   setInterval(needsMeTick, NEEDS_MS).unref?.();
+  // The outside heartbeat (20-beat.mjs): started here too, so a second copy never beats; its first beat waits a minute.
+  beatStart(BEAT_FIRST_MS);
 });
 function openSockets() {
 try { unlinkSync(API_SOCKET); } catch {}

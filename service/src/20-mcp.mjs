@@ -255,7 +255,10 @@ const SECRET_PATTERNS = [/\bhf_[A-Za-z0-9]{20,}/g, /\bnvapi-[A-Za-z0-9_-]{20,}/g
   /\btskey-[A-Za-z0-9-]{10,}/g, /\bsk-[A-Za-z0-9_-]{20,}/g, /\bsck_[A-Za-z0-9_-]{20,}/g, /\bscs_[A-Za-z0-9_-]{20,}/g, /\bsc_session=[^;\s"']{8,}/g, /\bAKIA[0-9A-Z]{16}\b/g,
   /\beyJ[A-Za-z0-9_-]{10,1000}\.[A-Za-z0-9_-]{10,8000}\.[A-Za-z0-9_-]{10,2000}/g,
   // Telegram bot tokens (R32), and Slack's.
-  /\b\d{6,12}:[A-Za-z0-9_-]{30,64}\b/g, /\bxox[abposr]-[A-Za-z0-9-]{10,}/g];
+  /\b\d{6,12}:[A-Za-z0-9_-]{30,64}\b/g, /\bxox[abposr]-[A-Za-z0-9-]{10,}/g,
+  // The outside heartbeat's address (20-beat.mjs, R32), with or without its scheme: its id is the secret, so a plain
+  // "hc-ping.com" stays.
+  /\b(?:https?:\/\/)?hc-ping\.com\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi];
 // A private key, BEGIN to END, found by searching forward (a pattern spanning both was quadratic on many BEGINs with no
 // END); a key cut off before its END is hidden to the end of the text. PGP's "PRIVATE KEY BLOCK" too.
 function hidePrivateKeys(t) {

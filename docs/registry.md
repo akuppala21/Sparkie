@@ -110,6 +110,8 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
+| `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
+| `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |

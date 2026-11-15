@@ -9,10 +9,13 @@ connection".
 - The one fetcher whose host isn't fixed is `read_page` (`21-web.mjs`, R39): only an address in the owner's own words
   or one `search_web` returned in the last hour, only public addresses, checked by the lookup each hop connects
   through (3 redirects at most), no credentials, 15 s and 2 MB.
+- A sender that sends nothing: the heartbeat (`beatOnce`, `20-beat.mjs`, R32), one bodiless GET to a fixed host at an
+  address saved with the passkey, no redirect followed, its tick started in the local port's listen callback.
 
 ## Also update
 
-- A switch like `DIG_FIXTURE` (web lookup: `WEB_FIXTURE`) so the stand-in fleet never reaches the web.
+- A switch like `DIG_FIXTURE` (web lookup: `WEB_FIXTURE`; the heartbeat: `SPARK_CONSOLE_BEAT_API`) so the stand-in
+  fleet never reaches the web.
 - The WEB node of the diagram in `docs/architecture.md`.
 
 ## Never
@@ -28,8 +31,9 @@ connection".
 
 ## Tests
 
-- `web.test.mjs`, `dig.test.mjs`.
+- `web.test.mjs`, `dig.test.mjs`, `beat.test.mjs`.
 
 ## Copy from
 
-- `webGet` (`11-setups.mjs`) for a fixed host; `webFetch` and `publicAddress` (`21-web.mjs`) for an open one.
+- `webGet` (`11-setups.mjs`) for a fixed host; `webFetch` and `publicAddress` (`21-web.mjs`) for an open one;
+  `beatOnce` (`20-beat.mjs`) for one that must carry nothing.
