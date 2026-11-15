@@ -1,4 +1,9 @@
 /* ───────── live metrics ───────── */
+// Area: ground        Rules: R10, R24        Tests: internet.test.mjs
+// Owns: none
+// Timers: startSampler (again 15 s after a reader ends, while a page is open), metricsStream (a ping every 15 s to
+//   each open page)
+// Wakes: none
 // One long-running reader per Spark, only while someone has the page open; stopped shortly after they leave.
 const SAMPLE_SCRIPT = `nvidia-smi --query-gpu=utilization.gpu,power.draw,temperature.gpu --format=csv,noheader,nounits -lms 1000 2>/dev/null | sed -u 's/^/G,/' &
 free -b -s 1 | sed -u -n 's/^Mem:/M/p' &

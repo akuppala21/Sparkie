@@ -1,4 +1,7 @@
 /* ───────── VS Code in the browser (taking over from the original portal) ───────── */
+// Area: features        Rules: R4, R31        Tests: internet.test.mjs, passkey.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // <console api>/connect/<spark>/ goes to that Spark's code-server, which listens on 127.0.0.1 on this Spark: its own,
 // and Spark 3 and 4's through the tunnel services. Owner only, since the editor is a full shell as the owner. The
 // same checks and rewriting the portal did: no escaping the editor's path, redirects and cookies kept under it, and

@@ -1,4 +1,9 @@
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */
+// Area: features        Rules: R32, R34        Tests: telegram.test.mjs
+// Owns: telegram.json (writers: tgSave)
+// Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
+//   Sparkie answers, 5 minutes at most)
+// Wakes: none
 // Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long polling): no route, port or Funnel,
 // so it works with Tailscale off on the owner's devices and with the console tailnet-only. One private chat, paired
 // with a one-time code only the passkey page shows, is a turn in the owner's own Sparkie chat with the same gates as

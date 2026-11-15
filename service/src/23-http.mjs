@@ -1,4 +1,8 @@
 /* ───────── HTTP ───────── */
+// Area: ways in        Rules: R7, R10, R30, R40        Tests: faults.test.mjs, fleet.test.mjs, internet.test.mjs
+// Owns: last-crash.json (writers: recordCrash), watchdog-restarts (writers: none; the watchdog writes it), api-locked
+//   (writers: checkRoute)
+// Timers: checkRoute (every 60 s), refreshBlocked (every 60 s, not on the stand-in fleet)        Wakes: none
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
