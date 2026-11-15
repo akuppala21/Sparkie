@@ -75,6 +75,7 @@ function describeChange(method, path, body = {}) {
   if (method === 'PUT' && path === '/telegram') return 'Connect a Telegram bot, so you can talk to Sparkie from Telegram once you pair your chat';
   if (method === 'POST' && path === '/telegram/pair') return 'Show a new code to pair your Telegram chat with Spark Console';
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true ? 'Let Spark Console send you one Telegram line when something new needs you (at most 3 a day)' : 'Stop the “needs you” lines on Telegram';
+  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true ? 'Let your yes come from your paired Telegram chat: a press there on a change Spark Console asks about (at most 3 an hour and 10 a day; /lock there turns it off)' : 'Stop approving changes from Telegram';
   if (method === 'PUT' && path === '/heartbeat') return 'Save your outside check’s address, so Spark Console sends it an empty request at hc-ping.com every 5 minutes';
   if (method === 'POST' && path === '/main/eval') return `Keep the brain eval’s result of ${clean(body?.at, 40)} (build ${clean(body?.build, 12)}, ${clean(body?.brain?.setup, 60) || 'its setup'}): with it, Sparkie makes the changes your words clearly ask for without asking`;
   const chatGone = path.match(/^\/chats\/([^/]+)$/);
@@ -111,6 +112,7 @@ const mayNeedPasskey = path => /^\/(access|agents|auth)(\/|$)/.test(path)
   || path === '/rollback'
   || path === '/stop'
   || /^\/telegram(\/(pair|needs))?$/.test(path)
+  || path === '/telegram/approve'
   || path === '/workflows/validate';
 // Each kind of request keeps its own size limit when the passkey check reads it first. (One a line, in this order: the
 // first that fits gives the limit.)
@@ -151,6 +153,8 @@ function needsPasskey(method, path, body, haveKeys) {
   if ((method === 'PUT' && path === '/telegram') || (method === 'POST' && path === '/telegram/pair')) return true;
   // Switching the needs-me line on (H5); off never needs it.
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true;
+  // Approving changes from the paired Telegram chat (20-tg-approve.mjs, A10a); off never needs it.
+  if (method === 'PUT' && path === '/telegram/approve') return body?.on === true;
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
   // A brain eval result that would let Sparkie change things without asking (21-brain-rail.mjs, R52); others never.

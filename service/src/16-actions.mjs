@@ -160,7 +160,7 @@ const GROUP_WORDS = [
   ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
-  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
+  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
   ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
   ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
   // (power: a Spark itself switched by name, never a model: "turn off Spark 3’s model" opens it but power_off refuses it)
@@ -217,7 +217,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'remember',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -408,8 +408,11 @@ async function sparkieCheck(name, input, ctx) {
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
   if (name === 'save_workflow') {
-    const steps = Array.isArray(out.steps) ? out.steps : [];
-    return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
+    // ("save that as …": the request's own steps, so the check and the button see them, D6e)
+    const o = out.from !== undefined ? fromRequest(out, null, ctx) : out, { leftOut, ...plain } = o;
+    const steps = Array.isArray(o.steps) ? o.steps : [];
+    const clear = asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request));
+    return { clear, input: clear ? o : plain };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
 }
