@@ -906,6 +906,33 @@ do_putback() {   # the put-back now, on the console's word: also for a guard who
   if [ -e "$G/kept" ]; then say "kept already: nothing goes back"; exit 0; fi
   refuse "the put-back failed: $(tail -n 1 -- "$G/failures" 2>/dev/null | cut -c1-200)"
 }
+# Ends one unit this helper started, early (design A 2.10: killable by name): the change's or the look's for that id,
+# never the net's timer or any other unit. It waits until the unit is gone and says whether it was running.
+do_stop() {
+  local u state was='' n
+  only_id
+  for u in "sw-run-$ID.service" "sw-look-$ID.service"; do
+    state=$(systemctl show --property=ActiveState --value "$u" 2>/dev/null) || state=''
+    case "$state" in active|activating|deactivating|reloading|refreshing) ;; *) continue ;; esac
+    was=${u%.service}
+    systemctl stop "$u" > /dev/null 2>&1 || true
+    for n in 1 2; do
+      for _ in $(seq 30); do
+        case "$(systemctl show --property=ActiveState --value "$u" 2>/dev/null)" in
+          active|activating|deactivating|reloading|refreshing) sleep 1 ;;
+          *) break 2 ;;
+        esac
+      done
+      [ "$n" = 1 ] && systemctl kill --signal=SIGKILL "$u" > /dev/null 2>&1
+    done
+    case "$(systemctl show --property=ActiveState --value "$u" 2>/dev/null)" in
+      active|activating|deactivating|reloading|refreshing) say "stop: $was is still running"; exit 1 ;;
+    esac
+  done
+  if [ -n "$was" ]; then say "stopped $was: it was running, and it is gone"
+  else say "stop: neither sw-run-$ID nor sw-look-$ID was running"; fi
+  exit 0
+}
 do_keep() {   # the owner's yes, through the console: counts only while the timer waits and once it is stopped
   local state
   only_id
@@ -1365,8 +1392,10 @@ def restore(why):
 
     # Stop, put back, start: Tailscale and the console never run on files being put back under them. (After a restart
     # they have not started yet.)
-    ts_files = TS_STATE in diff
-    console_files = any(under(p, STATE) or under(p, f'{HOME}/.config/systemd/user') for p in diff)
+    # (only for files that can go back: one under a link now is named, not put back, and stops nothing)
+    ts_files = TS_STATE in diff and found.get(TS_STATE, ABSENT)['kind'] != 'under-link'
+    console_files = any((under(p, STATE) or under(p, f'{HOME}/.config/systemd/user'))
+                        and found.get(p, ABSENT)['kind'] != 'under-link' and not any(found.get(a, ABSENT)['kind'] in ('link', 'under-link') for a in aboves if under(p, a)) for p in diff)
     console_ran = False
     if not boot:
         if ts_files:

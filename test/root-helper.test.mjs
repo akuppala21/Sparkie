@@ -415,7 +415,7 @@ describe('what the run wall holds in the home', () => {
       assert.ok(!c.some(a => a.includes('.zshrc') || a.includes('.npmrc')), c.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
     }
     const c = run(s, ['check', '--id', newId()]).stdout;
-    assert.match(c, / links not held, left alone: \.npmrc \.zshrc\n/, c);
+    assert.match(c, / links not held, left alone: \.zshrc \.npmrc\n/, c);   // (.zshrc is on the hidden list now, before .npmrc: R63)
     assert.match(c, / run ready\n/, c);
   });
   test('a login shell that is not bash, sh or dash: run is refused by name, and a look still runs', () => {
@@ -963,7 +963,7 @@ describe('the lock-out net (R60)', () => {
     const b = fire(s, r.id, 'boot');
     assert.equal(b.status, 0, b.stdout + b.stderr);
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
-    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl'), [['systemctl', 'stop', '--no-block', '--', `sw-run-${r.id}.service`]],
+    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show'), [['systemctl', 'stop', '--no-block', '--', `sw-run-${r.id}.service`]],
       'only the command\'s unit stopped (not there after a restart), without waiting; nothing reloaded');
     assert.equal(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n')[1], 'after a restart inside the window');
     writeFileSync(join(s.R, SSHD), 'Port 4444\n');
@@ -1030,7 +1030,8 @@ describe('the lock-out net (R60)', () => {
       // (authorized_keys2, not there, is now under a link: named as differing; it is not there again once .ssh is)
       ['a link', 'mv "$R/home/owner/.ssh" "$R/home/owner/.ssh-aside"; mkdir "$R/home/owner/other"; printf "theirs" > "$R/home/owner/other/authorized_keys"; ln -s "$R/home/owner/other" "$R/home/owner/.ssh"',
         ['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/authorized_keys2', '/home/owner/.ssh/config', '/home/owner/.ssh'], 3],
-      ['opened', 'chmod 777 "$R/home/owner/.ssh" "$R/home/owner"', ['/home/owner', '/home/owner/.ssh'], 2],
+      // (the home's own mode is put back by the helper right after the change, R63: only ~/.ssh is left to the net)
+      ['opened', 'chmod 777 "$R/home/owner/.ssh" "$R/home/owner"', ['/home/owner/.ssh'], 1],
       ['the state folder', 'rm -rf "$R/home/owner/.local/state/spark-console"', ['/home/owner/.local/state/spark-console/passkeys.json', '/home/owner/.local/state/spark-console'], 2],
     ];
     for (const [what, cmd, named, back] of cases) {
@@ -1358,7 +1359,7 @@ describe('the lock-out net (R60)', () => {
     const r = netIn(s, env, [`printf '{"RunSSH":true}' > ${R}/standin/ts-prefs`, `printf state-two > ${R}/var/lib/tailscale/tailscaled.state`,
       `printf '{"x":1}' > ${R}/home/owner/.local/state/spark-console/passkeys.json`, `mkdir ${R}/etc/.sw-guard-${'$'}(ls ${R}/var/lib/spark-console/guard | grep -v proof | tail -n 1)`,
       `printf "1.2.3.4 x\\n" >> ${R}/etc/hosts`].join('; '));
-    assert.match(readFileSync(join(G(s, r.id), '../../../../etc/systemd/system', `sw-guard-boot-${r.id}.service`), 'utf8'), /\nTimeoutStartSec=300\n/);
+    assert.match(readFileSync(join(s.R, 'etc/systemd/system', `sw-guard-boot-${r.id}.service`), 'utf8'), /\nTimeoutStartSec=300\n/);
     const before = calls(s).length;
     assert.equal(fire(s, r.id, 'timer', env).status, 0);
     assert.equal(readFileSync(join(s.R, 'var/lib/tailscale/tailscaled.state'), 'utf8'), 'state-one');
