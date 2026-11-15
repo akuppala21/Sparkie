@@ -1,4 +1,8 @@
 /* ───────── the outside heartbeat: an outside service notices when Spark 2 stops ───────── */
+// Area: safety        Rules: R32        Tests: beat.test.mjs
+// Owns: none
+// Timers: beatOnce (every 5 minutes, started in the listen callback and again when an address is saved)
+// Wakes: none
 // Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>) on the passkey page,
 // Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot)
 // when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing

@@ -1,7 +1,7 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
+Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+`docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
@@ -140,7 +140,7 @@ the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cu
 minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started beside the Telegram loop: reads
 the open-problems list and sends at most one fixed line, R32); the open-problems list (`openProblems`, 20-needs, built
-on each ask, never stored); the update record at start (`noteUpdate`, called in the local port's listen callback: when
+on each ask, never stored); the update record at start (`noteUpdate`, called in the listen callback: when
 the build differs from the last one in `updates.json` it adds one record and one notice, "Spark Console is now build
 X. It was build Y."); daily research (first run 3 minutes after start, 20 models a day); live metrics (one
 long-running sampler per Spark through `spawnOn` while a page is open, `startSampler` in `04-metrics.mjs`); a third
