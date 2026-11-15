@@ -1,6 +1,7 @@
 // Fails when the hand-written documents drift from the code. File reads only: no server, no network, a few seconds.
 //
 //   node tools/check-docs.mjs     prints each problem and exits 1 if there is any (tools/make.mjs runs it last)
+//   node tools/check-docs.mjs --meaning <base> [<head>]   the meaning diff instead (tools/meaning.mjs, check 13)
 //
 // test/docs.test.mjs runs the same code on the real tree, and on small made-up trees, one fault each.
 // What it checks, in every hand-written document (any *.md outside the dated records and the generated files):
@@ -101,7 +102,7 @@ function walk(root, dir = '', out = []) {
 }
 
 // Everything the checks compare against, read once.
-function readTree(root) {
+export function readTree(root) {
   const all = walk(root);
   const docs = all.filter(f => f.endsWith('.md') && !DATED.some(r => r.test(f)) && !GENERATED.includes(f) && !NOT_DOCS.some(r => r.test(f)));
   const parts = {};
@@ -412,7 +413,10 @@ export function checkDocs(root = ROOT) {
 
 export const describe = p => `${p.file}:${p.line}: ${p.message} [${p.check}]`;
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const meaning = process.argv.indexOf('--meaning');
+if (process.argv[1] === fileURLToPath(import.meta.url) && meaning > 0) {
+  import('./meaning.mjs').then(m => process.exit(m.meaningCli(process.argv.slice(meaning + 1))));
+} else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const problems = checkDocs();
   for (const p of problems) console.error(describe(p));
   if (problems.length) {
