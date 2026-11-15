@@ -32,7 +32,7 @@
 //                        this machine to 127.0.0.1:--brain-port (30100: the tunnel above).
 //   --brain-url <url>    the same, but the relay sends them to <url>/v1/… (the installed console's one model address,
 //                        which passes them to the brain). Besides those, one read of the installed console's
-//                        sparkie_setup (--console, else the --brain-url console) names the brain serving: the run is
+//                        GET /v1/models (--console, else the --brain-url console) names the brain serving: the run is
 //                        refused when it would ask as another setup, and its stand-in consoles run what that brain runs
 //                        (its image's id, its weights' snapshots), so the record's key is the serving brain's (R52).
 //   --stand-in           the stand-in console's own stand-in brain: nothing leaves this machine (to try the runner).
@@ -284,14 +284,13 @@ async function markOf() {
   } finally { await fleet.stop(); }
 }
 // The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
-// what it runs (its image's id, its weights' snapshots), from that console's sparkie_setup (--console, else the
-// --brain-url console, else the one address). The stand-in consoles below run what it runs, so their key is its key and
+// what it runs (its image's id, its weights' snapshots), from that console's GET /v1/models (--console, else the
+// --brain-url console, else the one address): the one route a compute Spark may reach. The stand-in consoles below run what it runs, so their key is its key and
 // the record can be kept there; a run asked as another setup than the one serving is refused before anything runs.
 const SERVING = STAND_IN ? null : await (async () => {
-  const at = String(arg('console', BRAIN_URL || CONSOLE)).replace(/\/$/, ''), origin = arg('origin', new URL(at).origin);
-  const seen = await fetch(`${at}/actions/sparkie_setup`, { method: 'POST', signal: AbortSignal.timeout(60000), headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin }, body: '{}' })
-    .then(r => r.json()).catch(() => null);
-  const inUse = seen?.brainCheck?.inUse, cfg = JSON.parse(readFileSync(join(TREE || join(TEST_DIR, '..'), 'service', 'config.json'), 'utf8')).main?.presets || {};
+  const at = String(arg('console', BRAIN_URL || CONSOLE)).replace(/\/$/, '');
+  const seen = await fetch(`${at}/v1/models`, { signal: AbortSignal.timeout(60000) }).then(r => r.json()).catch(() => null);
+  const inUse = seen?.spark_console?.brain, cfg = JSON.parse(readFileSync(join(TREE || join(TEST_DIR, '..'), 'service', 'config.json'), 'utf8')).main?.presets || {};
   const asked = SETUP || Object.keys(cfg)[0];
   if (inUse?.setup && inUse.setup !== asked) { console.error(`Spark Console at ${at} serves ${inUse.setup}, and this run would ask the brain as ${asked}: the record would be for the wrong brain. Run it with --setup ${inUse.setup}.`); process.exit(1); }
   const ran = inUse?.ran && /^sha256:[0-9a-f]{1,64}$/.test(String(inUse.ran.image)) && /^[\w.-]{1,100}$/.test(String(inUse.ran.model)) ? inUse.ran : null;

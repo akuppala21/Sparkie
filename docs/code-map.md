@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 67 parts in `service/src/`, joined in name order into `service/server.mjs` (17328 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 67 parts in `service/src/`, joined in name order into `service/server.mjs` (17330 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -297,12 +297,12 @@ The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them i
 Running models this service can point Sparkie or agents at: its own main model, console deploys (they listen on the tailnet too), and other model servers on its own Spark. Servers that only listen on another Spark's own address are listed but can't be reached from here.
 
 - **Area:** brain. **Rules:** R5, R36. **Tests:** gateway.test.mjs, paste.test.mjs
-- **Lines:** 234
+- **Lines:** 236
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `runningChoices`, `servedModel`, `setRoute`, `routeView`, `usedRecently`, `runningModels`, `proxyModel`, `startOnCall`, `sparkieApi`, `proxyBrain`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `CONFIG`, `HttpError`), `05-library` (`inventory`, `containerName`), `12-status` (`sparkName`), `13-main-model` (`MAIN`, `mainStatus`, `ROUTES`, `saveRoutes`, `routeTarget`, `agentTarget`), `16-actions` (`recentInventory`, `recent`, `runAction`, `mainArg`), `17-changes` (`resolveModelName`, `inRecipes`), `18-workflows` (`consoleStopped`), `20-desired` (`desired`, `waitJob`), `21-power` (`parkedFor`, `offFor`, `powerState`, `wakeNames`), `23-http` (`send`, `readBody`, `sparkAddresses`, `blockedAddresses`), `24-handler` (`clientAddress`), `25-backup-and-start` (`local`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `CONFIG`, `HttpError`), `05-library` (`inventory`, `containerName`), `12-status` (`sparkName`), `13-main-model` (`MAIN`, `mainStatus`, `ROUTES`, `saveRoutes`, `routeTarget`, `agentTarget`), `16-actions` (`recentInventory`, `recent`, `runAction`, `mainArg`), `17-changes` (`resolveModelName`, `inRecipes`), `18-workflows` (`consoleStopped`), `20-desired` (`desired`, `waitJob`), `21-brain-eval` (`brainInUse`), `21-brain-rail` (`brainRanLook`), `21-power` (`parkedFor`, `offFor`, `powerState`, `wakeNames`), `23-http` (`send`, `readBody`, `sparkAddresses`, `blockedAddresses`), `24-handler` (`clientAddress`), `25-backup-and-start` (`local`)
 - **Used by:** `07-jobs`, `09-verified`, `16-reads`, `17-changes`, `18-job-model`, `18-workflows`, `21-brain-check`, `21-power`, `24-handler`
 
 ### `16-actions.mjs`: actions: what the console can do, as one list for people, Sparkie and agents
@@ -752,7 +752,7 @@ test/eval.mjs runs the eval's cases on a stand-in console with the real brain an
 - **Wakes:** none
 - **Functions:** `evalSetNow`, `brainInUse`, `evalRecordProblem`, `evalScore`, `evalLine`, `storeBrainEval`, `keepEvalRecord`, `brainEvalView`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `02-ssh` (`run`), `03-identity` (`clean`), `13-main-model` (`MAIN`, `repoOf`, `mainBusy`), `16-actions` (`action`), `20-mcp` (`maskDeep`, `audit`), `21-brain-check` (`brainKey`, `brainProfileOf`, `brainReadsNow`, `saveBrainProfile`), `21-brain-rail` (`brainSetupKey`, `brainRanOf`, `evalCouldUnlock`, `evalSetToday`, `evalWait`, `evalMainSet`, `evalSealKey`, `evalSealOf`), `22-passkey` (`passkeys`)
-- **Used by:** `21-brain-check`, `21-brain-rail`, `24-handler`
+- **Used by:** `15-routes`, `21-brain-check`, `21-brain-rail`, `24-handler`
 
 ### `21-brain-rail.mjs`: the rail: a change runs at once only while Sparkie's brain is checked (the one page, milestone 5; P-4)
 
@@ -765,7 +765,7 @@ One brain check with two outcomes (design E 2.3, cut by the one page). Checked: 
 - **Wakes:** none
 - **Functions:** `brainRanLook`, `brainRanOf`, `brainLimits`, `brainSetupKey`, `evalSetLocked`, `evalSetToday`, `evalSealKey`, `evalSealOf`, `evalSealed`, `evalMainSet`, `evalCouldUnlock`, `evalCounts`, `brainRail`, `railWords`, `evalBar`, `evalWait`, `evalWaitingGone`, `evalYes`, `evalWaitingNeeds`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `BUILD`, `HttpError`), `02-ssh` (`run`, `fields`), `03-identity` (`accessList`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `13-main-model` (`MAIN`, `mainNode`, `mainSnapshots`, `chatTarget`, `mainBusy`), `14-chats` (`chatData`, `LIMITS`, `sparkieMessageChoices`, `saveChats`), `14-rounds` (`turnBudgets`), `16-actions` (`action`), `17-changes` (`question`, `pendingChoices`), `18-workflows` (`WORKFLOW_LOCK`), `20-mcp` (`audit`), `21-brain-check` (`brainSetupOf`, `brainReadsNow`, `brainProfileOf`, `checkWhen`), `21-brain-eval` (`EVAL_EXPECT`, `evalSetNow`, `evalRecordProblem`, `evalScore`, `keepEvalRecord`), `21-guide` (`toolCap`), `22-passkey` (`passkeys`)
-- **Used by:** `16-actions`, `16-reads`, `20-needs`, `21-brain-check`, `21-brain-eval`, `24-handler`
+- **Used by:** `15-routes`, `16-actions`, `16-reads`, `20-needs`, `21-brain-check`, `21-brain-eval`, `24-handler`
 
 ### `21-door.mjs`: the app door: the owner's kept apps from anywhere (R40)
 
