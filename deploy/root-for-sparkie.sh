@@ -89,11 +89,16 @@ COPY="$HOME/.cache/spark-console/spark-console-root.copy"
 # a start file, or a folder something outside the walls reads, that is not there could be made from inside the wall.
 MUST='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_environment .ssh .docker .config/systemd
   .config/environment.d .config/autostart .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d
-  .cache/spark-console'
-# Names the wall holds that must not be links (nor sit under one): the helper refuses a change until each is real.
-HELD="$MUST .bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .local/opt .local/share/code-server
-  .config/code-server .config/spark-console .local/share/spark-console .local/state/spark-console spark-console
-  spark-console-service spark-console-src .config .local .local/share .local/state .cache"
+  .cache/spark-console .local/share/spark-console .local/share/spark-portal/workspaces/shared
+  .local/share/spark-portal/workspaces/shared/jobs'
+# Every other name the helper lists in your home (its hidden and read-only lists, kept in step with it). A link at one
+# of these is left alone by both walls: not held, and never followed. A must name that is a link stops every change.
+LISTED='.bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .local/opt .local/share/code-server
+  spark-console spark-console-service spark-console-src .gnupg .aws .kube .ngc .config/gh .config/code-server
+  .config/spark-console .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
+  .git-credentials .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .bash_history .zsh_history .sh_history
+  .python_history .node_repl_history .psql_history .mysql_history .local/share/fish/fish_history
+  .local/state/spark-console'
 # Where an enabled unit of yours may take its program from without a change being able to rewrite it.
 SAFE_RUN=".local/opt .local/share/code-server spark-console spark-console-service spark-console-src .cache/spark-console
   .config/systemd .local/share/systemd"
@@ -103,21 +108,29 @@ new_id() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
 show() { local id rest; while read -r id rest; do [ -n "$rest" ] && echo "    $rest"; done; return 0; }
 
 missing() { local n; for n in $MUST; do [ -e "$HOME/$n" ] || [ -L "$HOME/$n" ] || printf '%s ' "$n"; done; }
-links() {   # as the helper judges them: each name's real path must be its own (the home's too)
-  local n real
-  [ "$(realpath -e -- "$HOME" 2>/dev/null)" = "$HOME" ] || printf '%s ' "$HOME"
-  for n in $HELD; do
+links() {   # $1 names: those that are links or under one, as the helper judges them (from the home's own real path)
+  local n real home
+  home=$(realpath -e -- "$HOME" 2>/dev/null) || home=$HOME
+  for n in $1; do
     [ -e "$HOME/$n" ] || [ -L "$HOME/$n" ] || continue
     real=$(realpath -e -- "$HOME/$n" 2>/dev/null) || real=''
-    [ "$real" = "$HOME/$n" ] || printf '%s ' "$n"
+    [ "$real" = "$home/$n" ] || printf '%s ' "$n"
   done
 }
 home_lines() {   # what the run wall needs of your home, and what reaches round it: reads only
   local v u path n bad files
   v=$(missing)
   if [ -n "$v" ]; then note "not there, made when you set up (a change could make them): ${v% }"; else note "every name the run wall holds is there"; fi
-  v=$(links)
-  if [ -n "$v" ]; then note "links, which the run wall refuses until each is the real file or folder: ${v% }"; else note "no name the run wall holds is a link"; fi
+  [ "$(realpath -e -- "$HOME" 2>/dev/null)" = "$HOME" ] || note "your home folder $HOME is a link: the run wall refuses every change until it is not"
+  v=$(links "$MUST")
+  if [ -n "$v" ]; then note "links, which the run wall refuses until each is the real file or folder: ${v% }"; else note "no name the run wall must hold is a link"; fi
+  v=$(links "$LISTED")
+  [ -z "$v" ] || note "links at other listed names, which both walls leave alone (not held, and never followed): ${v% }"
+  v=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7 || true)
+  case "${v##*/}" in
+    bash|sh|dash) note "your login shell: $v (the run wall holds bash's start files)" ;;
+    *) note "your login shell: ${v:-not known}: the run wall refuses changes here until it is bash, sh or dash" ;;
+  esac
   files=$(grep -ls 'user_readenv=1' /etc/pam.d/* 2>/dev/null | tr '\n' ' ' || true)
   if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); the run wall holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
   bad=''

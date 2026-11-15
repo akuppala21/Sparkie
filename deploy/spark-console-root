@@ -43,9 +43,15 @@ ROOTY=' docker lxd libvirt disk sudo '
 LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
 # What must be there in the owner's home before a change runs: a start file, or a folder that something outside the
 # walls reads, that is not there could be made from inside the run wall. The one-time command makes the missing ones.
+# (The start files are bash's: a change is refused unless the owner's login shell is bash, sh or dash.)
 MUST_BE_THERE='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_environment .ssh .docker .config/systemd
   .config/environment.d .config/autostart .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d
-  .cache/spark-console'
+  .cache/spark-console .local/share/spark-console .local/share/spark-portal/workspaces/shared
+  .local/share/spark-portal/workspaces/shared/jobs'
+# Places a change may write in, but whose place is held: the jobs' shared folder and their output folders, which the
+# console mounts into containers. Each is bound onto itself (and the folders above it pinned), so it cannot be swapped
+# for a link to somewhere else.
+PLACES='.local/share/spark-portal/workspaces/shared .local/share/spark-portal/workspaces/shared/jobs'
 # The state folder's names that stay hidden: the sign-in files and the sockets. Its other plain files are put back.
 SIGNIN=' api.sock door.sock sessions.json passkeys.json agents.json telegram.json access.json access.json.good '
 # And what the owner and Sparkie said, which R43 keeps from every agent key: never put back in either wall, nor the
@@ -120,7 +126,7 @@ parse() {
 
 # The owner: the account sudo says called (SUDO_UID and SUDO_USER, which sudo itself sets), checked against
 # /etc/passwd; its groups from /etc/group, with and without the ones that are root by another name.
-OWNER='' OWNER_UID='' OWNER_GID='' OWNER_HOME='' ALL_GIDS='' WALL_GIDS=''
+OWNER='' OWNER_UID='' OWNER_GID='' OWNER_HOME='' OWNER_SHELL='' ALL_GIDS='' WALL_GIDS=''
 caller() {
   local uid=${SUDO_UID-} name=${SUDO_USER-} line f pw puid pgid gecos home shell gname gid members
   [[ $uid =~ ^[0-9]{1,10}$ && $name =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || refuse "not called through sudo by an account"
@@ -130,7 +136,7 @@ caller() {
   [ -n "$line" ] && [ "$puid" = "$uid" ] || refuse "the account sudo names is not in /etc/passwd with that number"
   [[ $pgid =~ ^[0-9]{1,10}$ ]] && safe_path "$home" \
     || refuse "the account's group or home folder cannot stand in a setting"
-  OWNER=$name OWNER_UID=$uid OWNER_GID=$pgid OWNER_HOME=$home
+  OWNER=$name OWNER_UID=$uid OWNER_GID=$pgid OWNER_HOME=$home OWNER_SHELL=$shell
   ALL_GIDS=$pgid WALL_GIDS=$pgid
   while IFS=: read -r gname pw gid members || [ -n "$gname" ]; do
     [[ $gid =~ ^[0-9]{1,10}$ ]] && [ "$gid" != "$pgid" ] && [[ ",$members," == *",$name,"* ]] || continue
@@ -221,10 +227,27 @@ proof_state() {
 }
 
 # --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
-TMPFS=() GONE=() BACK=() RO=()
+TMPFS=() GONE=() BACK=() RO=() LINKED=()
+# A path in the owner's home that is a link, or under one, is left alone in both walls: not held, and never followed
+# (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem).
+real_here() {   # $1 a path that is there: is it the real thing, judged from the owner's home (whose own place is root's)?
+  local real home
+  in_home "$1" || return 0
+  real=$(realpath -e -- "$R$1" 2>/dev/null) || return 1
+  home=$(realpath -e -- "$R$OWNER_HOME" 2>/dev/null) || return 1
+  [ "$real" = "$home${1#"$OWNER_HOME"}" ]
+}
+unreal() {   # $1 a listed path: 0 (and noted) when it is a link in the owner's home, or under one; 1 when it is there and held
+  if in_home "$1"; then
+    [ -e "$R$1" ] || [ -L "$R$1" ] || return 0
+    real_here "$1" && return 1
+    LINKED+=("$1"); return 0
+  fi
+  [ -e "$R$1" ] && return 1 || return 0
+}
 hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
   local p=$1
-  [ -e "$R$p" ] || return 0
+  unreal "$p" && return 0
   safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
   if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then TMPFS+=("$p"); else GONE+=("$p"); fi
 }
@@ -250,7 +273,7 @@ hide_home() {
   # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
   # way or write the brain's memory, and no look or change reads what was said).
   p="$h/.local/state/spark-console"
-  if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then
+  if [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p"; then
     TMPFS+=("$p")
     for f in "$R$p"/*; do
       [ -f "$f" ] && [ ! -L "$f" ] && [[ $SIGNIN != *" ${f##*/} "* ]] || continue
@@ -260,9 +283,13 @@ hide_home() {
     done
   else hide "$p"; fi
 }
-ro() { [ -e "$R$1" ] || return 0; safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"; RO+=("$1"); }
+ro() {
+  unreal "$1" && return 0
+  safe_path "$1" || refuse "a path on the read-only list cannot stand in a setting"
+  RO+=("$1")
+}
 lists() {
-  TMPFS=() GONE=() BACK=() RO=()
+  TMPFS=() GONE=() BACK=() RO=() LINKED=()
   local name pw uid gid gecos home shell p f kind
   while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
     [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
@@ -297,28 +324,37 @@ lists() {
 # --- what the run wall holds in the owner's home: there, the real thing, and no folder above it movable -------------
 in_home() { case "$1" in "$OWNER_HOME"/*) return 0 ;; esac; return 1; }
 pins() {   # the folders between the owner's home and each path given that are not held already, each once, in order
-  local p d listed=$'\n'
-  for p in "$@"; do listed+="$p"$'\n'; done
+  # (a folder that is a held path, or lies under one, is read-only or hidden already, so it cannot be moved: never pinned,
+  # which would make a writable place inside it)
+  local p d l under
   for p in "$@"; do
     in_home "$p" || continue
     d=${p%/*}
     while [ "$d" != "$OWNER_HOME" ] && in_home "$d"; do
-      [[ $listed == *$'\n'"$d"$'\n'* ]] || printf '%s\n' "$d"
+      under=0
+      for l in "$@"; do case "$d/" in "$l"/*) under=1; break ;; esac; done
+      [ "$under" = 1 ] || printf '%s\n' "$d"
       d=${d%/*}
     done
   done | LC_ALL=C sort -u
 }
+places() {   # the held places that are there (held_problem refuses a change when one is not, or is a link)
+  local n
+  for n in $PLACES; do [ -d "$R$OWNER_HOME/$n" ] && real_here "$OWNER_HOME/$n" && printf '%s\n' "$OWNER_HOME/$n"; done
+  return 0
+}
 held_problem() {   # why the run wall cannot hold the owner's home as listed, or nothing (the lists must be made first)
-  local n p real
+  local n real shell=${OWNER_SHELL##*/}
   real=$(realpath -e -- "$R$OWNER_HOME" 2>/dev/null) || real=''
   [ "$real" = "$R$OWNER_HOME" ] || { printf '%s is a link, so nothing in it can be held' "$OWNER_HOME"; return; }
+  case "$shell" in
+    bash|sh|dash) ;;
+    *) [[ $shell =~ ^[A-Za-z0-9._+-]{1,40}$ ]] || shell='not one this helper can name'
+       printf "the owner's login shell is %s; the run wall holds bash's start files only" "$shell"; return ;;
+  esac
   for n in $MUST_BE_THERE; do
     [ -e "$R$OWNER_HOME/$n" ] || { printf '%s is not there, so it cannot be held: run the one-time command again' "$OWNER_HOME/$n"; return; }
-  done
-  for p in "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${PROTECT[@]}"; do
-    in_home "$p" || continue
-    real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
-    [ "$real" = "$R$p" ] || { printf '%s is a link, or under one, so the wall would hold only what it points at: put the real file or folder there' "$p"; return; }
+    real_here "$OWNER_HOME/$n" || { printf '%s is a link, or under one, so the wall would hold only what it points at: put the real file or folder there' "$OWNER_HOME/$n"; return; }
   done
 }
 
@@ -349,9 +385,11 @@ wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-
     for p in "${RO[@]}" "${PROTECT[@]}"; do PROPS+=(-p "ReadOnlyPaths=$p"); done
     # Each folder above a held path in the owner's home is bound onto itself: a mount point cannot be renamed or
     # replaced, so a change cannot move a held path out of the way and make a new one. What is inside stays writable.
-    local held=()
-    if [ "$OPEN" = 0 ]; then mapfile -t held < <(pins "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${PROTECT[@]}")
-    else mapfile -t held < <(pins "${RO[@]}" "${PROTECT[@]}"); fi
+    local held=() place=()
+    mapfile -t place < <(places)
+    if [ "$OPEN" = 0 ]; then mapfile -t held < <({ pins "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${PROTECT[@]}" "${place[@]}"
+                                                    for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u)
+    else mapfile -t held < <({ pins "${RO[@]}" "${PROTECT[@]}" "${place[@]}"; for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u); fi
     for p in "${held[@]}"; do PROPS+=(-p "BindPaths=$p"); done
   fi
   PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
@@ -422,6 +460,8 @@ do_check() {
   say "python3 $ST_PYTHON"
   say "files $ST_FILES"
   say "kernel ${KERNEL:-?}"
+  # Links at listed names in the owner's home are left alone in both walls (a change may have made them): named here.
+  [ ${#LINKED[@]} -eq 0 ] || say "links not held, left alone: ${LINKED[*]#"$OWNER_HOME/"}"
   say "proof $state"
   if [ ${#PROBLEMS[@]} -gt 0 ]; then why=${PROBLEMS[0]}
   elif [ "$state" != current ]; then why="the wall proof is $state on this Spark"; fi

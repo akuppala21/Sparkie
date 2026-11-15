@@ -16,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -75,7 +75,8 @@ function spark({ installed = true, systemd, knobs = {} } = {}) {
   // Every name the run wall holds that must be there (MUST_BE_THERE), as the one-time command leaves a home.
   for (const f of ['.bash_profile', '.bash_logout', '.bash_aliases', '.pam_environment']) put(`${h}/${f}`);
   for (const d of ['.docker', '.config/systemd', '.config/environment.d', '.config/autostart', '.config/user-tmpfiles.d',
-    '.local/share/systemd', '.local/share/user-tmpfiles.d', '.cache/spark-console']) dir(`${h}/${d}`);
+    '.local/share/systemd', '.local/share/user-tmpfiles.d', '.cache/spark-console', '.local/share/spark-console',
+    '.local/share/spark-portal/workspaces/shared/jobs']) dir(`${h}/${d}`);
   put(`${h}/.config/spark-console/secrets.json`, '{}');
   put(`${h}/.local/state/spark-console/api.sock`);
   put(`${h}/.local/state/spark-console/sessions.json`, '{}');
@@ -139,8 +140,11 @@ const READ_ONLY = ['/home/owner/.profile', '/home/owner/.bashrc', '/home/owner/.
   '/home/owner/.local/share/user-tmpfiles.d', '/home/owner/.cache/spark-console', '/home/owner/spark-console-src',
   '/usr/local/sbin/spark-console-root'];
 // The folders above a held path in the owner's home, each bound onto itself (so none can be moved), in order.
+// The jobs' shared folder and their output folder are held places: bound onto themselves too.
+const SHARED_PINS = ['/home/owner/.local/share/spark-portal', '/home/owner/.local/share/spark-portal/workspaces',
+  '/home/owner/.local/share/spark-portal/workspaces/shared', '/home/owner/.local/share/spark-portal/workspaces/shared/jobs'];
 const PINS = ['/home/owner/.cache', '/home/owner/.cache/huggingface', '/home/owner/.config', '/home/owner/.local',
-  '/home/owner/.local/share', '/home/owner/.local/state'];
+  '/home/owner/.local/share', ...SHARED_PINS, '/home/owner/.local/state'];
 // Every look: the same settings, whatever the command says.
 const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_READ_SEARCH',
   '-p', 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH', '-p', 'NoNewPrivileges=yes', '-p', 'SystemCallFilter=~open_by_handle_at',
@@ -245,7 +249,7 @@ describe('the walls asked for', () => {
       `--description=Spark Console run ${r.id} sha256 ${sha('true')}`, '--wait', '--pipe', '--collect', '--quiet',
       '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes',
       ...[...READ_ONLY.slice(0, -1), '/home/owner/.ssh', READ_ONLY.at(-1)].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]),
-      ...['/home/owner/.cache', '/home/owner/.config', '/home/owner/.local', '/home/owner/.local/share'].flatMap(p => ['-p', `BindPaths=${p}`]),
+      ...['/home/owner/.cache', '/home/owner/.config', '/home/owner/.local', '/home/owner/.local/share', ...SHARED_PINS].flatMap(p => ['-p', `BindPaths=${p}`]),
       '-p', `BindReadOnlyPaths=/run/spark-console/${r.id}`, '-p', 'RuntimeMaxSec=600', '-p', 'TimeoutStopSec=5',
       '-p', 'MemoryMax=8G', '-p', 'TasksMax=4096',
       '--', which(s, 'setpriv'), '--reuid=1000', '--regid=1000', '--groups=1000,4,27,44,999,998,992', '--inh-caps=-all',
@@ -381,6 +385,66 @@ describe('what the run wall holds in the home', () => {
     rmSync(ui, { recursive: true });
     symlinkSync(join(t.R, 'home/owner/.cache'), ui);
     refused(change(t, 'true'), '/home/owner/.local/share/user-tmpfiles.d is a link');
+  });
+  test('a held name under a linked folder (.local/share moved aside and linked back): run is refused by name', () => {
+    const s = proven();
+    const share = join(s.R, 'home/owner/.local/share');
+    renameSync(share, join(s.R, 'home/owner/.local/share-real'));
+    symlinkSync(join(s.R, 'home/owner/.local/share-real'), share);
+    refused(change(s, 'true'), '/home/owner/.local/share/systemd is a link, or under one, so the wall would hold only what it points at');
+    assert.equal(look(s, 'true').status, 0);
+  });
+  test('a link a change left at a listed name that was not there is left alone in both walls, and check names it; changes still run', () => {
+    const s = proven();
+    symlinkSync('.profile', join(s.R, 'home/owner/.zshrc'));            // a dotfiles tool does this
+    symlinkSync(join(s.R, 'home/owner'), join(s.R, 'home/owner/.npmrc')); // a link to the home at a hidden name
+    const r = change(s, 'true'), l = look(s, 'true');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(l.status, 0, l.stdout + l.stderr);
+    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      assert.ok(!c.some(a => a.includes('.zshrc') || a.includes('.npmrc')), c.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
+    }
+    const c = run(s, ['check', '--id', newId()]).stdout;
+    assert.match(c, / links not held, left alone: \.npmrc \.zshrc\n/, c);
+    assert.match(c, / run ready\n/, c);
+  });
+  test('a login shell that is not bash, sh or dash: run is refused by name, and a look still runs', () => {
+    const s = proven();
+    s.put('etc/passwd', readFileSync(join(s.R, 'etc/passwd'), 'utf8').replace(':/home/owner:/bin/bash', ':/home/owner:/usr/bin/zsh'));
+    const before = started(s).length;
+    refused(change(s, 'true'), "the owner's login shell is zsh; the run wall holds bash's start files only");
+    assert.equal(started(s).length, before);
+    assert.equal(look(s, 'true').status, 0);
+    s.put('etc/passwd', readFileSync(join(s.R, 'etc/passwd'), 'utf8').replace(':/usr/bin/zsh', ':/bin/dash'));
+    assert.equal(change(s, 'true').status, 0, 'dash reads .profile, which is held');
+  });
+  test("the console's own folder on a compute Spark must be there (a change could make it, with a link inside)", () => {
+    const s = proven();
+    rmSync(join(s.R, 'home/owner/.local/share/spark-console'), { recursive: true });
+    refused(change(s, 'true'), '/home/owner/.local/share/spark-console is not there, so it cannot be held: run the one-time command again');
+  });
+  test('a --protect folder under a read-only folder: no folder inside the read-only one is pinned (a pin there would be writable)', () => {
+    const s = proven();
+    mkdirSync(join(s.R, 'home/owner/.cache/spark-console/a/b'), { recursive: true });
+    const r = change(s, 'true', { extra: ['--protect', '/home/owner/.cache/spark-console/a/b'] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const c = unitCall(s, `sw-run-${r.id}`);
+    assert.ok(c.includes('ReadOnlyPaths=/home/owner/.cache/spark-console/a/b'));
+    assert.ok(!c.some(a => a.startsWith('BindPaths=/home/owner/.cache/spark-console')), c.filter(a => a.startsWith('BindPaths=')).join(' '));
+  });
+  test("the jobs' shared folder holds its place: it and its jobs folder are bound onto themselves, must be there, and must be real", () => {
+    const s = proven();
+    const r = change(s, 'true');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    for (const p of SHARED_PINS) assert.ok(unitCall(s, `sw-run-${r.id}`).includes(`BindPaths=${p}`), p);
+    const t = proven();
+    rmSync(join(t.R, 'home/owner/.local/share/spark-portal/workspaces/shared/jobs'), { recursive: true });
+    refused(change(t, 'true'), '/home/owner/.local/share/spark-portal/workspaces/shared/jobs is not there, so it cannot be held');
+    const u = proven();
+    const portal = join(u.R, 'home/owner/.local/share/spark-portal');
+    renameSync(portal, join(u.R, 'home/owner/elsewhere'));
+    symlinkSync(join(u.R, 'home/owner/elsewhere'), portal);   // the shared folder swapped for a link
+    refused(change(u, 'true'), '/home/owner/.local/share/spark-portal/workspaces/shared is a link, or under one');
   });
   test('each folder above a held path is pinned (BindPaths onto itself), names at the top of the home need none, and none is a held path', () => {
     const s = proven();
@@ -844,7 +908,8 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const made = ['.profile', '.bash_profile', '.bash_logout', '.bash_aliases', '.pam_environment', '.ssh', '.docker',
       '.config/systemd', '.config/environment.d', '.config/autostart', '.config/user-tmpfiles.d', '.local/share/systemd',
-      '.local/share/user-tmpfiles.d'];   // (.cache/spark-console is there already: the helper's copy came in it)
+      '.local/share/user-tmpfiles.d', '.local/share/spark-console', '.local/share/spark-portal/workspaces/shared',
+      '.local/share/spark-portal/workspaces/shared/jobs'];   // (.cache/spark-console is there already: the helper's copy came in it)
     assert.ok(existsSync(join(home, '.cache/spark-console')));
     const said = r.stdout.split('\n'), password = said.findIndex(l => l.includes('sudo asks for your password'));
     for (const n of made) {
@@ -889,6 +954,10 @@ describe("the owner's one-time command", () => {
     assert.match(r.stdout, / {2}enabled units of yours that run a program a change could rewrite: editor\.service \(.*\/tools\/editor\)\n/);
     assert.ok(!r.stdout.includes('kept.service'), 'a program on the read-only list is fine');
     assert.match(r.stdout, / {2}Tailscale SSH: off\n/);
+    assert.match(r.stdout, / {2}your login shell: \S+/);
+    symlinkSync('.profile', join(home, '.zshrc'));
+    assert.match(f.cmd(['--check', '3']).stdout, / {2}links at other listed names, which both walls leave alone \(not held, and never followed\): \.zshrc\n/);
+    rmSync(join(home, '.zshrc'));
     writeFileSync(join(f.T, 'runssh'), 'true');
     assert.match(f.cmd(['--check', '3']).stdout, / {2}Tailscale SSH: on\. Any program on your tailnet signed in as you can open a shell here with no key, outside every\n {2}wall/);
     const { [join(f.target.R, 'calls.log')]: _, ...nowR } = tree(f.target.R);
