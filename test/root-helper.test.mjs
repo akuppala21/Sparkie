@@ -707,6 +707,37 @@ describe('the proof of the walls', () => {
     assert.match(p.stdout, /proof failed: the look wall's unit did not run \(systemd refused it, or something it needs is missing on this Spark\)\. No mark was written/);
     assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')));
   });
+
+  test("a look's shared hold on the proof's lock makes a proof wait, not refuse; another proof's hold still refuses it", async () => {
+    const s = proven();
+    const lock = join(s.R, 'run/spark-console/prove.lock');
+    const units = () => calls(s).filter(c => c[0] === 'systemd-run').length;
+    // Holds the lock from outside, in its own process group (so it can be ended whole), until it says it holds it.
+    const hold = async (how, secs) => {
+      const h = spawn('flock', [how, lock, 'sh', '-c', `echo held; exec sleep ${secs}`], { env: s.env, detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      await new Promise((ok, no) => { h.stdout.once('data', ok); h.once('exit', () => no(new Error('the hold ended before it held the lock'))); });
+      return () => { try { process.kill(-h.pid, 'SIGKILL'); } catch { /* already ended */ } };
+    };
+    // A look's check holds it shared for a moment (21-work.mjs: flock -n -s); here for 1.5 s.
+    let end = await hold('-s', 1.5);
+    let t = Date.now();
+    let p = prove(s);
+    const waited = Date.now() - t;
+    end();
+    assert.equal(p.status, 0, p.stdout + p.stderr);
+    assert.ok(waited >= 1000, `it waited for the look's hold to end (${waited} ms)`);
+    // Another proof holds it whole, for minutes: after its few seconds' wait, this one is refused and starts nothing.
+    end = await hold('-x', 60);
+    const before = units();
+    t = Date.now();
+    p = prove(s);
+    const tried = Date.now() - t;
+    end();
+    refused(p, 'another proof is running on this Spark');
+    assert.ok(tried >= 4000, `it waited its few seconds first (${tried} ms)`);
+    assert.equal(units(), before, 'nothing started');
+    assert.ok(existsSync(join(s.R, 'var/lib/spark-console/proved')), "the passing proof's mark is left as it was");
+  });
 });
 
 // --- the owner's one-time command ---------------------------------------------------------------------------------

@@ -582,7 +582,9 @@ do_prove() {
   lists   # once before anything starts, so a name that cannot stand in a setting refuses here
   mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
   exec 9> "$R$HOLD/prove.lock" || refuse "cannot open the proof's lock"
-  flock -n 9 || refuse "another proof is running on this Spark"
+  # A look's check takes this lock shared for a moment (21-work.mjs, flock -n -s): wait a few seconds rather than refuse,
+  # so the one-time command's proof is never refused by a look; another proof holds it for minutes and still refuses.
+  flock -w 5 9 || refuse "another proof is running on this Spark"
   hold_folder
   trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; rm -rf -- "$H"; exit 129' HUP INT TERM
   rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
