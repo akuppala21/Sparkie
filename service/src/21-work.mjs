@@ -265,7 +265,7 @@ async function runCommand(input, viewer, ctx = {}) {
   const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
   // (stand-in fleet only, while the runner is dark: a command the sorter doesn't call a look goes to the runner, which
   // refuses all but a plain change itself, so its tests reach it; A7c wires it in for real, 21-runner.mjs)
-  if (RUNNER_DOOR && command.trim()) { whoMayLook(viewer, ctx); const sorted = sortCommand(command, runnerSortOpts(node)); if (sorted.class !== 'look') return runChange(node, command, sorted, viewer, ctx); }
+  if (RUNNER_DOOR && command.trim()) { whoMayLook(viewer, ctx); const sorted = sortCommand(command, runnerSortOpts(node)); if (sorted.class !== 'look') return runChange(node, command, viewer, ctx); }
   const rid = journalId(), rec = { outcome: 'refused' };
   try {
     whoMayLook(viewer, ctx);

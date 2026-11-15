@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 74 parts in `service/src/`, joined in name order into `service/server.mjs` (19055 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 74 parts in `service/src/`, joined in name order into `service/server.mjs` (19081 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -712,7 +712,7 @@ sortCommand(command, {at, root, dir, hosts, brain}) says what one command for ru
 - **Wakes:** none
 - **Functions:** `raise`, `sortFresh`, `sortMerge`, `sortAssign`, `sortList`, `sortCmd`, `sortWroteIn`, `sortRuns`, `sortGone`, `sortOpen`, `sortInline`, `sortKnown`, `sortProgram`, `sortReads`, `sortSetuid`, `sortFile`, `sortShows`, `sortWrap`, `sortAt`, `sortCommand`
 - **Uses:** `01-setup` (`CONFIG`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortTouch`, `sortPaths`, `sortWrote`, `sortCands`, `sortNames`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
-- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-tools`, `21-work`
+- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-tools`, `21-runner`, `21-work`
 
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
 
@@ -837,7 +837,7 @@ test/eval.mjs runs the eval's cases on a stand-in console with the real brain an
 Before the runner (21-runner.mjs) runs a change on a compute Spark, every file the sorter placed it as writing, removing or changing (its result's placed and wide: a * expanded there, a wide folder walked) is copied into a set of its own, ~/.local/share/spark-console/before/<set>/ on that Spark (the walls hide that folder from every command): folder 0700, files 0600, the bytes, the mode and the path of each kept, so a restore is exact. At most 16 MB a file and 128 MB a command; a file past a limit, unreadable or not a plain file, and what a named link points to, is "not kept", with why. The …
 
 - **Area:** features. **Rules:** R55. **Tests:** runner.test.mjs
-- **Lines:** 347
+- **Lines:** 359
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -888,15 +888,15 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 
 ### `21-runner.mjs`: the runner: one change on a compute Spark, its copies first (A7b, dark)
 
-runChange runs one command the sorter (20-sort.mjs) called a plain change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13) for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the sorter placed (21-copies.mjs) and the fingerprints of the ways in (a command that removes or overwrites files stops here, with nothing run, when one was not kept); the journal's start line, synced to disk, which names the set and the manifest's SHA-256 (no start line, no command, R43); the command …
+runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13) for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the sorter placed (21-copies.mjs) and the fingerprints of the ways in (a command that removes or overwrites files stops here, with nothing run, when one was not kept); the journal's start line, synced to disk, which names the set and the manifest's SHA-256 …
 
 - **Area:** features. **Rules:** R55, R13, R43. **Tests:** runner.test.mjs
-- **Lines:** 167
+- **Lines:** 181
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `runnerSortOpts`, `runnerRefuses`, `runnerWaysDiff`, `runChange`, `runnerLatest`, `runnerSparkOf`, `runnerUndo`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `NODES`, `HttpError`, `nodeById`), `02-ssh` (`fields`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `16-actions` (`tripBreaker`, `sizeWords`), `17-changes` (`brainSparks`, `agentSettings`, `putBack`), `19-watcher` (`fleetEvent`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `J_MAX`, `jErr`, `journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `21-apps` (`appRoom`), `21-copies` (`copiesSetName`, `copiesOn`), `21-work` (`helperAnswer`, `helperCall`, `needsOwner`, `wallsFailed`, `lookClean`, `forBrain`, `LOOK_SLACK`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `NODES`, `HttpError`, `nodeById`), `02-ssh` (`fields`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `16-actions` (`tripBreaker`, `sizeWords`), `17-changes` (`brainSparks`, `agentSettings`, `putBack`), `19-watcher` (`fleetEvent`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `J_MAX`, `jErr`, `journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-apps` (`appRoom`), `21-copies` (`copiesSetName`, `copiesOn`), `21-work` (`helperAnswer`, `helperCall`, `needsOwner`, `wallsFailed`, `lookClean`, `forBrain`, `LOOK_SLACK`)
 - **Used by:** `20-desired`, `21-work`
 
 ### `21-selftest.mjs`: the self-test: the fleet proved on its real hardware (design D 2.9)

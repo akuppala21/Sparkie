@@ -19,7 +19,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, secrets, stat, sys
+import base64, glob, hashlib, json, os, secrets, stat, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -89,7 +89,7 @@ def read(p, most):
 def fp(p):
     try:
         st = os.lstat(p)
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return 'absent'
     except OSError:
         return 'unreadable'
@@ -106,11 +106,12 @@ def fp(p):
         return 'file:%s:%d:%d' % (m, st.st_size, st.st_mtime_ns)
 
 def expand(p):
+    # a name holding * ? or [ is the file of exactly that name (there or not) and what it matches as a pattern
     q = whole(p)
     if q is None:
         return [(p, 'not a path the copy can place')]
     if any(c in q for c in '*?['):
-        return [(x, None) for x in sorted(glob.glob(q))]
+        return [(q, None)] + [(x, None) for x in sorted(glob.glob(q)) if x != q]
     return [(q, None)]
 
 def walk(top):
@@ -138,6 +139,13 @@ def ways_now():
         except OSError:
             pass
     return out
+
+def later(p, man):
+    # (a change cut off has no after.json: what was written after its own window, its time limit and a minute, is not its)
+    try:
+        return os.lstat(p).st_mtime > man.get('at', 0) + man.get('seconds', 0) + 60
+    except OSError:
+        return False
 
 def setdir(make):
     base = folder(BASE, make)
@@ -173,7 +181,7 @@ def manifest(sd):
 
 if A['mode'] == 'copy':
     sd = setdir(True)
-    man = {'set': A['set'], 'allow': [], 'entries': [], 'notKept': []}
+    man = {'set': A['set'], 'at': time.time(), 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
     total, seen = 0, set()
     # (the ways in the owner's account first, outside the command's 128 MB, so a put-back always has them)
     places = [(p, False, True) for p in A['ways'] if p.startswith('~/')] + [(p, False, False) for p in A['placed']] + [(p, True, False) for p in A['wide']]
@@ -198,22 +206,23 @@ if A['mode'] == 'copy':
                 if linked(x):
                     lost(x, 'a link in the folders above it')
                     continue
+                mark = {'way': True} if way else {}
                 try:
                     st = os.lstat(x)
-                except FileNotFoundError:
-                    man['entries'].append({'path': x, 'kind': 'absent'})
+                except (FileNotFoundError, NotADirectoryError):
+                    man['entries'].append(dict({'path': x, 'kind': 'absent'}, **mark))
                     continue
                 except OSError:
                     lost(x, 'it could not be read')
                     continue
                 mode = stat.S_IMODE(st.st_mode)
                 if stat.S_ISLNK(st.st_mode):
-                    man['entries'].append({'path': x, 'kind': 'link', 'target': os.readlink(x)})
+                    man['entries'].append(dict({'path': x, 'kind': 'link', 'target': os.readlink(x)}, **mark))
                     # (a write to a named link goes where it points, and that is not copied)
                     if not wide and not way:
                         lost(x, 'a link: what it points to is not copied')
                 elif stat.S_ISDIR(st.st_mode):
-                    man['entries'].append({'path': x, 'kind': 'dir', 'mode': mode})
+                    man['entries'].append(dict({'path': x, 'kind': 'dir', 'mode': mode}, **mark))
                 elif not stat.S_ISREG(st.st_mode):
                     lost(x, 'not a plain file')
                 elif st.st_size > A['fileMax']:
@@ -229,10 +238,10 @@ if A['mode'] == 'copy':
                     n = len(man['entries'])
                     put(os.path.join(sd, 'files', str(n)), data)
                     total += 0 if way else len(data)
-                    man['entries'].append({'path': x, 'kind': 'file', 'mode': mode, 'size': len(data), 'sha': hashlib.sha256(data).hexdigest(), 'n': n})
+                    man['entries'].append(dict({'path': x, 'kind': 'file', 'mode': mode, 'size': len(data), 'sha': hashlib.sha256(data).hexdigest(), 'n': n}, **mark))
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
-    OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[{'path': show(e['path']), 'kind': e['kind']} for e in man['entries']],
+    OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
                notKept=[dict(e, path=show(e['path'])) for e in man['notKept']], ways=ways_now())
     done()
 
@@ -274,6 +283,9 @@ if A['mode'] == 'restore':
             continue
         if A.get('check') and after is not None and after.get(p) != now:
             missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+            continue
+        if A.get('check') and after is None and e['kind'] != 'dir' and later(p, man):
+            missed.append({'path': p, 'why': 'changed since that change was cut off: left as it is'})
             continue
         try:
             if e['kind'] == 'absent':
