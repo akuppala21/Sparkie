@@ -2,7 +2,7 @@
 // the page and the passkey; off needs none; a new pairing turns it on); an owner-only ask from the owner's page chat or
 // Telegram chat sent once to the paired chat with the exact change and the page's own buttons, a press on either
 // running it once, a Telegram yes echoed on the page; with the switch off nothing sent and a press there refused while
-// the page still answers; silence for strangers, groups, bots and edited messages; nothing asked or run for an agent's
+// the page still answers; `/lock` read late or after a full minute; silence for strangers, groups, bots and edited messages; nothing asked or run for an agent's
 // conversation; a typed "ok" answering nothing; at
 // most 3 approvals an hour and 10 a day, kept across a restart; `/lock`; over 3,500 characters asked on the page only;
 // an ask void after a new pairing and after a restart.
@@ -109,6 +109,8 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     is(await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) }), 201, 'the owner sets up a passkey');
     assert.equal((await view()).approve, false);
+    const said = async () => (await api('/actions/sparkie_setup', { method: 'POST', body: {} })).json.telegram.approvals;
+    assert.match(await said(), /^Approvals from Telegram: off\. /, 'sparkie_setup says so in one line');
     const on = { on: true };
     is(await api('/telegram/approve', { method: 'PUT', body: on, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
     is(await api('/telegram/approve', { method: 'PUT', body: on, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
@@ -120,6 +122,7 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     is(r, 200, 'with the passkey');
     assert.equal(r.json.approve, true);
     assert.equal(secrets().telegram.approve, true, 'kept beside the pairing, in the secrets file');
+    assert.match(await said(), /^Approvals from Telegram: on\. A press in your paired chat counts as your yes/);
     const off = await api('/telegram/approve', { method: 'PUT', body: { on: false } });
     is(off, 200, 'off needs no passkey');
     assert.deepEqual([off.json.approve, secrets().telegram.approve], [false, false]);
@@ -174,6 +177,29 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     assert.equal(stopsRun().length, ran + 1, 'it ran once');
     assert.equal(stopsRun().at(-1).via, 'page');
     assert.equal(approvalsKept().length, 1, 'a page press isn\'t counted');
+  });
+
+  // Review of A10a: /lock was read after the five-minute rule and the minute's limit, so a late or flooded one was dropped.
+  test('a /lock read seven minutes after it was sent still locks, and the press after it stops nothing', { timeout: 120000 * SLOW }, async () => {
+    let from = tgCalls().length;
+    const ran = stopsRun().length;
+    const { yes } = await askOnPage();
+    await askSentFor(from, yes);
+    from = tgCalls().length;
+    await tgPost('/__push', { message: { ...tgMessage('/lock'), date: Math.floor(Date.now() / 1000) - 7 * 60 } });
+    assert.match(await answerAfter(from), /^Locked: nothing is approved from here now\./, 'the owner is told it is locked');
+    assert.deepEqual([(await view()).approve, secrets().telegram.approve], [false, false]);
+    from = tgCalls().length;
+    await tgPress(yes.id);
+    assert.equal(await answerAfter(from), WAITS);
+    await sleep(1000);
+    assert.equal(stateOf('spark3', TESTORG), 'running');
+    assert.equal(stopsRun().length, ran);
+    assert.equal(approvalsKept().length, 1);
+    from = tgCalls().length;
+    await tgSay('/status');
+    assert.match(await answerAfter(from), /\nApprovals from Telegram: off\. What needs your yes waits for you in Spark Console/, '/status there says so');
+    is(await confirmed('PUT', '/telegram/approve', { on: true }), 200);
   });
 
   test('with the switch off: nothing is sent, a press in Telegram gets the old answer, and the page still answers; an ask sent before stays void there', { timeout: 180000 * SLOW }, async () => {
@@ -367,6 +393,38 @@ describe('approving from Telegram', { concurrency: 1 }, () => {
     await sleep(1000);
     assert.equal(stateOf('spark3', TESTORG), 'running');
     assert.equal(stopsRun().length, ran);
+  });
+});
+
+describe('with the real limits', { concurrency: 1 }, () => {
+  test('a /lock after 20 messages in a minute still locks, and the press after it stops nothing', { timeout: 300000 * SLOW }, async () => {
+    const f = await startMock({ telegram: true, knowledge: true, watchMs: 60000, prepare: ctx => seed(ctx, pairing({ approve: true })) });
+    try {
+      await withFleet(f, async () => {
+        await waitFor(async () => (await view()).state === 'ok', { what: 'Telegram polling' });
+        await routeAgents();
+        let from = tgCalls().length;
+        const { yes } = await askOnPage();
+        await askSentFor(from, yes);
+        // The minute filled: one turn that takes a while, then 19 more messages; then the owner's /lock.
+        from = tgCalls().length;
+        const t0 = Date.now();
+        await tgSay('take 3 seconds please');
+        for (let i = 0; i < 19; i++) await tgSay(`flood ${i}`);
+        await tgSay('/lock');
+        const locked = await waitFor(() => tgSent(from).find(s => /^Locked: nothing is approved from here now\./.test(s.body.text)), { timeout: 30000, every: 200, what: 'the owner told it is locked' });
+        assert.ok(locked);
+        assert.deepEqual([(await view()).approve, secrets().telegram.approve], [false, false]);
+        // (pressed once the minute has freed, so the limit can't be what stops it)
+        await sleep(Math.max(0, t0 + 62000 - Date.now()));
+        from = tgCalls().length;
+        await tgPress(yes.id);
+        assert.equal(await answerAfter(from), WAITS);
+        await sleep(1000);
+        assert.equal(stateOf('spark3', TESTORG), 'running');
+        assert.equal(stopsRun().length, 0);
+      });
+    } finally { await f.stop(); }
   });
 });
 

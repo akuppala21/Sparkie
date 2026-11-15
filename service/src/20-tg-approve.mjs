@@ -24,6 +24,10 @@ const tgAsks = new Map();
 // Off at once (/lock, the switch off), whatever happens to the secrets file.
 let tgApproveOff = false;
 const tgApproveOn = () => { const p = tgPaired(); return Boolean(p && p.approve === true && !tgApproveOff); };
+// Whether approvals from Telegram are on, in one plain line (sparkie_setup, and /status in the paired chat).
+const tgApprovalsLine = () => (!tgPaired() ? 'Approvals from Telegram: off (no Telegram chat is paired).'
+  : tgApproveOn() ? `Approvals from Telegram: on. A press in your paired chat counts as your yes for a change Spark Console asks about, at most ${TG_APPROVALS.hour} an hour and ${TG_APPROVALS.day} a day; /lock there turns it off.`
+    : 'Approvals from Telegram: off. What needs your yes waits for you in Spark Console; turn it on there (Access → Agents), with your passkey.');
 // A pending choice whose answer may come from Telegram: owner-only, and not an action that never runs from a channel.
 const tgAskable = c => Boolean(c?.ownerOnly && !(c.action && PAGE_ONLY.has(c.action)));
 
