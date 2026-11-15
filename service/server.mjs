@@ -100,7 +100,23 @@ const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/st
 // The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
 // snapshot takes it. Under ALL_LOCAL a test names its own, else it sits next to that run's state folder.
 const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STATE_DIR.replace(/\/+[^/]*\/*$/, '')}/journal` : `${homedir()}/.local/share/spark-console/journal`;
-const PREAMBLE = 'export PATH="$PATH:$HOME/.local/bin:/usr/local/bin"\n';
+// The console's own commands on a Spark (R10) take their programs from FIXED_PATH, which holds no folder of the
+// owner's home, and their Python and curl read nothing from the home (-I: no folder of its own, no user site; -q: no
+// ~/.curlrc). A change inside the run wall may write most of the home; nothing it writes there is obeyed by them. Under
+// ALL_LOCAL the tests' own PATH is kept, so the stand-ins are found.
+const FIXED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+const PATH_FIRST = ALL_LOCAL ? '' : `PATH=${FIXED_PATH}; export PATH; `;
+const PREAMBLE = `export PATH=${ALL_LOCAL ? '"$PATH:/usr/local/bin"' : FIXED_PATH}
+python3() { command python3 -I "$@"; }
+curl() { command curl -q "$@"; }
+`;
+// What those commands call on a Spark, every one on FIXED_PATH on a stock DGX OS. Each status round looks for them
+// there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
+// (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
+// ~/.mock/no-<name> instead.)
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln basename paste base64 id sleep';
+const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/no-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
+const pathMissing = new Map();
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -122,9 +138,9 @@ function spawnOn(node, { script, command, limit }) {
     SPARK_MEMINFO: `${process.env.MOCK_ROOT}/${node.id}/.mock/meminfo` } : process.env;
   const guard = script != null && limit && !ALL_LOCAL ? ['timeout', '-k', '5', String(Math.ceil(limit))] : [];
   const child = local
-    ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', command])], { env })
+    ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-      `${node.user || CONFIG.user}@${node.host}`, script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command]);
+      `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
   if (script != null) child.stdin.end(PREAMBLE + script);
   return child;
 }
@@ -607,7 +623,9 @@ const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
-    name=$(basename "$d")
+    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R10)
+    name=\${d%/}; name=\${name##*/}
+    case "$name" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     size=$(du -sb "$d" 2>/dev/null | cut -f1)
     manifest=$(cat "$d/spark.json" 2>/dev/null | base64 | tr -d '\\n')
     config=$(head -c 65536 "$d/config.json" 2>/dev/null | base64 | tr -d '\\n')
@@ -624,8 +642,10 @@ hub=${HF_HUB}
 for d in "$hub"/models--*/; do
   [ -d "$d" ] || continue
   dir=\${d%/}; key=\${dir##*/models--}
+  case "$key" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
   ${hfSnap('"$dir"')}
   [ -n "$snap" ] || continue
+  case "$snap" in *[!A-Za-z0-9._-]*) continue ;; esac
   ggufs=$(cd "$dir/snapshots/$snap" 2>/dev/null && ls *.gguf */*.gguf 2>/dev/null | head -60 | base64 | tr -d '\\n')
   { [ -e "$dir/snapshots/$snap/config.json" ] || [ -n "$ggufs" ]; } || continue
   partial=0
@@ -665,17 +685,20 @@ function ggufOnDisk(b64) {
   const files = b64 ? Buffer.from(b64, 'base64').toString('utf8').split('\n').filter(Boolean) : [];
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
+// Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
+// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R10).
+const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
 function describe(config, manifest) {
   if (!config && !manifest) return {};
-  const quant = config?.quantization_config, architecture = config?.architectures?.[0] || null;
+  const quant = config?.quantization_config, architecture = plainText(config?.architectures?.[0]);
   return {
     architecture,
     // Speculative-decoding drafters (DFlash, EAGLE, ...) only run alongside their main model.
     role: /draft|eagle|medusa/i.test(architecture || '') ? 'draft' : null,
-    modelType: config?.model_type || null,
-    dtype: quant?.quant_method || quant?.quant_algo || config?.torch_dtype || null,
-    // (vision-language models such as Qwen 3.8 keep it under text_config)
-    contextLength: config?.max_position_embeddings || config?.text_config?.max_position_embeddings || null,
+    modelType: plainText(config?.model_type),
+    dtype: plainText(quant?.quant_method || quant?.quant_algo || config?.torch_dtype),
+    // (vision-language models such as Qwen 3.8 keep it under text_config; a whole number only)
+    contextLength: [config?.max_position_embeddings, config?.text_config?.max_position_embeddings].find(n => Number.isInteger(n) && n > 0) || null,
   };
 }
 
@@ -693,6 +716,7 @@ async function inventory(viewer) {
     const dockerOk = online && fields(r.out, 'docker').length > 0;
     const folders = fields(r.out, 'model').map(([name, size, manifest, config, ggufs]) => {
       const m = b64json(manifest), c = b64json(config);
+      if (m && m.title !== undefined && !plainText(m.title)) delete m.title;
       return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs) };
     });
     const cached = fields(r.out, 'hf').filter(([key]) => NAME_RE.test(key)).map(([key, size, partial, locked, config, ggufs]) => ({
@@ -2559,8 +2583,9 @@ function resolveHow(body, viewer, modelName, sparks, library) {
   return how;
 }
 
-const SCAN_SCRIPT = `ls -1 ${MODELS} 2>/dev/null | sed 's/^/model\t/' || true
-ls -1d ${HF_HUB}/models--* 2>/dev/null | sed 's#.*/models--#hf\t#' || true
+// (plain names only, as in the library's scan: a line break in a folder's name would add a model of its own, R10)
+const SCAN_SCRIPT = `for d in ${MODELS}/*; do n=\${d##*/}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'model\\t%s\\n' "$n"; done
+for d in ${HF_HUB}/models--*; do n=\${d##*/models--}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'hf\\t%s\\n' "$n"; done
 printf 'disk\\t%s\\n' "$(df -B1 --output=avail "$HOME" 2>/dev/null | tail -1 | tr -d ' ')"`;
 
 // Download targets are the online Sparks; the default is the preferred home, else the one with the most free disk.
@@ -2853,7 +2878,7 @@ const STATUS_EVERY = Number(process.env.SPARK_CONSOLE_STATUS_MS || 30000);
 function runWorker(node, payload, timeout = 30000) {
   if (knownOffline(node)) return Promise.reject(new Error(`${node.id} isn’t reachable (checked in the last minute).`));
   const code = readFileSync(WORKER).toString('base64');
-  const command = `python3 -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
+  const command = `${payload?.action === 'status' ? PATH_CHECK : ''}python3 -I -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
   return new Promise((resolve, reject) => {
     const child = spawnOn(node, { command });
     // (refused: the worker itself said no, as opposed to the Spark not answering; conflict: a name that's taken)
@@ -2870,6 +2895,7 @@ function runWorker(node, payload, timeout = 30000) {
           const ev = JSON.parse(line);
           if (ev.type === 'result') result = ev.result;
           else if (ev.type === 'error') { error = String(ev.error || 'The Spark couldn’t do that.').slice(0, 300); refused = true; conflict = ev.code === 'conflict'; }
+          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(Boolean));
         } catch {}
       }
     });
@@ -8869,6 +8895,13 @@ function openProblems() {
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
       for (const n of NODES) if (knowledge.sparks[n.id]?.dockerDownAt && !sparkOff(n.id)) add(`docker:${n.id}`, `Docker isn’t answering on ${sparkName(n)}, so Spark Console can’t see or change its containers. If it doesn’t come back by itself, run this on ${sparkName(n)}: sudo systemctl restart docker. It stops every container there: Sparkie’s model comes back by itself, and the rest need bringing back.`);
+    },
+    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R10: each status round looks).
+    () => {
+      for (const [id, miss] of pathMissing) {
+        const them = miss.length > 1, names = `${miss.slice(0, 4).join(', ')}${miss.length > 4 ? ` and ${miss.length - 4} more` : ''}`;
+        if (miss.length && nodeById(id) && !sparkOff(id)) add(`path:${id}`, `${sparkName(nodeById(id))}: ${names} ${them ? 'aren’t' : 'isn’t'} on the fixed path Spark Console’s commands use there (${FIXED_PATH}), so whatever needs ${them ? 'them' : 'it'} fails. Install ${them ? 'them' : 'it'} for the whole system, not in your home folder.`);
+      }
     },
     // A Spark Spark Console shut down but couldn't power off cleanly (its plug still drew power, so it was never cut):
     // the owner's to look at. A Spark it powered off as planned is off on purpose, never a line here (21-power.mjs).

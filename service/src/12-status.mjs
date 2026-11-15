@@ -11,7 +11,7 @@ const STATUS_EVERY = Number(process.env.SPARK_CONSOLE_STATUS_MS || 30000);
 function runWorker(node, payload, timeout = 30000) {
   if (knownOffline(node)) return Promise.reject(new Error(`${node.id} isn’t reachable (checked in the last minute).`));
   const code = readFileSync(WORKER).toString('base64');
-  const command = `python3 -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
+  const command = `${payload?.action === 'status' ? PATH_CHECK : ''}python3 -I -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
   return new Promise((resolve, reject) => {
     const child = spawnOn(node, { command });
     // (refused: the worker itself said no, as opposed to the Spark not answering; conflict: a name that's taken)
@@ -28,6 +28,7 @@ function runWorker(node, payload, timeout = 30000) {
           const ev = JSON.parse(line);
           if (ev.type === 'result') result = ev.result;
           else if (ev.type === 'error') { error = String(ev.error || 'The Spark couldn’t do that.').slice(0, 300); refused = true; conflict = ev.code === 'conflict'; }
+          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(Boolean));
         } catch {}
       }
     });

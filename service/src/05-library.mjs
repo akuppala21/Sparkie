@@ -6,7 +6,9 @@ const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
-    name=$(basename "$d")
+    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R10)
+    name=\${d%/}; name=\${name##*/}
+    case "$name" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     size=$(du -sb "$d" 2>/dev/null | cut -f1)
     manifest=$(cat "$d/spark.json" 2>/dev/null | base64 | tr -d '\\n')
     config=$(head -c 65536 "$d/config.json" 2>/dev/null | base64 | tr -d '\\n')
@@ -23,8 +25,10 @@ hub=${HF_HUB}
 for d in "$hub"/models--*/; do
   [ -d "$d" ] || continue
   dir=\${d%/}; key=\${dir##*/models--}
+  case "$key" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
   ${hfSnap('"$dir"')}
   [ -n "$snap" ] || continue
+  case "$snap" in *[!A-Za-z0-9._-]*) continue ;; esac
   ggufs=$(cd "$dir/snapshots/$snap" 2>/dev/null && ls *.gguf */*.gguf 2>/dev/null | head -60 | base64 | tr -d '\\n')
   { [ -e "$dir/snapshots/$snap/config.json" ] || [ -n "$ggufs" ]; } || continue
   partial=0
@@ -64,17 +68,20 @@ function ggufOnDisk(b64) {
   const files = b64 ? Buffer.from(b64, 'base64').toString('utf8').split('\n').filter(Boolean) : [];
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
+// Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
+// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R10).
+const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
 function describe(config, manifest) {
   if (!config && !manifest) return {};
-  const quant = config?.quantization_config, architecture = config?.architectures?.[0] || null;
+  const quant = config?.quantization_config, architecture = plainText(config?.architectures?.[0]);
   return {
     architecture,
     // Speculative-decoding drafters (DFlash, EAGLE, ...) only run alongside their main model.
     role: /draft|eagle|medusa/i.test(architecture || '') ? 'draft' : null,
-    modelType: config?.model_type || null,
-    dtype: quant?.quant_method || quant?.quant_algo || config?.torch_dtype || null,
-    // (vision-language models such as Qwen 3.8 keep it under text_config)
-    contextLength: config?.max_position_embeddings || config?.text_config?.max_position_embeddings || null,
+    modelType: plainText(config?.model_type),
+    dtype: plainText(quant?.quant_method || quant?.quant_algo || config?.torch_dtype),
+    // (vision-language models such as Qwen 3.8 keep it under text_config; a whole number only)
+    contextLength: [config?.max_position_embeddings, config?.text_config?.max_position_embeddings].find(n => Number.isInteger(n) && n > 0) || null,
   };
 }
 
@@ -92,6 +99,7 @@ async function inventory(viewer) {
     const dockerOk = online && fields(r.out, 'docker').length > 0;
     const folders = fields(r.out, 'model').map(([name, size, manifest, config, ggufs]) => {
       const m = b64json(manifest), c = b64json(config);
+      if (m && m.title !== undefined && !plainText(m.title)) delete m.title;
       return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs) };
     });
     const cached = fields(r.out, 'hf').filter(([key]) => NAME_RE.test(key)).map(([key, size, partial, locked, config, ggufs]) => ({

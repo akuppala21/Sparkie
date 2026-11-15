@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 48 parts in `service/src/`, joined in name order into `service/server.mjs` (14482 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 48 parts in `service/src/`, joined in name order into `service/server.mjs` (14515 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -66,7 +66,7 @@ The service is 48 parts in `service/src/`, joined in name order into `service/se
 Generated: this file is service/src/*.mjs joined in name order (node tools/build-server.mjs). Edit the parts. Spark Console API: live metrics, the model library and deployments across the Spark fleet. Runs on the portal host behind `tailscale serve --set-path=/console/api`, next to the portal. Every request must come from a tailnet user the portal knows; anything that changes a Spark is owner-only.
 
 - **Area:** ground. **Rules:** R8, R28, R29, R30. **Tests:** build.test.mjs, fleet.test.mjs
-- **Lines:** 108
+- **Lines:** 124
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -84,7 +84,7 @@ Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `spawnOn`, `knownOffline`, `noteReach`, `run`, `fields`, `b64json`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `PATH_FIRST`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
 - **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-memory`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-guide`, `21-power`, `21-selftest`, `21-web`, `24-handler`, `25-backup-and-start`
 
 ### `03-identity.mjs`: who's asking
@@ -129,11 +129,11 @@ One long-running reader per Spark, only while someone has the page open; stopped
 ### `05-library.mjs`: model library and deployments
 
 - **Area:** ground. **Rules:** R2, R8, R17, R21, R38. **Tests:** change.test.mjs, across.test.mjs
-- **Lines:** 405
+- **Lines:** 413
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `ggufOnDisk`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
+- **Functions:** `ggufOnDisk`, `plainText`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
 - **Uses:** `01-setup` (`MODELS`, `HF_HUB`, `hfSnap`, `NODES`, `NAME_RE`, `CONFIG`, `q`, `HttpError`, `nodeById`, `isProtected`, `hfMounts`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`canUse`), `06-links` (`lastCheck`), `08-cluster` (`clusterPlan`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `21-web` (`readable`)
 - **Used by:** `07-jobs`, `08-cluster`, `09-verified`, `11-setups`, `13-main-model`, `14-rounds`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `20-lessons`, `21-apps`, `21-power`, `21-selftest`, `24-handler`
 
@@ -205,7 +205,7 @@ Recipes: service/catalog.json (built by tools/build-catalog.py from the research
 For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai, Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only). The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads forum posts to say which speed belongs to which command, quoting the post, and the quote is checked against it. Each setup then goes through the same checks as the catalog's; its image is pinned to the exact build published now.
 
 - **Area:** knowledge. **Rules:** R10, R22, R27. **Tests:** dig.test.mjs
-- **Lines:** 440
+- **Lines:** 441
 - **Owns:** none
 - **Timers:** daily (the daily research: 3 minutes after start, then every 24 hours)
 - **Wakes:** none
@@ -231,12 +231,12 @@ deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-conso
 Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH as everything else, with the same fields the portal reported. It's collected every 30 seconds whether or not anyone is looking, like the portal did, which also keeps the GPU energy total going.
 
 - **Area:** knowledge. **Rules:** R10, R24, R30, R37. **Tests:** fleet.test.mjs, dark.test.mjs, files.test.mjs
-- **Lines:** 198
+- **Lines:** 199
 - **Owns:** energy.json (writers: sampleEnergy)
 - **Timers:** collectStatus (every 30 s, after a first round 2 s after start)
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`, `sparkAction`, `checkSparkAction`
-- **Uses:** `01-setup` (`HERE`, `q`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `07-jobs` (`step`, `note`, `jobs`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-editor` (`editorPath`), `21-power` (`powerMark`)
+- **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `07-jobs` (`step`, `note`, `jobs`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-editor` (`editorPath`), `21-power` (`powerMark`)
 - **Used by:** `03-identity`, `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-needs`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-main-model.mjs`: Sparkie's main model
@@ -445,12 +445,12 @@ What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is w
 One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model call, no look at another Spark, and no text from a log, an error, a container's output or the web (so fleet_status stays a read of the console's own numbers). Lock-out first, then the owner's data, then the fleet. A line stands while its cause does and goes when the cause goes, never because it was shown. Each cause is tried by itself, so one that throws never breaks /status. At most 8 lines are said (needsLines: the 8th counts the rest): in /status (page and Telegram), at the …
 
 - **Area:** safety. **Rules:** R21, R26. **Tests:** needs.test.mjs
-- **Lines:** 81
+- **Lines:** 88
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `tilde`, `openProblems`, `needsLines`
-- **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `nodeById`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `20-ways-in` (`waysInNeeds`), `21-power` (`powerState`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`), `25-backup-and-start` (`backupLate`, `lastBackup`)
+- **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `pathMissing`, `nodeById`, `FIXED_PATH`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `20-ways-in` (`waysInNeeds`), `21-power` (`powerState`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`), `25-backup-and-start` (`backupLate`, `lastBackup`)
 - **Used by:** `16-actions`, `19-watcher`, `20-journal`, `20-tell`, `20-words`
 
 ### `20-tell.mjs`: telling the owner on Telegram

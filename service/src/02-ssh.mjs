@@ -14,9 +14,9 @@ function spawnOn(node, { script, command, limit }) {
     SPARK_MEMINFO: `${process.env.MOCK_ROOT}/${node.id}/.mock/meminfo` } : process.env;
   const guard = script != null && limit && !ALL_LOCAL ? ['timeout', '-k', '5', String(Math.ceil(limit))] : [];
   const child = local
-    ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', command])], { env })
+    ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-      `${node.user || CONFIG.user}@${node.host}`, script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command]);
+      `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
   if (script != null) child.stdin.end(PREAMBLE + script);
   return child;
 }

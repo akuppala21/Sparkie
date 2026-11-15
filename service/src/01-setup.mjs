@@ -100,7 +100,23 @@ const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/st
 // The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
 // snapshot takes it. Under ALL_LOCAL a test names its own, else it sits next to that run's state folder.
 const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STATE_DIR.replace(/\/+[^/]*\/*$/, '')}/journal` : `${homedir()}/.local/share/spark-console/journal`;
-const PREAMBLE = 'export PATH="$PATH:$HOME/.local/bin:/usr/local/bin"\n';
+// The console's own commands on a Spark (R10) take their programs from FIXED_PATH, which holds no folder of the
+// owner's home, and their Python and curl read nothing from the home (-I: no folder of its own, no user site; -q: no
+// ~/.curlrc). A change inside the run wall may write most of the home; nothing it writes there is obeyed by them. Under
+// ALL_LOCAL the tests' own PATH is kept, so the stand-ins are found.
+const FIXED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+const PATH_FIRST = ALL_LOCAL ? '' : `PATH=${FIXED_PATH}; export PATH; `;
+const PREAMBLE = `export PATH=${ALL_LOCAL ? '"$PATH:/usr/local/bin"' : FIXED_PATH}
+python3() { command python3 -I "$@"; }
+curl() { command curl -q "$@"; }
+`;
+// What those commands call on a Spark, every one on FIXED_PATH on a stock DGX OS. Each status round looks for them
+// there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
+// (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
+// ~/.mock/no-<name> instead.)
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln basename paste base64 id sleep';
+const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/no-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
+const pathMissing = new Map();
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
