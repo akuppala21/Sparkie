@@ -122,7 +122,8 @@ function digitsNowhere(pair) {
 }
 
 describe('the dangerous ask', { concurrency: 1 }, () => {
-  afterEach(closeOpened);
+  // (and a model a failed test stopped is running again, so the next test starts where the others did)
+  afterEach(async () => { await closeOpened(); if (stateOf('spark3', TESTORG) !== 'running') await settle(); });
   test('came from is one string comparison: the owner\'s words win, newest read first, then earlier answers; 40 reads, 64 MB, 8 lines', () => {
     const src = readFileSync(join(REPO, 'service', 'src', '20-danger.mjs'), 'utf8'), pick = re => src.match(re)[0];
     const { cameFrom, dangerThings, dangerAskedFor, dangerReadsLoaded } = new Function('ACTION_KIND', 'tokensOf', 'dangerJournalText', `${[/const DANGER_READS = [^\n]*\n/,
@@ -530,7 +531,9 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
       if (button) is(await press(chat, button.id), 200, 'its button');
       await waitFor(async () => (await api('/jobs')).json.jobs.some(j => j.conv === chat && j.status !== 'running'), { timeout: 120000, what: 'the run to end' });
     } finally { noScript(); noHook(); }
-    assert.ok(!(await chatMessages(chat)).some(m => m.danger), 'no ask in the chat');
+    const made = (await chatMessages(chat)).find(m => m.danger);
+    if (made) opened.push({ chat, ask: made, no: made.choices[1] });
+    assert.equal(made, undefined, 'no ask in the chat');
     const job = (await api('/jobs')).json.jobs.find(j => j.conv === chat);
     assert.equal(job.status, 'failed');
     assert.match(String(job.error), /needs an answer first: DELETES FOR GOOD on Spark 3/);
