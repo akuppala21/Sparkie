@@ -26,7 +26,6 @@ const V = { page: made(), plain: made(), member: made(), agent: made(), bad: mad
 const GOOD = made('gt_'), BAD = made('gt_'), OLD = made('gt_');
 const BEAT_ID = randomUUID(), BEAT = `https://hc-ping.com/${BEAT_ID}`;
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, REPO_NAME = 'someone/spark-console';
-const CHISEL = 'qwen-recipe-chisel';
 const temps = [];
 const temp = p => { const d = mkdtempSync(join(tmpdir(), p)); temps.push(d); return d; };
 after(() => { for (const d of temps) rmSync(d, { recursive: true, force: true }); });
@@ -89,7 +88,13 @@ function holders(text, fleet = T.fleet, allowed = [join(fleet.dir, SECRETS_TAIL)
 const nowhere = (text, opts = {}) => assert.deepEqual(holders(text, opts.fleet, opts.allowed), [], `${text.slice(0, 6)}… is in these files`);
 const nowhereAtAll = (text, fleet = T.fleet) => nowhere(text, { fleet, allowed: [] });
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
-const logOf = (fleet, container) => join(fleet.root, 'spark3', '.mock', `logs-${container}`);
+// A file in Spark 3's shared folder, which the `files` tool reads.
+function plant(fleet, text) {
+  const dir = join(fleet.root, 'spark3', '.local', 'share', 'spark-portal', 'workspaces', 'shared');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, 'key-note.txt'), text);
+  return join(dir, 'key-note.txt');
+}
 // The stand-in Bot API.
 const tgPost = async (p, body) => (await fetch(`http://127.0.0.1:${T.fleet.telegramPort}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
 const tgCalls = () => { const f = join(T.fleet.dir, 'telegram-calls.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : []; };
@@ -123,21 +128,21 @@ describe('keys given once', { concurrency: 1 }, () => {
   });
 
   test('a kept key a tool prints, as is or in base64, comes back hidden: to the brain, to an agent, in the journal and the chat', async () => {
-    writeFileSync(logOf(T.fleet, CHISEL), `starting\nHF_TOKEN in use: ${V.page}\nas base64: ${Buffer.from(V.page).toString('base64')}\nready\n`);
+    const note = plant(T.fleet, `starting\nHF_TOKEN in use: ${V.page}\nas base64: ${Buffer.from(V.page).toString('base64')}\nready\n`);
     try {
-      script([{ match: '^show me the chisel log on spark 3$', calls: [{ name: 'container_logs', arguments: { spark: 'spark3', container: CHISEL } }] }]);
-      const r = await say(pageChat, 'show me the chisel log on spark 3');
+      script([{ match: '^show me the key note on spark 3$', calls: [{ name: 'files', arguments: { spark: 'spark3', file: 'key-note.txt' } }] }]);
+      const r = await say(pageChat, 'show me the key note on spark 3');
       const back = requests().at(-1);
       assert.equal(back.lastRole, 'tool');
       assert.match(back.results[0].content, /HF_TOKEN in use: \[hidden\]/);
       assert.match(back.results[0].content, /as base64: \[hidden\]/);
-      assert.match(r.text, /container_logs said/);
+      assert.match(r.text, /files said/);
       const look = await createKey('keys-look');
-      const got = await call(look.token, 'container_logs', { spark: 'spark3', container: CHISEL });
+      const got = await call(look.token, 'files', { spark: 'spark3', file: 'key-note.txt' });
       assert.equal(got.isError, false, got.text);
       assert.match(got.text, /in use: \[hidden\]/);
       assert.ok(!got.raw.includes(V.page) && !got.raw.includes(Buffer.from(V.page).toString('base64')));
-    } finally { rmSync(logOf(T.fleet, CHISEL), { force: true }); rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+    } finally { rmSync(note, { force: true }); rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
     nowhere(V.page);
     nowhere(Buffer.from(V.page).toString('base64').slice(0, 24));
   });
@@ -247,11 +252,11 @@ describe('keys given once', { concurrency: 1 }, () => {
       const inside = spawnSync('tar', ['-xzOf', copy], { maxBuffer: 1 << 28 }).stdout;
       assert.ok(inside.length > 1000 && inside.includes('/key HF_TOKEN [kept]'), 'the copy holds the chats');
       for (const v of [V.page, V.tg, V.tgKept, V.err, GOOD, BEAT_ID]) assert.ok(!inside.includes(v), `${v.slice(0, 6)}… in the copy`);
-      writeFileSync(logOf(B, CHISEL), `HF_TOKEN in use: ${V.page}\n`);
+      const note = plant(B, `HF_TOKEN in use: ${V.page}\n`);
       const look = await (await fetch(`${B.base}/agents`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: B.origin }, body: JSON.stringify({ name: 'keys-after' }) })).json();
-      const got = await call(look.token, 'container_logs', { spark: 'spark3', container: CHISEL }, { url: B.mcp });
+      const got = await call(look.token, 'files', { spark: 'spark3', file: 'key-note.txt' }, { url: B.mcp });
       assert.match(got.text, /in use: \[hidden\]/);
-      rmSync(logOf(B, CHISEL), { force: true });
+      rmSync(note, { force: true });
       for (const v of [V.page, V.tg, V.tgKept, V.err, GOOD, BEAT_ID]) nowhere(v, { fleet: B, allowed: [join(B.dir, SECRETS_TAIL)] });
     } finally { await B.stop(); }
   });
