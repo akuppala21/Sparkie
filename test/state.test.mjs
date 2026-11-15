@@ -10,7 +10,7 @@
 // and said when it's late (F17).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, rmSync, chmodSync, renameSync, symlinkSync, lstatSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -96,6 +96,27 @@ describe('the main service', { concurrency: 1 }, () => {
       assert.ok(listed.some(f => /(^|\/)events\.jsonl$/.test(f)));
       assert.ok(!listed.some(f => /\.sock$/.test(f)), `sockets: ${listed.filter(f => /\.sock$/.test(f))}`);
       assert.ok(!listed.some(f => /(^|\/)cloud\.json$/.test(f)), 'not cloud.json');
+    });
+    // The first command is the ssh command itself, so the far user's login shell reads it. Under zsh a file pattern that
+    // matches nothing is an error, and no copy would ever land (the review of A-9). The stand-in gzip keeps the command
+    // it was run from; here that text runs under zsh in an empty home (a space in its name), then with a stale .part.
+    const ZSH = (() => { try { execFileSync('zsh', ['-fc', 'true'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+    test('its first command on the far Spark ends well under zsh too, with no .part there and with a stale one', { timeout: 30000 * SLOW, skip: ZSH ? false : 'no zsh here' }, async () => {
+      const name = `state-${new Date().toISOString().slice(0, 10)}.tgz`, from = join(T.fleet.root, 'spark3', '.mock', 'gzip-from');
+      const copy = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-console', 'backups', name);
+      await waitFor(() => existsSync(copy) && existsSync(from), { timeout: 20000, what: 'the first copy' });
+      const sent = readFileSync(from, 'utf8').trim();
+      assert.match(sent, /^umask 077 && mkdir -p "\$HOME\/\.local\/share\/spark-console\/backups" && /);
+      const home = join(T.fleet.dir, 'a home for zsh'), there = join(home, '.local', 'share', 'spark-console', 'backups');
+      mkdirSync(home);
+      const zsh = () => spawnSync('zsh', ['-c', sent], { cwd: home, env: { ...process.env, HOME: home }, input: readFileSync(copy) });
+      let r = zsh();
+      assert.equal(r.status, 0, String(r.stderr));
+      assert.deepEqual(readdirSync(there), [`${name}.part`]);
+      writeFileSync(join(there, 'state-2026-01-01.tgz.part'), 'left by an earlier try');
+      r = zsh();
+      assert.equal(r.status, 0, String(r.stderr));
+      assert.deepEqual(readdirSync(there), [`${name}.part`], 'the stale .part is gone');
     });
   });
 

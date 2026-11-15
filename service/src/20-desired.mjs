@@ -1,4 +1,7 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
+// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler)
+// Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
 // isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console,
@@ -119,8 +122,10 @@ async function watchHeld() {
     if (!existsSync(DESIRED_FILE)) {
       const inv = await recentInventory().catch(() => null);
       if (!inv) return;
-      // (Not the brain's Spark: Sparkie's model looks after itself there, and nothing else starts there.)
-      const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank)
+      // (Not the brain's Spark: Sparkie's model looks after itself there, and nothing else starts there. Not the
+      // self-test's own model, R22: it would be the owner's from then on. A note that can't be read: next time.)
+      const test = selfTestModels(lookBegan.get(inv) ?? Date.now());
+      const running = inv.sparks.filter(sp => sp.online && !brainSparks().includes(sp.id)).flatMap(sp => sp.deployments.filter(d => d.state === 'running' && d.role !== 'main' && !d.rank && !test.has(`${sp.id}/${d.container}`))
         .map(d => ({ spark: sp.id, container: d.container, model: d.model, ...(d.cluster ? { sparks: d.cluster.split('+') } : {}), since: new Date().toISOString(), by: 'already running' })));
       writePrivate(DESIRED_FILE, { revision: 1, running, revisions: [{ revision: 1, at: new Date().toISOString(), by: 'Spark Console', chat: null, operation: null, added: running.map(keyOf), removed: [], before: [], seeded: true }] });
     }

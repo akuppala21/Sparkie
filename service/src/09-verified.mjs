@@ -1,4 +1,7 @@
 /* ───────── verified deployments ───────── */
+// Area: ground        Rules: R15, R22        Tests: change.test.mjs, detail.test.mjs
+// Owns: verified.json (writers: recordVerified)
+// Timers: none        Wakes: none
 // Every deploy that comes up healthy is recorded with exactly how it ran (model, image, flags, memory share, Sparks) and a
 // quick speed test on these Sparks: time to the first token and tokens per second over one 256-token answer. Recipes and
 // the deploy dialog show these as "Verified on your Sparks", next to what others reported.

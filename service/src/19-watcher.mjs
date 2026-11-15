@@ -1,4 +1,9 @@
 /* ───────── watching the fleet: what runs, what changed, and what it learns ───────── */
+// Area: core
+// Rules: R7, R19, R21, R23, R24, R38
+// Tests: fleet.test.mjs, dark.test.mjs, docker-down.test.mjs, state.test.mjs
+// Owns: knowledge.json (writers: saveKnowledge), events.jsonl (writers: fleetEvent)
+// Timers: watchFleet (15 s after start, then every 60 s)        Wakes: none
 // Every minute the console looks at every container on every Spark (models, services, dev boxes, anything started by
 // hand) and remembers how each was started: image, command (secrets hidden), ports, mounts, GPU use, and the names
 // (never the values) of its environment variables. Changes become events: started, stopped, crashed, removed, a Spark

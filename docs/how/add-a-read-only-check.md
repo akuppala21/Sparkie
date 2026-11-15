@@ -8,7 +8,8 @@ map's "Where new things go", row "A read-only check".
 - A probe script run with `run`, parsed with `fields` (`02-ssh.mjs`); the pattern to follow is `gpuUsersScript`, run
   and parsed in `plan` (`05-library.mjs`).
 - Shared through `recent` (`16-actions.mjs`), a short-lived read cache.
-- A loop copies the watcher's start: `watchFleet` in `19-watcher.mjs` (a delayed first round, then `setInterval`).
+- A loop copies the watcher's start: `watchFleet` in `19-watcher.mjs` (a delayed first round, then `setInterval`),
+  and goes on its part's `Timers:` line (R28).
 
 ## Also update
 

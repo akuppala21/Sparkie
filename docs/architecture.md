@@ -1,7 +1,7 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
+Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+`docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
@@ -114,7 +114,7 @@ flowchart TD
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
@@ -198,12 +198,11 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a `tested/` tag holds one, and the installer refuses a build without it. A step lands on `main`
-  on its affected tests (`tools/land.mjs`); the whole suite runs after. Any edit to a part changes the build; a
-  `worker.py` edit changes every workflow version but not the build. After an install `/health` names the workflows
-  whose version waits for a validation run (the hub guard, 2026-11-14, changed `start_model` and
-  `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the restart; one
-  `find_setups` covers that one.
+  whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
+  tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard
+  changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
+  the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.

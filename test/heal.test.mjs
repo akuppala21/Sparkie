@@ -16,8 +16,8 @@ import { T, useFleet, call, createActKey, agentSettings, waitFor, KeyPool, bug, 
 const keys = {}, looks = new KeyPool('heal-look', 100);   // polling: a fresh key every 100 calls (120 a minute each)
 const mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
 // Extra model containers of Spark Console's, running since a while ago.
-function seed(spark, name, extra = '') {
-  writeFileSync(mock(spark, 'containers'), `${readFileSync(mock(spark, 'containers'), 'utf8')}${name}|running|Up 1 hour|1|Qwen--Qwen3-32B||${extra}\n`);
+function seed(spark, name, extra = '', model = 'Qwen--Qwen3-32B') {
+  writeFileSync(mock(spark, 'containers'), `${readFileSync(mock(spark, 'containers'), 'utf8')}${name}|running|Up 1 hour|1|${model}||${extra}\n`);
   writeFileSync(mock(spark, `up-${name}`), String(Math.floor(Date.now() / 1000) - 3600));
 }
 // A container that crashes: exited, with this status (its exit code; "OOM" for killed for memory).
@@ -192,6 +192,23 @@ describe('left alone, side by side', { concurrency: true }, () => {
     assert.equal(stateOf('spark4', 'sc-justnow'), 'exited');
     assert.ok(auditLines().some(l => l.via === 'watcher' && l.ok === false && l.args?.container === 'sc-justnow'));
   });
+});
+
+// The review of A-5: the reason kept when a restart fails was the error as it came. Here the error names the model,
+// which isn't in the library: a fake key (built from pieces), so the reason holds a key.
+test('a restart that fails with a key in its error: the reason kept in the fleet\'s record hides it', { timeout: 180000 * SLOW }, async () => {
+  const KEY = ['hf_', 'FAKE', 'fake'.repeat(5), '0000'].join(''), name = 'sc-keyed';
+  seed('spark3', name, '', KEY);
+  await running('spark3', name);
+  const since = new Date().toISOString();
+  crash('spark3', name);
+  const evs = await waitEvents(since, [['spark3', name, 'heal-skipped']], 'heal-skipped');
+  assert.match(has(evs, 'spark3', name, 'heal-skipped').why, /isn’t in the library on spark3 any more/);
+  const kept = readFileSync(join(T.fleet.stateDir, 'events.jsonl'), 'utf8').split('\n').filter(l => l.includes('"heal-skipped"') && l.includes(`"${name}"`));
+  assert.equal(kept.length, 1, kept.join('\n'));
+  assert.ok(!kept[0].includes('FAKEfake'), `a piece of the key is in events.jsonl: ${kept[0]}`);
+  assert.match(kept[0], /\[hidden\] isn’t in the library/);
+  assert.equal(stateOf('spark3', name), 'exited');
 });
 
 describe('the owner\'s switches', () => {

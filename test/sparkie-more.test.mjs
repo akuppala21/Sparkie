@@ -95,6 +95,16 @@ test('forget_memory runs at once only when the owner says to forget that very li
       assert.deepEqual(m.choices?.map(c => c.label), [`Forget: “${WIFI}”`], words);
       assert.deepEqual(await memoryNow(), before, words);
     }
+    // The review of the fix: a forget called off in a later sentence, opposite asks in one message (the call aimed at
+    // the line the owner said not to forget) and "will you …?" are a button too.
+    for (const [words, id, text] of [[`Forget that ${WIFI}. Actually don't.`, line, WIFI], [`Forget that ${WIFI}. Never mind.`, line, WIFI],
+      [`Forget that ${WIFI}. No wait, keep it.`, line, WIFI], [`Don't forget that ${OTHER}. Forget that ${WIFI}.`, other, OTHER],
+      [`Will you forget that ${WIFI} if I restart you?`, line, WIFI]]) {
+      const before = await memoryNow(), m = await forget(words, id);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.deepEqual(m.choices?.map(c => c.label), [`Forget: “${text}”`], words);
+      assert.deepEqual(await memoryNow(), before, words);
+    }
     // Said in so many words, about that line: forgotten at once.
     const yes = await forget(SAID, line);
     assert.deepEqual(yes.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'forgotten']], JSON.stringify(yes.tools));
@@ -109,14 +119,15 @@ test('forget_memory runs at once only when the owner says to forget that very li
 });
 
 // The same review: "do not remember …" is a refusal the intent reads, and it is a button, never a line kept. "Don't
-// forget", "never forget" and "do not forget" ask to remember, and still keep the line at once.
+// forget", "never forget" and "do not forget" ask to remember, and still keep the line at once. So does a statement
+// with a "not" in it (the review of the fix: "don't use Spark 1 from now on" became a button).
 test('"do not remember …" or "don\'t note …" is a button and keeps nothing; "remember", "don\'t forget", "never forget" keep the line at once', { timeout: 180000 * SLOW }, async () => {
-  const remember = async words => {
-    script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text: WIFI } }] }]);
+  const remember = async (words, text = WIFI) => {
+    script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text } }] }]);
     return (await say(await newChat(), words)).message;
   };
   try {
-    for (const words of [`Do not remember that ${WIFI}`, `Don't remember that ${WIFI}`, `Please don't note that ${WIFI}`]) {
+    for (const words of [`Do not remember that ${WIFI}`, `Don't remember that ${WIFI}`, `Please don't note that ${WIFI}`, `Remember that ${WIFI}. Actually don't.`]) {
       const m = await remember(words);
       assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'needs-ok']], `${words}: ${JSON.stringify(m.tools)}`);
       assert.deepEqual(m.choices?.map(c => c.label), [`Remember: “${WIFI}”`], words);
@@ -127,6 +138,14 @@ test('"do not remember …" or "don\'t note …" is a button and keeps nothing; 
       assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']], `${words}: ${JSON.stringify(m.tools)}`);
       assert.ok(!m.choices?.length, `${words}: ${JSON.stringify(m.choices)}`);
       assert.deepEqual((await memoryNow()).map(e => e.text), [WIFI], words);
+      await forgetAll();
+    }
+    for (const [words, line] of [['Don\'t use Spark 1 from now on', 'Don\'t use Spark 1'], ['Remember: never stop Qwen at night from now on', 'Never stop Qwen at night'],
+      ['Spark 4 is not on Ethernet any more, remember that', 'Spark 4 is not on Ethernet any more']]) {
+      const m = await remember(words, line);
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.ok(!m.choices?.length, `${words}: ${JSON.stringify(m.choices)}`);
+      assert.deepEqual((await memoryNow()).map(e => e.text), [line], words);
       await forgetAll();
     }
   } finally { script([]); await forgetAll(); }

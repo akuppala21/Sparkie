@@ -1,4 +1,7 @@
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
+// Area: record        Rules: R20, R25, R26        Tests: sparkie-more.test.mjs
+// Owns: memory.json (writers: remember, forget_memory)
+// Timers: none        Wakes: none
 // What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I
 // meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). A few
 // dozen short lines in memory.json, put at the end of Sparkie's system prompt (so the prompt cache stays warm until it
@@ -82,28 +85,43 @@ const MEMORY_FILLER = new Set(['owner', 'owners', 'sparkie', 'they', 'their', 't
   'should', 'would', 'that', 'this', 'with', 'have', 'has', 'does', 'from', 'for', 'when', 'will', 'can', 'are', 'was', 'not', 'any', 'all', 'its', 'now']);
 // Whether this message itself says to forget, in so many words (A-3, 2026-11-14: a question about a line, "don't forget
 // that …", a quoted "forget that …" and an unrelated "remember …" each forgot a line with no button). A forget phrase
-// counts in a sentence that isn't a question (a polite "can you …" aside), isn't called off and doesn't follow don't,
-// never, if, whether or should; words in double quotes don't count. Sentence by sentence, as changeIntent reads them.
+// counts in a sentence that isn't a question (only "can you …" and "could you …" ask politely: "will you …" and "would
+// you …" ask about it), isn't called off and doesn't follow if, whether or should; words in double quotes don't count.
+// Sentence by sentence, as changeIntent reads them. A forget phrase after don't or never anywhere in the message (asked
+// and ruled out at once), or a later sentence that only calls it off ("Actually don't.", "No wait, keep it."), makes
+// the whole message a button.
 const FORGET_WORDS = /\bforget\s+(?:that|this|what\s+i\s+said|the\s+note)\b/gi;
+const CAN_YOU = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:can|could)\s+(?:you|u|ya)\b/i;
+// (a sentence that only says to leave it as it is: "No wait, keep it.", "Actually, leave it.")
+const KEEP_IT = /^\s*(?:(?:actually|no|wait|oh|ok|okay|sorry|never\s*mind|nevermind)[\s,]+)*(?:keep|leave)\s+(?:it|that|this)(?:\s+as\s+it\s+is)?[\s.!]*$/i;
 function saysForget(text) {
+  let says = false;
   for (const raw of normQuotes(text).replace(/"[^"\n]*"|“[^”\n]*”/g, ' ').split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
-    if (!sentence.trim() || (!polite && (/\?\s*$/.test(raw) || QUESTION_START.test(sentence))) || INFO_START.test(sentence) || CALLED_OFF.test(sentence)) continue;
-    for (const m of sentence.matchAll(FORGET_WORDS)) {
-      const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
-      if (!NEGATOR.test(pre) && !HYPOTHETICAL.test(pre)) return true;
-    }
+    if (!sentence.trim()) continue;
+    const found = [...sentence.matchAll(FORGET_WORDS)], pre = m => sentence.slice(Math.max(0, m.index - 50), m.index);
+    if (found.some(m => NEGATOR.test(pre(m)))) return false;
+    if (!found.length) { if (says && (CALLED_OFF.test(sentence) || KEEP_IT.test(sentence))) return false; continue; }
+    if ((polite ? !CAN_YOU.test(raw) : /\?\s*$/.test(raw) || QUESTION_START.test(sentence)) || INFO_START.test(sentence) || CALLED_OFF.test(sentence)) continue;
+    if (found.some(m => !HYPOTHETICAL.test(pre(m)))) says = true;
+  }
+  return says;
+}
+// Whether this message rules the remembering itself out (2026-11-14: "do not remember that …" was kept with no button):
+// don't, do not, never or no need to, then a remember word at most two words on ("do not remember …", "please don't
+// note that …"), or a remember word in a sentence that is called off, or followed by one that is ("remember that …,
+// actually don't", "remember that …. Actually don't."). A "not" anywhere else is part of what to keep ("don't use
+// Spark 1 from now on", "Spark 4 is not on Ethernet, remember that"), and "don't forget", "never forget" ask to remember.
+const REMEMBER_WORD = /\b(?:remember|note\s+(?:that|this|it)|make\s+a\s+note|keep\s+(?:(?:that|this|it)\s+)?in\s+mind)\b/i;
+const NOT_REMEMBER = /\b(?:don't|dont|do\s+not|never|no\s+need\s+to)\s+(?:\w+\s+){0,2}?(?:remember|note\s+(?:that|this|it)|make\s+a\s+note|keep\s+(?:(?:that|this|it)\s+)?in\s+mind)\b/i;
+function refusesRemember(ctx) {
+  let asked = false;
+  for (const raw of normQuotes(ctx.request || '').split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const sentence = raw.replace(/[?!;\n]+\s*$/, ''), word = REMEMBER_WORD.test(sentence);
+    if (NOT_REMEMBER.test(sentence) || ((word || asked) && CALLED_OFF.test(sentence))) return true;
+    asked ||= word;
   }
   return false;
-}
-// Whether this message rules remembering out ("do not remember …", "please don't note …"), as the intent read it. A
-// forget phrase after don't or never asks to remember, though the intent reads "never forget that …" as ruled out, so it
-// is read as "remember" here (2026-11-14: "do not remember that …" was kept with no button).
-const NOT_FORGET = /\b(?:don't|dont|do\s+not|never)\s+(?:\w+\s+){0,2}?forget\b/gi;
-function refusesRemember(ctx) {
-  const text = normQuotes(ctx.request || ''), plain = text.replace(NOT_FORGET, 'remember');
-  const intent = plain === text ? ctx.intent || {} : changeIntent(plain);
-  return [...(intent.negated || []), ...(intent.mixed || [])].includes('remember');
 }
 function memoryClear(name, input, ctx, asked) {
   const words = String(ctx.said || ctx.request || '');

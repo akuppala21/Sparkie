@@ -3,19 +3,19 @@
 One row per finding. Updated by the builders after each reply. Nothing is closed until both sides agree, or the
 owner decides (see [the procedure](README.md)).
 
-Last updated: 2026-11-14, after `reply-1.md` (complete for round 1). Commits and tests: the table at the end of the reply.
+Last updated: 2026-11-14, after `reply-1.md` (complete for round 1). Commits and tests: the two tables at the end of the reply. The second table lists five follow-up commits from our own review of the fixes; the reply's "later" list has a second part from that review, which Astra can rebut too.
 
 | Id | One line | State | Who moves next |
 |---|---|---|---|
-| A-1 | A removed or downgraded agent's reply under way can still make changes | Accepted in part; fixed on `main` (`eab0f43`, four tests). Not accepted: pending buttons and carry-on turns. Policy written down: operations already running keep running. Later: A-1b | Astra: check the fix; agree or rebut the part not accepted and the policy |
+| A-1 | A removed or downgraded agent's reply under way can still make changes | Accepted in part; fixed on `main` (`eab0f43`, four tests; one test's wait made real, `a677d71`). Not accepted: pending buttons and carry-on turns. Policy written down: operations already running keep running. Later: A-1b | Astra: check the fix; agree or rebut the part not accepted and the policy |
 | A-2 | A stopped GPU app starts on checks made before its claim | Accepted in part; fixed on `main` for `keep_running` (`2cc8152`, one test). Later: the restart path (A-2b: it changes `restart_model`'s version) | Astra: check the fix; agree or rebut the rating and A-2b |
-| A-3 | A question, "don't forget…", a quoted forget or an unrelated "remember…" can make Sparkie forget a line; "do not remember…" saved one | Accepted, wider than reported; fixed on `main` (`25f0cdb`, two tests); G 3.6 amended | Astra: check the fix |
+| A-3 | A question, "don't forget…", a quoted forget or an unrelated "remember…" can make Sparkie forget a line; "do not remember…" saved one | Accepted, wider than reported; fixed on `main` (`25f0cdb`, two tests; then `8e9dceb` and `55fd2cd` after our own review: statements with a "not" are kept again, and three more forget shapes give a button); G 3.6 amended | Astra: check the fix, and the sentences in the reply's later list that still slip through |
 | A-4 | A model error cut off part-way leaves the chat stuck, also after `/stop` | Accepted; fixed on `main` (`a65f880`, three tests) | Astra: check the fix |
-| A-5 | A key in an error's text is saved in the chat file | Accepted, plus button labels and operation errors in the events file; fixed on `main` (`acd2b92`, three tests) | Astra: check the fix |
+| A-5 | A key in an error's text is saved in the chat file | Accepted, plus button labels and operation errors in the events file; fixed on `main` (`acd2b92`, three tests; a third healing reason, `7182534`, one test) | Astra: check the fix |
 | A-6 | A file delete can remove a save that lands at the same moment | Accepted in part: later, a rename-first delete with the next `worker.py` change, or its only caller goes in milestone 4; not a blocker | Astra: agree or rebut "later", and the one word changed in its closing test |
 | A-7 | A character split across two pieces of a request body is spoiled | Accepted; fixed on `main` (`418e16b`, one test). Not taken: counting the limit in bytes. Later: A-7b (three less likely places) | Astra: check the fix; agree or rebut the byte limit |
 | A-8 | The first short job on a Spark only ever seen empty is never told | Accepted in part; fixed on `main` (`3f8044c`, one test). Not taken: "don't mark told before the notice succeeds" | Astra: check the fix; agree or rebut the part not taken |
-| A-9 | The far side keeps a daily copy before this side knows tar ended well | Accepted; fixed on `main` (`aba4683`, three tests, one with real GNU tar on Linux). The macOS run does not carry over to the Sparks | Astra: check the fix |
+| A-9 | The far side keeps a daily copy before this side knows tar ended well | Accepted; fixed on `main` (`aba4683`, three tests, one with real GNU tar on Linux; its first command made safe under zsh, `ea0d6f1`, one test). The macOS run does not carry over to the Sparks | Astra: check the fix |
 | A-10 | A pair's plan that arrives late replaces the plan of the Spark picked since | Accepted; later (page; the view is deleted in milestone 4) | Astra: agree or rebut "later" |
 | A-11 | A file listing still on its way shows under the next Spark | Accepted; later (page; the view is deleted in milestone 4) | Astra: agree or rebut "later" |
 | A-12 | A batch of uploads follows the area switch | Accepted; later (page; the view is deleted in milestone 4). Also reachable from the owner's "Preview as a member" | Astra: agree or rebut "later" |

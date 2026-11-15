@@ -1,4 +1,11 @@
 /* ───────── workflows ───────── */
+// Area: core
+// Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
+// Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
+//   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
+//   writes it, noteUpdate reads it)
+// Timers: none        Wakes: none
 // Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it
 // worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a
 // workflow and fill in its inputs; they never make up the steps.
@@ -396,16 +403,19 @@ async function maybeHeal(node, w) {
   if (/out of memory|OutOfMemoryError|CUDA error: out of memory|cudaErrorMemoryAllocation|Insufficient memory|less than desired/i.test(logs.out)) return skip('it ran out of memory, so restarting would only fail again');
   healTries.set(key, [...recentTries, Date.now()]);
   saveHealTries();
+  // (the self-test's own model, R22: a crash outside its drill too)
+  let test = false;
+  try { test = selfTestModels().has(key); } catch {}
   try {
     const ctx = { actor: 'Self-healing', via: 'watcher', request: `${w.name} crashed (exit ${w.exitCode})` };
     const job = await restartChecked({ login: accessList().owner, role: 'owner', nodeIds: null, permissions: ownerPermissions() }, ctx, node.id, w.name);
     if (!job) return;
-    // (the self-test's drill: its model is never the owner's wish, so its restart doesn't put it on the list either)
-    if (healDrills.has(`${node.id}/${w.id}`)) job.selfTest = true;
+    // (the self-test's drill, or its model all the same: never the owner's wish, so its restart doesn't put it on the list)
+    if (healDrills.has(`${node.id}/${w.id}`) || test) job.selfTest = true;
     Object.assign(job, { workflow: 'restart_model', workflowVersion: workflowVersion('restart_model') });
     fleetEvent({ type: 'healing', spark: node.id, container: w.name, operation: job.id });
     audit({ via: 'watcher', actor: 'Self-healing', action: 'restart_model', args: { spark: node.id, container: w.name }, ok: true, operation: job.id });
-  } catch (e) { skip(e.message); }
+  } catch (e) { skip(maskSecrets(String(e.message))); }
 }
 
 

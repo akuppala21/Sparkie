@@ -1,4 +1,7 @@
 /* ───────── the owner's words: /status, /pause, /restart sparkie, /stop, /undo update, /help (round two, 2026-11-11) ───────── */
+// Area: safety        Rules: R34        Tests: words.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Typed as the whole message in the owner's own page chat, they're answered by code before any model call, so they work
 // with Sparkie's model down or stuck (docs/analysis-2026-11-11/10-round-two-report.md, item 1; contract 8.13). They are
 // not tools: no agent, no /mcp or /v1, no carry-on turn. They can only look, pause agents' changes, bring back the
