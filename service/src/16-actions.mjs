@@ -124,6 +124,8 @@ const CHANGE_WORDS = [
   // Research changes nothing on the Sparks: "find setups for X" counts even said as a question.
   ['find', /\b(find|look\s+up|research|dig\s+up|search\s+for|refresh)\b[^.?!;\n]{0,60}?\b(setups?|recipes?|configs?|configurations?|benchmarks?|speeds?)\b/gi],
   ['save', /\b(save|make|turn|create|add|remember)\b[^.?!;\n]{0,80}?\bworkflows?\b/gi],
+  // Comparing models on a saved workload (21-compare.mjs): "compare X against Y", "whatever is best", "keep the winner".
+  ['compare', /\b(compare\w*|whatever\s+is\s+best|keep\s+the\s+(?:winner|best(?:\s+one)?)|(?:try|run)\b[^.?!;\n]{0,60}?\b(?:against|versus|vs\.?))(?=\W|$)/gi],
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
@@ -158,7 +160,7 @@ const GROUP_WORDS = [
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
   ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
-  ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
+  ['routines', 'saved workflows: list, save, run and forget them, compare models on one', /\b(?:workflows?|routines?|pipelines?|workloads?|compar\w*|whatever\s+is\s+best|keep\s+the\s+winner)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
   ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
@@ -222,6 +224,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
   cancel_operation: ['cancel'],
+  compare_models: ['compare'],
   find_setups: ['find'],
   forget_memory: ['remember'],
   forget_workflow: ['forget'],
@@ -355,10 +358,16 @@ async function sparkieCheck(name, input, ctx) {
   // rehearse, dry run, preview, simulate or what if (that's `workflows {name}`); otherwise it's a button.
   // Its input values must be in the words too, nothing may be ruled out ("… but don't stop GLM"), and a longer saved name
   // the words also fit wins over a shorter one inside it. A name that isn't saved is an error, not a button.
+  // A compare runs at once when the owner's words say compare and name the workflow and every candidate (or the one to
+  // keep); else it's a button (21-compare.mjs).
+  if (name === 'compare_models') {
+    const w = findSaved(String(out.workflow || '')), words = t => [...tokensOf(String(t))].every(x => said.has(x));
+    return { clear: asked && Boolean(w) && words(w.title) && [...(out.candidates || []), ...(out.keep ? [out.keep] : [])].every(words) && !ctx.noStops, input: out };
+  }
   if (name === 'run_workflow') {
     const w = findSaved(String(out.name || ''));
     if (!w) throw new HttpError(404, `No saved workflow called “${String(out.name || '').slice(0, 80)}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})));
+    const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})) && !(k === 'model' && w.best?.model));
     if (missingInputs.length) throw new HttpError(400, `“${w.title}” needs ${missingInputs.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // (every word counts here, one-letter ones and bare Spark numbers too: "run coding mo" isn't "coding mode", and
     // a value "4" must be said as 4 or Spark 4)

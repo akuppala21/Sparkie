@@ -52,6 +52,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `remember` | change | `20-memory` | core | remember | yes | no | — |
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
 | `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
+| `compare_models` | change | `21-compare` | routines | compare | — | no | — |
 | `guide` | read | `21-guide` | core | — | — | yes | inside |
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
@@ -97,7 +98,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
 | `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `placeStep`, `run_workflow`; `savedRunDone` is called by `run_workflow` | yes | yes |
-| `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
+| `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
@@ -165,6 +166,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | Operation | Started by |
 |---|---|
 | `add-list` | `handler` (24-handler) |
+| `compare` | `compare_models` (21-compare) |
 | `deploy` | `launch` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |
 | `deploy-cluster` | `launch` (17-changes), `handler` (24-handler) |
 | `dig` | `startDig` (11-setups) |

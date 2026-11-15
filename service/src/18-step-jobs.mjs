@@ -37,6 +37,7 @@ async function jobStepEnd(j, n, args, out) {
   const spark = sparkIdOf(out?.spark || args.spark) || String(args.spark), container = String(out?.starting || out?.container || args.container);
   const node = nodeById(spark), at = sparkName(node || { id: spark });
   j.workload = true;
+  (j.jobsRan ||= []).push({ spark, container, began: Date.now() });
   step(j, `Step ${n}: ${container} runs on ${at}; waiting for it to end (${forHowLong(STEP_JOB_MS)} at most)`);
   let end;
   try { end = await waitJobEnd(node, container, { limitMs: STEP_JOB_MS, job: j }); } catch (e) {

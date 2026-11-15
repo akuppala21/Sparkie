@@ -3757,6 +3757,7 @@ async function runChoice(viewer, conv, id, by) {
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
+  compare: 'Comparing models for',
   deploy: 'Starting',
   'deploy-cluster': 'Starting',
   'power-off': 'Powering off',
@@ -3783,7 +3784,7 @@ function postResult(job) {
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
-  conv.messages.push({ role: 'assistant', content: `${content}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status });
+  conv.messages.push({ role: 'assistant', content: `${content}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status, ...(Array.isArray(job.choices) && job.choices.length ? { choices: job.choices } : {}) });
   conv.updatedAt = new Date().toISOString();
   saveChats();
   // Work started from Telegram reports there too, as a fixed line (20-tell.mjs).
@@ -4627,6 +4628,8 @@ const CHANGE_WORDS = [
   // Research changes nothing on the Sparks: "find setups for X" counts even said as a question.
   ['find', /\b(find|look\s+up|research|dig\s+up|search\s+for|refresh)\b[^.?!;\n]{0,60}?\b(setups?|recipes?|configs?|configurations?|benchmarks?|speeds?)\b/gi],
   ['save', /\b(save|make|turn|create|add|remember)\b[^.?!;\n]{0,80}?\bworkflows?\b/gi],
+  // Comparing models on a saved workload (21-compare.mjs): "compare X against Y", "whatever is best", "keep the winner".
+  ['compare', /\b(compare\w*|whatever\s+is\s+best|keep\s+the\s+(?:winner|best(?:\s+one)?)|(?:try|run)\b[^.?!;\n]{0,60}?\b(?:against|versus|vs\.?))(?=\W|$)/gi],
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
@@ -4661,7 +4664,7 @@ const GROUP_WORDS = [
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
   ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
-  ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
+  ['routines', 'saved workflows: list, save, run and forget them, compare models on one', /\b(?:workflows?|routines?|pipelines?|workloads?|compar\w*|whatever\s+is\s+best|keep\s+the\s+winner)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
   ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
@@ -4725,6 +4728,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
   cancel_operation: ['cancel'],
+  compare_models: ['compare'],
   find_setups: ['find'],
   forget_memory: ['remember'],
   forget_workflow: ['forget'],
@@ -4858,10 +4862,16 @@ async function sparkieCheck(name, input, ctx) {
   // rehearse, dry run, preview, simulate or what if (that's `workflows {name}`); otherwise it's a button.
   // Its input values must be in the words too, nothing may be ruled out ("… but don't stop GLM"), and a longer saved name
   // the words also fit wins over a shorter one inside it. A name that isn't saved is an error, not a button.
+  // A compare runs at once when the owner's words say compare and name the workflow and every candidate (or the one to
+  // keep); else it's a button (21-compare.mjs).
+  if (name === 'compare_models') {
+    const w = findSaved(String(out.workflow || '')), words = t => [...tokensOf(String(t))].every(x => said.has(x));
+    return { clear: asked && Boolean(w) && words(w.title) && [...(out.candidates || []), ...(out.keep ? [out.keep] : [])].every(words) && !ctx.noStops, input: out };
+  }
   if (name === 'run_workflow') {
     const w = findSaved(String(out.name || ''));
     if (!w) throw new HttpError(404, `No saved workflow called “${String(out.name || '').slice(0, 80)}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
-    const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})));
+    const missingInputs = Object.keys(w.inputs || {}).filter(k => !(k in (out.inputs || {})) && !(k === 'model' && w.best?.model));
     if (missingInputs.length) throw new HttpError(400, `“${w.title}” needs ${missingInputs.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // (every word counts here, one-letter ones and bare Spark numbers too: "run coding mo" isn't "coding mode", and
     // a value "4" must be said as 4 or Spark 4)
@@ -5858,6 +5868,10 @@ function changeLabel(name, input) {
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
   if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
+  if (name === 'compare_models') {
+    const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
+    return input.keep ? `Keep ${maskSecrets(String(input.keep)).slice(0, 80)} for “${w}”` : `Compare ${(input.candidates || []).map(c => maskSecrets(String(c)).slice(0, 60)).join(', ')} on the saved workflow “${w}”${input.sample ? `, ${input.sample} items each` : ''}`;
+  }
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
     return `Run the saved workflow “${String(findSaved(String(input.name || ''))?.title || input.name || '').slice(0, 80)}”${given.length ? ` with ${given.join(', ')}` : ''}`;
@@ -6902,6 +6916,7 @@ async function jobStepEnd(j, n, args, out) {
   const spark = sparkIdOf(out?.spark || args.spark) || String(args.spark), container = String(out?.starting || out?.container || args.container);
   const node = nodeById(spark), at = sparkName(node || { id: spark });
   j.workload = true;
+  (j.jobsRan ||= []).push({ spark, container, began: Date.now() });
   step(j, `Step ${n}: ${container} runs on ${at}; waiting for it to end (${forHowLong(STEP_JOB_MS)} at most)`);
   let end;
   try { end = await waitJobEnd(node, container, { limitMs: STEP_JOB_MS, job: j }); } catch (e) {
@@ -7245,6 +7260,7 @@ const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isAr
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
 const NOT_A_STEP = new Set([
+  'compare_models',
   'forget_memory',
   'forget_workflow',
   'power_settings',
@@ -7263,7 +7279,7 @@ function fillIn(v, inputs) {
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}) });
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}), ...(w.best ? { best: w.best } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -7403,9 +7419,12 @@ action({
     inputs: { type: 'object', description: 'Its inputs, name → value.', additionalProperties: { type: ['string', 'number', 'boolean'] } },
   }, required: ['name'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
-    const w = findSaved(input.name);
+    // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
+    const w = ctx.compare?.workflow || findSaved(input.name);
     if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
     const given = input.inputs || {}, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
+    // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
+    if (missing.includes('model') && w.best?.model) { given.model = w.best.model; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
@@ -7420,10 +7439,12 @@ action({
       throw new HttpError(409, `“${w.title}” can’t run now: step ${blocked.step} (${blocked.action}): ${blocked.why}. Nothing was changed.${would.length ? ` ${would.length === 1 ? 'Step' : 'Steps'} ${would.join(', ')} would have gone; ask for ${would.length === 1 ? 'it' : 'them'} by ${would.length === 1 ? 'itself' : 'themselves'} if you want.` : ''}`);
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
+    if (given.model === w.best?.model && !input.inputs?.model) job.usedBest = w.best.model;
     const steps = JSON.stringify(w.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
+      if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
       // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
@@ -7433,6 +7454,7 @@ action({
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
+          if (ctx.compare) compareStep(j, i + 1, st, args, ctx.compare);
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
@@ -7459,7 +7481,7 @@ action({
         await runEndWell(j, ran, viewer, ctx, w.title);
       } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
-    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
+    return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
 });
 action({
@@ -12316,6 +12338,171 @@ function brainEvalView(p) {
     return { state: 'none', says: `No eval is on record for this brain. ${run}` };
   } catch (e) { return { state: 'not known', says: `The eval’s record couldn’t be read: ${e.message}` }; }
 }
+/* ───────── compare_models: a saved workload run with each candidate model, and the winner kept (D8) ───────── */
+// Area: features        Rules: R57, R13        Tests: compare.test.mjs, compare-asleep.test.mjs
+// Owns: none (saved-workflows.json's `compared` and `best`, through writeSaved in 18-workflows.mjs)
+// Timers: none        Wakes: none
+// "Run my workload on whatever is best, keep the winner" (contract 9.27, T141; design D 2.5's first block, as cut).
+// compare_models {workflow, candidates, sample} runs a saved workflow that declares a `model` input once for each
+// candidate, one after another, as run_workflow runs it (its own code, called with the compare's caller: placing, job
+// waits, D7's model address, D6c's yes, and a workload's end stopping what that run started all hold). It is one
+// operation, `compare`, which holds no claim itself. The brain ("sparkie") goes first when listed: its run leaves out
+// the steps that start, stop or restart `{model}` (compareBrainView), and it is tried only when its setup can chat and
+// answers more than one call at once; nothing starts, stops or wakes for it. Each candidate's job made from its image
+// gets the compare's own name suffix (compareStep), so it is a new container with that candidate's settings.
+// The score: `result.json` in the folder of the run's last job (jobs/<container> on the Spark it ran on), read by code
+// through the worker (no link followed), only when it is at most 4 KB, JSON, and written after that job began; only
+// `score` (0 to 1), `ok` (true or false) and `items` (a whole number) are taken, as numbers, and nothing else of the
+// file is kept or shown. The winner, by code: of the candidates whose run ended well and whose ok isn't false, the best
+// score when it leads the next by more than 0.05 and every one has a score; then it is kept on the saved workflow (best:
+// model, score, items, seconds, sample, at) and a later run with no model uses it. Closer, or with no score: the owner
+// picks, from buttons in the chat it was asked in (compare_models {workflow, keep}), or by saying it. From Telegram the
+// keeping waits for the owner in Spark Console, as other changes to saved workflows do (an owner-only button). Every
+// run's results are kept too (compared), for the keep. One hour in all (COMPARE_MS): at the hour the run under way is
+// cancelled, which stops what it started, and the best so far is kept or offered. A candidate that won't start is listed
+// with why and the loop goes on.
+const COMPARE_MS = Number(process.env.SPARK_CONSOLE_COMPARE_MS || 3600000);
+const COMPARE_MARGIN = 0.05;
+const COMPARE_FILE_MAX = 4096;
+const compareWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
+const compareIsBrain = m => String(m).toLowerCase() === SPARKIE_ID;
+const compareSkips = st => ['start_model', 'stop_model', 'restart_model'].includes(st.action) && placeholders(st.args).includes('model');
+// The workflow as the brain runs it: the steps that start, stop or restart {model} left out; a save's yes (D6c) still
+// covers the rest only when it covered the steps as saved.
+function compareBrainView(w) {
+  const steps = w.steps.filter(st => !compareSkips(st));
+  const approved = w.approved && w.approved.steps === savedStepsHash(w.steps) ? { ...w.approved, steps: savedStepsHash(steps) } : null;
+  return { ...w, steps, approved };
+}
+// run_workflow's loop asks this of each step of a candidate's run: a job made from its image gets the compare's suffix.
+function compareStep(j, n, st, args, c) {
+  if (jobFromImage(st.action, args)) args.container = `${String(args.container).slice(0, 62 - c.tag.length)}-${c.tag}`;
+}
+// Why the brain isn't tried, or null.
+function compareBrainWhy() {
+  const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
+  return !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
+    : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
+}
+// A candidate's run, to its end; at the hour (or when the compare is cancelled) it is cancelled, which stops what it
+// started.
+async function compareWait(j, id, until) {
+  while (jobs.get(id)?.status === 'running') {
+    const x = jobs.get(id);
+    if ((j.cancelled || Date.now() >= until) && !x.cancelled) cancelJob(x, j.cancelled ? j.cancelled : 'the compare: its hour was up');
+    await sleep(1000);
+  }
+  return jobs.get(id);
+}
+// The score a candidate's run left: { score, ok, items } (numbers, each only when it is one), or { scoreWhy }.
+async function compareScore(run) {
+  const last = (run.jobsRan || []).at(-1);
+  if (!last) return { scoreWhy: 'its run had no job' };
+  const node = nodeById(last.spark), folder = `jobs/${last.container}`, me = healOwner();
+  let list;
+  try { list = await sharedFolder(me, node, { operation: 'list', path: folder, limit: 200 }); } catch (e) { return { scoreWhy: `its job’s folder couldn’t be read: ${compareWords(e)}` }; }
+  const f = list.entries.find(x => x.name === 'result.json' && x.kind === 'file');
+  if (!f) return { scoreWhy: 'its job wrote no result.json' };
+  if (f.size > COMPARE_FILE_MAX) return { scoreWhy: 'its result.json is over 4 KB' };
+  if (f.modifiedAt * 1000 < last.began - 2000) return { scoreWhy: 'its result.json was written before this run’s job began' };
+  let text;
+  try { text = Buffer.from((await sharedFolder(me, node, { operation: 'read', path: `${folder}/result.json` })).data, 'base64').toString('utf8'); } catch (e) { return { scoreWhy: `its result.json couldn’t be read: ${compareWords(e)}` }; }
+  let v;
+  try { v = JSON.parse(text); } catch { return { scoreWhy: 'its result.json isn’t JSON' }; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { scoreWhy: 'its result.json isn’t an object' };
+  const out = {};
+  if (typeof v.score === 'number' && Number.isFinite(v.score) && v.score >= 0 && v.score <= 1) out.score = Math.round(v.score * 10000) / 10000;
+  if (typeof v.ok === 'boolean') out.ok = v.ok;
+  if (Number.isInteger(v.items) && v.items >= 0 && v.items <= 1e9) out.items = v.items;
+  if (out.score === undefined) out.scoreWhy = 'its result.json has no score from 0 to 1';
+  return out;
+}
+const compareLine = r => `${r.model}: ${r.result === 'ran' ? `${r.score !== undefined ? `score ${r.score}` : `no score (${r.scoreWhy})`}${r.items !== undefined ? `, ${r.items} items` : ''}${r.ok === false ? ', not ok' : ''}, ${r.seconds} s`
+  : `${r.result}: ${r.why}`}`;
+// Keeps `best` (and the results) on the saved workflow, through its one writer.
+function compareKeepOn(w, best, compared) {
+  writeSaved(savedWorkflows().map(x => (x.id === w.id ? { ...x, ...(compared ? { compared } : {}), ...(best ? { best } : {}) } : x)));
+}
+const compareBest = (r, sample) => ({ model: r.model, ...(r.score !== undefined ? { score: r.score } : {}), ...(r.items !== undefined ? { items: r.items } : {}), seconds: r.seconds, sample, at: new Date().toISOString() });
+async function compareRun(j, w, cands, sample, viewer, ctx) {
+  const until = Date.now() + COMPARE_MS, results = [], tag = j.id.slice(0, 6);
+  for (const [i, model] of cands.entries()) {
+    if (j.cancelled) break;
+    if (Date.now() >= until) { results.push({ model, result: 'not tried', why: 'the hour was up' }); continue; }
+    const brain = compareIsBrain(model), why = brain ? compareBrainWhy() : null;
+    if (why) { results.push({ model, result: 'not tried', why }); note(j, `${model}: not tried: ${why}`); continue; }
+    step(j, `Candidate ${i + 1} of ${cands.length}: ${model}`);
+    const inputs = { model: brain ? SPARKIE_ID : model, ...('sample' in (w.inputs || {}) ? { sample } : {}) };
+    const c = { ...ctx, conv: null, onQuestion: null, request: `comparing models for ${w.title}: ${model}`, compare: { tag: `${tag}${i + 1}`, ...(brain ? { workflow: compareBrainView(w) } : {}) } };
+    let out;
+    try { out = await ACTIONS.get('run_workflow').run({ name: w.title, inputs }, viewer, c); } catch (e) { results.push({ model, result: 'failed', why: compareWords(e) }); note(j, `${model}: failed: ${compareWords(e)}`); continue; }
+    const run = await compareWait(j, out.operation, until);
+    const seconds = Math.round((Date.parse(run?.finishedAt) - Date.parse(run?.createdAt)) / 1000) || 0;
+    const r = run?.status === 'completed' ? { model, result: 'ran', seconds, ...(await compareScore(run)) }
+      : { model, result: run?.status === 'cancelled' ? 'stopped' : 'failed', seconds, why: run?.status === 'cancelled' && !j.cancelled ? 'the hour was up' : compareWords(run?.error || run?.status) };
+    results.push(r);
+    note(j, compareLine(r));
+  }
+  cancelCheck(j);
+  const passed = results.filter(r => r.result === 'ran' && r.ok !== false), scored = [...passed].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const clear = scored.length && scored.every(r => r.score !== undefined) && (scored.length === 1 || scored[0].score - scored[1].score > COMPARE_MARGIN);
+  const compared = { at: new Date().toISOString(), sample, results: results.map(r => ({ ...r })) };
+  const lines = results.map(compareLine);
+  if (!passed.length) { compareKeepOn(w, null, compared); j.report = [...lines, 'No candidate ended well, so nothing was kept.']; return; }
+  const winner = clear ? scored[0] : null;
+  // From Telegram the keeping waits for the owner in Spark Console, as other changes to saved workflows do.
+  if (winner && !ctx.channel) {
+    compareKeepOn(w, compareBest(winner, sample), compared);
+    j.report = [...lines, `Kept ${winner.model} for “${w.title}”: a run of it with no model given uses it.`];
+    return;
+  }
+  compareKeepOn(w, null, compared);
+  const offer = winner ? [winner] : scored;
+  const said = winner ? `${winner.model} won; keeping it for “${w.title}” waits for you in Spark Console.` : `Too close to call (within ${COMPARE_MARGIN}, or without a score): pick the one to keep for “${w.title}”.`;
+  j.report = [...lines, said];
+  if (!ctx.conv) { j.report.push(`To keep one: compare_models {"workflow": "${w.title}", "keep": "<model>"}.`); return; }
+  const q = question(viewer, { ...ctx, onQuestion: () => {} }, said, offer.slice(0, 4).map(r => ({ label: `Keep ${r.model} (${r.score !== undefined ? `score ${r.score}, ` : ''}${r.seconds} s)`, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } })), 'question', { ownerOnly: Boolean(ctx.channel) });
+  j.choices = sparkieMessageChoices(q);
+}
+// The owner's pick after a compare: keeps that candidate of the last compare of this workflow.
+function compareKeep(w, keep, viewer, ctx) {
+  const r = (w.compared?.results || []).find(x => x.model === keep && x.result === 'ran' && x.ok !== false);
+  if (!r) throw new HttpError(409, `${String(keep).slice(0, 80)} isn’t one of the candidates that ended well in the last compare of “${w.title}”, so nothing was kept.`);
+  if (ctx.channel && !ctx.ownerConfirmed) {
+    const label = `Keep ${r.model} for “${w.title}”`;
+    return question(viewer, ctx, `${label}? That one waits for you in Spark Console.`, [{ label, call: { action: 'compare_models', args: { workflow: w.title, keep: r.model } } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+  }
+  compareKeepOn(w, compareBest(r, w.compared.sample), null);
+  return { outcome: 'kept', workflow: w.title, model: r.model, note: `${r.model} is kept for “${w.title}”: a run of it with no model given uses it.` };
+}
+
+action({
+  name: 'compare_models', title: 'Compare models on a saved workload', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
+  description: 'Use when the owner wants a saved workload run with several models to find the best one ("run my workload on whatever is best", "compare X against Y on nightly", "keep the winner"). The saved workflow must declare an input called model. Runs it once for each candidate, one after another: each starts what it needs, its job does sample items and writes result.json with a score from 0 to 1, and what the run started is stopped. Keeps the winner on the saved workflow (a later run with no model uses it); when the scores are within 0.05 the owner picks. "sparkie" means Sparkie\'s own model. One hour in all. It returns an operation id at once; the scores are posted when it ends. With keep, it keeps that candidate of the last compare instead (the owner\'s pick).',
+  input: { type: 'object', properties: {
+    workflow: { type: 'string', minLength: 2, maxLength: 80, description: 'The saved workflow’s name, from workflows (saved); it declares an input called model.' },
+    candidates: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][^\\n\\r\\x00-\\x1f]{0,199}$' }, description: 'The models to try, as start_model takes them; "sparkie" is Sparkie’s own model.' },
+    sample: { type: 'integer', minimum: 1, maximum: 200, description: 'How many items each candidate’s job does (the workflow’s sample input); 10 when not said.' },
+    keep: { type: 'string', minLength: 1, maxLength: 200, description: 'Only after a compare whose scores were close: the candidate the owner picked.' },
+  }, required: ['workflow'], additionalProperties: false },
+  run: async (input, viewer, ctx) => {
+    const w = findSaved(input.workflow);
+    if (!w) throw new HttpError(404, `No saved workflow called “${input.workflow}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    if (!Object.hasOwn(w.inputs || {}, 'model')) throw new HttpError(409, `“${w.title}” has no input called model, so it can’t be run with each candidate. Save it with {model} where the model’s name goes (its start step, the job’s settings).`);
+    if (input.keep !== undefined) {
+      if (input.candidates !== undefined || input.sample !== undefined) throw new HttpError(400, 'Give keep alone, with the workflow.');
+      return compareKeep(w, input.keep, viewer, ctx);
+    }
+    if (!input.candidates) throw new HttpError(400, 'Missing argument: candidates.');
+    const cands = [...new Set(input.candidates.map(String))].sort((a, b) => compareIsBrain(b) - compareIsBrain(a));
+    if ([...jobs.values()].some(x => x.type === 'compare' && x.status === 'running' && x.model === w.title)) throw new HttpError(409, `A compare of “${w.title}” is running already. Its scores are posted when it ends.`);
+    const sample = input.sample ?? 10;
+    const job = newJob('compare', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
+    runJob(job, j => compareRun(j, w, cands, sample, viewer, ctx));
+    return { outcome: 'started', operation: job.id, workflow: w.title, candidates: cands, sample,
+      ...('sample' in (w.inputs || {}) ? {} : { note: `“${w.title}” has no sample input, so each candidate runs it whole.` }), next: `wait_operation {"id":"${job.id}"}` };
+  },
+});
 /* ───────── the app door: the owner's kept apps from anywhere (R40) ───────── */
 // Area: features        Rules: R40        Tests: app-door.test.mjs
 // Owns: none

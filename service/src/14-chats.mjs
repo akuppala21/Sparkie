@@ -171,6 +171,7 @@ async function runChoice(viewer, conv, id, by) {
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
+  compare: 'Comparing models for',
   deploy: 'Starting',
   'deploy-cluster': 'Starting',
   'power-off': 'Powering off',
@@ -197,7 +198,7 @@ function postResult(job) {
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
-  conv.messages.push({ role: 'assistant', content: `${content}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status });
+  conv.messages.push({ role: 'assistant', content: `${content}${report}`, createdAt: new Date().toISOString(), notice: true, operation: job.id, status: job.status, ...(Array.isArray(job.choices) && job.choices.length ? { choices: job.choices } : {}) });
   conv.updatedAt = new Date().toISOString();
   saveChats();
   // Work started from Telegram reports there too, as a fixed line (20-tell.mjs).
