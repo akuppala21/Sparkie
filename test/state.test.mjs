@@ -11,8 +11,8 @@
 // each on a fleet of its own: a `readKept` file that isn't JSON falls back to `<file>.prev` (the copy from before its
 // last save) with a notice that the last change may be missing, or starts empty and says so; a missing file never falls
 // back; sign-in files get no `.prev`; `writePrivate` syncs before the rename (S1). `access.json` cut short at start:
-// the last good copy (`access.json.good`) answers with one notice, access changes → 503 and the file is left alone, and
-// once mended the copy follows each change (S2). `desired.json` and `validations.json` that can't be read as a stop
+// the last good copy (`access.json.good`) answers with one notice and the file is left alone, and once mended the copy
+// still matches it (S2). `desired.json` and `validations.json` that can't be read as a stop
 // finishes (a link to a folder in their place) are not saved over, Forget answers 503, and both entries of each are
 // there once they read again (F12). The daily copy's record survives a restart (`/health` `lastBackup.good`); with
 // every other Spark off nothing is tried and nothing is said on day 3, and past day 7 with changes there is one notice
@@ -378,10 +378,8 @@ describe('the main service', { concurrency: 1 }, () => {
   });
 
   /* ───────── access.json that can't be read (S2) ───────── */
-  describe('access.json that can\'t be read: the last good copy answers, and who has access can\'t be changed until it reads fine again', { concurrency: 1 }, () => {
+  describe('access.json that can\'t be read: the last good copy answers, and the bad file is left alone', { concurrency: 1 }, () => {
     const CUT = '{\n  "version": 1,\n  "ownerLogin": "owner@te'; // as a power cut can leave it
-    const MEMBER_ID = '0123456789abcdef'; // member@test in mock/access.json
-    const NEW = { login: 'new@test', permissions: { nodeIds: ['spark3'], chat: true, files: 'none', sharedFiles: 'none' } };
     let fleet, good;
     const file = name => join(fleet.stateDir, name);
     const who = async login => JSON.parse((await request(`${fleet.base}/whoami`, { headers: login ? { 'tailscale-user-login': login } : {} })).text).access;
@@ -395,37 +393,31 @@ describe('the main service', { concurrency: 1 }, () => {
     }, { timeout: 60000 * SLOW });
     after(() => fleet?.stop());
 
-    test('the owner is still the owner and a member still a member, with one notice', { timeout: 60000 * SLOW }, async () => {
+    test('the owner is still the owner, with one notice', { timeout: 60000 * SLOW }, async () => {
       assert.equal(await who(), 'owner');
-      assert.equal(await who('member@test'), 'member');
       assert.equal(await who('stranger@test'), 'none');
-      assert.equal((await ownerOn(fleet, '/access')).json.owner, 'owner@test');
       await waitFor(() => notices().length === 1, { timeout: 10000, what: 'the notice' });
       assert.match(notices()[0].text, /using its last good copy, access\.json\.good/);
     });
 
-    test('a change to who has access answers 503, and the bad file is left exactly as it is', { timeout: 60000 * SLOW }, async () => {
-      for (const [method, path, body] of [['POST', '/access', NEW], ['DELETE', `/access/${MEMBER_ID}`, undefined], ['PUT', '/access/invite', { url: '' }]]) {
-        const r = await ownerOn(fleet, path, { method, body });
-        assert.equal(r.status, 503, `${method} ${path}: ${r.text}`);
-        assert.match(r.json.error, /access file can’t be read\. Nothing was changed\./);
-      }
+    test('the bad file is left exactly as it is', { timeout: 60000 * SLOW }, async () => {
       assert.equal(readFileSync(file('access.json'), 'utf8'), CUT);
       assert.ok(!readdirSync(fleet.stateDir).some(x => x.startsWith('access.json.unreadable')));
       assert.equal(readFileSync(file('access.json.good'), 'utf8'), good);
-      assert.equal(await who('member@test'), 'member');
       assert.equal(notices().length, 1, 'one notice, not one per read');
     });
 
-    test('mended, changes work again and the copy follows each one: a removed member is not brought back by the next break', { timeout: 60000 * SLOW }, async () => {
-      writeFileSync(file('access.json'), good);
-      assert.equal((await ownerOn(fleet, `/access/${MEMBER_ID}`, { method: 'DELETE' })).status, 200);
+    test('mended, the copy still matches it; a new break gives a new notice', { timeout: 60000 * SLOW }, async () => {
+      // Mended by hand, with one thing changed, so the copy can only match by following it.
+      writeFileSync(file('access.json'), JSON.stringify({ ...JSON.parse(good), userName: 'Mended by hand' }, null, 2));
+      // (the service reads the file again: the access change removed above used to make it read; fleet_status reads it)
+      await ownerOn(fleet, '/actions/fleet_status', { method: 'POST', body: {} });
       const copy = JSON.parse(readFileSync(file('access.json.good'), 'utf8'));
       assert.deepEqual(copy, JSON.parse(readFileSync(file('access.json'), 'utf8')));
-      assert.deepEqual(copy.members, []);
+      assert.equal(copy.userName, 'Mended by hand');
       assert.equal(statSync(file('access.json.good')).mode & 0o777, 0o600);
       writeFileSync(file('access.json'), CUT);
-      assert.equal((await ownerOn(fleet, '/access', { method: 'POST', body: NEW })).status, 503);
+      await ownerOn(fleet, '/actions/fleet_status', { method: 'POST', body: {} });
       assert.equal(await who(), 'owner');
       assert.equal(await who('member@test'), 'none');
       await waitFor(() => notices().length === 2, { timeout: 10000, what: 'a new break, a new notice' });

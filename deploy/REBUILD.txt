@@ -36,7 +36,7 @@ Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.lo
    - the root helper, if you used it: bash spark-console/deploy/root-for-sparkie.sh --hub 2
    Sparkie's model is in no copy either: download it and its draft model to Spark 2 again, then type /restart sparkie.
 
-What comes back as that copy had it: people and access, passkeys, agent keys, memory, lessons, chats, saved
+What comes back as that copy had it: the owner and the Spark list, passkeys, agent keys, memory, lessons, chats, saved
 workflows, setups that worked, what should be running, and which brain to use. What doesn't: sign-ins, the keys in
 step 6, the journal (never copied: recall starts empty, and a memory line's source may point at a record that's gone),
 and whatever changed after that copy.

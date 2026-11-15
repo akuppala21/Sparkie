@@ -3,7 +3,7 @@
 // `tailnetLink`; the owner's session cookie opens a kept app (an HttpOnly, Secure, SameSite=Lax door ticket for `/`),
 // HTTP, a WebSocket and a 5 MB upload go through; no console or door cookie, Tailscale identity or client
 // `X-Forwarded-*` reaches the app, and its Set-Cookie with a console or door name and its CORS grant are dropped; one
-// app per browser; refused for HTTP and the WebSocket: not signed in, a member, an agent key, a terminal, a Spark's own
+// app per browser; refused for HTTP and the WebSocket: not signed in, an agent key, a terminal, a Spark's own
 // address; `/open` refuses a model, Spark 2, the model port, a hand-started model server, an unknown name or Spark, a
 // port or address in the path, an app's own page or another site; posts and WebSockets only from the door's origin; the
 // door's origin can't use the main API, a read too; signing a device out closes its app WebSocket and ticket; a
@@ -265,7 +265,7 @@ describe('the app door', () => {
     assert.equal((await door('/console/api/open/spark4/notebook', { headers: { ...browser, ...both(tB) } })).status, 302);
   });
 
-  test('not signed in, a member, an agent key, a terminal or a Spark\'s own program: refused, HTTP and WebSocket alike', async () => {
+  test('not signed in, an agent key, a terminal or a Spark\'s own program: refused, HTTP and WebSocket alike', async () => {
     // (on the tailnet, Tailscale's identity decides even beside the owner's door ticket; from the internet, a ticket is
     // the owner's, so these come without one)
     const refused = async (headers, [open, page], what, { owners = false } = {}) => {
@@ -285,7 +285,7 @@ describe('the app door', () => {
     assert.match(anon.text, /Sign in to Spark Console/);
     assert.deepEqual([...anon.text.matchAll(/href="([^"]+)"/g)].map(x => x[1]), [`${MAIN}/`]);
     assert.equal((await door('/', { headers: { 'tailscale-funnel-request': '?1' } })).status, 401, 'no ticket, no session');
-    await refused({ 'tailscale-user-login': 'member@test', 'x-forwarded-for': '100.100.8.8' }, [403, 403], 'a member', { owners: true });
+    await refused({ 'tailscale-user-login': 'stranger@test', 'x-forwarded-for': '100.100.8.8' }, [401, 401], 'someone else on the tailnet, with the owner’s ticket', { owners: true });
     await refused({ ...INTERNET, authorization: `Bearer ${keys.agent.token}` }, [401, 401], 'an agent key');
     await refused({ ...INTERNET, authorization: `Bearer ${TERMINAL}` }, [403, 401], 'a terminal signed in from the internet');
     await refused({ ...TAILNET, 'x-forwarded-for': '100.64.0.3' }, [403, 403], 'a program on Spark 3', { owners: true });

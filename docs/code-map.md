@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 64 parts in `service/src/`, joined in name order into `service/server.mjs` (17014 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 64 parts in `service/src/`, joined in name order into `service/server.mjs` (16847 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -90,16 +90,16 @@ Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data
 
 ### `03-identity.mjs`: who's asking
 
-The owner, the members and the Spark list live in the console's own owner-only file on this Spark, managed in Spark Console (Access). Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
+The owner and the Spark list live in the console's own owner-only file on this Spark (access.json); the service never writes it. Spark Console has one user, the owner (contract 2.1): members, their requests and the share link an older build kept there are left as they are, never read and never removed (E10d), so going back a build still finds them. Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
 
-- **Area:** ground. **Rules:** R5, R10, R20. **Tests:** state.test.mjs, internet.test.mjs, passkey.test.mjs
-- **Lines:** 289
-- **Owns:** access.json (writers: changeMembers, changeAccess), access.json.good (writers: ownAccess; a copy of the last good access.json)
+- **Area:** ground. **Rules:** R4, R5, R10, R20. **Tests:** state.test.mjs, internet.test.mjs, passkey.test.mjs, owner-only.test.mjs
+- **Lines:** 210
+- **Owns:** access.json (writers: none), access.json.good (writers: ownAccess; a copy of the last good access.json)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `readJson`, `readKept`, `writePrivate`, `ownAccess`, `accessToChange`, `accessList`, `memberPermissions`, `changeMembers`, `changeAccess`, `clean`, `addressKey`, `overLimit`, `askAccess`, `disconnectViewer`, `ownerPermissions`, `viewerFor`, `viewerForLogin`, `canUse`, `canManage`, `mustUse`, `refreshNodes`, `sameOrigin`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `NODES`, `DEV_LOGIN`, `nodeById`, `NODES_TTL`, `NODE_ID_RE`), `02-ssh` (`run`, `authProblem`), `04-metrics` (`clients`, `samplers`, `startSampler`), `07-jobs` (`deploy`, `note`), `12-status` (`sparkName`), `16-actions` (`recent`), `19-watcher` (`fleetEvent`), `21-web` (`publicHost`), `22-sessions` (`sessionViewer`), `23-http` (`selfOrigin`), `25-backup-and-start` (`local`)
-- **Used by:** `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory`, `20-needs`, `20-state-copy`, `20-tg-approve`, `20-ways-in`, `21-apps`, `21-brain-check`, `21-door`, `21-power`, `21-selftest`, `21-telegram`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Functions:** `readJson`, `readKept`, `writePrivate`, `ownAccess`, `accessList`, `clean`, `addressKey`, `overLimit`, `ownerPermissions`, `viewerFor`, `viewerForLogin`, `canUse`, `canManage`, `mustUse`, `refreshNodes`, `sameOrigin`
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `NODES`, `DEV_LOGIN`, `NODES_TTL`, `NODE_ID_RE`, `nodeById`), `02-ssh` (`authProblem`), `04-metrics` (`samplers`, `clients`, `startSampler`), `16-actions` (`recent`), `19-watcher` (`fleetEvent`), `21-web` (`publicHost`), `22-sessions` (`sessionViewer`), `23-http` (`selfOrigin`), `25-backup-and-start` (`local`)
+- **Used by:** `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `16-reads`, `17-changes`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory`, `20-needs`, `20-state-copy`, `20-tg-approve`, `20-ways-in`, `21-apps`, `21-brain-check`, `21-door`, `21-power`, `21-selftest`, `21-telegram`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `03-secrets.mjs`: secrets: one owner-only file outside the state folder
 
@@ -112,7 +112,7 @@ What Spark Console keeps for the owner that must never travel (Telegram's bot to
 - **Wakes:** none
 - **Functions:** `secretsRead`, `secretsWrite`, `keptForms`, `keptHidden`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`)
-- **Used by:** `14-chats`, `20-beat`, `20-keys`, `20-mcp`, `20-needs`, `20-tg-approve`, `21-telegram`, `22-sessions`, `24-handler`
+- **Used by:** `14-chats`, `20-beat`, `20-keys`, `20-mcp`, `20-memory-names`, `20-needs`, `20-tg-approve`, `21-telegram`, `22-sessions`, `24-handler`
 
 ### `04-metrics.mjs`: live metrics
 
@@ -160,7 +160,7 @@ Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the Conne
 - **Wakes:** none
 - **Functions:** `newJob`, `note`, `step`, `publicJob`, `claimSparks`, `claimed`, `stopList`, `runJob`, `copyModel`, `unapprovedStops`, `planMoved`, `deploy`, `stopContainer`
 - **Uses:** `01-setup` (`HttpError`, `nodeById`, `HF_HUB`, `CONFIG`, `hfSnap`, `q`, `HF_OWN`, `hfEachFile`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`, `spawnOn`), `03-identity` (`accessList`, `mustUse`), `05-library` (`plan`, `containerName`, `withHow`, `inventory`, `engineOf`, `ENGINES`, `memNow`, `memoryShare`, `dockerRunCommand`, `imageOf`), `08-cluster` (`asideBack`), `09-verified` (`answers`, `recordVerified`), `12-status` (`sparkName`), `14-chats` (`postResult`), `15-routes` (`sparkCalls`), `16-actions` (`tripBreaker`, `agentCache`), `17-changes` (`withoutRejected`, `fixFlags`, `causeLines`), `18-workflows` (`recordWorkflowRun`, `consoleStopped`), `19-watcher` (`fleetEvent`), `20-desired` (`cancelCheck`, `desiredAfter`), `20-journal` (`journalNote`, `journalOp`), `20-lessons` (`learnFrom`), `20-mcp` (`maskSecrets`), `20-op-energy` (`opEnergyStart`), `20-tell` (`tellAwaitDone`)
-- **Used by:** `03-identity`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `13-main-model`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-recall`, `20-state-copy`, `20-tell`, `20-words`, `21-apps`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `24-handler`, `25-backup-and-start`
+- **Used by:** `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `13-main-model`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-recall`, `20-state-copy`, `20-tell`, `20-words`, `21-apps`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `24-handler`, `25-backup-and-start`
 
 ### `08-cluster.mjs`: one model across two linked Sparks
 
@@ -232,13 +232,13 @@ deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-conso
 Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH as everything else, with the same fields the portal reported. It's collected every 30 seconds whether or not anyone is looking, like the portal did, which also keeps the GPU energy total going.
 
 - **Area:** knowledge. **Rules:** R10, R24, R30, R37. **Tests:** fleet.test.mjs, dark.test.mjs, files.test.mjs
-- **Lines:** 184
+- **Lines:** 181
 - **Owns:** energy.json (writers: sampleEnergy)
 - **Timers:** collectStatus (every 30 s, after a first round 2 s after start)
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`
-- **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `PATH_PROGRAMS`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
-- **Used by:** `03-identity`, `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `PATH_PROGRAMS`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
+- **Used by:** `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-ask.mjs`: how the brain is asked and read: its setup's ask block (B9, R50)
 
@@ -264,7 +264,7 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 - **Wakes:** none
 - **Functions:** `configPresets`, `mainPresets`, `loadMainSetup`, `saveMainChoice`, `writeMainFile`, `brainLeftDown`, `markBrainLeftDown`, `saveRoutes`, `routeTarget`, `chatTarget`, `agentTarget`, `mainNode`, `repoOf`, `mainBusy`, `mainSnapshots`, `mainStatusScript`, `mainStatus`, `mainPlan`, `mainRunCommand`, `mainOverlayScript`, `startMain`, `setupFromLibrary`, `switchMain`, `stopMain`
 - **Uses:** `01-setup` (`STATE_DIR`, `CONFIG`, `ALL_LOCAL`, `nodeById`, `q`, `HF_HUB`, `hfSnap`, `HttpError`, `isProtected`, `sleep`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `readJson`), `05-library` (`gpuUsersScript`, `inventory`), `07-jobs` (`jobs`, `note`, `stopContainer`, `step`, `copyModel`), `09-verified` (`recordVerified`), `13-ask` (`withAsk`), `21-brain-check` (`checkBrainSoon`), `21-web` (`readable`), `25-backup-and-start` (`local`)
-- **Used by:** `05-library`, `09-verified`, `10-recipes`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-workflows`, `19-watcher`, `20-heal`, `20-memory-names`, `20-words`, `21-brain-check`, `21-brain-eval`, `21-guide`, `22-passkey`, `24-handler`
+- **Used by:** `05-library`, `09-verified`, `10-recipes`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-workflows`, `19-watcher`, `20-heal`, `20-memory-names`, `20-words`, `21-brain-check`, `21-brain-eval`, `21-guide`, `24-handler`
 
 ### `14-chats.mjs`: Sparkie's chats
 
@@ -302,7 +302,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `runningChoices`, `servedModel`, `setRoute`, `routeView`, `usedRecently`, `runningModels`, `proxyModel`, `startOnCall`, `sparkieApi`, `proxyBrain`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `CONFIG`, `HttpError`), `03-identity` (`canUse`), `05-library` (`inventory`, `containerName`), `12-status` (`sparkName`), `13-main-model` (`MAIN`, `mainStatus`, `ROUTES`, `saveRoutes`, `routeTarget`, `agentTarget`), `16-actions` (`recentInventory`, `recent`, `runAction`, `mainArg`), `17-changes` (`resolveModelName`, `inRecipes`), `18-workflows` (`consoleStopped`), `20-desired` (`desired`, `waitJob`), `21-power` (`parkedFor`, `offFor`, `powerState`, `wakeNames`), `23-http` (`send`, `readBody`, `sparkAddresses`, `blockedAddresses`), `24-handler` (`clientAddress`), `25-backup-and-start` (`local`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`, `CONFIG`, `HttpError`), `05-library` (`inventory`, `containerName`), `12-status` (`sparkName`), `13-main-model` (`MAIN`, `mainStatus`, `ROUTES`, `saveRoutes`, `routeTarget`, `agentTarget`), `16-actions` (`recentInventory`, `recent`, `runAction`, `mainArg`), `17-changes` (`resolveModelName`, `inRecipes`), `18-workflows` (`consoleStopped`), `20-desired` (`desired`, `waitJob`), `21-power` (`parkedFor`, `offFor`, `powerState`, `wakeNames`), `23-http` (`send`, `readBody`, `sparkAddresses`, `blockedAddresses`), `24-handler` (`clientAddress`), `25-backup-and-start` (`local`)
 - **Used by:** `07-jobs`, `09-verified`, `16-reads`, `17-changes`, `18-job-model`, `18-workflows`, `21-brain-check`, `21-power`, `24-handler`
 
 ### `16-actions.mjs`: actions: what the console can do, as one list for people, Sparkie and agents
@@ -337,7 +337,7 @@ Every action here only looks (kind 'read'), so runAction runs it straight away a
 Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is checked the same way before anything happens: 1. inputs (checkInput) 2. a fresh plan, never the cached view 3. the rails below, in code 4. one change per Spark (claimSparks) 5. inside the operation the plan is made again and has to match what was approved (deploy's stop list), and a pause by the owner stops it there 6. memory is measured after the stops and 8 GB is always kept free 7. it has to answer before it counts 8. on failure, what was stopped is started again. It asks …
 
 - **Area:** core. **Rules:** R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38. **Tests:** change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs
-- **Lines:** 870
+- **Lines:** 871
 - **Actions:** `start_model`, `stop_model`, `restart_model`, `find_setups`, `save_file`
 - **Owns:** agent-settings.json (writers: setAgentSettings)
 - **Timers:** none
@@ -470,12 +470,12 @@ Fixing things by itself is what matters most to the owner (2026-11-11). On top o
 Spark Console's own record of what happens through it, so it is still known after a restart (operation_log forgets then) and can be looked up (recall). Append-only: never rewritten, never deleted, never copied off Spark 2. Its folder (JOURNAL_DIR, 0700, files 0600) is outside the state folder, so neither the daily copy nor an install snapshot takes it. Two files a month: journal-YYYY-MM.jsonl, one short line per record (1,500 bytes at most), and journal-YYYY-MM.out, a record's long text (a tool's result, an operation's log), written in pieces as it is read and masked piece by piece; its line …
 
 - **Area:** record. **Rules:** R7, R22, R26, R43. **Tests:** journal.test.mjs, door.test.mjs, fuzz.test.mjs
-- **Lines:** 358
+- **Lines:** 362
 - **Actions:** `recall`
 - **Owns:** none (its own files, journal-YYYY-MM.jsonl and .out in JOURNAL_DIR, are outside the state folder; one writer, journal)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `journalId`, `jSub`, `jErr`, `jArgs`, `jArgsKept`, `jFile`, `jMasker`, `jSlices`, `jBody`, `jLine`, `journal`, `journalFirstFor`, `jCall`, `journalFirst`, `journalCalled`, `journalLooks`, `journalLook`, `journalSaid`, `journalTool`, `journalTurn`, `journalNote`, `jOpText`, `journalOp`, `journalEvent`, `journalFiles`, `jParse`, `jLinesOf`, `jWhere`, `jTitle`, `jView`, `jMerge`, `jOwnCall`, `jWho`, `jOpen`, `jShut`, `jSees`, `jRecord`, `journalHits`, `journalAfterRestart`, `journalNeeds`
+- **Functions:** `journalId`, `jSub`, `jErr`, `jArgs`, `jArgsKept`, `jFile`, `jMasker`, `jSlices`, `jBody`, `jLine`, `journal`, `journalFirstFor`, `jCall`, `journalFirst`, `journalCalled`, `journalLooks`, `journalLook`, `journalSaid`, `journalTool`, `journalTurn`, `journalNote`, `jOpText`, `journalOp`, `journalEvent`, `journalFiles`, `jParse`, `jLinesOf`, `jWhere`, `jTitle`, `jView`, `jMerge`, `jOwnCall`, `jSaidHere`, `jWho`, `jOpen`, `jShut`, `jSees`, `jRecord`, `journalHits`, `journalAfterRestart`, `journalNeeds`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `JOURNAL_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`ACTIONS`, `sizeWords`, `action`, `sparkArg`), `17-changes` (`START_FAILURES`, `knownStartFailure`), `20-mcp` (`maskSecrets`, `maskDeep`), `20-needs` (`SAVE_WHY`, `tilde`), `20-op-energy` (`opWh`), `20-recall` (`recallAnswer`)
 - **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `18-saved-from`, `19-watcher`, `20-keys`, `20-lessons`, `20-memory-said`, `20-needs`, `20-recall`, `21-work`, `25-backup-and-start`
 
@@ -507,7 +507,7 @@ A lesson is Spark Console's own short record of a failure (contract 5.10; design
 
 ### `20-mcp.mjs`: the agent door (MCP)
 
-Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address, <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Access → Agents), so you can see what each one did and remove one without touching the others. A key only works together with its owner's Tailscale identity, and never from the Sparks themselves (requestGate). Only the key's hash is kept. Read-only for now; the key's scopes decide which actions it's offered once more kinds exist.
+Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address, <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Agents and Telegram), so you can see what each one did and remove one without touching the others. A key only works together with its owner's Tailscale identity, and never from the Sparks themselves (requestGate). Only the key's hash is kept. Read-only for now; the key's scopes decide which actions it's offered once more kinds exist.
 
 - **Area:** ways in. **Rules:** R7, R9, R26, R31, R37, R39. **Tests:** door.test.mjs, ask.test.mjs, fuzz.test.mjs
 - **Lines:** 308
@@ -523,12 +523,12 @@ Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above
 Each memory line says what it is about (`about`, G2a): up to five names of things Spark Console itself knows, found by code in the line's own words when it is saved: never by a model, and never by reading a file then. A name is a Spark ("spark4"), a model (a recipe's id, "glm-5.3-flash"), a container, an app, a setup (one of the brain's, "aphex-x4", or a recipe's, by its id), a person (the owner, a member) or an agent, each kept in one form, lower case. The names come from a book of what the console lists (memoryNameBook): made at start, and again at most once a minute when memory is used, …
 
 - **Area:** record. **Rules:** R45, R48. **Tests:** memory.test.mjs, lesson-cards.test.mjs
-- **Lines:** 283
+- **Lines:** 286
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `nameWords`, `buildNameBook`, `memoryNameBook`, `memoryNamesIn`, `memoryEnded`, `memoryLive`, `memorySig`, `memoryNamed`, `memoryIndexOf`, `memoryIndexNow`, `memoryLinesAbout`, `withoutAbout`, `pickWords`, `memoryPicking`, `memorySizes`, `isWish`, `memoryShown`, `memoryShownNow`, `memoryTail`, `memoryNeeds`, `memorySystem`, `memoryPicks`, `pickLine`, `memoryPickBlock`, `lessonsNow`, `memoryCards`
-- **Uses:** `01-setup` (`NODES`, `ALL_LOCAL`), `03-identity` (`accessList`), `10-recipes` (`modelKey`, `recipeCatalog`), `13-ask` (`askOf`), `13-main-model` (`repoOf`, `mainPresets`, `chatTarget`, `MAIN`), `19-watcher` (`knowledge`), `20-lessons` (`LESSONS_FILE`, `lessonsKept`, `lessonCard`), `20-mcp` (`agentKeys`), `20-memory-time` (`memoryOffFor`), `20-memory` (`MEMORY_FILE`, `memoryEntries`, `MEMORY_CHARS`, `memoryPrompt`, `MEMORY_UNREAD`)
+- **Functions:** `nameWords`, `buildNameBook`, `memoryNameBook`, `memoryNamesIn`, `memoryEnded`, `memoryLive`, `memorySig`, `memoryNamed`, `memoryIndexOf`, `memoryIndexNow`, `memoryLinesAbout`, `withoutAbout`, `pickWords`, `memoryPicking`, `memorySizes`, `isWish`, `memoryShown`, `memoryShownNow`, `memoryTail`, `memoryNeeds`, `memoryKeysHidden`, `memorySystem`, `memoryPicks`, `pickLine`, `memoryPickBlock`, `lessonsNow`, `memoryCards`
+- **Uses:** `01-setup` (`NODES`, `ALL_LOCAL`), `03-identity` (`accessList`), `03-secrets` (`keptHidden`), `10-recipes` (`modelKey`, `recipeCatalog`), `13-ask` (`askOf`), `13-main-model` (`repoOf`, `mainPresets`, `chatTarget`, `MAIN`), `19-watcher` (`knowledge`), `20-lessons` (`LESSONS_FILE`, `lessonsKept`, `lessonCard`), `20-mcp` (`agentKeys`), `20-memory-time` (`memoryOffFor`), `20-memory` (`MEMORY_FILE`, `memoryEntries`, `MEMORY_CHARS`, `memoryPrompt`, `MEMORY_UNREAD`)
 - **Used by:** `14-chats`, `20-memory-time`, `20-memory`, `20-needs`, `20-recall`
 
 ### `20-memory-said.mjs`: said outright, kept by code: "remember that …" when the brain didn't call remember
@@ -575,7 +575,7 @@ Design G's third addition (A3, step 4). The brain eval switches it off with `tim
 What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). Short lines in memory.json (no ceiling), put at the end of Sparkie's system prompt (so the prompt cache stays warm until it changes), and listed for agents by `memory`. Live state beats memory: the prompt says so. Only the owner's own words add or remove a line: either they say so ("remember…", "forget that…"), or they simply state it ("Spark 4 is on Ethernet now") …
 
 - **Area:** record. **Rules:** R20, R22, R25, R26, R45. **Tests:** sparkie-more.test.mjs, memory.test.mjs
-- **Lines:** 253
+- **Lines:** 255
 - **Actions:** `memory`, `remember`, `forget_memory`
 - **Owns:** memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
 - **Timers:** none
@@ -839,15 +839,15 @@ run (the one page's tool, design A's host_look) runs one command Sparkie writes 
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
 
-One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that exact request, so a program on the owner's device can't make those changes with Tailscale's identity alone. Until a passkey is set up, these changes need none (nothing can lock the owner out).
+Tailscale, or a device the owner signed in, says the owner is asking, and for the few changes to who may act (agent keys and their rights, resuming paused agents, new devices and passkeys) the owner also confirms with a passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that exact request, so a program on the owner's device can't make those changes with Tailscale's identity alone. Until a passkey is set up, these changes need none (nothing can lock the owner out).
 
 - **Area:** ways in. **Rules:** R6, R23, R31, R32, R33. **Tests:** passkey.test.mjs
-- **Lines:** 205
+- **Lines:** 191
 - **Owns:** passkeys.json (writers: savePasskeys)
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `passkeys`, `savePasskeys`, `passkeyOrigins`, `passkeyRpIds`, `counterNote`, `actionHash`, `newChallenge`, `describeChange`, `takeChallenge`, `passkeyNeeded`, `mayNeedPasskey`, `bodyLimit`, `stopsOutside`, `needsPasskey`, `refuseHiddenFiles`, `passkeyGate`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `nodeById`), `03-identity` (`readJson`, `writePrivate`, `accessList`, `clean`), `12-status` (`sparkName`), `13-main-model` (`ASSISTANT_NAME`), `14-chats` (`chatData`), `16-actions` (`action`), `17-changes` (`pendingChoices`, `agentSettings`), `19-watcher` (`fleetEvent`, `knowledge`), `20-mcp` (`audit`, `agentKeys`, `keyName`), `22-sessions` (`deviceCodes`, `newDevicePasskeyOpen`, `markPasskey`), `23-http` (`selfOrigin`, `readBody`)
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `nodeById`), `03-identity` (`readJson`, `writePrivate`, `clean`), `12-status` (`sparkName`), `14-chats` (`chatData`), `16-actions` (`action`), `17-changes` (`pendingChoices`, `agentSettings`), `19-watcher` (`fleetEvent`, `knowledge`), `20-mcp` (`audit`, `agentKeys`, `keyName`), `22-sessions` (`deviceCodes`, `newDevicePasskeyOpen`, `markPasskey`), `23-http` (`selfOrigin`, `readBody`)
 - **Used by:** `20-beat`, `21-telegram`, `22-sessions`, `24-handler`
 
 ### `22-sessions.mjs`: signing in without Tailscale (docs/contract.md 4.10)
@@ -879,12 +879,12 @@ From the internet (Tailscale Funnel) a request carries no Tailscale identity, so
 Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model, container, job, chat, person, hostname or address.
 
 - **Area:** ways in. **Rules:** R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40. **Tests:** fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs
-- **Lines:** 711
+- **Lines:** 630
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `publicFleet`, `publicValue`, `clientAddress`, `requestGate`, `handler`
-- **Uses:** `01-setup` (`HttpError`, `NODES`, `ALL_LOCAL`, `VERSION`, `BUILD`, `STARTED_AT`, `CONFIG`, `NAME_RE`, `nodeById`, `isProtected`), `02-ssh` (`knownOffline`, `authProblem`, `run`, `fields`), `03-identity` (`overLimit`, `viewerFor`, `LOGIN_RE`, `ownAccess`, `accessList`, `sameOrigin`, `askAccess`, `clean`, `canManage`, `refreshNodes`, `ownerPermissions`, `writePrivate`, `MEMBER_ID`, `ACCESS_PRESETS`, `memberPermissions`, `changeMembers`, `changeAccess`, `disconnectViewer`, `mustUse`), `03-secrets` (`SECRETS_FILE`), `04-metrics` (`metricsStream`), `05-library` (`inventory`, `plan`, `deployOptions`, `plansFor`, `gpuUsersScript`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`jobs`, `agentFailuresInARow`, `publicJob`, `stopList`, `claimSparks`, `newJob`, `runJob`, `deploy`, `claimed`, `stopContainer`), `08-cluster` (`clusterPlan`, `clusterNet`, `clusterDeploy`), `09-verified` (`verifiedList`, `verifiedView`), `10-recipes` (`searchModels`, `addModel`, `parseRepoList`, `addList`, `recipeCatalog`, `REPO_RE`), `11-setups` (`recipes`, `resolveHow`, `startDig`, `sameRepo`, `downloadTargets`, `downloadVersion`, `refreshSetups`), `12-status` (`statusCache`, `sparkName`, `statusFor`, `sparkFor`, `sparkFiles`, `workerCall`, `LOG_SERVICES`), `13-main-model` (`mainPresets`, `repoOf`, `MAIN`, `ROUTES`, `mainStatus`, `setupFromLibrary`, `mainSetup`, `mainPlan`, `mainBusy`, `switchMain`, `startMain`, `stopMain`, `markBrainLeftDown`), `14-chats` (`replying`, `chatData`, `chatSummary`, `LIMITS`, `saveChats`, `CHAT_ID`, `ownChat`, `runChoice`, `chatReply`), `15-routes` (`sparkieApi`, `routeView`, `runningChoices`, `setRoute`), `16-actions` (`action`, `ACTIONS`, `liveSchema`, `runAction`, `agentChanges`), `17-changes` (`agentSettings`, `setAgentSettings`, `notBrainsSpark`, `startWithFixes`, `stoppedForSure`), `18-workflows` (`WORKFLOWS`, `workflowStatus`, `pageWorkflow`, `startTestChanges`, `lastSnapshot`, `undoUpdate`), `19-watcher` (`fleetEvent`, `events`), `20-beat` (`heartbeatRoute`), `20-desired` (`cancelRunningOn`, `desiredNow`, `desired`, `DESIRED_FILE`), `20-keys` (`keysGiven`, `answerKeys`), `20-mcp` (`consoleOrigin`, `keyViewer`, `mcpDoor`, `audit`, `maskSecrets`, `mcpUrl`, `agentKeys`, `agentView`, `keyHash`, `AGENTS_FILE`, `AGENT_ID`, `agentUse`), `20-words` (`ownerWord`, `answerOwnerWord`, `nearMissWord`), `21-brain-check` (`checkBrainSoon`), `21-brain-eval` (`storeBrainEval`), `21-door` (`doorHosts`), `21-guide` (`brainCatalog`), `21-telegram` (`tg`, `telegramRoute`), `22-passkey` (`passkeys`, `passkeyGate`, `refuseHiddenFiles`, `passkeyRpIds`, `newChallenge`, `describeChange`, `actionHash`, `takeChallenge`, `passkeyOrigins`, `savePasskeys`, `challenges`), `22-sessions` (`SIGNIN_ROUTES`, `carriesCredential`, `recoveryView`, `signinRoute`, `sessionRoute`, `makeRecoveryCodes`, `markPasskeyAdded`), `23-http` (`funnelOn`, `tcpApiOff`, `sparkAddresses`, `blockedAddresses`, `send`, `readBody`, `isFault`, `recordFault`, `routePattern`), `25-backup-and-start` (`lastBackup`)
+- **Uses:** `01-setup` (`HttpError`, `NODES`, `ALL_LOCAL`, `VERSION`, `BUILD`, `STARTED_AT`, `CONFIG`, `NAME_RE`, `nodeById`, `isProtected`), `02-ssh` (`knownOffline`, `authProblem`, `run`, `fields`), `03-identity` (`overLimit`, `viewerFor`, `LOGIN_RE`, `accessList`, `sameOrigin`, `refreshNodes`, `ownerPermissions`, `clean`, `writePrivate`, `mustUse`), `03-secrets` (`SECRETS_FILE`), `04-metrics` (`metricsStream`), `05-library` (`inventory`, `plan`, `deployOptions`, `plansFor`, `gpuUsersScript`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`jobs`, `agentFailuresInARow`, `publicJob`, `stopList`, `claimSparks`, `newJob`, `runJob`, `deploy`, `claimed`, `stopContainer`), `08-cluster` (`clusterPlan`, `clusterNet`, `clusterDeploy`), `09-verified` (`verifiedList`, `verifiedView`), `10-recipes` (`searchModels`, `addModel`, `parseRepoList`, `addList`, `recipeCatalog`, `REPO_RE`), `11-setups` (`recipes`, `resolveHow`, `startDig`, `sameRepo`, `downloadTargets`, `downloadVersion`, `refreshSetups`), `12-status` (`statusCache`, `sparkName`, `statusFor`, `sparkFor`, `sparkFiles`, `workerCall`, `LOG_SERVICES`), `13-main-model` (`mainPresets`, `repoOf`, `MAIN`, `ROUTES`, `mainStatus`, `setupFromLibrary`, `mainSetup`, `mainPlan`, `mainBusy`, `switchMain`, `startMain`, `stopMain`, `markBrainLeftDown`), `14-chats` (`replying`, `chatData`, `chatSummary`, `LIMITS`, `saveChats`, `CHAT_ID`, `ownChat`, `runChoice`, `chatReply`), `15-routes` (`sparkieApi`, `routeView`, `runningChoices`, `setRoute`), `16-actions` (`action`, `ACTIONS`, `liveSchema`, `runAction`, `agentChanges`), `17-changes` (`agentSettings`, `setAgentSettings`, `notBrainsSpark`, `startWithFixes`, `stoppedForSure`), `18-workflows` (`WORKFLOWS`, `workflowStatus`, `pageWorkflow`, `startTestChanges`, `lastSnapshot`, `undoUpdate`), `19-watcher` (`fleetEvent`, `events`), `20-beat` (`heartbeatRoute`), `20-desired` (`cancelRunningOn`, `desiredNow`, `desired`, `DESIRED_FILE`), `20-keys` (`keysGiven`, `answerKeys`), `20-mcp` (`consoleOrigin`, `keyViewer`, `mcpDoor`, `audit`, `maskSecrets`, `mcpUrl`, `agentKeys`, `agentView`, `keyHash`, `AGENTS_FILE`, `AGENT_ID`, `agentUse`), `20-words` (`ownerWord`, `answerOwnerWord`, `nearMissWord`), `21-brain-check` (`checkBrainSoon`), `21-brain-eval` (`storeBrainEval`), `21-door` (`doorHosts`), `21-guide` (`brainCatalog`), `21-telegram` (`tg`, `telegramRoute`), `22-passkey` (`passkeys`, `passkeyGate`, `refuseHiddenFiles`, `passkeyRpIds`, `newChallenge`, `describeChange`, `actionHash`, `takeChallenge`, `passkeyOrigins`, `savePasskeys`, `challenges`), `22-sessions` (`SIGNIN_ROUTES`, `carriesCredential`, `recoveryView`, `signinRoute`, `sessionRoute`, `makeRecoveryCodes`, `markPasskeyAdded`), `23-http` (`funnelOn`, `tcpApiOff`, `sparkAddresses`, `blockedAddresses`, `send`, `readBody`, `isFault`, `recordFault`, `routePattern`), `25-backup-and-start` (`lastBackup`)
 - **Used by:** `15-routes`, `20-mcp`, `21-door`, `22-sessions`, `25-backup-and-start`
 
 ### `25-backup-and-start.mjs`: a copy of the console's state on another Spark

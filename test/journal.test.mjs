@@ -163,14 +163,13 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
   await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('no record j_000000000000'), { what: 'the tool results at the brain' });
   await sleep(1000);
   assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
-  // A member may not call it; the owner reads everything.
-  assert.equal((await api('/actions/recall', { method: 'POST', body: { about: '4471' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
+  // The owner reads everything.
   const all = (await owner('recall', { about: '4471', limit: 20 })).json.records;
   assert.ok(all.some(v => v.id === remembered.id && v.args.includes(line)) && all.some(v => v.id === failed.id && /door-4471\.md/.test(v.error)), JSON.stringify(all));
 });
 
 // The owner's words and a chat's tool results come back only on the owner's own call (review of B1, 2026-11-14): never
-// to an agent's key that looks or acts, an agent through ask_sparkie, or a member.
+// to an agent's key that looks or acts, or an agent through ask_sparkie.
 test('words said to Sparkie and a chat\'s tool results: only the owner\'s own call reads them back', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
   await say(chat, 'the NAS password is hunter2; what\'s running?');
@@ -193,8 +192,7 @@ test('words said to Sparkie and a chat\'s tool results: only the owner\'s own ca
   assert.equal(v.isError, false, v.text);
   await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('Words said in a chat'), { what: 'the tool results at the brain' });
   assert.ok(blind(readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from)), 'what the brain was sent for the agent');
-  // A member may not call it at all; the owner's own call reads both.
-  assert.equal((await api('/actions/recall', { method: 'POST', body: { kind: 'said' }, headers: { 'tailscale-user-login': MEMBER } })).status, 403);
+  // The owner's own call reads both.
   const own = await api('/actions/recall', { method: 'POST', body: { kind: 'said', limit: 20 } });
   assert.ok(own.json.records.some(r => r.id === said.id && /hunter2/.test(r.said)), own.text);
   assert.equal((await api('/actions/recall', { method: 'POST', body: { id: tool.id } })).json.text, textOf(tool).slice(0, 8000));
