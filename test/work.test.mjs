@@ -186,10 +186,10 @@ test('T124\'s look: where the one-time command has not run, nothing runs and Spa
   for (const p of ['DynamicUser=yes', 'PrivateNetwork=yes', 'PrivateDevices=yes', 'ProtectSystem=strict', 'ReadOnlyPaths=/', 'NoNewPrivileges=yes', 'RuntimeMaxSec=4']) assert.ok(unit.includes(p), p);
   // One journal record for each look, written when it ended: the command and what it printed.
   const mine = records().filter(x => x.k === 'cmd');
-  // (the chat's look on Spark 4, the second look there, the chat's look on Spark 3)
-  assert.deepEqual(mine.map(x => [x.act, x.args.spark, x.outcome, x.class]), [['run', 'spark4', 'none', 'look'], ['run', 'spark4', 'none', 'look'], ['run', 'spark3', 'ran', 'look']]);
-  assert.equal(mine[2].unit, `sw-look-${id}`);
-  assert.equal(recordText(mine[2]), '$ cat docs/plain.txt\nhello from spark 3\n');
+  // (the chat's look on Spark 4, the chat's look on Spark 3, the second look on Spark 4)
+  assert.deepEqual(mine.map(x => [x.act, x.args.spark, x.outcome, x.class]), [['run', 'spark4', 'none', 'look'], ['run', 'spark3', 'ran', 'look'], ['run', 'spark4', 'none', 'look']]);
+  assert.equal(mine[1].unit, `sw-look-${id}`);
+  assert.equal(recordText(mine[1]), '$ cat docs/plain.txt\nhello from spark 3\n');
 });
 
 test('a helper whose sudo line is gone, one this build does not know, or one whose proof is out of date: the owner\'s command, and no look wall started', { timeout: 120000 * SLOW }, async () => {
