@@ -458,6 +458,7 @@ function turnAnswer(turn) {
   const choices = asked.flatMap(sparkieMessageChoices);
   // Numbers in the answer (speeds, sizes, percentages) have to come from what the tools said or the record (7.7).
   const unverified = unsupportedNumbers(turn.answer, [...messages.filter(m => m.role === 'tool').map(m => m.content), notes || '', text, ...history.map(m => m.content)]);
+  keepSaid(turn); // (a line said outright that the brain didn't keep is kept by code, and said: 20-memory-said.mjs)
   const card = pastes.at(-1);
   const message = { role: 'assistant', content: `${maskSecrets(turn.answer.trim())}${card ? `\n\nPaste card, from Spark Console:\n\`\`\`\n${card}\n\`\`\`` : ''}`, createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), ...(turn.finishReason === 'length' ? { truncated: true } : {}),

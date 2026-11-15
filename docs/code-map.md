@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 58 parts in `service/src/`, joined in name order into `service/server.mjs` (16338 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 61 parts in `service/src/`, joined in name order into `service/server.mjs` (16723 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -67,25 +67,25 @@ The service is 58 parts in `service/src/`, joined in name order into `service/se
 Generated: this file is service/src/*.mjs joined in name order (node tools/build-server.mjs). Edit the parts. Spark Console API: live metrics, the model library and deployments across the Spark fleet. Runs on the portal host behind `tailscale serve --set-path=/console/api`, next to the portal. Every request must come from a tailnet user the portal knows; anything that changes a Spark is owner-only.
 
 - **Area:** ground. **Rules:** R8, R28, R29, R30. **Tests:** build.test.mjs, fleet.test.mjs
-- **Lines:** 130
+- **Lines:** 149
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`, `hfEachFile`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-op-energy`, `20-recall`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
 Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command. `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there after this side gave up.
 
 - **Area:** ground. **Rules:** R10. **Tests:** fleet.test.mjs, dark.test.mjs
-- **Lines:** 74
+- **Lines:** 76
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `spawnOn`, `knownOffline`, `noteReach`, `run`, `fields`, `b64json`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `offlineNow`, `PATH_FIRST`, `CONFIG`, `PREAMBLE`, `OFFLINE_TTL`), `25-backup-and-start` (`local`)
 - **Used by:** `03-identity`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `11-setups`, `12-status`, `13-main-model`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-memory`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-eval`, `21-guide`, `21-power`, `21-selftest`, `21-web`, `21-work-shown`, `21-work`, `24-handler`, `25-backup-and-start`
 
 ### `03-identity.mjs`: who's asking
@@ -130,11 +130,11 @@ One long-running reader per Spark, only while someone has the page open; stopped
 ### `05-library.mjs`: model library and deployments
 
 - **Area:** ground. **Rules:** R2, R8, R17, R21, R38. **Tests:** change.test.mjs, across.test.mjs
-- **Lines:** 405
+- **Lines:** 426
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `ggufOnDisk`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
+- **Functions:** `ggufOnDisk`, `plainText`, `plainImage`, `plainManifest`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
 - **Uses:** `01-setup` (`MODELS`, `HF_HUB`, `hfSnap`, `NODES`, `NAME_RE`, `CONFIG`, `q`, `HttpError`, `nodeById`, `isProtected`, `hfMounts`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`canUse`), `06-links` (`lastCheck`), `08-cluster` (`clusterPlan`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `21-web` (`readable`)
 - **Used by:** `07-jobs`, `08-cluster`, `09-verified`, `11-setups`, `13-main-model`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `20-lessons`, `21-apps`, `21-power`, `21-selftest`, `24-handler`
 
@@ -160,7 +160,7 @@ Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the Conne
 - **Wakes:** none
 - **Functions:** `newJob`, `note`, `step`, `publicJob`, `claimSparks`, `claimed`, `stopList`, `runJob`, `copyModel`, `unapprovedStops`, `planMoved`, `deploy`, `stopContainer`
 - **Uses:** `01-setup` (`HttpError`, `nodeById`, `HF_HUB`, `CONFIG`, `hfSnap`, `q`, `HF_OWN`, `hfEachFile`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`, `spawnOn`), `03-identity` (`accessList`, `mustUse`), `05-library` (`plan`, `containerName`, `withHow`, `inventory`, `engineOf`, `ENGINES`, `memNow`, `memoryShare`, `dockerRunCommand`, `imageOf`), `08-cluster` (`asideBack`), `09-verified` (`answers`, `recordVerified`), `12-status` (`sparkName`), `14-chats` (`postResult`), `15-routes` (`sparkCalls`), `16-actions` (`tripBreaker`, `agentCache`), `17-changes` (`withoutRejected`, `fixFlags`, `causeLines`), `18-workflows` (`recordWorkflowRun`, `consoleStopped`), `19-watcher` (`fleetEvent`), `20-desired` (`cancelCheck`, `desiredAfter`), `20-journal` (`journalNote`, `journalOp`), `20-lessons` (`learnFrom`), `20-mcp` (`maskSecrets`), `20-op-energy` (`opEnergyStart`), `20-tell` (`tellAwaitDone`)
-- **Used by:** `03-identity`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `13-main-model`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-state-copy`, `20-tell`, `20-words`, `21-apps`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `24-handler`, `25-backup-and-start`
+- **Used by:** `03-identity`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `13-main-model`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-recall`, `20-state-copy`, `20-tell`, `20-words`, `21-apps`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `24-handler`, `25-backup-and-start`
 
 ### `08-cluster.mjs`: one model across two linked Sparks
 
@@ -186,7 +186,7 @@ Every deploy that comes up healthy is recorded with exactly how it ran (model, i
 - **Wakes:** none
 - **Functions:** `verifiedList`, `httpJson`, `answerTest`, `answers`, `measureSpeed`, `recordVerified`, `adoptRunning`, `verifiedView`
 - **Uses:** `01-setup` (`STATE_DIR`, `sleep`, `ALL_LOCAL`, `nodeById`, `CONFIG`), `03-identity` (`readKept`, `writePrivate`), `05-library` (`withoutShare`, `inventory`, `engineOf`, `imageOf`), `07-jobs` (`step`, `note`), `13-main-model` (`MAIN`, `mainStatus`, `repoOf`), `15-routes` (`servedModel`), `20-desired` (`keyOf`), `21-brain-check` (`checkBrainSoon`), `25-backup-and-start` (`local`)
-- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `11-setups`, `13-main-model`, `16-reads`, `17-changes`, `18-workflows`, `20-mcp`, `21-apps`, `21-power`, `24-handler`
+- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `11-setups`, `13-main-model`, `16-reads`, `17-changes`, `18-workflows`, `20-mcp`, `20-recall`, `21-apps`, `21-power`, `24-handler`
 
 ### `10-recipes.mjs`: recipes
 
@@ -206,7 +206,7 @@ Recipes: service/catalog.json (built by tools/build-catalog.py from the research
 For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai, Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only). The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads forum posts to say which speed belongs to which command, quoting the post, and the quote is checked against it. Each setup then goes through the same checks as the catalog's; its image is pinned to the exact build published now.
 
 - **Area:** knowledge. **Rules:** R10, R22, R27. **Tests:** dig.test.mjs, setups-look.test.mjs
-- **Lines:** 442
+- **Lines:** 443
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -232,12 +232,12 @@ deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-conso
 Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH as everything else, with the same fields the portal reported. It's collected every 30 seconds whether or not anyone is looking, like the portal did, which also keeps the GPU energy total going.
 
 - **Area:** knowledge. **Rules:** R10, R24, R30, R37. **Tests:** fleet.test.mjs, dark.test.mjs, files.test.mjs
-- **Lines:** 183
+- **Lines:** 184
 - **Owns:** energy.json (writers: sampleEnergy)
 - **Timers:** collectStatus (every 30 s, after a first round 2 s after start)
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`
-- **Uses:** `01-setup` (`HERE`, `q`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
+- **Uses:** `01-setup` (`HERE`, `PATH_CHECK`, `q`, `pathMissing`, `PATH_PROGRAMS`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-power` (`powerMark`)
 - **Used by:** `03-identity`, `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-needs`, `20-op-energy`, `20-state-copy`, `20-tell`, `20-ways-in`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-ask.mjs`: how the brain is asked and read: its setup's ask block (B9, R50)
@@ -271,12 +271,12 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
-- **Lines:** 513
+- **Lines:** 514
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `chatData`, `saveChats`, `chatSummary`, `ownChat`, `systemPrompt`, `sparkieToolNames`, `sparkieTools`, `sparkieMessageChoices`, `outcomeText`, `runChoice`, `postResult`, `multiStep`, `chatBusy`, `resultSince`, `wakeWork`, `continueTask`, `unsupportedNumbers`, `stopTurn`, `sparkieTurn`, `turnDoor`, `turnHistory`, `keepWords`, `markAnswering`, `turnRequest`, `brainContext`, `keepTask`, `turnAnswer`, `turnFailed`, `chatReply`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `sleep`, `nodeById`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `budgetsOf`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-tell` (`tellResult`, `tellCarry`), `20-tg-approve` (`tgAskOpen`), `21-telegram` (`tgPaired`), `23-http` (`recordFault`)
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `q`, `sleep`, `nodeById`), `03-identity` (`accessList`, `ownerPermissions`), `03-secrets` (`keptHidden`), `07-jobs` (`deploy`, `jobs`), `12-status` (`sparkName`), `13-ask` (`askedMessages`), `13-main-model` (`MAIN`, `chatTarget`, `ASSISTANT_NAME`), `14-rounds` (`howAsked`, `turnBudgets`, `turnGroups`, `turnRounds`, `budgetsOf`), `16-actions` (`ACTIONS`, `liveSchema`, `runAction`, `normQuotes`, `changeIntent`, `PAGE_ONLY_TOOLS`, `AFFIRM`, `REFUSE`), `17-changes` (`pendingChoices`, `sparkieWho`, `agentSettings`), `19-watcher` (`fleetNotes`), `20-journal` (`journalTurn`, `journalSaid`), `20-keys` (`keysHidden`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memorySystem`, `memoryPickBlock`), `20-memory-said` (`keepSaid`), `20-tell` (`tellResult`, `tellCarry`), `20-tg-approve` (`tgAskOpen`), `21-telegram` (`tgPaired`), `23-http` (`recordFault`)
 - **Used by:** `07-jobs`, `10-recipes`, `14-rounds`, `16-reads`, `18-saved-from`, `20-journal`, `20-keys`, `20-mcp`, `20-memory`, `20-needs`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `22-passkey`, `24-handler`
 
 ### `14-rounds.mjs`: Sparkie’s rounds
@@ -316,7 +316,7 @@ Every workflow is a named action with typed inputs, so a model can pick up which
 - **Wakes:** none
 - **Functions:** `action`, `gbOfGiB`, `sparkIdOf`, `sparkList`, `sparkOf`, `checkValue`, `checkInput`, `liveSchema`, `normQuotes`, `sparkNames`, `tokensOf`, `changeIntent`, `pageOnlyLabel`, `pickContainer`, `tracesToRequest`, `planOf`, `modelCandidates`, `namesModel`, `sparkieCheck`, `powerSparksSaid`, `tripBreaker`, `firmModel`, `requestLine`, `runAction`, `recent`, `recentInventory`, `recentMain`, `onDiskAs`, `libraryModel`, `mainArg`, `wordStart`, `filePattern`, `sizeWords`, `filePath`, `sharedFolder`
 - **Uses:** `01-setup` (`NODES`, `HttpError`, `q`), `05-library` (`inventory`, `plan`), `07-jobs` (`agentFailuresInARow`, `jobs`), `10-recipes` (`recipeCatalog`), `11-setups` (`squash`, `sameRepo`), `12-status` (`sparkName`, `statusCache`, `sparkFor`, `sparkFiles`), `13-main-model` (`mainStatus`, `MAIN`), `17-changes` (`question`, `changeLabel`, `pendingChoices`, `resolveModelName`, `agentSettings`, `setAgentSettings`, `propose`), `18-saved-from` (`fromRequest`), `18-workflows` (`stepWords`, `findSaved`, `savedWorkflows`, `stepArgs`, `workflowFor`, `workflowStatus`, `offMessage`, `unvalidatedMessage`, `workflowVersion`, `workflowById`), `19-watcher` (`knowledge`, `fleetEvent`), `20-journal` (`journalLooks`, `journalLook`, `journalFirst`, `journalCalled`), `20-mcp` (`audit`, `maskSecrets`, `agentKeys`), `20-memory` (`memoryClear`), `20-tell` (`tellAwait`), `21-apps` (`appNamed`), `21-power` (`powerSettingsClear`)
-- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `15-routes`, `16-reads`, `17-changes`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory`, `20-needs`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`
+- **Used by:** `03-identity`, `07-jobs`, `11-setups`, `12-status`, `14-chats`, `14-rounds`, `15-routes`, `16-reads`, `17-changes`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-needs`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-eval`, `21-door`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `24-handler`
 
 ### `16-reads.mjs`: reads: the lookups, what people, Sparkie and agents can look up
 
@@ -329,7 +329,7 @@ Every action here only looks (kind 'read'), so runAction runs it straight away a
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `gbOf`, `recentWorkloads`, `didYouMean`, `mustLibraryModel`, `planSteps`, `fitView`, `pairView`, `flagsKey`, `sameFlags`, `runningDetail`, `darkNow`, `pasteCard`, `estimateFit`, `abilities`
-- **Uses:** `01-setup` (`HttpError`, `API_MOUNT`, `nodeById`, `q`, `CONFIG`, `isProtected`, `BUILD`, `STARTED_AT`), `02-ssh` (`run`, `b64json`), `03-identity` (`accessList`), `05-library` (`withoutShare`, `ENGINES`, `shareIn`, `metricsFlags`, `memoryShare`, `plansFor`, `plan`, `fitOf`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`note`, `jobs`, `step`), `08-cluster` (`clusterPlan`), `09-verified` (`verifiedList`, `verifiedView`, `answers`), `10-recipes` (`recipeCatalog`, `searchModels`), `11-setups` (`squash`, `catalogSetup`, `recipes`, `sameRepo`, `lookedUp`), `12-plugs` (`wallView`, `wallWords`), `12-status` (`workerCall`, `statusFor`, `sparkName`, `LOG_SERVICES`), `13-main-model` (`MAIN`, `agentTarget`, `mainNode`, `ROUTES`, `mainPresets`, `repoOf`), `14-chats` (`NEVER_CHANGES`, `chatData`), `15-routes` (`servedModel`, `SPARKIE_ID`, `routeView`), `16-actions` (`recent`, `action`, `recentInventory`, `libraryModel`, `gbOfGiB`, `recentMain`, `mainArg`, `wordStart`, `onDiskAs`, `CREDIBILITY`, `modelArg`, `sparkArg`, `sparkOf`, `sparksArg`, `filePathArg`, `filePath`, `sharedFolder`, `FILE_LIST`, `FILE_SHOW`, `ACTIONS`, `PAGE_ONLY`), `18-workflows` (`WORKFLOW_LOCK`, `lastUpdates`), `19-watcher` (`knowledge`, `lastReading`, `learnedFrom`, `ENGINE_OF_IMAGE`, `darkPeriods`, `readingWords`, `sparkOff`, `WATCH_EVERY`, `events`), `20-mcp` (`consoleOrigin`, `maskDeep`, `hideKeys`), `20-needs` (`needsLines`), `20-tg-approve` (`tgApprovalsLine`), `21-brain-check` (`brainCheck`, `brainCheckView`), `21-power` (`power`, `powerView`, `setupWords`, `asleepView`), `21-telegram` (`telegramView`), `21-work` (`needsOwner`), `22-sessions` (`accessView`), `23-http` (`faultView`)
+- **Uses:** `01-setup` (`HttpError`, `API_MOUNT`, `nodeById`, `q`, `CONFIG`, `isProtected`, `BUILD`, `STARTED_AT`), `02-ssh` (`run`, `b64json`), `03-identity` (`accessList`), `05-library` (`plainImage`, `withoutShare`, `ENGINES`, `shareIn`, `metricsFlags`, `memoryShare`, `plansFor`, `plan`, `fitOf`, `PLAIN_NOTE`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`note`, `jobs`, `step`), `08-cluster` (`clusterPlan`), `09-verified` (`verifiedList`, `verifiedView`, `answers`), `10-recipes` (`recipeCatalog`, `searchModels`), `11-setups` (`squash`, `catalogSetup`, `recipes`, `sameRepo`, `lookedUp`), `12-plugs` (`wallView`, `wallWords`), `12-status` (`workerCall`, `statusFor`, `sparkName`, `LOG_SERVICES`), `13-main-model` (`MAIN`, `agentTarget`, `mainNode`, `ROUTES`, `mainPresets`, `repoOf`), `14-chats` (`NEVER_CHANGES`, `chatData`), `15-routes` (`servedModel`, `SPARKIE_ID`, `routeView`), `16-actions` (`recent`, `action`, `recentInventory`, `libraryModel`, `gbOfGiB`, `recentMain`, `mainArg`, `wordStart`, `onDiskAs`, `CREDIBILITY`, `modelArg`, `sparkArg`, `sparkOf`, `sparksArg`, `filePathArg`, `filePath`, `sharedFolder`, `FILE_LIST`, `FILE_SHOW`, `ACTIONS`, `PAGE_ONLY`), `18-workflows` (`WORKFLOW_LOCK`, `lastUpdates`), `19-watcher` (`knowledge`, `lastReading`, `learnedFrom`, `ENGINE_OF_IMAGE`, `darkPeriods`, `readingWords`, `sparkOff`, `WATCH_EVERY`, `events`), `20-mcp` (`consoleOrigin`, `maskDeep`, `hideKeys`), `20-needs` (`needsLines`), `20-tg-approve` (`tgApprovalsLine`), `21-brain-check` (`brainCheck`, `brainCheckView`), `21-power` (`power`, `powerView`, `setupWords`, `asleepView`), `21-telegram` (`telegramView`), `21-work` (`needsOwner`), `22-sessions` (`accessView`), `23-http` (`faultView`)
 - **Used by:** `21-power`
 
 ### `17-changes.mjs`: actions that change things: say it, and it's done (checked inside)
@@ -344,7 +344,7 @@ Sparkie, your agents (with "can change things" on their key) and the spark comma
 - **Wakes:** none
 - **Functions:** `agentSettings`, `setAgentSettings`, `noStopWords`, `pausedCheck`, `sparkieWho`, `whoAsks`, `question`, `changeLabel`, `propose`, `redeemChoice`, `routedSparks`, `railsFor`, `inRecipes`, `agentSafeSetup`, `placeModel`, `bestHow`, `fullContext`, `freeOn`, `deployPlaced`, `knownStartFailure`, `causeLines`, `rejectedFlags`, `withoutRejected`, `withoutFlags`, `fixFlags`, `startWithFixes`, `launch`, `putBack`, `resolveModelName`, `pickVersion`, `startingNow`, `alreadyStarting`, `brainSparks`, `computeSparks`, `notBrainsSpark`, `acrossGate`, `runsWhereNamed`, `namedInFull`, `startModel`, `stoppedForSure`, `restartChecked`, `restartJob`
 - **Uses:** `01-setup` (`STATE_DIR`, `nodeById`, `HttpError`, `CONFIG`, `q`, `NODES`, `isProtected`, `sleep`, `ALL_LOCAL`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`, `canUse`, `mustUse`), `05-library` (`plan`, `fitOf`, `plansFor`, `ENGINES`, `memNow`, `engineOf`, `shareIn`, `inventory`, `KEEP_FREE`), `06-links` (`lastCheck`), `07-jobs` (`note`, `deploy`, `claimed`, `newJob`, `runJob`, `step`, `jobs`, `claimSparks`, `stopContainer`), `08-cluster` (`clusterPlan`, `clusterDeploy`), `09-verified` (`verifiedList`, `answers`), `10-recipes` (`recipeCatalog`, `REPO_RE`, `versionOf`, `QUANT_ORDER`, `addModel`), `11-setups` (`sameRepo`, `resolveHow`, `needsDraftModel`, `plainFromBrain`, `recipes`, `refreshSetups`, `downloadVersion`, `recipeIdOf`, `startDig`), `12-status` (`sparkName`, `statusFor`), `13-main-model` (`ROUTES`, `MAIN`), `15-routes` (`usedRecently`), `16-actions` (`action`, `pageOnlyLabel`, `sizeWords`, `onDiskAs`, `CREDIBILITY`, `libraryModel`, `wordStart`, `gbOfGiB`, `modelArg`, `sparkArg`, `sparksArg`, `sparkOf`, `filePathArg`, `SAVE_PATH`, `filePath`, `FILE_SAVE_BYTES`, `sharedFolder`), `18-workflows` (`findSaved`, `consoleStopped`, `workflowStatus`, `offMessage`, `workflowVersion`), `20-desired` (`cancelCheck`, `holdsModelsOn`, `cancelJobsAndWait`), `20-lessons` (`setupTried`, `bestHowNow`, `passedOverAsk`, `passedOverLines`, `askedByOwner`, `passedWords`), `20-mcp` (`maskSecrets`, `hideKeys`, `audit`), `20-memory` (`memoryText`), `20-tg-approve` (`tgAsk`), `21-apps` (`appCommand`, `commandWords`, `devBox`, `DEV_BOX_WORDS`), `21-power` (`parkedFor`, `powerFirst`, `powerState`, `sparksWords`, `wakeNames`)
-- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `12-plugs`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-mcp`, `20-memory`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Used by:** `07-jobs`, `08-cluster`, `10-recipes`, `12-plugs`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `18-step-jobs`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-mcp`, `20-memory-said`, `20-memory`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `18-saved-from.mjs`: "save that as …": a saved workflow from the changes a request made (D6e)
 
@@ -444,14 +444,14 @@ Fixing things by itself is what matters most to the owner (2026-11-11). On top o
 Spark Console's own record of what happens through it, so it is still known after a restart (operation_log forgets then) and can be looked up (recall). Append-only: never rewritten, never deleted, never copied off Spark 2. Its folder (JOURNAL_DIR, 0700, files 0600) is outside the state folder, so neither the daily copy nor an install snapshot takes it. Two files a month: journal-YYYY-MM.jsonl, one short line per record (1,500 bytes at most), and journal-YYYY-MM.out, a record's long text (a tool's result, an operation's log), written in pieces as it is read and masked piece by piece; its line …
 
 - **Area:** record. **Rules:** R7, R22, R26, R43. **Tests:** journal.test.mjs, door.test.mjs, fuzz.test.mjs
-- **Lines:** 350
+- **Lines:** 358
 - **Actions:** `recall`
 - **Owns:** none (its own files, journal-YYYY-MM.jsonl and .out in JOURNAL_DIR, are outside the state folder; one writer, journal)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `journalId`, `jSub`, `jErr`, `jArgs`, `jArgsKept`, `jFile`, `jMasker`, `jSlices`, `jBody`, `jLine`, `journal`, `journalFirstFor`, `jCall`, `journalFirst`, `journalCalled`, `journalLooks`, `journalLook`, `journalSaid`, `journalTool`, `journalTurn`, `journalNote`, `jOpText`, `journalOp`, `journalEvent`, `journalFiles`, `jParse`, `jLinesOf`, `jWhere`, `jTitle`, `jView`, `jMerge`, `jOwnCall`, `jWho`, `jOpen`, `jShut`, `jSees`, `jRecord`, `journalAfterRestart`, `journalNeeds`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `JOURNAL_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`ACTIONS`, `sizeWords`, `action`, `sparkArg`, `tokensOf`), `17-changes` (`START_FAILURES`, `knownStartFailure`), `20-mcp` (`maskSecrets`, `maskDeep`), `20-needs` (`SAVE_WHY`, `tilde`), `20-op-energy` (`opWh`), `21-work` (`mayRun`)
-- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `18-saved-from`, `19-watcher`, `20-keys`, `20-lessons`, `20-needs`, `21-work`, `25-backup-and-start`
+- **Functions:** `journalId`, `jSub`, `jErr`, `jArgs`, `jArgsKept`, `jFile`, `jMasker`, `jSlices`, `jBody`, `jLine`, `journal`, `journalFirstFor`, `jCall`, `journalFirst`, `journalCalled`, `journalLooks`, `journalLook`, `journalSaid`, `journalTool`, `journalTurn`, `journalNote`, `jOpText`, `journalOp`, `journalEvent`, `journalFiles`, `jParse`, `jLinesOf`, `jWhere`, `jTitle`, `jView`, `jMerge`, `jOwnCall`, `jWho`, `jOpen`, `jShut`, `jSees`, `jRecord`, `journalHits`, `journalAfterRestart`, `journalNeeds`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `JOURNAL_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`ACTIONS`, `sizeWords`, `action`, `sparkArg`), `17-changes` (`START_FAILURES`, `knownStartFailure`), `20-mcp` (`maskSecrets`, `maskDeep`), `20-needs` (`SAVE_WHY`, `tilde`), `20-op-energy` (`opWh`), `20-recall` (`recallAnswer`)
+- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `18-saved-from`, `19-watcher`, `20-keys`, `20-lessons`, `20-memory-said`, `20-needs`, `20-recall`, `21-work`, `25-backup-and-start`
 
 ### `20-keys.mjs`: keys given once: taken out of the owner's words at the door, kept by name
 
@@ -477,7 +477,7 @@ A lesson is Spark Console's own short record of a failure (contract 5.10; design
 - **Wakes:** none
 - **Functions:** `lValue`, `lSparks`, `setupTried`, `lessonOf`, `lessonsKept`, `recordLesson`, `learnFrom`, `failedTwice`, `bestHowNow`, `passedWords`, `passedOverLines`, `askedByOwner`, `passedOverAsk`
 - **Uses:** `01-setup` (`STATE_DIR`, `nodeById`, `HttpError`), `03-identity` (`readKept`, `writePrivate`), `05-library` (`withHow`, `engineOf`, `imageOf`, `ENGINES`), `12-status` (`sparkName`), `16-actions` (`action`), `17-changes` (`knownStartFailure`, `bestHow`, `START_FAILURES`, `question`), `18-workflows` (`workflowVersion`), `20-journal` (`START_JOBS`), `20-mcp` (`maskSecrets`)
-- **Used by:** `07-jobs`, `17-changes`, `18-workflows`
+- **Used by:** `07-jobs`, `17-changes`, `18-workflows`, `20-recall`
 
 ### `20-mcp.mjs`: the agent door (MCP)
 
@@ -490,46 +490,72 @@ Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above
 - **Wakes:** none
 - **Functions:** `keyHash`, `agentKeys`, `consoleOrigin`, `mcpUrl`, `agentView`, `keyViewer`, `agentFor`, `agentInstructions`, `askSparkie`, `audit`, `mcpDoor`, `hidePrivateKeys`, `keyName`, `randomish`, `hideKeys`, `maskSecrets`, `secretName`, `maskDeep`
 - **Uses:** `01-setup` (`STATE_DIR`, `HttpError`, `CONFIG`, `API_MOUNT`, `sleep`, `VERSION`), `03-identity` (`readJson`, `writePrivate`, `viewerForLogin`, `sameOrigin`, `overLimit`), `03-secrets` (`keptHidden`), `07-jobs` (`note`), `09-verified` (`answers`), `14-chats` (`chatData`, `replying`, `saveChats`, `runChoice`, `sparkieTurn`, `turns`), `16-actions` (`checkInput`, `ACTIONS`, `liveSchema`, `action`, `runAction`), `17-changes` (`pendingChoices`), `20-keys` (`keysHidden`), `23-http` (`selfOrigin`, `send`, `readBody`, `isFault`, `recordFault`), `24-handler` (`clientAddress`)
-- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-memory-names`, `20-memory`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`
+- **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `16-reads`, `17-changes`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `20-tell`, `20-tg-approve`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-selftest`, `21-telegram`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`
 
 ### `20-memory-names.mjs`: what Sparkie's memory lines are about, the index of them, and the picker
 
 Each memory line says what it is about (`about`, G2a): up to five names of things Spark Console itself knows, found by code in the line's own words when it is saved: never by a model, and never by reading a file then. A name is a Spark ("spark4"), a model (a recipe's id, "glm-5.3-flash"), a container, an app, a setup (one of the brain's, "aphex-x4", or a recipe's, by its id), a person (the owner, a member) or an agent, each kept in one form, lower case. The names come from a book of what the console lists (memoryNameBook): made at start, and again at most once a minute when memory is used, …
 
 - **Area:** record. **Rules:** R45. **Tests:** memory.test.mjs
-- **Lines:** 242
+- **Lines:** 247
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `nameWords`, `buildNameBook`, `memoryNameBook`, `memoryNamesIn`, `memorySig`, `memoryNamed`, `memoryIndexOf`, `memoryIndexNow`, `memoryLinesAbout`, `withoutAbout`, `pickWords`, `memoryPicking`, `memorySizes`, `isWish`, `memoryShown`, `memoryShownNow`, `memoryTail`, `memoryNeeds`, `memorySystem`, `memoryPicks`, `pickLine`, `memoryPickBlock`
-- **Uses:** `01-setup` (`NODES`, `ALL_LOCAL`), `03-identity` (`accessList`), `10-recipes` (`modelKey`, `recipeCatalog`), `13-ask` (`askOf`), `13-main-model` (`repoOf`, `mainPresets`, `chatTarget`, `MAIN`), `19-watcher` (`knowledge`), `20-mcp` (`agentKeys`), `20-memory` (`MEMORY_FILE`, `memoryEntries`, `MEMORY_CHARS`, `memoryPrompt`, `MEMORY_UNREAD`)
-- **Used by:** `14-chats`, `20-memory`, `20-needs`
+- **Functions:** `nameWords`, `buildNameBook`, `memoryNameBook`, `memoryNamesIn`, `memoryEnded`, `memoryLive`, `memorySig`, `memoryNamed`, `memoryIndexOf`, `memoryIndexNow`, `memoryLinesAbout`, `withoutAbout`, `pickWords`, `memoryPicking`, `memorySizes`, `isWish`, `memoryShown`, `memoryShownNow`, `memoryTail`, `memoryNeeds`, `memorySystem`, `memoryPicks`, `pickLine`, `memoryPickBlock`
+- **Uses:** `01-setup` (`NODES`, `ALL_LOCAL`), `03-identity` (`accessList`), `10-recipes` (`modelKey`, `recipeCatalog`), `13-ask` (`askOf`), `13-main-model` (`repoOf`, `mainPresets`, `chatTarget`, `MAIN`), `19-watcher` (`knowledge`), `20-mcp` (`agentKeys`), `20-memory-time` (`memoryOffFor`), `20-memory` (`MEMORY_FILE`, `memoryEntries`, `MEMORY_CHARS`, `memoryPrompt`, `MEMORY_UNREAD`)
+- **Used by:** `14-chats`, `20-memory-time`, `20-memory`, `20-needs`, `20-recall`
+
+### `20-memory-said.mjs`: said outright, kept by code: "remember that …" when the brain didn't call remember
+
+Design G's sixth addition (A6, step 6); the brain eval switches it off with `said` in SPARK_CONSOLE_MEMORY_OFF. When the owner says outright, in their own chat on the page or in the paired Telegram chat, "remember that …" or "from now on …", and the brain answers without calling remember or forget_memory, code keeps one line itself at the end of the turn (turnAnswer), through remember's own keeper (keepLine: a secret refused, the same line kept once, a fact said again taking its line's place), so a weaker brain can't drop it. The reply says it as every memory write is said ("I'll remember: …
+
+- **Area:** record. **Rules:** R45, R25. **Tests:** memory-said.test.mjs
+- **Lines:** 66
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `saidToKeep`, `keepSaid`
+- **Uses:** `16-actions` (`normQuotes`, `ACTIONS`, `requestLine`, `action`), `17-changes` (`agentSettings`), `20-journal` (`journalCalled`), `20-mcp` (`audit`), `20-memory-time` (`memoryOffFor`), `20-memory` (`refusesRemember`, `keepLine`)
+- **Used by:** `14-chats`
+
+### `20-memory-time.mjs`: memory's lines in time: an end date, a fact said again, the other lines about the same thing
+
+Design G's third addition (A3, step 4). The brain eval switches it off with `time` in SPARK_CONSOLE_MEMORY_OFF (test/eval.mjs): then memory is as the build before this one kept it, and an `until` given to remember is not kept. - `until`: the last day a line is true (YYYY-MM-DD, Spark 2's own day). After it the line is in no prompt and no pick; `memory {past: true}` shows it as past (why "expired"), and the next save of memory moves it to memory-past.json. It is never deleted. A day already gone when the line is saved is refused. Sparkie keeps a line with an end at once only when the owner's …
+
+- **Area:** record. **Rules:** R45. **Tests:** memory-time.test.mjs
+- **Lines:** 78
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `memoryOffFor`, `memoryExpired`, `memoryExpire`, `memoryUntil`, `lineWords`, `sameNames`, `memorySaidAgain`, `memoryAlso`, `memorySaid`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`), `20-memory-names` (`memoryEnded`, `memoryLive`, `memoryDay`, `nameWords`, `memoryNamed`, `memoryLinesAbout`), `20-memory` (`MEMORY_FILLER`)
+- **Used by:** `20-memory-names`, `20-memory-said`, `20-memory`, `20-recall`, `21-selftest`
 
 ### `20-memory.mjs`: Sparkie's memory (v3.1, 2026-11-11)
 
 What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). Short lines in memory.json (no ceiling), put at the end of Sparkie's system prompt (so the prompt cache stays warm until it changes), and listed for agents by `memory`. Live state beats memory: the prompt says so. Only the owner's own words add or remove a line: either they say so ("remember…", "forget that…"), or they simply state it ("Spark 4 is on Ethernet now") …
 
 - **Area:** record. **Rules:** R20, R22, R25, R26, R45. **Tests:** sparkie-more.test.mjs, memory.test.mjs
-- **Lines:** 234
+- **Lines:** 253
 - **Actions:** `memory`, `remember`, `forget_memory`
 - **Owns:** memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `memoryEntries`, `memoryPast`, `saveMemory`, `memoryText`, `lineBy`, `lineSrc`, `retired`, `notTheOwners`, `memoryLine`, `memoryFit`, `memoryPrompt`, `memoryWithPast`, `eraseLine`, `saysForget`, `refusesRemember`, `memoryClear`
-- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`), `02-ssh` (`run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`note`), `11-setups` (`squash`), `14-chats` (`chatData`), `16-actions` (`action`, `normQuotes`, `POLITE`, `NEGATOR`, `CALLED_OFF`, `QUESTION_START`, `INFO_START`, `HYPOTHETICAL`, `tokensOf`, `sparkNames`), `17-changes` (`changeLabel`, `question`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memoryNamed`, `memoryIndexOf`, `memorySig`, `withoutAbout`, `memoryIndexNow`, `memoryNamesIn`)
-- **Used by:** `16-actions`, `17-changes`, `20-memory-names`
+- **Functions:** `memoryEntries`, `memoryPast`, `saveMemory`, `memoryText`, `lineBy`, `lineSrc`, `retired`, `notTheOwners`, `memoryLine`, `memoryFit`, `memoryPrompt`, `memoryPastShown`, `memoryWithPast`, `keepLine`, `eraseLine`, `saysForget`, `refusesRemember`, `memoryClear`
+- **Uses:** `01-setup` (`STATE_DIR`, `HttpError`), `02-ssh` (`run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`note`), `11-setups` (`squash`), `14-chats` (`chatData`), `16-actions` (`action`, `normQuotes`, `POLITE`, `NEGATOR`, `CALLED_OFF`, `QUESTION_START`, `INFO_START`, `HYPOTHETICAL`, `tokensOf`, `sparkNames`), `17-changes` (`changeLabel`, `question`), `20-mcp` (`maskSecrets`), `20-memory-names` (`memoryNamed`, `memoryIndexOf`, `memorySig`, `memoryLive`, `memoryEnded`, `withoutAbout`, `memoryIndexNow`, `memoryNamesIn`), `20-memory-time` (`memoryExpire`, `memoryOffFor`, `memoryExpired`, `memoryUntil`, `memorySaidAgain`, `memoryAlso`, `memorySaid`, `TIME_WORDS`)
+- **Used by:** `16-actions`, `17-changes`, `20-memory-names`, `20-memory-said`, `20-memory-time`, `20-recall`
 
 ### `20-needs.mjs`: what is waiting on the owner (H4)
 
 One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model call, no look at another Spark, and no text from a log, an error, a container's output or the web (so fleet_status stays a read of the console's own numbers). Lock-out first, then the owner's data, then the fleet. A line stands while its cause does and goes when the cause goes, never because it was shown. Each cause is tried by itself, so one that throws never breaks /status. At most 8 lines are said (needsLines: the 8th counts the rest): in /status (page and Telegram), at the …
 
 - **Area:** safety. **Rules:** R21, R26. **Tests:** needs.test.mjs
-- **Lines:** 81
+- **Lines:** 88
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `tilde`, `openProblems`, `needsLines`
-- **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `nodeById`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `20-memory-names` (`memoryNeeds`), `20-state-copy` (`copyLateNow`, `copyLateWords`), `20-ways-in` (`waysInNeeds`), `21-power` (`powerState`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`)
+- **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `pathMissing`, `nodeById`, `FIXED_PATH`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `20-memory-names` (`memoryNeeds`), `20-state-copy` (`copyLateNow`, `copyLateWords`), `20-ways-in` (`waysInNeeds`), `21-power` (`powerState`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`)
 - **Used by:** `16-reads`, `19-watcher`, `20-journal`, `20-tell`, `20-words`
 
 ### `20-op-energy.mjs`: an operation's energy at the wall (D9 as cut: one number, on its journal end line)
@@ -545,12 +571,25 @@ When an operation ends, its journal end line (journalOp) says how much electrici
 - **Uses:** `01-setup` (`nodeById`), `12-plugs` (`wallFor`), `12-status` (`energy`, `sparkName`)
 - **Used by:** `07-jobs`, `20-journal`
 
+### `20-recall.mjs`: recall: one look back over memory, lessons, proven runs and the journal (G3)
+
+recall (its action is in 20-journal.mjs) answers from everything Spark Console keeps, in one order (design G 3.4): the owner's live memory lines, lessons (lessons.json), runs that worked here (verified.json), the owner's retired lines (memory-past.json, marked retired), then the journal, the owner's own words first. Each piece says when (at) and where it is from (source). The answer starts with one line that counts everything that matched (inAll), and next reads on from where the last answer stopped, leaving out what was kept after the first page, so nothing repeats. when is a word that code …
+
+- **Area:** record. **Rules:** R43, R45. **Tests:** recall.test.mjs, journal.test.mjs, door.test.mjs, fuzz.test.mjs
+- **Lines:** 141
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `recallWords`, `recallSpan`, `recallDay`, `recallLines`, `recallLineFrom`, `recallLine`, `recallLesson`, `recallLessonText`, `recallProven`, `recallProvenText`, `recallInAll`, `recallOne`, `recallAnswer`
+- **Uses:** `01-setup` (`HttpError`), `07-jobs` (`note`), `09-verified` (`verifiedList`), `16-actions` (`tokensOf`), `17-changes` (`START_FAILURES`), `20-journal` (`jRecord`, `jOwnCall`, `jWho`, `JOURNAL_KINDS`, `journalHits`), `20-lessons` (`lessonsKept`), `20-mcp` (`maskDeep`), `20-memory-names` (`memoryIndexNow`, `memoryLinesAbout`, `memoryEnded`, `withoutAbout`, `pickLine`, `memoryNamesIn`, `memorySizes`), `20-memory-time` (`memoryOffFor`, `memoryExpired`), `20-memory` (`memoryPastShown`, `memoryEntries`, `memoryPast`, `retired`), `21-work` (`mayRun`)
+- **Used by:** `20-journal`
+
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
 
 What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5, contract 6.25): - a compute Spark comes online (the status check sees it come back, or sees it on for the first time: by itself, by the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs); - just before Spark Console powers a Spark off: if the state changed since the newest …
 
 - **Area:** safety. **Rules:** R23, R41. **Tests:** copy.test.mjs, state.test.mjs
-- **Lines:** 124
+- **Lines:** 138
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -702,7 +741,7 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 - **Timers:** selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)
 - **Wakes:** none
 - **Functions:** `selfTestJobCommand`, `selfTestAddress`, `selfTestName`, `wordList`, `firstLine`, `selfTestPlace`, `healDrill`, `inAbout`, `drillHeldBack`, `selfTestJobParts`, `selfTestCtx`, `selfTestNeed`, `selfTestMine`, `selfTestModels`, `selfTestStopModel`, `selfTestStopApp`, `containerStates`, `selfTest`, `selfTestRecover`, `selfTestCutOff`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-tell` (`tell`), `21-apps` (`waitJobEnd`), `21-work` (`selfTestWalls`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `API_MOUNT`, `nodeById`, `HttpError`, `sleep`, `q`, `STATE_DIR`, `NAME_RE`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `writePrivate`, `mustUse`, `accessList`), `05-library` (`inventory`, `containerName`), `07-jobs` (`busySparks`, `jobs`, `step`, `claimSparks`, `note`, `newJob`, `runJob`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`runAction`, `action`, `sparkArg`, `ACTIONS`), `17-changes` (`computeSparks`, `agentSettings`, `pausedCheck`, `notBrainsSpark`, `changeLabel`, `question`), `18-workflows` (`testModels`, `healDrills`, `consoleStopped`, `healTriesThisHour`, `workflowStatus`, `lastOnOff`, `stepRun`), `19-watcher` (`WATCH_EVERY`, `knowledge`, `events`, `fleetEvent`), `20-desired` (`desired`, `cancelCheck`, `waitJob`, `holdsModelsOn`, `cancelJobsAndWait`), `20-heal` (`healOwner`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `20-memory-time` (`lineWords`), `20-tell` (`tell`), `21-apps` (`waitJobEnd`), `21-work` (`selfTestWalls`)
 - **Used by:** `18-workflows`, `19-watcher`, `20-desired`
 
 ### `21-telegram.mjs`: Telegram: the owner talks to Sparkie from any phone or laptop
@@ -750,14 +789,14 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. Today every command is a look: it runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing (changes, root and the net are later steps). helperCall is the one way the console calls the helper: one script over ssh (local bash on Spark 2) that first checks the Spark's helper is the one this …
 
 - **Area:** features. **Rules:** R42, R43. **Tests:** work.test.mjs, turn-budgets.test.mjs
-- **Lines:** 331
+- **Lines:** 332
 - **Actions:** `run`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperCall`, `helperAnswer`, `ownerCommand`, `mayRun`, `needsOwner`, `whoMayLook`, `lookClean`, `forBrain`, `runCommand`, `selfTestWalls`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `CONFIG`, `HttpError`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`)
-- **Used by:** `16-reads`, `20-journal`, `21-selftest`, `21-work-shown`
+- **Used by:** `16-reads`, `20-recall`, `21-selftest`, `21-work-shown`
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
 
@@ -814,7 +853,7 @@ Anyone may see the fleet's hardware and load, from the internet too. Internet (F
 People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied to another Spark while one is awake anyway (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), one file a day, keeping the last 14, so losing Spark 2's disk loses little (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar …
 
 - **Area:** start. **Rules:** R10, R20, R22, R31, R40. **Tests:** state.test.mjs, copy.test.mjs, fleet.test.mjs, install.test.mjs
-- **Lines:** 154
+- **Lines:** 155
 - **Owns:** backup.json (writers: backupState, copyLate)
 - **Timers:** backupIfDue (10 minutes after start, then hourly; it sends only while a Spark is on and the state changed), needsMeTick (every 60 s), tick (every 0.5 s while a stop waits for running operations, 60 s at most)
 - **Wakes:** none

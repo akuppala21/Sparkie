@@ -90,9 +90,14 @@ function memoryNamesIn(text, max = ABOUT_MAX) {
   return [...new Set(kept.map(m => m.name))].slice(0, max);
 }
 
-// The index: the live lines, each with its names, and each name's lines in the file's order; each word's lines too, for
-// the picker's rare words (byWord). `sig` is memory.json as the index last saw it (its inode, size and times), so a look
-// needs no read while the file is unchanged.
+// Spark 2's own day, YYYY-MM-DD; whether a line is past its last day (`until`, G4: 20-memory-time.mjs); live if not.
+// (memoryEnded takes one argument: it is handed to filter.)
+const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');
+const memoryLive = e => !memoryEnded(e);
+// The index: the live lines (none past its day: it is made again when the day turns), each with its names, and each
+// name's lines in the file's order; each word's lines too, for the picker's rare words (byWord). `sig` is memory.json as
+// the index last saw it (its inode, size and times), so a look needs no read while the file is unchanged.
 let memIndex = null;
 function memorySig() {
   try { const s = statSync(MEMORY_FILE, { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; } catch (e) { return e.code === 'ENOENT' ? 'none' : null; }
@@ -104,19 +109,19 @@ function memoryNamed(lines) {
   return lines.map(e => (Array.isArray(e.about) ? e : { ...e, about: (was.get(e.id)?.text === e.text && was.get(e.id).about) || memoryNamesIn(e.text) }));
 }
 function memoryIndexOf(entries, sig) {
-  const lines = memoryNamed(entries), byName = new Map(), byWord = new Map();
+  const lines = memoryNamed(entries.filter(memoryLive)), byName = new Map(), byWord = new Map();
   const put = (map, k, e) => { const at = map.get(k); if (at) at.push(e); else map.set(k, [e]); };
   for (const e of lines) {
     for (const n of new Set(e.about)) if (typeof n === 'string') put(byName, n, e);
     for (const w of new Set(pickWords(e.text))) put(byWord, w, e);
   }
-  memIndex = { sig, lines, byName, byWord };
+  memIndex = { sig, lines, byName, byWord, day: memoryDay() };
   return memIndex;
 }
 // The index as memory.json is now: read again only when the file changed (a read error throws, as memoryEntries does).
 function memoryIndexNow() {
   const sig = memorySig();
-  if (memIndex && sig && sig === memIndex.sig) return memIndex;
+  if (memIndex && sig && sig === memIndex.sig && memIndex.day === memoryDay()) return memIndex;
   const entries = memoryEntries(), after = memorySig();
   return memoryIndexOf(entries, after === sig ? after : null);
 }
@@ -228,7 +233,7 @@ function memoryPicks(words, setup) {
   return { lines, left: ranked - lines.length, names, ms: performance.now() - t0 };
 }
 // A picked line says where it came from: the owner (on Telegram, if said there) or the agent that noted it.
-const pickLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}, ${e.by === 'owner' ? `said by the owner${e.src?.channel === 'telegram' ? ' on Telegram' : ''}` : `noted by ${e.by || 'an agent'}`}) ${e.text}`;
+const pickLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}${e.until && !memoryOffFor('time') ? `, until ${e.until}` : ''}, ${e.by === 'owner' ? `said by the owner${e.src?.channel === 'telegram' ? ' on Telegram' : ''}` : `noted by ${e.by || 'an agent'}`}) ${e.text}`;
 // The picks as they go in Spark Console's record ahead of the owner's words (brainContext), or null when none.
 function memoryPickBlock(words, setup) {
   const p = memoryPicks(words, setup);

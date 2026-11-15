@@ -150,7 +150,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    // (shared: two looks' checks at once never meet; only a proof holds the lock whole)
+    // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
+    // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
     ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
