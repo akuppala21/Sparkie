@@ -30,9 +30,9 @@ flowchart TD
   PAGE["The page (public/, served as files by Tailscale) and tools/console.mjs"]
   AGENT["Agents over MCP (tools/spark.mjs, Claude Code)"]
   APPS["Apps calling the model address /v1"]
-  WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; the heartbeat to hc-ping.com"]
+  WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup; hc-ping.com heartbeat"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
-  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, the heartbeat address"]
+  SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes, heartbeat address"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -140,7 +140,7 @@ the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cu
 minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started beside the Telegram loop: reads
 the open-problems list and sends at most one fixed line, R32); the open-problems list (`openProblems`, 20-needs, built
-on each ask, never stored); the update record at start (`noteUpdate`, called in the listen callback: when
+on each ask, never stored); the update record at start (`noteUpdate`, in the listen callback: when
 the build differs from the last one in `updates.json` it adds one record and one notice, "Spark Console is now build
 X. It was build Y."); daily research (first run 3 minutes after start, 20 models a day); live metrics (one
 long-running sampler per Spark through `spawnOn` while a page is open, `startSampler` in `04-metrics.mjs`); a third
@@ -198,11 +198,11 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a checkout of a `tested/` tag holds one, and the installer refuses a build without it. Any edit
-  to a part changes the build; a `worker.py` edit changes every workflow version but not the build. After an install
-  `/health` names the workflows whose version waits for a validation run (the hub guard, 2026-11-14, changed
-  `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the
-  restart; one `find_setups` covers that one.
+  whole passing run, or a `tested/` tag holds one, and the installer needs it. A step lands on `main` on its affected
+  tests (`tools/land.mjs`). Any edit to a part changes the build; a `worker.py` edit changes every workflow version but
+  not the build. After an install `/health` names the workflows whose version waits for a validation run (the hub guard
+  changed `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and
+  the restart; one `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.
