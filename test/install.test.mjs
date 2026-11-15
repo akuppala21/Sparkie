@@ -395,6 +395,31 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     const g = spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'go-back.sh')], { env: envFor(home), encoding: 'utf8' });
     await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: `the last good build answering (go-back.sh: ${g.stdout}${g.stderr})` });
   });
+
+  test('19. the watchdog goes back a build once after 15 minutes of silence within a day of an install; not sooner, not while an update\'s way back is armed, not a day after', { timeout: 300000 * SLOW }, async () => {
+    const home = makeHome(), good = await firstGood(home);
+    assert.equal((await install(home, nextStamp(), stage(home, 'good', 2))).code, 0);
+    const D = join(home, '.local', 'share', 'spark-console'), S = join(home, '.local', 'state', 'spark-console'), markFile = join(D, 'install-mark');
+    const mark = readFileSync(markFile, 'utf8');
+    assert.match(mark, /^\d+ [0-9a-f]{12}\n$/, 'the install left its mark');
+    // The kept build goes silent: its installed copy exits as it starts, and systemd keeps starting it.
+    writeFileSync(join(home, 'spark-console-service', 'server.mjs'), `const MODE = 'dead'; // 2\n${STANDIN}`);
+    spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', 'restart', 'spark-console-api'], { env: envFor(home) });
+    await new Promise(r => setTimeout(r, 1500));
+    const dog = () => spawnSync('bash', [join(D, 'watchdog.sh')], { env: envFor(home) });
+    const silentFor = minutes => writeFileSync(join(S, 'watchdog-silent-since'), `${Math.floor(Date.now() / 1000) - minutes * 60}\n`);
+    silentFor(14); dog();
+    assert.equal(await health(home), null, 'not after 14 minutes');
+    silentFor(16); mkdirSync(join(D, 'update-guard')); dog(); rmSync(join(D, 'update-guard'), { recursive: true });
+    assert.equal(await health(home), null, 'not while an update\'s way back is armed');
+    writeFileSync(markFile, `${Math.floor(Date.now() / 1000) - 25 * 3600} ${mark.split(' ')[1]}`);
+    silentFor(16); dog();
+    assert.equal(await health(home), null, 'not a day after the install');
+    writeFileSync(markFile, mark);
+    silentFor(16); dog();
+    await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: 'the build before, put back by the watchdog' });
+    assert.ok(!existsSync(markFile), 'once: the mark is gone');
+  });
 });
 
 describe('install.sh verify and undo\'s snapshot, against the real service', { concurrency: 1 }, () => {
