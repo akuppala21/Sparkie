@@ -210,17 +210,25 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   return { kind: /a password is required|a terminal is required|not in the sudoers|may not run sudo/.test(out + err) ? 'nosudo' : 'broken', detail: first };
 }
 
-// The owner's one-time command for that Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
+// The owner's one-time command for a compute Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
 function ownerCommand(node) {
-  const n = /^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>';
-  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${node.host === 'local' ? '--hub ' : ''}${n}`;
+  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
   let host = '';
   try { host = new URL(consoleOrigin()).hostname; } catch {}
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && /^[a-z_][a-z0-9_-]*$/.test(String(CONFIG.user)) ? `ssh -t ${CONFIG.user}@${host} ${q(line)}` : line;
 }
 const mayRun = (viewer, ctx) => { try { whoMayLook(viewer, ctx); return true; } catch { return false; } };
-const needsOwner = (node, why) => ({ spark: node.id, ran: false, ownerCommand: ownerCommand(node), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
-  next: `Give the owner that command: they run it once, in their own terminal, and it asks ${sparkName(node)}’s password once${node.host === 'local' ? ' (the hub is set up last, after a compute Spark)' : ''}. Until then use the other tools there (spark_detail, container_logs, spark_diagnostics, files).` });
+// Nothing ran: the owner's command, once per Spark and reason while the console runs (then one short line). The hub's is
+// held back until the lock-out net is built: commands on Spark 2 come with a later build.
+const ownerTold = new Set();
+function needsOwner(node, kind, why) {
+  const at = sparkName(node), others = 'use the other tools there (spark_detail, container_logs, spark_diagnostics, files)';
+  if (node.host === 'local') return { spark: node.id, ran: false, why: `Commands on ${at}, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.`, next: `Until then ${others}.`, observedAt: new Date().toISOString() };
+  const told = ownerTold.has(`${node.id} ${kind}`);
+  ownerTold.add(`${node.id} ${kind}`);
+  return { spark: node.id, ran: false, ...(told ? {} : { ownerCommand: ownerCommand(node) }), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
+    next: told ? `The owner was given its one-time command earlier; until it has run, ${others}.` : `Give the owner that command: they run it once, in their own terminal, and it asks ${at}’s password once. Until then ${others}.` };
+}
 // Who may look (design A 2.3): the owner, in their own chats (the page, Telegram) and on POST /actions; an agent only
 // when its key may also change things, read again now (its own call, or through Sparkie); never a saved workflow's step.
 // recall reads a look's record back on the same rule (mayRun).
@@ -265,10 +273,10 @@ async function runCommand(input, viewer, ctx = {}) {
     try { r = await helperCall(node, form ? 'check' : 'look', form ? { seconds, form } : { command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
     const a = helperAnswer(r), why = String(a.detail || '').slice(0, 300);
     Object.assign(rec, { outcome: a.kind, unit: form ? null : `sw-look-${r.id}`, form });
-    if (a.kind === 'none') return needsOwner(node, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
-    if (a.kind === 'nosudo') return needsOwner(node, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
-    if (a.kind === 'unknown') return needsOwner(node, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
-    if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
+    if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
+    if (a.kind === 'nosudo') return needsOwner(node, a.kind, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
+    if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
+    if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
     if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
     if (a.kind === 'key') throw new HttpError(403, `Not run: ${maskSecrets(why)} is a key file on ${at} (or a link to one), and a look never reads keys back. Everything else may be read.`);
     if (a.kind === 'walk') throw new HttpError(403, `Not run: it would read every file under ${maskSecrets(why)} on ${at}, and keys are there. Name a folder that holds none.`);

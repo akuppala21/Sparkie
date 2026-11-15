@@ -156,6 +156,13 @@ test('T124\'s look: where the one-time command has not run, nothing runs and Spa
   assert.match(r4.text, /"ran":false/);
   assert.deepEqual(sudoCalls('spark4'), [], 'no sudo on Spark 4');
   assert.ok(!existsSync(join(home('spark4'), '.rehearsal')));
+  // The command is given once per Spark while the console runs: a second look there says so in one line, without it.
+  const again = await look({ on: 'spark4', command: 'ls' });
+  assert.equal(again.status, 200, again.text);
+  assert.ok(!('ownerCommand' in again.json), again.text);
+  assert.match(again.json.why, /^The root helper isn’t set up on Spark 4 yet .*, so nothing ran there\.$/);
+  assert.match(again.json.next, /^The owner was given its one-time command earlier/);
+  assert.deepEqual(sudoCalls('spark4'), [], 'no sudo on Spark 4');
   // The typed actions still work there.
   assert.equal((await call(keys.look.token, 'spark_detail', { spark: 'spark4' })).isError, false);
   // Spark 3: it ran, through sudo -n, with a fresh id, the command's SHA-256 and its seconds, in the look wall's unit.
@@ -305,13 +312,14 @@ test('Spark 2: the call goes through the owner\'s service manager (sudo fails in
   assert.deepEqual(via.slice(9, 11), ['look', '--id']);
   assert.equal(via.at(-1), 'cat hub.txt');
   assert.equal(sudoCalls('spark2').at(-1).userUnit, true);
-  // Its answer when it isn't set up names --hub.
+  // Not set up there: no command is given for the hub yet (its set-up waits for the lock-out net).
   const line = join(home('spark2'), '.rehearsal', 'etc/sudoers.d/spark-console-root');
   renameSync(line, `${line}.away`);
   try {
     const n = await look({ on: 'spark2', command: 'cat hub.txt' });
-    assert.match(n.json.ownerCommand, /^ssh -t \S+@\S+ 'bash ~\/spark-console-src\/deploy\/root-for-sparkie\.sh --hub 2'$/);
-    assert.match(n.json.next, /the hub is set up last/);
+    assert.equal(n.json.ran, false);
+    assert.ok(!('ownerCommand' in n.json) && !/root-for-sparkie/.test(n.text), n.text);
+    assert.equal(n.json.why, 'Commands on Spark 2, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.');
   } finally { renameSync(`${line}.away`, line); }
 });
 
@@ -355,10 +363,10 @@ test('the short table of exact forms: nvidia-smi runs outside the wall, by code\
   assert.equal(units('spark3').length, before, 'no look wall: the form runs outside it');
   assert.deepEqual(sudoCalls('spark3').at(-1).args.slice(2, 4), ['check', '--id']);
   assert.equal(records().find(y => y.id === r.json.record).form, 'nvidia-smi');
-  // Not set up: the command, as for any look.
+  // Not set up: nothing runs there, as for any look (its command was given once already).
   const n = await look({ on: 'spark4', command: 'nvidia-smi' });
   assert.equal(n.json.ran, false);
-  assert.match(n.json.ownerCommand, ONE_TIME(4));
+  assert.match(n.json.why, /isn’t set up on Spark 4 yet/);
   assert.deepEqual(sudoCalls('spark4'), []);
 });
 
