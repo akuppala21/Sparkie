@@ -39,31 +39,36 @@ async function jobThere(args) {
   if (!look || look.state === 'missing') return null;
   return { at: sparkName(node), model: look.env.find(e => e.startsWith('SPARK_MODEL_NAME='))?.slice(17) || null };
 }
+// The model this run would hand a job, and how many calls at once ({name, parallel}), or why it hands none ({why}).
+async function jobPick(j, given) {
+  const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
+  if (m && m.name !== SPARKIE_ID) {
+    const name = m.name || (await inventory(null).catch(() => null))?.sparks.find(sp => sp.id === m.spark)?.deployments.find(d => d.container === m.container && d.state === 'running')?.model;
+    return name ? { name, parallel: JOB_MODEL_PARALLEL } : { why: `isn’t handed a model: ${m.container} isn’t running on ${sparkName(nodeById(m.spark) || { id: m.spark })} any more` };
+  }
+  const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
+  const why = !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
+    : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
+  return why ? { why: `isn’t handed Sparkie’s model: ${why}` } : { name: SPARKIE_ID, parallel: slots ? Math.max(1, slots - 2) : 1 };
+}
 // The settings to add to step n's job (null when none): what it lacks of the three, and a note of what it was handed.
 async function jobModelEnv(j, n, args) {
   const env = Array.isArray(args.env) ? args.env : [], given = k => env.find(e => e.startsWith(`${k}=`))?.slice(k.length + 1);
   if (JOB_MODEL_KEYS.every(given)) return null;
-  const there = await jobThere(args);
+  const there = await jobThere(args), pick = await jobPick(j, given);
   if (there) {
+    // (made to ask another model than this run would hand it: refused in those words, never run asking the old one; the
+    // model review, D: "a later run with no model uses" the kept winner, so from the second winner on this is the case)
+    if (there.model && pick.name && there.model !== pick.name) {
+      throw new Error(`Step ${n} (keep_running): ${args.container} is there already on ${there.at}, made to ask ${there.model}, and this run would hand it ${pick.name}. A job keeps the settings it was made with: remove ${args.container}, or save the step with another container name, to run it for ${pick.name}.`);
+    }
     note(j, `Step ${n}: ${args.container} is there already on ${there.at}, so it runs again as it was made${there.model ? `, asking ${there.model}` : ''}: a job is handed a model only when it is made`);
     return null;
   }
   const url = given('SPARK_MODEL_URL') || jobModelAddress();
   if (!url) { note(j, `Step ${n}: ${args.container} isn’t handed a model address: Spark Console’s own address isn’t known.`); return null; }
-  const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
-  let name, parallel;
-  if (m && m.name !== SPARKIE_ID) {
-    name = m.name || (await inventory(null).catch(() => null))?.sparks.find(sp => sp.id === m.spark)?.deployments.find(d => d.container === m.container && d.state === 'running')?.model;
-    if (!name) { note(j, `Step ${n}: ${args.container} isn’t handed a model: ${m.container} isn’t running on ${sparkName(nodeById(m.spark) || { id: m.spark })} any more.`); return null; }
-    parallel = JOB_MODEL_PARALLEL;
-  } else {
-    const can = Array.isArray(MAIN?.can) ? MAIN.can : ['chat'], slots = mainArg('--max-running-requests');
-    const why = !MAIN ? 'no model is set up for Sparkie' : !can.includes('chat') ? 'its setup doesn’t say it can chat'
-      : slots === 1 ? 'it answers one call at a time, and that place is the owner’s' : null;
-    if (why) { note(j, `Step ${n}: ${args.container} isn’t handed Sparkie’s model: ${why}.`); return null; }
-    name = SPARKIE_ID;
-    parallel = slots ? Math.max(1, slots - 2) : 1;
-  }
+  if (pick.why) { note(j, `Step ${n}: ${args.container} ${pick.why}.`); return null; }
+  const { name, parallel } = pick;
   const add = [['SPARK_MODEL_URL', url], ['SPARK_MODEL_NAME', name], ['SPARK_MODEL_PARALLEL', String(given('SPARK_MODEL_PARALLEL') || parallel)]].filter(([k]) => !given(k));
   note(j, `Step ${n}: ${args.container} is handed ${name} at ${url}, ${given('SPARK_MODEL_PARALLEL') || parallel} at once`);
   return { env: [...env, ...add.map(([k, v]) => `${k}=${v}`)] };
