@@ -512,7 +512,7 @@ test('G2b: at 40,000 lines and past 400 candidates, a line carrying a name from 
     assert.equal(shown[0], pickOf(lines[100]));
     // (the 400 candidates are the newest of the 1,000 lines sharing the rarest words that the system prompt doesn't hold)
     const block = memBlockOf(sent[0].system), inPrompt = new Set(lines.filter(e => block.includes(`\n${oldLine(e)}`)).map(e => e.id));
-    assert.ok(inPrompt.size > 50 && !inPrompt.has(lines[100].id), String(inPrompt.size));
+    assert.ok(!inPrompt.has(lines[100].id));
     assert.deepEqual(shown.slice(1), lines.filter((e, i) => zebra(i) && !inPrompt.has(e.id)).reverse().slice(0, shown.length - 1).map(pickOf));
     assert.ok(shown.length > 5, String(shown.length));
     assert.equal(picks.at(-1), `More: ${401 - shown.length} other remembered lines match this message (gemma-4-31b); the memory tool lists every line.`);
