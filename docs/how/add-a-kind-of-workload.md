@@ -16,7 +16,7 @@ Something that runs on a Spark and is not a model. From the map's "Where new thi
 
 ## Also update
 
-- The `workloads` kind list (the `workloads` action, `16-actions.mjs`); `CHANGES_MODELS` (`20-desired.mjs`);
+- The `workloads` kind list (the `workloads` action, `16-reads.mjs`); `CHANGES_MODELS` (`20-desired.mjs`);
   `OP_WORDS` (`14-chats.mjs`); `startingNow` (`17-changes.mjs`); the page's job labels (`jobLabel` and `SVC_LABEL`
   in `public/app.js`); `knownContainers` (`test/start-mock.mjs`).
 - Whether it heals: anything in `ranHere` joins the desired list, and healing then tries `restart_model` on it.
