@@ -168,8 +168,12 @@ door_get() {
 json_build() { python3 -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(d.get("build") or "" if d.get("ok", True) is True else "")' 2>/dev/null || true; }
-# The service's build through the real address, or nothing.
-door_build() { [ "$(door_get /console/api/health)" = 200 ] && json_build < "$W/door.body" || true; }
+# The service's build through the real address; "ok" when it answers ok but names no build (a caller that comes in
+# through Funnel gets only {"ok":true}); nothing otherwise.
+door_build() { [ "$(door_get /console/api/health)" = 200 ] && door_ok < "$W/door.body" || true; }
+door_ok() { python3 -c 'import json, sys
+d = json.loads(sys.stdin.read())
+if d.get("ok") is True: print(d.get("build") or "ok")' 2>/dev/null || true; }
 # door_page <path>: the build of the page served at <path> (its version.json), when <path> answers.
 door_page() {
   [ "$(door_get "$1")" = 200 ] && [ "$(door_get "${1}version.json")" = 200 ] && json_build < "$W/door.body" || true
@@ -335,12 +339,19 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
   # is asked here if work is running, and the way back is armed from this build before the new one's code runs.
   local before pages='' pg ui busy answer
   before=$(health_build)
+  # (a build is installed but didn't answer: asked twice more; still silent, nothing starts unguarded)
+  if [ -z "$before" ] && [ -f "$HOME/spark-console-service/server.mjs" ]; then
+    for pg in 1 2; do sleep 3; before=$(health_build); [ -z "$before" ] || break; done
+    [ -n "$before" ] || refuse "Spark Console is installed but doesn't answer on its socket, so the way back couldn't be armed (there is no answering build to go back to). Bring it back first: ~/.local/share/spark-console/RECOVERY.txt."
+  fi
   if [ -n "$before" ]; then
     DOOR=$(door_url) || refuse "The real address isn't known: the installed config.json has no origin."
     pg=$(door_build)
-    [ "$pg" = "$before" ] || refuse "The real address ($DOOR) doesn't answer with the build running now ($before; it answered ${pg:-nothing}), so a new build couldn't be confirmed through it."
     ui=$(ui_build)
-    for pg in / /console/; do [ -z "$ui" ] || [ "$(door_page "$pg")" != "$ui" ] || pages="$pages $pg"; done
+    for answer in / /console/; do [ -z "$ui" ] || [ "$(door_page "$answer")" != "$ui" ] || pages="$pages $answer"; done
+    # (through Funnel /health names no build: then the page's version.json, served there, has to name the build)
+    [ "$pg" = "$before" ] || { [ "$pg" = ok ] && [ -n "$pages" ]; } \
+      || refuse "The real address ($DOOR) doesn't answer with the build running now ($before; it answered ${pg:-nothing}), so a new build couldn't be confirmed through it."
     busy=$(curl -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null || echo '0 0')
@@ -354,7 +365,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" 9>&- \
       || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
     ARMED=yes
-    trap 'echo "  The install was interrupted." >&2; bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted" 9>&-; result "not kept" "the install was interrupted; the build from before was put back" "$code_build"; exit 130' INT TERM HUP
+    trap 'echo "  The install was interrupted." >&2; bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted" 9>&- || true; result "not kept" "the install was interrupted; the build from before was put back" "$code_build"; exit 130' INT TERM HUP
   else
     echo "Spark Console isn't answering now, so there is no working build to go back to: the new build stays if it passes its own installer's checks."
   fi
@@ -398,8 +409,8 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     while :; do
       hc=$(door_get /console/api/health); last=''
       [ "$hc" = 000 ] || reached=yes
-      [ "$hc" != 200 ] || last=$(json_build < "$W/door.body")
-      if [ "$last" = "$code_build" ]; then
+      [ "$hc" != 200 ] || last=$(door_ok < "$W/door.body")
+      if [ "$last" = "$code_build" ] || { [ "$last" = ok ] && [ -n "$pages" ]; }; then
         ok=yes
         for pg in $pages; do [ "$(door_page "$pg")" = "$newui" ] || ok=''; done
         [ -z "$ok" ] || break
@@ -429,7 +440,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     return 0
   fi
   echo "  Not kept: $failed." >&2
-  [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed" 9>&-
+  [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed" 9>&- || true
   trap - INT TERM HUP
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"

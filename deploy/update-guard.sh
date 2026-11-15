@@ -58,6 +58,10 @@ same() {
   else [ ! -e "$2" ]; fi
 }
 
+# A copy counts only while its guard file is there: arm writes it last, and every removal takes it away first, so a copy
+# that was cut off part-way (being made or being removed) is never put back.
+whole() { [ -s "$G/guard" ]; }
+drop() { rm -f "$G/guard"; rm -rf "$G"; }
 take_copy() {
   local f u
   copy_dir "$HOME/spark-console" "$G/ui" && copy_dir "$HOME/spark-console-service" "$G/service" \
@@ -69,13 +73,15 @@ take_copy() {
 arm() {
   [ $# = 4 ] && [[ "$1" =~ ^[0-9a-f]{12}$ ]] && [[ "$2" =~ ^[0-9a-f]{12}$ ]] && [[ "$3" =~ ^[0-9a-f]{12}$ ]] && [[ "$4" =~ ^[0-9]+$ ]] \
     || { echo "Usage: $0 arm <tree> <new build> <old build> <process group>" >&2; return 2; }
+  if [ -e "$G" ] && ! whole; then rm -rf "$G"; fi
   [ ! -e "$G" ] || { say "An earlier update's way back is still armed ($G). Put it back first: bash $G/update-guard.sh put-back hand"; return 1; }
   local boot=''
   boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || boot=''
   ( umask 077; mkdir -p "$SHARE" && mkdir "$G" ) || { say "Couldn't make $G."; return 1; }
   # What an install changes, as it is now. A copy that fails leaves nothing behind.
   take_copy || { rm -rf "$G"; say "Couldn't copy what is installed now (is the disk full?)."; return 1; }
-  printf 'tree=%s\nbuild=%s\nfrom=%s\npgid=%s\nboot=%s\nat=%s\n' "$1" "$2" "$3" "$4" "$boot" "$(date +%s)" > "$G/guard"
+  printf 'tree=%s\nbuild=%s\nfrom=%s\npgid=%s\nboot=%s\nat=%s\n' "$1" "$2" "$3" "$4" "$boot" "$(date +%s)" > "$G/guard.new" \
+    && mv "$G/guard.new" "$G/guard" || { rm -rf "$G"; say "Couldn't copy what is installed now (is the disk full?)."; return 1; }
   mkdir -p "$UNITS"
   cat > "$UNITS/$NAME.service" <<EOF
 [Unit]
@@ -98,7 +104,7 @@ EOF
     say "The way back is armed: unless the new build is confirmed within $((GUARD_S / 60)) minutes, the build from before goes back by itself."
     return 0
   fi
-  timer_off; rm -rf "$G"
+  timer_off; drop
   say "The timer that puts the build from before back couldn't be started in your systemd."
   return 1
 }
@@ -107,7 +113,7 @@ disarm() {
   lock
   [ -d "$G" ] || { say "The way back had already put the build from before back."; return 1; }
   timer_off
-  rm -rf "$G"
+  drop
   return 0
 }
 
@@ -115,6 +121,7 @@ put_back() {
   local by="${1:-hand}" why="${2:-}" tree build from pgid boot restart='' back='' now
   lock
   [ -d "$G" ] || { say "Nothing to put back: no update's way back is armed."; return 0; }
+  whole || { say "The copy in $G isn't whole (an earlier run was cut off), so nothing is put back from it. It is removed."; timer_off; rm -rf "$G"; return 1; }
   tree=$(field tree); build=$(field build); from=$(field from); pgid=$(field pgid); boot=$(field boot)
   [ -n "$why" ] || why='nothing confirmed the new build through the real address in time'
   # From the timer: an install still running is stopped first (only pull.sh's own group, on this boot).
@@ -173,7 +180,7 @@ os.replace(tmp, path)' "$STATE/update-result.json" "$tree" "$build" \
   fi
   if [ -n "$back" ]; then say "The build from before the update ($from) is back and answers."
   else say "The build from before the update was put back, but it doesn't answer. See ~/.local/share/spark-console/RECOVERY.txt"; fi
-  rm -rf "$G"
+  drop
   [ -n "$back" ]
 }
 

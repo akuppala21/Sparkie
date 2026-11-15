@@ -216,6 +216,13 @@ if [[ "$FREE_KB" =~ ^[0-9]+$ ]]; then
 else
   echo "  Note: couldn't read how much disk space is free, so that wasn't checked."
 fi
+# An update from GitHub whose way back is still armed (update-guard.sh) would put this install back when its timer
+# fires. An install made outside that update (another process group: from the Mac, or by hand) disarms it first (R30).
+GUARD="$HOME/.local/share/spark-console/update-guard" ME_PGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+if [ -f "$GUARD/guard" ] && [[ "$ME_PGID" =~ ^[0-9]+$ ]] && [ "$(sed -n 's/^pgid=//p' "$GUARD/guard")" != "$ME_PGID" ]; then
+  echo "  An update from GitHub left its way back armed; this install takes over, so it is disarmed first."
+  bash "$GUARD/update-guard.sh" disarm >/dev/null 2>&1 || echo "  NOTE: couldn't disarm it; to put that update's build back by hand: bash $GUARD/update-guard.sh put-back hand"
+fi
 
 # From here on, however this script ends: a snapshot that wasn't finished is removed (it would hide the good ones from
 # "Undo the last update"), and once files have started to change, any failure puts the previous install back.
