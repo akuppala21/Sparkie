@@ -49,17 +49,17 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 2. Change the parts in `service/src/`, then run `node tools/make.mjs`: it rebuilds `service/server.mjs`, the code map
    and the rules index, and checks the documents. `node tools/make.mjs --check` changes nothing.
 3. Every fix gets a test that fails without it, in the `test/*.test.mjs` file closest to the feature.
-4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
-   `SPARK_TEST_SLOW=3` on a slow machine). They never touch the real Sparks.
-5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if it all passes, marks the
-   build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
-   `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
+4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs`
+   (`SPARK_TEST_SLOW=3` on a slow machine). They never touch a real Spark.
+5. Land each step: `node tools/land.mjs <branch>` (affected tests, R29). Before an install, `node test/lock.mjs`
+   runs the whole suite; only a pass marks the build tested (`service/workflows.lock.json`). Install with a note of
+   what changed: `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets).
 6. After installing, check the change the way the owner would use it: through Sparkie's chat or
-   `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
+   `POST /console/api/actions/<name>`. Passing tests don't prove it works on the Sparks.
    The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
 
-From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`), and a pass
-on `main` leaves a `tested/` tag holding the commit and the lock the installer asks for. No SSH or fleet key needed.
+From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`); a pass on
+`main` leaves a `tested/` tag (the commit and its lock). No SSH or fleet key.
 
 ## I want to …
 
@@ -86,6 +86,7 @@ on `main` leaves a `tested/` tag holding the commit and the lock the installer a
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+| land a step on main | `docs/how/land-a-step.md` |
 
 No card fits? Search `docs/rules.md`.
 
@@ -111,7 +112,7 @@ No card fits? Search `docs/rules.md`.
     lists (`buildOf` in `01-setup.mjs`, `API_BUILD` in `deploy/host-on-portal.sh`, `full-run.yml`'s `mark` job,
     `test/fleet.test.mjs` (“answers with the build”)). A change to what the installer reads (R30) keeps
     `test/install.test.mjs` passing.
-12. `node test/lock.mjs` passed on this exact tree, and again after any `worker.py` edit; after install, `/health`
-    shows no workflow `untested`.
-13. The documents change in the same change: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
+12. Before an install, `node test/lock.mjs` passed on that exact tree (again after a `worker.py` edit); after it,
+    `/health` shows no workflow `untested`.
+13. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
     rule's file in `docs/rules/` (its Today, Where and Checked by), a card in `docs/how/`.

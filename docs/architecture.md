@@ -198,11 +198,12 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
 ## 4. Known traps
 
 - **No lock in the tree.** Git doesn’t keep `service/workflows.lock.json` (R29): `node test/lock.mjs` writes it after a
-  whole passing run, or a checkout of a `tested/` tag holds one, and the installer refuses a build without it. Any edit
-  to a part changes the build; a `worker.py` edit changes every workflow version but not the build. After an install
-  `/health` names the workflows whose version waits for a validation run (the hub guard, 2026-11-14, changed
-  `start_model` and `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the
-  restart; one `find_setups` covers that one.
+  whole passing run, or a `tested/` tag holds one, and the installer refuses a build without it. A step lands on `main`
+  on its affected tests (`tools/land.mjs`); the whole suite runs after. Any edit to a part changes the build; a
+  `worker.py` edit changes every workflow version but not the build. After an install `/health` names the workflows
+  whose version waits for a validation run (the hub guard, 2026-11-14, changed `start_model` and
+  `start_model_across`): one live start, check and stop on Spark 3 or 4 covers the starts and the restart; one
+  `find_setups` covers that one.
 - **Being in Recipes is no longer only the catalog and the owner’s page.** A repo started or looked up by its full
   name joins (A9). From then it may run across two Sparks (`placeModel`), start on a call (`startOnCall`) and is
   looked up daily. A model already on disk joins only through `find_setups`.
