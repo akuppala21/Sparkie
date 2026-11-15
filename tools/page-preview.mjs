@@ -26,7 +26,7 @@
 // "stop … on spark N", "restart … on spark N", "what's running" (test/stand-in-fleet.md).
 //
 // What can't work here: passkeys (WebAuthn needs the real https address: "Sign in" with --as public, and a change that
-// asks for the owner's passkey, can't finish), the editors, and anything that reaches outside this computer (the
+// asks for the owner's passkey, can't finish) and anything that reaches outside this computer (the
 // stand-in fleet refuses it). The page's update check is off, as for any copy whose app.js still says BUILD = 'dev'.
 //
 // It listens on 127.0.0.1 only (--host takes nothing else), needs only Node, and never touches a real Spark, the real
