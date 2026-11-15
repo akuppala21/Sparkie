@@ -1,7 +1,8 @@
 // Covers: No sign-in travels with the state (E2b; contract 6.25; design E 2.5): a copy of the state holds no
 // `sessions.json`, and a sign-in alone sends no copy (the passkey's counter and last use don't count); state put back
 // from a copy onto a fresh Spark Console signs no device in (the old cookie gets 401) while the owner's access and
-// passkey are as the copy had them (the passkey signs in from the internet again); `restore.sh --with-state` puts an
+// passkey are as the copy had them (the passkey signs in from the internet again once the owner, on the tailnet, has
+// kept what came back: E2c, the copy has a number and the new disk none); `restore.sh --with-state` puts an
 // install snapshot's state back but never its `sessions.json`, also when the snapshot holds one.
 //
 // One stand-in fleet looks every 3 s (the hourly look, made short), with Sparks 3 and 4 on; a second starts from the
@@ -15,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { request, waitFor, sleep, SLOW } from './lib.mjs';
 import { startMock, serviceConfig, REPO } from './start-mock.mjs';
-import { Authenticator } from './authenticator.mjs';
+import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
 const ORIGIN = serviceConfig().origin, KEY = new Authenticator(new URL(ORIGIN).hostname.split('.').slice(1).join('.'), ORIGIN);
 const FUNNEL = { 'tailscale-funnel-request': '?1' };
@@ -100,6 +101,15 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
       assert.equal(boot.status, 200, boot.text);
       assert.equal(boot.json.viewer.role, 'owner', 'the owner is the owner on the tailnet');
       assert.deepEqual((await ask(G, '/auth/passkeys')).json.keys.map(k => k.id).sort(), had('passkeys.json').keys.map(k => k.id).sort());
+      // (E2c, contract 6.25) Not before the owner has looked at what came back, on the tailnet, and kept it: the copy
+      // carries the number its first passkey gave it, and this disk's secrets file has none, so the start held.
+      const held = await net(G, '/auth/signin/begin', { method: 'POST', body: {} });
+      assert.equal(held.status, 403, held.text);
+      assert.equal(held.json.error, 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.');
+      const c = await ask(G, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/auth/putback/keep', body: {} } });
+      assert.equal(c.status, 200, c.text);
+      const kept = await ask(G, '/auth/putback/keep', { method: 'POST', body: {}, headers: { 'x-spark-passkey': passkeyHeader(KEY.sign(c.json)) } });
+      assert.equal(kept.status, 200, kept.text);
       // The passkey that came back signs a browser in from the internet again.
       const again = await signIn(G);
       assert.ok(again);

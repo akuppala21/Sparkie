@@ -77,7 +77,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `agents.json` | `20-mcp` | `top level`, `putBackAtStart` (22-putback), `handler` (24-handler); the top-level one is the last-use timer | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
-| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoved`, `putBackRoute` | yes | no |
+| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoved`, `putBackSeed`, `putBackRoute` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `storeBrainEval` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |

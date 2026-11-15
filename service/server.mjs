@@ -15896,13 +15896,16 @@ async function passkeyGate(req, path, viewer) {
 // Owns: auth-serial.json (writers: putBackSerialWrite)
 // Timers: none        Wakes: none
 // Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json,
-// so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). It goes up
-// by one at each removal by the owner: a device signed out, a passkey, an agent key, agents' changes paused. The secrets
-// file also notes what was removed (kind and id). Nothing else writes either number.
-// At start (putBackAtStart, before the sockets open): a state number lower than the secrets file's, or a number in the
-// state and none in the secrets file (a new disk), means the state was put back: by restore.sh --with-state, or by hand
-// from a copy. A state with no number (every install before this one; any whose owner never removed anything) never
-// trips it, and nothing in the state folder, no agent and no walled command can lower the secrets file's number.
+// so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
+// that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
+// each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
+// tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; a key's rights after
+// it was narrowed). Nothing else writes either number; restore.sh --with-state removes the state's.
+// At start (putBackAtStart, before the sockets open), the state was put back (by restore.sh --with-state, or by hand from
+// a copy) when something the secrets file notes as removed is in the state again, whatever the numbers say; or when the
+// state's number is below the secrets file's (a state with no number is one when the secrets file has a number); or when
+// the state has a number and the secrets file none (a new disk). Nothing in the state folder, no agent and no walled
+// command can lower the secrets file's number. A copy made before this build, on a new disk, has no number: no hold.
 // Then, before anything is answered: what the owner removed since is removed again, every device is signed out (also
 // sessions an older copy or snapshot still held), the owner's own pause comes back, and a task under way is parked, with
 // a line in its chat. The hold follows until the owner, on the tailnet, looks at the list of what came back and presses
@@ -15932,7 +15935,9 @@ function putBackAuth() {
   try { mtime = statSync(SECRETS_FILE).mtimeMs; } catch {}
   if (mtime !== putBackSeen.mtime) {
     const s = secretsRead();
-    putBackSeen.auth = s?.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {};
+    // (one that can't be read keeps the last answer: a hold doesn't lift while it lasts)
+    if (s === null) return putBackSeen.auth;
+    putBackSeen.auth = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {};
     putBackSeen.mtime = mtime;
   }
   return putBackSeen.auth;
@@ -15942,8 +15947,9 @@ const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r =
 
 // A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
 // between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
-// session, passkey, agent, paused; resumed notes the owner's resume and changes no number.
-function putBackRemoved(kind, id = null, name = null) {
+// session, passkey, agent, narrowed (with the key's rights after it: extra { act, internet }), paused; resumed notes the
+// owner's resume and changes no number.
+function putBackRemoved(kind, id = null, name = null, extra = {}) {
   if (!SECRETS_FILE) return;
   try {
     const s = secretsRead();
@@ -15955,11 +15961,25 @@ function putBackRemoved(kind, id = null, name = null) {
     secretsWrite(x => {
       const a = { ...(x.auth && typeof x.auth === 'object' ? x.auth : {}), serial: n };
       if (kind === 'paused' || kind === 'resumed') a.halted = kind === 'paused';
-      else a.removed = [...putBackRemovedList(a), { kind, id: String(id), ...(name ? { name: clean(name, 60) } : {}), at: new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+      else a.removed = [...putBackRemovedList(a), { kind, id: String(id), ...(name ? { name: clean(name, 60) } : {}), ...extra, at: new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
       return { ...x, auth: a };
     });
     putBackSeen.at = 0;
   } catch (e) { console.error(`What was removed couldn’t be noted for a state put back later: ${e.message}`); }
+}
+
+// A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
+// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. The secrets file
+// first: if writing it fails, neither has a number and nothing holds.
+function putBackSeed() {
+  if (!SECRETS_FILE) return;
+  try {
+    const s = secretsRead();
+    if (s === null || putBackSerial() || (Number.isInteger(s.auth?.serial) && s.auth.serial > 0) || !(passkeys().length || agentKeys().length)) return;
+    secretsWrite(x => ({ ...x, auth: { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}), serial: 1 } }));
+    putBackSerialWrite(1);
+    putBackSeen.at = 0;
+  } catch (e) { console.error(`The state’s number couldn’t be started: ${e.message}`); }
 }
 
 // At start, before the sockets open (25-backup-and-start.mjs). Never throws. While it holds, each start removes again
@@ -15972,17 +15992,33 @@ function putBackAtStart() {
     if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
     const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
     const n = Number.isInteger(a.serial) && a.serial > 0 ? a.serial : 0, first = !a.hold;
-    if (first && n && t > n) { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), serial: t } })); return; }
-    if (first && !(n ? t < n : t > 0)) return;
     const removed = putBackRemovedList(a), gone = kind => new Set(removed.filter(r => r.kind === kind).map(r => String(r.id)));
+    // Something the owner removed is in the state again: put back, whatever the numbers say (a snapshot with no number
+    // put back over a state with one, by an older snapshot's restore.sh or by hand).
+    let back = false;
+    try {
+      const [p, k, d] = [gone('passkey'), gone('agent'), gone('session')];
+      back = passkeys().some(x => p.has(String(x.id))) || agentKeys().some(x => k.has(String(x.id))) || sessionList().some(x => d.has(String(x.id)));
+    } catch {}
+    if (first && !back && n && t > n) { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), serial: t } })); return; }
+    if (first && !back && (n ? t >= n : !t)) { putBackSeed(); return; }
     const again = [];
     try {
       const keys = passkeys(), drop = gone('passkey'), kept = keys.filter(k => !drop.has(String(k.id)));
       if (kept.length < keys.length) { savePasskeys(kept); again.push(...keys.filter(k => drop.has(String(k.id))).map(k => ({ kind: 'passkey', name: clean(k.name, 60) }))); }
     } catch (e) { console.error(`The passkeys after a put-back: ${e.message}`); }
     try {
-      const keys = agentKeys(), drop = gone('agent'), kept = keys.filter(k => !drop.has(k.id));
-      if (kept.length < keys.length) { writePrivate(AGENTS_FILE, { keys: kept }); again.push(...keys.filter(k => drop.has(k.id)).map(k => ({ kind: 'agent key', name: clean(k.name, 60) }))); }
+      const keys = agentKeys(), drop = gone('agent'), kept = keys.filter(k => !drop.has(String(k.id)));
+      let changed = kept.length < keys.length;
+      again.push(...keys.filter(k => drop.has(String(k.id))).map(k => ({ kind: 'agent key', name: clean(k.name, 60) })));
+      // A right the owner took from a key since (as the last narrowing noted it): taken again, never given.
+      const narrowed = new Map(removed.filter(r => r.kind === 'narrowed').map(r => [String(r.id), r]));
+      for (const k of kept) {
+        const r = narrowed.get(String(k.id));
+        if (r?.act === false && (k.scopes || []).includes('fleet:act')) { k.scopes = ['fleet:read']; changed = true; again.push({ kind: 'agent key’s right to change things', name: clean(k.name, 60) }); }
+        if (r?.internet === false && k.internet !== false) { k.internet = false; changed = true; again.push({ kind: 'agent key’s use from the internet', name: clean(k.name, 60) }); }
+      }
+      if (changed) writePrivate(AGENTS_FILE, { keys: kept });
     } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }
     let signedOut = 0;
     try { signedOut = sessionList().length; if (signedOut || existsSync(SESSIONS_FILE)) saveSessions([]); } catch (e) { console.error(`The devices after a put-back: ${e.message}`); }
@@ -16618,11 +16654,12 @@ const handler = async (req, res) => {
     const funnel = Boolean(req.headers['tailscale-funnel-request']);
     const tailnetLogin = !funnel && LOGIN_RE.test(String(req.headers['tailscale-user-login'] || '')) ? String(req.headers['tailscale-user-login']).slice(0, 200) : null;
     if (req.method === 'GET' && path === '/whoami') {
-      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in.
-      const signin = !viewer && !tailnetLogin && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
+      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in. While
+      // state put back waits for the owner (R23), neither a passkey nor a recovery code signs in from here.
+      const signin = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
       // code that can be read. Yes or no only, never how many. The sign-in page shows "Use a recovery code" from it (F18).
-      const recovery = !viewer && !tailnetLogin && Boolean(accessList().owner) && recoveryView().left > 0;
+      const recovery = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && recoveryView().left > 0;
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
       return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
@@ -16731,6 +16768,7 @@ const handler = async (req, res) => {
         const name = clean(b.name, 60) || 'Passkey';
         keys.push({ ...k, name, createdAt: new Date().toISOString(), lastUsedAt: null });
         savePasskeys(keys);
+        putBackSeed();
         audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'passkey-added', args: { name, domain: k.rpId, ...(viewer.session ? { device: viewer.session.name } : {}) }, ok: true });
         // From a device signed in over the internet: on its record (it may add one without another only once), and said.
         if (viewer.session) {
@@ -16794,6 +16832,7 @@ const handler = async (req, res) => {
         const token = `sck_${randomBytes(32).toString('base64url')}`;
         const key = { id: randomBytes(6).toString('hex'), name, login: viewer.login, hash: keyHash(token).toString('hex'), scopes: ['fleet:read'], internet: false, createdAt: new Date().toISOString(), lastUsedAt: null, lastAction: null };
         writePrivate(AGENTS_FILE, { keys: [...keys, key] });
+        putBackSeed();
         audit({ via: 'page', actor: 'owner', action: 'agent-added', args: { agent: name }, ok: true });
         return send(res, 201, { ...agentView(key), token, url: mcpUrl() });
       }
@@ -16807,9 +16846,12 @@ const handler = async (req, res) => {
         }
         const keys = agentKeys(), key = keys.find(k => k.id === agentId);
         if (!key) throw new HttpError(404, 'That agent was removed.');
+        const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
         writePrivate(AGENTS_FILE, { keys });
+        // A right taken away counts as a removal (R23): a state put back from before takes it away again.
+        if ((could.act && act === false) || (could.internet && internet === false)) putBackRemoved('narrowed', key.id, key.name, { act: key.scopes.includes('fleet:act'), internet: key.internet !== false });
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));

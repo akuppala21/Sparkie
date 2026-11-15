@@ -27,8 +27,11 @@ If the page loads but Sparkie doesn't answer, type one of these alone in your ow
 Code answers them, not Sparkie's model:
      /status    /pause    /restart sparkie    /undo update    /help
 
-Putting state back too (restore.sh --with-state in one of those, or a copy): then open Spark Console once on your
-tailnet and press "Keep these"; until then sign-in from the internet is refused.
+Putting state back too (restore.sh --with-state in a release below, or a copy): when Spark Console says so, open it
+once on your tailnet, look at what came back and press "Keep these"; until then sign-in from the internet is refused.
+If your Tailscale login changed since that copy, put today's login in access.json first (<login> is yours now):
+     python3 -c 'import json,sys; f,l=sys.argv[1:]; d=json.load(open(f)); d["ownerLogin"]=l; json.dump(d,open(f,"w"))' \
+       ~/.local/state/spark-console/access.json <login>
 
 Earlier builds are kept in ~/.local/share/spark-console/releases, the newest 10. go-back.sh uses the newest one
 that isn't what's installed now; run it again to go back one more build.

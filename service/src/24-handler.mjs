@@ -70,11 +70,12 @@ const handler = async (req, res) => {
     const funnel = Boolean(req.headers['tailscale-funnel-request']);
     const tailnetLogin = !funnel && LOGIN_RE.test(String(req.headers['tailscale-user-login'] || '')) ? String(req.headers['tailscale-user-login']).slice(0, 200) : null;
     if (req.method === 'GET' && path === '/whoami') {
-      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in.
-      const signin = !viewer && !tailnetLogin && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
+      // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in. While
+      // state put back waits for the owner (R23), neither a passkey nor a recovery code signs in from here.
+      const signin = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
       // code that can be read. Yes or no only, never how many. The sign-in page shows "Use a recovery code" from it (F18).
-      const recovery = !viewer && !tailnetLogin && Boolean(accessList().owner) && recoveryView().left > 0;
+      const recovery = !viewer && !tailnetLogin && !putBackHeld() && Boolean(accessList().owner) && recoveryView().left > 0;
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
       return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
@@ -183,6 +184,7 @@ const handler = async (req, res) => {
         const name = clean(b.name, 60) || 'Passkey';
         keys.push({ ...k, name, createdAt: new Date().toISOString(), lastUsedAt: null });
         savePasskeys(keys);
+        putBackSeed();
         audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'passkey-added', args: { name, domain: k.rpId, ...(viewer.session ? { device: viewer.session.name } : {}) }, ok: true });
         // From a device signed in over the internet: on its record (it may add one without another only once), and said.
         if (viewer.session) {
@@ -246,6 +248,7 @@ const handler = async (req, res) => {
         const token = `sck_${randomBytes(32).toString('base64url')}`;
         const key = { id: randomBytes(6).toString('hex'), name, login: viewer.login, hash: keyHash(token).toString('hex'), scopes: ['fleet:read'], internet: false, createdAt: new Date().toISOString(), lastUsedAt: null, lastAction: null };
         writePrivate(AGENTS_FILE, { keys: [...keys, key] });
+        putBackSeed();
         audit({ via: 'page', actor: 'owner', action: 'agent-added', args: { agent: name }, ok: true });
         return send(res, 201, { ...agentView(key), token, url: mcpUrl() });
       }
@@ -259,9 +262,12 @@ const handler = async (req, res) => {
         }
         const keys = agentKeys(), key = keys.find(k => k.id === agentId);
         if (!key) throw new HttpError(404, 'That agent was removed.');
+        const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
         writePrivate(AGENTS_FILE, { keys });
+        // A right taken away counts as a removal (R23): a state put back from before takes it away again.
+        if ((could.act && act === false) || (could.internet && internet === false)) putBackRemoved('narrowed', key.id, key.name, { act: key.scopes.includes('fleet:act'), internet: key.internet !== false });
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));
