@@ -114,7 +114,7 @@ describe('asleep (D4)', { concurrency: 1 }, () => {
       writeFileSync(join(home, 'reach.py'), sh.slice(start, end));
       const r = spawnSync('python3', [join(home, 'reach.py')], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
       assert.equal(r.status, 0, r.stderr);
-      assert.deepEqual(r.stdout.trim().split('\n'), [
+      assert.deepEqual(r.stdout.replace(/\n+$/, '').split('\n'), [
         '  spark2: this machine',
         '  spark3: NOT reachable without a password: ssh: connect to host port 22: Connection timed out',
         '  spark4: asleep (Spark Console powered it off at 2026-11-14 10:00 UTC; a start or power_on turns it on)',
