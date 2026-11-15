@@ -355,6 +355,7 @@ action({
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
+          if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -370,6 +371,7 @@ action({
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedBy(st.action, args, out, st.keep === true));
           savedRunKeep(j, { started: ran, pending: [] });
+          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
