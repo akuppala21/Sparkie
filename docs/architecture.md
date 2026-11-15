@@ -36,7 +36,7 @@ flowchart TD
   V1["/v1 gateway (sparkieApi)"]
   EDITOR["Editor proxy to code-server on 127.0.0.1"]
   APPDOOR["App door (21-door, R40): door.sock behind Tailscale :10000 on the same name, its own handler; the owner only, one kept app per browser"]
-  CHAT["Sparkie turn (sparkieTurn, 14-chats)"]
+  CHAT["Sparkie turn (sparkieTurn, 14-chats, 14-rounds)"]
   BRAIN["Chat-route model: the brain (sparkie-main on Spark 2) by default"]
   RUN["runAction: owner, inputs, (reads return here), may-change, pause, intent gate if via sparkie, workflow state, breaker, run, audit"]
   REG["Action registry: reads and changes"]
@@ -143,7 +143,7 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
    (once), so a throw while the turn is set up frees the chat and the owner's slot. A `memory.json` that can't be read
    gives a turn without memory lines and one line in the prompt saying so.
 4. **Tool call.** The brain asks for `start_model`; `runOne` passes it straight to `runAction` as via `sparkie`, with
-   the intent and the words in ctx (`runOne` inside `sparkieTurn` in `14-chats.mjs`).
+   the intent and the words in ctx (`runOne` in `14-rounds.mjs`).
 5. **runAction** (`16-actions.mjs`): owner, input schema, (a read would return here), may change, pause, intent gate
    (`sparkieCheck` in `16-actions.mjs`; unclear becomes a button), workflow `start_model` (untested is refused; tested
    but not yet validated runs as its validation run), hourly breaker.
