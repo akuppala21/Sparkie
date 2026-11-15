@@ -27,10 +27,10 @@ const COPY_LATE_MS = 7 * 86400000;
 const COPY_WAIT_MS = 5 * 60000;
 // Files Spark Console rewrites by itself as it watches and logs: in every copy, but a change to them alone makes none
 // due. The copy's own record; the fleet's record and the audit log; what the watcher, the status check, the cable test,
-// healing, power and Telegram keep; the watchdog's counts; a crash record; and cloud.json and sessions.json, which no
-// copy carries (so a sign-in alone sends none).
+// healing, power and Telegram keep; the watchdog's counts; a crash record; what a saved workflow under way started; and
+// cloud.json and sessions.json, which no copy carries (so a sign-in alone sends none).
 const COPY_IGNORES = new Set(['backup.json', 'events.jsonl', 'audit.jsonl', 'knowledge.json', 'energy.json', 'links.json', 'heal-tries.json',
-  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json']);
+  'power.json', 'telegram.json', 'watchdog-misses', 'watchdog-restarts', 'api-locked', 'last-crash.json', 'cloud.json', 'sessions.json', 'saved-runs.json']);
 // What only says when a passkey or an agent key was last used (and a passkey's counter, which a sign-in moves): a change
 // to it alone makes no copy due. (A counter put back from an older copy is lower than the passkey's own: accepted.)
 const COPY_USE_FIELDS = { 'passkeys.json': ['signCount', 'lastUsedAt'], 'agents.json': ['lastUsedAt', 'lastAction'] };

@@ -347,12 +347,15 @@ action({
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
+      savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
         for (const [i, st] of w.steps.entries()) {
           cancelCheck(j);
           const args = fillIn(st.args || {}, given);
           step(j, `Step ${i + 1} of ${w.steps.length}: ${st.action} ${JSON.stringify(args)}`);
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
+          if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
@@ -360,17 +363,20 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
+          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedBy(st.action, args, out, st.keep === true));
+          savedRunKeep(j, { started: ran, pending: [] });
+          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },

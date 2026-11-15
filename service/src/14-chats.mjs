@@ -69,9 +69,10 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
     `You are ${MAIN?.assistant || 'Sparkie'}, the assistant for this team's NVIDIA DGX Spark machines.`,
     tools ? [
       'Be concise and practical. You have tools: use them to look things up instead of guessing, and say what you found.',
-      // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
-      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
-        : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
+      // From Telegram (R32): saved workflows and updates are changed in Spark Console, so those tools aren't offered;
+      // memory is remembered and forgotten there as here (R25).
+      channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.' : null,
+      'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
       'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
@@ -296,7 +297,7 @@ async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}
   // or memory that can't be read) frees the chat and the slot too. No catch: the caller still gets the error.
   try {
     emit({ type: 'started' });
-    // From Telegram, memory and saved workflows aren't offered (R32: they're changed in Spark Console).
+    // From Telegram, saved workflows aren't offered (R32: they're changed in Spark Console); memory is (R25).
     const tools = viewer.role === 'owner' ? sparkieTools().filter(t => !(channel && PAGE_ONLY_TOOLS.has(t.function.name))) : [];
     const said = normQuotes(text);
     Object.assign(turn, { tools, said });
