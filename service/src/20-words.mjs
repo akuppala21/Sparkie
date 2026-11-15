@@ -113,7 +113,8 @@ function stopWord(conv) {
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
-// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt).
+// Where every install puts the by-hand way back (deploy/go-back.sh, deploy/RECOVERY.txt) and the rebuild steps
+// (deploy/REBUILD.txt).
 const BY_HAND_DIR = `${homedir()}/.local/share/spark-console`;
 // /undo update: the page's Undo update, typed. It is the undo_update action through runAction as the page, so that
 // action's own guard decides (R31): on the owner's tailnet it runs; a device signed in over the internet gets the
@@ -139,6 +140,7 @@ function helpWord() {
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
+  lines.push(`  bring ${consoleSparkWords().replace(/^on /, '')} back after its disk is lost: deploy/REBUILD.txt on GitHub (a copy: ${BY_HAND_DIR}/REBUILD.txt)`);
   lines.push(`  resume agents’ changes (${consoleSparkWords()}): set "halted": false in ${SETTINGS_FILE}`);
   return lines.join('\n');
 }
