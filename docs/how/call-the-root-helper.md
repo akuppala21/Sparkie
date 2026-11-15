@@ -12,8 +12,10 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 - `helperCall` runs it and gives back `{ id, code, out, cut, timedOut }`; it never rejects. It ends the call at its
   seconds and `LOOK_SLACK` more, or past `J_MAX` of output.
 - `helperAnswer` reads the answer from the lines that begin with the id; a look's (or run's) answer is its last line,
-  `<id> end <code>` or `<id> end time`, so what a command prints can never stand for one. Map a new kind of answer
-  there, never by searching the output.
+  `<id> end <code>` or `<id> end time`, so what a command prints can never stand for one; a change's own lines before
+  it come back as `notes`. Map a new kind of answer there, never by searching the output.
+- A change (`runChange`, R61): `--dir`, `--protect '~/…'`, `--memory`; after a yes only `--open`, `--fleet`, `--gpu`.
+  `state --id` (`runnerRunState`): what became of a call.
 - With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:
   the owner's command (`ownerCommand`) once per Spark and reason while the console runs, then one line; never the
   hub's yet (it waits for the lock-out net). While a proof holds its lock: "being proven right now".

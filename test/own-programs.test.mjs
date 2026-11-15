@@ -60,6 +60,9 @@ test('every program the call to the root helper and the copies run is on PATH_PR
     texts.push(own.helperScript(node, 'look', { id: 'abcdefgh1234', command: 'cat x', seconds: 30, words: ['x'], walks: ['y'] }));
     texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~/work', protect: ['~/models', '~/.cache/huggingface'] }));
     texts.push(own.helperScript(node, 'prove', { id: 'abcdefgh1234' }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~', memory: 4, fleet: true, gpu: true }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~/work', open: true }));
+    texts.push(own.helperScript(node, 'state', { id: 'abcdefgh1234' }));
   }
   // Each exact form, by a command that is that form (every row of the table is reached).
   const forms = ['docker ps', 'docker ps -a', 'docker images', 'docker stats --no-stream', 'nvidia-smi', 'tailscale status', 'ip addr', 'ip route',
@@ -77,4 +80,14 @@ test('every program the call to the root helper and the copies run is on PATH_PR
   for (const p of ['sha256sum', 'flock', 'sudo', 'systemd-run', 'timeout', 'bash', 'realpath', 'find', 'python3', 'docker', 'nvidia-smi', 'systemctl']) assert.ok(called.has(p), `${p} is read out of the scripts`);
   assert.ok(programsOf(own.ran[0]).has('systemctl'), 'the copies\' own call of systemctl is read');
   assert.deepEqual([...called].filter(p => !PATH_PROGRAMS.includes(p)).sort(), [], `called but not on PATH_PROGRAMS (read: ${[...called].sort().join(' ')})`);
+});
+
+test('the call to the root helper: a change\'s cap and widenings as the helper takes them, and never a quiet ~ for a dir it can\'t take', () => {
+  const far = { id: 'spark3', host: '100.0.0.3' }, at = opts => own.helperScript(far, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, ...opts });
+  assert.match(at({ dir: '~', memory: 4, fleet: true, gpu: true }), / --dir "\$HOME" --memory 4G --fleet --gpu -- 'touch x'/);
+  assert.match(at({ dir: '~/work', memory: 8, open: true, fleet: true }), / --dir "\$HOME"'\/work' --memory 8G --open -- 'touch x'/);
+  assert.match(own.helperScript(far, 'state', { id: 'abcdefgh1234' }), /"\$h" state --id "\$id"/);
+  for (const dir of ['/tmp', '~/../x', 'work', '~/a b', '~/.']) {
+    assert.throws(() => at({ dir }), e => e.status === 400 && /^dir isn’t in the right form for a change/.test(e.message), dir);
+  }
 });

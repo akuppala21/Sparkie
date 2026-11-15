@@ -15,7 +15,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, 
   lstatSync, statSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync, utimesSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, call, createActKey, newChat, say, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 import { rehearse } from './rehearsal.mjs';
 
@@ -44,7 +44,9 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_
     put('notes/tree/..dots', 'dots\n');
     put('notes/tree/sub/inner.txt', 'inner\n');
     chmodSync(join(h, 'notes/tree/sub'), 0o750);
-    put('dots.txt', 'dots before\n');
+    put('notes/dots.txt', 'dots before\n');
+    mkdirSync(join(h, 'notes/up'), { recursive: true });
+    put('dots.txt', 'top dots before\n');
     put('notes/r.txt', BYTES, 0o604);
     put('notes/s.txt', 'before s\n', 0o600);
     put('notes/p.txt', 'before p\n');
@@ -224,19 +226,40 @@ test('a file over 16 MB, or past the 128 MB one command keeps, is not kept and t
 test('names with a space, a leading dash, a line break or two dots are copied and put back exactly; a link out of the home, or one planted among the copies, is never written through', { timeout: 180000 * SLOW }, async () => {
   const tree = { 'with space.txt': ['space\n', 0o644], '-dash.txt': ['dash\n', 0o600], 'line\nbreak.txt': ['break\n', 0o644], '..dots': ['dots\n', 0o644], 'sub/inner.txt': ['inner\n', 0o644] };
   const chat = await newChat();
-  const ran = await inChat(chat, 'clean up the tree on spark 3', 'run', { on: 'spark3', command: 'rm -r notes/tree && echo z > notes/../dots.txt' });
+  const ran = await inChat(chat, 'clean up the tree on spark 3', 'run', { on: 'spark3', command: 'rm -r notes/tree && echo z > notes/up/../dots.txt' });
   assert.equal(ran.value?.ran, true, ran.error);
   assert.ok(!existsSync(at3('notes/tree')));
-  assert.equal(text('dots.txt'), 'z\n');
-  assert.equal(copyOf(ran.value.set, 'dots.txt').bytes.toString(), 'dots before\n');
+  assert.equal(text('notes/dots.txt'), 'z\n');
+  assert.equal(copyOf(ran.value.set, 'notes/dots.txt').bytes.toString(), 'dots before\n');
   for (const [n, [t]] of Object.entries(tree)) assert.equal(copyOf(ran.value.set, `notes/tree/${n}`).bytes.toString(), t, n);
   // what the page's line for it needs (A5): where, root as it ran, the record, the tail
   assert.deepEqual([ran.tool.where, ran.tool.root, ran.tool.kept, ran.tool.tail], ['Spark 3', false, ran.value.record, 'exit 0'], JSON.stringify(ran.tool));
   const undo = await inChat(chat, 'undo the tree', 'undo_last_change');
   assert.equal(undo.value?.outcome, 'restored', undo.error || JSON.stringify(undo.value));
   assert.deepEqual(undo.value.notRestored, []);
-  for (const p of ['~/dots.txt', '~/notes/tree', '~/notes/tree/sub', ...Object.keys(tree).map(n => `~/notes/tree/${n}`)]) assert.ok(undo.value.restored.includes(p), p);
-  assert.equal(text('dots.txt'), 'dots before\n');
+  for (const p of ['~/notes/dots.txt', '~/notes/tree', '~/notes/tree/sub', ...Object.keys(tree).map(n => `~/notes/tree/${n}`)]) assert.ok(undo.value.restored.includes(p), p);
+  assert.equal(text('notes/dots.txt'), 'dots before\n');
+  // What the row was (A13b's wall): a write at the top of the home would fail inside the plain wall, so it is asked, the
+  // button saying so; nothing runs before the press; after it, outside that wall (run --open), it writes ~/dots.txt, and
+  // undo puts it back.
+  const top = 'echo z > notes/../dots.txt', words = 'put the dots at the top on spark 3';
+  script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command: top, dir: '~' } }] }]);
+  let shown;
+  try { shown = await say(chat, words); } finally { noScript(); }
+  const asked = JSON.parse(lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').at(-1).results[0].content);
+  assert.equal(asked.outcome, 'needs-ok', JSON.stringify(asked));
+  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the wall: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\.\n/);
+  assert.equal(text('dots.txt'), 'top dots before\n', 'nothing ran before the press');
+  assert.equal(pair(top)[0], undefined, 'no start line before the press');
+  const pressed = await choose(chat, shown.message.choices.find(c => c.label === 'Run it').id);
+  assert.equal(pressed.status, 200, pressed.text);
+  assert.equal(text('dots.txt'), 'z\n');
+  const [topStart] = pair(top), topUnit = units().find(c => c.includes(`--unit=${topStart.unit}`));
+  assert.ok(topUnit && !topUnit.includes(`ReadOnlyPaths=/spark3`) && !topUnit.some(a => a.startsWith('IPAddressDeny=')), `outside the plain wall: ${JSON.stringify(topUnit)}`);
+  assert.deepEqual(topStart.outside, ['it writes ~/dots.txt at the top of the home, which the plain wall keeps read-only']);
+  const topBack = await inChat(chat, 'undo the top dots', 'undo_last_change');
+  assert.equal(topBack.value?.outcome, 'restored', topBack.error || JSON.stringify(topBack.value));
+  assert.equal(text('dots.txt'), 'top dots before\n');
   for (const [n, [t, m]] of Object.entries(tree)) { assert.equal(text(`notes/tree/${n}`), t, n); assert.equal(modeOf(at3(`notes/tree/${n}`)), m, n); }
   assert.equal(modeOf(at3('notes/tree/sub')), 0o750);
   // A link out of the home, named or in the folders above: what it points to can't be copied, so nothing runs.

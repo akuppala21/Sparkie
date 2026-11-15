@@ -108,8 +108,8 @@ test('past 7 days a set goes, but never one whose change still runs nor the newe
   const two = await inChat(chat, 'second change on spark 3', 'run', { on: 'spark3', command: 'echo two > notes/x2.txt', dir: '~' });
   assert.ok(one.value?.set && two.value?.set, JSON.stringify([one, two]));
   // A change cut off while its unit lives on (the connection drops as it starts; the command runs on), here past its
-  // time limit too (a systemd that failed to end it: the stand-in's past-limit). The console holds Spark 3 after an end
-  // it can't know until that limit has passed (A7c); then a new change opens a set beside one whose change may still run.
+  // time limit too (a systemd that failed to end it: the stand-in's past-limit). A new change opens a set beside one
+  // whose change may still run only once the console's hold on Spark 3 has ended (A7c), below.
   const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo live > notes/live.txt && sleep 40 && touch notes/live-done';
   const pastLimit = join(H3(), '.rehearsal', 'standin', 'past-limit');
   writeFileSync(drops, '');
@@ -123,7 +123,11 @@ test('past 7 days a set goes, but never one whose change still runs nor the newe
   for (const n of [one.value.set, two.value.set, running]) age(n, 8);
   assert.ok(existsSync(join(H3(), '.rehearsal', 'standin', 'live', unit)), 'its unit still runs');
   rmSync(pastLimit, { force: true });
-  // (the hold ends at the unit's time limit and the 6 s systemd is given to stop it, seen at the hold's next look)
+  // (the hold asks the root helper, state --id, and stays while it says the call runs. With its mark of the call lost,
+  // as a Spark's restart or the helper's own sweep loses it, it says "unknown": the hold then ends once the call's time
+  // limit and the 6 s systemd is given to stop it have passed, though the unit still runs, and the guard here keeps its
+  // set)
+  rmSync(join(H3(), '.rehearsal', 'run', 'spark-console', '.calls', unit.slice('sw-run-'.length)), { force: true });
   const started = Date.parse(records().find(r => r.start && r.set === running).at);
   await sleep(Math.max(0, started + (SECONDS + 6) * 1000 + 3000 - Date.now()));
   const r = await run('echo week > notes/week.txt');
