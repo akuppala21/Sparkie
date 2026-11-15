@@ -3012,7 +3012,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
   return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
@@ -7728,9 +7728,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
 // A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
-// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills. A
+// planned sleep or wake (Spark Console's own, `planned` on the event, D4) isn't an outage, so it doesn't count.
 const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
-const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
@@ -8224,7 +8225,10 @@ function noteSparkStates(nodes) {
     const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
+    // (planned: a sleep Spark Console put it to, or a wake from one (its record still there, a power operation on it, or a
+    // power-on since it went dark), never an outage: crash restarts aren't held back after it, maybeHeal, D4)
+    const wake = online && flipped && (consoleOff(n.id) || powerOpOn([n.id]) || plannedWake(n.id));
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null, ...(wake ? { planned: true } : {}) } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked', planned: true } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
@@ -8258,6 +8262,11 @@ setTimeout(() => { watchFleet(); setInterval(watchFleet, WATCH_EVERY).unref(); }
 // saw there stays in the record as it was (healing, the passkey gate and the intent gate read it), but no view calls
 // it running now (F16). Called only at run time, never at load.
 const sparkOff = id => knowledge.sparks[id]?.online === false;
+// A Spark Spark Console turned on since it last went dark (a spark-powered-on after its last spark-offline): a planned wake.
+function plannedWake(id) {
+  const dark = Math.max(0, ...events.filter(e => e.type === 'spark-offline' && e.spark === id).map(e => Date.parse(e.at) || 0));
+  return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
+}
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
@@ -8265,8 +8274,8 @@ function fleetNotes(viewer) {
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
-    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
-    if (off) return `${sparkName(n)}: ${off.words}`;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
+    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
@@ -8396,6 +8405,134 @@ async function beatSave(url, via) {
   // (only a copy whose tick was started, the one that holds the port, beats)
   if (beat.started) await beatStart();
 }
+/* ───────── the dangerous ask's "came from": what the command names and where it was read (A10b) ───────── */
+// Area: safety        Rules: R54        Tests: danger.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner
+// did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only
+// searched and never shown.
+// The search's bounds, after the reads' own: the first 64 things, in the order they were found, and 64 Mi characters
+// looked through in all (the owner's words, the reads and the answers, once per thing). A short thing in a crafted text
+// costs about 8 ns a character, so the worst case stays near half a second; past either bound the ask says not all was
+// searched.
+const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20, DANGER_THINGS = 64, DANGER_WORK = 64 * 2 ** 20;
+// The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
+// one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
+// pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
+const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
+function dangerThings(text) {
+  let t = String(text || '');
+  const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
+  // (what is taken is blanked where it stands, as long as it was, so nothing after it moves and nothing else is touched)
+  const blank = s => ' '.repeat(s.length);
+  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, blank); };
+  take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
+  // (packages and images before addresses with no scheme: an image's name can look like one; each name is kept with
+  // where it stands, [at, name])
+  const named = [], ok = w => !w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w);
+  const words = m => [...m[1].matchAll(/\S+/g)].map(w => [m.index + m[0].length - m[1].length + w.index, w[0]]);
+  for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    for (const w of words(m)) if (ok(w[1])) named.push(w);
+  }
+  for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    const w = words(m).find(x => !x[1].startsWith('-'));
+    if (w && ok(w[1])) named.push(w);
+  }
+  for (const [, w] of named) add(w);
+  // Each name blanked at its own place only, in one pass: the same letters in an address or path after it stay
+  // ("torch" in torch.evil.example/i.sh, "etc" in /etc/sudoers.d).
+  let rest = '', end = 0;
+  for (const [at, w] of [...named].sort((a, b) => a[0] - b[0])) {
+    if (at + w.length <= end) continue;
+    const from = Math.max(at, end);
+    rest += t.slice(end, from) + ' '.repeat(at + w.length - from);
+    end = at + w.length;
+  }
+  t = rest + t.slice(end);
+  // (a host right after "@" counts: root@evil.example, git@github.com:evil/repo.git)
+  take(new RegExp(`(?<![\\w/.-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
+  for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
+  for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
+  for (const m of t.matchAll(new RegExp(`(?<![\\w/.-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
+  return [...out];
+}
+// A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
+// "github.com", "/srv" in "/srv/old", "torch" in "pytorch").
+function dangerWhole(text, thing) {
+  for (let i = text.indexOf(thing); i >= 0; i = text.indexOf(thing, i + 1)) {
+    const before = text[i - 1] || '', after = text[i + thing.length] || '', next = text[i + thing.length + 1] || '';
+    if (/[A-Za-z0-9._/-]/.test(before) || /[A-Za-z0-9_-]/.test(after) || (/[./]/.test(after) && /[A-Za-z0-9_-]/.test(next))) continue;
+    return true;
+  }
+  return false;
+}
+// "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
+// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
+// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+function cameFrom(things, ownerMessages, reads, answers) {
+  const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
+  const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
+  const rs = [...(reads || [])].sort(newest);
+  let cut = rs.length > DANGER_READS || rs.some(r => r.cut), budget = DANGER_READ_BYTES;
+  const searched = [];
+  for (const r of rs.slice(0, DANGER_READS)) {
+    const text = String(r.text ?? '');
+    if (text.length > budget) { cut = true; break; }
+    budget -= text.length;
+    searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
+  }
+  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const lines = [], labels = [], list = [...(things || [])];
+  // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
+  if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
+  let work = DANGER_WORK;
+  // The first of xs that holds t (undefined: none does); null when the work ran out first.
+  const seek = (xs, t) => { for (const x of xs) { if ((work -= x.lower.length) < 0) return null; if (x.lower.includes(t)) return x; } return undefined; };
+  for (const thing of list.slice(0, DANGER_THINGS)) {
+    const t = String(thing).toLowerCase();
+    if (!t) continue;
+    if ((work -= own.length) < 0) { cut = true; break; }
+    if (dangerWhole(own, t)) continue;
+    const r = seek(searched, t);
+    if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
+    const a = r === null ? null : seek(said, t);
+    if (a === null) { cut = true; break; }
+    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+  }
+  return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
+}
+// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
+function dangerJournalText(id, max) {
+  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
+  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
+    if (!line.includes(`"id":"${id}"`)) continue;
+    const r = jParse(line);
+    if (r?.id !== id || !Array.isArray(r.o)) continue;
+    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
+    let fd;
+    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
+    // (and a record the journal itself cut at its size counts as not all searched)
+    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
+  }
+  return null;
+}
+// What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
+function dangerReadsLoaded(reads) {
+  let left = DANGER_READ_BYTES, cut = false;
+  const out = [];
+  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
+    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
+    // (a read whose text can't be read back was not searched, and the ask says so)
+    if (!got) { cut = true; continue; }
+    out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
+    left -= got.text.length;
+    if (got.cut || left <= 0) { cut = true; break; }
+  }
+  if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
+  return out;
+}
 /* ───────── the dangerous ask: hard to tap by reflex (A10b) ───────── */
 // Area: safety        Rules: R54        Tests: danger.test.mjs
 // Owns: none
@@ -8418,7 +8555,6 @@ const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'],
 // either, so most tests are not held up by the ones before them)
 const dangerEnvMs = (name, ms) => (ALL_LOCAL && /^\d+$/.test(process.env[name] || '') ? Number(process.env[name]) : ms);
 const DANGER_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_MS', 15 * 60000), DANGER_LATE_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_LATE_MS', 60000), DANGER_LONG = 300;
-const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20;
 // The one open ask; when recent ones were built (the third inside ten minutes is sent a minute late); the buttons of
 // asks that closed, so a later press is told so (the newest 200); the ask closed last, for a pair typed after it.
 let dangerOpen = null, dangerLastPair = null, dangerRecent = null;
@@ -8472,99 +8608,6 @@ function dangerMore(f) {
   return out;
 }
 
-// The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
-// one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
-// pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
-const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
-function dangerThings(text) {
-  let t = String(text || '');
-  const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
-  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, ' '); };
-  take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
-  // (packages and images before addresses with no scheme: an image's name can look like one)
-  const named = [];
-  for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    for (const w of m[1].trim().split(/\s+/)) if (!w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
-  }
-  for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    const w = m[1].trim().split(/\s+/).find(x => !x.startsWith('-'));
-    if (w && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
-  }
-  for (const w of named) { add(w); t = t.split(w).join(' '); }
-  take(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
-  for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
-  for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
-  for (const m of t.matchAll(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
-  return [...out];
-}
-// A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
-// "github.com", "/srv" in "/srv/old", "torch" in "pytorch").
-function dangerWhole(text, thing) {
-  for (let i = text.indexOf(thing); i >= 0; i = text.indexOf(thing, i + 1)) {
-    const before = text[i - 1] || '', after = text[i + thing.length] || '', next = text[i + thing.length + 1] || '';
-    if (/[A-Za-z0-9._/-]/.test(before) || /[A-Za-z0-9_-]/.test(after) || (/[./]/.test(after) && /[A-Za-z0-9_-]/.test(next))) continue;
-    return true;
-  }
-  return false;
-}
-// "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
-// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
-// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
-// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
-function cameFrom(things, ownerMessages, reads, answers) {
-  const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
-  const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
-  const rs = [...(reads || [])].sort(newest);
-  let cut = rs.length > DANGER_READS || rs.some(r => r.cut), budget = DANGER_READ_BYTES;
-  const searched = [];
-  for (const r of rs.slice(0, DANGER_READS)) {
-    const text = String(r.text ?? '');
-    if (text.length > budget) { cut = true; break; }
-    budget -= text.length;
-    searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
-  }
-  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
-  const lines = [], labels = [];
-  for (const thing of things || []) {
-    const t = String(thing).toLowerCase();
-    if (!t || dangerWhole(own, t)) continue;
-    const r = searched.find(x => x.lower.includes(t));
-    if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
-    const a = said.find(x => x.lower.includes(t));
-    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
-  }
-  return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
-}
-// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
-function dangerJournalText(id, max) {
-  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
-  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
-    if (!line.includes(`"id":"${id}"`)) continue;
-    const r = jParse(line);
-    if (r?.id !== id || !Array.isArray(r.o)) continue;
-    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
-    let fd;
-    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
-    // (and a record the journal itself cut at its size counts as not all searched)
-    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
-  }
-  return null;
-}
-// What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
-function dangerReadsLoaded(reads) {
-  let left = DANGER_READ_BYTES, cut = false;
-  const out = [];
-  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
-    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
-    // (a read whose text can't be read back was not searched, and the ask says so)
-    if (!got) { cut = true; continue; }
-    out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
-    left -= got.text.length;
-    if (got.cut || left <= 0) { cut = true; break; }
-  }
-  if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
-  return out;
-}
 // Line 2: the gate's own answer for this call, as sparkieCheck's: the owner's words in this request ask for this
 // action's kind of change (never a question, a "don't" or a mixed one) and name this Spark. An action with no kind is
 // "not asked" unless its raiser, which knows better (rule 2 of A 2.5, R25's word kinds), says so with facts.asked.
@@ -8591,6 +8634,10 @@ function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, c
   const install = ks.includes('install'), code = install ? null : dangerCodeOf(shown || {});
   if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
     throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
+  }
+  // (a file's path is shown on one line as it is: one that line would flatten or cut is not asked)
+  if (shown?.path != null && dangerPlain(shown.path, 400) !== String(shown.path)) {
+    throw new HttpError(400, 'The file’s path holds a line break, a tab, two spaces together, a space at either end or more than 400 characters, so it can’t be shown on one line as it is. Nothing was asked or run.');
   }
   // Shown whole or not asked: a part the masks would hide is a part the owner could not read before saying yes.
   const masked = x => maskSecrets(x) !== x;
@@ -8738,13 +8785,18 @@ function dangerWrong(a) {
   if (a.tries >= 3) { dangerClose(a, 'three wrong pairs'); return 'That was the third wrong pair, so the ask is closed and nothing was run. Ask again.'; }
   return 'Those aren’t the two digits from the ask, so nothing was run. Type them again, or press No.';
 }
+// Whether text holds the open ask's two digits as a number of their own (alone, or among other words).
+const dangerHolds = (a, t) => Boolean(a?.digits) && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(String(t));
+// The page's own chat box (24-handler.mjs, the owner's messages): one holding the open ask's pair is refused there,
+// before Sparkie, the chat file or the journal see it; the pair goes in the ask's own field.
+const dangerPairInChat = text => dangerHolds(dangerLive(), text);
 // The owner's next message in the paired chat (tgUpdate): after a press, the pair (spaces or punctuation around it
 // allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
 // ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
 // or the journal). null: not about an ask (it goes on to Sparkie).
 function dangerTypedHere(text) {
   const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
-  const holds = Boolean(a?.digits) && !pair && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(t);
+  const holds = !pair && dangerHolds(a, t);
   if (!a || !a.telegram) {
     if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
     return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;
@@ -16662,8 +16714,9 @@ function powerMark(id) {
   const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+  // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words };
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
@@ -21010,6 +21063,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;

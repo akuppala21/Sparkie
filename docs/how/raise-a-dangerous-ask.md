@@ -9,7 +9,8 @@ asks the owner with `dangerAsk` (`20-danger.mjs`) instead of `question`. Ordinar
   shown, call })`, and return what it gives back, as is.
 - `kinds`: some of `root`, `lockout`, `delete`, `brain`, `install`, named by code (the sorter, the action), never from
   the brain's input. `where`: the Spark's id. `call`: `{action, args}`, exactly what the yes runs.
-- `shown`: the bytes the press runs. `{command}`; `{path, before, after}` for a file (the lines that change);
+- `shown`: the bytes the press runs. `{command}`; `{path, before, after}` for a file (the lines that change; a path
+  that one line would change, with a line break, a tab, two spaces together or over 400 characters, is refused);
   `{script}` for a script's text. None for an install.
 - `facts`, each optional and typed: `asked` (the gate's own answer, when the raiser knows it better), `backAt` (the
   net's time), `kept` (files copied first), `gone` (`{what, bytes}`: cannot be put back), `waysIn` (paths),
