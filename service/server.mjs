@@ -4643,7 +4643,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'remember',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
@@ -4834,8 +4834,11 @@ async function sparkieCheck(name, input, ctx) {
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
   if (name === 'save_workflow') {
-    const steps = Array.isArray(out.steps) ? out.steps : [];
-    return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
+    // ("save that as …": the request's own steps, so the check and the button see them, D6e)
+    const o = out.from !== undefined ? fromRequest(out, null, ctx) : out, { leftOut, ...plain } = o;
+    const steps = Array.isArray(o.steps) ? o.steps : [];
+    const clear = asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request));
+    return { clear, input: clear ? o : plain };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
 }
@@ -6542,6 +6545,59 @@ action({
     return { outcome: 'saved', spark: node.id, file: r.path, sizeBytes: r.size, note: `Saved ${r.path} in the shared folder on ${at} (${sizeWords(r.size)}).` };
   },
 });
+/* ───────── "save that as …": a saved workflow from the changes a request made (D6e) ───────── */
+// Area: core        Rules: R35, R43        Tests: workloads-save.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// save_workflow {title, from: "this request"} saves the chain of changes the journal recorded for the request just
+// before this one, in this chat (contract 9.7's "save this as …"; the critic's cut of B7 and D's pipelines). Only in the
+// owner's own chat with Sparkie, on the page or Telegram, or a press of its button there: never an agent (its key,
+// ask_sparkie or a chat an agent started) and never POST /actions, which has no chat; R43's own-call test. The records
+// are this chat's alone (`chat`): its two newest `said` lines bound the request (the owner's words that asked, then the
+// words asking to save it), and the request is every change call between them, Sparkie's and the owner's button
+// presses, its carry-on turns included. A step is a change that worked and isn't a question, kept with the arguments it
+// was called with (as the journal masked them; answers to a question are left out), once. Not a step: a lookup, anything in
+// NOT_A_STEP, and cancel, undo, test runs (savedFromSkip). A call whose arguments the journal cut, or that carried a hidden
+// key or a pressed choice's id, is left out and said. Nothing that can be saved: refused, saying so. The steps then go
+// through save_workflow's own checks as if they were typed.
+const savedFromSkip = new Set(['cancel_operation', 'test_changes', 'undo_last_change', 'undo_update']);
+// The input with its steps: those given, or those of the request before this one when `from` is (with what was left
+// out of them, leftOut, for the answer).
+function fromRequest(input, viewer, ctx) {
+  if (input.from !== undefined && input.steps !== undefined) throw new HttpError(400, 'Give steps or from, not both.');
+  if (input.from === undefined) { if (input.steps === undefined) throw new HttpError(400, 'Missing argument: steps.'); return input; }
+  const { from, ...rest } = input, { steps, left } = requestSteps(viewer, ctx);
+  return { ...rest, steps, ...(left.length ? { leftOut: left } : {}) };
+}
+function requestSteps(viewer, ctx) {
+  const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  if (viewer?.agentKey || ctx?.agent || ctx?.agentId || !conv || conv.agent || !['sparkie', 'page', 'telegram'].includes(ctx.via)) {
+    throw new HttpError(403, 'from “this request” works only in your own chat with Sparkie: it saves what the request just before it changed there.');
+  }
+  // This chat's records, oldest first, from this month's journal and the last one's (a line names its chat).
+  const recs = [], tag = `"chat":${JSON.stringify(conv.id)}`;
+  for (const f of journalFiles().slice(0, 2).reverse()) for (const line of jLinesOf(f)) { if (line.includes(tag)) { const r = jParse(line); if (r?.chat === conv.id) recs.push(r); } }
+  const said = recs.map((r, i) => (r.k === 'said' ? i : -1)).filter(i => i >= 0);
+  if (said.length < 2) throw new HttpError(409, 'There’s no request before this one in this chat, so nothing was saved.');
+  const calls = new Map();
+  for (const r of recs.slice(said.at(-2) + 1, said.at(-1))) if (r.k === 'call') calls.set(r.id, calls.has(r.id) ? jMerge(calls.get(r.id), r) : r);
+  const steps = [], left = [];
+  for (const r of calls.values()) {
+    const a = ACTIONS.get(r.act);
+    if (!a || a.kind === 'read' || NOT_A_STEP.has(r.act) || savedFromSkip.has(r.act)) continue;
+    if (!r.ok || ['question', 'needs-ok', 'cancelled', 'refused'].includes(r.outcome)) continue;
+    const args = r.args && typeof r.args === 'object' && !Array.isArray(r.args) ? r.args : null;
+    const why = !args ? 'its arguments were too long to keep' : 'choice' in args ? 'it answered a question, so its arguments aren’t kept'
+      : JSON.stringify(args).includes('[hidden]') ? 'part of it was hidden as a key' : null;
+    if (why) { left.push(`${a.title} (${why})`); continue; }
+    const st = { action: r.act, args: Object.fromEntries(Object.entries(args).filter(([k]) => !APPROVAL_ARGS.includes(k))) };
+    // (the same call again, as a carry-on turn may make it, is one step)
+    if (!steps.some(x => JSON.stringify(x) === JSON.stringify(st))) steps.push(st);
+  }
+  if (!steps.length) throw new HttpError(409, `The request before this one in this chat changed nothing that can be saved${left.length ? ` (left out: ${left.join('; ')})` : ''}, so nothing was saved.`);
+  if (steps.length > 12) throw new HttpError(409, `The request before this one made ${steps.length} changes; a saved workflow holds 12 at most, so nothing was saved.`);
+  return { steps, left };
+}
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
 // Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs
 // Owns: none
@@ -7028,8 +7084,10 @@ action({
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
       items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' },
         keep: { type: 'boolean', description: 'For a step that starts something in a run with a job: leave it running when the run ends. Without it, a run with a job stops what it started at its end.' } }, required: ['action'], additionalProperties: false } },
-  }, required: ['title', 'steps'], additionalProperties: false },
-  run: async (input, viewer) => {
+    from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
+  }, required: ['title'], additionalProperties: false },
+  run: async (input, viewer, ctx) => {
+    input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
     for (const [i, st] of input.steps.entries()) {
@@ -7051,7 +7109,7 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({

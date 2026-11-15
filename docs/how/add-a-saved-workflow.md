@@ -15,6 +15,7 @@ the map's "Where new things go", row "A saved workflow".
   `18-step-jobs.mjs`); a job that ends badly ends the run and names the step (R35). A run that ends badly, or a run
   with a job that ends well, stops what its own steps started, except a step saved with `keep: true` (R35).
 - A `keep_running` step may leave out its Spark: `pickSpark` places it when the run reaches it, waking one if it must.
+- “Save that as X” is `save_workflow {title, from: "this request"}`: the request's changes, from the journal (R35).
 
 ## Also update
 

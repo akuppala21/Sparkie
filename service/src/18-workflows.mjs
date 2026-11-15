@@ -284,8 +284,10 @@ action({
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
       items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' },
         keep: { type: 'boolean', description: 'For a step that starts something in a run with a job: leave it running when the run ends. Without it, a run with a job stops what it started at its end.' } }, required: ['action'], additionalProperties: false } },
-  }, required: ['title', 'steps'], additionalProperties: false },
-  run: async (input, viewer) => {
+    from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
+  }, required: ['title'], additionalProperties: false },
+  run: async (input, viewer, ctx) => {
+    input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
     for (const [i, st] of input.steps.entries()) {
@@ -307,7 +309,7 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({

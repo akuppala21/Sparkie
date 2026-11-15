@@ -48,7 +48,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs`; `test/app-keys.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
-| [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/workloads.test.mjs`; `test/workloads-place.test.mjs`; `test/change.test.mjs` |  |
+| [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/workloads.test.mjs`; `test/workloads-place.test.mjs`; `test/workloads-save.test.mjs`; `test/change.test.mjs` |  |
 | [R36](rules/R36.md) | built | `test/paste.test.mjs` |  |
 | [R37](rules/R37.md) | built | `test/files.test.mjs` |  |
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
