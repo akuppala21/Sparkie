@@ -6976,10 +6976,16 @@ function startedBy(action, args, out, keep = false) {
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
-// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended. Returns
-// the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
+// What a step started that was on the list of what should be running before that step (`listed`: its entry then):
+// the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
+function startedListed(items, before) {
+  return items.map(x => { const was = before.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`); return was ? { ...x, listed: was } : x; });
+}
+// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended; what was on
+// the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
+// was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [];
+  const stopped = [], kept = [], failed = [], back = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -7001,9 +7007,12 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
+      if (x.listed && desiredPutBack([x.listed]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
-  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
+    ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
+    ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
 // An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
 // what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
@@ -7482,6 +7491,9 @@ action({
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
+          // (what was on the list of what should be running before this step: a step that starts one of those again
+          // leaves it on the list after the clean-up, stopWhatRan)
+          const listed = savedStepStarts(st.action, args) ? desired().running : [];
           try {
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
@@ -7490,13 +7502,13 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
-          ran.push(...startedBy(st.action, args, out, st.keep === true));
+          ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
           savedRunKeep(j, { started: ran, pending: [] });
           j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
@@ -8218,8 +8230,8 @@ async function beatSave(url, via) {
   if (beat.started) await beatStart();
 }
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
-// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired)
+// Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack)
 // Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -8319,6 +8331,17 @@ function parkDesired(keys, on) {
   for (const x of hit) { if (on) x.parked = new Date().toISOString(); else delete x.parked; }
   if (hit.length) writePrivate(DESIRED_FILE, d);
   return hit.map(keyOf);
+}
+// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again
+// (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it was then, so the list is what it was before the run. Read
+// with readKept itself, so a file that can't be read is never saved over; no revision (what should run hasn't changed
+// since before the run). The keys it put back.
+function desiredPutBack(entries) {
+  const d = readKept(DESIRED_FILE);
+  if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
+  const back = entries.filter(x => x && typeof x === 'object' && !d.running.some(y => keyOf(y) === keyOf(x)));
+  if (back.length) { d.running.push(...back.map(x => ({ ...x }))); writePrivate(DESIRED_FILE, d); }
+  return back.map(keyOf);
 }
 // Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
 // powered its Spark off, 21-power.mjs), or held, and why. An app also has its link, and (check) whether it answers there
