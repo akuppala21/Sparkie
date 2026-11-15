@@ -1,6 +1,7 @@
 # B. Learn from everything, and a brain that can be swapped
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-2; item 11; clean-up 1.
+Amended again the same day, for the build map's unclear item 10: what a lesson holds after the cut (2.2), and step 2's test.
 
 Design only; no code was changed. Covers gap 5 and decisions 8, 9, 13 to 16. "Verified" means read in the code on 2026-11-13.
 
@@ -52,6 +53,36 @@ A new store, because nothing kept today holds outputs. The old stores stay (heal
 - **Size:** about 400 records on a busy day: some 60 MB of short lines a year. The long text grows with the outputs, now kept whole; its size is read from the folder once built. **Default: nothing is deleted.** Past 20 GB it becomes one line on the needs-you list. No copy off Spark 2 at first.
 
 ### 2.2 Lessons
+
+**As cut, and what step 2 builds (settled 2026-11-14).** The one page keeps lessons as records of failures (milestone 3), and the contract says the same (5.10). So the record below this block, with its `fix`, `when`, `worked`, four states and six kinds, is the first design's and is not built. A lesson is this:
+
+```json
+{"id":"l_4c1d9e0a","kind":"start",
+ "subject":{"model":"zai-org/GLM-5.3-Flash","engine":"sglang","sparks":2},
+ "tried":{"how":"setup:nvidia-glm-flash","flags":"a1b2c3d4e5f6","image":"lmsysorg/sglang:v0.5.23","on":"spark3+spark4","code":"<the start workflow's version>"},
+ "failure":"never-connected","state":"proven","failed":2,
+ "evidence":["j_9f3a01c2d4e5"],"firstAt":"2026-11-10T…","lastAt":"2026-11-12T…"}
+```
+
+| Field | Holds | Comes from (typed facts on the operation, never a log's words) |
+|---|---|---|
+| `kind` | `start` or `app`. No other kind | The operation's type: a model start (`deploy`, `deploy-cluster`, `start-model`), or `keep_running` starting a container |
+| `subject` | For a start: the model, the engine, how many Sparks. For an app: the container's name and its image | The operation's own checked inputs |
+| `tried` | The setup that failed, and what it was true of: `how` (`setup:<id>`, `proven:<key>` or `own`), `flags` (12 hex of a hash of its flags and the names of its environment values), `image` as it was named (and the image's id when the start read one), `on` (the Sparks, in order, joined by `+`), `code` (the version of the workflow that ran) | `job.setup` and `job.workflowVersion` exist today. Step 2 puts `how`, `flags` and `image` on the job where the start makes it |
+| `failure` | A `START_FAILURES` id, or `unknown`. For an app one of four ids that `21-apps.mjs` sets where it gives up: `image` (the download failed), `docker` (Docker would not start it), `stopped-at-once`, `job-exit` | `knownStartFailure` on the operation's error, as the journal's `op` record already does (`journalOp`); for an app, a field its own code sets |
+| `state`, `failed` | `seen` after one failure. `proven` after two or more of the same known failure with no success between them. An `unknown` failure stays `seen` whatever its count | Counted by `recordLesson`, the one writer |
+| `evidence` | The journal ids of the newest three operations | B1's `op` records |
+| `firstAt`, `lastAt` | When | The operation's end |
+
+- **No `fix`, for starts or for anything.** A start that worked after a fix is already recorded with the settings that worked (`recordVerified` gets the changed flags and environment), and `bestHow` takes a proven run first. So the fix is replayed today, by the proven run. A `fix` on the lesson would be a second replay path. Whether a proven fix should go on replaying by itself is question 6 of `contract-changes-for-your-yes.md` (rule 6.11), which the owner has not answered. This record decides nothing there: step 2 neither adds to that replay nor takes it away.
+- **Written only when an operation ends failed.** An operation that ended well leaves no lesson, also when one of its attempts failed and a fix followed: the journal's `attempt` records hold what was tried, and the proven run holds what worked.
+- **A later success removes it.** When the same `subject` starts with the same `tried.flags`, `image` and `on`, its lesson is taken out of `lessons.json`. The journal keeps what happened. There is no `stale` and no `retired`.
+- **`tried` is what step 3 compares.** A proven lesson passes its setup over only while `image`, `on` and `code` are still what the next start would use. When one differs the setup is tried; if it fails again the lesson is written anew with the new values and `failed: 1`.
+- **Forgetting one.** There is no `forget_lesson`. `forget_memory` takes a lesson's id too (`l_` and 8 hex: G 3.8) and removes it, under the same gate and from the same places as a line of the owner's (G 3.3, R45). `recall` shows lessons (G's step 3).
+- **Where it is written.** `learnFrom(job)` in the new `20-lessons.mjs`, called from `runJob`'s end beside `journalOp` (`07-jobs.mjs`). `lessons.json` is in the state folder (`writePrivate`, `readKept`), so it is in the state copy.
+- **Version.** Putting `how`, `flags` and `image` on the job edits a function the start workflows run, so step 2 changes their version once. Land it with step 3 and design D's step 5, which change it anyway, so one `self_test` validates all three.
+
+The first design's record, for reference:
 
 A lesson is a typed record in `lessons.json` (state folder, `writePrivate` and `readKept`, so it is in the daily copy). One per subject and failure; a repeat adds to its counts.
 
@@ -147,6 +178,8 @@ A saved workflow can move the same way later (its Spark names become inputs; the
 
 ### 2.9 New actions
 
+Of these only `recall` is built (step 1). `lessons` and `forget_lesson` are not: `recall` shows lessons and `forget_memory` removes one (2.2). `learn` and `try_brain` are cut (the one page).
+
 | Action | Kind | Inputs |
 |---|---|---|
 | `lessons` | read (inside; outside text when it returns notes) | `about` string ≤80; `id` `^l_[0-9a-f]{8}$`; `kind` enum start, heal, app, command, note, chain; `state` enum proven, seen, stale, retired; `ready` boolean |
@@ -181,7 +214,7 @@ A saved workflow can move the same way later (its Spark names become inputs; the
 Each ships alone. A new action also goes in `test/lib.mjs`, the counts in `test/change.test.mjs`, and the door and fuzz tables.
 
 1. **Journal and `recall`.** New `20-journal.mjs`; one call each in `07-jobs`, `16-actions`, `14-chats`, `17-changes`, `19-watcher`; `01-setup` (folder switch, `readSync`). Test (`journal.test.mjs`): after a failed start and a console restart, `recall` returns that operation's log (today: "expired"); a key in the arguments is `[hidden]` in the file; after `recall`, `remember` needs a button. With the append made to fail as a full disk does, a changing `run` answers "couldn't write the record, nothing was changed" and nothing runs, while a look, `/stop`, `/putback` and `stop_model` still work. A console killed between a start line and its end leaves, after the restart, one "cut off" notice and no second run. A look writes one line and syncs nothing. A 3,000-line output is in the `.out` file whole; a key that falls across two pieces is `[hidden]`; past 16 MB reading stops and the record says so.
-2. **Typed lessons, `lessons`, `forget_lesson`.** New `20-lessons.mjs`; `07-jobs`; `17-changes` (failure and fix on the job); `16-actions`; `18-workflows` (`NOT_A_STEP`). Test (`lessons.test.mjs`): a start that fails on a rejected flag, then works, leaves one proven lesson; again adds to its count; a crafted name with spaces is stored as null; from Telegram, forgetting is a page button.
+2. **Typed lessons, as cut (2.2's first block). No `lessons` and no `forget_lesson` action.** New `20-lessons.mjs` (`recordLesson`, `learnFrom`); `07-jobs` (`runJob`'s end); `17-changes` (the setup's `how`, `flags` and `image` on the job); `21-apps` (the four failure ids); `20-memory` (`forget_memory` takes a lesson's id). Test (`lessons.test.mjs`). Of the first design's four rows two stand: a second failure of the same kind adds to the count, and a crafted name with spaces is stored as null. Two go: "fails on a rejected flag, then works, leaves one proven lesson" (a start that ends well now leaves none), and "from Telegram, forgetting is a page button" (it tested the cut `forget_lesson`; forgetting now works from Telegram, ledger 5c clean-up 3). The rows now: a start that fails a known way leaves one lesson, `seen`, `failed: 1`; the same start failing the same way again makes it `proven`, `failed: 2`; an unknown failure twice stays `seen`; a start that fails on a rejected flag and then works with the fix leaves no lesson and one proven run; a later success of the same setup removes its lesson; an app that stops right after starting leaves an `app` lesson; a log line planted in the stand-in engine's output is nowhere in `lessons.json`; `forget_memory` with a lesson's id removes it, wherever a line of the owner's can be forgotten; the file is still read after a restart.
 3. **Lessons applied at start.** `17-changes` (`startWithFixes`, `bestHow`), `18-workflows` (`START_CODE`), `20-heal`. Test (`workflows.test.mjs`): the second start runs `docker run` once, not twice; a learned fix that fails drops to `seen` and the plain path runs; with more free memory than recorded, the context lesson is not applied; a setup passed over for failing twice is tried again after its image, its Sparks or its start code changed, and when the owner asks for it, and the result says it was passed over.
 4. **Cards in the chat.** `14-chats` (`sparkieTurn`, `postResult`), `20-lessons`. Test (`sparkie-more.test.mjs`): the request the stand-in brain receives has the card in the labelled record block, not the system message; never more than 6; `remember` still saves with no button after cards alone.
 5. **The learn pass, code part.** `20-lessons` (`learnPass`, bookmark), `07-jobs` and `14-chats` (arm the one-shot). Test: setup A fails, setup B answers, and after the pass one lesson says so; a new message ends a pass and the bookmark stays; a second pass with nothing new writes nothing.

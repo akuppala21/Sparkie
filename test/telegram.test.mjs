@@ -403,6 +403,54 @@ describe('Telegram', { concurrency: 1 }, () => {
       } finally { noScript(); }
     });
 
+    // Review of G1 (2026-11-14): the lines the owner asked to be rid of are never sent out to Telegram.
+    test('a forgotten memory line never reaches Telegram: memory {past} is refused there', { timeout: 90000 * SLOW }, async () => {
+      const WORDS = 'my garage code is 9182';
+      const kept = await api('/actions/remember', { method: 'POST', body: { text: WORDS, kind: 'fact' } });
+      is(kept, 200, 'remember');
+      is(await api('/actions/forget_memory', { method: 'POST', body: { id: kept.json.id } }), 200, 'forget');
+      script([{ match: '^what did I ask you to forget\\?$', calls: [{ name: 'memory', arguments: { past: true } }] }]);
+      try {
+        const from = tgCalls().length;
+        await tgSay('what did I ask you to forget?');
+        const [m] = await sentAfter(from);
+        assert.match(m.body.text, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
+        assert.ok(!tgSent(from).some(x => String(x.body.text).includes(WORDS)), 'the words never went to Telegram');
+      } finally { noScript(); }
+    });
+
+    // Erasing a memory line for good waits for the page (contract 8.7), whatever the gates for Telegram allow: the erase
+    // asks the owner itself (20-memory.mjs eraseLine), so a later step that lets Telegram forget can't let it erase.
+    test('erasing a memory line for good from Telegram waits for the page: no Telegram button, a press there is refused, on the page it needs the passkey', { timeout: 90000 * SLOW }, async () => {
+      const WORDS = 'The spare key for the rack is in the top drawer';
+      const kept = await api('/actions/remember', { method: 'POST', body: { text: WORDS, kind: 'fact' } });
+      is(kept, 200, 'remember');
+      const id = kept.json.id, lines = async () => (await api('/actions/memory', { method: 'POST', body: { past: true } })).json;
+      script([{ match: '^erase the line about the rack key for good$', calls: [{ name: 'forget_memory', arguments: { id, erase: true }, offered: false }] }]);
+      try {
+        const from = tgCalls().length;
+        await tgSay('erase the line about the rack key for good');
+        const [m] = await sentAfter(from);
+        assert.match(m.body.text, /That one waits for you in Spark Console\.$/);
+        assert.equal(m.body.reply_markup, undefined, 'no button for it in Telegram');
+        const line = auditLines().findLast(l => l.action === 'forget_memory');
+        assert.deepEqual([line.outcome, line.channel, line.args], ['question', 'telegram', { id, erase: true }]);
+        assert.ok((await lines()).entries.some(e => e.id === id), 'still there');
+        const chat = await tgChat(), c = (await chatMessages(chat.id)).findLast(x => x.choices?.length).choices[0];
+        assert.equal(c.label, `Erase for good: “${WORDS}”`);
+        await tgPress(c.id);
+        const [, refused] = await sentAfter(from, 2);
+        assert.equal(refused.body.text, 'That one waits for you in Spark Console.');
+        assert.ok((await lines()).entries.some(e => e.id === id), 'still there after the press on Telegram');
+        is(await choose(chat.id, c.id), 428, 'on the page: the passkey');
+        const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: c.id });
+        is(pressed, 200, 'with the passkey');
+        assert.equal(pressed.json.outcome, 'erased');
+        const after = await lines();
+        assert.ok(!after.entries.some(e => e.id === id) && !after.past.some(p => p.id === id), JSON.stringify(after));
+      } finally { noScript(); }
+    });
+
     test('with agents\' changes paused, a change from Telegram is refused; a lookup and /status still answer', { timeout: 90000 * SLOW }, async () => {
       await agentSettings({ halted: true });
       try {

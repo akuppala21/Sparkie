@@ -5,12 +5,16 @@
 // lines that fit and says how many more there are. Forgetting through Sparkie: a question, "don't forget", "never
 // forget", a supposed and a quoted "forget" keep the line live; "forget that …" retires it. An agent never replaces or
 // forgets an owner's line, over the agent door or through Sparkie; its own lines it may, and a line said in its chat is
-// its own. The stand-in model is scripted.
+// its own. The retired lines are the owner's alone: an agent's key and Sparkie in an agent's chat are refused `memory
+// {past}`. Erasing a line for good (forget_memory {erase}) is the owner's alone: from Sparkie it is always a button,
+// whatever the words; pressed in Spark Console, the words leave both files, their copies from before the last save and
+// any copy set aside; the owner's own call erases at once; an agent is refused, for its own lines too. The stand-in
+// model is scripted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createActKey, newChat, say, waitFor, ASK, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, choose, waitFor, ASK, SLOW } from './lib.mjs';
 
 let agent;
 useFleet({ watchMs: 60000 }, async () => { agent = await createActKey('mem-agent'); });
@@ -18,8 +22,10 @@ const state = f => join(T.fleet.stateDir, f);
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const requests = () => (existsSync(join(T.fleet.dir, 'model-requests.jsonl')) ? readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []);
 const esc = w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// Memory starts empty in each test: both files and their copies from before the last save.
-const fresh = () => { for (const f of ['memory.json', 'memory-past.json']) for (const x of [f, `${f}.prev`]) rmSync(state(x), { force: true, recursive: true }); };
+// Memory starts empty in each test: both files, their copies from before the last save, and any copy set aside.
+const fresh = () => { for (const f of readdirSync(T.fleet.stateDir).filter(x => /^memory(-past)?\.json/.test(x))) rmSync(state(f), { force: true, recursive: true }); };
+// The state folder's files that hold these exact words.
+const holding = words => readdirSync(T.fleet.stateDir).filter(f => { try { return readFileSync(state(f), 'utf8').includes(words); } catch { return false; } }).sort();
 const owner = async (name, body = {}) => api(`/actions/${name}`, { method: 'POST', body });
 const remember = async (text, kind = 'fact') => { const r = await owner('remember', { text, kind }); assert.equal(r.json?.outcome, 'remembered', r.text); return r.json.id; };
 const live = async () => (await owner('memory')).json.entries;
@@ -191,4 +197,130 @@ test('memory-past.json that can\'t be read: forgetting refuses and changes nothi
     await remember('Spark 4 is on Wi-Fi only');
     assert.equal((await live()).length, 2);
   } finally { fresh(); }
+});
+
+// Review of G1 (2026-11-14): a forgotten line was handed back to any agent that asked memory {past: true}.
+test('a forgotten line is the owner\'s alone: an agent\'s key, look-only or not, and Sparkie in an agent\'s chat get no retired words; the owner\'s page chat does', { timeout: 180000 * SLOW }, async () => {
+  fresh();
+  const WORDS = 'my door code is 4471';
+  const id = await remember(WORDS);
+  const f = await owner('forget_memory', { id });
+  assert.equal(f.json?.outcome, 'forgotten', f.text);
+  assert.match(f.json.note, /It is kept in memory’s history, which only the owner sees; it isn’t erased\.$/);
+  const look = await createKey('mem-look');
+  try {
+    for (const token of [look.token, agent.token]) {
+      const r = await call(token, 'memory', { past: true });
+      assert.equal(r.isError, true, r.text);
+      assert.match(r.text, /^\[not_allowed\] The lines that were replaced or forgotten are shown to the owner only, in Spark Console\./);
+      assert.ok(!r.text.includes(WORDS), r.text);
+      const now = await call(token, 'memory', {});
+      assert.deepEqual(now.value?.entries, [], now.text);
+    }
+    const ask = 'what did the owner tell you to forget?';
+    script([{ match: `^${esc(ask)}$`, calls: [{ name: 'memory', arguments: { past: true } }] }]);
+    let v = (await call(agent.token, ASK, { message: ask })).value;
+    if (v?.status === 'thinking') v = await waitFor(async () => { const x = (await call(agent.token, ASK, { conversation: v.conversation })).value; return x?.status !== 'thinking' && x; }, { what: 'Sparkie’s answer' });
+    assert.match(v.reply, /memory said: \[error\] The lines that were replaced or forgotten are shown to the owner only/, v.reply);
+    assert.ok(!v.reply.includes(WORDS), v.reply);
+    // The owner, in their own chat on the page, reads the history.
+    const mine = 'what did I tell you to forget?';
+    script([{ match: `^${esc(mine)}$`, calls: [{ name: 'memory', arguments: { past: true } }] }]);
+    const r = await say(await newChat(), mine);
+    assert.ok(r.text.includes(WORDS), r.text);
+    assert.ok((await past()).some(p => p.id === id && p.text === WORDS));
+  } finally { script([]); fresh(); }
+});
+
+test('erasing a line for good: from Sparkie always a button, whatever the words; pressed in Spark Console, its words leave both files, their copies and the copies set aside', { timeout: 180000 * SLOW }, async () => {
+  fresh();
+  const WORDS = 'The rack in the hall opens with code 7731', NOW = 'The rack in the hall has a new code; ask me';
+  const other = await remember('Spark 3 is where models go', 'preference'), gone = await remember(WORDS);
+  assert.equal((await owner('forget_memory', { id: other })).json.outcome, 'forgotten');
+  const r = await owner('remember', { text: NOW, kind: 'fact', replaces: gone });
+  assert.equal(r.json?.outcome, 'remembered', r.text);
+  // A copy set aside as unreadable, and one a stop left half-written, hold the words too.
+  writeFileSync(state('memory.json.unreadable-2026-11-01T00-00-00-000Z'), `{"entries": [{"id": "${gone}", "text": "${WORDS}"`, { mode: 0o600 });
+  writeFileSync(state('memory-past.json.4242.tmp'), `{"past": [{"id": "${gone}", "text": "${WORDS}"`, { mode: 0o600 });
+  assert.deepEqual(holding(WORDS).filter(f => f.startsWith('memory')), ['memory-past.json', 'memory-past.json.4242.tmp', 'memory.json.prev', 'memory.json.unreadable-2026-11-01T00-00-00-000Z']);
+  try {
+    // From Sparkie, whatever the owner's words: a button the owner presses in Spark Console, and nothing changes yet.
+    let button;
+    for (const words of ['erase the line about the rack code for good', 'Forget that the rack in the hall opens with code 7731, erase it completely.', 'erase it']) {
+      script([{ match: `^${esc(words)}$`, calls: [{ name: 'forget_memory', arguments: { id: gone, erase: true } }] }]);
+      const chat = await newChat(), m = (await say(chat, words)).message;
+      assert.deepEqual(m.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'question']], `${words}: ${JSON.stringify(m.tools)}`);
+      assert.deepEqual(m.choices?.map(c => c.label), [`Erase for good: “${WORDS}”`, 'No, keep it'], words);
+      assert.ok((await past()).some(p => p.id === gone), words);
+      button = { chat, id: m.choices[0].id };
+    }
+    const pressed = await choose(button.chat, button.id);
+    assert.equal(pressed.status, 200, pressed.text);
+    assert.equal(pressed.json.outcome, 'erased', pressed.text);
+    assert.match(pressed.json.message.content, /^Erased for good: that line is gone from memory and its history\. What it can’t reach: the chat \(your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there\), Spark Console’s journal and its record of changes \(audit\.jsonl\), daily copies already sent to another Spark, and install snapshots already taken\.$/s);
+    // No record of it is left; the line that replaced it keeps only its id. In the state folder only the chat and the
+    // record of changes hold the words: not the two files, not their copies from before the last save (both there).
+    assert.deepEqual((await live()).map(e => [e.text, e.replaces]), [[NOW, gone]]);
+    assert.ok(!(await past()).some(p => p.id === gone), JSON.stringify(await past()));
+    assert.ok(existsSync(state('memory.json.prev')) && existsSync(state('memory-past.json.prev')));
+    assert.deepEqual(holding(WORDS).filter(f => !/^(chats\.json|audit\.jsonl)/.test(f)), []);
+    assert.ok(holding(WORDS).includes('audit.jsonl'));
+    assert.match(readFileSync(state('memory.json.unreadable-2026-11-01T00-00-00-000Z'), 'utf8'), /"text": "\[erased\]"$/);
+    // A second press has expired, and the owner's own call for a line with no record answers "already".
+    assert.equal((await choose(button.chat, button.id)).status, 409);
+    assert.equal((await owner('forget_memory', { id: gone, erase: true })).json.outcome, 'already');
+  } finally { script([]); fresh(); }
+});
+
+test('erasing for good: the owner\'s own call on the tailnet erases at once; an agent is refused, over the agent door or through Sparkie, for its own lines too', { timeout: 180000 * SLOW }, async () => {
+  fresh();
+  const OWN = 'Spark 3 is where models go', THEIRS = 'The nightly eval keeps its notes on Spark 4';
+  const mine = await remember(OWN, 'preference');
+  const door = await call(agent.token, 'remember', { text: THEIRS, kind: 'fact' });
+  assert.equal(door.value?.outcome, 'remembered', door.text);
+  const theirs = door.value.id, before = await live();
+  try {
+    for (const id of [theirs, mine]) {
+      const r = await call(agent.token, 'forget_memory', { id, erase: true });
+      assert.equal(r.isError, true, r.text);
+      assert.match(r.text, /^\[not_allowed\] /, r.text);
+    }
+    assert.match((await call(agent.token, 'forget_memory', { id: theirs, erase: 'true' })).text, /^\[invalid\] erase should be true or false/);
+    script([{ match: '^erase my note about the nightly eval for good$', calls: [{ name: 'forget_memory', arguments: { id: theirs, erase: true } }] }]);
+    let v = (await call(agent.token, ASK, { message: 'erase my note about the nightly eval for good' })).value;
+    if (v?.status === 'thinking') v = await waitFor(async () => { const x = (await call(agent.token, ASK, { conversation: v.conversation })).value; return x?.status !== 'thinking' && x; }, { what: 'Sparkie’s answer' });
+    assert.match(v.reply, /forget_memory said: \[error\] Only the owner erases a memory line for good/, v.reply);
+    assert.ok(!v.choices?.length, JSON.stringify(v.choices));
+    assert.deepEqual(await live(), before);
+    assert.deepEqual(await past(), []);
+    // The owner's own call erases the agent's line at once: no record of it is left.
+    const e = await owner('forget_memory', { id: theirs, erase: true });
+    assert.equal(e.json?.outcome, 'erased', e.text);
+    assert.deepEqual((await live()).map(x => x.text), [OWN]);
+    assert.deepEqual(await past(), []);
+    assert.deepEqual(holding(THEIRS).filter(f => f.startsWith('memory')), []);
+  } finally { script([]); fresh(); }
+});
+
+// T138: a 41st line; "forget that Spark 4 is on Wi-Fi"; then "don't forget it"; an agent tries to replace an owner's line.
+test('T138: the 41st line is kept; the plain ask retires its line, still in the history; "don\'t forget it" leaves a line live; the agent changes nothing', { timeout: 180000 * SLOW }, async () => {
+  fresh();
+  for (let i = 1; i <= 39; i++) await remember(`Fact number ${i} about the fleet`);
+  const wifi = await remember('Spark 4 is on Wi-Fi only'), last = await remember('Spark 3 is where models go', 'preference');
+  assert.equal((await live()).length, 41);
+  const turn = async (words, call) => { script([{ match: `^${esc(words)}$`, calls: [call] }]); return (await say(await newChat(), words)).message; };
+  try {
+    const plain = await turn('forget that Spark 4 is on Wi-Fi', { name: 'forget_memory', arguments: { id: wifi } });
+    assert.deepEqual(plain.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'forgotten']]);
+    assert.ok(!(await live()).some(e => e.id === wifi));
+    assert.deepEqual((await past()).map(p => [p.id, p.text, p.gone.why]), [[wifi, 'Spark 4 is on Wi-Fi only', 'forgotten']]);
+    const keep = await turn('Don\'t forget it.', { name: 'forget_memory', arguments: { id: last } });
+    assert.deepEqual(keep.tools.map(t => [t.name, t.outcome]), [['forget_memory', 'needs-ok']]);
+    const now = await live();
+    assert.ok(now.some(e => e.id === last) && now.length === 40);
+    const swap = await call(agent.token, 'remember', { text: 'Spark 4 is where models go', kind: 'preference', replaces: last });
+    assert.match(swap.text, /^\[not_allowed\] That line is the owner’s/);
+    assert.deepEqual(await live(), now);
+    assert.equal((await past()).length, 1);
+  } finally { script([]); fresh(); }
 });

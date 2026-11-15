@@ -103,7 +103,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
     await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/ };
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/ };
     for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(...groups), `“${words}”: ${groups.join(' + ') || 'the core'}`);

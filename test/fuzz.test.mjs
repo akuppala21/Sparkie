@@ -48,7 +48,7 @@ const VALID = () => ({
   wait_operation: { id: '0123456789ab' },
   start_model: { model: ctx.model }, stop_model: { spark: ctx.spark, container: ctx.container }, restart_model: { spark: ctx.spark, container: ctx.container },
   files: { spark: ctx.spark }, save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' }, keep_running: { spark: ctx.spark, container: ctx.container }, self_test: {},
-  search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' }, recall: { about: 'gemma' },
+  search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' }, recall: { about: 'gemma' }, forget_memory: { id: '0123abcd' },
 });
 let schemas = {};
 

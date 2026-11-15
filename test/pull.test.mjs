@@ -184,6 +184,9 @@ function pull(home, args, { input = '', extra } = {}) {
     let out = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { out += d; });
+    // A pull.sh that stops before it reads (a bad repository name) has closed its end; on a loaded machine the write
+    // can come after that and before node has seen it exit. That is the script's answer, not the test's error.
+    p.stdin.on('error', e => { if (e.code !== 'EPIPE') throw e; });
     p.stdin.end(input);
     p.on('close', code => resolve({ code, out }));
   });
@@ -231,6 +234,10 @@ after(() => {
 const CASE = { timeout: 180000 * SLOW };
 describe('pull.sh against a bare repository standing in for GitHub', { concurrency: 1 }, () => {
   let home, b1, b6, last;
+  // The cases build on each other (one Spark 2, one history). Each marks that it ran to its end; one that needs an
+  // earlier case says so plainly instead of failing on what that case would have left behind.
+  const ran = new Set();
+  const needs = (...cases) => { for (const c of cases) assert.ok(ran.has(c), `The ${c} case didn't run to its end, so this one can't run: read that case's failure.`); };
 
   test('setup: the token is tried, then kept in the secrets file beside what was there; never on a command line or in git’s config', CASE, async () => {
     b1 = push(treeFiles(1), 'The first build');
@@ -269,9 +276,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.ok(!lines(home, 'git-args.log').some(l => l.includes(TOKEN)), 'the token on a command line');
     assert.ok(lines(home, 'git-env.log').includes(`Authorization: basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`));
     assert.match(r.out, new RegExp(`To install it: bash \\S+/pull\\.sh install ${b1.t12}`));
+    ran.add('setup');
   });
 
   test('check: names what is installed and the newest tested build, and changes nothing', CASE, async () => {
+    needs('setup');
     const was = installedNow(home);
     const r = await pull(home, ['check']);
     assert.equal(r.code, 0, r.out);
@@ -280,9 +289,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.match(r.out, new RegExp(`install ${b1.t12}`));
     assert.deepEqual(installedNow(home), was);
     assert.ok(!existsSync(join(home, '.local', 'state', 'spark-console', 'update-result.json')));
+    ran.add('check');
   });
 
   test('install: exactly the tagged tree goes in through its own installer and is kept; then pull.sh is its copy. No tailscale, sudo or ssh', CASE, async () => {
+    needs('setup');
     const r = await pull(home, ['install', b1.t12]);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /kept: build/);
@@ -302,9 +313,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
       assert.equal(readlinkSync(join(home, 'spark-console-src', l)), to);
     }
     assert.ok(!existsSync(join(home, 'never-called.log')), existsSync(join(home, 'never-called.log')) ? read(home, 'never-called.log') : '');
+    ran.add('install');
   });
 
   test('install refuses, with nothing changed: an untagged head of main, a tag that changes other files, a lock for another tree or build', CASE, async () => {
+    needs('setup');
     const was = installedNow(home);
     const b2 = push(treeFiles(2), 'Not tested yet');
     refused(home, await pull(home, ['install', b2.t12]), b2.t12, /head of main, has no tested\/[0-9a-f]{12} tag/, was);
@@ -316,9 +329,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     refused(home, await pull(home, ['install', b2.t12]), b2.t12, /names no tree/, was);
     mark(b2, { lock: { build: '000000000000' } });
     refused(home, await pull(home, ['install', b2.t12]), b2.t12, /is for build 000000000000, but this code is build/, was);
+    ran.add('refusals');
   });
 
   test('install refuses a link, a submodule, an export- attribute, an older tested tree and one only on another branch', CASE, async () => {
+    needs('setup');
     const was = installedNow(home);
     const b3 = push({ ...treeFiles(3), 'public/icon-192.png': { text: '/proc/self/environ', mode: '120000' } }, 'A link');
     mark(b3);
@@ -346,9 +361,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     for (const args of [['install'], ['install', 'main'], ['install', `${b5.t12}0`], ['fetch']]) assert.equal((await pull(home, args)).code, 2, args.join(' '));
     assert.equal(read(home, '.local', 'state', 'spark-console', 'update-result.json'), before);
     assert.deepEqual(installedNow(home), was);
+    ran.add('more refusals');
   });
 
   test('a newer tested build is kept over the first, with a snapshot; one that dies goes back, and pull.sh stays the kept build’s', CASE, async () => {
+    needs('install', 'more refusals');
     b6 = push(treeFiles(6), 'Good again');
     mark(b6);
     // check names it, with the subjects since the installed commit (newest first), and the command.
@@ -396,9 +413,11 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     assert.deepEqual([resultOf(home).tree, resultOf(home).result], [b8.t12, 'kept']);
     assert.equal(JSON.parse(read(home, 'spark-console-service', 'workflows.lock.json')).tree, b8.tree);
     last = b8;
+    ran.add('newer');
   });
 
   test('main moved as tools/land.mjs moves it (a merge onto the branch, then a fast-forward): the newest tested build is the head before; never older than the installed one', CASE, async () => {
+    needs('newer');
     // A step's branch starts from main; another step lands, tested, and is installed; the step then merges main in
     // (first parent its own branch) and main fast-forwards to that merge, not tested yet.
     const step = commitOf(last.commit, treeFiles(10), 'A step, on its own branch');

@@ -42,12 +42,20 @@ import { startMock, REPO } from './start-mock.mjs';
 const CUT_OFF = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'abcdefabcdef', operation: 'deploy', status: 'started', model: 'gpt-oss-20b', spark: 'spark3', stops: ['spark3/sc-old-model'] };
 const ENDED = [{ at: '2026-11-04T10:00:00.000Z', type: 'operation', id: '0123456789ab', operation: 'stop', status: 'started', spark: 'spark4' },
   { at: '2026-11-04T10:00:05.000Z', type: 'operation', id: '0123456789ab', operation: 'stop', status: 'completed', spark: 'spark4' }];
+// The day the daily copies are named for, held for this file's run (2026-11-14: a run that crossed midnight UTC made one
+// copy named for the 14th and a later one for the 15th). Each service here that makes copies runs on mock/clock.mjs, its
+// whole clock: the real time, except that one started after 23:00 UTC that day (or past midnight) is set back to 23:00,
+// so for an hour it doesn't see the date change.
+const DAY = new Date().toISOString().slice(0, 10);
+const HOLD_DAY = { NODE_OPTIONS: `--import=${join(REPO, 'test', 'mock', 'clock.mjs')}`, MOCK_CLOCK_DATES: '1' };
+const holdDay = dir => writeFileSync(join(dir, 'clock-offset'), String(Math.min(0, Date.parse(`${DAY}T23:00:00.000Z`) - Date.now())));
 const keys = {};
 useFleet({
   watchMs: 60000,
   // A first copy of the state 3 s after starting, then every minute.
-  env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '3000', SPARK_CONSOLE_BACKUP_MS: '60000' },
-  prepare: ({ stateDir }) => {
+  env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '3000', SPARK_CONSOLE_BACKUP_MS: '60000', ...HOLD_DAY },
+  prepare: ({ dir, stateDir }) => {
+    holdDay(dir);
     // (a line that isn't JSON among them: only that line is dropped)
     writeFileSync(join(stateDir, 'events.jsonl'), [JSON.stringify(CUT_OFF), '{"type": "operation", broken', ...ENDED.map(e => JSON.stringify(e))].map(l => `${l}\n`).join(''), { mode: 0o600 });
     writeFileSync(join(stateDir, 'stray.sock'), 'not a real socket', { mode: 0o600 });
@@ -108,7 +116,7 @@ describe('the main service', { concurrency: 1 }, () => {
       const h = await waitFor(async () => { const x = await health(); return x.lastBackup && x; }, { timeout: 20000, what: 'the first copy' });
       assert.equal(h.lastBackup.ok, true, JSON.stringify(h.lastBackup));
       assert.equal(h.lastBackup.to, 'spark3');
-      const name = `state-${new Date().toISOString().slice(0, 10)}.tgz`;
+      const name = `state-${DAY}.tgz`;
       assert.equal(h.lastBackup.file, name);
       const dir = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-console', 'backups');
       assert.deepEqual(readdirSync(dir), [name], 'no .part left behind');
@@ -123,7 +131,7 @@ describe('the main service', { concurrency: 1 }, () => {
     // it was run from; here that text runs under zsh in an empty home (a space in its name), then with a stale .part.
     const ZSH = (() => { try { execFileSync('zsh', ['-fc', 'true'], { stdio: 'ignore' }); return true; } catch { return false; } })();
     test('its first command on the far Spark ends well under zsh too, with no .part there and with a stale one', { timeout: 30000 * SLOW, skip: ZSH ? false : 'no zsh here' }, async () => {
-      const name = `state-${new Date().toISOString().slice(0, 10)}.tgz`, from = join(T.fleet.root, 'spark3', '.mock', 'gzip-from');
+      const name = `state-${DAY}.tgz`, from = join(T.fleet.root, 'spark3', '.mock', 'gzip-from');
       const copy = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-console', 'backups', name);
       await waitFor(() => existsSync(copy) && existsSync(from), { timeout: 20000, what: 'the first copy' });
       const sent = readFileSync(from, 'utf8').trim();
@@ -473,7 +481,7 @@ describe('the main service', { concurrency: 1 }, () => {
   // 2 s after the start, then every 3 s here (every hour on the Sparks).
   describe('the daily copy: its record survives a restart; it is tried again; a copy cut short is never moved in; a day without one is said once', { concurrency: 1 }, () => {
     const GOOD = { at: new Date(Date.now() - 3 * 86400000).toISOString(), to: 'spark3', file: 'state-old.tgz' };
-    const today = () => `state-${new Date().toISOString().slice(0, 10)}.tgz`;
+    const today = () => `state-${DAY}.tgz`;
     let F;
     const copies = spark => join(F.root, spark, '.local', 'share', 'spark-console', 'backups');
     const record = async () => (await health(F.base)).lastBackup;
@@ -482,8 +490,9 @@ describe('the main service', { concurrency: 1 }, () => {
     const needsOn = async () => (await ownerOn(F, '/actions/fleet_status', { method: 'POST', body: {} })).json.needsOwner;
     before(async () => {
       F = await startMock({ watchMs: 600000, statusMs: 3000,
-        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '3000' },
+        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '3000', ...HOLD_DAY },
         prepare: ({ dir, stateDir }) => {
+          holdDay(dir);
           writeFileSync(join(dir, 'offline'), 'spark1\nspark3\nspark4\n');
           writeFileSync(join(stateDir, 'backup.json'), JSON.stringify({ at: GOOD.at, ok: true, to: GOOD.to, file: GOOD.file, good: GOOD, noticedOn: null }), { mode: 0o600 });
         } });
@@ -503,7 +512,7 @@ describe('the main service', { concurrency: 1 }, () => {
       last = await nextTry(last);
       assert.equal(last.ok, false);
       assert.equal(notices().length, 1, 'one notice a day, not one per try');
-      assert.equal(JSON.parse(readFileSync(join(F.stateDir, 'backup.json'), 'utf8')).noticedOn, new Date().toISOString().slice(0, 10));
+      assert.equal(JSON.parse(readFileSync(join(F.stateDir, 'backup.json'), 'utf8')).noticedOn, DAY);
       assert.ok((await needsOn()).some(l => l.startsWith(`Spark Console’s state hasn’t been copied to another Spark since ${GOOD.at.slice(0, 10)}.`)), 'the open-problems list says so');
     });
 
@@ -545,7 +554,7 @@ describe('the main service', { concurrency: 1 }, () => {
   // nothing. A fleet of its own: only Spark 3 takes copies; today's copy and 14 older ones are there; tried 2 s after the
   // start, then every 20 s (a quiet spell after each try, so its folder is read between two).
   describe('the daily copy: a tar that ends badly after a whole stream replaces nothing and prunes nothing', { concurrency: 1 }, () => {
-    const today = () => `state-${new Date().toISOString().slice(0, 10)}.tgz`;
+    const today = () => `state-${DAY}.tgz`;
     const OLDER = Array.from({ length: 14 }, (_, i) => `state-2026-10-${String(i + 1).padStart(2, '0')}.tgz`);
     // GNU tar ends 2 after a file it can't read; BSD tar (macOS) ends 1, which the copy accepts. Root reads any file.
     const GNU_TAR = (() => { try { return /GNU tar/.test(execFileSync('tar', ['--version'], { encoding: 'utf8' })); } catch { return false; } })();
@@ -564,8 +573,9 @@ describe('the main service', { concurrency: 1 }, () => {
     };
     before(async () => {
       F = await startMock({ watchMs: 600000, statusMs: 3000,
-        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '20000' },
+        env: { SPARK_CONSOLE_BACKUP_FIRST_MS: '2000', SPARK_CONSOLE_BACKUP_MS: '20000', ...HOLD_DAY },
         prepare: ({ dir, root }) => {
+          holdDay(dir);
           writeFileSync(join(dir, 'offline'), 'spark1\nspark4\n');
           // (the stand-in tar runs the real one to its end, then ends 2)
           writeFileSync(join(dir, 'tar-fails'), '');
