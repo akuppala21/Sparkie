@@ -5,10 +5,15 @@
 // The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the network's own tools (ip, arp, ss), the
 // downloaders (curl, wget, aria2c), Tailscale, and ssh, scp, rsync and sftp. On another machine there is no wall and no
 // copy first, so a command that runs or writes there is asked (risky) whatever it is, and still sorted as a command
-// there for lockout or not done; a host that isn't one of the Sparks is risky, a tunnel through one is not done.
+// there for lockout or not done; a host that isn't one of the Sparks is risky, a tunnel through one is not done. As
+// root no wall stands in front of the Spark's own ports, so a root download that names a host by number, localhost, a
+// one-word name, a name of the fleet or of a service that turns a name into the number in it (nip.io), or forces an
+// address (--resolve, --connect-to, a proxy, a socket) is asked; a name that DNS alone turns into the Spark is not seen.
 const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
+const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
+  && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
 // A far path, from the far home ('' and . are the home), placed as a path there (wide when it is where a copy lands).
-const sortFar = (path, ctx, r, wide) => sortPlace(sortNorm(/^[~/]/.test(path) ? path : `~/${path}`), /[*?[]/.test(path), ctx, r, wide, true);
+const sortFar = (path, ctx, r, wide) => sortPlace(sortNorm(/^[~/]/.test(path) ? path : `~/${path}`, null, ctx.home), /[*?[]/.test(path), ctx, r, wide, true);
 Object.assign(SORT_HANDLERS, {
   ip(a, ctx, r) {
     const t = a.map(w => w.text), o = [];
@@ -23,23 +28,30 @@ Object.assign(SORT_HANDLERS, {
   arp: (a, ctx, r) => (a.some(w => /^-\w*[sdfDS]|^--(?:set|delete|file)/.test(w.text) || w.text === ';') ? raise(r, 'lockout', 'arp changes the network’s address table, a way in.') : raise(r, 'change', 'arp reads the real network, which a look’s wall has none of.')),
   ss: (a, ctx, r) => (a.some(w => /^-\w*K|^--kill/.test(w.text)) ? raise(r, 'risky', 'ss -K closes connections, maybe the owner’s own.') : raise(r, 'change', 'ss reads the real network, which a look’s wall has none of (ss -tln alone is a look).')),
   curl(a, ctx, r, x, name = 'curl') {
-    const t = a.map(w => w.text), url = t.find(s => /^[a-z][\w+.-]*:\/\//i.test(s)) ?? '', last = url.replace(/[?#].*$/, '').split('/').pop();
+    const o = sortOpts(SORT_OPTS[name], a), t = a.map(w => w.text), urls = [...o.plain, ...o.all('url')].map(w => w.text);
+    const last = u => u.replace(/[?#].*$/, '').replace(/^[a-z][\w+.-]*:\/\/[^/]*/i, '').split('/').pop();
     raise(r, 'change', `${sortQ(name)} reaches the network, which a look’s wall has none of.`);
     ctx.piped = ctx.fetchSeen = ctx.fetched = true;
-    if (t.some(s => /^-\w*K$|^--config/.test(s))) unsure(`${sortQ(name)} reads more options from a file, which the sorter does not read.`);
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
-    const dirOf = re => { const i = t.findIndex(s => re.test(s)); return i < 0 ? null : t[i].includes('=') ? { text: t[i].slice(t[i].indexOf('=') + 1), subs: [] } : a[i + 1]; };
+    if (ctx.root) {
+      const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
+      const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
+      if (odd !== undefined || forced) raise(r, 'risky', `As root, ${sortQ(name)} reaches ${sortQ(odd ?? `--${forced[0]}`)}, which could be the Spark’s own port; as root no wall stands in front of it.`);
+    }
+    const dir = o.all('output-dir', 'P', 'directory-prefix', 'd', 'dir').at(-1) ?? null, at = f => (dir ? { ...dir, text: `${dir.text}/${f}`, subs: [] } : { text: f, subs: [] });
     if (name === 'curl') {
-      t.forEach((s, i) => { if (/^(?:-o|--output)$/.test(s) && t[i + 1] !== '-') sortTouch(a[i + 1], ctx, r); });
-      const dir = dirOf(/^--output-dir/);
-      if (t.some(s => /^-\w*J|^--remote-header-name/.test(s))) sortInto(dir, ctx, r);
-      else if (t.some(s => /^-\w*O|^--remote-name/.test(s)) && last) { if (dir) sortTouch({ ...dir, text: `${dir.text}/${last}` }, ctx, r); else sortTouch({ text: last, subs: [] }, ctx, r); }
+      for (const w of o.all('o', 'output')) if (w.text !== '-') { sortTouch(w, ctx, r); if (dir) sortTouch(at(w.text), ctx, r); }
+      // (every -O names a file from its address's last part; -J from what the server says)
+      if (o.has('J', 'remote-header-name')) sortInto(dir, ctx, r);
+      else if (o.has('O', 'remote-name', 'remote-name-all')) for (const u of urls) if (last(u)) sortTouch(at(last(u)), ctx, r);
     } else if (name === 'wget') {
-      const o = t.findIndex(s => /^-\w*O$|^--output-document$/.test(s)), dir = dirOf(/^-P$|^--directory-prefix/);
-      if (o >= 0) { if (t[o + 1] !== '-') sortTouch(a[o + 1], ctx, r); }
-      else if (t.some(s => /^-\w*[rmx]|^--(?:recursive|mirror|force-directories|content-disposition|trust-server-names)/.test(s))) sortInto(dir, ctx, r);
-      else if (!t.some(s => /^-\w*O-$|^--output-document=/.test(s)) && last) sortTouch({ text: dir ? `${dir.text}/${last}` : last, subs: [] }, ctx, r);
-    } else sortInto(dirOf(/^-d$|^--dir/), ctx, r);
+      const out = o.all('O', 'output-document');
+      for (const w of o.all('o', 'output-file', 'a', 'append-output')) sortTouch(w, ctx, r);
+      if (out.length) { for (const w of out) if (w.text !== '-') sortTouch(w, ctx, r); }
+      else if (o.has('r', 'm', 'x', 'i', 'p', 'recursive', 'mirror', 'force-directories', 'content-disposition', 'trust-server-names', 'input-file', 'page-requisites')) sortInto(dir, ctx, r);
+      else for (const u of urls) if (last(u)) sortTouch(at(last(u)), ctx, r);
+    } else sortInto(dir, ctx, r);
+    if (t.some(s => /^-[^-]*K|^--conf/.test(s))) unsure(`${sortQ(name)} reads more options from a file, which the sorter does not read.`);
   },
   ssh(a, ctx, r, x) {
     r.simple = false;
@@ -72,15 +84,15 @@ Object.assign(SORT_HANDLERS, {
     const fed = remote || (typeof x.stdin === 'string' ? x.stdin : '');
     if (!fed) return;
     if (!place) return sortScan(fed, ctx, r, true);
-    const was = [ctx.at, ctx.root, ctx.cwds], c = sortFresh();
-    Object.assign(ctx, { at: place, root: user === 'root', cwds: new Set(['~']) });
-    try { sortInline(fed, ctx, c, 'ssh'); sortAt(c, ctx); } finally { [ctx.at, ctx.root, ctx.cwds] = was; sortMerge(r, c); }
+    // (what it changes there is not a place here: the runner copies nothing for it)
+    const was = [ctx.at, ctx.root, ctx.cwds, ctx.changes], c = sortFresh();
+    Object.assign(ctx, { at: place, root: user === 'root', cwds: new Set(['~']), changes: null });
+    try { sortInline(fed, ctx, c, 'ssh'); sortAt(c, ctx); } finally { [ctx.at, ctx.root, ctx.cwds, ctx.changes] = was; sortMerge(r, c); }
   },
   scp(a, ctx, r, x, name = 'scp') {
     raise(r, 'change', `${sortQ(name)} copies files.`);
-    if (a.some(w => /^-\w*[oFJS]$|^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
     if (a.some(w => /^--(?:del|remove-source)/.test(w.text))) sortGone(ctx, r, `${sortQ(name)} --delete removes files it doesn’t name.`);
-    const plain = a.filter(w => !w.text.startsWith('-')), rec = name === 'sftp' || a.some(w => /^-\w*[ra]|^--(?:recursive|archive)$/.test(w.text));
+    const o = sortOpts(SORT_OPTS[name], a), plain = o.plain, rec = name === 'sftp' || o.has('r', 'a', 'recursive', 'archive');
     if (name === 'sftp') {
       const host = plain.at(-1)?.text.replace(/^[^@]*@/, '').replace(/:.*$/, '') ?? '';
       return raise(r, 'risky', sortHost(ctx, host) ? `sftp to ${sortQ(host)} can write any file there, outside every wall and copy: asked.` : `It connects to ${sortQ(host)}, which isn’t one of the Sparks.`);
@@ -93,6 +105,7 @@ Object.assign(SORT_HANDLERS, {
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
       sortFar(m[2], ctx, r, rec && lastOne);
     });
+    if (a.some(w => (name !== 'rsync' && /^-[^-]*[oFJS]/.test(w.text)) || /^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
   },
   tailscale(a, ctx, r) {
     const v = a.find(w => !w.text.startsWith('-'))?.text ?? '';

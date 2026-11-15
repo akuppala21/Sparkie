@@ -24,7 +24,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
     if (want) { heres.push({ ...want, quoted: w.quoted, delim: w.text }); want = null; }
     w = null;
   };
-  const sub = j => { const r = shellLex(src, true, j, nest + 1), x = opaque(); x.subs.push(shellParse(r.toks)); x.unknown = true; return r.end; };
+  const sub = j => { if (want) unsure('Its here-document’s end word holds <( … ), which bash reads as it is written and the sorter does not.'); const r = shellLex(src, true, j, nest + 1), x = opaque(); x.subs.push(shellParse(r.toks)); x.unknown = true; return r.end; };
   const named = (name, j) => { const x = opaque(); if (name === 'HOME' && !x.text) x.text = '~'; else x.unknown = true; return j; };
   const dollar = j => {
     const n = src[j + 1];

@@ -9,27 +9,38 @@
 // /proc/<id>/root taken off the front. "Wide" is a command that reaches everything under a folder it names (rm -r, chmod,
 // a folder an archive unpacks into): then a folder above a protected path counts too. A glob counts when it could match
 // one, or when its fixed folder is at or under one; it is matched segment by segment, with no regular expression, so no
-// word can make the sorter slow. Written (touched true): also a .py at the top of the home, and as root a path outside
-// the folders a root command may change at once. Named anywhere in a change (touched 'seen'): the lists above.
-const SORT_CWDS = 8, SORT_STEPS = 20000;
+// word can make the sorter slow. Written (touched true): also Python at the top of the home (x.py, .pyc, .so, .pth,
+// x/__init__.py), and a git hook or a repository's settings. Named anywhere in a change (touched 'seen', a path word,
+// or 'bare', a plain word read from where the command starts): the lists above; as root, a path word or a written
+// path outside the folders a root command may change at once is risky.
+const SORT_CWDS = 8, SORT_STEPS = 20000, SORT_PLACED = 256, SORT_PATH = 1000;
 // A piece of the command inside a reason: one line, no control signs, cut short, marked as the command's own text.
 const sortQ = s => { const t = String(s ?? '').replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').trim(); return `“${t.length > 60 ? `${t.slice(0, 59)}…` : t}”`; };
 
 // Paths, as ~/… or /…; /proc/<id>/root is the same tree, and /proc/<id>/cwd or /fd lead somewhere the text can't show.
-function sortNorm(p, r = null) {
-  const out = [];
-  for (const s of String(p).replace(/^~(?=\/|$)/, '/home/~').split('/').slice(1)) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); }
+// Only the owner's home (home) becomes ~, and root's (/root, whose ways in count the same); another user's home, /home
+// itself, or a path that climbs out of the home stays what it is. With no home known, ~ is a home no path spells.
+function sortNorm(p, r = null, home = null) {
+  const out = [], h = home ?? '/home/~';
+  for (const s of String(p).replace(/^~(?=\/|$)/, h).split('/').slice(1)) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); }
   let n = `/${out.join('/')}`;
-  for (let m; (m = /^\/proc\/(?:self|thread-self|\d+)\/root(?=\/|$)/.exec(n));) n = n.slice(m[0].length) || '/';
+  for (let m; (m = /^\/proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/root(?=\/|$)/.exec(n));) n = n.slice(m[0].length) || '/';
   if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)/.test(n)) {
     if (r && (LOCK_NAMES.has(n.slice(n.lastIndexOf('/') + 1)) || SIGNIN.test(n))) raise(r, 'lockout', `It names ${sortQ(n)}, one of the ways in.`);
     unsure(`It reaches a file through ${sortQ(n)}, which the sorter can't place.`);
   }
-  return n.replace(/^\/home\/[^/]+(?=\/|$)|^\/root(?=\/|$)/, '~');
+  return n === h || n.startsWith(`${h}/`) ? `~${n.slice(h.length)}` : n.replace(/^\/root(?=\/|$)/, '~');
 }
+// (a glob that could match the owner's home, /home/*, is that home too)
+const sortAtHome = (p, home) => {
+  if (!home || !/[*?[]/.test(p)) return [p];
+  const hs = home.split('/'), ps = p.split('/');
+  return ps.length >= hs.length && hs.every((s, i) => sortSeg(ps[i], s)) ? [p, ['~', ...ps.slice(hs.length)].join('/')] : [p];
+};
 const sortPaths = (c0, ctx, r = null) => {
-  const c = String(c0).replace(/^\/proc\/(?:self|thread-self)\/cwd(?:\/|$)/, '').replace(/^$/, '.');
-  return /^[~/]/.test(c) ? [sortNorm(c, r)] : [...ctx.cwds].map(d => (d == null ? unsure(`It names ${sortQ(c)} after a cd the sorter can't follow.`) : sortNorm(`${d}/${c}`, r)));
+  const c = String(c0).replace(/^\/proc\/(?:self|thread-self)(?:\/task\/\d+)?\/cwd(?:\/|$)/, '').replace(/^$/, '.');
+  return (/^[~/]/.test(c) ? [sortNorm(c, r, ctx.home)] : [...ctx.cwds].map(d => (d == null ? unsure(`It names ${sortQ(c)} after a cd the sorter can't follow.`) : sortNorm(`${d}/${c}`, r, ctx.home))))
+    .flatMap(p => sortAtHome(p, ctx.home));
 };
 // A folder a cd may leave the command in; past SORT_CWDS of them a relative path can't be placed.
 function sortCd(p, ctx) {
@@ -55,7 +66,12 @@ function sortSeg(p, s) {
   return i === p.length;
 }
 function sortClass(p, i, ch) {
-  const e = p.indexOf(']', i + 2);
+  const inner = p.indexOf('[', i + 1), first = p.indexOf(']', i + 2);
+  if (inner > i && (first < 0 || inner < first)) {
+    const c = p.slice(inner).search(/[:.=]\]/), end = c < 0 ? -1 : p.indexOf(']', inner + c + 2);
+    return end < 0 ? (ch === '[' ? i + 1 : -1) : end + 1;
+  }
+  const e = first;
   if (e < 0) return ch === '[' ? i + 1 : -1;
   const neg = p[i + 1] === '!' || p[i + 1] === '^', body = p.slice(neg ? i + 2 : i + 1, e);
   let hit = false;
@@ -104,7 +120,7 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '/etc/systemd/system/multi-user.target.wants/ssh.service', '/etc/systemd/system/multi-user.target.wants/tailscaled.service',
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
-const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
+const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
 const WAYS_FILE = new RegExp(`(?:^|/)(?:${WAYS_UNITS.join('|')})\\.(?:service|socket|timer)(?:\\.d)?(?:/|$)`);
@@ -132,37 +148,44 @@ const ROOT_OK = /^(?:~(?:\/|$)|\/(?:etc|opt|srv|mnt|data|tmp|var\/tmp|var\/www)\
 
 // Names that are risky wherever they stand in a change: Spark Console's own files and units, the brain's names.
 function sortNames(p, ctx, r, glob = false) {
-  const bits = glob ? p.split(/[*?/]|\[[^\]]*\]/).filter(b => b.length >= 4) : [], names = n => p.includes(n) || bits.some(b => n.includes(b));
+  const segs = glob ? p.split('/').filter(s => /[*?[]/.test(s)) : [], bits = segs.flatMap(s => s.split(/[*?[\]]/)).filter(b => b.length >= 4);
+  const names = n => p.includes(n) || bits.some(b => n.includes(b)) || segs.some(s => sortSeg(s, n) || sortSeg(s, `models--${n}`));
   if (/spark-console-root|root-for-sparkie/.test(p)) { r.answer = 'owner command'; raise(r, 'notdone', 'It names the root helper or its sudo line, which only the owner’s one-time command puts in place or changes.'); }
   if (SIGNIN.test(p)) raise(r, 'lockout', `${sortQ(p)} is Spark Console’s own unit or one of its sign-in files, a way in.`);
   else if (['spark-console', 'spark-portal'].some(names)) raise(r, 'risky', `It names Spark Console’s own files, state or units: ${sortQ(p)}.`);
   for (const b of ctx.brain) if (names(b)) { ctx.kinds.add('brain'); raise(r, 'risky', `It names the brain (its container, model files or setup): ${sortQ(p)}.`); }
 }
-function sortPlace(p, glob, ctx, r, wide, touched = false) {
+function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   if (++ctx.steps > SORT_STEPS) unsure('It names more places than the sorter reads.');
+  const glob = glob0 && /[*?[]/.test(p);
+  if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
   sortNames(p, ctx, r, glob);
   const hits = sortReach(p, glob, wide), base = p.slice(p.lastIndexOf('/') + 1);
   if (HELPER_PATHS.some(sortReach(p, glob, wide, false))) { r.answer = 'owner command'; raise(r, 'notdone', `It reaches ${sortQ(p)}, the root helper or its sudo line, which only the owner’s one-time command changes.`); }
   if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortGlob(base).test(`${u}.${x}`)))) || (glob ? base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2 && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
-  if (LATER_PATHS.some(hits) || (touched === true && /^~\/[^/]+\.py$/.test(p))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
-  if (touched === true && ctx.root && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
+  if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
+  if (LATER_PATHS.some(hits) || (touched === true && /^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$|(?:^|\/)\.git\/(?:hooks|config)(?:\/|$)/.test(p))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
+  if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
 }
 // A word as the paths it can name: itself, what follows = or @, what follows a one-letter option (-opath), file://.
-const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], /^-\w(.+)$/.exec(t)?.[1], /^[\w-]*=?@(.+)$/.exec(t)?.[1],
+const sortTails = t => { const m = /^-([A-Za-z]{1,26})/.exec(t); return m ? Array.from({ length: m[1].length }, (_, k) => t.slice(k + 2)).filter(Boolean) : []; };
+const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], ...sortTails(t), /^[\w-]*=?@(.+)$/.exec(t)?.[1],
   /^file:\/\/(\/.*)$/.exec(t)?.[1]].filter(c => c && !c.startsWith('-')))];
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
-// writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what the
-// runner copies first).
+// writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
+// the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
 function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
-  if (w.text.includes('\n')) unsure('It names a file with a line break in its name.');
+  if (/[\x00-\x1f\x7f]/.test(w.text)) unsure('It names a file with a line break, a tab or another control sign in its name.');
   for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
-    ctx.changes?.set(p, ctx.changes.get(p) || wide);
+    if (!ctx.changes) continue;
+    if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
+    ctx.changes.set(p, ctx.changes.get(p) || wide);
   }
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`));
@@ -170,7 +193,7 @@ const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p =
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
   for (const s of text.replace(/\$\{HOME\}|\$HOME\b/g, '~').split(/[\s;&|()<>`'"=,{}]+/)) {
-    if (!s) continue;
+    if (!s || (s.length > SORT_PATH && !touched)) continue;
     for (const p of sortCands(s)) {
       if (/^[~/.]/.test(p) || (p.includes('/') && !p.includes('://'))) for (const q of sortPaths(p, ctx, r)) sortPlace(q, /[*?[]/.test(p), ctx, r, false, touched);
       else sortNames(p, ctx, r);
@@ -184,7 +207,7 @@ function sortScan(text, ctx, r, progs, touched = false) {
 function sortSee(words, ctx, r) {
   for (const w of words) {
     if (w.unknown || ctx.programs.has(w)) continue;
-    for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, 'seen');
+    for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) sortPlace(p, w.glob, ctx, r, false, /^[~/.]|\//.test(c) ? 'seen' : 'bare');
     sortScan(w.text, ctx, r, false, 'seen');
   }
 }

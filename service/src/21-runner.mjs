@@ -24,8 +24,9 @@ const RUNNER_WAYS = ['~/.ssh/authorized_keys', '~/.ssh/authorized_keys2', '~/.ss
   '~/.config/environment.d', '~/.config/systemd/user', '/etc/passwd', '/etc/group', '/etc/shadow', '/etc/gshadow', '/etc/sudoers', '/etc/sudoers.d',
   '/etc/ssh/sshd_config', '/etc/ssh/sshd_config.d', '/etc/pam.d', '/etc/hosts', '/etc/netplan', '/etc/NetworkManager/system-connections', '/etc/ufw',
   '/etc/nftables.conf', '/etc/iptables', '/etc/default/tailscaled', '/var/lib/tailscale'];
-// What the sorter is told about where it runs (21-work.mjs's door; A7c's caller passes the same).
-const runnerSortOpts = node => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir: '~',
+// What the sorter is told about where it runs (21-work.mjs's door; A7c's caller passes the same): that Spark's own
+// user's home, which paths are placed against.
+const runnerSortOpts = node => ({ at: node.host === 'local' ? 'hub' : 'compute', root: false, dir: '~', home: `/home/${node.user || CONFIG.user}`,
   hosts: Object.fromEntries(NODES.flatMap(n => [[n.id, n.host === 'local' ? 'hub' : 'compute'], ...(n.host && n.host !== 'local' ? [[n.host, 'compute']] : [])])),
   brain: [MAIN?.container, MAIN?.served, MAIN?.model].filter(x => typeof x === 'string') });
 // Whatever its caller says, the runner refuses: Spark 2, a Spark holding the brain, root (sudo or su in it, or the root

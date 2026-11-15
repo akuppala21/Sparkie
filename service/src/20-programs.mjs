@@ -2,10 +2,12 @@
 // Area: safety        Rules: R55        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
-// One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, the shell's built-ins
-// that set a name, the package managers, git, Docker, systemd, archives, sudo and su (the network's tools and other
-// machines are in 20-remote.mjs). A program in no table is unknown, and so risky; an option a handler doesn't read is a doubt, and so risky.
-// A program that unpacks or downloads under names it picks reaches everything under the folder it writes to (wide).
+// One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, editors, the shell's
+// built-ins that set a name, archives, the system's own tools, sudo and su (the package managers, git, the builds and
+// systemd are in 20-tools.mjs; the network's tools and other machines in 20-remote.mjs). A program in no table is
+// unknown, and so risky; an option a handler doesn't know is a doubt, and so risky (each reads its options by its spec
+// in 20-options.mjs, or as written here). A program that unpacks or downloads under names it picks reaches everything
+// under the folder it writes to (wide).
 function sortShell(args, ctx, r, x, name) {
   r.simple = false;
   if (!/^(?:bash|sh|dash|ash)$/.test(name)) unsure(`${sortQ(name)} reads its text another way than bash, and the sorter reads only bash's.`);
@@ -33,26 +35,30 @@ function sortShell(args, ctx, r, x, name) {
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} commands an earlier part makes, which can’t be shown before they run.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the commands it reads from its input, which the sorter can’t see.`);
 }
+// An interpreter's options before its script (code:<name> in 20-options.mjs; one with no spec takes none): the letters
+// that hand it code (-c, -e), a file of code (php -f), and those after which its own options end. perl and ruby -i
+// take the rest of their letters as a backup's suffix (-pi.bak, even -pie), and change the files named after the code.
+const SORT_CODE = { python: ['c', '', ['c', 'm']], perl: ['eE', '', []], node: ['ep', '', ['e', 'p', 'eval', 'print']], ruby: ['e', '', []], php: ['rBRE', 'fF', ['r', 'f']], lua: ['e', '', []] };
+const sortSuffix = (w, takes) => { const t = w.text; for (let j = 1; j < t.length && !w.unknown && /^-[^-]/.test(t); j++) { if (t[j] === 'i') return { ...w, text: t.slice(0, j + 1) }; if (takes.includes(t[j])) break; } return w; };
 function sortInterp(args, ctx, r, x, name) {
   r.simple = false;
   if (args.length && args.every(a => /^(?:-V|-VV|--version|--help|-h)$/.test(a.text))) return;
-  for (let k = 0; k < args.length; k++) {
-    const a = args[k], t = a.text;
-    if (a.unknown) { if (a.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); return sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); }
-    if (/^-\w*c$/.test(t) || (!/^python/.test(name) && /^-\w*[eEr]$|^-p$|^--(?:eval|print)$/.test(t))) {
-      const code = args[k + 1];
-      if (!code || code.unknown) unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`);
-      sortScan(code.text, ctx, r, true, 'seen');
-      return sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`);
-    }
-    if (t === '-m') return /^pip3?$/.test(args[k + 1]?.text ?? '') ? SORT_HANDLERS.pip(args.slice(k + 2), ctx, r, x, 'pip') : sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(args[k + 1]?.text ?? '')}.`);
-    if (/^-[WX]$/.test(t)) { k++; continue; }
-    if (t === '-') break;
-    if (!t.startsWith('-')) return sortRuns(t, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(t)}.`);
-  }
+  const key = { python2: 'python', python3: 'python', nodejs: 'node', luajit: 'lua' }[name] ?? name, [code, files, ends] = SORT_CODE[key] ?? ['', '', []];
+  const o = sortOpts(SORT_OPTS[`code:${key}`], key === 'perl' ? args.map(w => sortSuffix(w, 'eEIMmx0F')) : key === 'ruby' ? args.map(w => sortSuffix(w, 'eEIrF0')) : args, null, ends);
+  const fin = () => { if (o.unknown) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(o.unknown)}.`); };
+  const codes = o.opts.filter(([n]) => n.length === 1 ? code.includes(n) : /^(?:eval|print)$/.test(n)).map(([, v]) => v);
+  for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); }
+  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) sortTouch(w, ctx, r); return fin(); }
+  for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
+  const mod = o.all('m')[0], file = o.plain[0];
+  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, x); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
+  if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text)) raise(r, 'risky', `${sortQ(name)} x downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
+  if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
+  if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
   if (x.inPipe) raise(r, 'risky', ctx.piped ? `It pipes what it fetched from the network into ${sortQ(name)}: code fetched and run is always asked.` : `It pipes into ${sortQ(name)} code an earlier part makes, which can’t be shown before it runs.`);
   sortRuns(null, ctx, r, `${sortQ(name)} runs the code it reads from its input, which the sorter does not read.`);
+  fin();
 }
 const sortDoubts = name => () => unsure(`It uses the shell’s ${sortQ(name)}, which can change what later words run.`);
 // Built-ins that set a name (declare, read, printf -v, getopts, unset): each name is an assignment; a name with [ (an
@@ -65,13 +71,17 @@ function sortSets(names, ctx, r, how) {
   }
 }
 const sortDeclare = (a, ctx, r, x, name) => {
-  if (a.some(w => /^-\w*[fnFi]/.test(w.text))) unsure(`${sortQ(name)} with -f, -n or -i makes a function, a name that points at another, or a value worked out as arithmetic.`);
-  sortSets(a.filter(w => !w.text.startsWith('-')), ctx, r, name);
+  if (a.some(w => /^[-+]\w*[fnFi]/.test(w.text))) unsure(`${sortQ(name)} with -f, -n or -i makes a function, a name that points at another, or a value worked out as arithmetic.`);
+  const odd = a.find(w => w.unknown ? /^[-+]/.test(w.lit ?? '') || !w.lit : /^[-+]/.test(w.text) && /[^aAgprxlut]/.test(w.text.slice(1)));
+  if (odd) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(odd.text || '$…')}.`);
+  sortSets(a.filter(w => !/^[-+]/.test(w.text)), ctx, r, name);
 };
 const sortZip = (a, ctx, r, x, name) => {
-  const o = a.findIndex(w => /^-o$|^--output$/.test(w.text)), glued = a.find(w => /^--output=|^-o./.test(w.text));
-  if (o >= 0 || glued) { raise(r, 'change', `${sortQ(name)} writes a file.`); r.deletes = true; return sortTouch(o >= 0 ? a[o + 1] : { ...glued, text: glued.text.replace(/^--output=|^-o/, '') }, ctx, r); }
-  return a.some(w => /^-\w*[clt]|^--(?:stdout|to-stdout|list|test)$/.test(w.text)) ? undefined : sortFile(name, 'over', a, ctx, r);
+  const o = sortOpts(SORT_OPTS[name], a), out = o.all('o', 'output');
+  if (!out.length) return o.has('c', 'l', 't', 'stdout', 'to-stdout', 'list', 'test') && !o.has('rm') ? undefined : sortFile(name, 'over', a, ctx, r);
+  raise(r, 'change', `${sortQ(name)} writes a file.`);
+  r.deletes = true;
+  for (const w of [...out, ...(o.has('rm') ? o.plain : [])]) sortTouch(w, ctx, r);
 };
 const sortBecome = (a, ctx, r, x, name) => {
   r.answer = 'set root';
@@ -82,48 +92,42 @@ const sortBecome = (a, ctx, r, x, name) => {
   ctx.root = true;
   try { sortInline(a[c + 1].text, ctx, r, `${name} -c`); } finally { ctx.root = was; }
 };
-const sortPkgs = (names, ctx, r) => {
-  for (const p of names) {
-    if (/^(?:openssh-\S*|ssh|tailscale\S*|ufw|iptables\S*|nftables|firewalld|netplan\S*|network-manager\S*|sudo\S*|libpam\S*|passwd|login|systemd|systemd-resolved|dbus|dropbear\S*|telnetd|xrdp|cockpit\S*|ifupdown|resolvconf|wireguard\S*|fail2ban|cloud-init)(?:[:=]\S*)?[-+]?$/.test(p)) raise(r, 'lockout', `${sortQ(p)} is a package the ways in depend on.`);
-    else if (/^(?:linux-\S+|nvidia-\S+|libnvidia-\S+|cuda-drivers\S*|\S*firmware\S*|\S+-dkms|grub\S*|shim\S*)$/.test(p)) raise(r, 'risky', `${sortQ(p)} is the kernel, a driver or firmware.`);
-    else if (/^(?:docker|containerd)/.test(p)) raise(r, 'risky', `${sortQ(p)} is the Docker service.`);
-    else if (/^[.~/]|\.deb$/.test(p)) sortRuns(p, ctx, r, `It installs the package file ${sortQ(p)}.`);
-    if (/[^-]-$/.test(p)) sortGone(ctx, r, `${sortQ(p)} ends in -, which removes that package.`);
-  }
-};
 // Where a program that writes under names it picks puts them: the folder given, or the folders it may start in.
 const sortInto = (dir, ctx, r) => (dir ? sortTouch(dir, ctx, r, true) : [...ctx.cwds].forEach(d => sortTouch({ text: d ?? '', unknown: d == null, subs: [] }, ctx, r, true)));
-const SYSTEMCTL_POWER = /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|suspend-then-hibernate|kexec|soft-reboot|rescue|emergency|isolate|default|exit)$/;
-const SYSTEMCTL_CHANGE = /^(?:start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|condrestart|force-reload|kill|clean|freeze|thaw|enable|disable|reenable|mask|unmask|edit|revert|set-property|preset|link|add-wants|add-requires|reset-failed|daemon-reload|daemon-reexec|set-default|set-environment|unset-environment|import-environment|preset-all)$/;
-const GIT_LOOK = new Set('status log show diff rev-parse ls-files ls-tree cat-file blame describe shortlog grep whatchanged count-objects for-each-ref show-ref name-rev version help'.split(' '));
-const TAR_LONG = 'list extract get create append update diff compare delete file directory gzip gunzip xz bzip2 zstd lzma auto-compress verbose to-stdout keep-old-files skip-old-files overwrite no-same-owner same-owner no-same-permissions preserve-permissions numeric-owner strip-components exclude wildcards totals one-file-system owner group mode mtime sort no-overwrite-dir'.split(' ');
+// tar's options (its old form, tar xzf a.tar, read as -x -z -f a.tar): T, X and g read names from a file, I and F and
+// the long ones that name a program run it.
+const TAR_SPEC = sortSpec('AcdrtuxvzjJaZkmopsSwWOhPlBiMGnRUb:f:C:H:K:L:N:V:T:X:g:F:I: --list --extract --get --create --append --update --diff --compare --delete --concatenate --catenate --file= --directory= --gzip --gunzip --xz --bzip2 --zstd --lzma --auto-compress --verbose --to-stdout --keep-old-files --skip-old-files --keep-newer-files --overwrite --overwrite-dir --no-overwrite-dir --no-same-owner --same-owner --no-same-permissions --preserve-permissions --same-permissions --numeric-owner --strip-components= --exclude= --exclude-vcs --exclude-caches --wildcards --no-wildcards --totals --one-file-system --owner= --group= --mode= --mtime= --sort= --transform= --xform= --warning= --newer= --after-date= --format= --blocking-factor= --label= --absolute-names --dereference --hard-dereference --ignore-zeros --recursion --no-recursion --remove-files --sparse --checkpoint --null --files-from= --exclude-from= --listed-incremental= --use-compress-program= --to-command= --checkpoint-action= --info-script= --new-volume-script= --rsh-command= --rmt-command= --index-file= --volno-file= --help --version');
+const READ_SPEC = sortSpec('ersa:d:i:n:N:p:t:u:');
+const FIND_ONE = new Set('name iname path ipath wholename iwholename regex iregex regextype type xtype size mtime mmin atime amin ctime cmin newer anewer cnewer perm user group uid gid links inum samefile maxdepth mindepth lname ilname fstype used context printf'.split(' '));
+const FIND_ZERO = new Set('print print0 ls prune quit true false not and or a o depth mount xdev follow noleaf daystart readable writable executable empty nouser nogroup help version warn nowarn ignore_readdir_race noignore_readdir_race'.split(' '));
 const SORT_HANDLERS = {
   ...Object.fromEntries('bash sh dash ash zsh ksh mksh fish'.split(' ').map(n => [n, sortShell])),
   ...Object.fromEntries('python python2 python3 perl ruby node nodejs php lua luajit Rscript julia deno bun tclsh wish pwsh'.split(' ').map(n => [n, sortInterp])),
-  ...Object.fromEntries('vi vim nvim view ex ed nano emacs joe micro'.split(' ').map(n => [n, (a, ctx, r) => { for (const w of a.filter(w => !w.text.startsWith('-') && !w.unknown)) sortTouch(w, ctx, r); sortRuns(null, ctx, r, `${sortQ(n)} is an editor, which can run anything it is told.`); }])),
-  ...Object.fromEntries('make gmake cmake ninja meson cargo go rustc gcc g++ cc c++ clang clang++ nvcc javac mvn gradle bazel'.split(' ').map(n => [n, (a, ctx, r) => sortRuns(null, ctx, r, `${sortQ(n)} builds or runs code.`)])),
+  ...Object.fromEntries('vi vim nvim view ex ed nano emacs joe micro'.split(' ').map(n => [n, (a, ctx, r) => {
+    sortRuns(null, ctx, r, `${sortQ(n)} is an editor, which can run anything it is told.`);
+    for (const w of a.filter(w => !w.unknown && !/^[-+]/.test(w.text))) sortTouch(w, ctx, r);
+    const odd = a.find(w => w.unknown || /^[-+]/.test(w.text));
+    if (odd) unsure(`${sortQ(n)} ${sortQ(odd.text || '$…')}: an editor’s option or + command can run anything, and the sorter reads none.`);
+  }])),
   ...Object.fromEntries('alias unalias hash enable trap shopt complete compgen bind fc history disown suspend caller let'.split(' ').map(n => [n, sortDoubts(n)])),
   ...Object.fromEntries('export declare typeset local readonly'.split(' ').map(n => [n, sortDeclare])),
   ...Object.fromEntries('gzip gunzip bzip2 bunzip2 xz unxz zstd unzstd lz4'.split(' ').map(n => [n, sortZip])),
   ...Object.fromEntries('su doas pkexec runuser sudoedit sg newgrp'.split(' ').map(n => [n, sortBecome])),
-  read(a, ctx, r) { const t = a.map(w => w.text); sortSets(a.filter((w, i) => !w.text.startsWith('-') && !/^-[dnNptui]$/.test(t[i - 1] ?? '') || t[i - 1] === '-a'), ctx, r, 'read'); },
+  read(a, ctx, r) { const o = sortOpts(READ_SPEC, a); sortSets([...o.all('a'), ...o.plain], ctx, r, 'read'); if (o.unknown) unsure(`The sorter doesn’t know read’s option ${sortQ(o.unknown)}.`); },
+  wait(a, ctx, r) { sortSets(sortOpts(SORT_OPTS.wait, a).all('p'), ctx, r, 'wait -p'); },
   printf(a, ctx, r) { if (a[0]?.text === '-v') sortSets([a[1]], ctx, r, 'printf -v'); else if (/^-v./.test(a[0]?.text ?? '')) unsure('printf -v sets a name the sorter can’t read.'); },
   getopts(a, ctx, r) { sortSets([a.filter(w => !w.text.startsWith('-'))[1]], ctx, r, 'getopts'); },
   unset(a, ctx, r) { sortSets(a.filter(w => !w.text.startsWith('-')), ctx, r, 'unset'); },
   test(a) { if (a.some(w => w.text === '-v') && a.some(w => /\[/.test(w.text) && !/^[[\]]$/.test(w.text))) unsure('test -v works out an index as arithmetic, running what is in it.'); },
   awk(a, ctx, r, x, name = 'awk') {
-    let k = 0;
-    for (; k < a.length; k++) {
-      const t = a[k].text;
-      if (t === '--') { k++; break; }
-      if (/^-[Fv]$/.test(t)) { k++; continue; }
-      if (/^-[Fv].|^-[bcCNOPrSstMn]$|^--(?:posix|traditional|characters-as-bytes|sandbox|re-interval)$/.test(t)) continue;
-      if (t.startsWith('-')) return sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(t)} reads its program from a file, loads code or writes a file.`);
-      break;
+    const o = sortOpts(SORT_OPTS.awk, a, null, []), files = o.all('f', 'file', 'E', 'i', 'include', 'l', 'load'), inline = o.all('e', 'source');
+    for (const f of files) sortRuns(f.text, ctx, r, `${sortQ(name)} runs the program in ${sortQ(f.text)}, or loads code, which the sorter does not read.`);
+    const progs = files.length || inline.length ? inline : [o.plain[0]];
+    for (const p of progs) {
+      if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
+      if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
-    const p = a[k];
-    if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
-    if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
+    return files.length || inline.length ? o.end : o.end + 1;
   },
   sed(a, ctx, r) {
     const scripts = [], files = [];
@@ -135,7 +139,7 @@ const SORT_HANDLERS = {
         const [n, v] = [t.slice(2).split('=')[0], t.includes('=') ? t.slice(t.indexOf('=') + 1) : null], hits = LONG.filter(l => l.replace(/=$/, '').startsWith(n));
         if (hits.length !== 1) unsure(`The sorter doesn't know sed’s option ${sortQ(t)}.`);
         if (hits[0] === 'expression=') scripts.push(v != null ? { text: v } : a[++k]);
-        else if (hits[0] === 'file=') return sortRuns(null, ctx, r, 'sed runs a script file, which the sorter does not read.');
+        else if (hits[0] === 'file=') return sortRuns(v ?? a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
         else if (hits[0] === 'in-place') inPlace = true;
         else if (hits[0] === 'line-length=' && v == null) k++;
         continue;
@@ -145,7 +149,7 @@ const SORT_HANDLERS = {
           const c = t[j];
           if (c === 'i') { inPlace = true; break; }
           if (c === 'e') { scripts.push(j < t.length - 1 ? { text: t.slice(j + 1) } : a[++k]); break; }
-          if (c === 'f') return sortRuns(null, ctx, r, 'sed runs a script file, which the sorter does not read.');
+          if (c === 'f') return sortRuns(j < t.length - 1 ? t.slice(j + 1) : a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
           if (c === 'l') { if (j === t.length - 1) k++; break; }
           if (!'nErsuz'.includes(c)) unsure(`The sorter doesn't know sed’s option ${sortQ(`-${c}`)}.`);
         }
@@ -163,6 +167,7 @@ const SORT_HANDLERS = {
     const starts = [];
     for (; k < a.length && !/^[-(!)]/.test(a[k].text); k++) starts.push(a[k]);
     if (a.some(w => w.unknown || w.glob || w.brace)) unsure('A $, * or {…} among find’s words could become -delete or -exec, so the sorter can’t know what it does.');
+    let odd = null, value = -1;
     for (; k < a.length; k++) {
       const t = a[k].text;
       if (t === '-delete') { r.deletes = true; for (const s of starts) sortTouch(s, ctx, r, true, false); sortGone(ctx, r, 'find -delete removes files it doesn’t name.'); }
@@ -175,8 +180,12 @@ const SORT_HANDLERS = {
         if (SORT_READS[a[k + 1].text.split('/').pop()] !== '') for (const s of starts) sortTouch(s, ctx, r, true, false);
         sortProgram(a.slice(k + 1, e), ctx, r, { unknownArgs: true });
         k = e;
-      } else if (/^-f(?:print0?|printf|ls)$/.test(t)) { raise(r, 'change', `find ${sortQ(t)} writes ${sortQ(a[k + 1]?.text)}.`); sortTouch(a[k + 1], ctx, r); }
+      } else if (/^-f(?:print0?|printf|ls)$/.test(t)) { raise(r, 'change', `find ${sortQ(t)} writes ${sortQ(a[k + 1]?.text)}.`); sortTouch(a[k + 1], ctx, r); value = k + (t === '-fprintf' ? 2 : 1); }
+      // (a primary's value is read as a value, but a value spelled -delete or -exec still counts: the careful reading)
+      else if (FIND_ONE.has(t.slice(1)) || /^-newer[aBcmt][aBcmt]t?$/.test(t)) value = k + 1;
+      else if (/^-./.test(t) && !FIND_ZERO.has(t.slice(1)) && k > value) odd ??= t;
     }
+    if (odd) unsure(`The sorter doesn’t know find’s ${sortQ(odd)}.`);
   },
   eval(a, ctx, r) { if (a.some(w => w.unknown)) unsure('eval runs text from a $ or a command, which the sorter can’t read.'); if (a.length) sortInline(a.map(w => w.text).join(' '), ctx, r, 'eval'); },
   source(a, ctx, r) {
@@ -190,8 +199,8 @@ const SORT_HANDLERS = {
   pushd(a, ctx) { sortCd(null, ctx); },
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
-  'nvidia-smi': (a, ctx, r) => (a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
-    ? raise(r, 'risky', 'nvidia-smi changes a GPU setting (the driver’s).') : raise(r, 'change', 'nvidia-smi here needs the GPU, which a look’s wall hides (nvidia-smi as the whole command is a look).')),
+  'nvidia-smi': (a, ctx, r) => { for (const f of sortOpts(SORT_OPTS['nvidia-smi'], a).all('f', 'filename')) sortTouch(f, ctx, r); return (a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
+    ? raise(r, 'risky', 'nvidia-smi changes a GPU setting (the driver’s).') : raise(r, 'change', 'nvidia-smi here needs the GPU, which a look’s wall hides (nvidia-smi as the whole command is a look).')); },
   sysctl(a, ctx, r) {
     const t = a.map(w => w.text);
     if (t.some(s => /^-\w*[wpf]|^--(?:write|load|system)|=/.test(s))) raise(r, t.some(s => /^net\.|^-\w*[pf]|^--(?:load|system)/.test(s)) ? 'lockout' : 'risky', 'sysctl changes kernel settings, maybe the network’s.');
@@ -208,163 +217,62 @@ const SORT_HANDLERS = {
       if (/^\/dev\/(?!null$|zero$|std(?:out|err)$)/.test(sortNorm(m[2]))) sortGone(ctx, r, `dd writes ${sortQ(m[2])}, a disk or a device, directly.`);
       sortTouch({ ...w, text: m[2] }, ctx, r);
     }
+    const odd = a.find(w => !/^(?:if|of|bs|ibs|obs|cbs|count|skip|seek|iseek|oseek|conv|iflag|oflag|status)=/.test(w.text));
+    if (odd) unsure(`The sorter doesn’t know dd’s word ${sortQ(odd.text || '$…')}.`);
   },
   tar(a, ctx, r) {
-    // What it unpacks over is checked first; an option that runs something, or one the sorter doesn't know, comes after,
-    // so the more dangerous answer stands.
-    const t = a.map(w => w.text), RUNS = ['to-command', 'use-compress-program', 'checkpoint-action', 'info-script', 'new-volume-script', 'rsh-command', 'rmt-command', 'index-file', 'volno-file'];
-    let runs = null, odd = null;
-    for (const s of t.filter(s => /^--./.test(s))) {
-      const n = s.slice(2).split('=')[0];
-      if (RUNS.some(l => l.startsWith(n))) runs ??= s;
-      else if (!TAR_LONG.some(l => l.startsWith(n)) && !/^(?:exclude|transform|xform|warning)$/.test(n)) odd ??= s;
-    }
-    // (an option that takes a word may have it glued: -f/tmp/x.tar, -C/opt; the letters stop there)
-    const letters = [t[0] && !t[0].startsWith('-') ? t[0] : '', ...t.filter(s => /^-[A-Za-z]/.test(s)).map(s => /^[^fCbHKLNVTXgIF]*[fCbHKLNVTXgIF]?/.exec(s.slice(1))[0])].join('');
-    if (/[IFgGTX]/.test(letters.replace(/[^A-Za-z]/g, ''))) runs ??= 'its -I, -F, -g, -T or -X';
-    const longs = t.join(' '), list = /t/.test(letters) || /--(?:list|diff|compare)/.test(longs), write = /[xcruA]/.test(letters) || /--(?:extract|get|create|append|update|delete|concat)/.test(longs);
-    const after = () => { if (runs) sortRuns(null, ctx, r, `tar ${sortQ(runs)} runs a program or writes a file it is given.`); if (odd) unsure(`The sorter doesn’t know tar’s option ${sortQ(odd)}.`); };
+    // What it unpacks over is checked first; a program it runs, or an option the sorter doesn't know, after, so the
+    // more dangerous answer stands. -P (--absolute-names) lets its members go anywhere: it reaches / then.
+    const old = a[0] && !a[0].unknown && /^[A-Za-z]+$/.test(a[0].text) ? a[0] : null, rest = a.slice(old ? 1 : 0), args = [];
+    let q = 0;
+    for (const c of old?.text ?? '') { args.push({ ...old, text: `-${c}` }); if (TAR_SPEC.short.get(c)) args.push(rest[q++] ?? { text: '', subs: [] }); }
+    const o = sortOpts(TAR_SPEC, [...args, ...rest.slice(q)]);
+    const runs = o.all('I', 'F', 'use-compress-program', 'to-command', 'checkpoint-action', 'info-script', 'new-volume-script', 'rsh-command', 'rmt-command');
+    const lists = o.has('T', 'X', 'g', 'files-from', 'exclude-from', 'listed-incremental', 'index-file', 'volno-file');
+    const list = o.has('t', 'd', 'list', 'diff', 'compare'), write = o.has('x', 'c', 'r', 'u', 'A', 'extract', 'get', 'create', 'append', 'update', 'delete', 'concatenate', 'catenate');
+    const after = () => {
+      for (const p of runs) sortRuns(p.text || null, ctx, r, `tar runs the program it is given: ${sortQ(p.text)}.`);
+      if (lists) sortRuns(null, ctx, r, 'tar reads names from a file, or writes one it is given.');
+      if (o.unknown) unsure(`The sorter doesn’t know tar’s option ${sortQ(o.unknown)}.`);
+    };
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
-    const c = t.findIndex(s => /^-C$|^--directory$/.test(s)), glued = t.find(s => /^-C.|^--directory=/.test(s));
-    if (/x/.test(letters) || /--(?:extract|get)/.test(longs) || !write) { r.deletes = true; sortInto(c >= 0 ? a[c + 1] : glued ? { text: glued.replace(/^-C|^--directory=/, ''), subs: [] } : null, ctx, r); }
-    a.forEach((w, i) => { if (i !== c + 1 || c < 0) sortTouch(w, ctx, r, false); });
+    if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
+    for (const w of [...o.plain, ...o.all('f', 'file')]) sortTouch(w, ctx, r, false);
+    if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }
     after();
   },
   unzip(a, ctx, r) {
     if (a.some(w => /^-[lvtZzp]/.test(w.text))) return;
     raise(r, 'change', 'unzip writes the files it holds.');
     r.deletes = true;
-    const d = a.findIndex(w => w.text === '-d');
-    sortInto(d >= 0 ? a[d + 1] : null, ctx, r);
-    a.forEach((w, i) => { if (i !== d + 1) sortTouch(w, ctx, r, false); });
+    // (-: and -^ let its members leave the folder: it reaches / then)
+    const o = sortOpts(SORT_OPTS.unzip, a);
+    sortInto(a.some(w => /^-[^-]*[:^]/.test(w.text)) ? { text: '/', subs: [] } : o.all('d').at(-1) ?? null, ctx, r);
+    for (const w of o.plain) sortTouch(w, ctx, r, false);
   },
   '7z'(a, ctx, r) {
     const v = a.find(w => !w.text.startsWith('-'))?.text;
-    if (/^[lt]$/.test(v ?? '')) return;
-    raise(r, 'change', '7z writes files.');
-    if (/^[xe]$/.test(v ?? '')) { const o = a.find(w => /^-o./.test(w.text)); sortInto(o ? { text: o.text.slice(2), subs: [] } : null, ctx, r); }
-    for (const w of a) sortTouch(w, ctx, r);
+    const odd = a.find(w => w.unknown || (w.text.startsWith('-') && !/^-(?:o.+|y|p.*|r-?|t\w+|m\S+|[xi][!@r]\S*|ao[asut]|bb\d?|bd|bs\S*|so|si\S*|w\S*|scs\S*|mmt\S*|v\d+\w?|sse|ssc-?|slt|-)$/.test(w.text)));
+    if (!/^[lt]$/.test(v ?? '')) {
+      raise(r, 'change', '7z writes files.');
+      if (/^[xe]$/.test(v ?? '')) { const o = a.find(w => /^-o./.test(w.text)); sortInto(o ? { ...o, text: o.text.slice(2), subs: [] } : null, ctx, r); }
+      for (const w of a) sortTouch(w, ctx, r);
+    }
+    if (odd) unsure(`The sorter doesn’t know 7z’s switch ${sortQ(odd.text || '$…')}.`);
   },
   patch(a, ctx, r) {
     raise(r, 'change', 'patch changes the files its diff names.');
-    const d = a.findIndex(w => /^-d$|^--directory$/.test(w.text)), o = a.findIndex(w => /^-o$|^--output$/.test(w.text));
-    if (o >= 0) sortTouch(a[o + 1], ctx, r); else sortInto(d >= 0 ? a[d + 1] : null, ctx, r);
-    for (const w of a.filter(w => !w.text.startsWith('-'))) sortTouch(w, ctx, r, false, false);
+    const o = sortOpts(SORT_OPTS.patch, a), out = o.all('o', 'output');
+    if (out.length) for (const w of out) sortTouch(w, ctx, r); else sortInto(o.all('d', 'directory').at(-1) ?? null, ctx, r);
+    for (const w of [...o.plain, ...o.all('i', 'input')]) sortTouch(w, ctx, r, false, false);
   },
-  zip(a, ctx, r) { if (a.some(w => /^-\w*TT|^--unzip-command/.test(w.text))) sortRuns(null, ctx, r, 'zip -TT runs the command it is given.'); sortFile('zip', '', a, ctx, r); },
   'ssh-keygen'(a, ctx, r) {
     const t = a.map(w => w.text);
     if (t.some(s => /^-\w*A/.test(s))) return raise(r, 'lockout', 'ssh-keygen -A makes the Spark’s own SSH host keys.');
     if (t.some(s => /^-\w*[lLyFBQ]/.test(s)) && !t.some(s => /^-\w*R/.test(s))) return;
     raise(r, 'change', 'ssh-keygen writes a key or known_hosts.');
     a.forEach((w, i) => { if (t[i - 1] === '-f') sortTouch(w, ctx, r); });
-  },
-  hf(a, ctx, r, x, name = 'hf') {
-    const p = a.filter(w => !w.text.startsWith('-')).map(w => w.text), t = a.map(w => w.text);
-    if (/^(?:env|version|scan-cache)$/.test(p[0]) || (p[0] === 'cache' && /^(?:ls|scan|list)$/.test(p[1]))) return;
-    raise(r, 'change', `${sortQ(name)} ${sortQ(p[0] ?? '')} downloads or changes model files.`);
-    if (p[0] === 'delete-cache' || (p[0] === 'cache' && /^(?:rm|delete|prune)$/.test(p[1]))) sortGone(ctx, r, `${sortQ(name)} ${sortQ(p[0])} removes downloaded models.`);
-    const d = t.findIndex(s => s === '--local-dir'), glued = t.find(s => s.startsWith('--local-dir='));
-    if (d >= 0 || glued) sortInto(d >= 0 ? a[d + 1] : { text: glued.slice(12), subs: [] }, ctx, r);
-    for (const w of a) sortTouch(w, ctx, r, false);
-  },
-  git(a, ctx, r) {
-    let k = 0, dir = null;
-    for (; k < a.length && a[k].text.startsWith('-'); k++) {
-      if (a[k].text === '-C') dir = a[++k];
-      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
-    }
-    const v = a[k]?.text ?? '', rest = a.slice(k + 1).map(w => w.text), only = re => rest.every(s => re.test(s));
-    if (GIT_LOOK.has(v) ? !rest.some(s => /^--(?:output|ext|textconv)|^-O|^--open/.test(s))
-      : (/^(?:branch|tag)$/.test(v) && only(/^-(?:[arvl]+|-list|-all|-remotes|-show-current|-verbose)$/)) || (v === 'remote' && only(/^(?:-v|--verbose|show|get-url|[\w.-]+)$/) && !rest.some(s => /^(?:add|remove|rm|rename|set-\S+|prune|update)$/.test(s)))
-        || (v === 'stash' && /^(?:list|show)$/.test(rest[0])) || (v === 'config' && rest.some(s => /^--(?:get\S*|list)$|^-l$/.test(s))) || (/^(?:worktree|reflog)$/.test(v) && /^(?:list|show)?$/.test(rest[0] ?? ''))) return;
-    raise(r, 'change', `git ${sortQ(v)} changes the repository or its files.`);
-    if (ctx.root) raise(r, 'risky', 'As root, a git command that changes something runs the repository’s hooks and settings: asked.');
-    if (rest.some(s => /^--(?:upload-pack|receive-pack|exec|template|config)|^-[uc]$|^ext::/.test(s))) unsure('git is told to run a program, or to take its settings from another place.');
-    if (v === 'config' && rest.some(s => /^--(?:global|system)$/.test(s))) raise(r, 'risky', 'git config --global or --system changes what every later git command runs (aliases, hooks, pagers).');
-    if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(rest[0]))) ctx.fetched = ctx.fetchSeen = true;
-    if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && rest.includes('--hard')) || (v === 'checkout' && rest.some(s => /^(?:--|\.|-f|--force)$/.test(s))) || (v === 'stash' && /^(?:drop|clear)$/.test(rest[0]))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
-    if (dir) sortTouch(dir, ctx, r, true, false);
-    for (const w of a.slice(k + 1)) sortTouch(w, ctx, r);
-  },
-  apt(a, ctx, r, x, name = 'apt') {
-    if (a.some(w => /^-[oc]|^--(?:option|config-file)/.test(w.text))) unsure(`${sortQ(name)} -o or -c can make it run any command.`);
-    const p = a.filter(w => !w.text.startsWith('-')).map(w => w.text), v = p[0] ?? '';
-    if (/^(?:list|show|search|policy|showsrc|depends|rdepends|madison)$/.test(v)) return;
-    raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the packages on that Spark.`);
-    if (/^(?:remove|purge|autoremove|autopurge)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
-    if (/^(?:upgrade|full-upgrade|dist-upgrade)$/.test(v)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} upgrades every package, the kernel and drivers among them.`);
-    sortPkgs(p.slice(1), ctx, r);
-  },
-  dpkg(a, ctx, r) {
-    const t = a.map(w => w.text), v = t.find(s => s.startsWith('-')) ?? '';
-    if (/^-[lLsSpcI]$|^--(?:list|listfiles|status|search|print-avail|get-selections|print-architecture|contents|info|audit)$/.test(v)) return;
-    if (/^-[rP]$|^--(?:remove|purge)$/.test(v)) return sortGone(ctx, r, 'dpkg removes packages, which are not put back.');
-    if (!/^-i$|^--(?:install|configure|unpack)$/.test(v)) unsure(`The sorter doesn’t know dpkg ${sortQ(v)}.`);
-    raise(r, 'change', 'dpkg installs packages.');
-    sortPkgs(t.filter(s => !s.startsWith('-')), ctx, r);
-  },
-  pip(a, ctx, r, x, name = 'pip') {
-    const t = a.map(w => w.text), k = t.findIndex(s => !s.startsWith('-')), v = t[k] ?? '';
-    if (k < 0 || /^(?:list|show|freeze|check|help|inspect|debug|index)$/.test(v) || (/^(?:config|cache)$/.test(v) && /^(?:list|get|dir|info|debug)$/.test(t[k + 1]))) return;
-    raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the Python packages there.`);
-    if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
-    if (v === 'uninstall') return sortGone(ctx, r, `${sortQ(name)} uninstall removes packages, which are not put back.`);
-    for (const s of t) {
-      if (/:\/\/|^git\+/.test(s)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} installs code from an address: ${sortQ(s)}, always asked.`);
-      else if (/^(?:[.~/]|-e$|--editable$|-r$|--requirement$|-c$)|\.(?:whl|zip|tar\.gz)$/.test(s) && t.indexOf(s) > k) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(s)} builds and runs local code, or installs what a list names.`);
-    }
-  },
-  conda(a, ctx, r, x, name = 'conda') {
-    const p = a.filter(w => !w.text.startsWith('-')).map(w => w.text), t = a.map(w => w.text), v = p[0] ?? '';
-    if (!v || /^(?:list|info|search)$/.test(v) || (/^(?:env|config)$/.test(v) && (p[1] === 'list' || a.some(w => /^--(?:show|get)/.test(w.text))))) return;
-    if (v === 'run') return sortRuns(null, ctx, r, `${sortQ(name)} run runs a program inside an environment.`);
-    raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes a Python environment.`);
-    if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
-    if (t.some((s, i) => /:\/\//.test(s) && (/^-c$|^--channel$/.test(t[i - 1] ?? '') || /^--channel=/.test(s)))) raise(r, 'risky', `${sortQ(name)} installs from a channel at an address: always asked.`);
-    if (/^(?:remove|uninstall)$/.test(v) || (v === 'env' && p[1] === 'remove')) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages or an environment, which are not put back.`);
-  },
-  npm(a, ctx, r, x, name = 'npm') {
-    const p = a.filter(w => !w.text.startsWith('-')).map(w => w.text), t = a.map(w => w.text), v = p[0] ?? '';
-    if (!v || (/^(?:ls|list|ll|la|view|info|show|outdated|root|prefix|help|explain|why|config|get)$/.test(v) && !/^(?:set|delete|edit)$/.test(p[1] ?? ''))) return;
-    if (/^(?:config|c|set)$/.test(v)) return raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} changes where every later install comes from.`);
-    if (/^(?:exec|x|dlx)$/.test(v) || (/^(?:init|create|innit)$/.test(v) && p.length > 1)) return raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} downloads a package and runs it: always asked.`);
-    raise(r, 'change', `${sortQ(name)} ${sortQ(v)} changes the packages there.`);
-    if (t.some(s => /:\/\/|^git\+|^github:|^--registry/.test(s))) raise(r, 'risky', `${sortQ(name)} installs code from an address or another registry: always asked.`);
-    if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
-    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`);
-  },
-  docker(a, ctx, r, x, name = 'docker') {
-    r.simple = false;
-    sortOpen(ctx, r, `${sortQ(name)} needs the Docker socket, which the run wall hides (Docker is root by another name): free-form, it is always asked.`);
-    const v = a.filter(w => !w.text.startsWith('-')).map(w => w.text);
-    if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
-  },
-  systemctl(a, ctx, r) {
-    const t = a.map(w => w.text), user = t.includes('--user'), bus = user ? 'the owner’s service manager' : 'systemd’s bus';
-    if (t.some(s => /^(?:-H|--host|-M|--machine)/.test(s))) unsure('systemctl -H or -M reaches another machine.');
-    const plain = a.filter(w => !w.text.startsWith('-')), v = plain[0]?.text ?? 'list-units';
-    if (SYSTEMCTL_POWER.test(v)) return raise(r, 'risky', `systemctl ${sortQ(v)}: power, so what runs on that Spark stops.`);
-    if (/^(?:status|show|cat|list-\S+|is-\S+|get-default|show-environment|help)$/.test(v)) return ctx.root && !user ? raise(r, 'change', `systemctl ${sortQ(v)} needs systemd’s bus, which a look’s wall hides.`) : sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`);
-    if (!SYSTEMCTL_CHANGE.test(v)) unsure(`The sorter doesn’t know systemctl ${sortQ(v)}.`);
-    for (const u of plain.slice(1)) {
-      if (u.unknown) unsure('systemctl names a unit through a $ or a command.');
-      const is = n => (u.glob ? sortGlob(u.text).test(n) || sortGlob(u.text).test(`${n}.service`) : u.text.replace(/\.(?:service|socket)$/, '') === n);
-      if (WAYS_UNITS.some(is) || /^user@/.test(u.text)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
-      else if (['docker', 'containerd'].some(is)) raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`);
-      else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);
-    }
-    if (/^(?:daemon-\S+|set-default|\S+-environment|preset-all)$/.test(v)) raise(r, 'risky', `systemctl ${sortQ(v)} changes how systemd runs every service.`);
-    if (user || !ctx.root) sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`); else raise(r, 'change', `systemctl ${sortQ(v)} changes a service.`);
-  },
-  service: (a, ctx, r, x) => (a[0]?.text === '--status-all' ? sortOpen(ctx, r, 'service --status-all needs systemd’s bus, which the run wall hides.')
-    : SORT_HANDLERS.systemctl([a[1] ?? { text: 'status', subs: [] }, ...(a[0] ? [a[0]] : []), ...a.slice(2)], ctx, r, x)),
-  loginctl(a, ctx, r) {
-    const v = a.find(w => !w.text.startsWith('-'))?.text ?? 'list-sessions';
-    if (/^(?:list-\S+|show-\S+|\S+-status)$/.test(v)) return sortOpen(ctx, r, `loginctl ${sortQ(v)} needs the login manager’s bus, which the run wall hides.`);
-    if (SYSTEMCTL_POWER.test(v)) return raise(r, 'risky', `loginctl ${sortQ(v)}: power, so what runs on that Spark stops.`);
-    raise(r, 'lockout', `loginctl ${sortQ(v)} changes sessions or linger, which keep the ways in running.`);
   },
   userdel(a, ctx, r) { if (a.some(w => /^-\w*r|^--remove/.test(w.text))) { ctx.kinds.add('delete'); r.lasting = 'A deleted user’s home can’t be put back.'; } raise(r, 'lockout', 'userdel removes a user, a way in.'); },
   sudo(a, ctx, r, x) {
