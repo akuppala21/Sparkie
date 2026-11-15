@@ -4,7 +4,8 @@
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
 #   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
 #                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first; past its
-#                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit. WALL_VIEW
+#                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit; while it
+#                               runs <rehearsal>/standin/live/<unit> is there (what systemctl is-active answers). WALL_VIEW
 #                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
 #                               folder empty, a hidden file gone, what is put back there), for a command to look in
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
@@ -141,9 +142,11 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
     # Its RuntimeMaxSec, as systemd holds it: past it, the command and everything it started are ended (exit 1).
     limit = next((float(a.split('=', 1)[1]) for a in args if a.startswith('RuntimeMaxSec=')), None)
-    if limit is None:
-        os.execv(cmd[0], cmd)
     import signal, subprocess
+    # While it runs, <rehearsal>/standin/live/<unit> is there (the stand-in systemctl's is-active reads it).
+    live = os.path.join(R, 'standin', 'live', unit)
+    os.makedirs(os.path.dirname(live), exist_ok=True)
+    open(live, 'w').close()
     # (its own session, so it can be ended whole; a signal to this stand-in, a caller's timeout say, ends it whole too)
     held = []
     def end(sig, _):
@@ -152,6 +155,10 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
                 os.killpg(q.pid, signal.SIGKILL)
             except OSError:
                 pass
+        try:
+            os.unlink(live)
+        except OSError:
+            pass
         os._exit(128 + sig)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, end)
@@ -159,11 +166,13 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     held.append(p)
     try:
         code = p.wait(timeout=limit)
-        sys.exit(code if code >= 0 else 128 - code)
+        code = code if code >= 0 else 128 - code
     except subprocess.TimeoutExpired:
         os.killpg(p.pid, signal.SIGKILL)
         p.wait()
-        sys.exit(1)
+        code = 1
+    os.unlink(live)
+    sys.exit(code)
 
 sys.stderr.write(f'systemd-run: the stand-in does not know this unit ({unit or "no --unit"})\n')
 sys.exit(1)

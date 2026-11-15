@@ -36,7 +36,8 @@ const own = await import(pathToFileURL(join(dir, 'own.mjs')).href);
 const SHELL = new Set('[ [[ case esac if then else elif fi for in do done while until return exit shift set shopt cd printf echo read local export true false test eval trap wait break continue declare unset type command'.split(' '));
 const FRONT = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', 'exec', 'timeout', 'command']);
 function programsOf(text) {
-  const out = new Set(), t = text.replace(/<<-?\s*'?(\w+)'?[^\n]*\n[\s\S]*?\n\1(?=\n|$)/g, ' ')
+  // (a program the copies' Python starts itself: subprocess.run(['name', …]))
+  const out = new Set([...text.matchAll(/subprocess\.\w+\(\[\s*'([a-z][\w.+-]*)'/g)].map(m => m[1])), t = text.replace(/<<-?\s*'?(\w+)'?[^\n]*\n[\s\S]*?\n\1(?=\n|$)/g, ' ')
     .replace(/\$'(?:[^'\\]|\\.)*'/g, ' Q ').replace(/'[^']*'/g, ' Q ').replace(/"(?:[^"\\]|\\.)*"/g, ' Q ')
     .replace(/(\bin|;;)[ \t]*[^;()\n]*?\)/g, '$1 ');
   const fns = new Set([...t.matchAll(/([A-Za-z_][\w-]*)\(\)\s*\{/g)].map(m => m[1]));
@@ -73,5 +74,6 @@ test('every program the call to the root helper and the copies run is on PATH_PR
   const called = new Set(texts.flatMap(t => [...programsOf(t)]));
   // (the reading finds what is plainly there)
   for (const p of ['sha256sum', 'flock', 'sudo', 'systemd-run', 'timeout', 'bash', 'realpath', 'find', 'python3', 'docker', 'nvidia-smi', 'systemctl']) assert.ok(called.has(p), `${p} is read out of the scripts`);
+  assert.ok(programsOf(own.ran[0]).has('systemctl'), 'the copies\' own call of systemctl is read');
   assert.deepEqual([...called].filter(p => !PATH_PROGRAMS.includes(p)).sort(), [], `called but not on PATH_PROGRAMS (read: ${[...called].sort().join(' ')})`);
 });

@@ -45,12 +45,15 @@ function runnerRefuses(node, sorted, ctx) {
 // back only by a caller that may run one, R43 and R59)
 const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => a[k] !== b[k]).sort();
 
-// (the helper's answers that mean the command never started there: its set goes, and undo passes over it)
-const RUNNER_NEVER = ['none', 'nosudo', 'unknown', 'proof', 'proving', 'refused'];
+// The helper's answers that mean the command never started there (its set goes, and undo passes over it), each only
+// with the exit code that comes with it: a line the command itself printed, then a dropped connection, is not one.
+const RUNNER_NEVER = { none: 0, unknown: 0, proving: 0, nosudo: 1, proof: 125, refused: 125 };
+// The minute after a change's time limit that a cut-off set still counts as its (the stand-in fleet may shorten it).
+const RUNNER_CUT_SLACK = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_CUT_SLACK) || 60;
 // What the copies don't cover, said in every result: a script's or a program's own writes (an install, a build), and
 // any write the sorter didn't place (a file an option names). The result never says all a command wrote was kept.
 const RUNNER_NOT_COVERED = 'Not covered by put-back: what a script or a program (an install, a build) writes on its own isn’t copied first, so undo can’t put that back.';
-const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a file an option names, a program’s own writes) isn’t copied first.';
+const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
 async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
@@ -80,10 +83,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       gate: ctx.gate || ctx.via || null, unit, root: false, args: { spark: node.id, command: command.slice(0, 600) }, set, sha: copied.sha,
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
-    const a = helperAnswer(await helperCall(node, 'run', { id, command, seconds }));
+    const called = await helperCall(node, 'run', { id, command, seconds });
+    let a = helperAnswer(called);
+    // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
+    if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
     const why = String(a.detail || '').slice(0, 300);
     if (!['ran', 'ended'].includes(a.kind)) {
-      const never = RUNNER_NEVER.includes(a.kind);
+      const never = Object.hasOwn(RUNNER_NEVER, a.kind);
       if (never) await copiesOn(node, 'drop', { set }).catch(() => null);
       ending({ ok: false, outcome: a.kind, ...(never ? { ran: false } : {}), err: why || null });
       if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
@@ -150,7 +156,7 @@ function runnerLatest(conv) {
     }
   }
   const best = starts.filter(r => !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
-  return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id } : null;
+  return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id, unit: /^sw-run-[0-9a-f]{24}$/.test(best.unit || '') ? best.unit : null } : null;
 }
 const runnerSparkOf = r => (r.args && typeof r.args === 'object' ? r.args.spark : null) || (r.sub || []).find(x => nodeById(x)) || null;
 // undo_last_change for files (20-desired.mjs): the chat's newest set, when it is newer than the chat's last model
@@ -167,7 +173,8 @@ async function runnerUndo(viewer, ctx, since = '') {
     rid = journal('cmd', { start: true, chat: ctx.chat || ctx.conv, via: ctx.via || null, actor: ctx.actor || null, act: 'undo_last_change', where: 'host', class: 'restore',
       args: { spark: node.id, of: last.id }, set: last.set, sub: jSub(node.id) });
     if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
-    const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true });
+    // (not beside the change's own unit while it still runs: a cut-off change may)
+    const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true, unit: last.unit, slack: RUNNER_CUT_SLACK });
     journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome: r.notRestored.length ? 'partly' : 'restored', set: last.set,
       restored: r.restored.length, notRestored: r.notRestored.length, ms: Date.now() - t0 });
     const said = p => maskSecrets(String(p)).slice(0, 300);

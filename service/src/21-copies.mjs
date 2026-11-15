@@ -19,7 +19,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, secrets, stat, sys, time
+import base64, glob, hashlib, json, os, re, secrets, stat, subprocess, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -105,13 +105,19 @@ def fp(p):
     except (OSError, OverflowError):
         return 'file:%s:%d:%d' % (m, st.st_size, st.st_mtime_ns)
 
+# A bracket in a name, as bash may read it ([abc], [!a], [^a], [[:digit:]]) or as the letters themselves
+BRACKET = re.compile(r'\[(?:[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*)\]')
+
 def expand(p):
-    # a name holding * ? or [ is the file of exactly that name (there or not) and what it matches as a pattern
+    # a name holding * ? or [ is the file of exactly that name (there or not), what it matches as a pattern, and what
+    # it matches with each [...] read as anything: bash reads [^a], a class or a quoted [x] its own way
     q = whole(p)
     if q is None:
         return [(p, 'not a path the copy can place')]
     if any(c in q for c in '*?['):
-        return [(q, None)] + [(x, None) for x in sorted(glob.glob(q)) if x != q]
+        loose = BRACKET.sub('*', q)
+        found = set(glob.glob(q)) | (set(glob.glob(loose)) if loose != q else set())
+        return [(q, None)] + [(x, None) for x in sorted(found) if x != q]
     return [(q, None)]
 
 def walk(top):
@@ -141,11 +147,20 @@ def ways_now():
     return out
 
 def later(p, man):
-    # (a change cut off has no after.json: what was written after its own window, its time limit and a minute, is not its)
+    # (a change cut off has no after.json: what was written after its time ran out, its limit and a minute from the end
+    # of the copy, is not its; by the changed time, which no command can set)
     try:
-        return os.lstat(p).st_mtime > man.get('at', 0) + man.get('seconds', 0) + 60
+        return os.lstat(p).st_ctime > man.get('at', 0) + man.get('seconds', 0) + A.get('slack', 60)
     except OSError:
         return False
+
+def unit_live(unit):
+    # (systemd's own answer: 0 active, 3 or 4 not; anything else can't be told)
+    try:
+        return subprocess.run(['systemctl', 'is-active', '--quiet', unit + '.service'], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 def setdir(make):
     base = folder(BASE, make)
@@ -181,7 +196,7 @@ def manifest(sd):
 
 if A['mode'] == 'copy':
     sd = setdir(True)
-    man = {'set': A['set'], 'at': time.time(), 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
+    man = {'set': A['set'], 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
     total, seen = 0, set()
     # (the ways in the owner's account first, outside the command's 128 MB, so a put-back always has them)
     places = [(p, False, True) for p in A['ways'] if p.startswith('~/')] + [(p, False, False) for p in A['placed']] + [(p, True, False) for p in A['wide']]
@@ -239,6 +254,8 @@ if A['mode'] == 'copy':
                     put(os.path.join(sd, 'files', str(n)), data)
                     total += 0 if way else len(data)
                     man['entries'].append(dict({'path': x, 'kind': 'file', 'mode': mode, 'size': len(data), 'sha': hashlib.sha256(data).hexdigest(), 'n': n}, **mark))
+    # (the change's time counts from here, once every copy is made: the unit starts after this)
+    man['at'] = time.time()
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
     OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
@@ -256,6 +273,12 @@ if A['mode'] == 'after':
 if A['mode'] == 'restore':
     sd = setdir(False)
     man = manifest(sd)
+    if A.get('unit'):
+        live = unit_live(A['unit'])
+        if live == 0:
+            stop('that change is still running there (' + A['unit'] + '), so nothing was put back: ask again when it has ended')
+        if live not in (3, 4):
+            stop('whether that change still runs there could not be told, so nothing was put back')
     try:
         after = json.loads(read(os.path.join(sd, 'after.json'), 64 << 20))
     except (OSError, OverflowError, ValueError):
@@ -285,7 +308,7 @@ if A['mode'] == 'restore':
             missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
             continue
         if A.get('check') and after is None and e['kind'] != 'dir' and later(p, man):
-            missed.append({'path': p, 'why': 'changed since that change was cut off: left as it is'})
+            missed.append({'path': p, 'why': 'written after that change\'s time ran out: left as it is'})
             continue
         try:
             if e['kind'] == 'absent':

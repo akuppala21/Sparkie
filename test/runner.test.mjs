@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, renameSync,
-  lstatSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync, utimesSync } from 'node:fs';
+  lstatSync, statSync, openSync, readSync, closeSync, truncateSync, cpSync, unlinkSync, utimesSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, waitFor, sleep, agentSettings, SLOW } from './lib.mjs';
@@ -28,7 +28,9 @@ const KEYS_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn owner@mac\n';
 const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 const keys = {};
-useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS) },
+// (a cut-off set counts as its change's for the time limit and a second, not a minute: CUT)
+const CUT = 1;
+useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: String(CUT) },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3'), out = join(root, 'outside-spark3');
@@ -54,6 +56,15 @@ useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: Str
     put('notes/h.txt', 'h before\n');
     put('notes/cut.txt', 'cut before\n');
     put('notes/cut2.txt', 'cut2 before\n');
+    put('notes/live.txt', 'live before\n');
+    put('p1/1.txt', 'it was 1\n');
+    put('p1/b.txt', 'it was b\n');
+    put('p1/a.txt', 'it was a\n');
+    put('p2/1digit.txt', 'one\n');
+    put('p2/adigit.txt', 'a digit\n');
+    put('p3/[x]keep.txt', 'keep\n');
+    put('data/one.csv', 'csv\n');
+    for (let i = 0; i < 3000; i++) put(`notes/many2/f${i}.txt`, `${i}\n`);
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
     put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\necho added\n", 0o755);
@@ -138,7 +149,7 @@ test('the copies come first: a file\'s bytes, mode and path before it is overwri
   assert.equal(v.tail, 'exit 0');
   assert.ok(!('putBack' in v), 'no way in changed');
   assert.equal(v.copied, 1, 'the one file of its own it keeps (the ways in, marks and folders are not counted)');
-  assert.equal(v.notCovered, 'Put-back covers only the files counted in copied: anything else it wrote (a file an option names, a program’s own writes) isn’t copied first.');
+  assert.equal(v.notCovered, 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.');
   assert.equal(text('notes/a.txt'), 'new\n');
   const dir = join(BEFORE(), v.set), c = copyOf(v.set, 'notes/a.txt');
   assert.deepEqual([c.kind, c.mode, c.size, c.sha], ['file', 0o640, 6, sha('old a\n')]);
@@ -395,7 +406,9 @@ test('undo never puts back a set whose command did not run, nor, for a change cu
   assert.equal(text('notes/h.txt'), 'by hand\n');
   // The Spark stops answering as the change starts (the connection drops; the command runs on): its end is unknown and
   // it has no after-look. A file of its set written later is left, and said; one as the change left it is put back.
-  const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo cut > notes/cut.txt && echo cut > notes/cut2.txt && touch notes/cut-done', chat2 = await newChat();
+  const drops = join(H3(), '.mock', 'sudo-drops'), chat2 = await newChat();
+  // (the change dates a file it wrote years ahead: still its own, by the time it was changed)
+  const command = 'echo cut > notes/cut.txt && echo cut > notes/cut2.txt && touch -d 2030-01-01 notes/cut2.txt && touch notes/cut-done';
   writeFileSync(drops, '');
   let cut;
   try { cut = await inChat(chat2, 'cut on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
@@ -404,17 +417,85 @@ test('undo never puts back a set whose command did not run, nor, for a change cu
   const [cs, ce] = pair(command);
   assert.equal(ce.outcome, 'unreachable');
   assert.ok(!existsSync(join(BEFORE(), cs.set, 'after.json')), 'no after-look');
+  // Once its time is over, the owner puts a file of its set there, with an old date kept (as cp -p or mv would).
+  const over = (manifestOf(cs.set).at + SECONDS + CUT + 1) * 1000;
+  await waitFor(() => Date.now() > over, { every: 200, what: 'the change\'s time to run out' });
   writeFileSync(at3('notes/cut.txt'), 'by hand later\n');
-  const later = Math.floor(manifestOf(cs.set).at) + 3600;
-  utimesSync(at3('notes/cut.txt'), later, later);
+  utimesSync(at3('notes/cut.txt'), new Date('2020-01-01'), new Date('2020-01-01'));
   const undo = await inChat(chat2, 'undo the cut', 'undo_last_change');
   assert.equal(undo.value?.outcome, 'partly', undo.error || JSON.stringify(undo.value));
   assert.ok(undo.value.restored.includes('~/notes/cut2.txt'), JSON.stringify(undo.value));
   const byPath = (x, y) => (x.path < y.path ? -1 : 1);
   assert.deepEqual(undo.value.notRestored.filter(x => x.path.startsWith('~/notes/')).sort(byPath), [{ path: '~/notes/cut-done', why: 'it was not there before the change: left as it is' },
-    { path: '~/notes/cut.txt', why: 'changed since that change was cut off: left as it is' }].sort(byPath));
+    { path: '~/notes/cut.txt', why: 'written after that change\'s time ran out: left as it is' }].sort(byPath));
   assert.match(undo.value.note, /That change was cut off, so what it did is unknown\.$/);
   assert.deepEqual([text('notes/cut.txt'), text('notes/cut2.txt')], ['by hand later\n', 'cut2 before\n']);
+});
+
+test('undo is not done beside a change that still runs: a cut-off change whose unit lives on is refused, and put back once it has ended', { timeout: 120000 * SLOW }, async () => {
+  const drops = join(H3(), '.mock', 'sudo-drops'), chat = await newChat(), command = 'echo live > notes/live.txt && sleep 5 && touch notes/live-done';
+  writeFileSync(drops, '');
+  let ran;
+  try { ran = await inChat(chat, 'live on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  assert.match(ran.error || '', /^Spark 3 stopped answering while the change ran/, JSON.stringify(ran));
+  await waitFor(() => existsSync(at3('notes/live.txt')) && text('notes/live.txt') === 'live\n', { every: 100, what: 'the change to start' });
+  const [start] = pair(command), live = join(H3(), '.rehearsal', 'standin', 'live', start.unit);
+  assert.ok(existsSync(live), 'its unit runs');
+  const early = await inChat(chat, 'undo live', 'undo_last_change');
+  assert.equal(early.error, `The copies on Spark 3: that change is still running there (${start.unit}), so nothing was put back: ask again when it has ended.`, JSON.stringify(early));
+  assert.equal(text('notes/live.txt'), 'live\n');
+  await waitFor(() => existsSync(at3('notes/live-done')) && !existsSync(live), { what: 'its unit to end' });
+  const undo = await inChat(chat, 'undo live again', 'undo_last_change');
+  assert.ok(undo.value?.restored?.includes('~/notes/live.txt'), undo.error || JSON.stringify(undo.value));
+  assert.equal(text('notes/live.txt'), 'live before\n');
+});
+
+test('a line the command prints as the helper would, then a dropped connection: the set is kept and nothing says it never ran', { timeout: 120000 * SLOW }, async () => {
+  const drops = join(H3(), '.mock', 'sudo-drops'), chat = await newChat();
+  const command = `printf '%s refused: x\\n' "$(basename "$(dirname "$0")")"; echo printed > notes/printed.txt`;
+  writeFileSync(drops, 'first-line\n');
+  let ran;
+  try { ran = await inChat(chat, 'print refused on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  assert.match(ran.error || '', /^Spark 3 stopped answering while the change ran, so whether it finished is unknown/, JSON.stringify(ran));
+  assert.doesNotMatch(ran.error, /Nothing ran/);
+  await waitFor(() => existsSync(at3('notes/printed.txt')), { what: 'the command to have run' });
+  const [start, end] = pair(command);
+  assert.deepEqual([end.outcome, end.ran], ['unreachable', undefined]);
+  assert.ok(existsSync(join(BEFORE(), start.set, 'manifest.json')), 'its set is kept');
+});
+
+test('a change\'s time counts from the end of its copies: the manifest\'s time is after every copy was made', { timeout: 120000 * SLOW }, async () => {
+  const r = await run('rm -r notes/many2');
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.ran, true, r.text);
+  assert.equal(r.json.copied, 3000);
+  const dir = join(BEFORE(), r.json.set, 'files'), at = manifestOf(r.json.set).at * 1000;
+  const last = Math.max(...readdirSync(dir).map(f => statSync(join(dir, f)).mtimeMs));
+  assert.ok(at >= last, `the manifest's time ${at} is before the last copy ${last}`);
+});
+
+test('patterns as bash reads them ([^a], a class, a quoted [x]) are copied first, and undo puts every file back', { timeout: 240000 * SLOW }, async () => {
+  const cases = [
+    ['sed -i.bak s/was/is/ p1/[^a]*.txt', { 'p1/1.txt': 'it was 1\n', 'p1/b.txt': 'it was b\n' }],
+    ['echo new > p2/[^a]digit.txt', { 'p2/1digit.txt': 'one\n' }],
+    ['echo teed | tee p2/[^a]digit.txt', { 'p2/1digit.txt': 'one\n' }],
+    ['cp data/one.csv p2/[[:digit:]]digit.txt', { 'p2/1digit.txt': 'one\n' }],
+    ["mv p3/'[x]'* data/", { 'p3/[x]keep.txt': 'keep\n' }],
+  ];
+  for (const [i, [command, files]] of cases.entries()) {
+    const chat = await newChat();
+    const ran = await inChat(chat, `pattern ${i} on spark three`, 'run', { on: 'spark3', command });
+    assert.equal(ran.value?.ran, true, `${command}: ${ran.error || JSON.stringify(ran.value)}`);
+    for (const [p, t] of Object.entries(files)) {
+      assert.equal(copyOf(ran.value.set, p)?.bytes?.toString(), t, `${command}: the copy of ${p}`);
+      assert.ok(!existsSync(at3(p)) || text(p) !== t, `${command} changed ${p}`);
+    }
+    const undo = await inChat(chat, `undo pattern ${i}`, 'undo_last_change');
+    assert.ok(['restored', 'partly'].includes(undo.value?.outcome), `${command}: ${undo.error || JSON.stringify(undo.value)}`);
+    for (const [p, t] of Object.entries(files)) assert.equal(text(p), t, `${command}: ${p} put back`);
+  }
+  assert.equal(text('p1/a.txt'), 'it was a\n');
+  assert.equal(text('p2/adigit.txt'), 'a digit\n');
 });
 
 test('a key in the command, or in what it printed, is masked in the result and the journal\'s lines', { timeout: 60000 * SLOW }, async () => {
