@@ -321,14 +321,16 @@ test('recall {id, find} on a look\'s record: keys across the old cut points stay
   const act = async args => { const x = await call(keys.act.token, 'recall', { id, ...args }); assert.equal(x.isError, false, x.text); return x; };
   const found = await act({ find: 'HF_TOKEN' });
   assert.deepEqual(pieces(found.text), [], found.text);
-  assert.equal(found.value.found, 2);
-  assert.ok(found.value.lines.every(([n, t]) => Number.isInteger(n) && t.includes('[hidden]')), found.text);
+  // (the two lines the command printed them on: the record's first line is the command, which names HF_TOKEN too)
+  const keyLines = [...(await act({ find: 'x HF_TOKEN' })).value.lines, ...(await act({ find: 'HF_TOKEN=[hidden] y' })).value.lines];
+  assert.equal(keyLines.length, 2, JSON.stringify(keyLines));
+  assert.ok(keyLines.every(([n, t]) => Number.isInteger(n) && t.includes('HF_TOKEN=[hidden]')), JSON.stringify(keyLines));
   const middle = await act({ find: 'zircon middle' });
   assert.equal(middle.value.lines.length, 1);
   const [n] = middle.value.lines[0];
   assert.deepEqual((await act({ lines: String(n) })).value.lines, [[n, 'zircon middle line']]);
   // Every line the key's neighbourhood falls in, read as a stretch: still hidden.
-  for (const [a] of found.value.lines) assert.deepEqual(pieces((await act({ lines: `${Math.max(1, a - 2)}-${a + 2}` })).text), []);
+  for (const [a] of keyLines) assert.deepEqual(pieces((await act({ lines: `${Math.max(1, a - 2)}-${a + 2}` })).text), []);
   assert.deepEqual(pieces((await api('/actions/recall', { method: 'POST', body: { id, find: 'HF_TOKEN' } })).text), []);
   // A key that may only look reads none of it.
   for (const args of [{ find: 'zircon' }, { lines: '1-5' }]) {
