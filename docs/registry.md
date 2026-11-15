@@ -57,6 +57,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
+| `check_update` | read | `21-updates` | updates | — | — | yes | outside |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
 | `run` | read | `21-work` | core | — | — | no | outside |

@@ -81,6 +81,9 @@ grep -q "^const BUILD = '$BUILD';$" "$STAGE/ui/app.js" || { echo "Couldn't stamp
 printf '{"build":"%s"}\n' "$BUILD" > "$STAGE/ui/version.json"
 for f in "${SERVICE_FILES[@]}"; do cp "$HERE/service/$f" "$STAGE/service/"; done
 for f in "${RECOVERY_FILES[@]}"; do cp "$HERE/deploy/$f" "$STAGE/"; done
+# The look install.sh makes on Spark 2 before it changes anything: every program the console's commands call is on the
+# fixed path (R53).
+cp "$HERE/deploy/path-check.sh" "$STAGE/"
 # The service's /health names its build: the first 12 hex digits of the sha256 of its code (server.mjs, dig.mjs,
 # passkey.mjs, in that order). The update only counts once the service answers with the code sent here.
 API_BUILD="$(cd "$STAGE/service" && cat server.mjs dig.mjs passkey.mjs | shasum -a 256 | cut -c1-12)"
@@ -91,16 +94,17 @@ COPYFILE_DISABLE=1 tar -C "$HERE" --exclude='.DS_Store' --exclude='node_modules'
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 # The lock has to be for THIS code: a tree one change ahead of its test run would install with every workflow off
 # (found by the gap analysis, 2026-11-11).
-LOCK_BUILD="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("build", ""))' "$HERE/service/workflows.lock.json" 2>/dev/null || true)"
+LOCK_BUILD="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("build", ""))' "$HERE/service/workflows.lock.json" 2>/dev/null || true)"
 [ "$LOCK_BUILD" = "$API_BUILD" ] || { echo "service/workflows.lock.json is for build ${LOCK_BUILD:-unknown}, but this code is build $API_BUILD. Run node test/lock.mjs (the whole suite) first; installing now would switch every workflow off." >&2; exit 1; }
 # What this update is, in plain words (optional, NOTE='…'). The new build puts it on its update record as it starts.
-NOTE="${NOTE:-}" python3 -c 'import json, os, sys; json.dump({"build": sys.argv[1], "note": os.environ["NOTE"][:600]}, open(sys.argv[2], "w"))' "$API_BUILD" "$STAGE/update-note.json" 2>/dev/null \
+NOTE="${NOTE:-}" python3 -I -c 'import json, os, sys; json.dump({"build": sys.argv[1], "note": os.environ["NOTE"][:600]}, open(sys.argv[2], "w"))' "$API_BUILD" "$STAGE/update-note.json" 2>/dev/null \
   || printf '{"build":"%s","note":""}\n' "$API_BUILD" > "$STAGE/update-note.json"
 
 # The part that runs on Spark 2. It travels with the new files to ~/.cache/spark-console/incoming (nothing installed
 # changes by being copied there):
-#   install.sh check                            checks Node.js; prints "busy <jobs running> <chats answering>", or
-#                                               "busy down" / "busy unknown", for this Mac to read
+#   install.sh check                            checks Node.js and the fixed path (path-check.sh); prints "busy <jobs
+#                                               running> <chats answering>", or "busy down" / "busy unknown", for this
+#                                               Mac to read
 #   install.sh verify                           the checks alone (sign-in, the agent door, the model address, one chat
 #                                               turn); changes nothing
 #   install.sh install <stamp> <build> <host>   saves a snapshot, installs, restarts, checks; puts the old files back
@@ -113,6 +117,22 @@ API="$STATE/api.sock"
 UNIT="$HOME/.config/systemd/user/spark-console-api.service"
 REL="$HOME/.local/share/spark-console/releases"
 fail() { echo "  STOP: $*" >&2; exit 1; }
+# Every program the console's commands call has to be on the fixed path (R53): path-check.sh, beside this script, says
+# which isn't. Asked before anything changes; a miss refuses, naming each. (On the stand-in fleet a test marks one
+# missing with ~/.mock/off-path-<program>, as the console's own look reads it; the list is path-check.sh's.)
+path_check() {
+  local out p
+  if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -f "$IN/path-check.sh" ]; then
+    out=''
+    for p in $(sed -n 's/^for p in \(.*\); do$/\1/p' "$IN/path-check.sh"); do [ ! -e "$HOME/.mock/off-path-$p" ] || out="$out $p"; done
+    [ -z "$out" ] && return 0
+    out="Not on the fixed path:$out"
+  else
+    out=$(bash "$IN/path-check.sh" 2>&1) && return 0
+  fi
+  [ -n "$out" ] || out="path-check.sh gave no answer"
+  fail "Spark 2 is missing programs Spark Console's commands call. $out. Nothing was changed. Install them where that path finds them (not in your home), then run this again."
+}
 
 # The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes.
 NODE=$(command -v node || ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
@@ -123,13 +143,14 @@ NODE_MAJOR=${NODE_V#v}; NODE_MAJOR=${NODE_MAJOR%%.*}
   || fail "Spark Console needs Node.js 18 or newer, but the one it would run with ($NODE) is ${NODE_V:-unreadable}. Install a newer one, then run this again."
 
 # /health on the socket Tailscale uses (empty if nothing answers).
-socket_health() { curl -s -m 3 --unix-socket "$API" http://localhost/health 2>/dev/null || true; }
+socket_health() { curl -q -s -m 3 --unix-socket "$API" http://localhost/health 2>/dev/null || true; }
 
 if [ "${1:-}" = check ]; then
   echo "  Node.js $NODE_V ($NODE): ok" >&2
+  path_check
   # A service from before the socket only answers on its local port.
-  h=$(socket_health); [ -n "$h" ] || h=$(curl -s -m 3 http://127.0.0.1:8810/health 2>/dev/null || true)
-  printf '%s' "$h" | python3 -c 'import json, sys
+  h=$(socket_health); [ -n "$h" ] || h=$(curl -q -s -m 3 http://127.0.0.1:8810/health 2>/dev/null || true)
+  printf '%s' "$h" | python3 -I -c 'import json, sys
 try:
     d = json.loads(sys.stdin.read())
 except ValueError:
@@ -144,14 +165,14 @@ fi
 # How long the new build gets to answer first, and how long it then has to keep answering as the same process.
 WAIT_S="${SPARK_CONSOLE_INSTALL_WAIT_S:-45}"; SETTLE_S="${SPARK_CONSOLE_INSTALL_SETTLE_S:-40}"
 # field <name>: that field of the JSON object on stdin (True/False for a yes/no); nothing if it can't be read.
-field() { python3 -c 'import json, sys
+field() { python3 -I -c 'import json, sys
 try:
     v = json.loads(sys.stdin.read()).get(sys.argv[1])
 except Exception:
     sys.exit(0)
 print("" if v is None else v)' "$1"; }
 # started <build>: when the service answering /health started, only if it is ok and is that build.
-started() { python3 -c 'import json, sys
+started() { python3 -I -c 'import json, sys
 try:
     d = json.loads(sys.stdin.read())
 except ValueError:
@@ -160,13 +181,13 @@ if not (isinstance(d, dict) and d.get("ok") is True and d.get("build") == sys.ar
 print(d["startedAt"])' "$1"; }
 # The owner's login, as the service reads it (config.json's ownerLogin wins over access.json's). The checks below ask
 # the service on its own socket as the owner, the way Tailscale hands a request over. Empty on a first install.
-OWNER=$(python3 -c 'import json, sys
+OWNER=$(python3 -I -c 'import json, sys
 def owner(f):
     try: return json.load(open(f)).get("ownerLogin") or ""
     except Exception: return ""
 print(owner(sys.argv[1]) or owner(sys.argv[2]))' "$IN/service/config.json" "$STATE/access.json" 2>/dev/null || true)
 [[ "$OWNER" =~ ^[A-Za-z0-9._%+@-]+$ ]] || OWNER=''
-as_owner() { local t="$1"; shift; curl -s -m "$t" --unix-socket "$API" -H "Tailscale-User-Login: $OWNER" "$@"; }
+as_owner() { local t="$1"; shift; curl -q -s -m "$t" --unix-socket "$API" -H "Tailscale-User-Login: $OWNER" "$@"; }
 # (what a change from the page carries: the console's header and its own Origin)
 page_post() { as_owner "$1" -H 'X-Spark-Console: 1' -H 'X-Forwarded-Host: localhost' -H 'Origin: https://localhost' -H 'Content-Type: application/json' -d "$3" "http://localhost$2"; }
 WHY=''
@@ -191,7 +212,7 @@ chat_turn() {
 }
 check_chat() {
   local kept
-  kept=$(as_owner 10 http://localhost/chats | python3 -c 'import json, sys
+  kept=$(as_owner 10 http://localhost/chats | python3 -I -c 'import json, sys
 try:
     chats = json.loads(sys.stdin.read())["chats"]
 except Exception:
@@ -214,6 +235,7 @@ fi
 [ "${1:-}" = install ] && [ $# = 4 ] || fail "Usage: install.sh check | verify | install <stamp> <build> <host>"
 STAMP="$2" API_BUILD="$3" HOST="$4"
 [[ "$STAMP" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] && [[ "$API_BUILD" =~ ^[0-9a-f]{12}$ ]] || fail "Unexpected snapshot name or build: $STAMP $API_BUILD"
+path_check
 
 # Before anything changes. Can the chat be checked afterwards? Only if Sparkie's model answers now.
 BEFORE=$(socket_health)
@@ -306,7 +328,7 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
     save "$STATE" state
     if [ -f "$UNIT" ]; then cp -p "$UNIT" "$SNAP/"; fi
     # Which build this snapshot holds (the fingerprint /health reports), for the record of updates.
-    python3 -c 'import hashlib, sys; print(hashlib.sha256(b"".join(open(f, "rb").read() for f in sys.argv[1:])).hexdigest()[:12])' \
+    python3 -I -c 'import hashlib, sys; print(hashlib.sha256(b"".join(open(f, "rb").read() for f in sys.argv[1:])).hexdigest()[:12])' \
       "$SNAP"/spark-console-service/server.mjs "$SNAP"/spark-console-service/dig.mjs "$SNAP"/spark-console-service/passkey.mjs > "$SNAP/build" 2>/dev/null || rm -f "$SNAP/build"
     # `same`: this snapshot holds exactly what is installed (here: the same update run again), so going back to it
     # would change nothing and "Undo the last update" passes over it. restore.sh leaves the same mark once it has put
@@ -320,6 +342,8 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 # signed out since is let back in (contract 6.25).
 #   bash restore.sh [--with-state]
 set -euo pipefail
+# Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH.
+[ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$(cd "$(dirname "$0")" && pwd)"
 case "${1:-}" in ''|--with-state) ;; *) echo "Usage: bash $0 [--with-state]" >&2; exit 2 ;; esac
 # put_back <saved> <live>: the live folder's contents become exactly the saved ones. It stays the same folder, so
@@ -349,7 +373,7 @@ fi
 systemctl --user daemon-reload
 systemctl --user restart spark-console-api
 for _ in $(seq 1 20); do
-  if curl -s -m 2 --unix-socket "$HOME/.local/state/spark-console/api.sock" http://localhost/health 2>/dev/null | grep '"ok":true' >/dev/null; then
+  if curl -q -s -m 2 --unix-socket "$HOME/.local/state/spark-console/api.sock" http://localhost/health 2>/dev/null | grep '"ok":true' >/dev/null; then
     : > "$S/same" 2>/dev/null || true   # this snapshot is what's installed now: "Undo the last update" passes over it
     echo "  Done: the service answers again."; exit 0
   fi
@@ -496,6 +520,8 @@ fi
 mkdir -p "$HOME/.local/share/spark-console"
 cat > "$HOME/.local/share/spark-console/watchdog.sh" <<'DOG'
 #!/usr/bin/env bash
+# Its programs come from the fixed path, never a folder in the home (R53); the stand-in fleet's tests keep their PATH.
+[ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$HOME/.local/state/spark-console"; U=spark-console-api; D="$HOME/.local/share/spark-console"
 state=$(systemctl --user show -p ActiveState --value "$U" 2>/dev/null)
 restart() {
@@ -508,8 +534,10 @@ restart() {
 case "$state" in
   failed) restart "systemd gave up on it" ;;
   active|activating)
-    if curl -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then echo 0 > "$S/watchdog-misses"; rm -f "$S/watchdog-silent-since"; exit 0; fi
-    m=$(( $(cat "$S/watchdog-misses" 2>/dev/null || echo 0) + 1 )); echo "$m" > "$S/watchdog-misses"
+    if curl -q -s -m 10 --unix-socket "$S/api.sock" http://localhost/health 2>/dev/null | grep -q '"ok":true'; then echo 0 > "$S/watchdog-misses"; rm -f "$S/watchdog-silent-since"; exit 0; fi
+    # (read as text first: only plain digits count, so nothing in the file is ever worked out as an expression)
+    m=$(cat "$S/watchdog-misses" 2>/dev/null); [[ "$m" =~ ^[0-9]+$ ]] || m=0
+    m=$((10#$m + 1)); echo "$m" > "$S/watchdog-misses"
     [ "$m" -lt 3 ] || restart "it didn't answer /health 3 minutes in a row" ;;
   *) rm -f "$S/watchdog-silent-since"; exit 0 ;;
 esac
@@ -546,17 +574,18 @@ systemctl --user daemon-reload && systemctl --user enable --now spark-console-wa
 echo "  if Spark Console ever stops answering, on Spark 2: bash ~/.local/share/spark-console/go-back.sh puts the last build back (more: ~/.local/share/spark-console/RECOVERY.txt)"
 
 # Each workflow's state: active, waiting for its first run on the Sparks (which validates it), or off (not tested).
-socket_health | python3 -c '
+socket_health | python3 -I -c '
 import json, sys
 names = {"active": "active", "needs-validation": "its first run validates it", "untested": "OFF: this version was not tested (run node test/lock.mjs, then install again)"}
 for k, v in (json.load(sys.stdin).get("workflows") or {}).items(): print(f"  workflow {k}: {names.get(v, v)}")
 ' 2>/dev/null || true
-python3 -c 'import yaml' 2>/dev/null && echo "  recipe files: readable" || echo "  NOTE: Find setups reads recipe files with PyYAML, which isn't installed here. Install it with: sudo apt install python3-yaml"
+# (Spark Console's Python leaves out the packages in the home, as -I does here: only the system's PyYAML counts)
+python3 -I -c 'import yaml' 2>/dev/null && echo "  recipe files: readable" || echo "  NOTE: Find setups reads recipe files with PyYAML, and the system's Python here doesn't have it (Spark Console's Python leaves out packages in your home, so a pip install --user doesn't count). Install the system package with: sudo apt install python3-yaml"
 
 if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "  Not checked here: whether this machine reaches the other Sparks (SKIP_ROUTES=1: no ssh)."
 else
 echo "Checking that this machine can reach the other Sparks without a password:"
-python3 - <<'PY'
+python3 -I - <<'PY'
 import json, os, subprocess
 cfg = json.load(open(os.path.expanduser('~/spark-console-service/config.json')))
 for n in cfg['nodes']:
@@ -577,7 +606,7 @@ echo "Connecting to $HOST. Your password is asked once and reused for the steps 
 "${SSH[@]}" -fN "$HOST"
 
 echo "Copying build $BUILD to a holding folder on Spark 2 (nothing installed changes yet) and checking it …"
-PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh source.tar "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
+PRE=$(COPYFILE_DISABLE=1 tar -C "$STAGE" -cf - ui service install.sh path-check.sh source.tar "${RECOVERY_FILES[@]}" update-note.json | "${SSH[@]}" "$HOST" \
   'I="$HOME/.cache/spark-console/incoming"; rm -rf "$I" && mkdir -p "$I" && tar --warning=no-unknown-keyword -C "$I" -xf - && bash "$I/install.sh" check')
 PRE="${PRE##*$'\n'}"
 case "$PRE" in
