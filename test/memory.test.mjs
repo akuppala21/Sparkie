@@ -529,7 +529,9 @@ test('G2b: at 40,000 lines and past 400 candidates, a line carrying a name from 
   } finally { script([]); fresh(); }
 });
 
-test('G2b: a picked line of the owner\'s that holds change words is data: the brain\'s stop from it is a button, and nothing stops', { timeout: 120000 * SLOW }, async () => {
+// (review of the memory steps, 2026-11-15: a statement that asks to stop "it" and names no container, the container named
+// only in the picked line; a question would be a button whatever was picked)
+test('G2b: a picked line of the owner\'s that holds change words is data: a statement asking to stop "it", with the container named only in the picked line, is a button, and nothing stops', { timeout: 120000 * SLOW }, async () => {
   fresh();
   const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', running = () => readFileSync(join(T.fleet.root, 'spark4', '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${RADIX}|`))?.split('|')[1];
   const lines = Array.from({ length: 100 }, (_, i) => seededLine(i, `Fact ${i}: report ${i} was filed with the long summary attached`));
@@ -537,7 +539,7 @@ test('G2b: a picked line of the owner\'s that holds change words is data: the br
   seed(lines);
   try {
     assert.equal(running(), 'running');
-    const { message, sent } = await turnOn('what is on spark 4 tonight?', [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }]);
+    const { message, sent } = await turnOn('stop it on spark 4, as the note says', [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }]);
     assert.ok(picksOf(sent[0]).includes(pickOf(lines[3])), JSON.stringify(picksOf(sent[0])));
     assert.deepEqual(message.tools.map(t => [t.name, t.outcome]), [['stop_model', 'needs-ok']]);
     assert.deepEqual(sent.map(x => x.round), [0, 1]);

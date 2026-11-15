@@ -3,7 +3,8 @@
 // "I'll remember: …" (recall shows the words as said there); "forget that …" retires it, marked; "don't forget that …"
 // leaves it (the forget gate holds there). A press on a memory button from Telegram, save_workflow and an erase for good
 // still wait for the page, and so does a typed yes. A stranger's chat, a forwarded message, a caption and an edited
-// message keep nothing; nor does the brain's call in a turn during which the pairing turned to another user.
+// message keep nothing; nor does the brain's call in a turn during which the pairing turned to another user. A line
+// kept there with an end says the end back as a day in words.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, readdirSync, mkdirSync } from 'node:fs';
@@ -142,6 +143,18 @@ test('a typed yes to a Remember button in Telegram waits for the page, and nothi
     await tgSay('yes');
     assert.ok((await sentAfter(from))[0].body.text.endsWith(WAITS), 'the typed yes waits for the page');
     assert.deepEqual(await live(), []);
+  } finally { script([]); fresh(); }
+});
+
+// The review of the memory steps (2026-11-15), fix 5: the end said back as a day in words, on Telegram as on the page.
+test('from Telegram, remember with an end says the end back as a day in words', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  const t = new Date(Date.now() + 4 * 86400000), end = new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const words = new Date(`${end}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', ...(end.slice(0, 4) === String(new Date().getFullYear()) ? {} : { year: 'numeric' }) }).replace(',', '');
+  try {
+    const reply = await said('spark 4 is busy with the nightly eval until friday', [{ name: 'remember', arguments: { text: 'Spark 4 is busy with the nightly eval', kind: 'fact', until: end } }]);
+    assert.ok(reply.text.includes(`(until ${words})`), reply.text);
+    assert.deepEqual((await live()).map(e => [e.text, e.until, e.src.channel]), [['Spark 4 is busy with the nightly eval', end, 'telegram']]);
   } finally { script([]); fresh(); }
 });
 
