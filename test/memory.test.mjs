@@ -9,12 +9,21 @@
 // {past}`. Erasing a line for good (forget_memory {erase}) is the owner's alone: from Sparkie it is always a button,
 // whatever the words; pressed in Spark Console, the words leave both files, their copies from before the last save and
 // any copy set aside; the owner's own call erases at once; an agent is refused, for its own lines too. The stand-in
-// model is scripted.
+// model is scripted. Names on every line (G2a): a line naming a Spark, a model and a setup is about those three and
+// nothing else, one naming none about nothing, and a word inside another word or a model in a web address names
+// nothing; after a restart a line saved before names were kept is indexed with its names and memory.json is rewritten
+// only at the next save; the brain's prompt and memory's answers to Sparkie are what the build before sent; the index
+// answers "which lines are about Spark 4" at 40,000 lines in under 5 ms (p95, its own code run in place).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, newChat, say, choose, waitFor, ASK, SLOW } from './lib.mjs';
+import { statSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import vm from 'node:vm';
+import { REPO, request } from './lib.mjs';
+import { startMock } from './start-mock.mjs';
 
 let agent;
 useFleet({ watchMs: 60000 }, async () => { agent = await createActKey('mem-agent'); });
@@ -323,4 +332,132 @@ test('T138: the 41st line is kept; the plain ask retires its line, still in the 
     assert.deepEqual(await live(), now);
     assert.equal((await past()).length, 1);
   } finally { script([]); fresh(); }
+});
+
+/* ───────── G2a: names on every line, and the index of them in memory ───────── */
+// (a line as the build before this one kept it and showed it: the same keys in the same order, with no names)
+const plain = ({ about, ...line }) => line;
+const NAMED = 'On Spark 4, glm-5.3-flash is best started with setup aphex-x4';
+
+test('G2a: a line is about the names in it: a Spark, a model and a setup, and nothing else; a line naming none is about nothing; a word inside another word, or a model in a web address, is no name', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  const NONE = 'Short answers, please, and no tables';
+  const LOOKS = 'The aphexian sparkline and glm-5.3-flashy run on spark42; see https://huggingface.co/zai-org/GLM-5.3-Flash and huggingface.co/google/gemma-4-31b-it';
+  const ids = [await remember(NAMED), await remember(NONE, 'preference'), await remember(LOOKS)];
+  const want = [[ids[0], ['spark4', 'glm-5.3-flash', 'aphex-x4']], [ids[1], []], [ids[2], []]];
+  // kept on the line in memory.json, and shown to the owner's own call
+  assert.deepEqual(JSON.parse(readFileSync(state('memory.json'), 'utf8')).entries.map(e => [e.id, e.about]), want);
+  assert.deepEqual((await live()).map(e => [e.id, e.about]), want);
+  // A line Sparkie keeps from the owner's words gets its names the same way.
+  const words = 'remember that Spark 3 is where gemma-4-31b goes';
+  script([{ match: `^${esc(words)}$`, calls: [{ name: 'remember', arguments: { text: 'Spark 3 is where gemma-4-31b goes', kind: 'preference' } }] }]);
+  try {
+    assert.deepEqual((await say(await newChat(), words)).message.tools.map(t => [t.name, t.outcome]), [['remember', 'remembered']]);
+    assert.deepEqual((await live()).at(-1).about, ['spark3', 'gemma-4-31b']);
+  } finally { script([]); fresh(); }
+});
+
+test('G2a: lines saved before names were kept: after a restart each is indexed with its names, memory.json is rewritten only at the next save, which writes every line with them, and the build before this one reads it', { timeout: 180000 * SLOW }, async () => {
+  const before = [
+    { id: 'a1b2c3d4', kind: 'fact', text: 'Spark 4 is on Wi-Fi only', by: 'owner', at: '2026-11-01T10:00:00.000Z' },
+    { id: 'b2c3d4e5', kind: 'preference', text: 'Start gemma-4-31b on Spark 3 with setup aphex', by: 'owner', at: '2026-11-02T10:00:00.000Z', src: { via: 'sparkie', chat: 'c_1' } },
+    { id: 'c3d4e5f6', kind: 'preference', text: 'Short answers, please', by: 'nightly-agent', at: '2026-11-03T10:00:00.000Z' },
+  ];
+  const text = JSON.stringify({ entries: before }, null, 2);
+  const fleet = await startMock({ watchMs: 60000, statusMs: 60000, prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'memory.json'), text, { mode: 0o600 }) });
+  const act = async (name, body = {}) => {
+    const r = await request(`${fleet.base}/actions/${name}`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin } });
+    assert.equal(r.status, 200, r.text);
+    return JSON.parse(r.text);
+  };
+  try {
+    const file = join(fleet.stateDir, 'memory.json'), was = statSync(file).mtimeMs;
+    const shown = (await act('memory')).entries;
+    assert.deepEqual(shown.map(e => [e.id, e.about]), [['a1b2c3d4', ['spark4']], ['b2c3d4e5', ['gemma-4-31b', 'spark3', 'aphex']], ['c3d4e5f6', []]]);
+    assert.deepEqual(shown.map(plain), before);
+    // The names are in memory only: the file is as it was, byte for byte.
+    assert.equal(readFileSync(file, 'utf8'), text);
+    assert.equal(statSync(file).mtimeMs, was);
+    assert.equal((await act('remember', { text: 'Spark 2 runs the brain', kind: 'fact' })).outcome, 'remembered');
+    const after = JSON.parse(readFileSync(file, 'utf8'));
+    assert.deepEqual(Object.keys(after), ['entries']);
+    assert.deepEqual(after.entries.slice(0, 3), shown);
+    assert.deepEqual(after.entries[3].about, ['spark2']);
+    // The build before this one reads it as it did: every line, each one's own fields as they were, the same block.
+    assert.deepEqual(oldEntries(after).slice(0, 3).map(plain), before);
+    assert.equal(oldBlock(oldEntries(after)), oldBlock([...before, plain(after.entries[3])]));
+  } finally { await fleet.stop(); }
+});
+
+test('G2a: the brain is sent what the build before this one sent: the memory block of its prompt and memory\'s answers to Sparkie hold no names', { timeout: 120000 * SLOW }, async () => {
+  fresh();
+  await remember(NAMED);
+  const gone = await remember('Spark 3 is where models go', 'preference');
+  assert.equal((await owner('forget_memory', { id: gone })).json.outcome, 'forgotten');
+  await remember('gemma-4-31b runs on Spark 3 now');
+  const words = 'what do you remember about the sparks, and what did I tell you to forget?';
+  script([{ match: `^${esc(words)}$`, calls: [{ name: 'memory', arguments: {} }, { name: 'memory', arguments: { past: true } }] }]);
+  try {
+    const from = requests().length;
+    await say(await newChat(), words);
+    const sent = requests().slice(from).filter(x => x.words === words);
+    const lines = JSON.parse(readFileSync(state('memory.json'), 'utf8')).entries, past = JSON.parse(readFileSync(state('memory-past.json'), 'utf8')).past;
+    // (the names are kept on disk, and the owner's own call sees them)
+    assert.ok([...lines, ...past].every(e => Array.isArray(e.about)), JSON.stringify(lines));
+    assert.deepEqual((await live()).map(e => e.about), [['spark4', 'glm-5.3-flash', 'aphex-x4'], ['gemma-4-31b', 'spark3']]);
+    assert.equal(sent.length, 2);
+    for (const x of sent) assert.ok(x.system.endsWith(`\n${oldBlock(lines.map(plain))}`), x.system.slice(-600));
+    // Both answers, byte for byte as the build before this one gave them from the same lines.
+    const [one, both] = sent.find(x => x.round === 1).results.map(r => r.content);
+    assert.equal(one, JSON.stringify({ entries: lines.map(plain) }));
+    assert.equal(both, JSON.stringify({ entries: lines.map(plain), past: past.map(plain) }));
+  } finally { script([]); fresh(); }
+});
+
+// The index alone, at the design's size (G 3.4: the picker under 5 ms p95 at 40,000 lines; this is the index's part of
+// it): the part's own code, run here with stand-ins for what it reads from the rest of Spark Console.
+test('G2a: the index at 40,000 lines answers "which lines are about Spark 4" in under 5 ms (p95), lines saved before names were kept included, and reads memory.json again only when it changed', { timeout: 120000 * SLOW }, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'mem-index-')), file = join(dir, 'memory.json');
+  try {
+    const catalog = JSON.parse(readFileSync(join(REPO, 'service', 'catalog.json'), 'utf8'));
+    let reads = 0;
+    const box = vm.createContext({ console, statSync, setTimeout: () => {}, MEMORY_FILE: file,
+      memoryEntries: () => { reads++; return JSON.parse(readFileSync(file, 'utf8')).entries; },
+      NODES: [1, 2, 3, 4].map(n => ({ id: `spark${n}`, name: `Spark ${n}` })), knowledge: { workloads: {} }, recipeCatalog: () => catalog,
+      modelKey: repo => String(repo).split('/').pop().toLowerCase(), repoOf: k => String(k).replace('--', '/'),
+      mainPresets: () => ({ aphex: { title: 'Qwen 3.8 27B · Aphex' } }), agentKeys: () => [], accessList: () => ({ userName: 'Owner', members: [] }) });
+    vm.runInContext(`${readFileSync(join(REPO, 'service', 'src', '20-memory-names.mjs'), 'utf8')}\n;globalThis.part = { memoryNamesIn, memoryIndexNow, memoryLinesAbout };`, box);
+    const { memoryNamesIn, memoryIndexNow, memoryLinesAbout } = box.part, models = catalog.models.map(m => m.id);
+    // (what the part gives back, made plain here: its arrays belong to the part's own context)
+    const here = x => JSON.parse(JSON.stringify(x));
+    // 40,000 lines as this build saves them, but 40 of those on Spark 4 as saved before names were kept (no `about`).
+    const said = i => `Line ${i}: ${models[i % models.length]} on Spark ${1 + (i % 4)} was ${['fast', 'slow', 'fine'][i % 3]} with a long context, the owner said`;
+    const old = i => i % 1000 === 3;
+    let ms = performance.now();
+    const entries = Array.from({ length: 40000 }, (_, i) => ({ id: i.toString(16).padStart(8, '0'), kind: 'fact', text: said(i), ...(old(i) ? {} : { about: here(memoryNamesIn(said(i))) }), by: 'owner', at: '2026-11-14T00:00:00.000Z' }));
+    const finder = (performance.now() - ms) / 40000, written = JSON.stringify({ entries }, null, 2);
+    writeFileSync(file, written);
+    ms = performance.now();
+    memoryIndexNow();
+    const built = performance.now() - ms, times = [];
+    let about4 = [];
+    for (let k = 0; k < 1000; k++) { ms = performance.now(); about4 = memoryLinesAbout('spark4'); times.push(performance.now() - ms); }
+    times.sort((a, b) => a - b);
+    const p95 = times[949];
+    t.diagnostic(`names found in a line: ${(finder * 1000).toFixed(1)} µs; index made from memory.json at 40,000 lines: ${built.toFixed(0)} ms; "which lines are about Spark 4": p50 ${(times[499] * 1000).toFixed(1)} µs, p95 ${(p95 * 1000).toFixed(1)} µs, slowest ${(times[999] * 1000).toFixed(1)} µs`);
+    assert.ok(p95 < 5, `p95 ${p95} ms`);
+    assert.equal(reads, 1);
+    assert.deepEqual(here(about4.map(e => e.id)), entries.filter((e, i) => i % 4 === 3).map(e => e.id));
+    // The 40 old lines are among them, with their names found in memory; the file is left as it was.
+    const olds = here(about4.filter(e => old(parseInt(e.id, 16))));
+    assert.equal(olds.length, 40);
+    for (const e of olds) assert.ok(e.about.includes('spark4') && e.about.includes(models[parseInt(e.id, 16) % models.length]), JSON.stringify(e));
+    assert.equal(readFileSync(file, 'utf8'), written);
+    // memory.json changed under it: read again once, and the moved line is found under its new name.
+    entries[3].text = 'Line 3 moved to Spark 1';
+    writeFileSync(file, JSON.stringify({ entries }, null, 2));
+    assert.ok(!memoryLinesAbout('spark4').some(e => e.id === entries[3].id));
+    assert.ok(memoryLinesAbout('spark1').some(e => e.id === entries[3].id));
+    assert.equal(reads, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

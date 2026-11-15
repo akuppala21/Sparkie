@@ -1,15 +1,16 @@
 /* ───────── the outside heartbeat: an outside service notices when Spark 2 stops ───────── */
-// Area: safety        Rules: R32        Tests: beat.test.mjs
+// Area: safety        Rules: R32, R51        Tests: beat.test.mjs, app-keys.test.mjs
 // Owns: none
 // Timers: beatStart (once, a minute after the listen callback: the first beat), beatOnce (every 5 minutes after that,
 //   and from a beat at once when an address is saved)
 // Wakes: none
-// Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>) on the passkey page,
+// Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>), pasted in their own chat
+// (20-keys.mjs) or with the passkey (PUT /heartbeat),
 // Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot)
 // when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing
 // changed. The request carries nothing: no body, no query, no cookie, one fixed User-Agent. The host is fixed; what the
 // owner saves only names the check, and a redirect is never followed. The address is a secret (whoever holds it can beat
-// in Spark 2's place): it is kept only in the secrets file (03-secrets.mjs), typed only with the passkey, and is in no
+// in Spark 2's place): it is kept only in the secrets file (03-secrets.mjs), given only by the owner, and is in no
 // answer, log, event or audit line. No address saved: nothing is ever sent. The tick starts in the local port's listen
 // callback (25-backup-and-start.mjs), like Telegram's loop, so a second copy never beats, and its first beat waits a
 // minute: a console that dies a few seconds after each start (systemd starts it again 3 s later) never keeps the check
@@ -95,10 +96,15 @@ async function heartbeatRoute(req, res, viewer) {
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets, so it sends no heartbeat.');
   const given = (await readBody(req, 2000))?.url, url = typeof given === 'string' ? given.trim() : '';
   if (!BEAT_URL_RE.test(url)) throw new HttpError(400, 'That isn’t a check’s ping address. Copy it from Healthchecks.io: https://hc-ping.com/ and the check’s id, with nothing after it.');
+  await beatSave(url, via);
+  return send(res, 200, beatView());
+}
+// Saving a check's address, from this route or pasted in the owner's own chat (20-keys.mjs, R51): the same save, and the
+// beat starts the same way.
+async function beatSave(url, via) {
   secretsWrite(s => ({ ...s, heartbeat: { url, savedAt: new Date().toISOString() } }));
   Object.assign(beat, { okAt: null, failingSince: null, miss: null });
   audit({ via, actor: 'owner', action: 'heartbeat-saved', args: {}, ok: true });
   // (only a copy whose tick was started, the one that holds the port, beats)
   if (beat.started) await beatStart();
-  return send(res, 200, beatView());
 }
