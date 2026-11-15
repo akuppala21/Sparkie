@@ -6704,8 +6704,11 @@ action({
 // chat (`can` on the setup, ["chat"] when not said) and answers at least 2 calls at once: a job then gets its
 // --max-running-requests less two (at least 1), which with R36's cap on app calls (its slots less one) leaves one place
 // for another app and one for the owner's chat; a setup that doesn't say how many gets 1. A model of the run's own gets
-// JOB_MODEL_PARALLEL (4). A job run again by name keeps what it was made with (a container keeps its settings), and
-// nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these run-time settings).
+// JOB_MODEL_PARALLEL (4). Only a job that is made in this run is handed them: one whose container is there already runs
+// again as it was made, with the settings it was made with (keep_running refuses other settings than a container has),
+// whether its step names its image or not, and the run says so and which model it was made to ask (the workloads
+// review, C1). Nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these
+// run-time settings).
 // Real use waits on the self-test's fifth line passing on the real Sparks: a container reaches the one address (R57's
 // Today).
 const JOB_MODEL_PARALLEL = 4;
@@ -6719,10 +6722,24 @@ function jobModel(action, args, out) {
   return null;
 }
 const jobFromImage = (action, args) => action === 'keep_running' && args.once === true && typeof args.image === 'string' && (args.do || 'keep') === 'keep';
+// Whether step's job container is there already on its Spark (and the model it was made to ask), from one look; a look
+// that fails counts as not there (keep_running looks again itself).
+async function jobThere(args) {
+  const node = nodeById(sparkIdOf(args.spark) || String(args.spark || ''));
+  if (!node) return null;
+  const look = await appLook(node, String(args.container), null).catch(() => null);
+  if (!look || look.state === 'missing') return null;
+  return { at: sparkName(node), model: look.env.find(e => e.startsWith('SPARK_MODEL_NAME='))?.slice(17) || null };
+}
 // The settings to add to step n's job (null when none): what it lacks of the three, and a note of what it was handed.
 async function jobModelEnv(j, n, args) {
   const env = Array.isArray(args.env) ? args.env : [], given = k => env.find(e => e.startsWith(`${k}=`))?.slice(k.length + 1);
   if (JOB_MODEL_KEYS.every(given)) return null;
+  const there = await jobThere(args);
+  if (there) {
+    note(j, `Step ${n}: ${args.container} is there already on ${there.at}, so it runs again as it was made${there.model ? `, asking ${there.model}` : ''}: a job is handed a model only when it is made`);
+    return null;
+  }
   const url = given('SPARK_MODEL_URL') || jobModelAddress();
   if (!url) { note(j, `Step ${n}: ${args.container} isn’t handed a model address: Spark Console’s own address isn’t known.`); return null; }
   const named = given('SPARK_MODEL_NAME'), m = named ? { name: named } : j.jobModel || null;
@@ -6752,14 +6769,16 @@ async function jobModelEnv(j, n, args) {
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
-// known only once its operation has ended), and the Sparks it keeps awake. The record goes when the run ends, however it
+// known only once its operation has ended, so a start under way is kept as its operation, `starting`), and the Sparks
+// it keeps awake. The record goes when the run ends, however it
 // ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
 // no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
 // keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
 // and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
-// operation or its steps' (savedRunCutOff): the notice above says what is true. The file changes as runs go, so a state
-// copy ignores it (COPY_IGNORES).
+// operation or its steps' (savedRunCutOff), but for a start under way it is: the notice above says what is true, and
+// never that nothing was running when the run was cut inside a start. The file changes as runs go, so a state copy
+// ignores it (COPY_IGNORES).
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
 const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
 const savedRunWords = e => maskSecrets(String(e?.message || e || 'unknown').split('\n')[0]).slice(0, 300);
@@ -6794,9 +6813,12 @@ function savedRunPending(action, args, out, keep) {
 }
 // An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
 // steps' (its actor, since the run began).
+// A start step's own operation is not one of those: its container is known only once it ends, so the run can't stop it,
+// and its own line says to check it (`starting`, the workloads review, C5).
 function savedRunCutOff(e) {
   let runs = [];
   try { runs = Object.values(savedRunsNow().runs); } catch { return false; }
+  if (runs.some(r => r?.starting === e.id)) return false;
   return runs.some(r => r?.operation === e.id || (r?.title && e.actor === `${r.title} (saved workflow)` && String(e.at) >= String(r.since || '~')));
 }
 async function savedRunsRecover() {
@@ -6811,7 +6833,9 @@ async function savedRunsRecover() {
     let words;
     try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }
     const awake = (Array.isArray(r.awake) ? r.awake : []).filter(id => nodeById(id));
-    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || 'Nothing it had started was still running.'}`
+    // (a run cut inside a start step: what that start brought up may be running; its own line says so)
+    const none = r.starting ? `The start at step ${r.step} was still under way: its own line says what to check.` : 'Nothing it had started was still running.';
+    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || none}`
       + `${awake.length ? ` ${awake.map(id => sparkName(nodeById(id))).join(' and ')}, which it had turned on, ${awake.length > 1 ? 'are' : 'is'} no longer held awake for it.` : ''} Nothing was run again: ask for it again if it’s still wanted.`;
     fleetEvent({ type: 'notice', text });
     const conv = /^sc_[0-9a-f]{16}$/.test(String(r.chat || '')) ? chatData().conversations.find(c => c.id === r.chat && c.login === accessList().owner) : null;
@@ -7067,6 +7091,9 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         const r = await run(node, `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
+      // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
+      // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
+      const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
         : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
@@ -7075,7 +7102,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
-      if (x.listed && desiredPutBack([x.listed]).length) back.push(name);
+      if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
@@ -7083,10 +7110,14 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
 // An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
-// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's),
+// but only while it is running: one that isn't (the owner stopped it by hand, which took it off) has nothing to stop, and
+// keeping it would start it (the workloads review, C2).
 async function stopAppStarted(viewer, x, c) {
   try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
+    if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }
@@ -7599,14 +7630,15 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
+            starting: st.action === 'start_model' && out?.outcome === 'started' && out.operation ? out.operation : null });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
-          savedRunKeep(j, { started: ran, pending: [] });
+          savedRunKeep(j, { started: ran, pending: [], starting: null });
           j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
@@ -8359,10 +8391,10 @@ function desiredAfter(job) {
   const d = desired(true), before = d.running.map(x => ({ ...x }));
   // Bringing back what's already on the list (a restart, self-healing) changes nothing on it: no revision, so it never
   // stands in the way of undoing the owner's last change there. One parked while its Spark was powered off
-  // (21-power.mjs) runs again, so its mark goes (no revision either).
+  // (21-power.mjs), or put back by a run's clean-up (desiredPutBack), runs again, so its mark goes (no revision either).
   if (!stopped.length && started.every(k => d.running.some(x => keyOf(x) === k))) {
-    const parked = d.running.filter(x => x.parked && started.includes(keyOf(x)));
-    for (const x of parked) delete x.parked;
+    const parked = d.running.filter(x => (x.parked || x.putBack) && started.includes(keyOf(x)));
+    for (const x of parked) { delete x.parked; delete x.putBack; }
     let save = parked.length > 0;
     // (The owner's own start of one that's on the list makes it the newest wish for its Sparks. Self-healing brings
     // back only the newest model wanted on a Spark, displacedBy in 20-heal.mjs, so its date moves; still no revision.)
@@ -8429,15 +8461,17 @@ function parkDesired(keys, on) {
   if (hit.length) writePrivate(DESIRED_FILE, d);
   return hit.map(keyOf);
 }
-// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again
-// (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it was then, so the list is what it was before the run. Read
+// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again, and its
+// stop took it off (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it stood just before that stop, so the list
+// is what it was before the run. It carries putBack (when), so self-healing leaves it alone as it leaves a parked one
+// (the stop is the run's, not a crash: the workloads review, C4); the mark goes when it next runs (desiredAfter). Read
 // with readKept itself, so a file that can't be read is never saved over; no revision (what should run hasn't changed
 // since before the run). The keys it put back.
 function desiredPutBack(entries) {
   const d = readKept(DESIRED_FILE);
   if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
   const back = entries.filter(x => x && typeof x === 'object' && !d.running.some(y => keyOf(y) === keyOf(x)));
-  if (back.length) { d.running.push(...back.map(x => ({ ...x }))); writePrivate(DESIRED_FILE, d); }
+  if (back.length) { const at = new Date().toISOString(); d.running.push(...back.map(x => ({ ...x, putBack: at }))); writePrivate(DESIRED_FILE, d); }
   return back.map(keyOf);
 }
 // Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
@@ -8768,7 +8802,7 @@ function recordPart(month, [offset, length], id, { find, lines: stretch }, from)
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
 // Area: safety
 // Rules: R7, R8, R11, R18, R19, R21, R34, R38
-// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs, workloads-heal.test.mjs
 // Owns: none
 // Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
@@ -8821,8 +8855,9 @@ function healSkip(x, why) {
 // Which of the list's entries need bringing back now, and why; null when it's fine or not for self-healing now.
 function healReason(x, inv) {
   const sparks = x.sparks || [x.spark], sps = sparks.map(id => inv.sparks.find(s => s.id === id));
-  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark)
-  if (x.parked || sparks.some(consoleOff)) return null;
+  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark. Or put
+  // back by a run's clean-up, which stopped it on purpose: 20-desired.mjs desiredPutBack)
+  if (x.parked || x.putBack || sparks.some(consoleOff)) return null;
   // (a Spark whose Docker didn't answer the look is "couldn't read", not "its parts are gone": nothing is healed there, F6)
   if (sps.some(sp => !sp?.online || !sp.dockerOk)) return null;
   // (the status check hasn't seen it back yet: until it records this power-on, what is known of power-ons is the one
@@ -9008,7 +9043,7 @@ async function healPass() {
       if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id))) continue;
       // Parked by the power rules, or on a Spark Spark Console powered off (21-power.mjs): nothing heals against an
       // intentional power-off; it comes back when its Spark is turned on, or on its next call.
-      if (x.parked || (x.sparks || [x.spark]).some(consoleOff)) continue;
+      if (x.parked || x.putBack || (x.sparks || [x.spark]).some(consoleOff)) continue;
       // An app kept running (21-apps.mjs) has its own rules.
       if (x.app) { await healApp(x, inv).catch(e => console.error(`Self-healing ${x.container}: ${e.message}`)); continue; }
       const r = healReason(x, inv);
@@ -15374,6 +15409,61 @@ async function doorUpgrade(req, socket, head) {
     deny('403 Forbidden');
   }
 }
+/* ───────── the lock-out net: its calls to the root helper (dark: only tests call them) ───────── */
+// Area: features        Rules: R60, R42        Tests: root-helper.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The lock-out net (R60; design A 2.8, step A13a). The root helper's `run --net` copies the ways in, writes restore.sh
+// beside them and arms a timer in the Spark's own systemd before the change runs; when nothing differs afterwards it
+// disarms by itself, and otherwise what differs goes back when the timer fires unless `keep` stopped it. Nothing in the
+// console calls these yet (A13b turns the net on): guardScript builds the one script a call runs on a Spark, as
+// helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came back.
+// The guard's id is the call's own, and keep names it again.
+function guardScript(node, verb, { id, command = '', seconds = 60 }) {
+  const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
+  const call = verb === 'run'
+    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir "$HOME" -- ${q(command)}`
+    : 'keep --id "$id"';
+  return [
+    `id=${id}; h=${HELPER_AT}`,
+    "said() { printf '%s console %s\\n' \"$id\" \"$1\"; exit 0; }",
+    '[ -f "$h" ] || said none',
+    's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
+    `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
+    `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+  ].join('\n');
+}
+// What the helper said of the net: armed (and when it goes back), disarmed (nothing differed), open (what differs),
+// kept, already put back (and when), or refused (why); for run, the command's own end. Only lines that begin with the
+// call's id count: what the command printed is never read as the helper's.
+function guardAnswer(id, out) {
+  const own = String(out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1));
+  const find = p => own.find(l => l.startsWith(p))?.slice(p.length);
+  const end = own.map(l => /^end (\d{1,3}|time)$/.exec(l)).filter(Boolean).pop();
+  const said = find('console '), refused = find('refused: ');
+  return {
+    ...(said != null ? { said } : {}),
+    ...(refused != null ? { refused } : {}),
+    goesBackAt: /^the ways in go back at (\S+) /.exec(find('net armed: ') || '')?.[1] || null,
+    disarmed: find('net disarmed: ') != null,
+    open: find('net open: ') ?? null,
+    kept: find('kept: ') != null || find('kept already: ') != null,
+    putBackAt: find('already put back at ') ?? null,
+    ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
+  };
+}
+// One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
+// first; keep: id is the guard's own.
+function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60 } = {}) {
+  return new Promise(resolve => {
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds }), limit: Number(seconds) + 180 });
+    const chunks = [];
+    let bytes = 0;
+    child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
+    child.on('error', () => {});
+    child.on('close', code => resolve({ id, code, out: Buffer.concat(chunks).toString('utf8').slice(0, J_MAX) }));
+  });
+}
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
 // Area: features        Rules: R46        Tests: tools.test.mjs
 // Owns: none
@@ -18100,7 +18190,7 @@ function commandShown(c, ok, out) {
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
 // The SHA-256 of deploy/spark-console-root as this build ships it (work.test.mjs holds the two equal). A Spark's helper is
 // called only when it is this one; a build that ships a changed helper answers with the owner's command again.
-const HELPER_SHA256 = '8b6ea139d806ea817f3688587d37826194ab74547726a09b415bd687f83d1eca';
+const HELPER_SHA256 = 'ac9f2e08c9b7e0a49bf5fe38a52dd84fc53c2bd4d777ad3bb77e9b2f06ad91ef';
 // (on the stand-in fleet only, each Spark's helper is a rehearsal under its own home, test/work.test.mjs: a real sudo,
 // whose line names HELPER_FILE alone, never runs that path without a password)
 const HELPER_AT = ALL_LOCAL ? `"$HOME/.rehearsal"${HELPER_FILE}` : HELPER_FILE;
