@@ -2223,15 +2223,31 @@ function checkedFold(m) {
     odd.length ? h('p', { class: 'muted msg-unverified' }, `Not confirmed by your Sparks: ${odd.join(', ')}. Double-check these.`) : null);
 }
 
+// A command Sparkie ran on a Spark (design A 2.10): its own quiet row, never folded, the command itself on a button
+// (the Spark it ran on before it, "as root" or "as a look"); a press shows the line saying it ran as a look, the
+// command whole in fixed-width type with the end of what it printed, and where all of it is kept. The service builds
+// and masks every field; here they are text.
+function commandRow(t) {
+  const shown = h('div', { class: 'cmd-shown', hidden: true },
+    t.look ? h('div', { class: 'muted' }, t.look) : null,
+    h('pre', {}, [t.line, t.tail].filter(Boolean).join('\n')),
+    t.kept ? h('div', { class: 'muted' }, `All of it is kept in Sparkie’s record ${t.kept}.`) : null);
+  const btn = h('button', { type: 'button', class: 'cmd-row', 'aria-expanded': 'false',
+    onclick: () => { shown.hidden = !shown.hidden; btn.setAttribute('aria-expanded', String(!shown.hidden)); } },
+  t.where ? h('span', {}, `${t.where}${t.root ? ', as root' : t.look ? ', as a look' : ''}`) : null, h('code', {}, t.line), t.ok === false ? h('span', {}, 'didn’t run') : null);
+  return h('li', {}, btn, shown);
+}
+
 function toolLines(tools, asked = false) {
   const lines = [];
   for (const t of tools) {
-    const same = !t.change && lines.find(x => !x.change && x.name === t.name && x.ok === t.ok);
+    const same = !t.change && !t.line && lines.find(x => !x.change && !x.line && x.name === t.name && x.ok === t.ok);
     if (same) { same.times++; same.ms += num(t.ms) ? t.ms : 0; } else lines.push({ ...t, times: 1, ms: num(t.ms) ? t.ms : 0 });
   }
   const took = ms => (ms >= 10000 ? `${Math.round(ms / 1000)} s` : `${Math.max(0.1, ms / 1000).toFixed(1)} s`);
   const times = n => (n === 2 ? ' twice' : n > 2 ? ` ${n} times` : '');
   return h('ul', { class: 'msg-tools', 'aria-label': `What ${ASSISTANT} did` }, lines.map(t => {
+    if (t.line) return commandRow(t);
     const title = t.title || t.name;
     const waits = t.outcome ? ['question', 'needs-ok'].includes(t.outcome) : asked;
     return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? 'Started' : 'Couldn’t'}: ${title}`)
@@ -2752,7 +2768,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
         if (ev.type === 'thinking') reply.thinking = true;
         if (ev.type === 'delta') reply.content += ev.text;
         if (ev.type === 'tool') {
-          reply.tools = [...(reply.tools || []), { name: ev.name, title: ev.title, ok: ev.ok, ms: ev.ms, change: ev.change, outcome: ev.outcome }];
+          reply.tools = [...(reply.tools || []), { name: ev.name, title: ev.title, ok: ev.ok, ms: ev.ms, change: ev.change, outcome: ev.outcome, where: ev.where, line: ev.line, tail: ev.tail, root: ev.root, kept: ev.kept, look: ev.look }];
           if (ev.change && ev.ok) followNewJobs();
         }
         if (ev.type === 'done' || ev.type === 'error') {
