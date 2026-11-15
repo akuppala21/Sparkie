@@ -792,10 +792,10 @@ def a1(c):   # a write through a link, to a hidden file and to a read-only one
     return got
 
 
-def a2(c):   # an open connection
+def a2(c):   # an open connection, only to what is the owner's own: no host outside is ever contacted
     tries = [('the loopback', '127.0.0.1', c.port)]
     if c.mode != 'run':
-        tries += [('an outside address', '1.1.1.1', 443), ('the tailnet', '100.100.100.100', 53)]
+        tries.append(('the tailnet', '100.100.100.100', 53))   # answered by this Spark's own Tailscale
         if c.fx.get('own'):
             tries.append(('its own address', c.fx['own'], 22))
     return [name for name, addr, port in tries if port and tcp(addr, port)]
@@ -986,12 +986,12 @@ def prep():
     os.symlink(f'{H}/key', f'{S}/key-link')
     for i, (_, path) in enumerate(SOCKETS):
         os.symlink(path, f'{S}/sock-{i}')
-    own = None
+    own = None   # this Spark's own first address, as hostname -I lists them (no connection is made)
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:   # no packet is sent: this only picks a route
-            u.connect(('1.1.1.1', 53))
-            own = u.getsockname()[0]
-    except OSError:
+        listed = subprocess.run(['hostname', '-I'], stdin=DEVNULL, stdout=subprocess.PIPE, stderr=DEVNULL, env=CLEAN,
+                                timeout=10).stdout.decode().split()
+        own = next((a for a in listed if re.fullmatch(r'\d+\.\d+\.\d+\.\d+', a) and not a.startswith('127.')), None)
+    except (OSError, subprocess.SubprocessError):
         pass
     handle = handle_of(f'{H}/key')
     with open(f'{S}/fixtures.json', 'w') as f:
