@@ -3,7 +3,8 @@
 // model uses it; the model that ran before the compare still runs and nothing it started is left running; scores 0.80
 // and 0.81 give the owner buttons in the chat, and a press keeps that one; a result.json written before its job began
 // gives no score; a workflow with no model input is refused, and so is one whose job takes an {input} (it would be
-// asked every run, D6c); a candidate that won't start is listed with why and the
+// asked every run, D6c); names holding a quote, a semicolon or $( run nothing, a line break is refused, and a setting
+// holding them reaches its job whole; a candidate that won't start is listed with why and the
 // loop goes on; "sparkie" with a brain that answers one call at a time is not tried, and starts and stops nothing; at
 // the hour the run under way is stopped (what it started too) and the best so far is kept.
 //
@@ -14,9 +15,9 @@
 // so their job's image runs. One hour is two minutes here (SPARK_CONSOLE_COMPARE_MS).
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, SLOW } from './lib.mjs';
+import { T, REPO, useFleet, api, newChat, say, choose, chatMessages, waitFor, SLOW } from './lib.mjs';
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT = 'gpt-oss-20b', TEST = 'testorg--Qwen3.8-27B-abliterated-GGUF', IMAGE = 'python:3.12-slim';
 const SINCE = '2026-11-12T08:00:00.000Z';
@@ -136,6 +137,29 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
     assert.match(op.report[1], /^zzqx nothing matches this: failed: .*No model on disk or in the recipes matches/);
     assert.match(op.report[2], /^gpt-oss-20b: score 0\.9, 2 items, \d+ s$/);
     assert.deepEqual(running('spark3'), before);
+  });
+
+  // A candidate's name reaches start_model only (the job is handed the model as started); every setting goes to Docker
+  // as one quoted argument (appRunCommand's q), so text in it is never run. Apps get no env file, only -e.
+  test('names holding a quote, a semicolon or $( run nothing of theirs, a line break is refused, and a setting holding them reaches the job whole', { timeout: 300000 * SLOW }, async () => {
+    const MARK = 'sc-injected', marks = () => [T.fleet.root, REPO].flatMap(d => readdirSync(d, { recursive: true }).map(String).filter(f => f.split('/').pop().startsWith(MARK)));
+    const broken = await act('compare_models', { workflow: 'scored work', candidates: [`${GPT}\ntouch ${MARK}-0`] });
+    assert.equal(broken.status, 400, broken.text);
+    await ownerSaves('odd names', workload('odd', { gpt: 0.9 }));
+    const odd = [`${GPT}"; touch ${MARK}-1; echo "`, `x$(touch ${MARK}-2)`, `y;touch ${MARK}-3 \`touch ${MARK}-4\``];
+    const op = await compare({ workflow: 'odd names', candidates: odd, sample: 1 });
+    assert.equal(op.status, 'completed', `${op.error}\n${op.log.join('\n')}`);
+    assert.equal(op.report.length, odd.length + 1, op.report.join('\n'));
+    odd.forEach((name, i) => assert.ok(op.report[i].startsWith(`${name}: `), op.report[i]));
+    // A setting's value with all of them, to a job of the owner's: it is the job's whole, and nothing of it ran.
+    const value = `a"b; touch ${MARK}-5; $(touch ${MARK}-6) \`touch ${MARK}-7\` 'c'`;
+    const job = await act('keep_running', { spark: 'spark3', container: 'odd-env', image: IMAGE, once: true, env: [`ODD=${value}`], command: ['sh', '-c', 'printf %s "$ODD" > odd.txt'] });
+    assert.equal(job.json?.outcome, 'started', job.text);
+    assert.equal((await opEnd(job.json.operation, 'the odd-env job')).status, 'completed');
+    const file = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs', 'odd-env', 'odd.txt');
+    await waitFor(async () => existsSync(file), { timeout: 30000, what: 'odd.txt' });
+    assert.equal(readFileSync(file, 'utf8'), value);
+    assert.deepEqual(marks(), [], 'nothing in a name or a setting ran');
   });
 
   test('at the hour, the run under way is stopped with what it started, and the best so far is kept', { timeout: 300000 * SLOW }, async () => {
