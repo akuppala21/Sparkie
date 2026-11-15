@@ -1,5 +1,5 @@
 /* ───────── Sparkie’s rounds ───────── */
-// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs
+// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
@@ -16,10 +16,66 @@ function howAsked({ target, tuned, tools }) {
     ...usageAsked(tuned) };
   return { base };
 }
-// Tool rounds per message, and changes among them: the setup's, else 6 and 4.
+// Tool rounds per message, and changes among them: the setup's, else 6 and 4. And the loop's budgets (design A 2.10,
+// R50), each counted by code on this turn, so per message and per chat, and each set beside a setup's ask block, never
+// in it (askBlock leaves them out): work steps, the run calls one message may make (the setup's workSteps, else twice
+// its rounds, at most 30); the tool output it may read (40% of the setup's contextTokens, else 32,768, at 3 characters
+// a token); and three refused calls in a row. Reaching one makes the next round the last, as overBudget does.
+const WORK_STEPS_MOST = 30;        // limit: run calls in one message, whatever a setup says
+const CONTEXT_TOKENS = 32768;      // limit: the context a setup that states none is taken to have
+const REFUSED_IN_A_ROW = 3;        // limit: refused calls in a row before the tools are put away for the message
+// (the two a setup states, for the tested mark: brainCatalog, 21-guide.mjs; none today, so the mark is unchanged)
+const budgetsSet = s => Object.fromEntries(['workSteps', 'contextTokens'].filter(k => s?.[k] != null).map(k => [k, s[k]]));
 function turnBudgets({ tuned }) {
   const ROUNDS = Math.max(1, Number(tuned.toolRounds) || 6), CHANGES = Math.max(1, Number(tuned.maxChanges) || 4);
-  return { ROUNDS, CHANGES };
+  const steps = Number(tuned.workSteps), tokens = Number(tuned.contextTokens);
+  const WORK_STEPS = Math.min(WORK_STEPS_MOST, Number.isInteger(steps) && steps > 0 ? steps : 2 * ROUNDS);
+  const TOOL_OUTPUT = Math.floor((Number.isInteger(tokens) && tokens >= 1000 && tokens <= 1048576 ? tokens : CONTEXT_TOKENS) * 3 * 0.4);
+  return { ROUNDS, CHANGES, WORK_STEPS, TOOL_OUTPUT, works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: null };
+}
+// One run call is one work step (runOne, before it is handed over): past the message's steps it is not run, and the
+// step that reaches them makes the next round the last.
+function workStep(turn) {
+  if (turn.works >= turn.WORK_STEPS) {
+    turn.notRun++;
+    throw new HttpError(429, `Not run: one message may run ${turn.WORK_STEPS} commands, and this one has. Answer now with what you found and what is left; the owner can say “go on” to carry on.`);
+  }
+  if (++turn.works >= turn.WORK_STEPS) turn.spent ||= 'steps';
+}
+// After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
+// refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
+// sent of the result (budgetCut).
+function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
+  const why = ok ? nothing : out.replace(/^\[error\] /, '');
+  if (why == null) turn.refusedRow.length = 0;
+  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW && !turn.spent) {
+    turn.spent = 'refused';
+    turn.refused.push(...turn.refusedRow);
+  }
+  if (name === 'run' && ok && nothing == null) turn.ran++;
+  return budgetCut(turn, out, jid);
+}
+// The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
+// by its record (journalTool keeps it whole), and the next round is the last. (Kept apart: how a long result is cut may
+// change, design G step 5.)
+function budgetCut(turn, out, jid) {
+  if (!turn.unread.length && turn.outChars + out.length <= turn.TOOL_OUTPUT) { turn.outChars += out.length; return out; }
+  turn.unread.push(jid);
+  turn.spent ||= 'output';
+  return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${jid ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : 'It wasn’t kept: the record couldn’t be written.'} Answer now with what you have; the owner can say “go on” to carry on.`;
+}
+// A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
+// results weren't read and where they are kept, or which calls were refused and why; and that the owner can go on.
+function budgetReport(turn) {
+  if (!turn.spent) return;
+  const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : ''}.`);
+  if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
+  if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
+  lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : 'Say “go on” to carry on.');
+  const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
+  turn.answer += text;
+  turn.emit({ type: 'delta', text });
 }
 // The tools of each round (R46): the core and this request's groups, opened by its words (a carry-on turn starts
 // from the groups its request kept), by state, by a call to a tool that wasn't offered, and by guide.
@@ -97,8 +153,9 @@ async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs)
-    const last = round >= ROUNDS || overBudget(turn);
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
+    // or at one of the loop's budgets, turnBudgets)
+    const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
     turn.usage = r.usage || turn.usage;
@@ -108,6 +165,7 @@ async function turnRounds(turn) {
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
   }
+  budgetReport(turn);
 }
 // One round’s tool calls (at most 4): on the record first; lookups together, then changes one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
@@ -141,12 +199,14 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null;
+  let nothing = null;   // (why a call that answered ran nothing: a run where the helper can't run it; budgetsAfter)
   try {
     // (the owner's /stop came while another call of this round ran: nothing more is handed to runAction)
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
+    if (c.name === 'run') workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
     let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -159,12 +219,14 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     out = JSON.stringify(maskDeep(value));
     outcome = typeof value?.outcome === 'string' ? value.outcome : null;
     if (value?.plan) plan = value.plan;
+    if (value?.ran === false) nothing = maskSecrets(String(value.why || 'Nothing ran.'));
   } catch (e) {
     ok = false;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
-  journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
   if (out.length > 12000) out = `${out.slice(0, 12000)} …(cut)`;
+  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
   const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   steps[i] = step;
   emit({ type: 'tool', ...step });

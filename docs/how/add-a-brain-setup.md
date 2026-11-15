@@ -14,7 +14,8 @@ at a switch. A newer brain needs its setup, never an edit to the chat loop (R50)
 - What the new brain needs that the first one didn't, in the same place: `mergeRoles` when its chat template refuses
   two user messages in a row; `thinkTags` when its server leaves its thinking in the text between other tags;
   `tokenBudget` when its context is small (its own count of tokens ends the tool rounds there).
-- Its limits beside the block, never in it: `toolRounds`, `maxChanges`, `toolCap` (R46).
+- Its limits beside the block, never in it: `toolRounds`, `maxChanges`, `toolCap` (R46); `workSteps` and
+  `contextTokens`, the loop's budgets (R50).
 - After the switch: `POST /main/check` (the brain check) and the brain eval (`docs/how/run-the-brain-eval.md`). A setup
   that sets any of the three fields above changes what the brain reads (the tested mark).
 
