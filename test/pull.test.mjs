@@ -16,7 +16,9 @@
 // gone after either ending; refused with nothing changed when its timer can't start or the real address doesn't answer
 // for the build running now; the build from before back and answering when the new one never answers, when its own
 // installer keeps a dead build or its own put-back does nothing, when it calls tailscale despite SKIP_ROUTES, when the
-// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle.
+// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle. R53: with
+// a `.curlrc` and a user-site `.pth` in Spark 2's home, setup, check, an install kept through the way back and one put
+// back by it read neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -89,6 +91,7 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'deploy/update-guard.sh': { text: read(REPO, 'deploy', 'update-guard.sh'), mode: '100755' },
     'deploy/go-back.sh': { text: read(REPO, 'deploy', 'go-back.sh'), mode: '100755' },
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },
+    'deploy/path-check.sh': { text: read(REPO, 'deploy', 'path-check.sh'), mode: '100755' },
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
   };
   for (const u of UI_FILES) f[`public/${u}`] = { text: u === 'app.js' ? "const BUILD = 'dev';\n" : `${u} ${n}\n` };
@@ -1018,5 +1021,39 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.deepEqual([res.tree, res.result], [g.t12, 'not kept']);
     assert.match(res.why, /^the install was interrupted; the build answering now is /);
     await fromBefore(r, mk);
+  });
+
+  test('Python as -I and curl as -q: with a .curlrc and a user-site .pth in Spark 2\'s home, setup, check, an install kept through the way back and one put back by it read neither', { timeout: 300000 * SLOW }, async () => {
+    const h = await sparkTwo(), rc = join(h, 'curlrc-read'), pth = join(h, 'pth-ran');
+    writeFileSync(join(h, '.curlrc'), `trace-ascii = "${rc}"\n`);
+    const site = spawnSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], { env: envFor(h), encoding: 'utf8' }).stdout.trim();
+    mkdirSync(site, { recursive: true });
+    writeFileSync(join(site, 'zz-planted.pth'), `import os; open(${JSON.stringify(pth)}, 'a').close()\n`);
+    // (a plain python3 and curl here do read them)
+    spawnSync('python3', ['-c', 'pass'], { env: envFor(h) });
+    spawnSync('curl', ['-s', '-m', '2', 'http://127.0.0.1:1/'], { env: envFor(h) });
+    assert.deepEqual([existsSync(pth), existsSync(rc)], [true, true], 'the planted files are read on this machine');
+    rmSync(pth); rmSync(rc);
+    assert.equal((await pull(h, ['setup', OWNER_REPO], { input: `${TOKEN}\n` })).code, 0);
+    const g1 = push(treeFiles(67), 'Home reads: the first build');
+    mark(g1);
+    let r = await pull(h, ['install', g1.t12]);
+    assert.equal(r.code, 0, r.out);
+    const g2 = push(treeFiles(68), 'Home reads: kept through the way back');
+    mark(g2);
+    r = await pull(h, ['install', g2.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /The way back is armed/);
+    assert.deepEqual([resultOf(h).tree, resultOf(h).result], [g2.t12, 'kept']);
+    const g3 = push(treeFiles(69, 'dead'), 'Home reads: put back');
+    mark(g3);
+    r = await pull(h, ['install', g3.t12]);
+    assert.equal(r.code, 1, r.out);
+    assert.deepEqual([resultOf(h).tree, resultOf(h).result], [g3.t12, 'not kept']);
+    assert.equal((await health(h))?.build, buildOf(g2.files));
+    assert.equal((await pull(h, ['check'])).code, 0);
+    assert.equal((await pull(h, ['check', '--json'])).code, 0);
+    assert.ok(!existsSync(pth), 'a python3 without -I ran');
+    assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? read(rc).slice(0, 300) : ''}`);
   });
 });
