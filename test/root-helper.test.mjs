@@ -80,6 +80,10 @@ function spark({ installed = true, systemd, knobs = {} } = {}) {
   put(`${h}/.local/state/spark-console/api.sock`);
   put(`${h}/.local/state/spark-console/sessions.json`, '{}');
   put(`${h}/.local/state/spark-console/desired.json`, '{}');
+  // What the owner and Sparkie said, as Spark 2 keeps it (with the copies beside it): never put back.
+  for (const f of ['chats.json', 'memory.json', 'memory-past.json', 'audit.jsonl', 'saved-workflows.json', 'memory.json.prev', 'audit.jsonl.1']) {
+    put(`${h}/.local/state/spark-console/${f}`, '"the owner said"');
+  }
   put(`${h}/.cache/huggingface/token`, 'hf_x');
   dir(`${h}/spark-console-src`);
   dir(`${h}/models`);
@@ -390,12 +394,42 @@ describe('what the run wall holds in the home', () => {
   });
   test('.docker is hidden whole; the state folder is one empty folder with its plain files put back and no sign-in file or socket', () => {
     const s = proven();
-    for (const f of ['passkeys.json', 'agents.json', 'telegram.json', 'access.json', 'access.json.good', 'door.sock', 'memory.json', 'chats.json']) s.put(`home/owner/.local/state/spark-console/${f}`, '{}');
+    for (const f of ['passkeys.json', 'agents.json', 'telegram.json', 'access.json', 'access.json.good', 'door.sock', 'lessons.json', 'plugs.json']) s.put(`home/owner/.local/state/spark-console/${f}`, '{}');
     const r = change(s, 'true');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const c = unitCall(s, `sw-run-${r.id}`).filter(a => a.includes('/home/owner/.docker') || a.includes('/.local/state/spark-console'));
     assert.deepEqual(c, ['TemporaryFileSystem=/home/owner/.docker:ro', 'TemporaryFileSystem=/home/owner/.local/state/spark-console:ro',
-      ...['chats.json', 'desired.json', 'memory.json'].map(f => `BindReadOnlyPaths=/home/owner/.local/state/spark-console/${f}`)]);
+      ...['desired.json', 'lessons.json', 'plugs.json'].map(f => `BindReadOnlyPaths=/home/owner/.local/state/spark-console/${f}`)]);
+  });
+});
+
+describe("the owner's words on Spark 2", () => {
+  // The state folder is on Spark 2 only; the helper's lists are the same everywhere, so this is how the hub looks.
+  const WORDS = ['chats.json', 'memory.json', 'memory-past.json', 'audit.jsonl', 'saved-workflows.json', 'memory.json.prev', 'audit.jsonl.1'];
+  const LOOK_IN = 'cd "$WALL_VIEW/home/owner/.local/state/spark-console" && for f in ' + [...WORDS, 'desired.json', 'lessons.json'].join(' ')
+    + '; do cat "$f" > /dev/null && echo "$f read"; done; true';
+  test('a look and a change on the hub: the state folder is hidden, and no file of what was said is put back', () => {
+    const s = proven();
+    s.put('home/owner/.local/state/spark-console/lessons.json', '{}');
+    for (const [wall, r] of [['look', look(s, LOOK_IN)], ['run', change(s, LOOK_IN)]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
+      assert.ok(c.includes('TemporaryFileSystem=/home/owner/.local/state/spark-console:ro'), c.join(' '));
+      for (const f of WORDS) assert.ok(!c.some(a => a.endsWith(`/.local/state/spark-console/${f}`)), `${f} is not put back`);
+      assert.ok(c.includes('BindReadOnlyPaths=/home/owner/.local/state/spark-console/lessons.json'), 'what holds no words is');
+      // A command in the wall: each file of what was said is not there; the rest is read.
+      for (const f of WORDS) assert.match(r.stderr, new RegExp(`cat: ${esc(f)}: No such file or directory\n`));
+      assert.match(r.stdout, /^desired\.json read\nlessons\.json read\n/);
+    }
+  });
+  test('on a compute Spark (no state folder) nothing about it is asked for', () => {
+    const s = proven();
+    rmSync(join(s.R, 'home/owner/.local/state'), { recursive: true });
+    for (const r of [look(s, 'true'), change(s, 'true')]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      const c = calls(s).filter(x => x[0] === 'systemd-run').at(-1);
+      assert.ok(!c.some(a => a.includes('/.local/state')), c.join(' '));
+    }
   });
 });
 

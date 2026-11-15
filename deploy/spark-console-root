@@ -48,6 +48,9 @@ MUST_BE_THERE='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_en
   .cache/spark-console'
 # The state folder's names that stay hidden: the sign-in files and the sockets. Its other plain files are put back.
 SIGNIN=' api.sock door.sock sessions.json passkeys.json agents.json telegram.json access.json access.json.good '
+# And what the owner and Sparkie said, which R43 keeps from every agent key: never put back in either wall, nor the
+# copies kept beside them (.prev, .1, .unreadable-...). (The journal is in ~/.local/share/spark-console, hidden whole.)
+WORDS='chats.json memory.json memory-past.json audit.jsonl saved-workflows.json'
 # A path that may stand in a unit setting: no space, quote, %, $, backslash or colon; no . or .. part.
 SAFE='^(/[A-Za-z0-9._@+-]+)+$'
 
@@ -226,7 +229,7 @@ hide() {   # a folder gets an empty read-only one over it; anything else is made
   if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then TMPFS+=("$p"); else GONE+=("$p"); fi
 }
 hide_home() {
-  local h=$1 p f
+  local h=$1 p f w
   # .ssh is hidden, and its files that hold no private key are put back, read-only: plain files only, never a link.
   if [ -d "$R$h/.ssh" ] && [ ! -L "$R$h/.ssh" ]; then
     TMPFS+=("$h/.ssh")
@@ -243,13 +246,15 @@ hide_home() {
            .local/share/fish/fish_history; do
     hide "$h/$p"
   done
-  # Spark Console's state folder, the same way: hidden, and its plain files but the sign-in files and the sockets put
-  # back, read-only (a change cannot rename a hidden name out of the way, or write the brain's memory).
+  # Spark Console's state folder (on Spark 2 only), the same way in both walls: hidden, and its plain files put back
+  # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
+  # way or write the brain's memory, and no look or change reads what was said).
   p="$h/.local/state/spark-console"
   if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then
     TMPFS+=("$p")
     for f in "$R$p"/*; do
       [ -f "$f" ] && [ ! -L "$f" ] && [[ $SIGNIN != *" ${f##*/} "* ]] || continue
+      for w in $WORDS; do [[ ${f##*/} == "$w"* ]] && continue 2; done
       f=${f#"$R"}
       if safe_path "$f"; then BACK+=("$f"); fi
     done
