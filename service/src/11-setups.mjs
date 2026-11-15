@@ -210,7 +210,7 @@ async function digModel(job, viewer, modelId) {
   const variants = (await inBatches(DIG_FIXTURE ? [] : newRepos, 4, versionOf)).filter(Boolean).map(v => ({ ...variantFields(v), community: true }));
   const result = { found: setups.length, oneClick: setups.filter(s => s.deployable).length };
   // A look where a source failed never loses what an earlier look found from it, and isn't stamped as fresh (so the
-  // daily refresher tries again tomorrow, not in a week): review, 2026-11-11.
+  // next look that needs it tries again, not one a week later): review, 2026-11-11.
   const earlier = foundSetups()[m.id], failedSources = new Set(report.filter(r => r.error).map(r => r.name));
   const kept = failedSources.size && earlier?.setups ? earlier.setups.filter(st => !setups.some(x => x.id === st.id)) : [];
   const at = failedSources.size && earlier?.at ? earlier.at : new Date().toISOString();
@@ -351,7 +351,7 @@ async function downloadTargets(viewer) {
     if (r.code !== 0) continue;
     for (const [name] of fields(r.out, 'model')) at(name, n.id);
     for (const [key] of fields(r.out, 'hf')) at(`hf:${key}`, n.id);
-    if (canUse(viewer, n.id)) targets.push({ id: n.id, diskFree: Number((fields(r.out, 'disk')[0] || [])[0]) || null });
+    targets.push({ id: n.id, diskFree: Number((fields(r.out, 'disk')[0] || [])[0]) || null });
   }
   const best = targets.find(t => t.id === CONFIG.modelsHost) || [...targets].sort((a, b) => (b.diskFree || 0) - (a.diskFree || 0))[0];
   return { present, where, targets, defaultTarget: best?.id || null };

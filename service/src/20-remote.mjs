@@ -44,6 +44,8 @@ Object.assign(SORT_HANDLERS, {
       // last part, which may hold the same; -J takes what the server says)
       const any = (w, text) => ({ ...w, text: text.replace(/#\d+|\{[^}]*\}|\[[^\]]*\]/g, '*'), glob: w.glob || /#\d|\{|\[/.test(text) });
       for (const w of o.all('o', 'output')) if (w.text !== '-') { sortTouch(any(w, w.text), ctx, r); if (dir) sortTouch(any(w, at(w.text).text), ctx, r); }
+      // (and -w's %output{file} writes the rest of what -w prints to that file)
+      for (const w of o.all('w', 'write-out')) for (const m of w.text.matchAll(/%output\{>{0,2}([^}]*)\}/g)) sortTouch(any(w, m[1]), ctx, r);
       if (o.has('J', 'remote-header-name')) sortInto(dir, ctx, r);
       else if (o.has('O', 'remote-name', 'remote-name-all')) for (const u of urls) if (last(u)) sortTouch(any(at(last(u)), at(last(u)).text), ctx, r);
     } else if (name === 'wget') {
@@ -107,12 +109,16 @@ Object.assign(SORT_HANDLERS, {
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
       sortFar(m[2], ctx, r, rec && lastOne);
     });
-    // (each source lands in the folder under its own name; a source ending in / lands as what it holds)
+    // (each source lands in the folder under its own name, a source ending in / as what it holds; rsync -b keeps what
+    // it replaces with a suffix, ~ unless --suffix says)
     const dest = plain.at(-1), far = dest && /^(?:[^@/:]*@)?([^/:]+):+(.*)$/s.exec(dest.text);
+    const bk = name === 'rsync' && o.has('b', 'backup') && !o.has('backup-dir') ? o.all('suffix').at(-1)?.text ?? '~' : null;
+    if (bk != null && dest && !far) sortTouch({ ...dest, text: dest.text.replace(/\/+$/, '') + bk }, ctx, r);
     for (const w of plain.length > 1 ? plain.slice(0, -1) : []) {
       const b = w.text.replace(/^(?:[^@/:]*@)?[^/:]+:+/, ''), base = b.replace(/\/+$/, '').split('/').pop();
       if (!base || (/\/$/.test(b) && name === 'rsync')) { if (rec) { if (far) sortFar(far[2], ctx, r, true); else sortTouch(dest, ctx, r, true); } continue; }
       if (far) sortFar(`${far[2] || '.'}/${base}`, ctx, r, rec); else sortTouch({ ...dest, text: `${dest.text.replace(/\/+$/, '')}/${base}`, glob: dest.glob || /[*?[]/.test(base) }, ctx, r, rec);
+      if (bk != null && !far) sortTouch({ ...dest, text: `${dest.text.replace(/\/+$/, '')}/${base}${bk}`, glob: dest.glob || /[*?[]/.test(base) }, ctx, r, rec);
     }
     if (a.some(w => (name !== 'rsync' && /^-[^-]*[oFJS]/.test(w.text)) || /^-e$|^--(?:rsh|rsync-path)/.test(w.text) || (name === 'rsync' && /^-[a-zA-Z]*e/.test(w.text)))) unsure(`${sortQ(name)} is given an option that runs a command or goes through a host the sorter can’t see.`);
   },
