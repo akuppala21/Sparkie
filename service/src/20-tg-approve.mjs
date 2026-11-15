@@ -88,6 +88,7 @@ function tgApproving(choice) {
   if (!conv) return { answer: 'That button has expired. Ask again.' };
   // Not sent here, sent to a chat paired before this one, or approvals off or locked: the page answers it.
   if (!tgAskOpen(choice, c)) return { answer: 'That one waits for you in Spark Console.' };
+  if (putBackHeld()) return { answer: PUTBACK_TG };
   const held = c.action ? tgApprovalsHeld() : null;
   if (held) {
     audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approval-held', args: { chat: conv.id }, ok: true });

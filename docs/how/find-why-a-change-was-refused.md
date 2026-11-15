@@ -8,13 +8,14 @@ says which it was in its words; find the gate before changing anything.
 Look in this order:
 1. The refusal or the button's text: it names the gate (paused, not tested, not validated, not your words, no room,
    the brain's Spark, protected).
-2. `sparkie_setup`: whether agents' changes are paused (by the owner or by themselves) and why.
+2. `sparkie_setup`: whether agents' changes are paused (by the owner or by themselves) and why; `changes`, why every
+   change Sparkie asks for is a button (the rail, R52: no passing eval on record for this brain and build).
 3. `workflows`: whether the workflow behind it is tested and validated.
 4. `recent_operations` and `fleet_events`: failed operations that tripped the pause.
 
 Then the code, in the order `runAction` (`16-actions.mjs`) checks: inputs (`checkInput`), may change, the pause
 (`pausedCheck`, `agentSettings` in `17-changes.mjs`), the intent gate for Sparkie (`sparkieCheck`, `changeIntent`,
-`tracesToRequest` in `16-actions.mjs`), the workflow state (`workflowStatus` in `18-workflows.mjs`), the breaker
+`tracesToRequest` in `16-actions.mjs`), the rail (`brainRail`, `21-brain-rail.mjs`), the workflow state (`workflowStatus` in `18-workflows.mjs`), the breaker
 (`tripBreaker`), then the action's own rails (`railsFor`, `placeModel`, `question` in `17-changes.mjs`). Passkey
 gates on page routes: `passkeyGate` (`22-passkey.mjs`).
 
@@ -30,7 +31,8 @@ gates on page routes: `passkeyGate` (`22-passkey.mjs`).
 
 ## Rules
 
-- R25: a change from Sparkie runs at once only when the owner's own words ask for it and name its target.
+- R25: a change from Sparkie runs at once only when the owner's own words ask for it and name its target. R52: and
+  only while its brain is checked.
 - R9: the pause fails closed and trips itself. R18: a workflow runs only tested. R12: approval arguments stay out of
   public schemas. R6: passkey-gated changes.
 
