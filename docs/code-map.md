@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 85 parts in `service/src/`, joined in name order into `service/server.mjs` (21145 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 85 parts in `service/src/`, joined in name order into `service/server.mjs` (21157 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -455,10 +455,10 @@ Once the owner has saved a check's ping address (Healthchecks.io: https://hc-pin
 
 ### `20-came-from.mjs`: the dangerous ask's "came from": what the command names and where it was read (A10b)
 
-Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only searched and never shown.
+Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only searched and never shown. The search's bounds, after the reads' own: the first 64 things, in the order they were found, and 64 Mi characters looked through in all (the owner's words, the reads and the answers, once per thing). A short thing in a crafted text costs about 8 ns a character, so the worst case stays near half a second; past either bound the ask says …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 116
+- **Lines:** 128
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
