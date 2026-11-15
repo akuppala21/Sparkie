@@ -1,10 +1,12 @@
 // Covers: The memory questions (design G 3.7; build step 7, piece b): `test/eval/memory.json` and its held-out set
 // `test/eval/memory-held-out.json`, run by `test/eval.mjs` on the stand-in brain. With every memory switch on, every
 // question's checks of what the brain is sent (has, hasNot) hold and nothing is changed; for each switch (names, past,
-// time, count, said) every question that measures it fails those checks with that switch off (a lesson card follows
-// names), and the questions that measure none still hold with every switch off (an agent's chat gets no card); the run prints each case and each kind with its rounds and seconds.
-// The held-out set holds the same way, and none of its words is in another case file, a document, the service's code
-// or settings, or what a stand-in console's brain is sent (its system prompt, tools and their catalog).
+// time, count, said, digest) every question that measures it fails those checks with that switch off (a lesson card
+// follows names; a long result's line, and a line read on through recall, follow digest), and the questions that
+// measure none still hold with every switch off (an agent's chat gets no card); the run prints each case and each kind
+// with its rounds and seconds. The held-out set holds the same way, and none of its words is in another case file, a
+// document, the service's code or settings, or what a stand-in console's brain is sent (its system prompt, tools and
+// their catalog).
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -19,8 +21,8 @@ const TMP = mkdtempSync(join(tmpdir(), 'sct-memory-questions-'));
 process.on('exit', () => rmSync(TMP, { recursive: true, force: true }));
 const file = n => join(TMP, n), read = n => JSON.parse(readFileSync(file(n), 'utf8'));
 const setOf = name => JSON.parse(readFileSync(join(REPO, 'test', 'eval', `${name}.json`), 'utf8'));
-// The additions on main that a question can measure (the digest, G5, is not built yet: no question of it is here).
-const SWITCHES = ['names', 'past', 'time', 'count', 'said'];
+// The additions a question can measure: every one of design G 3 (the digest since G5).
+const SWITCHES = ['names', 'past', 'time', 'count', 'said', 'digest'];
 let fleet = null;
 after(async () => { await fleet?.stop(); });
 
@@ -84,7 +86,8 @@ describe('the held-out set is kept apart', () => {
   const held = setOf('memory-held-out').cases;
   const words = [...new Set(held.flatMap(c => [c.say, ...(c.has || []), ...(c.hasNot || []), ...(c.answerHas || []), ...(c.answerHasNot || []),
     ...(c.before || []).flat(), ...(c.seed?.memory || []).map(l => l.text), ...(c.seed?.past || []).map(l => l.text),
-    ...(c.seed?.journal || []).flatMap(j => [j.words, j.text].filter(Boolean))]).map(w => w.toLowerCase()))];
+    ...(c.seed?.journal || []).flatMap(j => [j.words, j.text].filter(Boolean)), ...(c.seed?.events || []).flatMap(e => Object.values(e.errorLines?.put || {}))])
+    .map(w => w.toLowerCase()))];
   const found = (where, text) => words.filter(w => text.toLowerCase().includes(w)).map(w => `${where}: “${w}”`);
   const filesIn = dir => readdirSync(join(REPO, dir)).flatMap(f => { const p = `${dir}/${f}`; return statSync(join(REPO, p)).isDirectory() ? filesIn(p) : [p]; });
   test('none of its words is in another case file, a document, or the service’s code and settings', () => {
