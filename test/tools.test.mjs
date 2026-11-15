@@ -87,7 +87,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.deepEqual(sorted(Object.keys(OPENED_BY)), sorted(catalog.brain.groups.map(g => g.group)), 'a request for every group');
     const from = requests().length;
     await withScript([QUIET], async () => { for (const words of Object.values(OPENED_BY)) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/ };
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/ };
     for (const [group, words] of Object.entries(OPENED_BY)) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(group), `${group}: “${words}”`);

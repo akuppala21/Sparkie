@@ -386,6 +386,22 @@ describe('Telegram', { concurrency: 1 }, () => {
       } finally { noScript(); }
     });
 
+    // Review of G1 (2026-11-14): the lines the owner asked to be rid of are never sent out to Telegram.
+    test('a forgotten memory line never reaches Telegram: memory {past} is refused there', { timeout: 90000 * SLOW }, async () => {
+      const WORDS = 'my garage code is 9182';
+      const kept = await api('/actions/remember', { method: 'POST', body: { text: WORDS, kind: 'fact' } });
+      is(kept, 200, 'remember');
+      is(await api('/actions/forget_memory', { method: 'POST', body: { id: kept.json.id } }), 200, 'forget');
+      script([{ match: '^what did I ask you to forget\\?$', calls: [{ name: 'memory', arguments: { past: true } }] }]);
+      try {
+        const from = tgCalls().length;
+        await tgSay('what did I ask you to forget?');
+        const [m] = await sentAfter(from);
+        assert.match(m.body.text, /The lines that were replaced or forgotten are shown to the owner only, in Spark Console/);
+        assert.ok(!tgSent(from).some(x => String(x.body.text).includes(WORDS)), 'the words never went to Telegram');
+      } finally { noScript(); }
+    });
+
     test('with agents\' changes paused, a change from Telegram is refused; a lookup and /status still answer', { timeout: 90000 * SLOW }, async () => {
       await agentSettings({ halted: true });
       try {

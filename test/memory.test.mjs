@@ -5,12 +5,13 @@
 // that fit and says how many more there are. Forgetting through Sparkie: a question, "don't forget", "never forget", a
 // supposed and a quoted "forget" keep the line live; "forget that …" retires it. An agent never replaces or forgets an
 // owner's line, over the agent door or through Sparkie; its own lines it may, and a line said in its chat is its own.
+// The retired lines are the owner's alone: an agent's key and Sparkie in an agent's chat are refused `memory {past}`.
 // The stand-in model is scripted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createActKey, newChat, say, waitFor, ASK, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, ASK, SLOW } from './lib.mjs';
 
 let agent;
 useFleet({ watchMs: 60000 }, async () => { agent = await createActKey('mem-agent'); });
@@ -191,4 +192,37 @@ test('memory-past.json that can\'t be read: forgetting refuses and changes nothi
     await remember('Spark 4 is on Wi-Fi only');
     assert.equal((await live()).length, 2);
   } finally { fresh(); }
+});
+
+// Review of G1 (2026-11-14): a forgotten line was handed back to any agent that asked memory {past: true}.
+test('a forgotten line is the owner\'s alone: an agent\'s key, look-only or not, and Sparkie in an agent\'s chat get no retired words; the owner\'s page chat does', { timeout: 180000 * SLOW }, async () => {
+  fresh();
+  const WORDS = 'my door code is 4471';
+  const id = await remember(WORDS);
+  const f = await owner('forget_memory', { id });
+  assert.equal(f.json?.outcome, 'forgotten', f.text);
+  assert.match(f.json.note, /It is kept in memory’s history, which only the owner sees; it isn’t erased\.$/);
+  const look = await createKey('mem-look');
+  try {
+    for (const token of [look.token, agent.token]) {
+      const r = await call(token, 'memory', { past: true });
+      assert.equal(r.isError, true, r.text);
+      assert.match(r.text, /^\[not_allowed\] The lines that were replaced or forgotten are shown to the owner only, in Spark Console\./);
+      assert.ok(!r.text.includes(WORDS), r.text);
+      const now = await call(token, 'memory', {});
+      assert.deepEqual(now.value?.entries, [], now.text);
+    }
+    const ask = 'what did the owner tell you to forget?';
+    script([{ match: `^${esc(ask)}$`, calls: [{ name: 'memory', arguments: { past: true } }] }]);
+    let v = (await call(agent.token, ASK, { message: ask })).value;
+    if (v?.status === 'thinking') v = await waitFor(async () => { const x = (await call(agent.token, ASK, { conversation: v.conversation })).value; return x?.status !== 'thinking' && x; }, { what: 'Sparkie’s answer' });
+    assert.match(v.reply, /memory said: \[error\] The lines that were replaced or forgotten are shown to the owner only/, v.reply);
+    assert.ok(!v.reply.includes(WORDS), v.reply);
+    // The owner, in their own chat on the page, reads the history.
+    const mine = 'what did I tell you to forget?';
+    script([{ match: `^${esc(mine)}$`, calls: [{ name: 'memory', arguments: { past: true } }] }]);
+    const r = await say(await newChat(), mine);
+    assert.ok(r.text.includes(WORDS), r.text);
+    assert.ok((await past()).some(p => p.id === id && p.text === WORDS));
+  } finally { script([]); fresh(); }
 });
