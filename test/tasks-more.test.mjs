@@ -151,12 +151,13 @@ test('a task waits at a button: no carry-on turn by itself, its hours stop, one 
 
 // The coordinator's ruling (contract 4.8 for the first step too): with no eval on record every change Sparkie makes is a
 // button, and a request with a next step still carries on once the owner presses it.
+// (a stop, not a restart: the stand-in answers a restart of a running model with "already", which runs nothing)
 test('with no eval on record, a request with a next step whose first change is a button is a task parked there: the press runs it, the carry-on turn reports, and nothing else changed without a button', { timeout: 300000 * SLOW }, async () => {
-  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', words = `restart ${RADIX} on spark 4, then tell me how it went`;
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', words = `stop ${RADIX} on spark 4, then tell me how it went`;
   // (its brain up a minute already, so the first reply finds it answering)
   const F = await startMock({ watchMs: 60000, evalOnRecord: false, env: { SPARK_CONSOLE_CONTINUE_MS: '1500' }, prepare: ({ root }) => writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60)) });
   try {
-    writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'restart_model', arguments: { spark: 'spark4', container: RADIX } }] }, { match: FINISHED, calls: [] }]));
+    writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }] }, { match: FINISHED, calls: [] }]));
     const post = async (path, body) => { const r = await fetch(`${F.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify(body) }); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {} return { status: r.status, text, json }; };
     const messages = async id => (await (await fetch(`${F.base}/chats/${id}`)).json()).messages;
     const ops = async () => (await post('/actions/recent_operations', { limit: 50 })).json.operations;
@@ -165,23 +166,23 @@ test('with no eval on record, a request with a next step whose first change is a
     const asked = await post(`/chats/${chat}/messages`, { text: words });
     assert.equal(asked.status, 200, asked.text);
     const done = asked.text.split('\n\n').map(x => x.trim()).filter(x => x.startsWith('data:')).map(x => JSON.parse(x.slice(5))).find(e => e.type === 'done').message;
-    assert.deepEqual(done.tools.map(t => [t.name, t.outcome]), [['restart_model', 'needs-ok']], done.content);
+    assert.deepEqual(done.tools.map(t => [t.name, t.outcome]), [['stop_model', 'needs-ok']], done.content);
     const buttons = done.choices.filter(c => c.label !== 'No');
     assert.equal(buttons.length, 1, JSON.stringify(done.choices));
     const t = taskIn(chat);
     assert.deepEqual([t?.request, Boolean(t?.parked)], [words, true], JSON.stringify(t));
     assert.deepEqual((await post('/actions/fleet_status', {})).json.needsOwner.filter(l => l === WAITING), [WAITING]);
     assert.equal((await ops()).length, 0, 'nothing ran before the press');
-    // The owner presses it: the restart runs, its result comes, and the carry-on turn reports.
+    // The owner presses it: the stop runs, its result comes, and the carry-on turn reports.
     const pressed = await post(`/chats/${chat}/choose`, { choice: buttons[0].id });
     assert.equal(pressed.status, 200, pressed.text);
     assert.equal(pressed.json.outcome, 'started', pressed.text);
-    const m = await waitFor(async () => { const x = await messages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 180000 * SLOW, what: 'the carry-on turn after the restart' });
+    const m = await waitFor(async () => { const x = await messages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 180000 * SLOW, what: 'the carry-on turn after the stop' });
     const at = m.findIndex(y => y.auto);
     assert.match(m[at].content, new RegExp(FINISHED));
-    assert.ok(m.slice(0, at).some(y => y.notice && y.operation && y.status === 'completed'), 'after the restart’s result');
+    assert.ok(m.slice(0, at).some(y => y.notice && y.operation && y.status === 'completed'), 'after the stop’s result');
     assert.deepEqual(m[at + 1].tools ?? [], [], 'the report changed nothing');
-    assert.deepEqual((await ops()).map(o => o.type), ['restart-model'], 'one change: the one pressed');
+    assert.equal((await ops()).length, 1, `one change, the one pressed: ${JSON.stringify((await ops()).map(o => o.type))}`);
     await waitFor(() => taskIn(chat) === null, { timeout: 15000 * SLOW, what: 'the done request off the record' });
   } finally { await F.stop(); }
 });

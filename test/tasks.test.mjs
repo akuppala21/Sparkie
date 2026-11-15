@@ -145,7 +145,7 @@ test('set-up: killed with every carry-on turn due, started again from that disk;
   await waitFor(async () => (JSON.parse((await bPost('/actions/workloads', { spark: 'spark3' })).text).workloads || []).some(w => w.name === GGUF && w.state === 'running'), { timeout: 60000 * SLOW, what: 'B’s watcher seeing Spark 3' });
   const run = { name: 'run_workflow', arguments: { name: 'night mode' } };
   script([{ match: `^${esc(STOP)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }] },
-    { match: `${CARRIED}.*run night mode`, rounds: [[run]] }, { match: CARRIED, calls: [] }, { match: FINISHED, calls: [] }, { match: '^carry on$', rounds: [[LONG]] }], B);
+    { match: `${CARRIED}.*run night mode`, rounds: [[run]] }, { match: CARRIED, calls: [] }, { match: FINISHED, calls: [] }, { match: '^carry on$', calls: [run] }], B);
   // A request made after the start and before the look, whose stop is still under way when the look comes.
   made.fresh = JSON.parse((await bPost('/chats', {})).text).id;
   const asked = await bPost(`/chats/${made.fresh}/messages`, { text: STOP });
@@ -219,6 +219,8 @@ test('(E6b) a task whose chat is full stops, said in a line of its own past its 
   assert.ok(JSON.parse((await bPost('/actions/fleet_status', {})).text).needsOwner.includes('Sparkie stopped carrying on with one of your requests: its chat is full. Start a new chat and ask again there.'));
 });
 
+// (its turn asks a button, so the task waits there and can be looked at: B's brain has a large context, so a long
+// lookup wouldn't end its reply at a budget)
 test('(E6b) the owner’s “carry on” in a chat stopped at its 120 commands: the same request, a fresh 6 hours and 90 turns', { timeout: 120000 * SLOW }, async () => {
   assert.ok(made.g, 'set-up');
   const said = await bPost(`/chats/${made.six}/messages`, { text: 'carry on' });
