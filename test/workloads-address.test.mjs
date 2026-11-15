@@ -94,7 +94,7 @@ describe('a job is handed the one model address (D7)', { concurrency: 1 }, () =>
       const run = await runOn(T.base, T.origin, 'again with its image', [{ action: 'keep_running', args }]);
       assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
       assert.ok(logOf(run).includes('Step 1: wl-d7 is there already on Spark 4, so it runs again as it was made: a job is handed a model only when it is made'), run.log.join('\n'));
-      assert.ok(!logOf(run).some(l => /is handed /.test(l)), run.log.join('\n'));
+      assert.ok(!logOf(run).some(l => /is handed \S+ at /.test(l)), run.log.join('\n'));
       assert.equal(runs(), 2, 'the job ran again');
     } finally { rmSync(jobsRun, { force: true }); }
   });
