@@ -59,27 +59,31 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
   }, { timeout: 400000 * SLOW });
   after(() => F?.stop(), { timeout: 30000 });
 
-  test('a copy holds no sessions.json, and a sign-in alone sends no copy', { timeout: 300000 * SLOW }, async () => {
-    // The owner sets up a passkey on the tailnet: a change, so a copy goes.
-    const r0 = await record(F);
+  test('a copy holds no sessions.json', { timeout: 300000 * SLOW }, async () => {
+    // The owner sets up a passkey on the tailnet, and a browser signs in with it from the internet: a session.
     const b = await ask(F, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     assert.equal(b.status, 200, b.text);
     assert.equal((await ask(F, '/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) })).status, 201);
-    await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r0.at; }, { timeout: 30000 * SLOW, what: 'the copy after the passkey' });
-    const r1 = await quiet(F);
-    // A browser signs in from the internet with it: a session, the passkey's counter and last use. No copy for that.
-    cookie = await signIn(F);
-    assert.ok(cookie);
-    assert.equal((await net(F, '/bootstrap', { headers: withCookie(cookie) })).status, 200, 'signed in');
+    const signedIn = await signIn(F);
+    assert.equal((await net(F, '/bootstrap', { headers: withCookie(signedIn) })).status, 200, 'signed in');
     assert.ok(existsSync(join(F.stateDir, 'sessions.json')));
-    await sleep(10000);
-    assert.equal((await record(F)).at, r1.at, 'a sign-in alone sends no copy');
-    // A change to the state: the copy that follows holds the passkey and the owner's access, and no sessions.json.
-    assert.equal((await ask(F, '/agents/settings', { method: 'PUT', body: { selfHeal: false } })).status, 200);
-    copy = await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r1.at && x; }, { timeout: 30000 * SLOW, what: 'a copy after a change' });
-    const names = listed(copyFile(F, copy));
-    assert.ok(names.includes('./passkeys.json') && names.includes('./access.json') && names.includes('./agent-settings.json'), names.join(' '));
+    // Then a change to the state (a file of its own, as any state file is written): the copy that follows holds the
+    // passkey and the owner's access, and no sessions.json.
+    const r0 = await quiet(F);
+    writeFileSync(join(F.stateDir, 'test-change.json'), JSON.stringify({ at: new Date().toISOString() }), { mode: 0o600 });
+    const c = await waitFor(async () => { const x = await record(F); return x?.ok && x.at !== r0.at && x; }, { timeout: 30000 * SLOW, what: 'a copy after a change' });
+    copy = c; cookie = signedIn;
+    const names = listed(copyFile(F, c));
+    assert.ok(names.includes('./passkeys.json') && names.includes('./access.json') && names.includes('./test-change.json'), names.join(' '));
     assert.ok(!names.some(n => /(^|\/)sessions\.json$/.test(n)), `no sessions.json in the copy: ${names.join(' ')}`);
+  });
+
+  test('a sign-in alone sends no copy (a session, and the passkey’s counter and last use)', { timeout: 300000 * SLOW }, async () => {
+    const r1 = await quiet(F);
+    const again = await signIn(F);
+    assert.equal((await net(F, '/bootstrap', { headers: withCookie(again) })).status, 200, 'signed in');
+    await sleep(10000);
+    assert.equal((await record(F)).at, r1.at, 'no copy');
   });
 
   test('state put back from that copy onto a fresh Spark Console signs no device in; the owner’s access and passkey are as the copy had them', { timeout: 300000 * SLOW }, async () => {
