@@ -41,6 +41,8 @@ ME="bash $SHARE/pull.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WANT='' W='' DOOR='' ARMED=''
 CONFIRM_S=600
+# On the stand-in fleet the incoming installer is told so by an argument (--stand-in), not by what it inherits.
+STAND_IN=''; [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || STAND_IN=--stand-in
 if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_CONFIRM_S:-}" =~ ^[0-9]+$ ]]; then CONFIRM_S=$SPARK_CONSOLE_UPDATE_CONFIRM_S; fi
 
 die() { echo "  STOP: $*" >&2; exit 1; }
@@ -473,7 +475,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   local ay="${ASSUME_YES:-}"
   [ -z "$ARMED" ] || ay=1
   ( cd "$W/tree" && export PATH="$W/guard-bin:$PATH" && NOTE="$note" SKIP_ROUTES=1 ASSUME_YES="$ay" \
-      bash deploy/host-on-portal.sh local ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
+      bash deploy/host-on-portal.sh local ${STAND_IN:+"$STAND_IN"} ) 9>&- 2>&1 | tee "$W/install.log" || code=$?
   now=$(health_build)
   read -r ib it ic <<<"$(installed)"
   local guarded failed='' reached='' last='' named=''

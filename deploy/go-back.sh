@@ -8,7 +8,10 @@
 # Like "Undo the last update", it passes over a snapshot marked `same` (it holds exactly what is installed: the same
 # update run again, or a snapshot already put back), so running it twice goes back one more build.
 set -euo pipefail
-[ $# -eq 0 ] || { echo "Usage: bash $0   (no options: it puts back the build's files only)" >&2; exit 2; }
+# (the stand-in fleet's tests, and the watchdog they run, add --stand-in: it goes on to restore.sh as an argument)
+STAND_IN=''
+[ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --stand-in ] && STAND_IN=--stand-in; } \
+  || { echo "Usage: bash $0   (no options: it puts back the build's files only)" >&2; exit 2; }
 REL="$HOME/.local/share/spark-console/releases"
 last=''
 for d in "$REL"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z; do
@@ -16,4 +19,4 @@ for d in "$REL"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-
 done
 [ -n "$last" ] || { echo "There's no earlier build to go back to on this Spark (nothing complete in $REL that differs from what's installed)." >&2; exit 1; }
 echo "Going back to the build saved before the update on ${last##*/} ..."
-exec bash "$last/restore.sh"
+exec bash "$last/restore.sh" ${STAND_IN:+"$STAND_IN"}

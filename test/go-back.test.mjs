@@ -1,6 +1,7 @@
 // Covers: `deploy/go-back.sh` against a made-up home: runs the newest complete snapshot's `restore.sh` not marked
-// `same`, with no options, refuses options, says so when there is none; `RECOVERY.txt` names the fixed path and
-// commands; the installer lists and copies both before it replaces anything.
+// `same`, with no options, refuses options but --stand-in (the stand-in fleet's, passed on to restore.sh), says so when
+// there is none; `RECOVERY.txt` names the fixed path and commands; the installer lists and copies both before it
+// replaces anything.
 //
 // deploy/go-back.sh and deploy/RECOVERY.txt (H1): the by-hand way back when Spark Console doesn't answer. go-back.sh
 // runs against a made-up home (no fleet, no real snapshot); the installer is only read here (install.test.mjs runs its
@@ -42,6 +43,19 @@ describe('go-back.sh: the newest complete snapshot\'s restore.sh, by hand', () =
       const r = run(h);
       assert.equal(r.status, 0, r.stderr);
       assert.equal(ran(h), '20261109T100000Z|\n');
+    } finally { rmSync(h, { recursive: true, force: true }); }
+  });
+  test('--stand-in (the stand-in fleet\'s tests, and the watchdog they run) goes on to restore.sh as an argument, and is the only option taken', () => {
+    const h = home(['20261110T120000Z', 'restore.sh']);
+    try {
+      const r = run(h, '--stand-in');
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(ran(h), '20261110T120000Z|--stand-in\n');
+      for (const args of [['--stand-in', '--with-state'], ['--stand-in', '--stand-in']]) {
+        rmSync(join(h, 'ran'), { force: true });
+        assert.equal(run(h, ...args).status, 2, args.join(' '));
+        assert.equal(ran(h), null);
+      }
     } finally { rmSync(h, { recursive: true, force: true }); }
   });
   test('refuses options (--with-state is for restore.sh by hand)', () => {
