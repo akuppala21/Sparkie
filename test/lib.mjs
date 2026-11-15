@@ -54,6 +54,7 @@ export const TOOLS = [
   'recall',
   'recent_operations',
   'recipe_detail',
+  'run',
   'running_models',
   'search_huggingface',
   'search_web',
@@ -97,7 +98,7 @@ export const DOOR_READ = [...TOOLS, ASK], DOOR_ACT = [...ALL_TOOLS, ASK];
 export const SPARKIE_TOOLS = [...ALL_TOOLS];
 // What every round offers Sparkie (R46): the core, at most TOOL_CAP tools with the groups a request opens (TOOL_CAP in
 // 21-guide.mjs; test/tools.test.mjs checks the service agrees).
-export const CORE_TOOLS = ['fleet_status', 'running_models', 'workloads', 'should_be_running', 'sparkie_setup', 'start_model', 'stop_model', 'restart_model',
+export const CORE_TOOLS = ['fleet_status', 'running_models', 'workloads', 'run', 'sparkie_setup', 'start_model', 'stop_model', 'restart_model',
   'keep_running', 'remember', 'search_web', 'guide'];
 export const TOOL_CAP = 24;
 
