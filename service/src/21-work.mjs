@@ -213,10 +213,12 @@ function ownerCommand(node) {
   try { host = new URL(consoleOrigin()).hostname; } catch {}
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && /^[a-z_][a-z0-9_-]*$/.test(String(CONFIG.user)) ? `ssh -t ${CONFIG.user}@${host} ${q(line)}` : line;
 }
+const mayRun = (viewer, ctx) => { try { whoMayLook(viewer, ctx); return true; } catch { return false; } };
 const needsOwner = (node, why) => ({ spark: node.id, ran: false, ownerCommand: ownerCommand(node), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
   next: `Give the owner that command: they run it once, in their own terminal, and it asks ${sparkName(node)}’s password once${node.host === 'local' ? ' (the hub is set up last, after a compute Spark)' : ''}. Until then use the other tools there (spark_detail, container_logs, spark_diagnostics, files).` });
 // Who may look (design A 2.3): the owner, in their own chats (the page, Telegram) and on POST /actions; an agent only
 // when its key may also change things, read again now (its own call, or through Sparkie); never a saved workflow's step.
+// recall reads a look's record back on the same rule (mayRun).
 function whoMayLook(viewer, ctx) {
   if (ctx.via === 'workflow') throw new HttpError(403, 'run can’t be a step of a saved workflow.');
   const agentId = ctx.agentId || viewer?.agentKey?.id;
@@ -225,11 +227,14 @@ function whoMayLook(viewer, ctx) {
     if (!ctx.canChange || !(key?.scopes || []).includes('fleet:act')) throw new HttpError(403, 'An agent may run commands on a Spark only when the owner lets it change things too (Access → Agents).');
   }
 }
-// What the brain gets: escape codes and characters that don't show (or turn text around) taken out, keys masked; past
-// 6,000 characters the first 2,000 and the last 3,500, cut where a line or a word ends when one is near.
-const LOOK_PLAIN = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]?|[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
-function forBrain(raw) {
-  const t = raw.replace(LOOK_PLAIN, '');
+// What a look printed, as it is kept and shown: escape codes and characters that don't show (or turn text around) taken
+// out (a key a colour code splits in two is whole again), and any other control character (NUL between the words of a
+// /proc/<pid>/cmdline, say) a space, so the mask still sees the words apart.
+const LOOK_CODES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]?|[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+const lookClean = raw => raw.replace(LOOK_CODES, '').replace(/\r\n/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ' ');
+// What the brain gets: the cleaned text, keys masked; past 6,000 characters the first 2,000 and the last 3,500, cut where
+// a line or a word ends when one is near.
+function forBrain(t) {
   if (t.length <= LOOK_HEAD + LOOK_TAIL + 500) return { text: maskSecrets(t), left: 0, of: t.length };
   const a0 = LOOK_HEAD, b0 = t.length - LOOK_TAIL, before = t.slice(a0 - 300, a0), j = t.slice(b0, b0 + 300).search(/\s/);
   const i = Math.max(before.lastIndexOf('\n'), before.lastIndexOf(' ')), a = i >= 0 ? a0 - 300 + i + 1 : a0, b = j >= 0 ? b0 + j + 1 : b0;
@@ -265,9 +270,9 @@ async function runCommand(input, viewer, ctx = {}) {
     if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the look: ${why}. Nothing ran.`);
     if (a.kind === 'unreachable') throw new HttpError(503, `${at} isn’t answering (${why || 'no connection'}), so the look didn’t run.`);
     if (!['ran', 'ended'].includes(a.kind)) throw new HttpError(502, `The command on ${at} didn’t answer the way the root helper does${why ? `: ${why}` : ''}. Nothing is known to have run.`);
-    rec.text = a.output;
+    rec.text = lookClean(a.output);
     Object.assign(rec, { exit: a.exit ?? null, bytes: Buffer.byteLength(a.output), cut: a.cut ? J_MAX : null, outcome: a.cut ? 'cut' : a.ended || a.kind === 'ended' ? 'ended' : 'ran' });
-    const b = forBrain(a.output);
+    const b = forBrain(rec.text);
     return {
       spark: node.id, ran: true, observedAt: new Date().toISOString(), exit: a.exit ?? null,
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended.` } : a.kind === 'ended' ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so the look was ended; what it printed until then is below.` } : {}),
