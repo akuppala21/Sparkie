@@ -44,7 +44,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs`; `test/affected.test.mjs`; `test/land.test.mjs` | falls short today: its file says where |
 | [R30](rules/R30.md) | built | `test/fleet.test.mjs` (“/health”); `test/install.test.mjs`; `test/door.test.mjs` (“search_huggingface on the stand-in fleet”) |  |
 | [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”) |  |
-| [R32](rules/R32.md) | built | `test/telegram.test.mjs`; `test/needs-me.test.mjs` |  |
+| [R32](rules/R32.md) | built | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs` |  |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
 | [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/change.test.mjs` |  |
@@ -153,7 +153,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 8.16 | no test yet |  | T126: no test holds it yet |
 | 8.17 | no test yet |  | T128: no test holds it yet |
 | 8.18 | no test yet |  | T71, T129: no test holds them yet |
-| 8.19 | no test yet |  | T92, T133: no test holds them yet |
+| 8.19 | partly | `test/beat.test.mjs` (“with the passkey: kept only in the 0600 secrets file”) | holds T133; T92: no test holds it yet |
 | 9.1 | no test yet |  | T3, T4, T5, T32, T64, T65: no test holds them yet |
 | 9.2 | no test yet |  | no acceptance test lists it |
 | 9.3 | no test yet |  | T25, T46: no test holds them yet |
