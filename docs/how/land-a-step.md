@@ -15,6 +15,9 @@ One small change at a time onto `main`: its affected tests on a compute Spark, t
 - `SPARK_TEST_OUT=<folder>` chooses whose queue runs the step's tests (the `spark-test-runs*` folders beside the work
   folders); `SPARK_LAND_TIP_OUT` the queue for the whole run after (the main queue when not set).
 - To see a pick first: `node tools/affected.mjs pick --landing` (the files on stdout, why on stderr).
+- To see what the step rewords that is the owner's (a contract requirement or acceptance test, a Rule paragraph, a
+  glossary meaning): `node tools/check-docs.mjs --meaning main`, by id with the old and new words (`--json` for a
+  button); it exits 1 when there is any.
 
 ## Also update
 

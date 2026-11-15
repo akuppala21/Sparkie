@@ -87,7 +87,7 @@ function runJob(job, fn) {
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
       ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
-    journalOp(job);
+    learnFrom(job, journalOp(job));
   });
   return job;
 }
