@@ -23,6 +23,7 @@ function newJob(type, meta) {
 }
 function note(job, line) {
   job.log.push(`${new Date().toTimeString().slice(0, 8)}  ${line}`);
+  journalNote(job, line);
   if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
 }
 function step(job, text) { job.step = text; note(job, text); }
@@ -86,6 +87,7 @@ function runJob(job, fn) {
     if (job.channel) try { tellAwaitDone(job.id); } catch {}
     fleetEvent({ type: 'operation', id: job.id, operation: job.type, status: job.status, model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}), ...(job.actor ? { actor: job.actor } : {}),
       ...(job.error ? { error: maskSecrets(String(job.error).slice(0, 500)).slice(0, 300) } : {}), by: !job.by ? null : String(job.by).toLowerCase() === String(accessList().owner || '').toLowerCase() ? 'owner' : 'a member' });
+    journalOp(job);
   });
   return job;
 }

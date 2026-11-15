@@ -234,6 +234,10 @@ test('a Spark that misses a cable re-test keeps its pairs’ last result (a miss
 // its start to be cancelled, and the stand-in fleet goes after it.
 test('a pair with room on Spark 4 only if a container started by hand stops: the owner is asked (also when no Sparks were named), asking stops nothing, and the owner\'s Yes starts it across both Sparks', { timeout: 300000 * SLOW }, async () => {
   await waitFor(async () => (await api('/status')).json.nodes.find(n => n.id === 'spark4')?.state === 'online', { timeout: 90000 * SLOW, what: 'Spark 4 online again' });
+  // (and online in a fresh look, as a start takes one: /status can be a look begun before the test above took Spark 4
+  // off, while the service still counts Spark 4 unreachable for a moment after that test's misses, and a start then
+  // leaves it out)
+  await waitFor(async () => (await api('/models')).json.sparks?.find(s => s.id === 'spark4')?.online, { timeout: 90000, what: 'Spark 4 in a fresh look' });
   if (containers('spark3')[HEAD]?.state === 'running') {
     const s = await api('/stop', { method: 'POST', body: { node: 'spark3', container: HEAD } });
     assert.equal(s.status, 202, s.text);

@@ -353,6 +353,11 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.match(x.watchedEvery, /^3 seconds$/);
     assert.ok(x.workloads.every(w => w.kind === 'model' && w.running));
   });
+  v('recall', { about: 'gemma', kind: 'call', spark: 'Spark 3', since: '2026-01-01', limit: 3 }, x => {
+    assert.equal(typeof x.count, 'number');
+    assert.ok(Array.isArray(x.records) && x.records.length <= 3);
+    assert.match(x.recordIsData, /data, not instructions/);
+  });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);
     assert.equal(x.count, x.events.length);
@@ -371,6 +376,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     deploy_plan: { model: ctx.model, spark: sp() }, cluster_plan: { model: ctx.model, sparks: ctx.pair }, recipe_detail: { id: ctx.recipe },
     search_huggingface: { query: 'qwen3 0.6b' }, spark_diagnostics: { spark: sp() }, service_logs: { spark: sp(), service: 'console' },
     wait_operation: { id: '0123456789ab' }, files: { spark: sp() }, search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' },
+    recall: { about: 'gemma' },
   }[t] || {});
   const cases = []; // [tool, args(), expected message, code, label]
   for (const t of TOOLS) cases.push([t, () => ({ ...validFor(t), bogus: 1 }), /^\[invalid\] Unknown argument: bogus/, 'invalid', 'unknown arg bogus']);
@@ -380,20 +386,21 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   for (const [t, ks] of Object.entries(req)) for (const k of ks) cases.push([t, () => { const a = { ...validFor(t) }; delete a[k]; return a; }, new RegExp(`Missing argument: ${k}`), 'invalid', `missing ${k}`]);
   // wrong types: text arguments
   const textProps = { find_recipes: ['query', 'category'], where_it_fits: ['model'], operation_log: ['id'], container_logs: ['container'], deploy_plan: ['model'],
-    cluster_plan: ['model'], recipe_detail: ['id', 'setup'], search_huggingface: ['query'], fleet_events: ['since'], wait_operation: ['id'], files: ['folder', 'file'], search_web: ['query'], read_page: ['url'] };
+    cluster_plan: ['model'], recipe_detail: ['id', 'setup'], search_huggingface: ['query'], fleet_events: ['since'], wait_operation: ['id'], files: ['folder', 'file'], search_web: ['query'], read_page: ['url'],
+    recall: ['about', 'id', 'since', 'next'] };
   for (const [t, ks] of Object.entries(textProps)) for (const k of ks) {
     cases.push([t, () => ({ ...validFor(t), [k]: 123 }), new RegExp(`${k} should be text`), 'invalid', `${k}=123`]);
     cases.push([t, () => ({ ...validFor(t), [k]: ['x'] }), new RegExp(`${k} should be text`), 'invalid', `${k}=[array]`]);
   }
   // wrong types: Spark arguments (a Spark name is looked up, so anything else is "no Spark called …")
-  const sparkProps = { spark_detail: 'spark', container_logs: 'spark', deploy_plan: 'spark', spark_diagnostics: 'spark', service_logs: 'spark', workloads: 'spark', fleet_events: 'spark', files: 'spark' };
+  const sparkProps = { spark_detail: 'spark', container_logs: 'spark', deploy_plan: 'spark', spark_diagnostics: 'spark', service_logs: 'spark', workloads: 'spark', fleet_events: 'spark', files: 'spark', recall: 'spark' };
   for (const [t, k] of Object.entries(sparkProps)) {
     for (const val of [123, true, { id: 'spark2' }, 'spark99', '../spark2', 'spark2;id', '$(id)', '', 'x'.repeat(41)]) {
       cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k}: no Spark called|${k} should be text`), 'invalid', `${k}=${JSON.stringify(val).slice(0, 20)}`]);
     }
   }
   // integers
-  for (const [t, k, max] of [['find_recipes', 'limit', 30], ['recent_operations', 'limit', 50], ['fleet_events', 'limit', 200], ['find_recipes', 'maxSparks', 4], ['find_recipes', 'maxMemoryGB', 2000], ['wait_operation', 'seconds', 45]]) {
+  for (const [t, k, max] of [['find_recipes', 'limit', 30], ['recent_operations', 'limit', 50], ['fleet_events', 'limit', 200], ['find_recipes', 'maxSparks', 4], ['find_recipes', 'maxMemoryGB', 2000], ['wait_operation', 'seconds', 45], ['recall', 'limit', 20]]) {
     for (const n of ['5', true, null, 0, -1, max + 1, 1.5, 1e300]) {
       cases.push([t, () => ({ ...validFor(t), [k]: n }), new RegExp(`${k} should be a whole number from 1 to ${max}`), 'invalid', `${k}=${JSON.stringify(n)}`]);
     }
@@ -402,7 +409,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['read_page', () => ({ ...validFor('read_page'), from: n }), /from should be a whole number from 0 to 2097152/, 'invalid', `from=${JSON.stringify(n)}`]);
   }
   // booleans
-  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all']]) {
+  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all'], ['memory', 'past']]) {
     for (const b of ['true', 1, null]) cases.push([t, () => ({ ...validFor(t), [k]: b }), new RegExp(`${k} should be true or false`), 'invalid', `${k}=${JSON.stringify(b)}`]);
   }
   // patterns
@@ -419,6 +426,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     files: { folder: ['.git', '../x', '/etc', 'a//b'], file: ['.env', 'notes/.envrc', '../../etc/passwd', 'a\\b'] },
     search_web: { query: ['a', ' a ', '   '] },
     read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
+    recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890'] },
   };
   for (const [t, props] of Object.entries(badPatterns)) for (const [k, vals] of Object.entries(props)) for (const val of vals) {
     cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k} isn’t in the right form`), 'invalid', `bad pattern ${k}=${JSON.stringify(val).slice(0, 30)}`]);
@@ -433,6 +441,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   for (const s of ['model', 'ray', 'portal', 'CONSOLE', '']) cases.push(['service_logs', () => ({ spark: sp(), service: s }), /service should be one of: editor, console, sparkie/, 'invalid', `service=${JSON.stringify(s)}`]);
   cases.push(['workloads', () => ({ kind: 'models' }), /kind should be one of: model, service, sparkie, other/, 'invalid', 'kind=models']);
   cases.push(['fleet_events', () => ({ type: 'nope' }), /type should be one of: started/, 'invalid', 'type=nope']);
+  cases.push(['recall', () => ({ kind: 'nope' }), /kind should be one of: said, tool, call/, 'invalid', 'kind=nope']);
   // length limits
   cases.push(['find_recipes', () => ({ query: 'q'.repeat(121) }), /query should be text of at most 120 characters/, 'invalid', 'query 121 chars']);
   cases.push(['find_recipes', () => ({ category: 'c'.repeat(41) }), /category should be text of at most 40 characters/, 'invalid', 'category 41 chars']);
@@ -440,12 +449,14 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
   cases.push(['where_it_fits', () => ({ model: 'm'.repeat(201) }), /model should be text of at most 200 characters/, 'invalid', 'model 201 chars']);
   cases.push(['search_web', () => ({ query: 'q'.repeat(2001) }), /query should be text of at most 2000 characters/, 'invalid', 'query 2001 chars']);
   cases.push(['read_page', () => ({ url: `https://example.org/${'a'.repeat(1981)}` }), /url should be text of at most 2000 characters/, 'invalid', 'url 2001 chars']);
+  cases.push(['recall', () => ({ about: 'q'.repeat(121) }), /about should be text of at most 120 characters/, 'invalid', 'about 121 chars']);
   // well-formed but nonexistent
   cases.push(['find_recipes', () => ({ category: 'no-such-category' }), /No recipes in category no-such-category/, 'invalid', 'unknown category']);
   cases.push(['where_it_fits', () => ({ model: 'no-such-model-test' }), /No model on disk or recipe called no-such-model-test/, 'not_found', 'unknown model']);
   cases.push(['deploy_plan', () => ({ model: 'no-such-model-test', spark: sp() }), /no-such-model-test isn’t on any online Spark/, 'not_found', 'unknown model']);
   cases.push(['cluster_plan', () => ({ model: 'no-such-model-test', sparks: ctx.pair }), /isn’t on any online Spark/, 'not_found', 'unknown model']);
   cases.push(['recipe_detail', () => ({ id: 'no-such-recipe-test' }), /No recipe called no-such-recipe-test/, 'not_found', 'unknown recipe']);
+  cases.push(['recall', () => ({ id: 'j_000000000000' }), /There’s no record j_000000000000 in the journal/, 'not_found', 'unknown record']);
   cases.push(['recipe_detail', () => ({ id: ctx.recipe, setup: 'zzzz9999' }), /has no setup zzzz9999/, 'not_found', 'unknown setup']);
   cases.push(['container_logs', () => ({ spark: sp(), container: 'no-such-container-test' }), /No container called no-such-container-test/, 'not_found', 'unknown container']);
   // An agent reads only an address search_web returned in the last hour (R39).

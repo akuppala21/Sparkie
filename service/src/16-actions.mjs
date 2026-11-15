@@ -156,7 +156,7 @@ const GROUP_WORDS = [
   ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest|list)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?|where\s+(?:can|could|should|would)\s+(?:i|we|it|you)\s+(?:run|put|start))\b/i],
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
-  ['past', 'what happened on the fleet: its events', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week)|earlier\s+today)\b/i],
+  ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
   ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
@@ -410,6 +410,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
   // A button's arguments were kept here when it was offered (and checked then, or built here): they run as kept.
   let input = ctx.trusted ? args : checkInput(a.input, args, name);
+  if (a.kind === 'read' && journalLooks(ctx)) return journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx));
   if (a.kind === 'read') return a.run(input, viewer, ctx);
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in Access → Agents.' : 'This agent can look but not change things. The owner can allow it in Access → Agents.');
@@ -491,6 +492,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // ask_sparkie): a failed operation of the owner's isn't a looping agent (runJob, R9).
   const ownersOwn = ctx.via === 'sparkie' && !ctx.agent;
   const started = Date.now();
+  const jid = journalFirst(name, input, args, ctx);
   try {
     const out = await a.run(input, viewer, ctx);
     if (byAgent && out?.operation && out.outcome !== 'already-starting') agentChanges.push(Date.now());
@@ -512,10 +514,12 @@ async function runAction(name, viewer, args, ctx = {}) {
       : ctx.plan;
     audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started,
       ...(plan ? { plan } : {}) });
+    journalCalled(jid, name, input, args, ctx, { out, ms: Date.now() - started });
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };
     return out;
   } catch (e) {
     audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: false, error: maskSecrets(String(e.message).slice(0, 400)).slice(0, 200) });
+    journalCalled(jid, name, input, args, ctx, { err: e, ms: Date.now() - started });
     throw e;
   }
 }

@@ -82,6 +82,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['why did my job on spark 3 fail?', 'dig'], ['what went wrong?', 'dig'], ['show me the log', 'dig'],
     ['spark 4 went dark, what\'s up with it?', 'dig'],
     ['what happened on the fleet yesterday?', 'past'], ['what changed while I was away?', 'past'],
+    ['what happened last time we started GLM?', 'past'], ['did we ever run gemma before the restart?', 'past'],
     ['show me the notes.md file in my shared folder', 'reading'], ['what\'s in my shared folder on spark 3?', 'reading'],
     ['save this as notes.md on spark 3', 'reading'], ['save that as settings.toml on spark 3', 'reading'],
     ['list my saved workflows', 'routines'], ['what workflows do I have?', 'routines'],
@@ -103,7 +104,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
     await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory removes a line\./, workflows: /The workflows tool lists every workflow/,
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/,
       power_off: /To shut a Spark down or turn it on, call power_off/ };
     for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);

@@ -39,6 +39,7 @@ function fleetEvent(e) {
     if (existsSync(EVENTS_FILE) && statSync(EVENTS_FILE).size > 5e6) renameSync(EVENTS_FILE, `${EVENTS_FILE}.1`);
     appendFileSync(EVENTS_FILE, `${JSON.stringify(x)}\n`, { mode: 0o600 });
   } catch {}
+  journalEvent(x);
 }
 const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model || ''} ${e.status}${e.error ? ` (${e.error})` : ''}`
   // (powered off or on by Spark Console on purpose, 21-power.mjs: not a fault)
