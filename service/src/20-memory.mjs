@@ -120,7 +120,8 @@ function keepLine({ text, kind = 'preference', replaces, until: end }, ctx) {
   if (replaces && !old) throw new HttpError(404, 'There’s no such line in memory to replace (memory lists them).');
   notTheOwners(old, ctx);
   const all = before.filter(e => e !== old);
-  if (all.some(e => memoryLive(e) && e.text.toLowerCase() === line.toLowerCase() && !(until && e.until !== until))) return { outcome: 'already', note: `Already remembered: ${line}` };
+  // (the same words are already kept only with the same end; with another end, or none, the new line takes its place)
+  if (all.some(e => memoryLive(e) && e.text.toLowerCase() === line.toLowerCase() && (memoryOffFor('time') || (e.until || null) === until))) return { outcome: 'already', note: `Already remembered: ${line}` };
   const about = memoryNamesIn(line), again = old ? null : memorySaidAgain(line, about, all);
   // (an agent saying an owner's line again joins it: it never takes an owner's line's place, R45)
   if (again?.by === 'owner' && (ctx.via === 'agent' || ctx.agent)) return { outcome: 'already', joined: { id: again.id, text: again.text }, note: `The owner already said nearly that: “${again.text}”. Nothing new was kept.` };
