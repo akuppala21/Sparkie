@@ -157,7 +157,8 @@ async function pickSpark(j, n, args, viewer) {
       if (args.gpu) gpuAlone(sp, await appLook(node, name, sp.tsip), at);
       await appRoom(node, gb, name);
       if (files.length) {
-        const r = await run(node, `cd "$HOME/.local/share/spark-portal/workspaces/shared" 2>/dev/null && for p in ${files.map(q).join(' ')}; do [ -e "$p" ] || printf 'missing\\t%s\\n' "$p"; done; echo looked`, { timeout: 20000 });
+        // (each path whole under the shared folder: a Spark with no shared folder has none of them)
+        const r = await run(node, `for p in ${files.map(q).join(' ')}; do [ -e "$HOME/.local/share/spark-portal/workspaces/shared/$p" ] || printf 'missing\\t%s\\n' "$p"; done; echo looked`, { timeout: 20000 });
         if (r.code !== 0 || !/^looked$/m.test(r.out)) throw new Error(`${at}’s shared folder couldn’t be read.`);
         const missing = fields(r.out, 'missing').map(([p]) => `/in/${p}`);
         if (missing.length) throw new Error(`${at} doesn’t have ${missing.join(', ')}.`);
