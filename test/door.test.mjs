@@ -409,7 +409,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['read_page', () => ({ ...validFor('read_page'), from: n }), /from should be a whole number from 0 to 2097152/, 'invalid', `from=${JSON.stringify(n)}`]);
   }
   // booleans
-  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all']]) {
+  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all'], ['memory', 'past']]) {
     for (const b of ['true', 1, null]) cases.push([t, () => ({ ...validFor(t), [k]: b }), new RegExp(`${k} should be true or false`), 'invalid', `${k}=${JSON.stringify(b)}`]);
   }
   // patterns

@@ -24,9 +24,12 @@ const [P1, P2, P3, P4, P5] = servers.map(s => s.address().port);
 // A database: takes the connection, reads the request, and closes it without a word (as Postgres does to GET /).
 const db = await new Promise(res => { const s = net.createServer(c => { c.on('error', () => {}); c.once('data', () => c.destroy()); }); s.listen(0, '127.0.0.1', () => res(s)); });
 const PDB = db.address().port;
-// A port nothing listens on, one for the hand-started model server, and one only a LAN address publishes.
+// A port nothing listens on, one for the hand-started model server, and one only a LAN address publishes. The three are
+// held (taking no connection) until this file's stand-in fleet has its own ports, then let go: let go at once, one could
+// be handed to the fleet's model server, and lan-only then answered with its model list.
 const free = async () => { const s = await page(0); const p = s.address().port; await new Promise(r => s.close(r)); return p; };
-const [PDEAD, PVLLM, PLAN] = [await free(), await free(), await free()];
+const held = await Promise.all([1, 2, 3].map(() => new Promise(res => { const s = net.createServer(c => c.destroy()); s.listen(0, '127.0.0.1', () => res(s)); s.unref(); })));
+const [PDEAD, PVLLM, PLAN] = held.map(s => s.address().port);
 // (closed at the end, or the test process would wait on them forever)
 after(() => { for (const s of servers) { s.closeAllConnections?.(); s.close(); } db.close(); });
 
@@ -56,6 +59,7 @@ useFleet({ watchMs: 2000, statusMs: 3000, knowledge: true,
     }
   },
 }, async () => {
+  await Promise.all(held.map(s => new Promise(r => s.close(r))));
   keys.look = await createKey('apps-look');
   keys.act = await createActKey('apps-act');
   // (the watcher's first look is 15 s in)
