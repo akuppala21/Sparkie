@@ -153,7 +153,7 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true;
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
-  // A brain eval result that would let Sparkie change things without asking (21-brain-rail.mjs, R51); others never.
+  // A brain eval result that would let Sparkie change things without asking (21-brain-rail.mjs, R52); others never.
   if (method === 'POST' && path === '/main/eval') return evalCouldUnlock(body);
   return false;
 }

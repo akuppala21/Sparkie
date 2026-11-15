@@ -1,5 +1,5 @@
 /* ───────── the rail: a change runs at once only while Sparkie's brain is checked (the one page, milestone 5; P-4) ───────── */
-// Area: features        Rules: R51, R47        Tests: brain-rail.test.mjs
+// Area: features        Rules: R52, R47        Tests: brain-rail.test.mjs
 // Owns: eval-seal.json (writers: evalSealKey; beside secrets.json, outside the state folder)
 // Timers: none        Wakes: none
 // One brain check with two outcomes (design E 2.3, cut by the one page). Checked: the chat goes to Sparkie's own model,

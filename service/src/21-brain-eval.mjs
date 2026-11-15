@@ -12,7 +12,7 @@
 // whether an eval is on record for what this build's brain reads (the lock's brainReads) on today's case set, or
 // which of the two is missing. Today's case set is the one this build's lock names (evalSet, test/lock.mjs), else
 // test/eval/cases.json beside this build: on Spark 2 the copy of the source every install keeps (~/spark-console-src).
-// The rail (21-brain-rail.mjs, R51) acts on it. A record that could let Sparkie change things without asking (a full
+// The rail (21-brain-rail.mjs, R52) acts on it. A record that could let Sparkie change things without asking (a full
 // run of the main set that met the bar) needs the owner's passkey once one is set up, says how it was kept, and is
 // sealed; a slot keeps five of those and five of the rest (partial runs, other sets, memory additions off), so neither
 // kind pushes out the other, and the slot this build counts on is kept first.
@@ -96,7 +96,7 @@ function storeBrainEval(r, { passkey = false } = {}) {
   }
   const p = brainProfileOf(MAIN);
   if (!p) throw new HttpError(409, 'No brain check is on record for the brain serving now, and its result is kept in that profile. Ask for a check first (POST /console/api/main/check), then keep the result.');
-  // (one that could let Sparkie change things without asking takes the passkey once one is set up: R51)
+  // (one that could let Sparkie change things without asking takes the passkey once one is set up: R52)
   let keys = 1;
   try { keys = passkeys().length; } catch {}
   const unlocks = evalCouldUnlock(r);

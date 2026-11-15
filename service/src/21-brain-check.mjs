@@ -6,7 +6,7 @@
 // can run or change), and a profile of what came back in brain-profiles.json, kept per brain setup and shown in
 // sparkie_setup. Two outcomes, not three grades (the one page): "checked" when it answers, calls the tool with
 // arguments that fit three times out of three, and answers from the tool's result; "not checked" otherwise, with why.
-// The rail (21-brain-rail.mjs, R51) reads it: while it says not checked, every change Sparkie asks for is a button.
+// The rail (21-brain-rail.mjs, R52) reads it: while it says not checked, every change Sparkie asks for is a button.
 // A profile belongs to what was checked (P-4 in the ledger): it is keyed by a hash of everything that changes how the
 // brain answers (model, draft, engine, image, flags, environment, rope settings, how it is asked, the console's limits
 // for it, its name, and what runs: the image's id and the weights' snapshots), never by its name, and names the "what
@@ -27,7 +27,7 @@ const CHECK_ASKS = { plain: 'Say hello in five words.', one: 'What is the temper
 const brainSetupOf = m => ({ model: repoOf(m.model), draft: m.draft ? repoOf(m.draft) : null, engine: m.engine, image: m.image, imageId: m.imageId || null,
   flags: (m.args || []).map(String), env: m.env || {}, ropeScaling: m.ropeScaling || null,
   asked: { thinking: Boolean(m.thinking), maxTokens: m.maxTokens || 4096, sampling: m.sampling || null, templateKwargs: m.templateKwargs || null, ...askSet(m) },
-  // (the console's own limits for it, its name, and what runs now: its image's id and the weights' snapshots; R51)
+  // (the console's own limits for it, its name, and what runs now: its image's id and the weights' snapshots; R52)
   limits: brainLimits(m), assistant: m.assistant || null, ran: brainRanOf(m) });
 const brainKey = m => createHash('sha256').update(JSON.stringify(brainSetupOf(m))).digest('hex').slice(0, 16);
 // What this build's brain reads: the lock's brainReads, when the lock is this build's; null when that isn't known.
@@ -117,7 +117,7 @@ async function brainCheckAsk(m, key, messages, tools) {
   const r = await brainAsk(m, messages, tools);
   // (still loading or overloaded: not an answer to judge)
   if (r.status === 503) throw new Error('Sparkie’s model answered 503 (loading or busy)');
-  // (a server error is no answer either: never "it never calls a tool", R51)
+  // (a server error is no answer either: never "it never calls a tool", R52)
   if (r.status >= 500) throw new Error(`Sparkie’s model answered ${r.status}, a server error, so the check couldn’t be made: ${r.error || 'no reason given'}`);
   return r;
 }

@@ -10,7 +10,7 @@
 // and `brainReads`, the sha256 of what Sparkie's brain is sent (its system prompt and the tools one turn offers, how it
 // is asked, and everything the other rounds can add: every action's name, description, inputs and group, the cap, the
 // groups' words and the lines that follow tools, the brain's setup: R46), so a later build can say whether what the
-// brain reads has changed, and `evalSet`, the eval's case set this tree holds (its version and each case's expect: R51). Without git (a copy with no .git
+// brain reads has changed, and `evalSet`, the eval's case set this tree holds (its version and each case's expect: R52). Without git (a copy with no .git
 // folder) tree and commit are left out; off GitHub, run is. After the suite it prints the seconds each test file took.
 //
 // SPARK_TEST_MAP=1 also records which test files run each function of the service's parts, for picking the tests a
@@ -60,7 +60,7 @@ export function runOf(env = process.env) {
   return `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 }
 
-// brainSent, brainReadsOf and evalSetOf live in start-mock.mjs, which needs them for every stand-in fleet's lock (R51)
+// brainSent, brainReadsOf and evalSetOf live in start-mock.mjs, which needs them for every stand-in fleet's lock (R52)
 // and must load in a copy of a tree that has no tools/ folder.
 export { brainSent, brainReadsOf, evalSetOf };
 

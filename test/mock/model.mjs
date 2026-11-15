@@ -106,7 +106,7 @@ async function checkReply(b, msgs, tools, res) {
     appendFileSync(`${DIR}/brain-check.jsonl`, `${JSON.stringify({ at: new Date().toISOString(), kind, tools: tools.map(t => t.function?.name), lastRole: last.role || null, words,
       params: { temperature: b.temperature ?? null, top_p: b.top_p ?? null, max_tokens: b.max_tokens ?? null, thinking: b.chat_template_kwargs?.enable_thinking ?? null, toolChoice: b.tool_choice || null } })}\n`);
   } catch {}
-  // "server-error": a request with tools gets a 500, as a server that fails on them (R51: no answer, never "no tools").
+  // "server-error": a request with tools gets a 500, as a server that fails on them (R52: no answer, never "no tools").
   if (kind === 'server-error' && tools.length) { res.writeHead(500, { 'content-type': 'application/json' }); return res.end('{"error":{"message":"stand-in server error"}}'); }
   const s = stream(res), cities = [...words.matchAll(/\b(Oslo|Lima)\b/g)].map(m => m[1]);
   if (tools.length && last.role === 'user' && cities.length && kind !== 'no-tools') {
@@ -253,6 +253,6 @@ const serve = (port, isUp, served, reply) => http.createServer((req, res) => {
   res.writeHead(404); res.end();
 }).listen(port, '127.0.0.1', () => console.log(`mock model ${served} on 127.0.0.1:${port}`));
 serve(MAIN_PORT, up, 'qwen-aphex', mainReply);
-// (with $MOCK_DIR/bench-tools it keeps the tools and calls them as Sparkie's does: a chat routed here, R51)
+// (with $MOCK_DIR/bench-tools it keeps the tools and calls them as Sparkie's does: a chat routed here, R52)
 serve(BENCH_PORT, () => true, 'qwen-recipe-test', (b, port, res) => mainReply({ ...b, tools: DIR && existsSync(`${DIR}/bench-tools`) ? b.tools : undefined }, port, res, false));
 if (SERVE_PORT) serve(SERVE_PORT, () => true, 'stand-in-deploy', (b, port, res) => deployReply(b, res));

@@ -34,7 +34,7 @@
 //                        which passes them to the brain). Besides those, one read of the installed console's
 //                        sparkie_setup (--console, else the --brain-url console) names the brain serving: the run is
 //                        refused when it would ask as another setup, and its stand-in consoles run what that brain runs
-//                        (its image's id, its weights' snapshots), so the record's key is the serving brain's (R51).
+//                        (its image's id, its weights' snapshots), so the record's key is the serving brain's (R52).
 //   --stand-in           the stand-in console's own stand-in brain: nothing leaves this machine (to try the runner).
 //   --tree <dir>         the stand-in console and stand-in Sparks of another checkout (the installed build's tree, say):
 //                        that build's prompt and tools, with these cases and this grading. The record names its build.
@@ -212,7 +212,7 @@ async function markOf() {
     return { build, reads: brainReadsOf(await brainSent(fleet)) };
   } finally { await fleet.stop(); }
 }
-// The brain that answers, as the console serving it names it (R51; not with --stand-in): its setup, the setup's key and
+// The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
 // what it runs (its image's id, its weights' snapshots), from that console's sparkie_setup (--console, else the
 // --brain-url console, else the one address). The stand-in consoles below run what it runs, so their key is its key and
 // the record can be kept there; a run asked as another setup than the one serving is refused before anything runs.
@@ -224,7 +224,7 @@ const SERVING = STAND_IN ? null : await (async () => {
   const asked = SETUP || Object.keys(cfg)[0];
   if (inUse?.setup && inUse.setup !== asked) { console.error(`Spark Console at ${at} serves ${inUse.setup}, and this run would ask the brain as ${asked}: the record would be for the wrong brain. Run it with --setup ${inUse.setup}.`); process.exit(1); }
   const ran = inUse?.ran && /^sha256:[0-9a-f]{1,64}$/.test(String(inUse.ran.image)) && /^[\w.-]{1,100}$/.test(String(inUse.ran.model)) ? inUse.ran : null;
-  if (!ran || !/^[0-9a-f]{16}$/.test(String(inUse.key))) console.error(`Spark Console at ${at} doesn't say what its brain runs (a build from before R51, or its model isn't up): this run's record can't be kept there.`);
+  if (!ran || !/^[0-9a-f]{16}$/.test(String(inUse.key))) console.error(`Spark Console at ${at} doesn't say what its brain runs (a build from before R52, or its model isn't up): this run's record can't be kept there.`);
   return { at, setup: inUse?.setup || null, key: inUse?.key || null, setupKey: inUse?.setupKey || null, ran };
 })();
 // A stand-in console runs what the serving brain runs: its container's image id and its weights' snapshot names.
