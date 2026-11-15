@@ -74,6 +74,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | add a messaging channel | `docs/how/add-a-messaging-channel.md` |
 | change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
+| give a new brain its setup (how it is asked) | `docs/how/add-a-brain-setup.md` |
 | add a self-test check | `docs/how/add-a-hardware-check.md` |
 | run the brain eval and keep its result | `docs/how/run-the-brain-eval.md` |
 | run something on a Spark through the root helper | `docs/how/call-the-root-helper.md` |

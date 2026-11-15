@@ -62,6 +62,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs`; `test/brain-eval-memory.test.mjs` | falls short today: its file says where |
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
+| [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
