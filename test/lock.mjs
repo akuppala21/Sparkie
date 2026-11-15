@@ -10,7 +10,7 @@
 // and `brainReads`, the sha256 of what Sparkie's brain is sent (its system prompt and the tools one turn offers, how it
 // is asked, and everything the other rounds can add: every action's name, description, inputs and group, the cap, the
 // groups' words and the lines that follow tools, the brain's setup: R46), so a later build can say whether what the
-// brain reads has changed, and `evalSet`, the eval's case set this tree holds (its version and each case's expect: R52). Without git (a copy with no .git
+// brain reads has changed. Without git (a copy with no .git
 // folder) tree and commit are left out; off GitHub, run is. After the suite it prints the seconds each test file took.
 //
 // SPARK_TEST_MAP=1 also records which test files run each function of the service's parts, for picking the tests a
@@ -21,11 +21,11 @@
 // test/lock.test.mjs imports lockFor and the rest; importing this file runs nothing.
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, readdirSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMock, REPO, brainSent, brainReadsOf, evalSetOf } from './start-mock.mjs';
+import { startMock, REPO, evalSetOf } from './start-mock.mjs';
 import { buildMap, testFiles, MAP_FILE } from '../tools/affected.mjs';
 
 const SERVICE = join(REPO, 'service');
@@ -60,11 +60,33 @@ export function runOf(env = process.env) {
   return `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
 }
 
-// brainSent, brainReadsOf and evalSetOf live in start-mock.mjs, which needs them for every stand-in fleet's lock (R52)
-// and must load in a copy of a tree that has no tools/ folder.
-export { brainSent, brainReadsOf, evalSetOf };
+// What the brain is sent at the start of the owner's chat turn, as the stand-in model received it (mock/model.mjs
+// keeps the latest in brain-sent.json): the system prompt, the tools that turn offers and how it was asked (sampling,
+// limit, thinking). With it, what other rounds can be sent (R46): GET /actions, every action with its group and the
+// brain's catalog (the cap, the groups and their words, the lines that follow tools, the setup's sampling and limits).
+export async function brainSent(fleet) {
+  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
+  let last = '';
+  for (let i = 0; i < 5; i++) {
+    const words = `Hello from test/lock.mjs (${randomBytes(4).toString('hex')}).`;
+    const chat = await fetch(`${fleet.base}/chats`, { method: 'POST', headers, body: '{}' });
+    const { id } = await chat.json();
+    last = await (await fetch(`${fleet.base}/chats/${id}/messages`, { method: 'POST', headers, body: JSON.stringify({ text: words }) })).text();
+    let sent = null;
+    try { sent = JSON.parse(readFileSync(join(fleet.dir, 'brain-sent.json'), 'utf8')); } catch {}
+    if (sent?.words === words && typeof sent.system === 'string' && Array.isArray(sent.tools) && sent.tools.length) {
+      const catalog = await (await fetch(`${fleet.base}/actions`)).json();
+      if (!Array.isArray(catalog?.actions) || !catalog.brain) throw new Error('GET /actions didn’t give the actions and the brain’s catalog, so what the brain reads couldn’t be marked.');
+      return { system: sent.system, tools: sent.tools, params: sent.params ?? null, catalog };
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error(`The stand-in brain wasn’t sent a chat turn, so what it reads couldn’t be marked: ${last.slice(-500)}`);
+}
+export const brainReadsOf = ({ system, tools, params = null, catalog = null }) => createHash('sha256').update(JSON.stringify({ system, tools, params, catalog })).digest('hex');
 
-// The lock for the build the stand-in fleet runs. `git` is what gitFields gave before the suite ran.
+// The lock for the build the stand-in fleet runs. `git` is what gitFields gave before the suite ran. `evalSet` is the eval's
+// case set this tree holds (its version and each case's id and expect), so a build reads its own set (R52).
 export async function lockFor(fleet, { git = gitFields(), env = process.env } = {}) {
   const { workflows } = await (await fetch(`${fleet.base}/workflows`)).json();
   const { build } = await (await fetch(`${fleet.base}/health`)).json();

@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, mkdtempSync
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, useFleet, api, call, createActKey, newChat, say, auditLines, waitFor, SLOW } from './lib.mjs';
+import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, auditLines, waitFor, SLOW } from './lib.mjs';
 import { serviceConfig, startMock } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
@@ -129,6 +129,25 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.equal((await api('/main/check', { method: 'POST', body: {} })).status, 202);
     await waitFor(() => Object.values(profiles()).find(p => p.at > at), { timeout: 60000, what: 'the brain check' });
     await aButton('checked, no eval', /^Sparkie asks before every change, one button each: the eval has not been run for this build\.$/);
+  });
+
+  test('no eval on record, and still the rail is only the brain’s: the owner’s own call, the owner’s press of a button and a saved workflow’s step run as before', { timeout: 120000 * SLOW }, async () => {
+    const own = await api('/actions/remember', { method: 'POST', body: { text: 'Rail own call holds', kind: 'fact' } });
+    assert.deepEqual([own.status, own.json.outcome], [200, 'remembered'], own.text);
+    const words = 'remember that the rail press holds', chat = await newChat();
+    script([{ match: `^${words}$`, calls: [{ name: 'remember', arguments: { text: 'The rail press holds', kind: 'fact' } }] }]);
+    const asked = (await say(chat, words)).message;
+    assert.equal(asked.choices?.length, 1, JSON.stringify(asked));
+    const pressed = await choose(chat, asked.choices[0].id);
+    assert.equal(pressed.status, 200, pressed.text);
+    assert.equal(pressed.json.outcome, 'remembered', pressed.text);
+    const saved = await api('/actions/save_workflow', { method: 'POST', body: { title: 'rail step', steps: [{ action: 'stop_model', args: { spark: 'spark4', container: RADIX } }] } });
+    assert.equal(saved.status, 200, saved.text);
+    const run = await api('/actions/run_workflow', { method: 'POST', body: { name: 'rail step' } });
+    assert.equal(run.status, 200, run.text);
+    assert.notEqual(run.json.outcome, 'question', run.text);
+    await waitFor(() => stateOf('spark4', RADIX) === 'exited', { timeout: 60000, what: 'the workflow’s stop step to run' });
+    assert.ok(auditLines().some(l => l.via === 'workflow' && l.action === 'stop_model' && l.ok), 'the step ran as the workflow');
   });
 
   test('a full, bar-met record needs the passkey once one is set up: sent without it, 428 and nothing kept; with it, kept and changes run at once', { timeout: 120000 * SLOW }, async () => {
