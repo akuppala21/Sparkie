@@ -12,13 +12,16 @@
 // only). Cancelling the run ends the wait at once (sleepUnless, and the look under way is stopped by the operation's
 // abort signal), and cancels the step's own operation under way, which puts back what it did. /stop never cancels an
 // operation (R34), so it doesn't end the run.
-// A run that ends badly (a step failed or asked, a job ended badly or ran past the limit, or the run was cancelled)
-// stops what its own steps started, newest first, and only that (runCleanUp): each step whose answer was `started` is
-// noted as it finishes (startedBy): a model a start or restart ran (stop_model), an app keep_running started (keep_running
-// stop, which takes it off the list) and a job (the same, only while it still runs). A step that answered `already` (it
-// was running before the run) is never stopped, and what a step stopped stays stopped. Each stop is an ordinary action
-// call as the run (via workflow), so the pause and the claims hold; one that fails is said after the first error, never
-// in its place. A run that ends well stops nothing.
+// What a run started is stopped again, newest first, and only that (contract 9.27, design D 2.3; stopWhatRan): each step
+// whose answer was `started` is noted as it finishes (startedBy): a model a start or restart ran (stop_model), an app
+// keep_running started (its stop, which takes it off the list) and a job (the same, only while it still runs). A step
+// that answered `already` (it was running before the run) is never stopped, a step saved with keep: true is left
+// running, and what a step stopped stays stopped. When: a run that ends badly (a step failed or asked, a job ended badly
+// or ran past the limit, or the run was cancelled), every run (runCleanUp); a run that ends well, only a workload, a run
+// with a job step (j.workload, set by jobStepEnd): its models and apps were started for its job (runEndWell), and its
+// jobs, which have ended, stay with their files. A run with no job step (a routine, a stack) keeps what it started.
+// Each stop is an ordinary action call as the run (via workflow), so the pause and the claims hold; one that fails is
+// said after the first error, never in its place. What was stopped and what was kept is said in the run's result.
 const STEP_JOB_MS = Number(process.env.SPARK_CONSOLE_STEP_JOB_MS || 6 * 3600000);
 const STEP_JOB_LINES = 10;
 const forHowLong = ms => (ms >= 3600000 ? `${+(ms / 3600000).toFixed(1)} hours` : ms >= 60000 ? `${Math.round(ms / 60000)} minutes` : `${Math.round(ms / 1000)} seconds`);
@@ -33,6 +36,7 @@ const sleepUnless = (ms, signal) => new Promise(resolve => {
 async function jobStepEnd(j, n, args, out) {
   const spark = sparkIdOf(out?.spark || args.spark) || String(args.spark), container = String(out?.starting || out?.container || args.container);
   const node = nodeById(spark), at = sparkName(node || { id: spark });
+  j.workload = true;
   step(j, `Step ${n}: ${container} runs on ${at}; waiting for it to end (${forHowLong(STEP_JOB_MS)} at most)`);
   let end;
   try { end = await waitJobEnd(node, container, { limitMs: STEP_JOB_MS, job: j }); } catch (e) {
@@ -63,24 +67,24 @@ async function stepOpEnd(j, id) {
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
 // part. Nothing for a step that answered anything else (already, kept, a stop).
-function startedBy(action, args, out) {
+function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
   const op = jobs.get(out.operation), inner = op?.inner ? jobs.get(op.inner) : null, id = v => sparkIdOf(v) || String(v);
   if (action === 'start_model') {
-    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1] }));
+    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
   }
-  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container) }];
-  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container) }];
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
-// The run ended badly with `e`: stop what `ran` holds, newest first, and say so. Returns the error to end the run with:
-// the first error's first line, then what was stopped and what couldn't be, then the rest of the first error. Its words
-// are also kept on the run (cleanUp) for the chat line and the cancel's answer.
-async function runCleanUp(j, ran, e, viewer, ctx, title) {
-  const stopped = [], failed = [];
+// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended. Returns
+// the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
+async function stopWhatRan(ran, viewer, ctx, title) {
+  const stopped = [], kept = [], failed = [];
   const c = { via: 'workflow', actor: `${title} (saved workflow)`, request: `${title}, stopping what it started`, canChange: true, conv: ctx.conv || null, ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) };
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
+    if (x.keep) { kept.push(name); continue; }
     try {
       // (a job that already ended has nothing to stop)
       if (x.kind === 'job') {
@@ -97,9 +101,31 @@ async function runCleanUp(j, ran, e, viewer, ctx, title) {
       if (out?.outcome !== 'already') stopped.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
-  const words = [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...failed].join(' ');
+  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
+// error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
+// are also kept on the run (cleanUp) for the chat line and the cancel's answer.
+async function runCleanUp(j, ran, e, viewer, ctx, title) {
+  const words = await stopWhatRan(ran, viewer, ctx, title);
   j.cleanUp = words || 'Nothing it had started was still running.';
   if (words) note(j, `After the end: ${words}`);
   const [first, ...rest] = String(e?.message || e).split('\n');
   return Object.assign(new Error([`${first}${words ? ` ${words}` : ''}`, ...rest].join('\n')), e?.cancelled || j.cancelled ? { cancelled: true } : {});
+}
+// The run ended well: a workload (a run with a job step) stops the models and apps it started for its job; its jobs have
+// ended and stay. Any other run keeps what it started. The words go on the run (cleanUp) and in the chat line.
+async function runEndWell(j, ran, viewer, ctx, title) {
+  if (!j.workload) return;
+  const words = await stopWhatRan(ran.filter(x => x.kind !== 'job'), viewer, ctx, title);
+  if (words) { j.cleanUp = words; note(j, `At the end: ${words}`); }
+}
+// A saved step's keep: true or false, for a step that starts something (D 2.3's word); anything else is refused.
+const SAVED_STEP_KEYS = new Set(['action', 'args', 'keep']);
+const savedStepStarts = (action, args) => action === 'start_model' || action === 'restart_model' || (action === 'keep_running' && (args?.do ?? 'keep') === 'keep');
+function savedStepShape(st, i) {
+  const extra = Object.keys(st || {}).find(k => !SAVED_STEP_KEYS.has(k));
+  if (extra) throw new HttpError(400, `Step ${i + 1}: ${String(extra).slice(0, 40)} isn’t part of a step. A step has action, args and, for one that starts something, keep.`);
+  if (st.keep !== undefined && typeof st.keep !== 'boolean') throw new HttpError(400, `Step ${i + 1}: keep is true or false.`);
+  if (st.keep === true && !savedStepStarts(st.action, st.args || {})) throw new HttpError(400, `Step ${i + 1} (${st.action}): keep is only for a step that starts something.`);
 }

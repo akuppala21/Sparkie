@@ -3,8 +3,10 @@
 // already running before the run, it stops the model and the app steps 1 and 2 started, takes them off the list, leaves
 // that job and the model that ran before it running, and says what it stopped in its result, in the cancel's answer and
 // in the chat it was asked in; cancelled while a step's own operation runs, that operation is cancelled too and puts
-// back what it did; a stop that fails is said after the first error, never in its place; a run that ends well stops
-// nothing.
+// back what it did; a stop that fails is said after the first error, never in its place. A workload (a run with a job
+// step) that ends well stops the models and apps it started for its job, except a step saved with keep: true, and says
+// so; one whose model ran before it leaves that running; a run with no job step (a stack) keeps what it started; keep
+// is refused when it isn't true or false, on a step that starts nothing, and beside an unknown field.
 //
 // The stand-in fleet: Spark 3's model of Spark Console's is stopped before the service starts, so a restart_model step
 // there starts sc-gpt-oss-20b and stops nothing; Spark 4 keeps its model (on the list of what should be running, seeded
@@ -127,18 +129,78 @@ describe('a run that ends badly stops what it started, and only that (D6d)', { c
     assert.equal(stateOf('spark3', GPT20), 'running', 'not stopped, as it says');
   });
 
-  test('a run that ends well stops nothing', { timeout: 240000 * SLOW }, async t => {
-    t.after(async () => { if (stateOf('spark3', GPT20) === 'running') await stopByHand('spark3', GPT20); });
-    await save('ends well', [
+  test('a workload (a model, then a job) that ends well stops the model it started for the job, takes it off the list, and says so in its result and the chat', { timeout: 240000 * SLOW }, async () => {
+    await save('model for a job', [
       { action: 'restart_model', args: { spark: 'spark3', container: GPT20 } },
       { action: 'keep_running', args: { spark: 'spark4', container: 'wl-ok' } },
     ]);
     jobsRun(true);
-    const run = await opEnd(await runIt('ends well'), 'the run');
+    script([{ match: '^run model for a job$', calls: [{ name: 'run_workflow', arguments: { name: 'model for a job' } }] }]);
+    let chat;
+    try { chat = await newChat(); await say(chat, 'run model for a job'); } finally { noScript(); }
+    const run = await opEnd((await runOf('model for a job')).id, 'the run');
     assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    const said = 'Stopped what this run had started: sc-gpt-oss-20b on Spark 3.';
+    assert.equal(run.cleanUp, said);
+    assert.ok(run.log.some(l => String(l).endsWith(`At the end: ${said}`)), run.log.join('\n'));
+    assert.equal(stateOf('spark3', GPT20), 'exited');
+    assert.ok(!(await listed()).includes(`spark3/${GPT20}`));
+    const posted = await waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.operation === run.id), { timeout: 30000, what: 'the posted result' });
+    assert.equal(posted.content, `Done: the saved workflow model for a job finished. ${said}`);
+  });
+
+  test('a step saved with keep: true is left running when the workload ends, and the result says it was kept; keep is refused when it isn’t true or false, on a step that starts nothing, and an unknown field with it', { timeout: 240000 * SLOW }, async t => {
+    t.after(async () => { if (stateOf('spark3', GPT20) === 'running') await stopByHand('spark3', GPT20); });
+    for (const [steps, re] of [
+      [[{ action: 'restart_model', args: { spark: 'spark3', container: GPT20 }, keep: 'yes' }], /^Step 1: keep is true or false\.$/],
+      [[{ action: 'stop_model', args: { spark: 'spark3', container: GPT20 }, keep: true }], /^Step 1 \(stop_model\): keep is only for a step that starts something\.$/],
+      [[{ action: 'restart_model', args: { spark: 'spark3', container: GPT20 }, stay: true }], /^Step 1: stay isn’t part of a step\./],
+    ]) {
+      const r = await act('save_workflow', { title: 'bad keep', steps });
+      assert.equal(r.status, 400, r.text);
+      assert.match(r.json.error, re);
+    }
+    await save('kept model', [
+      { action: 'restart_model', args: { spark: 'spark3', container: GPT20 }, keep: true },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-ok' } },
+    ]);
+    assert.equal((await act('workflows', {})).json.saved.find(x => x.name === 'kept-model').steps[0].keep, true);
+    jobsRun(true);
+    const run = await opEnd(await runIt('kept model'), 'the run');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.equal(run.cleanUp, 'Kept running, as saved: sc-gpt-oss-20b on Spark 3.');
     assert.equal(stateOf('spark3', GPT20), 'running');
     assert.ok((await listed()).includes(`spark3/${GPT20}`));
-    assert.ok(!run.log.some(l => /After the end|Stopped what this run had started/.test(l)), run.log.join('\n'));
+  });
+
+  test('a run with no job step (a stack) that ends well keeps everything it started', { timeout: 240000 * SLOW }, async t => {
+    t.after(async () => {
+      if (stateOf('spark3', GPT20) === 'running') await stopByHand('spark3', GPT20);
+      if (stateOf('spark4', 'wl-web') === 'running') { const s = await act('keep_running', { spark: 'spark4', container: 'wl-web', do: 'stop' }); await opEnd(s.json.operation, 'wl-web stopped'); }
+    });
+    await save('my stack', [
+      { action: 'restart_model', args: { spark: 'spark3', container: GPT20 } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-web' } },
+    ]);
+    const run = await opEnd(await runIt('my stack'), 'the run');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.deepEqual([stateOf('spark3', GPT20), stateOf('spark4', 'wl-web')], ['running', 'running']);
     assert.equal(run.cleanUp, undefined);
+    assert.ok(!run.log.some(l => /At the end|Stopped what this run had started/.test(l)), run.log.join('\n'));
+  });
+
+  test('a workload whose model was running before the run leaves that model running, and stops only what it started', { timeout: 240000 * SLOW }, async () => {
+    await save('model already up', [
+      { action: 'start_model', args: { model: 'RadixArk--Qwen3.8-27B-NVFP4', spark: 'spark4' } },
+      { action: 'restart_model', args: { spark: 'spark3', container: GPT20 } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-ok' } },
+    ]);
+    jobsRun(true);
+    const run = await opEnd(await runIt('model already up'), 'the run');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.ok(run.log.some(l => /Step 1: already/.test(l)), run.log.join('\n'));
+    assert.equal(run.cleanUp, 'Stopped what this run had started: sc-gpt-oss-20b on Spark 3.');
+    assert.deepEqual([stateOf('spark4', RADIX), stateOf('spark3', GPT20)], ['running', 'exited']);
+    assert.ok((await listed()).includes(`spark4/${RADIX}`));
   });
 });
