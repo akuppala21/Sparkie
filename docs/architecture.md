@@ -33,7 +33,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes"]
-  JOURNAL["The journal (20-journal, R43): outside the state folder; never copied off Spark 2, never deleted"]
+  JOURNAL["The journal (20-journal, R43): outside the state folder, never copied off Spark 2 or deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -103,7 +103,7 @@ flowchart TD
   RUN -->|"a start line, synced, before a change written down first (else nothing runs); each change's result; recall"| JOURNAL
   CHAT -->|"the owner's words, each tool call and its result, the turn"| JOURNAL
   JOBS -->|"an operation's end and log; a start's attempts"| JOURNAL
-  SENSE -->|"a copy of each event"| JOURNAL
+  SENSE -->|"each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
   KNOW -->|"best setup for a start"| RUN
@@ -119,7 +119,7 @@ flowchart TD
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB
@@ -138,9 +138,9 @@ printed and counted in memory, an uncaught error writes `last-crash.json` just b
 (`recordCrash`), and `sparkie_setup` shows both with the watchdog's last five restarts (`faultView`); `checkRoute` and
 `refreshBlocked` (every 60 s, read Tailscale; set the TCP lock, `funnelOn` and the Sparks' blocked addresses;
 `funnelOn` (`/health`'s `internet`) and `doorOn` (R40) stay null, not known, until an answer names the main address:
-right after a boot tailscaled answers with nothing loaded. `checkRoute` also runs on the stand-in fleet, where `test/mock/bin/tailscale` answers it); `watchHeld` (60 s);
-the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start (and
-the journal's, `journalAfterRestart`, R43), and
+right after a boot tailscaled answers with nothing loaded. `checkRoute` also runs on the stand-in fleet, where
+`test/mock/bin/tailscale` answers it); `watchHeld` (60 s); the agent last-use write (60 s); `adoptRunning` (once, 60 s
+after start); the cut-off-operation report at start (and the journal's, `journalAfterRestart`, R43), and
 `selfTestRecover` (5 s after start: stops what a cut-off self-test started); the daily copy’s clock (`backupIfDue`: 10
 minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started in the local port's listen callback beside the Telegram loop: reads

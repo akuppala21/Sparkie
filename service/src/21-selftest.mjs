@@ -16,7 +16,8 @@
 // stop_model or restart_model wait for their validation run, these runs are it (the drill's heal is restart_model's).
 // The web page's and job's containers stay, stopped, and are used again next time (their names carry a hash of what they
 // run, so a new image or address makes new ones). The model it starts never joins the list of what should be running
-// (desiredAfter; its start, the drill's restart and its stop are marked selfTest), and a model that is on that list for
+// (desiredAfter; its start, the drill's restart and its stop are marked selfTest; the list's first seed and self-healing
+// ask selfTestModels), and a model that is on that list for
 // the Spark is never the one it picks. It wakes nothing: with no compute Spark on, it says so and starts nothing. It is not
 // a workflow (no lock entry): each step is an action with its own gate. What a run starts is kept in self-test.json as it
 // starts (the model's container id as soon as Docker has one), so a restart of Spark Console in the middle stops exactly
@@ -146,6 +147,15 @@ const SELF_TEST_FILE = `${STATE_DIR}/self-test.json`;
 const selfTestCtx = spark => ({ via: 'page', actor: 'Self-test', request: `the self-test on ${sparkName(nodeById(spark) || { id: spark })}`, canChange: true, trusted: true, noStops: true, selfTest: true });
 const selfTestNeed = id => (workflowStatus(id).state === 'needs-validation' ? id : null);
 const selfTestMine = x => { x.selfTest = true; };
+// The self-test's own model, `<spark>/<container>`, for as long as it can be running (R22): a run under way, from its job
+// (made before anything starts; one that ended after `since` too, for a look at the Sparks from before its end), and one
+// a restart cut off, from self-test.json until selfTestRecover has stopped what it started. Neither watchHeld's first
+// seed nor maybeHeal's restart puts it on the list. Throws when self-test.json can't be read just now (readKept).
+function selfTestModels(since = Date.now()) {
+  const rec = readKept(SELF_TEST_FILE);
+  const runs = [...jobs.values()].filter(x => x.type === 'self-test' && x.container && (x.status === 'running' || (Date.parse(x.finishedAt) || 0) >= since));
+  return new Set([...runs.map(x => `${x.node}/${x.container}`), ...(rec?.spark && rec.model?.container ? [`${rec.spark}/${rec.model.container}`] : [])]);
+}
 // Its model's stop (the Stop step, the clean-up, and after a restart). stop_model asked as the page first cancels every
 // operation that changes models on that Spark; asked as a workflow's step it cancels only operations of the same actor,
 // its own (17-changes.mjs). So when anything of anyone else's is under way there (an owner's download-then-start, say),
@@ -351,7 +361,7 @@ action({
     const image = String(CONFIG.selfTestImage || '');
     if (!new RegExp(ACTIONS.get('keep_running').input.properties.image.pattern).test(image)) throw new HttpError(409, 'No self-test image is set in config.json (selfTestImage), so the self-test can’t run.');
     const where = await selfTestPlace(spark);
-    const job = newJob('self-test', { node: where.spark, model: where.model.repo || where.model.name, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
+    const job = newJob('self-test', { node: where.spark, model: where.model.repo || where.model.name, container: containerName(where.model.name), by: viewer.login, actor: ctx.actor || null, via: ctx.via || null,
       request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     runJob(job, j => selfTest(j, ctx, where, image));
     return { outcome: 'started', operation: job.id, spark: where.spark, model: where.model.repo || where.model.name, container: containerName(where.model.name),
