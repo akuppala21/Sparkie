@@ -55,6 +55,9 @@ const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GEMMA = 'sc-gemma-3-12b-it';
 // at a line's beginning, and the shortened pieces (256 characters) fall inside keys.
 const KEYS = Array.from({ length: 80 }, (_, i) => `hf_${(`${i}`.padStart(3, '0') + 'k'.repeat(10) + Array.from({ length: 33 }, (_, j) => 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'[(i * 31 + j * 17 + j * j) % 55]).join(''))}`);
 const leaks = text => KEYS.flatMap(k => Array.from({ length: k.length - 11 }, (_, i) => k.slice(i, i + 12))).filter(f => text.includes(f));
+// A key's pieces of 12 characters: none may be in the journal, whole or cut.
+const piecesOf = key => Array.from({ length: key.length - 11 }, (_, i) => key.slice(i, i + 12));
+const SUBKEY = 'hf_Zq7Wm2Xr9Tb4Lk8Hs3Fd6Gp1Nc5Vy0Uj', EVKEY = 'hf_Pa4Ke8Rt2Wq6Yz0Bn3Mx7Lc1Vg5Hd9Js';
 let failedOp = null;
 
 test('its folder is outside the state folder (0700, files 0600); a look writes one line; a key in an agent\'s arguments is [hidden] in the file', async () => {
@@ -86,6 +89,12 @@ test('a failed start: its log (keys hidden, also across two pieces), its attempt
     assert.ok(op.o[1] > 4 * 256, `long enough to be written in several pieces: ${op.o[1]}`);
     assert.ok((text.match(/\[hidden\]/g) || []).length >= 40, text);
     assert.deepEqual(leaks(everything()), [], 'no piece of any key, whole or split');
+    // A key across the cut of a name the record is about (its model, cut at 120 characters): masked before the cut.
+    const named = await call(keys.look.token, 'where_it_fits', { model: `${'m'.repeat(105)}${SUBKEY}` });
+    assert.equal(named.isError, true, named.text);
+    const about = await waitFor(() => records().find(r => r.act === 'where_it_fits' && (r.sub || []).some(n => n.startsWith('mmmm'))), { what: 'the look\'s record' });
+    assert.ok(about.sub.some(n => n.includes('[hidden]')), JSON.stringify(about.sub));
+    assert.deepEqual(piecesOf(SUBKEY).filter(f => everything().includes(f)), [], 'no piece of the key in a name');
     const attempt = records().find(r => r.k === 'attempt' && r.op === x.operation);
     assert.deepEqual([attempt?.n, attempt?.failure], [1, 'unknown'], JSON.stringify(attempt ?? null));
     const ev = records().filter(r => r.k === 'event' && r.op === x.operation).map(r => r.outcome);
@@ -174,10 +183,15 @@ test('with the journal\'s disk full, a change written down first answers "couldn
 // The console killed between the start line of save_file (its worker stalled) and its end; then started again on the
 // same state and journal, twice. B is the console after the first restart.
 let B = null, cutChat = null;
-const copyTo = from => ({ dir, stateDir }) => {
+const copyTo = (from, events = []) => ({ dir, stateDir }) => {
   cpSync(join(from.stateDir, 'chats.json'), join(stateDir, 'chats.json'));
   cpSync(from.journalDir, join(dir, 'journal'), { recursive: true });
+  if (events.length) writeFileSync(join(stateDir, 'events.jsonl'), events.map(e => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
 };
+// An operation a restart cut off, whose notice (“A restart of Spark Console cut off deploy <model>…”) holds a key across
+// the 600 characters an event's text keeps: it is masked before the cut.
+const CUT_PREFIX = 'A restart of Spark Console cut off deploy ';
+const CUT_OP = { at: '2026-11-04T10:00:00.000Z', type: 'operation', id: 'fedcba987654', operation: 'deploy', status: 'started', model: `${'m'.repeat(585 - CUT_PREFIX.length)}${EVKEY}`, spark: 'spark3' };
 const env = { SPARK_CONSOLE_JOURNAL_MAX_BYTES: '2048', SPARK_CONSOLE_JOURNAL_NEEDS_BYTES: '1' };
 // Part of acceptance test T123: killed while a file write changes a Spark, after the restart one "cut off" notice, and
 // it is never run again.
@@ -190,7 +204,7 @@ test('a console killed between a start line and its end: after the restart, one 
   assert.equal(records().filter(r => r.id === start.id).length, 1, 'no end yet');
   process.kill(T.fleet.servicePid(), 'SIGKILL');
   await waitFor(() => T.fleet.serviceExit(), { what: 'the console to end' });
-  B = await startMock({ watchMs: 600000, statusMs: 600000, env, prepare: copyTo(T.fleet) });
+  B = await startMock({ watchMs: 600000, statusMs: 600000, env, prepare: copyTo(T.fleet, [CUT_OP]) });
   later.push(B);
   const notices = await waitFor(async () => {
     const m = (await (await fetch(`${B.base}/chats/${cutChat}`)).json()).messages.filter(x => x.notice && /cut off/.test(x.content));
@@ -204,6 +218,9 @@ test('a console killed between a start line and its end: after the restart, one 
   const mine = records(B.journalDir).filter(r => r.id === start.id);
   assert.deepEqual(mine.map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'cut-off']]);
   assert.equal(records(B.journalDir).filter(r => r.start && r.act === 'save_file' && r.chat === cutChat).length, 1, 'never run again');
+  const notice = await waitFor(() => records(B.journalDir).find(r => r.k === 'event' && (r.text || '').startsWith(`${CUT_PREFIX}mmmm`)), { what: 'the cut-off operation\'s notice' });
+  assert.ok(notice.text.includes('[hidden]'), notice.text);
+  assert.deepEqual(piecesOf(EVKEY).filter(f => everything(B.journalDir).includes(f)), [], 'no piece of the key in an event\'s text');
 });
 
 test('after the restart, recall still has the failed start\'s log (operation_log says expired)', { timeout: 60000 * SLOW }, async () => {

@@ -7296,8 +7296,9 @@ const JOURNAL_REFUSED = 'Couldn’t write the record of this change on Spark 2 (
 // When a write last failed and last worked (the needs-you line), and the changes a restart cut off (for a day).
 let journalProblem = null, journalWorked = 0, journalCut = null, journalDirSet = false;
 const journalId = () => `j_${randomBytes(6).toString('hex')}`;
-// The names a record is about (Sparks, models, containers, a failure), for search.
-const jSub = (...xs) => [...new Set(xs.flat().filter(x => typeof x === 'string' && x).map(x => x.slice(0, 120)))].slice(0, 8);
+// The names a record is about (Sparks, models, containers, a failure), for search. Masked before the cut, with 200
+// characters past it, so a key across the cut is hidden whole (as audit does).
+const jSub = (...xs) => [...new Set(xs.flat().filter(x => typeof x === 'string' && x).map(x => maskSecrets(x.slice(0, 320)).slice(0, 120)))].slice(0, 8);
 const jErr = e => (e == null ? null : maskSecrets(String(e?.message ?? e).slice(0, 4000)).slice(0, 300));
 const jArgs = a => { if (typeof a !== 'string') return a; try { return JSON.parse(a); } catch { return a; } };
 // Arguments past 4,000 characters are cut before they are masked (masking a megabyte was most of audit's cost), with
@@ -7457,7 +7458,7 @@ function journalOp(job) {
 function journalEvent(e) {
   try {
     const { at, type, id, status, spark, sparks, container, model, error, why, text, ...rest } = e;
-    journal('event', { act: type, op: type === 'operation' ? id : null, outcome: status || null, err: jErr(error || why), text: text ? String(text).slice(0, 600) : null,
+    journal('event', { act: type, op: type === 'operation' ? id : null, outcome: status || null, err: jErr(error || why), text: text ? maskSecrets(String(text).slice(0, 800)).slice(0, 600) : null,
       sub: jSub(spark, sparks, container, model), ...(Object.keys(rest).length ? { ev: rest } : {}) });
   } catch {}
 }
