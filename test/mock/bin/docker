@@ -76,15 +76,16 @@ runList() { local prev= out= a; while IFS= read -r a; do [ "$prev" = "$2" ] && o
 setLine() { { grep -v "^$1|" "$M/containers" || true; echo "$2"; } > "$M/c.tmp"; mv "$M/c.tmp" "$M/containers"; }
 # With ~/.mock/stamp-starts: when this container (re)started.
 stamp() { [ -f "$M/stamp-starts" ] && date -u +%Y-%m-%dT%H:%M:%SZ > "$M/started-$1"; true; }
-# With ~/.mock/jobs-run: runs job $1's command (the words after its image) in its /out folder; prints its exit code.
+# With ~/.mock/jobs-run: runs job $1's command (the words after its image) in its /out folder, with its settings (-e) in
+# its environment, as a container has them; prints its exit code.
 runJobNow() {
-  local a want= prev= img= dir= cmd=() code
+  local a want= prev= img= dir= cmd=() envs=() code
   while IFS= read -r a; do
     if [ -n "$img" ]; then cmd+=("$a"); continue; fi
-    if [ -n "$want" ]; then [ "$prev" = -v ] && case "$a" in *:/out) dir=${a%:/out} ;; esac; want=; continue; fi
+    if [ -n "$want" ]; then [ "$prev" = -v ] && case "$a" in *:/out) dir=${a%:/out} ;; esac; [ "$prev" = -e ] && envs+=("$a"); want=; continue; fi
     case "$a" in --name|--label|--restart|--memory|--log-opt|-p|-v|-e|-w|--gpus|--shm-size) want=1; prev=$a ;; -*) ;; *) img=$a ;; esac
   done < "$M/run-$1"
-  if [ -n "$dir" ] && [ -d "$dir" ] && [ ${#cmd[@]} -gt 0 ]; then (cd "$dir" && "${cmd[@]}") > "$M/logs-$1" 2>&1; code=$?; else code=125; fi
+  if [ -n "$dir" ] && [ -d "$dir" ] && [ ${#cmd[@]} -gt 0 ]; then (cd "$dir" && env ${envs[@]+"${envs[@]}"} "${cmd[@]}") > "$M/logs-$1" 2>&1; code=$?; else code=125; fi
   echo "$code"
 }
 runsJob() { [ -f "$M/jobs-run" ] && runLabel "$M/run-$1" spark.job=1; }
