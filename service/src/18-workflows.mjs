@@ -39,6 +39,16 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   HF_OWN,
   hfEachFile,
   copyModel,
+  offHolds,
+  powerThenStart,
+  powerThen,
+  powerOnSparks,
+  powerOnOne,
+  bringBackParked,
+  wakeNeedOf,
+  wakeMayPair,
+  wakePartner,
+  wakeNeedsTwo,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',

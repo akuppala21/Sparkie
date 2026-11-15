@@ -54,4 +54,5 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R50](rules/R50.md): Any brain (contract 3.11; design B, step 9): the chat loop keeps no model's habits.
 - [R51](rules/R51.md): Keys given once (A14a; contract 9.15, owner decision 22): a key, token or address the owner gives in their own chat, on the page or in the paired Telegram chat, is taken out at …
 - [R53](rules/R53.md): What the console runs as the owner reads nothing from the owner's home.
+- [R56](rules/R56.md): Asleep, and waking for work (contract 9.22 and 9.28; it carries on from R41, which is full).
 - [R57](rules/R57.md): A saved workflow run as a workload (contract 9.27; design D 2.3 as cut): what R35 says of its steps, its job waits and its clean-up holds; this rule adds what outlives the process.

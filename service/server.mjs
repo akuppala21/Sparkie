@@ -6409,8 +6409,10 @@ async function startModel(args, viewer, ctx) {
     // Making room by stopping Spark Console's own models is done and said (contract 8.4), unless the owner said not to.
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
+    // (what a wake goes by: its size, its own need, and whether it may run across two Sparks, R56)
+    const wakeSize = { sizeBytes: m.sizeBytes, needBytes: wakeNeedOf(m), pairs: wakeMayPair(m) };
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -6422,12 +6424,13 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ], 'question', { ownerOnly: true });
     }
-    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows;
+    // after one wake, once more only for a model no Spark that is on can hold alone: its partner, R56)
+    if (!placed.ok && !spark && !sparks && (!ctx.poweredOn || (ctx.poweredOn === 1 && wakeNeedsTwo(m, inv)))) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { ...wakeSize, why: notWoken }); if (first) return first; }
     if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -7172,6 +7175,16 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   HF_OWN,
   hfEachFile,
   copyModel,
+  offHolds,
+  powerThenStart,
+  powerThen,
+  powerOnSparks,
+  powerOnOne,
+  bringBackParked,
+  wakeNeedOf,
+  wakeMayPair,
+  wakePartner,
+  wakeNeedsTwo,
 ];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
@@ -12841,6 +12854,39 @@ action({
       next: open === null ? 'Every tool is offered here: call them by name.' : open ? 'These are offered from your next round.' : 'This brain’s setup offers the core only: call one by its name and it runs.' };
   },
 });
+/* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
+// Area: features        Rules: R41, R56        Tests: power-wake-pair.test.mjs, power-wake.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// A start that names no Spark and has to wake one (wakeOne, 21-power.mjs; startModel, 17-changes.mjs) wakes the two a
+// model across two Sparks needs. How many it needs is read from what the start already knows, never guessed: for a
+// model on a disk of a Spark that is on, its own need as plan() reckons it (05-library.mjs: its spark.json's memoryGiB,
+// else its size and 15%), against a Spark's memory less the 8 GB kept free (a sleeping Spark's from its record, one
+// that is on from the live look); for one to download, the recipe's versions (`sparks`, `needGB`). Its partner is the
+// other end of a cable between two compute Sparks that passed its test: never the hub, which is never asleep and never
+// holds part of a model. A model that fits on one Spark wakes one, as before.
+
+// The model's own memory need in bytes, as plan() reckons it.
+function wakeNeedOf(m) {
+  return m?.manifest?.memoryGiB ? m.manifest.memoryGiB * 2 ** 30 : Math.round((m?.sizeBytes || 0) * 1.15);
+}
+// Whether a model on disk may run across two Sparks at all: from Recipes (placeModel), not a draft, on an engine that
+// pairs (pairOptions).
+function wakeMayPair(m) {
+  return Boolean(m) && m.role !== 'draft' && Boolean(ENGINES[engineOf(m)]?.pairs) && inRecipes(m);
+}
+// The compute Spark at the other end of this one's tested cable, or null.
+function wakePartner(id) {
+  const hub = brainSparks(), p = (lastCheck?.pairs || []).find(x => x.fastLink === 'full' && [x.a, x.b].includes(id) && ![x.a, x.b].some(s => hub.includes(s)));
+  return p ? (p.a === id ? p.b : p.a) : null;
+}
+// After a wake, whether the model on disk can only run across two Sparks: no compute Spark that is on holds its need
+// alone, by the live look. Only then may a start that still fits nowhere wake once more (its partner, startModel); a
+// model that fits on one Spark never does.
+function wakeNeedsTwo(m, inv) {
+  const on = inv.sparks.filter(s => s.online && computeSparks().includes(s.id) && Number.isFinite(s.memTotal));
+  return wakeMayPair(m) && on.length > 0 && on.every(s => s.memTotal - HEADROOM < wakeNeedOf(m));
+}
 /* ───────── power-aware Sparks (contract 9.22, R41) ───────── */
 // Area: features        Rules: R19, R22, R23, R32, R41        Tests: power.test.mjs, heal-status.test.mjs
 // Owns: power.json (writers: savePower)
@@ -12944,28 +12990,35 @@ function offFor(off, names, listedOnly) {
 // (with its linked partner when its memory alone can't hold it and that one is off too). Without room, or for a call (a
 // call never copies or downloads): else one with no list, which may hold anything. With room (a start that fits on no
 // Spark that is on): else the first whose record's free disk holds the model with the usual floor (its size and a
-// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; a record with no numbers (an older build) last. A
-// Spark that is off with no record is never woken here. [] when none fits; then why goes into `why`, for the answer.
-function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, why = null } = {}) {
+// tenth, and 20 GB) and whose memory less 8 GB holds what it needs; else, for a model that may run across two
+// (`pairs`, or a recipe's version for two), the first that holds half of it, with its partner (R56); a record with no
+// numbers (an older build) last. A Spark that is off with no record is never woken here. [] when none fits; then why
+// goes into `why`, for the answer.
+function wakeOne(off, names, { room = false, call = false, sizeBytes = null, needBytes = null, versions = null, pairs = false, why = null } = {}) {
   const st = powerState(), order = NODES.map(n => n.id);
   const recs = off.filter(id => st.off[id]).sort((a, b) => order.indexOf(a) - order.indexOf(b)), rec = id => st.off[id];
+  // (its partner too when that one is asleep, on a cable between two compute Sparks: wakePartner, R56)
+  const withPartner = id => (recs.includes(wakePartner(id)) ? [id, wakePartner(id)] : [id]);
   const listed = recs.filter(id => offHolds(rec(id), names) === true);
   if (listed.length) {
     const id = listed[0], need = needBytes ?? sizeBytes, mem = rec(id).memTotal;
-    const pair = Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need
-      ? (lastCheck?.pairs || []).find(p => p.fastLink === 'full' && [p.a, p.b].includes(id)) : null;
-    const partner = pair ? (pair.a === id ? pair.b : pair.a) : null;
-    return partner && recs.includes(partner) ? [id, partner] : [id];
+    return pairs && Number.isFinite(need) && Number.isFinite(mem) && mem - HEADROOM < need ? withPartner(id) : [id];
   }
   const unknown = recs.filter(id => offHolds(rec(id), names) === null);
   if ((!room || call) && unknown.length) return [unknown[0]];
   const numbers = recs.filter(id => Number.isFinite(rec(id).diskFree) && Number.isFinite(rec(id).memTotal));
-  const holdsIt = r => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === 1 && v.sizeGB != null && v.needGB != null)
-    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9)
-    : !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes)));
+  // (parts 2: half of a model across two Sparks, all its files there: a recipe's version for two, or a model on disk
+  // that may pair, by its own need)
+  const holdsIt = (r, parts = 1) => (versions?.length ? versions.filter(v => (v.sparks ?? 1) === parts && v.sizeGB != null && v.needGB != null)
+    .some(v => r.diskFree >= v.sizeGB * 1.1e9 + 20e9 && r.memTotal - HEADROOM >= v.needGB * 1e9 / parts)
+    : parts === 1 ? !Number.isFinite(sizeBytes) || (r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes))
+      : pairs && Number.isFinite(sizeBytes) && r.diskFree >= sizeBytes * 1.1 + 20e9 && r.memTotal - HEADROOM >= (needBytes ?? sizeBytes) / 2);
   if (room && !call) {
     const fits = numbers.find(id => holdsIt(rec(id)));
     if (fits) return [fits];
+    // (none holds it alone: the first that holds half, with its partner when that one is asleep too)
+    const half = numbers.find(id => wakePartner(id) && holdsIt(rec(id), 2));
+    if (half) return withPartner(half);
     const older = recs.filter(id => !numbers.includes(id));
     if (older.length) return [older[0]];
   }
@@ -13535,8 +13588,8 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
     let started = false;
     try {
       step(j, `Starting ${what}`);
-      // (no conversation: this operation posts the one result)
-      const out = await go({ ...ctx, poweredOn: true, conv: null, onQuestion: null });
+      // (no conversation: this operation posts the one result; poweredOn counts the wakes this start has had, R56)
+      const out = await go({ ...ctx, poweredOn: (ctx.poweredOn || 0) + 1, conv: null, onQuestion: null });
       if (['already', 'kept'].includes(out?.outcome)) { note(j, `${what} is running`); started = true; return; }
       if (!['started', 'already-starting'].includes(out?.outcome) || !out.operation) {
         throw new Error(`${names} ${need.length > 1 ? 'are' : 'is'} on now, but starting ${what} needs a choice first: ${String(out?.question || out?.note || out?.outcome || 'ask again').slice(0, 300)} Ask again to choose.`);
@@ -13544,6 +13597,8 @@ function powerThen(viewer, ctx, need, what, go, asked = null) {
       // (its failure is this operation's: counted once, here, R9)
       const inner = jobs.get(out.operation);
       if (inner) inner.partOf = j.id;
+      // (and its own version, as runAction gives the operation it returns: its lesson has its start code, B2, R56)
+      if (inner && !inner.workflowVersion && (out.workflowVersion || ctx.workflowVersion)) inner.workflowVersion = out.workflowVersion || ctx.workflowVersion;
       j.inner = out.operation;
       for (;;) {
         const x = jobs.get(out.operation);

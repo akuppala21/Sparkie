@@ -559,8 +559,10 @@ async function startModel(args, viewer, ctx) {
     // Making room by stopping Spark Console's own models is done and said (contract 8.4), unless the owner said not to.
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
+    // (what a wake goes by: its size, its own need, and whether it may run across two Sparks, R56)
+    const wakeSize = { sizeBytes: m.sizeBytes, needBytes: wakeNeedOf(m), pairs: wakeMayPair(m) };
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -572,12 +574,13 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ], 'question', { ownerOnly: true });
     }
-    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows;
+    // after one wake, once more only for a model no Spark that is on can hold alone: its partner, R56)
+    if (!placed.ok && !spark && !sparks && (!ctx.poweredOn || (ctx.poweredOn === 1 && wakeNeedsTwo(m, inv)))) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { ...wakeSize, why: notWoken }); if (first) return first; }
     if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).

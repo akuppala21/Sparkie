@@ -65,6 +65,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”); `test/turn-budgets.test.mjs` | falls short today: its file says where |
 | [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “a member's /key and an agent's”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “a value typed in plain words, then given with /key”, “a kept key that reached the secrets file another way”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
 | [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”) | falls short today: its file says where |
+| [R56](rules/R56.md) | partly | `test/power-wake-pair.test.mjs`; `test/power-wake.test.mjs` | falls short today: its file says where |
 | [R57](rules/R57.md) | partly | `test/workloads-agent.test.mjs`; `test/workloads-restart.test.mjs`; `test/workloads-address.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
@@ -191,8 +192,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.24 | no test yet |  | T114, T115: no test holds them yet |
 | 9.25 | no test yet |  | T116, T117: no test holds them yet |
 | 9.26 | no test yet |  | T140: no test holds it yet |
-| 9.27 | partly | `test/power-wake.test.mjs` | holds part of T141: “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
-| 9.28 | partly | `test/power-wake.test.mjs` | holds part of T141: “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
+| 9.27 | partly | `test/power-wake-pair.test.mjs`; `test/power-wake.test.mjs` | holds part of T141: “only the Sparks a start needs are woken: two for a model across two, one for one that fits on one.”, “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
+| 9.28 | partly | `test/power-wake-pair.test.mjs`; `test/power-wake.test.mjs` | holds part of T141: “only the Sparks a start needs are woken: two for a model across two, one for one that fits on one.”, “only the Spark a start needs is woken, and a look wakes nothing, says how old its answer is and reads "asleep".” |
 | 10.1 | no test yet |  | T60: no test holds it yet |
 | 10.2 | no test yet |  | T14: no test holds it yet |
 | 10.3 | no test yet |  | T60: no test holds it yet |
