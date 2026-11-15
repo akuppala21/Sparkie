@@ -185,6 +185,9 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, editor = false, keep
     // Every workflow counts as validated on the stand-in fleet (workflows.test.mjs turns this off to test the rule), and a
     // model that loads but can't answer is given up on after 4 seconds instead of 90.
     SPARK_CONSOLE_ASSUME_VALIDATED: '1', SPARK_CONSOLE_ANSWER_TEST_MS: '4000',
+    // The stand-in cable check before a start across two Sparks: its two sides get 3 seconds each, stretched on a slow
+    // machine (SPARK_TEST_SLOW), as every other wait here is.
+    SPARK_CONSOLE_CABLE_SECS: String(3 * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1)),
     // Hugging Face is never reached: searches and repo look-ups answer from this list (mock/hf-fixture.json).
     SPARK_CONSOLE_HF_FIXTURE: join(MOCK, 'hf-fixture.json'),
     ...extraEnv,

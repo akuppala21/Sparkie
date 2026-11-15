@@ -36,7 +36,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const MAP_FILE = 'test/affected-map.json';
 const PART = /^service\/src\/(\d{2}-[a-z0-9-]+\.mjs)$/;
 // Sign-in, lock-out safety, Sparkie's own rules and the one way to change a Spark: any change here runs everything.
-export const ALWAYS_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '16-actions', '17-changes',
+export const ALWAYS_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads', '17-changes',
   '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `${p}.mjs`);
 export const ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^service\/config\.json$/, /^deploy\//,
   /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//, /^\.github\//];

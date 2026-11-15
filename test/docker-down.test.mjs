@@ -1,3 +1,8 @@
+// Covers: Docker not answering on a Spark that is on (`.mock/stall` set to 0): no `removed` events, healing leaves a
+// two-Spark model alone and uses no try, the should-run list says “Docker isn’t answering on Spark 3”, one notice for
+// the whole outage, one line in `needsOwner` and none for the model; when Docker answers again everything is known as
+// before (F6).
+//
 // Docker not answering on a Spark that is on (its service restarting, or slow) is "couldn't read", never "nothing
 // there" (F6, 2026-11-12). The stand-in Spark's ~/.mock/stall set to 0 makes every docker command there fail at once
 // while the Spark itself (its worker) still answers. Before: the watcher's `docker ps … | while` exited 0 with no lines and

@@ -1,5 +1,5 @@
-// service/server.mjs is generated: service/src/*.mjs joined in name order (tools/build-server.mjs). It must match its
-// parts exactly, so what's tested, locked and installed is what the parts say.
+// Covers: service/server.mjs is generated: service/src/*.mjs joined in name order (tools/build-server.mjs). It must
+// match its parts exactly, so what's tested, locked and installed is what the parts say.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

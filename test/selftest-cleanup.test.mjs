@@ -1,3 +1,10 @@
+// Covers: The self-test's clean-up on a fleet where nothing is validated yet (as after an install that changed the
+// workflows), on a Spark 3 turned on ten minutes ago: cancelled during its first step while `stop_model` waits for its
+// validation run, the clean-up still stops the model; the drill isn't run there ("not tried", saying when to ask
+// again), nothing is killed and the run passes; after a restart of Spark Console in the middle, at start-up it stops
+// exactly what the test had started (`self-test.json`), says so once in the chat that asked, and tells no one to start
+// it again.
+//
 // The self-test's clean-up (21-selftest.mjs) on a fleet where nothing is validated yet, as after an install that changed
 // the workflows: the self-test's runs are their validation runs, and its clean-up has to carry that pass too, or
 // runAction refuses its stop and the test model is left running. (selftest.test.mjs covers the rest, with everything

@@ -4,8 +4,11 @@
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
 #   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
 #                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first
-#   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt is stopped, except what
-#                               <rehearsal>/standin/let-through names, one per line: "<attempt> <wall> [direct|child|after]"
+#   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
+#                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
+#                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
+#                               attempt shows outside, one per line: "<attempt> works|not-there [what]".
+#                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
 import json, os, shutil, sys
 
@@ -59,9 +62,19 @@ def say(*words):
     print(' '.join(str(x) for x in words), flush=True)
 
 
+outside = {}
+for line in (knob('outside') or '').splitlines():
+    w = line.split(None, 2)
+    if len(w) >= 2:
+        outside[int(w[0])] = (w[1], w[2] if len(w) > 2 else 'stand-in')
+
 if unit.startswith('sw-prove-'):
     part, uid = unit[len('sw-prove-'):].split('-', 1)
     held = os.path.join(R, 'run', 'spark-console', uid)
+    played = knob(f'play-{part}')
+    if played is not None:
+        sys.stdout.write(played)
+        sys.exit(0)
     if part == 'prep':
         # What proof.py's prep makes and the helper looks for: the proof's folders in the owner's home.
         home = open(os.path.join(held, 'owner')).read().split('\n')[2]
@@ -76,7 +89,8 @@ if unit.startswith('sw-prove-'):
         mode, nums = cmd[at + 1], [int(n) for n in cmd[at + 2:]]
         for n in nums:
             if mode == 'outside':
-                say('P', n, 'outside', 'works', 'stand-in')
+                word, what = outside.get(n, ('works', 'the loopback, stand-in' if n == 2 else 'stand-in'))
+                say('P', n, 'outside', word, what)
                 continue
             for how in ('direct', 'child'):
                 word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
@@ -85,6 +99,8 @@ if unit.startswith('sw-prove-'):
         for n, wall in ((1, 'look'), (1, 'run'), (5, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     elif part == 'after':
+        say('V', 5, 'outside', 'works', 'stand-in')
+        say('V', 12, 'outside', 'works', 'stand-in')
         for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     sys.exit(0)

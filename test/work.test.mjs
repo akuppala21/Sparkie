@@ -1,6 +1,6 @@
-// run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root helper through
-// sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the one this
-// build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
+// Covers: run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root
+// helper through sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the
+// one this build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
 // as outside text (masked, cut for the brain, kept whole in one journal record).
 // The stand-in fleet, with the real helper (deploy/spark-console-root) as a rehearsal under each set-up Spark's home
 // (~/.rehearsal: a made-up /etc, /proc and /usr/local/sbin), driven by the stand-ins step 1a added in test/mock/bin
@@ -228,6 +228,14 @@ test('what a look prints comes back masked, without escape codes, cut to the fir
   assert.ok(text.startsWith("$ printf 'HF_TOKEN="), text.slice(0, 80));
   assert.ok(text.endsWith('\n19999\n20000\n'));
   assert.ok(text.includes('\n10000\n') && !text.includes('hf_abcdefghijklmnop'));
+  // Words a NUL keeps apart (a program's /proc/<pid>/cmdline) stay apart, and a key after a colour code is whole again:
+  // the mask sees both, for the brain and in the record. (The command builds each key, so only the output holds it.)
+  const cleaned = await look({ on: 'spark3', command: 'k=abcdefghij; h=hf_; printf "vllm\\0serve\\0--api-key\\0sk-${k}klmnopqrstuvwxyz0123456789\\0\\n"; printf "Using \\033[32m${h}abcdefghijklmnopqrstuvwxyz0123456789\\033[0m\\n"' });
+  assert.equal(cleaned.status, 200, cleaned.text);
+  assert.ok(!cleaned.text.includes('sk-abcdefghijklmnop') && !cleaned.text.includes('hf_abcdefghijklmnop'), cleaned.text);
+  assert.match(cleaned.json.output, /^vllm serve --api-key \S*\[hidden\]/);
+  const kept = recordText(records().find(y => y.id === cleaned.json.record));
+  assert.ok(!kept.includes('sk-abcdefghijklmnop') && !kept.includes('hf_abcdefghijklmnop') && !kept.includes('\x1b'), kept);
   // Past the journal's size (here 300,000 bytes; 16 MB on the Sparks) the look is ended and says so.
   const big = await look({ on: 'spark3', command: "head -c 400000 /dev/zero | tr '\\0' a" });
   assert.equal(big.status, 200, big.text);
@@ -336,6 +344,16 @@ test('who may look: the owner; an agent only when its key may change things too;
   const act = await call(keys.act.token, 'run', { on: 'spark3', command: 'cat docs/plain.txt' });
   assert.equal(act.isError, false, act.text);
   assert.equal(act.value.output, 'hello from spark 3\n');
+  // recall reads a look back on the same rule: the key that may only look gets the record without its text.
+  const id = act.value.record;
+  const back = await call(keys.look.token, 'recall', { id });
+  assert.equal(back.isError, false, back.text);
+  assert.equal(back.value.text, null);
+  assert.match(back.value.note, /read back only by the owner, or by an agent the owner lets change things/);
+  const listed = (await call(keys.look.token, 'recall', { kind: 'cmd', limit: 20 })).value.records.find(x => x.id === id);
+  assert.ok(listed && !('kept' in listed), JSON.stringify(listed));
+  assert.match((await call(keys.act.token, 'recall', { id })).value.text, /^\$ cat docs\/plain\.txt\nhello from spark 3\n$/);
+  assert.match((await api('/actions/recall', { method: 'POST', body: { id } })).json.text, /hello from spark 3/);
   assert.equal((await look({ on: 'spark3', command: 'ls' }, { 'tailscale-user-login': MEMBER })).status, 403);
   // The one page's later inputs aren't there yet: refused as any action refuses an input it doesn't know.
   for (const extra of [{ root: true }, { dir: '/tmp' }, { minutes: 5 }, { seconds: 10 }]) {

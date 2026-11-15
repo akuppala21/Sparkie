@@ -1,6 +1,6 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler)
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired)
 // Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -30,15 +30,20 @@ function desiredAfter(job) {
   if (!started.length && !stopped.length) return;
   const d = desired(true), before = d.running.map(x => ({ ...x }));
   // Bringing back what's already on the list (a restart, self-healing) changes nothing on it: no revision, so it never
-  // stands in the way of undoing the owner's last change there.
+  // stands in the way of undoing the owner's last change there. One parked while its Spark was powered off
+  // (21-power.mjs) runs again, so its mark goes (no revision either).
   if (!stopped.length && started.every(k => d.running.some(x => keyOf(x) === k))) {
+    const parked = d.running.filter(x => x.parked && started.includes(keyOf(x)));
+    for (const x of parked) delete x.parked;
+    let save = parked.length > 0;
     // (The owner's own start of one that's on the list makes it the newest wish for its Sparks. Self-healing brings
     // back only the newest model wanted on a Spark, displacedBy in 20-heal.mjs, so its date moves; still no revision.)
     if (job.actor !== 'Self-healing') {
       const at = job.finishedAt || new Date().toISOString();
       for (const x of d.running) if (started.includes(keyOf(x))) x.since = at;
-      try { writePrivate(DESIRED_FILE, d); } catch (e) { console.error(`Couldn’t save what should be running: ${e.message}`); }
+      save = true;
     }
+    if (save) try { writePrivate(DESIRED_FILE, d); } catch (e) { console.error(`Couldn’t save what should be running: ${e.message}`); }
     return;
   }
   const add = started.map(x => {
@@ -84,8 +89,21 @@ function forgetApp(x, by, chat) {
   writePrivate(DESIRED_FILE, d);
   return true;
 }
-// Each entry, with how it is now: running, changing (an operation holds its Spark), or held, and why. An app also has
-// its link, and (check) whether it answers there now.
+// Parking (21-power.mjs, contract 9.22): entries Spark Console stopped to power their Spark off stay on the list with
+// parked (when), so healing leaves them alone and nothing calls them missing; they come back when their Spark is turned
+// on, or on their next call (and the mark goes when they run again, desiredAfter). Read with readKept itself, so a file
+// that can't be read is never saved over; no revision (what should run hasn't changed). The keys it marked.
+function parkDesired(keys, on) {
+  const d = readKept(DESIRED_FILE);
+  if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
+  const hit = d.running.filter(x => keys.includes(keyOf(x)) && Boolean(x.parked) !== on);
+  for (const x of hit) { if (on) x.parked = new Date().toISOString(); else delete x.parked; }
+  if (hit.length) writePrivate(DESIRED_FILE, d);
+  return hit.map(keyOf);
+}
+// Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
+// powered its Spark off, 21-power.mjs), or held, and why. An app also has its link, and (check) whether it answers there
+// now.
 async function desiredNow({ check = false } = {}) {
   const d = desired(), inv = await recentInventory().catch(() => null);
   // The look at the Sparks is shared for a few seconds: an operation that ended after it began changed what's there
@@ -98,7 +116,13 @@ async function desiredNow({ check = false } = {}) {
   const states = new Map(await Promise.all(appSparks.map(async id => [id, await appStates(nodeById(id)).catch(() => null)])));
   return { revision: d.revision, running: await Promise.all(d.running.map(async x => {
     const sp = inv?.sparks.find(s => s.id === x.spark), dep = sp?.deployments.find(y => y.container === x.container);
-    if (x.app) return appNow(x, sp, busy, check, states.get(x.spark) ?? null);
+    // (parked: not running on purpose; with its Spark off on purpose, nothing about it is the owner's to fix)
+    // (the mark is kept now, not read from the look, so only an operation running there now makes it changing)
+    if (x.parked && dep?.state !== 'running' && !(x.app && sp?.online && (states.get(x.spark) || []).some(c => c.name === x.container && c.state === 'running'))) {
+      if ([...jobs.values()].some(j => j.status === 'running' && (j.nodes || [j.node]).includes(x.spark))) return { ...x, state: 'changing' };
+      return { ...x, ...(x.app ? { kind: 'app' } : {}), state: 'parked', why: parkedWhy(x) };
+    }
+    if (x.app) return { ...(await appNow(x, sp, busy, check, states.get(x.spark) ?? null)), ...(poweredOffNow(x) ? { poweredOff: true } : {}) };
     if (dep?.state === 'running') return { ...x, state: 'running' };
     if (busy.has(x.spark)) return { ...x, state: 'changing' };
     const w = knowledge.workloads?.[Object.keys(knowledge.workloads || {}).find(k => knowledge.workloads[k].spark === x.spark && knowledge.workloads[k].name === x.container)];
@@ -110,7 +134,7 @@ async function desiredNow({ check = false } = {}) {
           : skipped ? skipped.why
             : 'it isn’t running';
     // (its Spark off, or its Docker not answering: whether it runs isn't known, and it isn't the owner's to fix by itself)
-    return { ...x, state: 'held', why, ...(!sp?.online ? { sparkOff: true } : !sp.dockerOk ? { dockerDown: true } : {}) };
+    return { ...x, state: 'held', why, ...(!sp?.online ? { sparkOff: true } : !sp.dockerOk ? { dockerDown: true } : {}), ...(poweredOffNow(x) ? { poweredOff: true } : {}) };
   })) };
 }
 // Tells the owner once when something on the list becomes held.
@@ -137,8 +161,9 @@ async function watchHeld() {
     for (const x of now.running) {
       const k = keyOf(x);
       if (x.state !== 'held') { heldSaid.delete(k); continue; }
-      // Docker isn't answering there: the watcher said so once, and whether it runs isn't known (F6).
-      if (x.dockerDown) continue;
+      // Docker isn't answering there: the watcher said so once, and whether it runs isn't known (F6). Its Spark powered
+      // off by Spark Console (21-power.mjs): off on purpose, nothing to tell.
+      if (x.dockerDown || x.poweredOff) continue;
       if (heldSaid.has(k)) continue;
       heldSaid.add(k);
       fleetEvent({ type: 'notice', text: `${x.container} on ${sparkName(nodeById(x.spark) || { id: x.spark })} should be running but isn’t (${x.why}). Bring it back, or forget it, in Activity.` });
@@ -162,7 +187,7 @@ function cancelCheck(job) {
 // The operations a stop cancels on its Sparks: the ones that start, stop or bring back models there, so a stop never
 // waits behind a start. A download, a search for setups or a Spark action touches no model and goes on (2026-11-11: a
 // stop on Spark 3 cancelled GLM-5.3-Flash's 178 GB download there).
-const CHANGES_MODELS = new Set(['deploy', 'deploy-cluster', 'start-model', 'restart', 'stop', 'undo']);
+const CHANGES_MODELS = new Set(['deploy', 'deploy-cluster', 'start-model', 'restart', 'stop', 'undo', 'power-off', 'power-on']);
 const holdsModelsOn = (j, ids) => j.status === 'running' && CHANGES_MODELS.has(j.type) && (j.nodes || [j.node]).some(id => ids.includes(id));
 async function cancelRunningOn(ids, by) {
   return cancelJobsAndWait([...jobs.values()].filter(j => holdsModelsOn(j, ids)), by);

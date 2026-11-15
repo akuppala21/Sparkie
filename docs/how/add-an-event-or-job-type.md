@@ -9,7 +9,7 @@ map's "Where new things go", row "An event type or a job type".
 
 ## Also update
 
-- `EVENT_TYPES` (`16-actions.mjs`) for an event type; `docs/rules/R13.md` names a job type and says whether it takes a
+- `EVENT_TYPES` (`16-reads.mjs`) for an event type; `docs/rules/R13.md` names a job type and says whether it takes a
   claim. `node tools/make.mjs` fails on a type sent or started that isn't there, and `docs/registry.md` lists who
   sends or starts each.
 - `describeEvent` (`19-watcher.mjs`); the last 10 events go to Sparkie with every owner message (`fleetNotes`).

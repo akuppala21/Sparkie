@@ -856,7 +856,11 @@ More checking agents are added only where the eval (10.1) shows they catch real 
 - 9.22 **Power-aware Sparks.** With smart plugs on Sparks 1, 3 and 4 (O1), a Spark idle past the owner's
   chosen time is shut down cleanly and its plug turned off; one a task needs is turned on, and the task waits for it.
   Spark 2 is never powered down. The plugs also measure real wall power, so a job's energy shows on its task card.
-  Nothing that should be running (6.13) is powered down.
+  Nothing that should be running (6.13) is powered down, except idle models, which are parked: stopped, kept on the
+  list, never healed, and back when their Spark is on or they are called. The owner turns Sparks off or on, or sets
+  the idle time, from chat, an agent or the API; an agent's power-off or idle setting waits for the owner's yes.
+  Nothing Spark Console didn't start, or that is protected, is stopped for it, and a Spark that still answers is never
+  cut.
 - 9.23 **The ready library: about 20 models, ready to go.** The models the owner uses are kept ready to start on
   Sparks 1, 3 and 4, alone or across several (Spark 2 is the brain's). Ready means:
   - a recipe verified on these Sparks, with its measured speed and start time;

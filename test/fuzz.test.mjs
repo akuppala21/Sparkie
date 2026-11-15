@@ -1,3 +1,7 @@
+// Covers: Hostile values, argument names and envelopes against every tool: no 5xx, no non-JSON, no broken JSON-RPC, no
+// leaked exceptions, every error coded, the service stays up. The change tools are fuzzed with agents paused (their
+// inputs are still checked; nothing may run).
+//
 // Fuzz pass: hostile argument values, argument names and envelopes against every tool. Looks for HTTP 500s, non-JSON
 // answers, broken JSON-RPC envelopes, results that aren't JSON, leaked internal exceptions, and the service going down.
 // The tools that change things are fuzzed with agents' changes paused, so nothing they're asked for runs (their inputs
@@ -38,13 +42,32 @@ const CODED = /^\[(invalid|not_allowed|not_found|conflict|too_large|busy|unreach
 
 const ctx = {};
 const VALID = () => ({
-  where_it_fits: { model: ctx.model }, spark_detail: { spark: ctx.spark }, operation_log: { id: '0123456789ab' }, container_logs: { spark: ctx.spark, container: ctx.container },
-  deploy_plan: { model: ctx.model, spark: ctx.spark }, cluster_plan: { model: ctx.model, sparks: ctx.pair }, recipe_detail: { id: ctx.recipe },
-  search_huggingface: { query: 'qwen3 0.6b' }, spark_diagnostics: { spark: ctx.spark }, service_logs: { spark: ctx.spark, service: 'console' },
+  cluster_plan: { model: ctx.model, sparks: ctx.pair },
+  container_logs: { spark: ctx.spark, container: ctx.container },
+  deploy_plan: { model: ctx.model, spark: ctx.spark },
+  files: { spark: ctx.spark },
+  forget_memory: { id: '0123abcd' },
+  keep_running: { spark: ctx.spark, container: ctx.container },
+  operation_log: { id: '0123456789ab' },
+  power_off: { spark: ctx.spark },
+  power_on: { spark: ctx.spark },
+  power_settings: { idleMinutes: 30 },
+  read_page: { url: 'https://docs.example.org/never-searched' },
+  recall: { about: 'gemma' },
+  recipe_detail: { id: ctx.recipe },
+  restart_model: { spark: ctx.spark, container: ctx.container },
+  run: { on: ctx.spark, command: 'ls' },
+  save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' },
+  search_huggingface: { query: 'qwen3 0.6b' },
+  search_web: { query: 'vllm flags' },
+  self_test: {},
+  service_logs: { spark: ctx.spark, service: 'console' },
+  spark_detail: { spark: ctx.spark },
+  spark_diagnostics: { spark: ctx.spark },
+  start_model: { model: ctx.model },
+  stop_model: { spark: ctx.spark, container: ctx.container },
   wait_operation: { id: '0123456789ab' },
-  start_model: { model: ctx.model }, stop_model: { spark: ctx.spark, container: ctx.container }, restart_model: { spark: ctx.spark, container: ctx.container },
-  files: { spark: ctx.spark }, save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' }, keep_running: { spark: ctx.spark, container: ctx.container }, self_test: {},
-  search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' }, recall: { about: 'gemma' }, forget_memory: { id: '0123abcd' }, run: { on: ctx.spark, command: 'ls' },
+  where_it_fits: { model: ctx.model },
 });
 let schemas = {};
 

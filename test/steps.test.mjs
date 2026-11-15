@@ -1,3 +1,15 @@
+// Covers: A saved workflow's steps checked before step 1 (R35): `save_workflow` refuses a step carrying an answer
+// (`choice`, `allowStop`) or arguments its action refuses; `workflows {name}` rehearses with nothing run or changed
+// (goes, nothing to do, checked when reached); a run that can't work (a container that isn't there, a Spark that's off,
+// a model nothing matches) is refused with its step number and nothing changed; a run that passes says what it checked;
+// Sparkie runs it at once only for its whole name, never on "rehearse" or "dry run". Also: a stop or start naming no
+// target is refused at save; a look at a Spark that's off doesn't block; if the check itself fails the run goes ahead
+// and says so; a run's result isn't kept for steps that changed meanwhile; Sparkie makes a button for input values the
+// owner didn't say, "but don't …", or a shorter name inside a longer one, and an unknown name is an error. A routine
+// run again while its model already runs where the step names it (one Spark, or both parts across two named in either
+// order) starts nothing (F10): the check says nothing to do, the step answers already, no start operation; one part
+// down, or a pair when one Spark was named, is not already.
+//
 // A saved workflow's steps checked before step 1 (service/src/18-workflows.mjs checkSteps; round two, item 3). One look
 // at the Sparks, changing nothing: a run that can't work is refused with its step number and nothing changed (before,
 // step 1 had already stopped a model); `workflows {name}` is the rehearsal; save_workflow refuses a step that answers a

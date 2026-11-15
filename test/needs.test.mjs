@@ -1,3 +1,11 @@
+// Covers: What is waiting on the owner (H4, A2): `fleet_status` always carries `needsOwner` right after `observedAt`
+// (`[]` on the untouched stand-in fleet, and that is what Sparkie's tool result says; `/status` says “Needs you:
+// nothing.” right after Sparkie's line); a model on the should-run list stopped outside the console is one line naming
+// it and its Spark, the same in `/status` and at the top of Sparkie's record, not cleared by asking, not listed while
+// its Spark is off, gone when forgotten; each other cause (a file set aside, the secrets file unreadable, Spark 2's
+// disk under 10 GB, a restart in the last day, `access.json` unreadable, a save that failed, chats not being saved)
+// gives one line and goes when it does; more than 8 give the first 7 and “And N more.”
+//
 // What is waiting on the owner (H4, A2; 2026-11-12): one list, built by code from what Spark Console already holds, at
 // most 8 lines. fleet_status always carries it as needsOwner (right after observedAt; [] means nothing is), /status says
 // it ("Needs you: …", Telegram's /status too), and Sparkie's record carries it first, only when there is something. Each

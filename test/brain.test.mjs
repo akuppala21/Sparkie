@@ -1,23 +1,47 @@
+// Covers: Sparkie's own model when a change goes wrong. Switching: a setup that can't start is refused before anything
+// stops; a failed switch says whether the old model came back, and leaves no half-started container when it didn't. The
+// brain keeper (R19): a brain the console left down itself (a brain start that fails after its container is removed)
+// comes back with the same setup once self-healing is on (a `healing` event, a `main-start` operation by Self-healing,
+// the mark gone from `main.json`); a second try that would have to stop a container refuses and stops nothing, then one
+// notice and never a third; the owner's Stop clears the mark, and so does the brain answering again; nothing is started
+// then. Another brain's habits (B9, R50), said by its setup's `ask` block, never by the chat loop: today's setup is asked
+// as before; a block's field goes over the one beside it; with `mergeRoles` a stand-in brain that refuses two user
+// messages in a row gets none; one that prints its thinking between tags leaves none in the saved answer; thinking sent
+// as `reasoning` is read as thinking; past the setup's `tokenBudget`, by the brain's own `usage`, the next round offers no
+// tools; a Library model's spark.json `ask` block is kept with its setup, checked, and its brain is asked that way.
+//
 // Sparkie's own model (the brain) when a change of Spark Console's goes wrong. Switching it: a setup that can't start is
 // refused before anything stops; a failed switch says whether the old model came back, and leaves no half-started
 // container when it didn't (F3). The brain keeper (H2): a brain Spark Console left down itself (its `leftDown` mark in
 // main.json) comes back with the same setup, twice in 6 hours at most, stopping nothing; one stopped by the owner never
 // does. The stand-in brain is sparkie-main on spark2; ~/.mock/reject-flag makes its start exit at once, and the stand-in
 // docker exits any model whose name has "gemma".
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, rmSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, agentSettings, auditLines, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, agentSettings, auditLines, eventLines, waitFor, sleep, SLOW, newChat, say, chatMessages } from './lib.mjs';
 
+// B9: the ask blocks of a setup and of a Library model's spark.json (with fields the check leaves out: a limit, a
+// sampling key it doesn't know, tags that aren't two strings).
+const B9_ASK = { maxTokens: 6000, mergeRoles: true, tokenBudget: 4000 };
+const LIBRARY_ASK = { thinking: true, maxTokens: 8192, sampling: { temperature: 0.6, top_p: 0.95, top_k: 20, color: 3 }, mergeRoles: true, tokenBudget: 4000,
+  thinkTags: '<think>', toolRounds: 99 };
 useFleet({
   watchMs: 60000,
   // (self-healing looks every 2 s, and a brain stopped for 3 s is "down", so the keeper acts within seconds)
   env: { SPARK_CONSOLE_HEAL_MS: '2000', SPARK_CONSOLE_HEAL_SETTLE_MS: '3000' },
-  prepare: ({ stateDir }) => {
+  prepare: ({ root, stateDir }) => {
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8')), base = m.presets[m.current];
     m.presets['f3-not-here'] = { ...base, title: 'Not here', model: 'nobody--not-here' };
     m.presets['f3-crashes'] = { node: base.node, title: 'Crashes at start', served: 'gemma-brain', engine: base.engine, image: base.image, imageId: base.imageId, model: 'Qwen--Qwen3-32B', port: base.port, args: [] };
+    // (B9: today's brain asked another way, by its ask block; and a Library model whose spark.json carries one)
+    m.presets['b9-asks'] = { ...base, title: 'Asked another way', ask: B9_ASK };
+    const lib = join(root, 'spark2', 'models', 'next-brain');
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, 'config.json'), readFileSync(join(root, 'spark2', 'models', 'gpt-oss-20b', 'config.json')));
+    writeFileSync(join(lib, 'model.safetensors'), '');
+    writeFileSync(join(lib, 'spark.json'), JSON.stringify({ title: 'Next brain', engine: 'vllm', args: [], ask: LIBRARY_ASK }));
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   },
 }, async () => { await agentSettings({ selfHeal: false }); });
@@ -157,5 +181,124 @@ describe('the brain keeper', { concurrency: 1 }, () => {
       await waitFor(() => mainFile().leftDown === undefined, { timeout: 30000 * SLOW, what: 'the mark to go' });
       assert.equal((await keeperStarts()).length, before);
     } finally { await agentSettings({ selfHeal: false }); }
+  });
+});
+
+// B9 (R50): what one brain needs is said by its setup's ask block (13-ask.mjs), never by the chat loop. The stand-in
+// brain takes other brains' habits from $MOCK_DIR/model-habits.json (test/mock/model.mjs).
+describe('another brain\'s habits, said by its setup', { concurrency: 1 }, () => {
+  const requests = () => (existsSync(join(T.fleet.dir, 'model-requests.jsonl')) ? readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []);
+  const habits = h => (h ? writeFileSync(join(T.fleet.dir, 'model-habits.json'), JSON.stringify(h)) : rmSync(join(T.fleet.dir, 'model-habits.json'), { force: true }));
+  const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
+  // A reply that fails: its answer is left out of what the brain is sent next, so the owner's two messages meet.
+  async function failedReply(chat, words) {
+    writeFileSync(join(T.fleet.dir, 'model-fail'), 'answer-500\n{"error":{"message":"stand-in failure"}}');
+    const r = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: words } });
+    assert.match(r.text, /"type":"error"/);
+  }
+  async function use(body) {
+    const j = await brainJob('/main/use', body);
+    assert.equal(j.status, 'completed', JSON.stringify(j.log));
+    await answering();
+  }
+  const THOUGHT = /Let me look|at the snapshot|<\/?think>|<thi|ink>/;
+  after(async () => { habits(null); rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); if (mainFile().current !== 'aphex') await use({ preset: 'aphex' }); });
+
+  test('today\'s setup is asked as before: two user messages in a row go as two, and no count of tokens is asked for', { timeout: 120000 * SLOW }, async () => {
+    await answering();
+    assert.equal(mainFile().current, 'aphex');
+    const chat = await newChat();
+    await failedReply(chat, 'first words, before a failure');
+    const from = requests().length;
+    await say(chat, 'second words, after it');
+    const [asked] = requests().slice(from).filter(x => x.lastUser.endsWith('second words, after it'));
+    assert.deepEqual(asked.roles, ['system', 'user', 'user']);
+    assert.equal(asked.usageAsked, false);
+    assert.equal(asked.params.max_tokens, 4096);
+  });
+
+  test('a setup\'s ask block goes over the fields beside it', { timeout: 180000 * SLOW }, async () => {
+    await use({ preset: 'b9-asks' });
+    const chat = await newChat(), from = requests().length;
+    await say(chat, 'hello from a setup asked another way');
+    const [asked] = requests().slice(from).filter(x => x.words === 'hello from a setup asked another way');
+    assert.equal(asked.params.max_tokens, 6000, 'the block\'s maxTokens, not the 4096 beside it');
+    assert.equal(asked.usageAsked, true, 'a token budget asks for the brain\'s own count');
+  });
+
+  test('a stand-in brain that refuses two user messages in a row gets none', { timeout: 120000 * SLOW }, async () => {
+    habits({ alternating: true });
+    try {
+      const chat = await newChat();
+      await failedReply(chat, 'first words, before a failure');
+      const from = requests().length;
+      const r = await say(chat, 'second words, after it');
+      assert.ok(r.text.trim(), 'it answered');
+      const [asked] = requests().slice(from).filter(x => x.lastUser.endsWith('second words, after it'));
+      assert.deepEqual(asked.roles, ['system', 'user'], 'the two went as one');
+      assert.match(asked.lastUser, /^first words, before a failure\n\n(\[Spark Console’s record[\s\S]*\[End of record\.\]\n\n)?second words, after it$/);
+      assert.ok(requests().slice(from).every(x => x.roles.every((role, i) => i === 0 || role !== x.roles[i - 1] || !['user', 'assistant'].includes(role))), 'none, in any round');
+    } finally { habits(null); }
+  });
+
+  test('a stand-in brain that prints its thinking leaves none in the saved answer', { timeout: 120000 * SLOW }, async () => {
+    habits({ thinksAloud: true });
+    try {
+      const chat = await newChat();
+      const plain = await say(chat, 'hello, thinking out loud');
+      assert.match(plain.text, /^You asked: \*\*hello, thinking out loud\*\*/);
+      // (a tool round too: each call's answer starts with its thinking)
+      const looked = await say(await newChat(), 'what\'s running?');
+      assert.ok(looked.tools.length >= 1, JSON.stringify(looked.tools));
+      assert.match(looked.text, /^I checked\. running_models said:/);
+      for (const r of [plain, looked]) {
+        assert.doesNotMatch(r.text, THOUGHT);
+        assert.doesNotMatch(r.events.filter(e => e.type === 'delta').map(e => e.text).join(''), THOUGHT, 'nor on the page as it came');
+        assert.ok(r.events.some(e => e.type === 'thinking'), 'the page is told it was thinking');
+      }
+      assert.ok((await chatMessages(chat)).every(m => !THOUGHT.test(m.content)));
+    } finally { habits(null); }
+  });
+
+  test('thinking sent as reasoning, vLLM\'s newer name, is read as thinking', { timeout: 120000 * SLOW }, async () => {
+    habits({ reasoningField: true });
+    try {
+      const r = await say(await newChat(), 'hello, reasoning');
+      assert.ok(r.events.some(e => e.type === 'thinking'), JSON.stringify(r.events.map(e => e.type)));
+      assert.doesNotMatch(r.text, THOUGHT);
+    } finally { habits(null); }
+  });
+
+  test('tokens from the brain\'s own usage: past the setup\'s token budget the next round offers no tools', { timeout: 180000 * SLOW }, async () => {
+    const look = { name: 'running_models', arguments: {} };
+    script([{ match: '^look three times', rounds: [[look], [look], [look]] }]);
+    try {
+      // 5,000 tokens by the brain's count, over the setup's 4,000: one round of tools, then it answers.
+      habits({ usage: 5000 });
+      let from = requests().length;
+      let r = await say(await newChat(), 'look three times');
+      assert.equal(r.tools.length, 1, JSON.stringify(r.tools.map(t => t.name)));
+      const asked = requests().slice(from).filter(x => x.words === 'look three times');
+      assert.deepEqual(asked.map(x => [x.round, x.tools.length > 0, x.usageAsked]), [[0, true, true], [1, false, true]]);
+      // 100 tokens: under it, every round the script asks for.
+      habits({ usage: 100 });
+      from = requests().length;
+      r = await say(await newChat(), 'look three times');
+      assert.equal(r.tools.length, 3, JSON.stringify(r.tools.map(t => t.name)));
+    } finally { habits(null); rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+  });
+
+  test('a Library model\'s spark.json ask block is kept with its setup, checked, and its brain is asked that way', { timeout: 180000 * SLOW }, async () => {
+    await use({ model: 'next-brain' });
+    const m = mainFile(), lib = m.presets['lib-next-brain'];
+    assert.equal(m.current, 'lib-next-brain');
+    assert.deepEqual(lib.ask, { thinking: true, maxTokens: 8192, sampling: { temperature: 0.6, top_p: 0.95, top_k: 20 }, mergeRoles: true, tokenBudget: 4000 });
+    assert.equal(lib.toolRounds, undefined, 'a limit is no ask: a spark.json doesn\'t set it');
+    assert.equal(lib.port, m.presets.aphex.port, 'served on Sparkie\'s port');
+    const from = requests().length;
+    await say(await newChat(), 'hello from the next brain');
+    const [asked] = requests().slice(from).filter(x => x.words === 'hello from the next brain');
+    assert.deepEqual(asked.params, { temperature: 0.6, top_p: 0.95, top_k: 20, max_tokens: 8192, thinking: true });
+    assert.equal(asked.usageAsked, true);
   });
 });
