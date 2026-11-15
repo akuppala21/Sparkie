@@ -123,15 +123,17 @@ describe('a start wakes only the Spark it needs (D5)', { concurrency: 1 }, () =>
     assert.deepEqual(offline().filter(x => x !== 'spark1').sort(), ['spark3', 'spark4']);
   });
 
-  test('with both asleep, a model only on Spark 3’s record wakes Spark 3 alone, which is waited for, and it starts there', { timeout: 300000 * SLOW }, async () => {
+  // (unsloth/Qwen3.8-27B-NVFP4 is in Spark 4's Hugging Face cache only; Spark 2 holds another version, which isn't it)
+  test('with both asleep, a model only on Spark 4’s record wakes Spark 4 alone, which is waited for, and it starts there', { timeout: 300000 * SLOW }, async () => {
+    assert.ok(power().off.spark4.models.includes('unsloth--Qwen3.8-27B-NVFP4') && !power().off.spark3.models.includes('unsloth--Qwen3.8-27B-NVFP4'));
     const before = plugs.commands.length;
-    const r = await act('start_model', { model: 'gpt-oss-20b' });
-    assert.deepEqual(r.json?.poweringOn, ['spark3'], r.text);
+    const r = await act('start_model', { model: 'unsloth/Qwen3.8-27B-NVFP4' });
+    assert.deepEqual(r.json?.poweringOn, ['spark4'], r.text);
     await done(r);
-    assert.deepEqual(commandsSince(before), [{ node: 2, command: 'on' }], 'only Spark 3');
-    assert.ok(offline().includes('spark4') && !offline().includes('spark3'));
-    assert.ok((await look('running_models')).models.some(x => x.spark === 'spark3' && /gpt-oss-20b/.test(x.container)), 'it runs on Spark 3');
-    await sleepSpark('spark3');
+    assert.deepEqual(commandsSince(before), [{ node: 3, command: 'on' }], 'only Spark 4');
+    assert.ok(offline().includes('spark3') && !offline().includes('spark4'));
+    assert.ok((await look('running_models')).models.some(x => x.spark === 'spark4' && x.container === 'sc-unsloth--Qwen3.8-27B-NVFP4'), 'it runs on Spark 4');
+    await sleepSpark('spark4');
   });
 
   test('with both asleep and the model on neither record, one Spark is woken (the first with room), not both', { timeout: 300000 * SLOW }, async () => {
