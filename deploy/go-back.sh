@@ -19,4 +19,5 @@ for d in "$REL"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-
 done
 [ -n "$last" ] || { echo "There's no earlier build to go back to on this Spark (nothing complete in $REL that differs from what's installed)." >&2; exit 1; }
 echo "Going back to the build saved before the update on ${last##*/} ..."
-exec bash "$last/restore.sh" ${STAND_IN:+"$STAND_IN"}
+[ -z "$STAND_IN" ] || exec bash "$last/restore.sh" --stand-in
+exec bash "$last/restore.sh"
