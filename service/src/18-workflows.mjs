@@ -153,7 +153,16 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps)
-const NOT_A_STEP = new Set(['save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'save_file', 'self_test', 'power_settings']);
+const NOT_A_STEP = new Set([
+  'forget_memory',
+  'forget_workflow',
+  'power_settings',
+  'remember',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
   if (Array.isArray(v)) return v.map(x => fillIn(x, inputs));

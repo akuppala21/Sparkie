@@ -36,14 +36,58 @@ export function useFleet(opts = {}, setup = null) {
 export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PRODUCT BUG: ${reason}` });
 
 // The agent door's actions: the ones that read (every key sees them) and the ones that change things (only keys the
-// owner let act, scope fleet:act).
-export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_recipes', 'recipe_detail', 'search_huggingface', 'where_it_fits',
-  'deploy_plan', 'cluster_plan', 'linked_sparks', 'spark_detail', 'recent_operations', 'operation_log', 'container_logs', 'spark_diagnostics',
-  'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
-  'search_web', 'read_page', 'guide', 'recall'];
-export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
-  'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test',
-  'power_off', 'power_on', 'power_settings'];
+// owner let act, scope fleet:act). One a line, in name order.
+export const TOOLS = [
+  'cluster_plan',
+  'container_logs',
+  'deploy_plan',
+  'files',
+  'find_recipes',
+  'fleet_events',
+  'fleet_status',
+  'guide',
+  'linked_sparks',
+  'memory',
+  'models_on_disk',
+  'operation_log',
+  'read_page',
+  'recall',
+  'recent_operations',
+  'recipe_detail',
+  'running_models',
+  'search_huggingface',
+  'search_web',
+  'service_logs',
+  'should_be_running',
+  'spark_detail',
+  'spark_diagnostics',
+  'sparkie_setup',
+  'wait_operation',
+  'where_it_fits',
+  'workflows',
+  'workloads',
+];
+export const CHANGE_TOOLS = [
+  'cancel_operation',
+  'find_setups',
+  'forget_memory',
+  'forget_workflow',
+  'keep_running',
+  'power_off',
+  'power_on',
+  'power_settings',
+  'remember',
+  'restart_model',
+  'run_workflow',
+  'save_file',
+  'save_workflow',
+  'self_test',
+  'start_model',
+  'stop_model',
+  'test_changes',
+  'undo_last_change',
+  'undo_update',
+];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
 // Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), beside every
 // read action (a key that only looks) or every action (one that can act).
