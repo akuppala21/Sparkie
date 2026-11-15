@@ -57,6 +57,7 @@ const VALID = () => ({
   recipe_detail: { id: ctx.recipe },
   remember: { text: 'Spark 3 is where models go' },
   restart_model: { spark: ctx.spark, container: ctx.container },
+  run: { on: ctx.spark, command: 'ls' },
   save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' },
   search_huggingface: { query: 'qwen3 0.6b' },
   search_web: { query: 'vllm flags' },

@@ -13,13 +13,10 @@
 // - The other live lines about the same names come back on the result (two at most, newest first), so the brain and
 //   the owner see at once a line the new one may make untrue ("I also have: … Still true?").
 const NEAR_SHARE = 0.8, ALSO_MAX = 2;
-// Whether one of the additions of design G 3 is switched off for this run (the brain eval's switches, test/eval.mjs).
-const memoryOffFor = name => String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes(name);
-// Spark 2's own day, YYYY-MM-DD.
-const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-// Whether a line is past its last day; a line that is not, is live. (One argument only: it is passed to filter.)
-const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');
-const memoryLive = e => !memoryEnded(e);
+// Whether one of the additions of design G 3 is switched off for this run: the brain eval's switches (test/eval.mjs),
+// on the stand-in fleet only, as the picker's (memoryPicking). Whether a line is past its day is memoryEnded's
+// (20-memory-names.mjs: the index holds only the live lines).
+const memoryOffFor = name => ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes(name);
 // A line past its day, as memory's history keeps it: gone at the start of the next day, by Spark Console.
 function memoryExpired(e) {
   const at = new Date(`${e.until}T00:00:00`);
@@ -40,13 +37,13 @@ function memoryUntil(until) {
 const TIME_WORDS = /\b(?:until|till|til|through|thru|today|tonight|tomorrow|weekend|(?:this|next|coming)\s+(?:week|month|year)|end\s+of|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|january|february|march|april|june|july|august|september|october|november|december|(?:jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.?|for\s+(?:the\s+)?(?:next\s+)?(?:a|an|one|two|three|four|five|six|seven|\d+)\s+(?:days?|weeks?|months?)|\d{4}-\d\d-\d\d|\d{1,2}\/\d{1,2})\b/i;
 
 // Words that say nothing about what a line is about: left out when two lines are compared. So are memoryClear's.
-const COMMON_WORDS = new Set(('a an the is are was were be been being am on in at of to for from with by about into onto over under up down out off ' +
+const SAID_AGAIN_SKIP = new Set(('a an the is are was were be been being am on in at of to for from with by about into onto over under up down out off ' +
   'and or but nor so if then than as it its this that these those there here i me my mine we us our you your yours he him his she her ' +
   'they them their do does did done doing has have had having not no never don doesn didn isn aren wasn won cannot will would should could ' +
   'can may might must shall now just only also still too very really all any some each every more most what which who whom whose when ' +
   'where why how one ones thing things').split(' '));
 // A line's own words, to compare: lower case, a Spark said by number one word, no web address, no common word. Numbers stay.
-const lineWords = text => new Set(nameWords(text).filter(w => !COMMON_WORDS.has(w) && !MEMORY_FILLER.has(w) && (w.length > 1 || /\d/.test(w))));
+const lineWords = text => new Set(nameWords(text).filter(w => !SAID_AGAIN_SKIP.has(w) && !MEMORY_FILLER.has(w) && (w.length > 1 || /\d/.test(w))));
 const sameNames = (a, b) => [...new Set(a || [])].sort().join(' ') === [...new Set(b || [])].sort().join(' ');
 // The live line a new one says again, if any: about the same names, holding that line's numbers, and at least 0.8 of
 // its own words. The closest, the newest of equals. None with `time` off.
