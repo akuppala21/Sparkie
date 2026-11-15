@@ -1,3 +1,12 @@
+// Covers: The agent door (MCP): handshake and JSON-RPC envelope errors; the tools a new key sees (every read action and
+// `ask_sparkie`), with valid arguments; per-tool invalid arguments (unknown, missing, wrong type, pattern, range, enum,
+// length, nonexistent), each refused with its code (`[invalid]`, `[not_found]`, …); Spark names as people say them
+// (`"Spark 3"`, `"3"`, `cluster_plan` sparks as a list or `"a+b"`); auth (keys, Content-Type, Origin, member/stranger
+// identities, from the internet with its own key (v3.1), a Spark's own address); agent key lifecycle; `GET /actions`
+// (every action; `ask_sparkie` isn't one); rate limits (120 a minute, 3 tools at once, 6 web searches a minute); secret
+// masking, also of env-style names ending in `_KEY` or `_PASS`, a passphrase and `PGPASS` in a container's log, never
+// of a path to a key file (F20); `search_huggingface` on the fixture (`test/mock/hf-fixture.json`, test/README.md).
+//
 // Agent door (MCP): handshake, every read tool with valid and invalid arguments, auth, key lifecycle, masking, rate limit.
 // What a key that can act sees and does (start_model, stop_model, restart_model) is in change.test.mjs.
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
