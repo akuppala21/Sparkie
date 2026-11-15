@@ -136,7 +136,7 @@ action({
 // words and Telegram included, gets that button and nothing is changed; an agent is refused, for its own lines too. Every
 // record of the line leaves both files and their copies from before the last save (saveMemory), and a copy of either
 // file set aside as unreadable, or left half-written by a stop, has the words blanked.
-const ERASE_LEAVES = 'What it can’t reach: the chat (your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there), the record of changes (audit.jsonl), daily copies already sent to another Spark, and install snapshots already taken.';
+const ERASE_LEAVES = 'What it can’t reach: the chat (your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there), Spark Console’s journal and its record of changes (audit.jsonl), daily copies already sent to another Spark, and install snapshots already taken.';
 function eraseLine(id, viewer, ctx) {
   if (ctx.via === 'agent' || ctx.agent) throw new HttpError(403, 'Only the owner erases a memory line for good, in Spark Console. Nothing was changed.');
   const all = memoryEntries(), line = all.find(e => e.id === id) || memoryPast().find(p => p.id === id);

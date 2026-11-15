@@ -256,7 +256,7 @@ test('erasing a line for good: from Sparkie always a button, whatever the words;
     const pressed = await choose(button.chat, button.id);
     assert.equal(pressed.status, 200, pressed.text);
     assert.equal(pressed.json.outcome, 'erased', pressed.text);
-    assert.match(pressed.json.message.content, /^Erased for good: that line is gone from memory and its history\. What it can’t reach: the chat \(your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there\), the record of changes \(audit\.jsonl\), daily copies already sent to another Spark, and install snapshots already taken\.$/s);
+    assert.match(pressed.json.message.content, /^Erased for good: that line is gone from memory and its history\. What it can’t reach: the chat \(your own words, Sparkie’s replies and this button, and Telegram’s copy if it was said there\), Spark Console’s journal and its record of changes \(audit\.jsonl\), daily copies already sent to another Spark, and install snapshots already taken\.$/s);
     // No record of it is left; the line that replaced it keeps only its id. In the state folder only the chat and the
     // record of changes hold the words: not the two files, not their copies from before the last save (both there).
     assert.deepEqual((await live()).map(e => [e.text, e.replaces]), [[NOW, gone]]);
