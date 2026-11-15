@@ -1384,7 +1384,7 @@ PAGES.spark = function sparkPage(view, r) {
   const id = r.a;
   const n0 = node(id);
   if (!n0) {
-    put(view, empty('chip', 'Spark not found', 'It may not be shared with you.', h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
+    put(view, empty('chip', 'Spark not found', 'It isn’t on the fleet list.', h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
     return;
   }
   const tabs = owner()
@@ -1599,20 +1599,21 @@ function workloadsTab(box, n0) {
 function logsTab(box, n0) {
   const id = n0.id, d = mdata(id);
   const host = portalHostId() === id;
-  // Sparkie's model, each running model (its own log), VS Code, and Spark Console itself on its Spark.
+  // Sparkie's model, each running model (its own log), and Spark Console itself on its Spark.
   const services = () => [
     ...(state.main.data?.configured && state.main.data.node === id ? [['sparkie', `${ASSISTANT}’s model`]] : []),
     ...(d.workloads?.containers || []).filter(c => c.State === 'running' && !c.protected && c.Names !== 'sparkie-main')
       .map(c => [`container-${c.ID}`, containerTitle(c.Names)]),
-    ['editor', 'VS Code'],
     ...(host ? [['console', 'Spark Console']] : []),
   ];
-  if (!services().some(([k]) => k === d.logService)) d.logService = services()[0][0];
+  // (none at all on a compute Spark with nothing running: the tab says so)
+  const pick = () => { if (!services().some(([k]) => k === d.logService)) d.logService = services()[0]?.[0] || null; };
+  pick();
   const select = h('select', { class: 'select sm', 'aria-label': 'Which log', onchange: () => { d.logService = select.value; d.logs = null; draw(); load(); } });
-  const fillSelect = () => { set(select, services().map(([value, label]) => h('option', { value, selected: value === d.logService }, label))); };
+  const fillSelect = () => { pick(); set(select, services().map(([value, label]) => h('option', { value, selected: value === d.logService }, label))); };
   fillSelect();
   // The running models come from the Spark's container list.
-  if (!d.workloads && isUp(node(id))) capi(`nodes/${id}/workloads`).then(w => { d.workloads = w; if (select.isConnected) fillSelect(); }).catch(() => {});
+  if (!d.workloads && isUp(node(id))) capi(`nodes/${id}/workloads`).then(w => { d.workloads = w; if (select.isConnected) { fillSelect(); if (d.logs?.none) load(); } }).catch(() => {});
   const filter = h('input', { class: 'input sm', type: 'search', placeholder: 'Filter lines…', 'aria-label': 'Filter log lines', value: d.logFilter, oninput: () => { d.logFilter = filter.value; draw(); } });
   const reload = h('button', { class: 'btn sm', type: 'button', onclick: () => load() }, icon('refresh'), 'Refresh');
   const pre = h('pre', { class: 'log', tabindex: '0', 'aria-label': 'Log output' });
@@ -1630,6 +1631,7 @@ function logsTab(box, n0) {
     // Only the newest request counts: switching logs quickly never shows the one before.
     const ticket = d.logTicket = (d.logTicket || 0) + 1;
     if (!isUp(node(id))) { d.logs = { error: `${n0.name} is offline. Its logs show here again when it’s back.` }; draw(); return; }
+    if (!d.logService) { d.logs = { none: true, error: `Nothing of Spark Console’s runs on ${n0.name} now, so there is no log to show.` }; draw(); return; }
     reload.setAttribute('aria-busy', 'true');
     let logs;
     try { logs = await capi(`nodes/${id}/logs/${d.logService}`); } catch (e) { logs = { error: e.message }; }
@@ -3268,7 +3270,7 @@ function paletteCommands() {
     }
     if (canSparkChat(n)) add('Open', `Ask ${ASSISTANT} about ${n.name}`, 'chat', () => { state.chat.conv = null; go(`sparkie/new?spark=${n.id}`); }, { keywords: 'chat assistant' });
     if (owner()) {
-      add('Inspect', `Logs on ${n.name}`, 'logs', () => go(`spark/${n.id}/logs`), { keywords: 'editor console sparkie output' });
+      add('Inspect', `Logs on ${n.name}`, 'logs', () => go(`spark/${n.id}/logs`), { keywords: 'console sparkie output' });
       add('Inspect', `Workloads on ${n.name}`, 'box', () => go(`spark/${n.id}/workloads`), { keywords: 'containers processes docker gpu' });
       add('Inspect', `Run checks on ${n.name}`, 'clipboard', () => go(`spark/${n.id}/diagnostics?run=1`), { keywords: 'check health troubleshoot diagnostics cables' });
     }

@@ -26,7 +26,7 @@ seed = sum(map(ord, os.path.basename(home))) % 40
 if action == 'status':
     st = {'gpu': 'NVIDIA GB10', 'gpuUtilization': random.randint(0, 30) + seed, 'temperature': 40 + seed // 3, 'gpuPowerWatts': round(8 + random.random() * 40, 1),
          'memoryTotalGiB': 121.7, 'memoryFreeGiB': round(30 + seed, 1), 'uptimeSeconds': 50000 + seed * 100, 'load': 0.2, 'diskFreeGiB': 3000,
-         'editorReady': True, 'dockerAccessible': True, 'issues': [], 'runningContainers': running,
+         'dockerAccessible': True, 'issues': [], 'runningContainers': running,
          'network': {'highSpeedLinksUp': 4, 'highSpeedLinksConfigured': 4}, 'power': {'sleepModes': ['s2idle'], 'hibernateAvailable': False}}
     # ~/.mock/status.json: numbers a test sets (GPU load, watts, uptime after a restart).
     try: st.update(json.load(open(os.path.join(home, '.mock/status.json'))))
@@ -39,10 +39,8 @@ if action == 'diagnostics':
     out({'checks': [{'name': 'Reachable', 'ok': True, 'message': 'Answered over SSH.'}, {'name': 'Docker', 'ok': True, 'message': 'Container service accessible.'}], 'checkedAt': '2026-11-04T05:00:00Z'})
 if action == 'logs':
     svc = req.get('service')
-    if svc not in ('editor', 'console', 'sparkie'): fail('Choose editor, console, or sparkie logs.')
+    if svc not in ('console', 'sparkie'): fail('Choose console or sparkie logs.')
     out({'service': svc, 'text': f'2026-11-04T05:00:00 stand-in {svc} log line 1\n2026-11-04T05:00:01 stand-in {svc} log line 2\n', 'truncated': False, 'ok': True, 'checkedAt': '2026-11-04T05:00:02Z'})
-if action == 'editor-restart':
-    out({'requested': action, 'editorReady': True})
 if action == 'container-logs':
     # ~/.mock/slow-container-logs (seconds): reading a log takes that long (a lookup still under way).
     try: time.sleep(float(open(os.path.join(home, '.mock', 'slow-container-logs')).read().strip() or 0))

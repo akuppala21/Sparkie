@@ -38,8 +38,9 @@ writeFileSync(join(RELEASES, '20261110T120000Z', 'restore.sh'), '#!/bin/sh\nexit
 process.on('exit', () => rmSync(RELEASES, { recursive: true, force: true }));
 let look, pairCode = null;
 // (the limits on messages in and out are raised here; the flood tests run on a fleet of their own with the real ones)
+// (an app is waited on 3 s to answer, not 3 minutes: the save-with-from test starts one whose port nothing answers)
 useFleet({ telegram: true, knowledge: true, watchMs: 60000,
-  env: { SPARK_CONSOLE_RELEASES: RELEASES, SPARK_CONSOLE_CONTINUE_MS: '500', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' } },
+  env: { SPARK_CONSOLE_RELEASES: RELEASES, SPARK_CONSOLE_CONTINUE_MS: '500', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000', SPARK_CONSOLE_APP_ANSWER_MS: '3000' } },
   async () => { look = (await createKey('tg-look')).token; });
 
 const is = (r, status, what = '') => assert.equal(r.status, status, `${what} → ${r.status} ${r.text}`);

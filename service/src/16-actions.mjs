@@ -10,7 +10,7 @@
 //   kind   'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify,
 //          put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions.
 //   scope  which agent keys may use it: 'fleet:read' today; 'fleet:act', 'commands', 'memory:…' later.
-//   who    'owner', or 'member' (anyone signed in; the action itself checks which Sparks are theirs).
+//   who    'owner' or 'member'; since E10d only the owner signs in, so both mean the owner.
 // Every result says when it was observed (observedAt). Text that comes from programs, containers or web pages is marked
 // as data. Descriptions start with when to use the action, since models pick tools by them.
 const ACTIONS = new Map();
