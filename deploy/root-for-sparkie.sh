@@ -89,13 +89,13 @@ COPY="$HOME/.cache/spark-console/spark-console-root.copy"
 # a start file, or a folder something outside the walls reads, that is not there could be made from inside the wall.
 MUST='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_environment .ssh .docker .config/systemd
   .config/environment.d .config/autostart .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d
-  .cache/spark-console .local/share/spark-console .local/share/spark-portal/workspaces/shared
+  .cache/spark-console .local/share/spark-console .config/spark-console .local/share/spark-portal/workspaces/shared
   .local/share/spark-portal/workspaces/shared/jobs'
 # Every other name the helper lists in your home (its hidden and read-only lists, kept in step with it). A link at one
 # of these is left alone by both walls: not held, and never followed. A must name that is a link stops every change.
 LISTED='.bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .local/opt .local/share/code-server
   spark-console spark-console-service spark-console-src .gnupg .aws .kube .ngc .config/gh .config/code-server
-  .config/spark-console .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
+  .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
   .git-credentials .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .bash_history .zsh_history .sh_history
   .python_history .node_repl_history .psql_history .mysql_history .local/share/fish/fish_history
   .local/state/spark-console'
@@ -162,6 +162,9 @@ make_missing() {   # as you, before the password: each name the run wall holds t
         if [ -e "$HOME/.bash_login" ]; then printf '%s\n' '. "$HOME/.bash_login"' > "$HOME/.bash_profile"
         else printf '%s\n' '. "$HOME/.profile"' > "$HOME/.bash_profile"; fi ;;
       .bashrc|.profile|.bash_logout|.bash_aliases|.pam_environment) : > "$HOME/$n" ;;
+      # (Spark Console's own folders and the jobs' shared folder: the owner's alone, as the console makes them)
+      .local/share/spark-console|.config/spark-console|.local/share/spark-portal/workspaces/shared*)
+        (umask 077 && mkdir -p -- "$HOME/$n") ;;
       *) mkdir -p -- "$HOME/$n" ;;
     esac
     note "made $n (it was not there, and the run wall holds it)"

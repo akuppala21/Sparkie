@@ -5,7 +5,10 @@
 # <rehearsal>/standin/systemd-version, else 255.4-1ubuntu8.4), a unit's main process (4242; 0 with
 # <rehearsal>/standin/no-pid), whether a unit is active (yes; no with <rehearsal>/standin/target-dead), and stop (does
 # nothing). And the one-time command's read of a unit's program (show --user), from <rehearsal>/standin/user-units,
-# one per line: "<unit> <program>" (nothing without it).
+# one per line: "<unit> <program>" (nothing without it). The lock-out net's: a unit's ActiveState (a net's timer is
+# active while <rehearsal>/standin/timers/<unit> is there, as the stand-in systemd-run leaves it; any other unit is
+# inactive); stop of a net's timer takes that away (it fails with <rehearsal>/standin/timer-stop-fails); and kill,
+# try-reload-or-restart, restart, daemon-reload and try-restart, the user manager's too, which do nothing.
 import json, os, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -15,6 +18,8 @@ if not R.startswith('/') or not os.path.isdir(R):
 args = sys.argv[1:]
 with open(os.path.join(R, 'calls.log'), 'a') as f:
     f.write(json.dumps(['systemctl'] + args) + '\n')
+args = [a for a in args if a != '--']
+timers = os.path.join(R, 'standin', 'timers')
 try:
     with open(os.path.join(R, 'standin', 'systemd-version')) as f:
         version = f.read().strip()
@@ -26,7 +31,20 @@ elif args[:3] == ['show', '--property=MainPID', '--value'] and len(args) == 4:
     print(0 if os.path.exists(os.path.join(R, 'standin', 'no-pid')) else 4242)
 elif args[:2] == ['is-active', '--quiet'] and len(args) == 3:
     sys.exit(3 if os.path.exists(os.path.join(R, 'standin', 'target-dead')) else 0)
+elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4:
+    print('active' if os.path.exists(os.path.join(timers, args[3])) else 'inactive')
+elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-'):
+    if os.path.exists(os.path.join(R, 'standin', 'timer-stop-fails')):
+        sys.stderr.write('Failed to stop: Access denied\n')
+        sys.exit(1)
+    try:
+        os.unlink(os.path.join(timers, args[1]))
+    except FileNotFoundError:
+        pass
 elif args[:1] == ['stop'] and len(args) == 2:
+    pass
+elif args[:1] in (['kill'], ['try-reload-or-restart'], ['restart'], ['daemon-reload'], ['try-restart']) \
+        or (args[:1] and args[0].startswith('--machine=') and args[1:2] == ['--user']):
     pass
 elif args[:4] == ['show', '--user', '--property=ExecStart', '--value'] and len(args) == 5:
     try:

@@ -16,7 +16,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync } from 'node:fs';
+import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -561,8 +562,10 @@ describe('the proof of the walls', () => {
     "another program's environment", 'a write that stays', "round the hiding, through another program's /proc",
     'a signal to a program outside the wall', 'more rights: sudo, the helper, a capability', 'starting something outside the wall',
     'a hidden key file', 'a disk device or the GPU', 'something left behind', 'root with no net',
-    'moving a folder above a held one, and making a new one in its place'];
-  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14];
+    'moving a folder above a held one, and making a new one in its place', "stopping or changing the net's timer",
+    "writing the net's copies or restore.sh", "taking away the net's pending mark", 'making keep count',
+    "swapping a job's own output folder for a link"];
+  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 17, 18, 19];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -577,9 +580,13 @@ describe('the proof of the walls', () => {
     // The units, in order: the proof's files, root's folders, the program outside, the attempts outside, inside each
     // wall, the check from outside afterwards (as the owner, then as root); then the program outside is stopped.
     const units = calls(s).filter(c => c[0] === 'systemd-run').map(c => c.find(a => a.startsWith('--unit=')).slice(7));
-    assert.deepEqual(units, ['prep', 'setup', 'target', 'outside', 'look', 'run', 'post', 'after'].map(u => `sw-prove-${u}-${p.id}`));
+    // (and, after the program outside, a guard of the net for each wall to try: 15 to 18; stopped after the check)
+    const g = p.id.slice(0, 38);
+    assert.deepEqual(units, [...['prep', 'setup', 'target'].map(u => `sw-prove-${u}-${p.id}`), `sw-guard-${g}nl`, `sw-guard-${g}nr`,
+      ...['outside', 'look', 'run', 'post', 'after'].map(u => `sw-prove-${u}-${p.id}`)]);
     assert.deepEqual(calls(s).filter(c => c[0] === 'systemctl' && c[1] !== 'show' && c[1] !== '--version'),
-      [['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
+      [['systemctl', 'stop', `sw-guard-${g}nl.timer`], ['systemctl', 'stop', `sw-guard-${g}nr.timer`],
+        ['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
     assert.ok(p.stdout.includes(`${p.id} proof outside 2 works: an open connection (the loopback, stand-in)\n`));
     assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt was seen working outside the walls, or is not there\n`));
     const py = which(s, 'python3'), proof = `/run/spark-console/${p.id}/proof.py`;
@@ -594,7 +601,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -791,6 +798,291 @@ function tree(dir) {
   walk(dir);
   return out;
 }
+
+// The lock-out net (R60; design A 2.8, step A13a, dark): run --net arms a put-back before the change, in the Spark's own
+// systemd (the stand-ins show what is asked); a test fires the timer itself by running restore.sh, as systemd would.
+describe('the lock-out net (R60)', () => {
+  const G = (s, id) => join(s.R, 'var/lib/spark-console/guard', id);
+  const net = (s, cmd, opts = {}) => change(s, cmd, { secs: 300, extra: ['--net'], ...opts });
+  const fire = (s, id, why = 'timer') => spawnSync('bash', [join(G(s, id), 'restore.sh'), why], { env: s.env, encoding: 'utf8', timeout: 120000 });
+  const keep = (s, id) => ({ ...run(s, ['keep', '--id', id]), id });
+  const SSHD = 'etc/ssh/sshd_config';
+  const BOOT = (s, id) => [join(s.R, `etc/systemd/system/sw-guard-boot-${id}.service`), join(s.R, `etc/systemd/system/multi-user.target.wants/sw-guard-boot-${id}.service`)];
+  const timerWaits = (s, id) => existsSync(join(s.R, 'standin/timers', `sw-guard-${id}.timer`));
+  const at = c => c.find(a => a.startsWith('--unit=')) || c.slice(0, 3).join(' ');
+  const lstatExists = f => { try { lstatSync(f); return true; } catch { return false; } };
+  const ARMED = id => new RegExp(`^${id} net armed: the ways in go back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ unless they are kept\\n`);
+  const netted = () => { const s = proven(); s.put(SSHD, 'Port 22\n', 0o640); return s; };
+
+  test('armed before the change: its timer (the time limit plus 600 s) and restart unit come first; a change that cannot start differs in nothing, and the guard disarms itself', () => {
+    const s = netted();
+    s.put('standin/refuse', 'sw-run-');
+    const before = calls(s).length;
+    const r = net(s, 'true');
+    assert.match(r.stdout, ARMED(r.id));
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net disarmed: nothing differs\\n${r.id} end 1\\n$`));
+    const asked = calls(s).slice(before).map(at);
+    const timer = asked.indexOf(`--unit=sw-guard-${r.id}`), change_ = asked.indexOf(`--unit=sw-run-${r.id}`);
+    assert.ok(timer >= 0 && change_ > timer, `the timer is asked for before the change: ${asked.join(', ')}`);
+    assert.ok(asked.indexOf(`systemctl stop sw-guard-${r.id}.timer`) > change_, 'and stopped after it');
+    assert.deepEqual(unitCall(s, `sw-guard-${r.id}`), ['systemd-run', `--unit=sw-guard-${r.id}`, `--description=Spark Console net ${r.id}: what was not kept goes back`,
+      '--on-active=900s', '--timer-property=AccuracySec=1s', '--quiet', '-p', 'Type=oneshot', '--', which(s, 'bash'),
+      `/var/lib/spark-console/guard/${r.id}/restore.sh`, 'timer']);
+    assert.ok(!existsSync(join(G(s, r.id), 'pending')) && !timerWaits(s, r.id));
+    for (const f of BOOT(s, r.id)) assert.ok(!existsSync(f) && !lstatExists(f), f);
+    assert.match(readFileSync(join(G(s, r.id), 'kept'), 'utf8'), /^disarmed \S+: nothing differs\n$/);
+  });
+
+  test('a change that breaks a way in stays armed and says what; the timer stops the change first, puts back the exact bytes, mode and owner, reloads ssh and leaves a result; once is all', () => {
+    const s = netted(), file = join(s.R, SSHD), was = statSync(file);
+    const r = net(s, 'printf "Port 2222\\n" >> "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"; chmod 0666 "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.match(r.stdout, ARMED(r.id));
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: 1 of the ways in differ \\(/etc/ssh\\); they go back at \\S+ unless they are kept\\n${r.id} end 0\\n$`));
+    assert.ok(existsSync(join(G(s, r.id), 'pending')) && timerWaits(s, r.id));
+    for (const f of BOOT(s, r.id)) assert.ok(lstatExists(f), f);
+    assert.match(readFileSync(BOOT(s, r.id)[0], 'utf8'), new RegExp(`ConditionPathExists=/var/lib/spark-console/guard/${r.id}/pending\\n[\\s\\S]*ExecStart=/bin/bash /var/lib/spark-console/guard/${r.id}/restore.sh boot\\n`));
+    const before = calls(s).length;
+    const f = fire(s, r.id);
+    assert.equal(f.status, 0, f.stdout + f.stderr);
+    assert.equal(readFileSync(file, 'utf8'), 'Port 22\n');
+    const now = statSync(file);
+    assert.deepEqual([now.mode & 0o7777, now.uid, now.gid], [was.mode & 0o7777, was.uid, was.gid]);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.match(result[0], /^put back at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.equal(result[1], 'by its timer');
+    assert.ok(result.includes('put back /etc/ssh/sshd_config'), result.join('\n'));
+    assert.ok(result.includes('reload systemctl try-reload-or-restart ssh.service: ok'), result.join('\n'));
+    const asked = calls(s).slice(before).map(c => c.join(' '));
+    const stop = asked.indexOf(`systemctl stop -- sw-run-${r.id}.service`), reload = asked.indexOf('systemctl try-reload-or-restart ssh.service');
+    assert.ok(stop >= 0 && reload > stop, `the change is stopped before anything goes back: ${asked.join(' | ')}`);
+    assert.ok(!existsSync(join(G(s, r.id), 'pending')));
+    for (const p of BOOT(s, r.id)) assert.ok(!lstatExists(p), p);
+    // Once: the timer again (or a restart) changes nothing.
+    writeFileSync(file, 'Port 3333\n');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(fire(s, r.id, 'boot').status, 0);
+    assert.equal(readFileSync(file, 'utf8'), 'Port 3333\n');
+  });
+
+  test('kept while the timer waits: the change stays, the timer is stopped, and the timer firing after does nothing; a keep after the put-back says when it went back', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    const k = keep(s, r.id);
+    assert.equal(k.status, 0, k.stdout + k.stderr);
+    assert.equal(k.stdout, `${r.id} kept: the change stays, and the copies stay beside it\n`);
+    assert.ok(!timerWaits(s, r.id) && !existsSync(join(G(s, r.id), 'pending')));
+    assert.ok(calls(s).some(c => c.join(' ') === `systemctl stop sw-guard-${r.id}.timer`));
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 2222\n', 'kept');
+    assert.ok(!existsSync(join(G(s, r.id), 'result')));
+    assert.match(keep(s, r.id).stdout, new RegExp(`^${r.id} kept already: kept \\S+\\n$`));
+    // Another, not kept: the timer puts it back; a keep then answers when.
+    const t = netted(), r2 = net(t, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.equal(fire(t, r2.id).status, 0);
+    const late = keep(t, r2.id);
+    assert.equal(late.status, 0, late.stdout + late.stderr);
+    assert.match(late.stdout, new RegExp(`^${r2.id} already put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ\\n$`));
+    assert.equal(readFileSync(join(t.R, SSHD), 'utf8'), 'Port 22\n');
+  });
+
+  test('keep counts only while the timer waits and once its stop succeeded; otherwise it is refused and the change still goes back', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    s.put('standin/timer-stop-fails', '');
+    refused(keep(s, r.id), 'its timer could not be stopped, so keeping does not count: it goes back at');
+    assert.ok(!existsSync(join(G(s, r.id), 'kept')) && existsSync(join(G(s, r.id), 'pending')));
+    rmSync(join(s.R, 'standin/timer-stop-fails'));
+    rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));   // (it fired: the put-back has not run yet)
+    refused(keep(s, r.id), 'its timer is not waiting (inactive), so keeping does not count: what was not kept goes back');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+    refused(keep(s, 'nosuchguard1'), 'there is no guard nosuchguard1 on this Spark');
+  });
+
+  test('one guard a Spark: while one is open a second is refused and nothing runs; arming that fails leaves nothing and runs nothing', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    const before = started(s).length;
+    const second = net(s, 'touch "$SPARK_CONSOLE_REHEARSAL/second-ran"');
+    refused(second, `another guard is open on this Spark (${r.id}): it is kept or goes back first, so nothing ran`);
+    assert.equal(started(s).length, before);
+    assert.ok(!existsSync(G(s, second.id)) && !existsSync(join(s.R, 'second-ran')));
+    // Systemd will not take the timer: nothing is left, nothing runs (here, on a Spark with no guard open).
+    const t = netted();
+    t.put('standin/refuse', 'sw-guard-');
+    const third = net(t, 'touch "$SPARK_CONSOLE_REHEARSAL/third-ran"');
+    refused(third, 'the net could not be armed: systemd did not take its timer, so nothing ran');
+    assert.ok(!existsSync(G(t, third.id)) && !existsSync(join(t.R, 'third-ran')) && !existsSync(join(t.R, 'run/spark-console', third.id)));
+    for (const f of BOOT(t, third.id)) assert.ok(!lstatExists(f), f);
+    assert.ok(!started(t).some(c => c.includes(`--unit=sw-run-${third.id}`)));
+    // A look never takes the net; a change in it is held to 30 minutes.
+    refused(look(t, 'true', { extra: ['--net'] }), 'a look changes nothing, so it never takes --net');
+    refused(net(t, 'true', { secs: 1801 }), 'a change inside the net is held to 30 minutes');
+  });
+
+  test('a restart inside the window: the restart unit puts back once, stops nothing and reloads nothing (they have not started yet); the timer after it does nothing', () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    const before = calls(s).length;
+    const b = fire(s, r.id, 'boot');
+    assert.equal(b.status, 0, b.stdout + b.stderr);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl'), [], 'no unit stopped, nothing reloaded');
+    assert.equal(readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n')[1], 'after a restart inside the window');
+    writeFileSync(join(s.R, SSHD), 'Port 4444\n');
+    assert.equal(fire(s, r.id, 'boot').status, 0);
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 4444\n', 'once');
+  });
+
+  test('the put-back never follows a link out of its folder: a folder swapped for a link, a file swapped for one, a file added, all put back as they were, and what the links point at is untouched', () => {
+    const s = netted(), keys = join(s.R, 'home/owner/.ssh/authorized_keys'), keysWas = statSync(keys);
+    s.put('elsewhere/target', 'not ours');
+    s.put('etc/sudoers.d/owner', 'owner ALL=(ALL) ALL\n', 0o440);
+    const r = net(s, ['R="$SPARK_CONSOLE_REHEARSAL"', 'mv "$R/etc/ssh" "$R/etc/ssh-aside"', 'mkdir "$R/outside"', 'printf "x\\n" > "$R/outside/sshd_config"',
+      'ln -s "$R/outside" "$R/etc/ssh"', 'rm "$R/home/owner/.ssh/authorized_keys"', 'ln -s "$R/elsewhere/target" "$R/home/owner/.ssh/authorized_keys"',
+      'printf "evil ALL=(ALL) NOPASSWD: ALL\\n" > "$R/etc/sudoers.d/evil"'].join('; '));
+    assert.match(r.stdout, /net open: 3 of the ways in differ \(\/etc\/ssh \/etc\/sudoers\.d \/home\/owner\/\.ssh\/authorized_keys\)/);
+    const f = fire(s, r.id);
+    assert.equal(f.status, 0, f.stdout + f.stderr);
+    assert.ok(!lstatSync(join(s.R, 'etc/ssh')).isSymbolicLink() && lstatSync(join(s.R, 'etc/ssh')).isDirectory());
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+    assert.equal(readFileSync(join(s.R, 'etc/ssh/ssh_host_ed25519_key'), 'utf8'), 'private');
+    assert.equal(readFileSync(join(s.R, 'outside/sshd_config'), 'utf8'), 'x\n', 'what the link pointed at is untouched');
+    assert.ok(!lstatSync(keys).isSymbolicLink());
+    assert.equal(readFileSync(keys, 'utf8'), 'keys');
+    assert.equal(statSync(keys).mode & 0o7777, keysWas.mode & 0o7777);
+    assert.equal(readFileSync(join(s.R, 'elsewhere/target'), 'utf8'), 'not ours');
+    assert.ok(!existsSync(join(s.R, 'etc/sudoers.d/evil')), 'what the change added is taken away');
+    assert.equal(readFileSync(join(s.R, 'etc/sudoers.d/owner'), 'utf8'), 'owner ALL=(ALL) ALL\n');
+    assert.equal(statSync(join(s.R, 'etc/sudoers.d/owner')).mode & 0o7777, 0o440);
+  });
+
+  test('a link already at a way in when the net copies is copied as a link, never followed, and put back as that link', () => {
+    const s = netted();
+    s.put('secret/hosts-target', 'SECRET-HOSTS');
+    symlinkSync(join(s.R, 'secret/hosts-target'), join(s.R, 'etc/hosts'));
+    const r = net(s, 'rm "$SPARK_CONSOLE_REHEARSAL/etc/hosts"; printf "1.2.3.4 x\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/hosts"');
+    const manifest = JSON.parse(readFileSync(join(G(s, r.id), 'manifest.json'), 'utf8'));
+    assert.deepEqual([manifest.entries['/etc/hosts'].kind, manifest.entries['/etc/hosts'].to], ['link', join(s.R, 'secret/hosts-target')]);
+    assert.equal(manifest.entries['/home/owner/.ssh/config'].kind, 'link', "the owner's ssh config, a link: as a link");
+    const copied = spawnSync('grep', ['-rl', 'SECRET-HOSTS', G(s, r.id)], { encoding: 'utf8' }).stdout;
+    assert.equal(copied, '', 'what the link points at is not in the copy');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readlinkSync(join(s.R, 'etc/hosts')), join(s.R, 'secret/hosts-target'));
+    assert.equal(readFileSync(join(s.R, 'secret/hosts-target'), 'utf8'), 'SECRET-HOSTS');
+  });
+
+  test('the proof tries the net in both walls (15 to 18, checked from outside afterwards); one that gets through fails the proof', () => {
+    const s = spark();
+    const p = prove(s);
+    assert.equal(p.status, 0, p.stdout + p.stderr);
+    for (const [n, what] of [[15, "stopping or changing the net's timer"], [16, "writing the net's copies or restore.sh"], [17, "taking away the net's pending mark"], [18, 'making keep count']]) {
+      for (const w of ['look', 'run']) assert.ok(p.stdout.includes(`${p.id} proof ${w} ${n} blocked: ${what}\n`), `${w} ${n}`);
+    }
+    const g = p.id.slice(0, 38);
+    for (const w of ['l', 'r']) assert.ok(!existsSync(G(s, `${g}n${w}`)), 'its guards are taken away');
+    const t = spark({ knobs: { 'let-through': '17 run after\n' } });
+    const q = prove(t);
+    assert.equal(q.status, 1);
+    assert.ok(q.stdout.includes(`${q.id} proof run 17 got through: taking away the net's pending mark (stand-in, seen from outside afterwards)\n`), q.stdout);
+    assert.ok(!existsSync(join(t.R, 'var/lib/spark-console/proved')));
+  });
+
+  test("the console's call (21-guard.mjs): run --net through sudo with the helper this build ships, armed then open; keep by the guard's id", () => {
+    const s = netted(), home = mkdtempSync(join(tmpdir(), 'guard-home-')), bin = join(home, 'bin');
+    temps.push(home);
+    symlinkSync(s.R, join(home, '.rehearsal'));
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'sudo'), '#!/bin/bash\n[ "$1" = -n ] && shift\nexec "$@"\n', { mode: 0o755 });
+    const part = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+    const pinned = /const HELPER_SHA256 = '([0-9a-f]{64})'/.exec(readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8'))[1];
+    const box = vm.createContext({ createHash, q: x => `'${String(x).replace(/'/g, `'\\''`)}'`, HELPER_AT: '"$HOME/.rehearsal"/usr/local/sbin/spark-console-root', HELPER_SHA256: pinned });
+    vm.runInContext(`${part}\n;globalThis.part = { guardScript, guardAnswer };`, box);
+    const env = { ...s.env, HOME: home, PATH: `${bin}:${s.env.PATH}` };
+    const call = (verb, o) => spawnSync('bash', ['-s'], { input: box.part.guardScript({ host: '100.64.0.3' }, verb, o), env, encoding: 'utf8', timeout: 120000 });
+    const id = 'guardcall' + Date.now().toString(36);
+    const a = box.part.guardAnswer(id, call('run', { id, command: 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"', seconds: 300 }).stdout);
+    assert.match(a.goesBackAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, JSON.stringify(a));
+    assert.deepEqual({ disarmed: a.disarmed, open: /^1 of the ways in differ \(\/etc\/ssh\)/.test(a.open), exit: a.exit }, { disarmed: false, open: true, exit: 0 });
+    const k = box.part.guardAnswer(id, call('keep', { id }).stdout);
+    assert.equal(k.kept, true, JSON.stringify(k));
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 2222\n');
+    // A helper this build does not ship: nothing is asked of it.
+    const other = vm.createContext({ ...box, HELPER_SHA256: '0'.repeat(64) });
+    vm.runInContext(`${part}\n;globalThis.part = { guardScript, guardAnswer };`, other);
+    const u = other.part.guardAnswer('guardother1', spawnSync('bash', ['-s'], { input: other.part.guardScript({ host: '100.64.0.3' }, 'run', { id: 'guardother1', command: 'true' }), env, encoding: 'utf8' }).stdout);
+    assert.match(u.said, /^unknown [0-9a-f]{64}$/);
+  });
+});
+
+// Section D of the wall analyst's read (2a179d2), for this helper change.
+describe('the held lists, after the analyst', () => {
+  test('a look refuses while .ssh, .docker or the console\'s own folder is a link (it would see what the link points at)', () => {
+    for (const n of ['.ssh', '.docker', '.local/share/spark-console']) {
+      const s = proven(), p = join(s.R, 'home/owner', n);
+      renameSync(p, `${p}-real`);
+      symlinkSync(`${p}-real`, p);
+      const before = started(s).length;
+      refused(look(s, 'true'), `/home/owner/${n} is a link, or under one, so a look would see what it points at: put the real folder there`);
+      assert.equal(started(s).length, before, n);
+      assert.match(run(s, ['check', '--id', newId()]).stdout, / look refuses: \/home\/owner\/\S+ is a link, or under one, so a look would see/);
+    }
+  });
+
+  test('a held place under a --protect folder is not bound onto itself (that would make it writable inside the read-only one)', () => {
+    const s = proven(), shared = '/home/owner/.local/share/spark-portal/workspaces/shared';
+    const r = change(s, 'true', { extra: ['--protect', shared] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const c = unitCall(s, `sw-run-${r.id}`);
+    assert.ok(c.includes(`ReadOnlyPaths=${shared}`));
+    assert.ok(!c.some(a => a === `BindPaths=${shared}` || a === `BindPaths=${shared}/jobs`), c.filter(a => a.startsWith('BindPaths=')).join(' '));
+  });
+
+  test("each job's own output folder that is there is bound onto itself in the run wall (not a link, not one under a --protect folder); a proof that sees one swapped fails", () => {
+    const s = proven(), jobs = '/home/owner/.local/share/spark-portal/workspaces/shared/jobs';
+    for (const n of ['sums', 'train.v2']) mkdirSync(join(s.R, jobs, n));
+    s.put('elsewhere/x');
+    symlinkSync(join(s.R, 'elsewhere'), join(s.R, jobs, 'linked'));
+    s.put(`${jobs.slice(1)}/a-file`);
+    const r = change(s, 'true');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const binds = unitCall(s, `sw-run-${r.id}`).filter(a => a.startsWith(`BindPaths=${jobs}/`));
+    assert.deepEqual(binds, [`BindPaths=${jobs}/sums`, `BindPaths=${jobs}/train.v2`]);
+    const l = look(s, 'true');
+    assert.ok(!unitCall(s, `sw-look-${l.id}`).some(a => a.startsWith('BindPaths=')), 'a look binds nothing');
+    const p = change(s, 'true', { extra: ['--protect', jobs] });
+    assert.ok(!unitCall(s, `sw-run-${p.id}`).some(a => a.startsWith(`BindPaths=${jobs}`)), 'under a --protect folder, nothing in it is bound');
+    const t = spark({ knobs: { 'let-through': '19 run after\n' } });
+    const q = prove(t);
+    assert.equal(q.status, 1);
+    assert.ok(q.stdout.includes(`${q.id} proof run 19 got through: swapping a job's own output folder for a link (stand-in, seen from outside afterwards)\n`), q.stdout);
+  });
+
+  test("the retired door's door.json and cloud.json are never put back in either wall", () => {
+    const s = proven();
+    for (const f of ['door.json', 'cloud.json']) s.put(`home/owner/.local/state/spark-console/${f}`, '{"token":"x"}');
+    const r = change(s, 'true'), l = look(s, 'true');
+    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      assert.ok(c.includes('BindReadOnlyPaths=/home/owner/.local/state/spark-console/desired.json'), 'its other plain files are');
+      assert.ok(!c.some(a => /door\.json|cloud\.json/.test(a)), c.filter(a => /door|cloud/.test(a)).join(' '));
+    }
+  });
+
+  test(".config/spark-console must be there for a change; the one-time command makes it, and the console's own folders, the owner's alone", () => {
+    const s = proven();
+    rmSync(join(s.R, 'home/owner/.config/spark-console'), { recursive: true });
+    refused(change(s, 'true'), '/home/owner/.config/spark-console is not there, so it cannot be held: run the one-time command again');
+    const f = fleet(), home = join(f.T, 'spark3');
+    const r = f.cmd(['3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(r.stdout.includes('  made .config/spark-console (it was not there, and the run wall holds it)\n'));
+    for (const n of ['.config/spark-console', '.local/share/spark-console', '.local/share/spark-portal/workspaces/shared', '.local/share/spark-portal/workspaces/shared/jobs']) {
+      assert.equal(statSync(join(home, n)).mode & 0o777, 0o700, n);
+    }
+    assert.equal(statSync(join(home, '.config/systemd')).mode & 0o777, 0o755, 'the others as before');
+  });
+});
 
 describe("the owner's one-time command", () => {
   test('a compute Spark: its steps in order, everything staged and checked as root before it is put in place, then the proof', () => {

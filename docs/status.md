@@ -67,6 +67,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”) | falls short today: its file says where |
 | [R57](rules/R57.md) | partly | `test/workloads-agent.test.mjs`; `test/workloads-restart.test.mjs`; `test/workloads-address.test.mjs` | falls short today: its file says where |
 | [R59](rules/R59.md) | built | `test/memory-reads.test.mjs` (“Telegram: recall there gives back no words”, “Telegram: forget_memory with the id of a line no longer live”, “an agent that may change things”, “a chat an agent started”, “a kept key in a memory line”, “a value given as a key after a lesson card was made”); `test/recall.test.mjs` (“never: a retired line to an agent's key, an agent's chat or Telegram”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”) |  |
+| [R60](rules/R60.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
