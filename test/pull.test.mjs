@@ -95,6 +95,8 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },
     'deploy/REBUILD.txt': { text: read(REPO, 'deploy', 'REBUILD.txt') },
     'deploy/path-check.sh': { text: read(REPO, 'deploy', 'path-check.sh'), mode: '100755' },
+    // (the eval's case files: today's set, and the held-out one, which never reaches Spark 2)
+    'test/eval/cases.json': { text: '{"cases":[]}\n' }, 'test/eval/memory-held-out.json': { text: '{"held":"out"}\n' },
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
   };
   for (const u of UI_FILES) f[`public/${u}`] = { text: u === 'app.js' ? "const BUILD = 'dev';\n" : `${u} ${n}\n` };
@@ -403,6 +405,15 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
     }
     assert.ok(!existsSync(join(home, 'never-called.log')), existsSync(join(home, 'never-called.log')) ? read(home, 'never-called.log') : '');
     ran.add('install');
+  });
+
+  // (the fourth read of C4b: the held-out eval set never reaches Spark 2)
+  test('the source kept on Spark 2 has today\'s eval cases but not the held-out set, and nothing the console runs names it', CASE, async () => {
+    needs('install');
+    assert.ok(existsSync(join(home, 'spark-console-src', 'test', 'eval', 'cases.json')), 'today\'s cases are there');
+    assert.ok(!existsSync(join(home, 'spark-console-src', 'test', 'eval', 'memory-held-out.json')), 'the held-out set is on Spark 2');
+    const files = dir => readdirSync(join(REPO, dir)).flatMap(f => (statSync(join(REPO, dir, f)).isDirectory() ? files(`${dir}/${f}`) : [`${dir}/${f}`]));
+    assert.deepEqual(files('service').filter(f => read(REPO, f).includes('memory-held-out')), []);
   });
 
   test('install refuses, with nothing changed: an untagged head of main, a tag that changes other files, a lock for another tree or build', CASE, async () => {
@@ -820,7 +831,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(x.status, 0, x.stderr);
     writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
     r = await new Promise(resolve => {
-      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       p.stdout.on('data', d => { stdout += d; });
       p.stderr.on('data', d => { stdout += d; });
@@ -843,7 +854,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(x.status, 0, x.stderr);
     writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
     const r = await new Promise(resolve => {
-      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local', '--stand-in'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';
       p.stdout.on('data', d => { out += d; });
       p.stderr.on('data', d => { out += d; });
@@ -1088,5 +1099,20 @@ describe('the way back for an update from GitHub, armed by the build installed n
       sysctl('start', 'spark-console-api');
       await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 15000, what: 'the console, started by systemctl start' });
     } finally { holder.kill('SIGKILL'); }
+  });
+
+  // (the fourth read of C4b: the rebuild steps are among the by-hand files the way back keeps)
+  test('the way back keeps the rebuild steps too: REBUILD.txt changed after it was armed is put back as it was', CASE, async () => {
+    needs('kept');
+    const before = read(share('REBUILD.txt'));
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(existsSync(share('update-guard', 'share', 'REBUILD.txt')), 'kept in the copy');
+    writeFileSync(share('REBUILD.txt'), 'changed by the update that went wrong\n');
+    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(read(share('REBUILD.txt')), before);
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering' });
+    nothingArmed();
   });
 });

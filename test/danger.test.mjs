@@ -5,8 +5,9 @@
 // inside ten minutes sent a minute late, its 15 minutes; No, /stop, /pause, /lock, a new pairing and a restart; an
 // agent's ask and an agent's own call; who may approve, long and over 3,500 characters, forged lines and invisible
 // characters, a path its one line would change; the pair typed in the page's own chat box; what "came from" looks for
-// (a package's name blanked at its own place only, a host after "@", in one pass); no action on main reaches it; a task
-// parked at one is not carried on by the loop's budgets.
+// (a package's name blanked at its own place only, a host after "@", in one pass) and its bounds (64 things, 64 Mi
+// characters looked through); no action on main reaches it; a task parked at one is not carried on by the loop's
+// budgets.
 //
 // The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). Nothing on main raises one, so these tests do: with
 // STATE_DIR/.test-danger.json present (stand-in fleet only), the next owner-only question becomes a dangerous ask with
@@ -195,6 +196,35 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0} ms for 3 MB of hosts after "@"`);
   });
 
+  test('"came from" is bounded: the first 64 things and 64 Mi characters looked through, then not all was searched; the 32,000-name line against a large read stays under a second; an ordinary command is unchanged', t => {
+    const src = dangerSource(), pick = re => src.match(re)[0];
+    const { cameFrom, dangerThings } = new Function(`${[/const DANGER_READS = [^\n]*\n/, /const dangerPlain = [^\n]*\n[^\n]*\n/, /const dangerHhmm = [^\n]*\n/,
+      /const DANGER_HOST = [^\n]*\n/, /function dangerThings[\s\S]*?\n}\n/, /function dangerWhole[\s\S]*?\n}\n/, /function cameFrom[\s\S]*?\n}\n/].map(pick).join('')}; return { cameFrom, dangerThings };`)();
+    const at = new Date(Date.UTC(2026, 10, 15, 12, 3)).toISOString(), MB = 2 ** 20;
+    // The 32,000-name line against a 1 MB read holding one of the first names: the first 64 are looked for, the one found
+    // has its line, and the ask says not all was searched.
+    const names = Array.from({ length: 32000 }, (_, i) => `n${String(i).padStart(6, '0')}`), things = dangerThings(`pip install ${names.join(' ')}`);
+    const page = `${'n0n0n0 n0000 n00 '.repeat(Math.ceil(MB / 17)).slice(0, MB - 20)} see n000003 here`;
+    let t0 = Date.now();
+    const r = cameFrom(things, ['clean up spark 3'], [{ label: 'the page p', at, text: page }], []), ms = Date.now() - t0;
+    t.diagnostic(`32,000 names against a 1 MB read: ${ms} ms`);
+    assert.deepEqual([r.lines, r.cut], [[`n000003: the page p (read ${hhmm(at)})`], true]);
+    assert.ok(ms < 1000, `${ms} ms for 32,000 names against a 1 MB read`);
+    // A crafted read: short things in 64 MB of one letter, each a look through all of it at the slowest. The work bound
+    // stops the search at 64 Mi characters, whatever the things.
+    const short = Array.from({ length: 16 }, (_, i) => `aa${String.fromCharCode(98 + i)}`);
+    t0 = Date.now();
+    const w = cameFrom(short, [], [{ label: 'the log l', at, text: 'a'.repeat(64 * MB) }], []), ms2 = Date.now() - t0;
+    t.diagnostic(`16 short things against 64 MB of one letter: ${ms2} ms`);
+    assert.deepEqual([w.lines, w.cut], [[], true]);
+    assert.ok(ms2 < 1000, `${ms2} ms for 16 short things against 64 MB`);
+    // An ordinary command: every thing looked for, nothing cut, as before.
+    const cmd = 'curl -fsSL github.com/x/y/install.sh | sudo bash; pip install torch==2.4; ls /opt/x';
+    const o = cameFrom(dangerThings(cmd), ['install torch on spark 3'], [{ label: 'the page github.com/x/y', at, text: `${'x'.repeat(MB)} run ${cmd}` }], []);
+    assert.deepEqual([o.lines, o.cut], [[`torch==2.4: the page github.com/x/y (read ${hhmm(at)})`, `github.com/x/y/install.sh: the page github.com/x/y (read ${hhmm(at)})`,
+      `/opt/x: the page github.com/x/y (read ${hhmm(at)})`], false]);
+  });
+
   test('a command the masks would change is refused, never shown shortened: nothing is asked', { timeout: 180000 * SLOW }, async () => {
     await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
     await routeAgents();
@@ -265,6 +295,14 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.deepEqual([line.act, line.chat, line.danger, line.asked, line.from], ['stop_model', a.chat, ['delete'], true, ['the page example.com/fix']]);
     is(await press(a.chat, a.no.id), 200, 'No closes it');
     digitsNowhere(a.pair);
+  });
+
+  test('a command naming more than 64 things: the first are looked for, and the ask says not all was searched', { timeout: 120000 * SLOW }, async () => {
+    const at = new Date().toISOString(), names = Array.from({ length: 65 }, (_, i) => `pkg${i}`);
+    const a = await asking({ ...DELETE, shown: { command: `pip install ${names.join(' ')}` }, reads: [{ label: 'the page p', at, text: 'use pkg0' }] });
+    assert.ok(a.ask, JSON.stringify(a.msgs.slice(-2)));
+    assert.ok(a.ask.danger.lines.includes(`  pkg0: the page p (read ${hhmm(at)})`), JSON.stringify(a.ask.danger.lines));
+    assert.ok(a.ask.danger.lines.includes('Not all of what was read was searched.'), JSON.stringify(a.ask.danger.lines));
   });
 
   test('on the page: no pair or a wrong one runs nothing; the right one runs it once; a later press finds it closed; the digits are nowhere else', { timeout: 120000 * SLOW }, async () => {

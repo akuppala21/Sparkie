@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21249 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 86 parts in `service/src/`, joined in name order into `service/server.mjs` (21275 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -455,10 +455,10 @@ Once the owner has saved a check's ping address (Healthchecks.io: https://hc-pin
 
 ### `20-came-from.mjs`: the dangerous ask's "came from": what the command names and where it was read (A10b)
 
-Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only searched and never shown.
+Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only searched and never shown. The search's bounds, after the reads' own: the first 64 things, in the order they were found, and 64 Mi characters looked through in all (the owner's words, the reads and the answers, once per thing). A short thing in a crafted text costs about 8 ns a character, so the worst case stays near half a second; past either bound the ask says …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 116
+- **Lines:** 128
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1064,12 +1064,12 @@ Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long 
 check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer; whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update is not in INSIDE_READS). It installs and changes nothing; the token never leaves pull.sh. When GitHub refuses the …
 
 - **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, tools.test.mjs
-- **Lines:** 109
+- **Lines:** 123
 - **Actions:** `check_update`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updDay`, `updCheck`, `updNeeds`
+- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`), `02-ssh` (`run`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `13-main-model` (`MAIN`), `16-actions` (`action`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`)
 - **Used by:** `20-needs`
 
