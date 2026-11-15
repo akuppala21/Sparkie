@@ -10,6 +10,8 @@
 // routed to another model; a missing or unreadable profile or lock. The newest full run decides: one that missed the bar
 // takes the pass away, and newer partial runs never push a full one out. A server error on the brain check keeps
 // nothing. The eval's runner refuses to ask the brain as another setup than the one serving.
+// The mark of what the brain reads holds a turn in the paired Telegram chat too: only its prompt or tools changed is
+// another mark, and a Telegram turn there is a button until an eval for that mark is kept.
 // T136 (part): a switch to a brain with no eval on record makes every change a button; once the eval has passed for this
 // brain and build, a clear change runs at once.
 import { test, describe, after } from 'node:test';
@@ -22,6 +24,7 @@ import { join } from 'node:path';
 import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, auditLines, waitFor, SLOW } from './lib.mjs';
 import { serviceConfig, startMock } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
+import { brainSent, brainReadsOf } from './lock.mjs';
 
 const MAIN_ORIGIN = serviceConfig().origin, TAILNET = new URL(MAIN_ORIGIN).hostname.split('.').slice(1).join('.');
 const KEY = new Authenticator(TAILNET, MAIN_ORIGIN);
@@ -317,3 +320,87 @@ for (const [what, lockAt] of [['no lock for this build', join(TMP, 'none.json')]
     } finally { await fleet.stop(); }
   });
 }
+
+// The mark holds a turn in the paired Telegram chat too (its prompt and tools differ from the page's): a change to only
+// that is another mark, and a Telegram turn on a build with that mark is a button until an eval for it is kept.
+test('the mark holds what a Telegram turn is sent: only its prompt or its tools changed is another mark, and a Telegram turn is then a button', { timeout: 300000 * SLOW }, async t => {
+  const sent = await brainSent(T.fleet), reads = brainReadsOf(sent), tg = sent.catalog.telegram;
+  assert.match(tg.system, /writing from Telegram/);
+  assert.notEqual(tg.system, sent.system);
+  const pageOnly = brainReadsOf({ ...sent, catalog: { ...sent.catalog, telegram: undefined } });
+  t.diagnostic(`the mark: ${pageOnly} for the page's turn alone (as before), ${reads} with the Telegram turn`);
+  assert.notEqual(pageOnly, reads);
+  const changed = edit => { const c = structuredClone(sent); edit(c.catalog.telegram); return brainReadsOf(c); };
+  const promptOnly = changed(x => { x.system += ' One more line for Telegram.'; }), toolsOnly = changed(x => { x.tools = x.tools.filter(f => f.function.name !== 'remember'); });
+  assert.ok(tg.tools.some(f => f.function.name === 'remember'));
+  assert.ok(![promptOnly, toolsOnly].includes(reads) && promptOnly !== toolsOnly);
+  // A build whose mark moved only for Telegram (its lock names promptOnly), holding a passing record of the mark before.
+  const lock = { ...LOCK(), brainReads: promptOnly }, lockFile = join(TMP, 'telegram-lock.json');
+  writeFileSync(lockFile, JSON.stringify(lock));
+  const fleet = await startMock({ telegram: true, knowledge: true, watchMs: 60000, env: { SPARK_CONSOLE_WORKFLOW_LOCK: lockFile }, prepare: ({ dir }) => {
+    mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner' } }), { mode: 0o600 });
+  } });
+  try {
+    const head = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin }, post = (p, b) => fetch(`${fleet.base}${p}`, { method: 'POST', headers: head, body: JSON.stringify(b) });
+    const since = new Date().toISOString();
+    assert.equal((await post('/main/check', {})).status, 202);
+    const p = await waitFor(() => { try { return Object.values(JSON.parse(readFileSync(join(fleet.stateDir, 'brain-profiles.json'), 'utf8')).profiles).find(x => x.at > since); } catch { return null; } }, { timeout: 60000, what: 'the check' });
+    const keep = async marked => {
+      const rec = { kind: 'spark-console-eval', at: new Date(tick += 1000).toISOString(), build: lock.build, reads: marked, set: lock.evalSet.version, setFile: 'test/eval/cases.json', setCases: lock.evalSet.cases.length,
+        cap: null, memorySwitches: { on: SWITCHES, off: [] }, runs: 3, brain: { standIn: true, key: p.key, setup: p.setup.id, model: p.model, engine: p.engine, image: p.image, flags: p.flags },
+        cases: lock.evalSet.cases.map(([id, expect]) => ({ id, expect, runs: [1, 2, 3].map(() => ({ passed: true, asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] })) })) };
+      assert.equal((await post('/main/eval', rec)).status, 201);
+    };
+    const calls = () => { const f = join(fleet.dir, 'telegram-calls.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(c => c.method === 'sendMessage') : []; };
+    const fromTelegram = async text => {
+      const from = calls().length;
+      await fetch(`http://127.0.0.1:${fleet.telegramPort}/__push`, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: { message_id: msgId++, date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } }) });
+      return (await waitFor(() => { const s = calls().slice(from); return s.length && s; }, { timeout: 60000, what: 'the answer on Telegram' }))[0].body;
+    };
+    const radix = () => readFileSync(join(fleet.root, 'spark4', '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${RADIX}|`))?.split('|')[1];
+    await keep(reads);
+    const asked = await fromTelegram(`stop ${RADIX} on spark 4`);
+    assert.match(asked.reply_markup?.inline_keyboard?.[0]?.[0]?.text || '', /^Stop sc-RadixArk/, JSON.stringify(asked));
+    assert.equal(radix(), 'running');
+    const changes = (await (await post('/actions/sparkie_setup', {})).json()).changes;
+    assert.equal(changes, 'Sparkie asks before every change, one button each: the eval has not been run for this build.');
+    await keep(promptOnly);
+    const ran = await fromTelegram(`stop ${RADIX} on spark 4`);
+    assert.equal(ran.reply_markup, undefined, JSON.stringify(ran));
+    await waitFor(() => radix() === 'exited', { timeout: 60000, what: `${RADIX} stopped from Telegram` });
+  } finally { await fleet.stop(); }
+});
+
+// The rail is the brain's alone: on a fleet with no eval on record, self-healing still restarts a crashed model of Spark
+// Console's, and the owner's self-test still starts (neither becomes a question).
+test('no eval on record: self-healing restarts a crashed model, and the owner’s self-test starts, neither a question', { timeout: 240000 * SLOW }, async () => {
+  const name = 'sc-rail-heal';
+  const fleet = await startMock({ watchMs: 3000, evalOnRecord: false, env: { SPARK_CONSOLE_HEAL_MIN_RUN_MS: '60000' }, prepare: ({ root, stateDir }) => {
+    const f = join(root, 'spark4', '.mock', 'containers');
+    writeFileSync(f, `${readFileSync(f, 'utf8')}${name}|running|Up 1 hour|1|Qwen--Qwen3-32B|||\n`);
+    writeFileSync(join(root, 'spark4', '.mock', `up-${name}`), String(Math.floor(Date.now() / 1000) - 3600));
+    writeFileSync(join(stateDir, 'desired.json'), JSON.stringify({ revision: 1, running: [], revisions: [] }), { mode: 0o600 });
+    // (Spark 3 free for the self-test, as selftest.test.mjs makes it)
+    const s3 = join(root, 'spark3', '.mock', 'containers');
+    writeFileSync(s3, readFileSync(s3, 'utf8').replace(new RegExp(`^(${TESTORG.replace(/[.]/g, '\\.')})\\|running\\|[^|]*\\|`, 'm'), '$1|exited|Exited (0) 2 hours ago|'));
+  } });
+  try {
+    const head = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin };
+    const seen = async () => ((await (await fetch(`${fleet.base}/actions/workloads`, { method: 'POST', headers: head, body: JSON.stringify({ spark: 'spark4' }) })).json()).workloads || []).some(w => w.name === name && w.running);
+    const events = () => { try { return readFileSync(join(fleet.stateDir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+    const containers = join(fleet.root, 'spark4', '.mock', 'containers'), stateOf4 = () => readFileSync(containers, 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+    const shown = await (await fetch(`${fleet.base}/actions/sparkie_setup`, { method: 'POST', headers: head, body: '{}' })).json();
+    assert.match(shown.changes, /^Sparkie asks before every change, one button each: /);
+    // (the watcher has to have seen it running: its first look is 15 s after the start)
+    await waitFor(seen, { timeout: 60000, every: 1000, what: `the watcher seeing ${name} running` });
+    const since = new Date().toISOString();
+    writeFileSync(containers, readFileSync(containers, 'utf8').replace(new RegExp(`^${name}\\|running\\|[^|]*\\|`, 'm'), `${name}|exited|Exited (1) just now|`));
+    rmSync(join(fleet.root, 'spark4', '.mock', `up-${name}`), { force: true });
+    await waitFor(() => events().some(e => e.at >= since && e.container === name && e.type === 'healing'), { timeout: 90000, every: 1000, what: 'self-healing' });
+    await waitFor(() => stateOf4() === 'running', { timeout: 90000, every: 1000, what: `${name} running again` });
+    const test = await (await fetch(`${fleet.base}/actions/self_test`, { method: 'POST', headers: head, body: '{}' })).json();
+    assert.equal(test.outcome, 'started', JSON.stringify(test));
+  } finally { await fleet.stop(); }
+});

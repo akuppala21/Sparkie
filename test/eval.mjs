@@ -209,7 +209,7 @@ async function markOf() {
     const { build } = await (await fetch(`${fleet.base}/health`)).json();
     const catalog = await fetch(`${fleet.base}/actions`).then(r => r.json()).catch(() => null);
     if (!catalog?.brain) return { build, reads: null, readsWhy: 'This build shows no brain catalog (GET /actions), so what its brain reads can’t be marked: it is from before the mark.' };
-    return { build, reads: brainReadsOf(await brainSent(fleet)) };
+    return { build, reads: brainReadsOf(await brainSent(fleet, { start: startMock })) };
   } finally { await fleet.stop(); }
 }
 // The brain that answers, as the console serving it names it (R52; not with --stand-in): its setup, the setup's key and
