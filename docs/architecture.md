@@ -128,7 +128,7 @@ flowchart TD
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
-list (`docs/state.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
+list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
 
 ## 3. One sentence, start to finish
 

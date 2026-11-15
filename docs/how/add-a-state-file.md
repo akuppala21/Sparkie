@@ -9,7 +9,8 @@ new things go", row "A state file".
 
 ## Also update
 
-- `docs/state.md`: a row for the new fact.
+- `docs/state.md`: a row for the new fact. (A fact kept anywhere but the state folder, or only in memory, has its
+  row in `docs/state-outside.md` instead.)
 - The daily copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`) and the install snapshot (`on_exit` and its
   `save` in `deploy/host-on-portal.sh`), if it must be left out.
 - Its part's header: `Owns: <file> (writers: …)`, naming every function that writes it, wherever it is (R22, R28).
