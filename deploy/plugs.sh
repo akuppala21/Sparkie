@@ -64,7 +64,7 @@ fi
 read -r -d '' REMOTE <<'REMOTE_EOF' || true
 set -euo pipefail
 # Its Python reads nothing from the home it runs in (no ~/json.py in place of the real one, no user site): -I, as the
-# console's own commands do (R10).
+# console's own commands do (R53).
 python3() { command python3 -I "$@"; }
 C=spark-console-plugs
 DATA="$HOME/.config/spark-console/matter"

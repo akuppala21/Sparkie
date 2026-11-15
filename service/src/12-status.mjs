@@ -28,7 +28,7 @@ function runWorker(node, payload, timeout = 30000) {
           const ev = JSON.parse(line);
           if (ev.type === 'result') result = ev.result;
           else if (ev.type === 'error') { error = String(ev.error || 'The Spark couldn’t do that.').slice(0, 300); refused = true; conflict = ev.code === 'conflict'; }
-          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(Boolean));
+          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(p => PATH_PROGRAMS.split(' ').includes(p)));
         } catch {}
       }
     });

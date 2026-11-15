@@ -6,7 +6,7 @@ const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
-    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R10)
+    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R53)
     name=\${d%/}; name=\${name##*/}
     case "$name" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     size=$(du -sb "$d" 2>/dev/null | cut -f1)
@@ -69,8 +69,19 @@ function ggufOnDisk(b64) {
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
-// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R10).
+// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
+// The same for what a start passes on from spark.json: its image only shaped like an image reference, its setting names
+// only shaped like names. True when something was left out; the plans say so (PLAIN_NOTE), never what it was.
+const PLAIN_NOTE = 'its spark.json names an image or settings that aren’t plain, so Spark Console left them out';
+function plainManifest(m) {
+  let out = false;
+  if (m.image !== undefined && !(typeof m.image === 'string' && /^[A-Za-z0-9._/:@-]{1,200}$/.test(m.image))) { delete m.image; out = true; }
+  for (const env of [m.env, m.cluster?.env]) {
+    if (env && typeof env === 'object') for (const k of Object.keys(env)) if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) { delete env[k]; out = true; }
+  }
+  return out;
+}
 function describe(config, manifest) {
   if (!config && !manifest) return {};
   const quant = config?.quantization_config, architecture = plainText(config?.architectures?.[0]);
@@ -100,7 +111,8 @@ async function inventory(viewer) {
     const folders = fields(r.out, 'model').map(([name, size, manifest, config, ggufs]) => {
       const m = b64json(manifest), c = b64json(config);
       if (m && m.title !== undefined && !plainText(m.title)) delete m.title;
-      return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs) };
+      const notPlain = Boolean(m && typeof m === 'object' && plainManifest(m));
+      return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs), ...(notPlain ? { settingsNotPlain: true } : {}) };
     });
     const cached = fields(r.out, 'hf').filter(([key]) => NAME_RE.test(key)).map(([key, size, partial, locked, config, ggufs]) => ({
       name: key, repo: key.replace('--', '/'), sizeBytes: Number(size) || 0, manifest: null, store: 'hf', locked: locked === '1',

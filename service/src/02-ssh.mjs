@@ -17,6 +17,8 @@ function spawnOn(node, { script, command, limit }) {
     ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
       `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
+  // (a program that isn't there fails this command, never the service: its callers see the close, R53)
+  child.on('error', () => {});
   if (script != null) child.stdin.end(PREAMBLE + script);
   return child;
 }

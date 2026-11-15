@@ -337,7 +337,7 @@ function resolveHow(body, viewer, modelName, sparks, library) {
   return how;
 }
 
-// (plain names only, as in the library's scan: a line break in a folder's name would add a model of its own, R10)
+// (plain names only, as in the library's scan: a line break in a folder's name would add a model of its own, R53)
 const SCAN_SCRIPT = `for d in ${MODELS}/*; do n=\${d##*/}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'model\\t%s\\n' "$n"; done
 for d in ${HF_HUB}/models--*; do n=\${d##*/models--}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'hf\\t%s\\n' "$n"; done
 printf 'disk\\t%s\\n' "$(df -B1 --output=avail "$HOME" 2>/dev/null | tail -1 | tr -d ' ')"`;

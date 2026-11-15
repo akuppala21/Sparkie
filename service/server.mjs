@@ -110,11 +110,14 @@ const STATE_DIR = process.env.SPARK_CONSOLE_STATE_DIR || `${homedir()}/.local/st
 // The journal (20-journal.mjs, R43): beside the state folder, never in it, so neither the daily copy nor an install
 // snapshot takes it. Under ALL_LOCAL a test names its own, else it sits next to that run's state folder.
 const JOURNAL_DIR = ALL_LOCAL ? process.env.SPARK_CONSOLE_JOURNAL_DIR || `${STATE_DIR.replace(/\/+[^/]*\/*$/, '')}/journal` : `${homedir()}/.local/share/spark-console/journal`;
-// The console's own commands on a Spark (R10) take their programs from FIXED_PATH, which holds no folder of the
+// The console's own commands on a Spark (R53) take their programs from FIXED_PATH, which holds no folder of the
 // owner's home, and their Python and curl read nothing from the home (-I: no folder of its own, no user site; -q: no
 // ~/.curlrc). A change inside the run wall may write most of the home; nothing it writes there is obeyed by them. Under
 // ALL_LOCAL the tests' own PATH is kept, so the stand-ins are found.
 const FIXED_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+// On Spark 2 the service's own PATH is that one too, whatever the service manager handed it (a desktop login there can
+// put ~/.local/bin first): ssh, bash, timeout and every local command Node starts are found on it.
+if (!ALL_LOCAL) process.env.PATH = FIXED_PATH;
 const PATH_FIRST = ALL_LOCAL ? '' : `PATH=${FIXED_PATH}; export PATH; `;
 const PREAMBLE = `export PATH=${ALL_LOCAL ? '"$PATH:/usr/local/bin"' : FIXED_PATH}
 python3() { command python3 -I "$@"; }
@@ -124,7 +127,7 @@ curl() { command curl -q "$@"; }
 // there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
 // (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
 // ~/.mock/off-path-<name> instead.)
-const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln basename paste base64 id sleep';
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname';
 const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/off-path-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
 const pathMissing = new Map();
 
@@ -151,6 +154,8 @@ function spawnOn(node, { script, command, limit }) {
     ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
       `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
+  // (a program that isn't there fails this command, never the service: its callers see the close, R53)
+  child.on('error', () => {});
   if (script != null) child.stdin.end(PREAMBLE + script);
   return child;
 }
@@ -456,7 +461,7 @@ function mustUse(viewer, ids) {
 
 // This machine's own addresses, so the portal host's entry runs commands locally instead of over SSH.
 const LOCAL_IPS = new Set();
-spawn('bash', ['-c', 'tailscale ip 2>/dev/null; hostname -I 2>/dev/null']).stdout
+spawn('bash', ['-c', 'tailscale ip 2>/dev/null; hostname -I 2>/dev/null']).on('error', () => {}).stdout
   .on('data', d => String(d).split(/\s+/).filter(Boolean).forEach(ip => LOCAL_IPS.add(ip)));
 
 let nodesAt = 0;
@@ -674,7 +679,7 @@ const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
-    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R10)
+    # (a plain name only: one holding a line break or a tab would add lines of its own to this answer, R53)
     name=\${d%/}; name=\${name##*/}
     case "$name" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     size=$(du -sb "$d" 2>/dev/null | cut -f1)
@@ -737,8 +742,19 @@ function ggufOnDisk(b64) {
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
-// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R10).
+// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
+// The same for what a start passes on from spark.json: its image only shaped like an image reference, its setting names
+// only shaped like names. True when something was left out; the plans say so (PLAIN_NOTE), never what it was.
+const PLAIN_NOTE = 'its spark.json names an image or settings that aren’t plain, so Spark Console left them out';
+function plainManifest(m) {
+  let out = false;
+  if (m.image !== undefined && !(typeof m.image === 'string' && /^[A-Za-z0-9._/:@-]{1,200}$/.test(m.image))) { delete m.image; out = true; }
+  for (const env of [m.env, m.cluster?.env]) {
+    if (env && typeof env === 'object') for (const k of Object.keys(env)) if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) { delete env[k]; out = true; }
+  }
+  return out;
+}
 function describe(config, manifest) {
   if (!config && !manifest) return {};
   const quant = config?.quantization_config, architecture = plainText(config?.architectures?.[0]);
@@ -768,7 +784,8 @@ async function inventory(viewer) {
     const folders = fields(r.out, 'model').map(([name, size, manifest, config, ggufs]) => {
       const m = b64json(manifest), c = b64json(config);
       if (m && m.title !== undefined && !plainText(m.title)) delete m.title;
-      return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs) };
+      const notPlain = Boolean(m && typeof m === 'object' && plainManifest(m));
+      return { name, sizeBytes: Number(size) || 0, manifest: m, store: 'models', ...describe(c, m), ...ggufOnDisk(ggufs), ...(notPlain ? { settingsNotPlain: true } : {}) };
     });
     const cached = fields(r.out, 'hf').filter(([key]) => NAME_RE.test(key)).map(([key, size, partial, locked, config, ggufs]) => ({
       name: key, repo: key.replace('--', '/'), sizeBytes: Number(size) || 0, manifest: null, store: 'hf', locked: locked === '1',
@@ -2638,7 +2655,7 @@ function resolveHow(body, viewer, modelName, sparks, library) {
   return how;
 }
 
-// (plain names only, as in the library's scan: a line break in a folder's name would add a model of its own, R10)
+// (plain names only, as in the library's scan: a line break in a folder's name would add a model of its own, R53)
 const SCAN_SCRIPT = `for d in ${MODELS}/*; do n=\${d##*/}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'model\\t%s\\n' "$n"; done
 for d in ${HF_HUB}/models--*; do n=\${d##*/models--}; case "$n" in ''|*[!A-Za-z0-9._-]*) continue ;; esac; printf 'hf\\t%s\\n' "$n"; done
 printf 'disk\\t%s\\n' "$(df -B1 --output=avail "$HOME" 2>/dev/null | tail -1 | tr -d ' ')"`;
@@ -2950,7 +2967,7 @@ function runWorker(node, payload, timeout = 30000) {
           const ev = JSON.parse(line);
           if (ev.type === 'result') result = ev.result;
           else if (ev.type === 'error') { error = String(ev.error || 'The Spark couldn’t do that.').slice(0, 300); refused = true; conflict = ev.code === 'conflict'; }
-          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(Boolean));
+          else if (ev.type === 'path' && typeof ev.missing === 'string') pathMissing.set(node.id, ev.missing.split(' ').filter(p => PATH_PROGRAMS.split(' ').includes(p)));
         } catch {}
       }
     });
@@ -5423,7 +5440,7 @@ action({
     const p = await plan(m.name, spark, viewer, inv), f = fitOf(p), v = fitView(f);
     return {
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, spark, engine: p.model.engine, canRun: v.canRun, fitsNow: v.fitsNow, wouldStop: v.wouldStop,
-      steps: planSteps(p.steps, spark), warnings: p.warnings, ...(v.blockers ? { blockers: v.blockers } : {}),
+      steps: planSteps(p.steps, spark), warnings: [...p.warnings, ...(m.settingsNotPlain ? [PLAIN_NOTE] : [])], ...(v.blockers ? { blockers: v.blockers } : {}),
       memory: { neededGB: gbOf(p.memory.need), freeGB: gbOf(p.memory.available), totalGB: gbOf(p.memory.total) }, sparkieRunsHere: p.sparkieHere, endpoint: p.endpoint,
       next: ctx.canChange ? `start_model {"model":"${m.name}","spark":"${spark}"} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it in Spark Console (Models → Deploy), or allows this agent to change things.',
     };
@@ -5444,7 +5461,7 @@ action({
     return {
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, sparks: cp.nodes, answers: cp.head, link, linkTestedAt: lastCheck?.checkedAt || null,
       canRun: cp.fits && link === 'full', fitsNow: cp.fits && link === 'full' && cp.members.every(x => !x.stop.length), memoryEachGB: gbOf(cp.each), endpoint: cp.endpoint, blockers,
-      each: cp.members.map(x => ({ spark: x.node, fits: x.fits, wouldStop: x.stop.map(c => ({ spark: x.node, container: c })), copyFirst: x.copy, steps: planSteps(x.steps, x.node), warnings: x.warnings, memoryFreeGB: gbOf(x.memory.available) })),
+      each: cp.members.map(x => ({ spark: x.node, fits: x.fits, wouldStop: x.stop.map(c => ({ spark: x.node, container: c })), copyFirst: x.copy, steps: planSteps(x.steps, x.node), warnings: [...x.warnings, ...(m.settingsNotPlain ? [PLAIN_NOTE] : [])], memoryFreeGB: gbOf(x.memory.available) })),
       next: ctx.canChange ? `start_model {"model":"${m.name}","sparks":${JSON.stringify(sparks)}} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it in Spark Console (Clusters → Deploy), or allows this agent to change things.',
     };
   },
@@ -9646,7 +9663,7 @@ function openProblems() {
     () => {
       for (const n of NODES) if (knowledge.sparks[n.id]?.dockerDownAt && !sparkOff(n.id)) add(`docker:${n.id}`, `Docker isn’t answering on ${sparkName(n)}, so Spark Console can’t see or change its containers. If it doesn’t come back by itself, run this on ${sparkName(n)}: sudo systemctl restart docker. It stops every container there: Sparkie’s model comes back by itself, and the rest need bringing back.`);
     },
-    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R10: each status round looks).
+    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R53: each status round looks).
     () => {
       for (const [id, miss] of pathMissing) {
         const them = miss.length > 1, names = `${miss.slice(0, 4).join(', ')}${miss.length > 4 ? ` and ${miss.length - 4} more` : ''}`;

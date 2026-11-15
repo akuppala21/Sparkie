@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stand-in curl on a test Spark. Sparkie's model goes to the real curl, at the stand-in model's port (MOCK_MODEL_PORT).
-# With ~/.mock/curl-first there, each call adds its first argument to it (the console's curl says -q first, R10).
+# With ~/.mock/curl-first there, each call adds its first argument to it (the console's curl says -q first, R53).
 [ -f "$HOME/.mock/curl-first" ] && printf '%s\n' "$1" >> "$HOME/.mock/curl-first"
 case "$*" in *127.0.0.1:${MOCK_MODEL_PORT:-none}/*) exec /usr/bin/curl "$@" ;; esac
 # The serve port's /metrics (a model server's own counters): ~/.mock/metrics on this Spark when there is one.

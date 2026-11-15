@@ -48,7 +48,7 @@ function openProblems() {
     () => {
       for (const n of NODES) if (knowledge.sparks[n.id]?.dockerDownAt && !sparkOff(n.id)) add(`docker:${n.id}`, `Docker isn’t answering on ${sparkName(n)}, so Spark Console can’t see or change its containers. If it doesn’t come back by itself, run this on ${sparkName(n)}: sudo systemctl restart docker. It stops every container there: Sparkie’s model comes back by itself, and the rest need bringing back.`);
     },
-    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R10: each status round looks).
+    // A program Spark Console's commands call that isn't on the fixed path on that Spark (R53: each status round looks).
     () => {
       for (const [id, miss] of pathMissing) {
         const them = miss.length > 1, names = `${miss.slice(0, 4).join(', ')}${miss.length > 4 ? ` and ${miss.length - 4} more` : ''}`;
