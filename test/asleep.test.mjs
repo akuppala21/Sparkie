@@ -66,6 +66,8 @@ const ASLEEP = /^Spark 4 is asleep since \d{4}-\d\d-\d\d \d\d:\d\d UTC; \d+ mode
 
 describe('asleep (D4)', { concurrency: 1 }, () => {
   test('a Spark Spark Console powered off reads asleep in fleet_status, /status and the fleet notes', { timeout: 300000 * SLOW }, async () => {
+    // (the watcher's first look comes 15 s after the service starts: only after it does a Spark going dark make an event)
+    await waitFor(async () => (await look('workloads')).workloads?.some(w => w.spark === 'spark4'), { timeout: 90000, what: 'the watcher’s first look' });
     await done(await act('power_off', { spark: 'spark4' }));
     const row = (await look('fleet_status')).sparks.find(x => x.id === 'spark4');
     assert.equal(row.state, 'off', JSON.stringify(row));
