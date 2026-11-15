@@ -138,8 +138,12 @@ async function updInstallAsk(viewer, ctx) {
   const hub = NODES.find(n => n.host === 'local')?.id || brainSparks()[0] || null;
   const differs = [...(Array.isArray(f.differs) ? f.differs : []).map(d => String(d).slice(0, 160)),
     ...(f.differsOther > 0 ? [`${f.differsOther} with an odd name`] : [])];
+  // (asked: the owner's own words in this request ask to install, not as a question or ruled out; the place is the
+  // console itself, so it needn't be named)
+  const i = ctx.intent || {}, has = (l, k) => (l || []).includes(k);
+  const asked = !ctx.agent && ['sparkie', 'page'].includes(ctx.via) && has(i.asked, 'install') && !has(i.negated, 'install') && !has(i.mixed, 'install');
   return dangerAsk(viewer, ctx, { kinds: ['install'], where: hub,
-    facts: { install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
+    facts: { asked, install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
     call: { action: 'install_update', args: { tree: x.newest.tree } } });
 }
 // The yes: still the newest tested build and still newer, nothing running; then pull.sh, outside this service.

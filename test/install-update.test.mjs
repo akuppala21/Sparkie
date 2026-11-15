@@ -106,7 +106,7 @@ describe('install_update', { concurrency: 1 }, () => {
     const a = await asking();
     assert.ok(a.ask, JSON.stringify(a.msgs.slice(-3)));
     const text = a.ask.content;
-    assert.match(text, /^INSTALLS SPARK CONSOLE on /);
+    assert.match(text, /^INSTALLS SPARK CONSOLE on [^\n]+\nYou asked for this\./);
     assert.match(text, new RegExp(`The tree ${c2.t12} \\(build ${buildOf(c2)}\\), tested \\d\\d:\\d\\d\\.`));
     assert.match(text, /files differ from the build installed now: .*public\/app\.js/);
     assert.match(text, /It changes what Sparkie’s brain reads; the eval for it: not run\. Until the eval’s result is kept, Sparkie asks you before every change\./);
