@@ -378,6 +378,9 @@ action({
           if (placedStep(st.action, args)) Object.assign(args, await placeStep(j, i + 1, args, viewer, w.title));
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
+          // (what was on the list of what should be running before this step: a step that starts one of those again
+          // leaves it on the list after the clean-up, stopWhatRan)
+          const listed = savedStepStarts(st.action, args) ? desired().running : [];
           try {
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
@@ -386,13 +389,13 @@ action({
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
-          savedRunKeep(j, { step: i + 1, pending: savedRunPending(st.action, args, out, st.keep === true) });
+          savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed) });
           if (out?.operation && out.outcome === 'started') {
             const done = await stepOpEnd(j, out.operation);
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
-          ran.push(...startedBy(st.action, args, out, st.keep === true));
+          ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
           savedRunKeep(j, { started: ran, pending: [] });
           j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
