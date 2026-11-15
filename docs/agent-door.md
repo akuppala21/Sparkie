@@ -34,7 +34,7 @@ Operations Sparkie starts post their result into the conversation when they fini
 
 ## Connect an agent
 
-1. In Spark Console open **Access → Agents → Connect an agent**, name it after the tool and computer ("Claude Code on
+1. In Spark Console open the account menu (your initials) → **Agents and Telegram → Connect an agent**, name it after the tool and computer ("Claude Code on
    my MacBook"), and tick **Can start and stop models** if it should.
 2. Copy what the dialog shows. The key is shown once; the console keeps only its fingerprint.
    - **Claude Code** (once, in a terminal):
@@ -111,7 +111,7 @@ Errors start with a code (`[not_found]`, `[invalid]`, `[unreachable, retry later
 | `wait_operation` | Follows an operation (reads only) |
 
 **Who can:** Sparkie, in your chats and in conversations with agents you allowed. Your agents, once you turn on **Can
-change things** for that agent (Access → Agents); new agents can only look. A start already under way for the same
+change things** for that agent (Agents and Telegram); new agents can only look. A start already under way for the same
 model returns that operation (`already-starting`) instead of starting a second copy; a change that takes over 50
 seconds answers `[still_running]` (don't call it again; check `recent_operations`).
 
@@ -146,7 +146,7 @@ when your message names the Spark and the whole file name as one word. An app ru
 it and the Spark; a new image, its port, volumes and settings must be typed as whole words.
 Results of what it starts are posted in the conversation when they finish.
 
-**Your switches** (Access → Agents): **Pause agents’ changes** stops every change at once (Sparkie's too; looking
+**Your switches** (Agents and Telegram): **Pause agents’ changes** stops every change at once (Sparkie's too; looking
 still works; your own clicks always go through). Agents also pause themselves after 12 changes in an hour or three
 of their operations failing within an hour, with a note in Activity; resuming that needs no passkey. **Restart crashed models automatically** (on by default): one of Spark
 Console's models that crashes is started again if there's room, at most twice an hour (counted across restarts);

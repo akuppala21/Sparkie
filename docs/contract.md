@@ -160,7 +160,7 @@ for calm before it ships.
   passkey yes opens an approval link (in the browser for Touch ID, or as a link for the phone's Face ID). The owner
   approves that exact step there, and the command carries on. Agents get the same link (4.4).
 - 4.2 *(changed)* **Through agents**: Codex and Claude Code connect over MCP (`ask_sparkie`, plus the workflows
-  themselves), each with its own key. Setting one up takes one copy-paste from the Access page. Any other MCP agent
+  themselves), each with its own key. Setting one up takes one copy-paste from Agents and Telegram in the page's account menu. Any other MCP agent
   works the same way. An agent that calls a workflow directly gets the same checks and corrections as through
   `ask_sparkie`.
 - 4.3 It's one brain everywhere: the same memory, workflows, rules and answers. The owner sees every conversation,
@@ -1442,7 +1442,7 @@ rounded large numbers), and the suite ran in a container on Spark 3 in about 12 
 **Version 3 (2026-11-08): agreed, with the reviewers' changes.** Phases 1 and 2 are installed (build `90aa8f0fc3d8`).
 
 **Phase 3 (baselines): built; the owner's measurements are next.**
-- **The brain's agent setup** ("Qwen 3.8 27B · Agent" in Models → Sparkie): thinking on, native 262K context, the
+- **The brain's agent setup** ("Qwen 3.8 27B · Agent", one of the brain's setups): thinking on, native 262K context, the
   model card's sampling, 32K outputs, 4 at once, and up to 40 tool rounds a message. aphex is unchanged.
 - **The agent bar** (`agentbar/`): four real tasks with hidden checks (fix a bug, add a feature with tests, find why a
   model crashed, set up an app wired to the brain), and the engine trial that runs opencode and Qwen Code on them in
