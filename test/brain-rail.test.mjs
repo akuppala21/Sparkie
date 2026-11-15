@@ -3,7 +3,7 @@
 // mark and case set is a full run that met the bar, recounted from the record. With no eval on record every change is one
 // button and nothing runs at once, from the page, from Telegram and through the agent door; a lookup is never affected;
 // sparkie_setup says why in one line. A full, bar-met record kept with the passkey runs today's clear changes at once.
-// What never counts: a partial run; a run that missed the bar; another mark; another case set; a memory-set run; one with
+// What never counts: a partial run; a run that missed the bar (also when its own score says it met it); another mark; another case set; a memory-set run; one with
 // a memory addition off; one missing those fields; a case id or expect that isn't the lock's; a record written into the
 // file by hand; one sent without the passkey once a passkey is set up (428, nothing kept); another key (a changed flag,
 // image, image actually run, weights' snapshot, toolRounds, maxChanges, toolCap) or the narrow key of before; the chat
@@ -168,6 +168,7 @@ describe('the rail', { concurrency: 1 }, () => {
     const cases = LOCK().evalSet.cases, memory = readFileSync(join(REPO, 'test', 'eval', 'memory.json')), sha = b => createHash('sha256').update(b).digest('hex');
     const never = [
       ['a partial run', await record({}, { cases: cases.slice(0, 5) })],
+      ['its own score saying it met the bar over failing runs', await record({ full: true, score: { full: true, met: true, passOnce: 1, passAllRuns: 1, wrongChanges: 0, askedOnClear: 0 } }, { passed: i => i >= 3 })],
       ['another mark', await record({ reads: 'cd'.repeat(32) })],
       ['another case set', await record({ set: 'ef'.repeat(32) })],
       ['a memory-set full pass', await record({ set: sha(memory), setFile: 'test/eval/memory.json', setCases: JSON.parse(memory).length }, { cases: JSON.parse(memory).map(c => [c.id, c.expect]) })],
