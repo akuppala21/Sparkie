@@ -74,6 +74,7 @@ export const TOOLS = [
 ];
 export const CHANGE_TOOLS = [
   'cancel_operation',
+  'compare_models',
   'find_setups',
   'forget_memory',
   'forget_workflow',
