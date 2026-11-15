@@ -48,7 +48,7 @@ const WORKFLOWS = [
     inputs: { model: 'The model as the owner named it: a recipe id, a Hugging Face repo, a model on disk, or their words.' },
     changes: 'Nothing on the Sparks. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps the setups it finds (each with its command, image and measured speed) in Recipes. A repo that isn’t in Recipes yet is added first.',
     takes: 'Under a minute.',
-    failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next daily look tries it again.' }],
+    failures: [{ id: 'source-down', title: 'a source couldn’t be read', advice: 'The others still count; the log says which one failed, and the next look tries it again.' }],
     code: () => [digModel, startDig, recipeCatalog, recipeIdOf, setupsStale, refreshSetups, resolveModelName, nvidiaIndex, eugrIndex, arenaIndex, sparkrunIndex, vllmRecipeSetups, pinImage,
       cardSetups, cardText, addModel, versionOf, hfFixture, namedInFull] },
   { id: 'restart_model', action: 'restart_model', title: 'Restart a model as it was',

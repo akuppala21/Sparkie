@@ -108,7 +108,6 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `startSampler` | `04-metrics` | again 15 s after a reader ends, while a page is open |
 | `metricsStream` | `04-metrics` | a ping every 15 s to each open page |
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
-| `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
 | `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
