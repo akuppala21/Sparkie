@@ -72,6 +72,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 3.8 | no test yet |  | T100: no test holds it yet |
 | 3.9 | no test yet |  | T86: no test holds it yet |
 | 3.10 | no test yet |  | no acceptance test lists it |
+| 3.11 | no test yet |  | T136: no test holds it yet |
+| 3.12 | no test yet |  | T142: no test holds it yet |
 | 4.1 | no test yet |  | no acceptance test lists it |
 | 4.2 | no test yet |  | T58: no test holds it yet |
 | 4.3 | no test yet |  | no acceptance test lists it |
@@ -84,9 +86,9 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 4.10 | no test yet |  | no acceptance test lists it |
 | 5.1 | no test yet |  | T1: no test holds it yet |
 | 5.2 | no test yet |  | no acceptance test lists it |
-| 5.3 | no test yet |  | T9, T21: no test holds them yet |
+| 5.3 | no test yet |  | T9, T21, T137, T138: no test holds them yet |
 | 5.4 | no test yet |  | T10: no test holds it yet |
-| 5.5 | no test yet |  | T9, T22: no test holds them yet |
+| 5.5 | no test yet |  | T9, T22, T138: no test holds them yet |
 | 5.6 | no test yet |  | no acceptance test lists it |
 | 5.7 | no test yet |  | T27, T28: no test holds them yet |
 | 5.8 | no test yet |  | T47, T68, T106: no test holds them yet |
@@ -94,6 +96,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.10 | no test yet |  | T106: no test holds it yet |
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
+| 5.13 | no test yet |  | T123: no test holds it yet |
+| 5.14 | no test yet |  | T137: no test holds it yet |
 | 6.1 | no test yet |  | no acceptance test lists it |
 | 6.2 | no test yet |  | T2, T17: no test holds them yet |
 | 6.3 | no test yet |  | T20, T41: no test holds them yet |
@@ -108,13 +112,17 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 6.12 | no test yet |  | T26, T43: no test holds them yet |
 | 6.13 | no test yet |  | T39: no test holds it yet |
 | 6.14 | no test yet |  | T48: no test holds it yet |
-| 6.15 | no test yet |  | T63, T69, T70, T71, T84, T85, T94, T95: no test holds them yet |
+| 6.15 | no test yet |  | T63, T69, T70, T71, T84, T85, T94, T95, T100, T143: no test holds them yet |
 | 6.16 | no test yet |  | T84, T99: no test holds them yet |
 | 6.17 | no test yet |  | T83: no test holds it yet |
 | 6.18 | no test yet |  | T85: no test holds it yet |
 | 6.19 | no test yet |  | T87: no test holds it yet |
 | 6.20 | no test yet |  | T105: no test holds it yet |
 | 6.21 | no test yet |  | T111: no test holds it yet |
+| 6.22 | no test yet |  | T120: no test holds it yet |
+| 6.23 | no test yet |  | T121: no test holds it yet |
+| 6.24 | no test yet |  | T70, T90, T134: no test holds them yet |
+| 6.25 | no test yet |  | T99, T135: no test holds them yet |
 | 7.1 | no test yet |  | no acceptance test lists it |
 | 7.2 | no test yet |  | T11, T28, T53: no test holds them yet |
 | 7.3 | built | `test/change.test.mjs` (“start_model across a "full" pair (Spark 3 + Spark 4)”) | holds T54 |
@@ -125,20 +133,27 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 7.8 | no test yet |  | no acceptance test lists it |
 | 7.9 | built | `test/change.test.mjs` (“start_model across a "full" pair (Spark 3 + Spark 4)”) | holds T54 |
 | 7.10 | no test yet |  | T67: no test holds it yet |
+| 7.11 | no test yet |  | T122: no test holds it yet |
 | 8.0 | no test yet |  | T39, T40: no test holds them yet |
 | 8.1 | no test yet |  | T2, T7: no test holds them yet |
 | 8.2 | no test yet |  | T8, T51: no test holds them yet |
 | 8.3 | no test yet |  | T15, T51, T65, T74: no test holds them yet |
 | 8.4 | no test yet |  | T37, T52: no test holds them yet |
-| 8.5 | no test yet |  | T50, T73, T83, T96: no test holds them yet |
+| 8.5 | no test yet |  | T50, T73, T83, T96, T125: no test holds them yet |
 | 8.6 | no test yet |  | no acceptance test lists it |
 | 8.7 | no test yet |  | T8, T37, T38, T71, T91: no test holds them yet |
 | 8.8 | no test yet |  | T55: no test holds it yet |
 | 8.9 | no test yet |  | T56: no test holds it yet |
-| 8.10 | no test yet |  | T49, T57, T104: no test holds them yet |
-| 8.11 | no test yet |  | T15, T51, T74, T93: no test holds them yet |
+| 8.10 | no test yet |  | T49, T57: no test holds them yet |
+| 8.11 | no test yet |  | T15, T51, T74, T130, T131: no test holds them yet |
 | 8.12 | no test yet |  | T88: no test holds it yet |
-| 8.13 | no test yet |  | T90, T91, T92: no test holds them yet |
+| 8.13 | no test yet |  | T90, T92: no test holds them yet |
+| 8.14 | no test yet |  | T91, T124, T125, T127: no test holds them yet |
+| 8.15 | no test yet |  | T91, T124: no test holds them yet |
+| 8.16 | no test yet |  | T126: no test holds it yet |
+| 8.17 | no test yet |  | T128: no test holds it yet |
+| 8.18 | no test yet |  | T71, T129: no test holds them yet |
+| 8.19 | no test yet |  | T92, T133: no test holds them yet |
 | 9.1 | no test yet |  | T3, T4, T5, T32, T64, T65: no test holds them yet |
 | 9.2 | no test yet |  | no acceptance test lists it |
 | 9.3 | no test yet |  | T25, T46: no test holds them yet |
@@ -153,8 +168,8 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.12 | no test yet |  | T46: no test holds it yet |
 | 9.13 | no test yet |  | T75, T101: no test holds them yet |
 | 9.14 | no test yet |  | T76, T102: no test holds them yet |
-| 9.15 | no test yet |  | T77, T96, T98: no test holds them yet |
-| 9.16 | no test yet |  | T78: no test holds it yet |
+| 9.15 | no test yet |  | T77, T96, T98, T132: no test holds them yet |
+| 9.16 | no test yet |  | no acceptance test lists it |
 | 9.17 | no test yet |  | no acceptance test lists it |
 | 9.18 | no test yet |  | T89: no test holds it yet |
 | 9.19 | no test yet |  | no acceptance test lists it |
@@ -164,7 +179,11 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.23 | no test yet |  | T114, T116, T119: no test holds them yet |
 | 9.24 | no test yet |  | T114, T115: no test holds them yet |
 | 9.25 | no test yet |  | T116, T117: no test holds them yet |
+| 9.26 | no test yet |  | T140: no test holds it yet |
+| 9.27 | no test yet |  | T141: no test holds it yet |
+| 9.28 | no test yet |  | T141: no test holds it yet |
 | 10.1 | no test yet |  | T60: no test holds it yet |
 | 10.2 | no test yet |  | T14: no test holds it yet |
 | 10.3 | no test yet |  | T60: no test holds it yet |
 | 10.4 | no test yet |  | T82: no test holds it yet |
+| 10.5 | no test yet |  | T139: no test holds it yet |
