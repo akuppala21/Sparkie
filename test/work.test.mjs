@@ -252,9 +252,9 @@ test('a look while a proof of the walls holds its lock there: "being proven righ
   assert.equal(await ended, 0, 'the proof passes');
 });
 
-test('two looks at once on one Spark both run: checking for a proof takes no lock of its own', { timeout: 60000 * SLOW }, async () => {
-  // (with the stand-in flock, a check that took the lock would hold it a second, and the other look would hear "being
-  // proven", as two lookups of one round on a loaded Spark once did)
+test('two looks at once on one Spark both run: their checks for a proof never stop each other', { timeout: 60000 * SLOW }, async () => {
+  // (with the stand-in flock each check holds its lock a second: an exclusive one would stop the other look, which then
+  // hears "being proven", as two lookups of one round on a loaded Spark once did)
   const both = await Promise.all([look({ on: 'spark3', command: 'cat docs/plain.txt' }), look({ on: 'spark3', command: 'ls docs' })]);
   assert.deepEqual(both.map(r => [r.status, r.json.ran, r.json.output]), [[200, true, 'hello from spark 3\n'], [200, true, 'plain.txt\ntodo.txt\n']], JSON.stringify(both.map(r => r.json)));
 });

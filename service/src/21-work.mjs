@@ -150,9 +150,9 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    // (read in the kernel's table of locks, never by taking the lock: two looks checking at once would each see the
-    // other's lock and answer "being proven", and a proof starting just then would be refused)
-    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ] && i=$(stat -c %i -- "$l" 2>/dev/null) && grep -Eq "FLOCK .* [0-9a-f]+:[0-9a-f]+:$i " /proc/locks 2>/dev/null; then said proving; fi`]),
+    // (a shared lock, held only for `true`: two looks checking at once share it, and only the proof's own lock, which is
+    // exclusive, stops it. A proof that starts in those few milliseconds is refused as "another proof is running".)
+    ...(verb === 'prove' ? [] : [`l=${PROVE_LOCK_AT}; if [ -e "$l" ]; then flock -n -s -E 75 "$l" true </dev/null 2>/dev/null; [ $? = 75 ] && said proving; fi`]),
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
