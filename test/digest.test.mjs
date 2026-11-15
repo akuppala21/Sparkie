@@ -6,11 +6,12 @@
 // shaped like the digest's own (its count line, a line number, its data label) cannot pass for them. Keys stay hidden in
 // the digest and through find and lines (a kept value across the 300-character fold too, also in a record written
 // before it was masked). A caller other than the owner reads back no chat's tool result, and in an agent's chat the
-// digest says so; a command's lines only a caller that may run there. The output a message may read counts the digest
+// digest says so; a command's lines only a caller that may run there. From the phone (Telegram, paired) and an agent's
+// key, find and lines give no more than recall {id} does there. The output a message may read counts the digest
 // (a setup of 20,000 tokens: 24,000 characters a message). With the switch digest off the 12,000 cut comes back.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, ASK, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
@@ -37,6 +38,7 @@ const LOG = Array.from({ length: 3000 }, (_, i) => {
 }).join('\n');
 // A command's record written before masking (as an older build could have): raw keys, a kept value across the fold.
 const CMD = 'j_c0de00000001', CMD_TEXT = `$ cat /var/log/zircon.log\nzircon start\nHF_TOKEN=${HF} zircon login\n${'v'.repeat(290)}${NAS} zircon nas\nzircon end\n`;
+const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
 const pieces = text => [HF.slice(0, 12), HF.slice(-12), NAS.slice(0, 10), NAS.slice(-10)].filter(p => text.includes(p));
 function seed({ dir, stateDir }) {
   // (a brain setup of 20,000 tokens: 24,000 characters of tool results a message)
@@ -45,7 +47,8 @@ function seed({ dir, stateDir }) {
   writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
   writeFileSync(join(stateDir, 'events.jsonl'), `${JSON.stringify({ at: at(NOW - 60000), type: 'crashed', spark: 'spark1', container: 'kestrel-app', error: LOG })}\n`, { mode: 0o600 });
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ keys: { NAS: { value: NAS, at: at(NOW) } } }), { mode: 0o600 });
+  writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ keys: { NAS: { value: NAS, at: at(NOW) } },
+    telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner' } }), { mode: 0o600 });
   const folder = join(dir, 'journal'), month = at(NOW - 120000).slice(0, 7);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   writeFileSync(join(folder, `journal-${month}.out`), CMD_TEXT, { mode: 0o600 });
@@ -54,7 +57,7 @@ function seed({ dir, stateDir }) {
 }
 
 const keys = {};
-useFleet({ watchMs: 60000, prepare: seed }, async () => { keys.look = await createKey('g5-look'); keys.act = await createActKey('g5-act'); });
+useFleet({ telegram: true, watchMs: 60000, prepare: seed }, async () => { keys.look = await createKey('g5-look'); keys.act = await createActKey('g5-act'); });
 const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); }, { timeout: 60000 });
 
@@ -63,6 +66,10 @@ const script = (rules, fleet = T.fleet) => writeFileSync(join(fleet.dir, 'model-
 const requests = (fleet = T.fleet) => (existsSync(join(fleet.dir, 'model-requests.jsonl')) ? readFileSync(join(fleet.dir, 'model-requests.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []);
 // What the brain was sent back from its first round of calls for these words.
 const resultsFor = (words, fleet = T.fleet) => waitFor(() => requests(fleet).find(x => x.words === words && x.round === 1)?.results.map(x => x.content), { what: `the tool results for “${words}”` });
+const tgSay = async text => (await fetch(`http://127.0.0.1:${T.fleet.telegramPort}/__push`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ message: { message_id: Math.floor(Math.random() * 1e6), date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } }) })).json();
+// The journal's records (every month).
+const journalRecords = () => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).flatMap(f => readFileSync(join(T.fleet.journalDir, f), 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return {}; } }));
 const owner = async body => { const r = await api('/actions/recall', { method: 'POST', body }); assert.equal(r.status, 200, r.text); return r.json; };
 // The digest the owner's page chat is sent for a crash event's 3,000-line log (kept from the first test).
 let D = null, content = '';
@@ -153,6 +160,28 @@ test('a caller other than the owner reads back no chat\'s tool result, and in an
   assert.ok(!mine.includes('recall {'), mine.slice(0, 600));
   const back = await call(asker.token, 'recall', { id: d.record, find: 'quartz' });
   assert.ok(!('lines' in back.value) && !/quartz/.test(back.text), back.text);
+});
+
+test('from the phone and from an agent\'s key, find and lines give no more than recall {id}: a page chat\'s tool result and words said on the page stay back, and the phone\'s own digest says only the owner reads its record', { timeout: 120000 * SLOW }, async () => {
+  assert.ok(D, 'the first test ran');
+  const said = journalRecords().find(x => x.k === 'said' && x.via === 'page' && x.words === 'g5 why did kestrel crash on spark 1');
+  assert.ok(said, 'the page words of the first test');
+  const asks = [{ id: D.record, find: 'quartz-77' }, { id: D.record, lines: '1-50' }, { id: said.id, find: 'kestrel' }];
+  // An agent's key that may change things.
+  for (const args of asks) {
+    const r = await call(keys.act.token, 'recall', args);
+    assert.ok(!/quartz-77|step 1 ok|why did kestrel/.test(r.text) && !(r.value && 'lines' in r.value), `${JSON.stringify(args)}: ${r.text}`);
+  }
+  // The owner's paired phone: the same three calls, and a long result of its own.
+  const words = 'g5 phone asks about the crash';
+  script([{ match: '^g5 phone asks about the crash', calls: [EVENTS, ...asks.map(a => ({ name: 'recall', arguments: a }))] }]);
+  await tgSay(words);
+  const [digest, ...rest] = await resultsFor(words), d = JSON.parse(digest);
+  assert.match(d.digest, new RegExp(`All of it is kept in record ${d.record}, which only the owner reads back\\.$`));
+  for (const r of rest) assert.ok(!/quartz-77|step 1 ok|why did kestrel|"lines":\[/.test(r), r.slice(0, 400));
+  assert.match(rest[2], /^\[error\] Words said in a chat/);
+  // The owner's own call reads them.
+  assert.equal((await owner({ id: D.record, find: 'quartz-77' })).lines.length, 1);
 });
 
 test('the tool output one message may read counts the digest: three long results fit in 24,000 characters', { timeout: 120000 * SLOW }, async () => {
