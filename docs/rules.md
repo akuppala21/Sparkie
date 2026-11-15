@@ -60,3 +60,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R58](rules/R58.md): Updates from chat (design C 2.3, step 5; contract 6.24): `check_update` (a lookup in the group `updates`, the owner's and any read key's) runs `pull.sh check --json` on Spark 2, …
 - [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).
 - [R61](rules/R61.md): What the runner does with a change (R55 is the sorter, R42 the root helper and its walls).
+- [R62](rules/R62.md): The box (design A 2.4; step A2): `run {on: "box"}` opens the caller's box, a throw-away container on a compute Spark that reaches nothing of the Spark but its own folder.

@@ -37,6 +37,8 @@ const modelArg = { type: 'string', maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z
 // Spark names become ids, "a+b" becomes a list.
 function checkValue(k, p, v) {
   if (p.spark) {
+    // (run's on may also be "box", 21-box.mjs; the brain isn't shown that yet)
+    if (p.box && v === 'box') return v;
     if (typeof v !== 'string') throw new HttpError(400, `${k} should be text: one Spark id, like spark3. Spark ids: ${sparkList()}.`);
     const id = sparkIdOf(v);
     if (!id) throw new HttpError(400, `${k}: no Spark called ${v.slice(0, 40)}. Spark ids: ${sparkList()}.`);
@@ -75,7 +77,7 @@ function checkInput(schema, args, name = null) {
 // The schema agents are shown: Spark arguments list the real Spark ids.
 function liveSchema(schema) {
   const fix = p => {
-    if (p.spark) { const { spark, ...rest } = p; return { ...rest, enum: NODES.map(n => n.id) }; }
+    if (p.spark) { const { spark, box, ...rest } = p; return { ...rest, enum: NODES.map(n => n.id) }; }
     return p.type === 'array' && p.items ? { ...p, items: fix(p.items) } : p;
   };
   return { ...schema, properties: Object.fromEntries(Object.entries(schema.properties || {}).map(([k, p]) => [k, fix(p)])) };

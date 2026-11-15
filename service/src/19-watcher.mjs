@@ -111,9 +111,11 @@ function darkPeriods(spark, max = 5) {
 }
 
 // One look per Spark: every container's id, name and state; and the full inspect only for ones that are new or changed.
+// A box (21-box.mjs, R62) is no workload: one whose label names it is left out here, so workloads never lists it.
 const watchScript = known => `${readingsScript}
 known=${q(known)}
-docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}' 2>/dev/null | while IFS='|' read -r id name state; do
+docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Label "spark-console.box"}}' 2>/dev/null | while IFS='|' read -r id name state box; do
+  case "$name" in spark-console-box-*) [ "$box" = "$name" ] && continue ;; esac
   printf 'ps\\t%s\\t%s\\t%s\\n' "$id" "$name" "$state"
   case " $known " in *" $id:$state "*) ;; *) printf 'inspect\\t%s\\t%s\\n' "$id" "$(docker inspect "$id" 2>/dev/null | head -c 300000 | base64 | tr -d '\\n')" ;; esac
 done

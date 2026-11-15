@@ -106,10 +106,12 @@ async function restartWord(via) {
   return 'Restarting Sparkie’s model. It takes a few minutes to load again; /status shows when its server responds.';
 }
 
-// /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs). It
-// never cancels an operation and never stops a model.
+// /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs), and
+// the chat's box goes (boxStop, 21-box.mjs). It never cancels an operation and never stops a model.
 function stopWord(conv) {
-  if (conv && stopTurn(conv)) return 'Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request. Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.';
+  const box = conv ? boxStop(conv) : null, gone = box ? ` This chat’s box on ${box} is being removed, with its folder.` : '';
+  if (conv && stopTurn(conv)) return `Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request.${gone} Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.`;
+  if (box) return `Sparkie isn’t answering in this chat and has nothing to carry on with.${gone} Operations and models are as they were.`;
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
