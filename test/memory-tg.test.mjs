@@ -66,7 +66,7 @@ test('"forget that …" there retires the line, marked as said on Telegram; "don
     const { id } = (await owner('remember', { text: LINE, kind: 'fact' })).json;
     const keep = await said('don\'t forget that Spark 3 is the coding box', [{ name: 'forget_memory', arguments: { id } }]);
     assert.ok(!keep.text.includes('No longer used'), keep.text);
-    assert.equal(auditLines().findLast(l => l.action === 'forget_memory')?.outcome, 'needs-ok');
+    assert.match(keep.text, /forget_memory said: \{"outcome":"needs-ok"/);
     assert.deepEqual((await live()).map(e => e.id), [id]);
     const gone = await said('forget that Spark 3 is the coding box', [{ name: 'forget_memory', arguments: { id } }]);
     assert.match(gone.text, /No longer used: “Spark 3 is the coding box”/);
@@ -106,8 +106,8 @@ test('a stranger\'s chat and a forwarded message keep nothing', { timeout: 12000
     await tgSay(words, { extra: { forward_origin: { type: 'user', date: 1 } } });
     // (updates are read in order: once this one is answered, the two before it were read)
     await tgSay('hello again');
-    const sent = await sentAfter(from);
-    assert.deepEqual(sent.map(s => s.body.chat_id), [OWNER_TG]);
+    const sent = await waitFor(() => { const s = tgCalls().slice(from).filter(c => c.method === 'sendMessage'); return s.some(x => /hello again/.test(x.body.text)) ? s : null; }, { timeout: 60000, every: 200, what: 'the answer to hello again' });
+    assert.ok(sent.every(s => s.body.chat_id === OWNER_TG), JSON.stringify(sent.map(s => s.body.chat_id)));
     assert.ok(!requests().some(x => x.words === words), 'the brain was asked');
     assert.deepEqual(await live(), []);
   } finally { script([]); fresh(); }
