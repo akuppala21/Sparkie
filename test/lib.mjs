@@ -201,3 +201,27 @@ export async function waitFor(fn, { timeout: limit = 45000, every = 500, what = 
     await sleep(every);
   }
 }
+
+// A POST whose body reaches the server in two pieces, cut inside a character of several bytes (the first one that ends
+// at or after byte `from`), a moment apart so the server reads them separately: what a long body, or a slow sender,
+// does by chance. Resolves with the status, the answer's text and where the cut was.
+export function postInTwo(url, text, { from = 0, headers = {}, pause = 200 } = {}) {
+  const bytes = Buffer.from(text);
+  let cut = Math.max(1, from);
+  while (cut < bytes.length && (bytes[cut] & 0xc0) !== 0x80) cut++;
+  if (cut >= bytes.length) throw new Error(`no character of several bytes after byte ${from} to cut inside`);
+  const u = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: u.hostname, port: u.port, path: `${u.pathname}${u.search}`, method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': bytes.length, ...headers } }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8'), cut }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('socket', s => s.setNoDelay(true));
+    req.write(bytes.subarray(0, cut));
+    setTimeout(() => req.end(bytes.subarray(cut)), pause * SLOW);
+  });
+}
