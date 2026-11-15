@@ -232,7 +232,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
   });
 
   test('in the paired chat: the press asks for the digits, a wrong pair runs nothing, the right one runs it once, counted and echoed', { timeout: 120000 * SLOW }, async () => {
-    const ran = stopsRun().length, approvals = () => JSON.parse(readFileSync(join(fleet().stateDir, 'telegram.json'), 'utf8')).approvals?.length || 0, had = approvals();
+    const ran = stopsRun().length, approvals = () => { const f = join(fleet().stateDir, 'telegram.json'); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')).approvals?.length || 0 : 0; }, had = approvals();
     let from = tgCalls().length;
     const a = await asking();
     await waitFor(() => asksSent(from).length, { what: 'the ask' });
@@ -518,7 +518,9 @@ describe('in time', { concurrency: 1 }, () => {
         await waitFor(() => asksSent(from).length, { what: 'the ask' });
         return a;
       });
-      kept = { chats: readFileSync(join(one.stateDir, 'chats.json'), 'utf8'), telegram: JSON.stringify({ ...JSON.parse(readFileSync(join(one.stateDir, 'telegram.json'), 'utf8')), offset: 0 }) };
+      // (telegram.json is written once the owner's chat has sent something; here it may not have)
+      const tf = join(one.stateDir, 'telegram.json');
+      kept = { chats: readFileSync(join(one.stateDir, 'chats.json'), 'utf8'), telegram: JSON.stringify({ ...(existsSync(tf) ? JSON.parse(readFileSync(tf, 'utf8')) : {}), offset: 0 }) };
     } finally { await one.stop(); }
     assert.ok(!kept.chats.includes(`type ${old.pair}`), 'the pair was never in the chat file');
     const two = await startMock({ ...FLEET, prepare: ctx => seed(ctx, { 'chats.json': kept.chats, 'telegram.json': kept.telegram }) });
