@@ -205,7 +205,9 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 // A word the command changes ({a,b} spelled out), wide when it reaches everything under a folder it names; what it
 // writes is kept, so a file this same command wrote and then runs is known, and every place it changes (changes: what
 // the runner copies first, at most SORT_PLACED places of at most SORT_PATH signs, none with a control sign).
-function sortTouch(w, ctx, r, wide = false, write = true) {
+// (read: a known program only reads it, a copy's or an archive's source: still placed, for the copy first, and noted
+// apart, R64)
+function sortTouch(w, ctx, r, wide = false, write = true, read = false) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
   ctx.touched?.add(w);
@@ -225,6 +227,7 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
+    (read ? ctx.readOnly : ctx.wrote)?.add(p);
   }
 }
 const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
