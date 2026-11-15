@@ -85,10 +85,88 @@ HELPER=/usr/local/sbin/spark-console-root
 LINE=/etc/sudoers.d/spark-console-root
 MARK=/var/lib/spark-console/proved
 COPY="$HOME/.cache/spark-console/spark-console-root.copy"
+# What the run wall holds in your home must be there (the helper's MUST_BE_THERE: the same names, kept in step with it):
+# a start file, or a folder something outside the walls reads, that is not there could be made from inside the wall.
+MUST='.bashrc .profile .bash_profile .bash_logout .bash_aliases .pam_environment .ssh .docker .config/systemd
+  .config/environment.d .config/autostart .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d
+  .cache/spark-console .local/share/spark-console .local/share/spark-portal/workspaces/shared
+  .local/share/spark-portal/workspaces/shared/jobs'
+# Every other name the helper lists in your home (its hidden and read-only lists, kept in step with it). A link at one
+# of these is left alone by both walls: not held, and never followed. A must name that is a link stops every change.
+LISTED='.bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .local/opt .local/share/code-server
+  spark-console spark-console-service spark-console-src .gnupg .aws .kube .ngc .config/gh .config/code-server
+  .config/spark-console .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
+  .git-credentials .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .bash_history .zsh_history .sh_history
+  .python_history .node_repl_history .psql_history .mysql_history .local/share/fish/fish_history
+  .local/state/spark-console'
+# Where an enabled unit of yours may take its program from without a change being able to rewrite it.
+SAFE_RUN=".local/opt .local/share/code-server spark-console spark-console-service spark-console-src .cache/spark-console
+  .config/systemd .local/share/systemd"
 stop() { echo "  Stopped on $(hostname): $*" >&2; exit 2; }
 note() { echo "  $*"; }
 new_id() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
 show() { local id rest; while read -r id rest; do [ -n "$rest" ] && echo "    $rest"; done; return 0; }
+
+missing() { local n; for n in $MUST; do [ -e "$HOME/$n" ] || [ -L "$HOME/$n" ] || printf '%s ' "$n"; done; }
+links() {   # $1 names: those that are links or under one, as the helper judges them (from the home's own real path)
+  local n real home
+  home=$(realpath -e -- "$HOME" 2>/dev/null) || home=$HOME
+  for n in $1; do
+    [ -e "$HOME/$n" ] || [ -L "$HOME/$n" ] || continue
+    real=$(realpath -e -- "$HOME/$n" 2>/dev/null) || real=''
+    [ "$real" = "$home/$n" ] || printf '%s ' "$n"
+  done
+}
+home_lines() {   # what the run wall needs of your home, and what reaches round it: reads only
+  local v u path n bad files
+  v=$(missing)
+  if [ -n "$v" ]; then note "not there, made when you set up (a change could make them): ${v% }"; else note "every name the run wall holds is there"; fi
+  [ "$(realpath -e -- "$HOME" 2>/dev/null)" = "$HOME" ] || note "your home folder $HOME is a link: the run wall refuses every change until it is not"
+  v=$(links "$MUST")
+  if [ -n "$v" ]; then note "links, which the run wall refuses until each is the real file or folder: ${v% }"; else note "no name the run wall must hold is a link"; fi
+  v=$(links "$LISTED")
+  [ -z "$v" ] || note "links at other listed names, which both walls leave alone (not held, and never followed): ${v% }"
+  v=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7 || true)
+  case "${v##*/}" in
+    bash|sh|dash) note "your login shell: $v (the run wall holds bash's start files)" ;;
+    *) note "your login shell: ${v:-not known}: the run wall refuses changes here until it is bash, sh or dash" ;;
+  esac
+  files=$(grep -ls 'user_readenv=1' /etc/pam.d/* 2>/dev/null | tr '\n' ' ' || true)
+  if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); the run wall holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
+  bad=''
+  while read -r u _; do
+    [ -n "$u" ] || continue
+    path=$(systemctl show --user --property=ExecStart --value "$u" 2>/dev/null | grep -o 'path=[^ ;]*' | head -n 1 || true)
+    path=${path#path=}
+    case "$path" in "$HOME"/*) ;; *) continue ;; esac
+    for n in $SAFE_RUN; do case "$path" in "$HOME/$n"/*) continue 2 ;; esac; done
+    bad+="$u ($path) "
+  done < <(for d in "$HOME/.config/systemd/user" /etc/systemd/user; do   # enabled: linked into a .wants folder
+             find "$d" -mindepth 2 -maxdepth 2 -path '*.wants/*' -printf '%f\n' 2>/dev/null || true
+           done | sort -u)
+  if [ -n "$bad" ]; then note "enabled units of yours that run a program a change could rewrite: ${bad% }"; else note "no enabled unit of yours runs a program a change could rewrite"; fi
+  v=$(tailscale debug prefs 2>/dev/null || true)
+  if [[ $v == *'"RunSSH": true'* ]]; then
+    note "Tailscale SSH: on. Any program on your tailnet signed in as you can open a shell here with no key, outside every"
+    note "wall (from a change running on another Spark, too). To turn it off: sudo tailscale set --ssh=false"
+  elif [[ $v == *'"RunSSH": false'* ]]; then note "Tailscale SSH: off"
+  else note "Tailscale SSH: could not tell (tailscale debug prefs did not answer)"; fi
+}
+make_missing() {   # as you, before the password: each name the run wall holds that is not there
+  local n
+  for n in $MUST; do
+    [ -e "$HOME/$n" ] || [ -L "$HOME/$n" ] && continue
+    case "$n" in
+      .ssh) mkdir -m 0700 -- "$HOME/.ssh" ;;
+      .bash_profile)   # what bash read without one: .bash_login if there is one, else .profile
+        if [ -e "$HOME/.bash_login" ]; then printf '%s\n' '. "$HOME/.bash_login"' > "$HOME/.bash_profile"
+        else printf '%s\n' '. "$HOME/.profile"' > "$HOME/.bash_profile"; fi ;;
+      .bashrc|.profile|.bash_logout|.bash_aliases|.pam_environment) : > "$HOME/$n" ;;
+      *) mkdir -p -- "$HOME/$n" ;;
+    esac
+    note "made $n (it was not there, and the run wall holds it)"
+  done
+}
 
 check() {
   local id out v major h
@@ -104,6 +182,7 @@ check() {
       note "set up, but its walls are not proven (a proof was stopped, failed, or is out of date): look and run refuse here"
       note "until a proof passes. Run this command again without --check to prove them, or --undo to remove the line and the helper."
     fi
+    home_lines
     note "what the helper says:"
     grep "^$id " <<<"$out" | grep -v "^$id helper " | show
     return 0
@@ -123,6 +202,7 @@ check() {
   if [ -e "$HELPER" ]; then note "the helper ($HELPER): there, but sudo asks for a password to run it (its line is missing)"
   else note "the helper ($HELPER): not there"; fi
   note "its sudo line ($LINE): not working (not there, or sudo asks for a password)"
+  home_lines
   note "look wall: not set up"
   note "run wall: not set up"
   note "root (the net): not built yet, refused on every Spark"
@@ -142,6 +222,7 @@ install() {
   [ -f "$COPY" ] || stop "the copy of the helper did not arrive. Nothing was changed."
   read -r got _ < <(sha256sum "$COPY")
   [ "$got" = "$sha" ] || stop "the copy's SHA-256 is not the one Spark 2 sent. Nothing was changed."
+  make_missing
   me=$(id -un)
   want_line="$me ALL=(root) NOPASSWD: $HELPER"
   note "the helper to install has SHA-256 $sha"
