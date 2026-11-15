@@ -104,12 +104,12 @@ const RUNNER_CACHES = ['~/.cache', '~/.npm', '~/.cargo/registry', '~/.cargo/git'
 const RUNNER_INSTALLS = [[/(?:^|[\s;&|(])(?:pip3?|python3?\s+-m\s+pip)\s+install\b[^;&|]*\s--user\b/, '~/.local'],
   [/(?:^|[\s;&|(])(?:uv\s+tool|pipx)\s+install\b/, '~/.local'], [/(?:^|[\s;&|(])cargo\s+install\b/, '~/.cargo/bin'],
   [/(?:^|[\s;&|(])npm\s+(?:i|install|add)\b[^;&|]*\s(?:-g|--global)\b/, 'the system’s own folders']];
-function runnerOutside(sorted, command, dir = RUNNER_DIR) {
+function runnerOutside(sorted, command, dir = RUNNER_DIR, topDirs = []) {
   const out = [];
   if (sorted?.open) out.push(String(sorted.why || 'it needs what the plain wall hides').replace(/\.$/, ''));
   for (const p of [...(sorted?.placed || []), ...(sorted?.wide || [])].filter(x => typeof x === 'string')) {
     const parts = p.startsWith('~/') ? p.slice(2).split('/') : null, wide = (sorted.wide || []).includes(p);
-    if (parts && RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`))) continue;
+    if (parts && (RUNNER_CACHES.some(c => p === c || p.startsWith(`${c}/`)) || topDirs.includes(p))) continue;
     const where = p === '~' || (parts && parts.length === 1 && !wide && !parts[0].startsWith('.')) ? ' at the top of the home'
       : parts ? (parts[0].startsWith('.') || parts[0] === 'bin' ? '' : null)
         : p.startsWith('/') && !/^\/(?:tmp|var\/tmp|dev\/shm)(?:\/|$)/.test(p) ? ', outside the home' : null;
@@ -124,7 +124,16 @@ function runnerMemoryCap(available) {
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {} } = {}) {
+// The folders at the top of the home a change names that are there now, real and not ~/bin (one look): a write inside
+// one is inside the plain wall's writable folders, not at the top (R63).
+async function runnerTopDirs(node, sorted) {
+  const tops = [...new Set([...(sorted?.placed || []), ...(sorted?.wide || [])].filter(p => typeof p === 'string' && /^~\/[^/.][^/]*$/.test(p) && p !== '~/bin' && !/[*?[\]{}\\]/.test(p)))].slice(0, 16);
+  if (!tops.length) return [];
+  const w = p => `"$HOME"${q(p.slice(1))}`;
+  const r = await run(node, `${tops.map(p => `{ [ -d ${w(p)} ] && [ ! -L ${w(p)} ] && printf '%s\\n' ${q(p)}; }`).join('; ')}; true`, { timeout: 15000 }).catch(() => ({ code: -1, out: '' }));
+  return r.code === 0 ? String(r.out).split('\n').filter(l => tops.includes(l)) : [];
+}
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
   // (the sorter's own answer for the very command that runs: no caller hands it one)
   const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
@@ -132,7 +141,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
   const protect = RUNNER_PROTECT.filter(d => !reached.includes(d));
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
-  const wide = runnerWiden(node, command, widen), outside = runnerOutside(sorted, command, dir);
+  const wide = runnerWiden(node, command, widen), outside = runnerOutside(sorted, command, dir, topDirs ?? await runnerTopDirs(node, sorted));
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs outside that wall, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark or the home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && outside.length > 0;

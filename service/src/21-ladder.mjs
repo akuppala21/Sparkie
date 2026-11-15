@@ -46,13 +46,13 @@ function workWrote(ctx, sorted) {
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
 // fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}) {
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = []) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${sorted.why}`;
   const reached = runnerProtected(sorted, dir);
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
-  const outside = runnerOutside(sorted, command, dir);
+  const outside = runnerOutside(sorted, command, dir, topDirs);
   if (outside.length) return `${outside[0]}, so it runs outside that wall after your yes`;
   const wide = runnerWiden(node, command, widen);
   if (wide.fleet) return 'it reaches another Spark or your home network';
@@ -116,18 +116,18 @@ const workKey = (node, command, ctx, dir = RUNNER_DIR) => createHash('sha256').u
 
 // The button's words, built by code: the exact command, the Spark, why it is asked, what put-back covers, what it
 // would run outside the wall or widen after the yes, what Sparkie read before proposing it, each script's hash.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, widen = {}) {
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, widen = {}, topDirs = []) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {}, bases = [dir], odd = [], names = [] } = scripts;
   const lines = Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`);
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
-  const outside = runnerOutside(sorted, command, dir), wide = runnerWiden(node, command, widen);
+  const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen);
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
     ...(outside.length ? [`Runs outside the wall: ${outside.join('; ')}.`] : [wide.fleet && RUNNER_WIDE.fleet, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}) {
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
@@ -139,7 +139,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
@@ -150,6 +150,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
   if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63)
+  const topDirs = await runnerTopDirs(node, sorted);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
   if (ctx.button && ctx.ownerConfirmed) {
     const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
@@ -157,23 +159,23 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
       const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
       if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) {
         workAsks.delete(key);
-        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir, widen);
+        return workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, 'a script it runs changed after you were asked, so that yes was void', dir, widen, topDirs);
       }
     }
     workAsks.delete(key);
-    return runChange(node, command, viewer, ctx, { asked: true, dir, widen });
+    return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen);
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs);
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, command, viewer, ctx, { dir, widen });
+  if (!why) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
     const w = runnerWiden(node, command, widen);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen });
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
-  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen);
+  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
 }
