@@ -108,8 +108,8 @@ const handler = async (req, res) => {
     // Your own agents, through the agent door (MCP): they bring their own key, not the page's header.
     if (path === '/mcp') return await mcpDoor(req, res, viewer);
     const owner = viewer.role === 'owner', chatRoute = /^\/chats(\/|$)/.test(path), filesRoute = /^\/nodes\/[^/]+\/files$/.test(path);
-    const agentRoute = path.startsWith('/v1/'), editorRoute = path.startsWith('/connect/');
-    if (req.method !== 'GET' && !editorRoute) {
+    const agentRoute = path.startsWith('/v1/');
+    if (req.method !== 'GET') {
       if (agentRoute) {
         // Agents don't send the console's header. A page on another site would send its Origin, and requiring JSON
         // makes browsers ask first (CORS), which this service never allows.
@@ -123,15 +123,6 @@ const handler = async (req, res) => {
     }
     if ((chatRoute || agentRoute) && !viewer.chat) throw new HttpError(403, 'Chat isn’t enabled for your account.');
     if (agentRoute) return await sparkieApi(req, res, path, viewer);
-    const bare = /^\/connect\/([a-z0-9-]+)$/.exec(path);
-    if (bare && EDITOR_PORTS[bare[1]]) { res.writeHead(302, { location: editorPath(bare[1]) + url.search }); return res.end(); }
-    const editor = editorTarget(path + url.search);
-    if (editor) {
-      if (!owner) throw new HttpError(403, 'Only the owner can open the editors.');
-      if (viewer.session && viewer.session.kind !== 'browser') throw new HttpError(403, 'Open the editors from a browser.');
-      if (!editorPasskeyFresh(viewer)) throw new HttpError(403, `From the internet, the editors open only within ${Math.round(EDITOR_PASSKEY_MS / 3600000)} hours of using your passkey on this device. Sign in again with your passkey, or open them on your tailnet.`);
-      return editorHttp(req, res, editor);
-    }
     const ownerOnly = () => { if (!owner) throw new HttpError(403, 'Only the owner can do that.'); };
     // Changes to who has access need the owner's passkey (see "the owner's passkey").
     if (owner) await passkeyGate(req, path, viewer);
@@ -146,7 +137,7 @@ const handler = async (req, res) => {
       return send(res, 200, {
         source: 'console', viewer: { login: viewer.login, role: viewer.role, permissions: viewer.permissions || ownerPermissions() },
         userName: owner ? a.userName : viewer.login,
-        nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true, editorPath: owner && EDITOR_PORTS[n.id] ? editorPath(n.id) : null })),
+        nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true })),
         main: consoleOrigin() || null,
         // How this device is signed in when it isn't through Tailscale (4.10).
         session: viewer.session || null,
@@ -364,17 +355,10 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files|actions)$/);
+    const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files)$/);
     if (nodeMatch) {
       const node = sparkFor(viewer, nodeMatch[1]), what = nodeMatch[2];
       if (what === 'files' && req.method === 'POST') return send(res, 200, await sparkFiles(viewer, node, await readBody(req, 400000)));
-      if (what === 'actions' && req.method === 'POST') {
-        const { action } = await readBody(req);
-        ownerOnly();
-        await checkSparkAction(node, action);
-        const job = newJob('spark-action', { node: node.id, action, by: viewer.login });
-        return send(res, 202, publicJob(runJob(job, j => sparkAction(j, node, action))));
-      }
       ownerOnly();
       if (req.method !== 'GET') throw new HttpError(405, 'Not allowed.');
       if (what === 'workloads') return send(res, 200, await workerCall(node, { action: 'workloads' }, 40000));
@@ -643,6 +627,8 @@ const handler = async (req, res) => {
         const { text, context = null } = await readBody(req);
         if (typeof text !== 'string' || !text.trim() || text.length > LIMITS.text) throw new HttpError(400, `Write a message of up to ${LIMITS.text} characters.`);
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
+        // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
+        if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;

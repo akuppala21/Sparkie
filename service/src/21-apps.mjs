@@ -183,13 +183,13 @@ function jobEnded(node, w) {
 // returns how it ended: { state, exitCode, oomKilled, seconds } (state "exited" or "dead"; "created" is a container that
 // never ran). It changes nothing: a job still running at the limit is an error that says so (stillRunning), and the
 // caller decides whether to stop it. Gone from Docker is an error; so is a minute in which Docker there didn't answer.
-// With `job`, cancelling that operation ends the wait.
+// With `job`, cancelling that operation ends the wait at once: the look under way and the sleep between looks.
 const JOB_WAIT_MS = Number(process.env.SPARK_CONSOLE_JOB_WAIT_MS || 10000);
 async function waitJobEnd(node, container, { limitMs = 30 * 60000, job = null } = {}) {
   const began = Date.now(), at = sparkName(node);
   for (let unanswered = 0; ;) {
     if (job) cancelCheck(job);
-    const r = await run(node, `docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+    const r = await run(node, `docker inspect -f '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}' ${q(container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000, signal: job?.abort?.signal });
     const [state, code, oom] = r.code === 0 ? r.out.trim().split(/\s+/) : [];
     if (state === 'missing') throw new Error(`${container} is gone from ${at}, so how it ended isn’t known.`);
     if (['exited', 'dead', 'created'].includes(state)) {
@@ -200,7 +200,7 @@ async function waitJobEnd(node, container, { limitMs = 30 * 60000, job = null } 
     if (Date.now() - began >= limitMs) {
       throw Object.assign(new Error(`${container} was still running on ${at} after ${Math.round(limitMs / 60000)} minutes.`), { stillRunning: true });
     }
-    await sleep(Math.max(0, Math.min(JOB_WAIT_MS, limitMs - (Date.now() - began))));
+    await sleepUnless(Math.max(0, Math.min(JOB_WAIT_MS, limitMs - (Date.now() - began))), job?.abort?.signal);
   }
 }
 // Up means its container is running and stays running: five looks in a row, 3 s apart. Its port only decides whether it
@@ -432,7 +432,7 @@ action({
       return { outcome: 'started', operation: job.id, restarting: container, spark, ...appLinks(spark, container, link), next: next(job.id) };
     }
     if (state === 'running' && look.job) {
-      return { outcome: 'already', spark, container, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
+      return { outcome: 'already', spark, container, job: true, note: `${container} on ${at} is running now. It’s a job: it runs to its end and isn’t kept running; Spark Console posts in the chat it was started from when it ends.` };
     }
     if (state === 'running') {
       if (changed) keepIt();
