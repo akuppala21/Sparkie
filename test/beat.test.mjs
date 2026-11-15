@@ -145,6 +145,8 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     assert.deepEqual([HC.got.length, ELSEWHERE.got.length], [0, 0], 'nothing sent anywhere');
   });
 
+  // T133: once the address is given, one request with nothing in it leaves each interval, none before (the first test);
+  // the outside service's own alarm is not in the suite.
   test('with the passkey: kept only in the 0600 secrets file; then a bodiless GET each interval, with no cookie and no header that names this fleet', { timeout: 90000 * SLOW }, async () => {
     const { r, summary } = await confirmed('PUT', '/heartbeat', { url: ADDRESS });
     is(r, 200, 'saved');

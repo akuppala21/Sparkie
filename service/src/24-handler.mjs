@@ -591,6 +591,14 @@ const handler = async (req, res) => {
       const job = claimed([...new Set([target.node, MAIN?.node].filter(Boolean))], `switching Sparkie’s model`, () => newJob('main-switch', { node: target.node, model: target.title, from: MAIN?.title || null }));
       return send(res, 202, publicJob(runJob(job, j => switchMain(j, target, keep.map(String)))));
     }
+    // The brain check (21-brain-check.mjs): a few requests to Sparkie's model with a toy tool; it changes nothing. It
+    // runs after this answers, and sparkie_setup shows the result.
+    if (req.method === 'POST' && path === '/main/check') {
+      ownerOnly();
+      if (!MAIN) throw new HttpError(404, 'No main model is configured.');
+      if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Ask for the check when that’s done.');
+      return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
+    }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');
