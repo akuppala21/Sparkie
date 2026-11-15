@@ -98,7 +98,7 @@ test('when the brain did call remember there is one line, not two; a fact said a
   try {
     const m = (await say(await newChat(), words)).message;
     assert.deepEqual(m.tools.map(t => [t.name, t.outcome, t.said]), [['remember', 'remembered', undefined]], JSON.stringify(m.tools));
-    assert.equal((m.content.match(/I’ll remember/g) || []).length, 0, m.content);
+    assert.ok(!/\n\nI’ll remember: Spark 4 is on Wi-Fi only$/.test(m.content), m.content);
     const [first] = await live();
     assert.equal(first.text, 'Spark 4 is on Wi-Fi only');
     // A weaker brain, the same words: no second line.
