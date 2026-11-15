@@ -173,6 +173,8 @@ function holdForSession(viewer, closable) {
   closable.once?.('close', () => { sessionSockets.get(id)?.delete(closable); if (!sessionSockets.get(id)?.size) sessionSockets.delete(id); });
 }
 function endSession(id) {
+  // (and a task the device started: its carry-on turns would go on as that device, 14-chats.mjs)
+  try { endTasksFrom({ session: id }); } catch (e) { console.error(`Signing a device out: its tasks weren’t ended (${e.message}).`); }
   for (const c of sessionSockets.get(id) || []) { try { c.destroy ? c.destroy() : c.end(); } catch {} }
   sessionSockets.delete(id);
   for (const client of clients) if (client.viewer?.session?.id === id) { try { client.res.end(); } catch {} }

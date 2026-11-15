@@ -266,6 +266,8 @@ function tgForget() {
   const st = tgSaved();
   delete st.conv; delete st.answering;
   tgSave();
+  // (a task started from Telegram ends with it: its carry-on turns would go on with Telegram's rights)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Disconnecting Telegram: its tasks weren’t ended (${e.message}).`); }
   let removed = false;
   try {
     const now = secretsRead();

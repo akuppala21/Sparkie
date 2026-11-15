@@ -138,8 +138,9 @@ curl() { command curl -q "$@"; }
 // What those commands call on a Spark, every one on FIXED_PATH on a stock DGX OS. Each status round looks for them
 // there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
 // (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
-// ~/.mock/off-path-<name> instead.)
-const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname';
+// ~/.mock/off-path-<name> instead.) The root helper's call and a change's copies (21-work.mjs, 21-copies.mjs) are held to
+// this list by test/own-programs.test.mjs.
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname flock sha256sum realpath';
 const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/off-path-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
 const pathMissing = new Map();
 
