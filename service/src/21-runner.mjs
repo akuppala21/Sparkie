@@ -1,7 +1,7 @@
 /* ───────── the runner: one change on a compute Spark, its copies first (A7b) ───────── */
 // Area: features        Rules: R61, R13, R43        Tests: runner.test.mjs
 // Owns: none
-// Timers: none        Wakes: none
+// Timers: holdTick (every 2 s, only while a Spark is held past a change's unknown end)        Wakes: none
 // runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain
 // change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13)
 // for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the
@@ -15,9 +15,9 @@
 // start). It never runs on Spark 2 or on a Spark holding the brain, never as root (the net doesn't exist yet), and
 // never while changes are paused, whatever its caller says. Its one caller is run's ladder (21-ladder.mjs, A7c): at
 // once behind hostClear, or after the owner's yes (asked: a risky change too). An end it can't know holds the Spark's
-// claim until the unit's time limit has passed (here, and runnerHold after a console restart). runnerUndo is
-// undo_last_change's part for files: the chat's newest set put back, file by file, said for each, as a change with its
-// own start and end lines.
+// claim until systemd says the unit is gone or its time limit has passed (here, and runnerHold after a console
+// restart). runnerUndo is undo_last_change's part for files: the chat's newest set put back, file by file, said for
+// each, as a change with its own start and end lines.
 const RUNNER_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_RUN_SECONDS) || 30;
 // The ways in, fingerprinted before and after every change (design A 2.8, the plain check): what the owner's account
 // can change is copied too, so it can be put back; the rest is only compared.
@@ -166,18 +166,37 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   } finally {
     // (an end that isn't known: the claim is held until the unit's time limit has surely passed, so no undo or second
     // change starts beside it, A7c)
-    const hold = unknownEnd ? unitAt + (seconds + RUNNER_STOP_S) * 1000 - Date.now() : 0;
-    if (hold > 0) setTimeout(release, hold).unref?.(); else release();
+    const until = unknownEnd ? unitAt + (seconds + RUNNER_STOP_S) * 1000 : 0;
+    if (until > Date.now()) runnerHoldClaim(node, unit, until, release); else release();
   }
 }
-// A change a console restart cut off (journalAfterRestart): its Spark is held until the unit's time limit has surely
-// passed. One shot.
+// The Sparks held past a change whose end is unknown: Spark id → {unit, until, release}. The hold ends when systemd says
+// the unit is gone (asked every few seconds, a one-shot timer chained) or its time limit has passed, whichever is first.
+const runnerHolds = new Map();
+function runnerHoldClaim(node, unit, until, release) {
+  const h = { unit, until, release: () => { if (runnerHolds.get(node.id) === h) runnerHolds.delete(node.id); release(); } };
+  runnerHolds.set(node.id, h);
+  const holdTick = async () => {
+    if (runnerHolds.get(node.id) !== h) return;
+    if (Date.now() >= until || await runnerUnitLive(node, unit) === 'gone') return h.release();
+    setTimeout(holdTick, 2000).unref?.();
+  };
+  setTimeout(holdTick, 1000).unref?.();
+}
+// Whether systemd on that Spark still runs a change's unit: 'live', 'gone' or 'unknown' (not answering).
+async function runnerUnitLive(node, unit) {
+  if (!/^sw-run-[0-9a-f]{24}$/.test(String(unit || ''))) return 'unknown';
+  const r = await run(node, `systemctl is-active --quiet -- ${q(`${unit}.service`)}`, { timeout: 10000 }).catch(() => ({ code: -1 }));
+  return r.code === 0 ? 'live' : r.code === 3 || r.code === 4 ? 'gone' : 'unknown';
+}
+// A change a console restart cut off (journalAfterRestart): its Spark is held until its unit is gone or its time limit
+// has surely passed.
 function runnerHold(r) {
   const node = nodeById(runnerSparkOf(r) || ''), until = Date.parse(r.at) + ((Number(r.seconds) || RUNNER_SECONDS) + RUNNER_STOP_S) * 1000;
   if (!node || !(until > Date.now())) return false;
   let release;
   try { release = claimSparks([node.id], 'a change a restart cut off may still run there'); } catch { return false; }
-  setTimeout(release, until - Date.now()).unref?.();
+  runnerHoldClaim(node, String(r.unit || ''), until, release);
   return true;
 }
 
@@ -207,7 +226,15 @@ async function runnerUndo(viewer, ctx, since = '') {
   if (!last || !(last.at > since)) return null;
   const node = nodeById(last.spark);
   if (!node) throw new HttpError(409, 'The Spark that change ran on isn’t on the list any more, so nothing was put back.');
-  const at = sparkName(node), t0 = Date.now(), release = claimSparks([node.id], 'putting back a change’s files');
+  const at = sparkName(node), t0 = Date.now();
+  // (the change being undone may still run there, its end unknown: never beside it; another change's hold is a claim)
+  const held = runnerHolds.get(node.id);
+  if (held && held.unit === last.unit) {
+    const live = await runnerUnitLive(node, held.unit);
+    if (live === 'gone') held.release();
+    else throw new HttpError(409, `The copies on ${at}: that change ${live === 'live' ? 'is still running' : 'may still be running'} there (${held.unit}), so nothing was put back: ask again when it has ended.`);
+  }
+  const release = claimSparks([node.id], 'putting back a change’s files');
   let rid = null;
   try {
     rid = journal('cmd', { start: true, chat: ctx.chat || ctx.conv, via: ctx.via || null, actor: ctx.actor || null, act: 'undo_last_change', where: 'host', class: 'restore',
