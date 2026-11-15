@@ -328,7 +328,7 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
     assert.equal((await api('/agents')).json.settings.halted, true);
     const told = notices().slice(seen).filter(e => /way in/.test(e.text));
     assert.equal(told.length, 1, JSON.stringify(told));
-    assert.equal(told[0].text, 'Agents’ changes were paused automatically: a change on Spark 3 ($ bash fix.sh) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in Access → Agents.');
+    assert.equal(told[0].text, `Agents’ changes were paused automatically: a change on Spark 3 (record ${r.json.record}) changed a way in: ~/.ssh/authorized_keys; what it had copied first is put back. Look at Activity, then resume them in Access → Agents.`);
     const [, end] = pair('bash fix.sh');
     assert.deepEqual(end.putBack, ['~/.ssh/authorized_keys']);
     // Paused: the next change doesn't run, whoever asks.
@@ -378,6 +378,24 @@ test('undo_last_change puts back the chat\'s last change file by file, exact byt
   assert.equal(text('notes/s.txt'), 'by hand\n');
 });
 
+// The stand-in fleet's brain is on Spark 2; this console's runs on Spark 3 (its setup in main.json names that Spark).
+// Spark Console has no brain across two Sparks yet: the brain's Sparks are its setup's one Spark and Spark 2.
+test('a Spark that holds the brain is never run on: with Sparkie\'s model on Spark 3, the runner refuses Spark 3 by name', { timeout: 120000 * SLOW }, async () => {
+  const F = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_RUNNER_DOOR: '1' }, prepare: ({ stateDir }) => {
+    const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
+    m.presets[m.current].node = 'spark3';
+    writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
+  } });
+  later.push(F);
+  const r = await fetch(`${F.base}/actions/run`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify({ on: 'spark3', command: 'touch notes/brain.txt' }) });
+  const j = await r.json();
+  assert.equal(r.status, 403, JSON.stringify(j));
+  assert.equal(j.error, 'Spark 3 holds the brain, so the runner changes nothing there.');
+  assert.ok(!existsSync(join(F.root, 'spark3', 'notes', 'brain.txt')));
+  assert.ok(!existsSync(join(F.root, 'spark3', '.local', 'share', 'spark-console', 'before')), 'no copies');
+  await F.stop();
+});
+
 // Last: it stops this file's console.
 const copyTo = from => ({ dir, stateDir }) => {
   cpSync(join(from.stateDir, 'chats.json'), join(stateDir, 'chats.json'));
@@ -404,6 +422,11 @@ test('the start line is on disk before the unit runs: a console stopped between 
   assert.match(notices[0].content, /^A restart of Spark Console cut off “Run a command on a Spark: \$ touch notes\/cut-started && sleep 30 # HF_TOKEN=\[hidden\] ” on Spark 3 before its end was written \(it began at \d\d:\d\d UTC\)\. It may or may not have happened, and it won’t be run again/);
   assert.ok(!notices[0].content.includes(KEY2));
   assert.deepEqual(records(B.journalDir).filter(r => r.id === start.id).map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'cut-off']]);
+  // The needs-you line, which agents read too (fleet_status), names the change but not its command (R43, R59).
+  const needs = (await (await fetch(`${B.base}/actions/fleet_status`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: B.origin }, body: '{}' })).json()).needsOwner;
+  const line = needs.find(l => /cut off/.test(l));
+  assert.match(line || '', /^A restart of Spark Console cut off “Run a command on a Spark” on Spark 3 before its end was written/, JSON.stringify(needs));
+  assert.ok(!line.includes('touch'), line);
   // Again: no second notice, and it never ran again.
   process.kill(B.servicePid(), 'SIGTERM');
   await waitFor(() => B.serviceExit(), { what: 'the console to end' });

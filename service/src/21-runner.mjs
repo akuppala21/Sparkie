@@ -39,7 +39,8 @@ function runnerRefuses(node, sorted, ctx) {
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (Access → Agents), so nothing ran.');
   if (sorted?.class !== 'change') throw new HttpError(409, `That is not a plain change (the sorter calls it ${sorted?.class || 'nothing'}), so the runner didn’t run it.`);
 }
-const runnerLine = c => maskSecrets(lookClean(`$ ${String(c).slice(0, 1200)}`)).replace(/\s*\n\s*/g, ' ').slice(0, 300);
+// (a notice names the change by its record, never by its command: fleet events reach every agent, and a command is read
+// back only by a caller that may run one, R43 and R59)
 const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => a[k] !== b[k]).sort();
 
 async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RUNNER_SECONDS } = {}) {
@@ -77,7 +78,7 @@ async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RU
       if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the command: ${why}. Nothing ran.`);
       // (the Spark stopped answering mid-change: what it did is unknown, and the owner is told once, here)
       if (a.kind === 'unreachable') {
-        fleetEvent({ type: 'notice', spark: node.id, text: maskSecrets(`${at} stopped answering while a change ran there (${runnerLine(command)}): whether it finished is unknown. It won’t be run again by itself; its copies are kept (${set}).`) });
+        fleetEvent({ type: 'notice', spark: node.id, text: `${at} stopped answering while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself; its copies are kept (${set}).` });
         throw new HttpError(503, `${at} stopped answering while the change ran, so whether it finished is unknown. It won’t be run again by itself.`);
       }
       throw new HttpError(502, `The command on ${at} didn’t answer the way the root helper does${why ? `: ${why}` : ''}. Nothing is known to have run.`);
@@ -91,14 +92,14 @@ async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RU
       if (differ.length) {
         const back = await copiesOn(node, 'restore', { set, sha: copied.sha, check: false });
         putBack = { differed: differ, restored: back.restored, notRestored: back.notRestored };
-        const why = maskSecrets(`a change on ${at} (${runnerLine(command)}) changed a way in: ${differ.slice(0, 6).join(', ')}; what it had copied first is put back${back.notRestored.length ? `, but not ${back.notRestored.slice(0, 4).map(x => x.path).join(', ')}` : ''}`);
+        const why = maskSecrets(`a change on ${at} (record ${rid}) changed a way in: ${differ.slice(0, 6).join(', ')}; what it had copied first is put back${back.notRestored.length ? `, but not ${back.notRestored.slice(0, 4).map(x => x.path).join(', ')}` : ''}`);
         // (the pause's own notice says what differed; when changes were paused already, this one does)
         if (agentSettings().halted) fleetEvent({ type: 'notice', spark: node.id, text: `${why[0].toUpperCase()}${why.slice(1)}. Changes stay paused.` });
         else tripBreaker(why);
       }
     } catch (e) { putBack = { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     const unknown = a.kind === 'ended';
-    if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: maskSecrets(`${at} didn’t answer in time while a change ran there (${runnerLine(command)}): whether it finished is unknown. It won’t be run again by itself.`) });
+    if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: copied.kept.length, notKept: copied.notKept.length,
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${command}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();

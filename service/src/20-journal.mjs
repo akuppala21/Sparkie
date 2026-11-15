@@ -222,10 +222,11 @@ function* jLinesOf(name) {
   } finally { closeSync(fd); }
 }
 const jWhere = r => { const n = (r.sub || []).map(nodeById).find(Boolean); return n ? ` on ${sparkName(n)}` : ''; };
-// (a command's record names the command too: one line, cut short)
-// (a command's own line after the title; one that ends in a hidden key ends in a space, so masking the notice again
-// never takes the closing quote with it)
-const jTitle = r => `${ACTIONS.get(r.act)?.title || r.act || r.k}${r.k === 'cmd' && typeof r.args?.command === 'string' ? `: $ ${r.args.command.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 120).replace(/\[hidden\]$/, '[hidden] ')}` : ''}`;
+const jTitle = r => ACTIONS.get(r.act)?.title || r.act || r.k;
+// A cut-off change's own command, after its title, in the owner's own chat (R43, R59: a command is read back only by a
+// caller that may run one, so never in a chat an agent started, nor in the needs-you line). One that ends in a hidden
+// key ends in a space, so masking the notice again never takes the closing quote with it.
+const jCommand = (r, conv) => (r.k === 'cmd' && !conv?.agent && typeof r.args?.command === 'string' ? `: $ ${r.args.command.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 120).replace(/\[hidden\]$/, '[hidden] ')}` : '');
 // How a record is shown by recall: short, its own text one call away. A call's or a tool call's arguments and error only
 // when the caller may read them (open, jOpen).
 const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt', 'wh', 'noWh']
@@ -347,7 +348,7 @@ function journalAfterRestart() {
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
       if (!conv) continue;
       const at = new Date().toISOString();
-      conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
+      conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
       conv.updatedAt = at;
     }
     saveChats();

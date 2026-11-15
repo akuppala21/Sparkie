@@ -138,8 +138,9 @@ curl() { command curl -q "$@"; }
 // What those commands call on a Spark, every one on FIXED_PATH on a stock DGX OS. Each status round looks for them
 // there (runWorker) and the needs-you list names any that is missing; deploy/path-check.sh is the same look by hand.
 // (Under ALL_LOCAL the stand-in Sparks share the test machine's programs, so a test marks one missing with
-// ~/.mock/off-path-<name> instead.)
-const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname';
+// ~/.mock/off-path-<name> instead.) The root helper's call and a change's copies (21-work.mjs, 21-copies.mjs) are held to
+// this list by test/own-programs.test.mjs.
+const PATH_PROGRAMS = 'bash timeout python3 docker nvidia-smi tailscale curl tar gzip ip ss ping who sudo systemctl journalctl loginctl ps free df du find xargs readlink sed awk grep cut cat head tail tr wc sort ls mkdir rm rmdir mv ln dirname paste base64 id sleep ssh systemd-run hostname flock sha256sum realpath';
 const PATH_CHECK = `m=; for p in ${PATH_PROGRAMS}; do ${ALL_LOCAL ? '[ ! -e "$HOME/.mock/off-path-$p" ]' : 'command -v "$p" >/dev/null 2>&1'} || m="$m $p"; done; printf '{"type":"path","missing":"%s"}\\n' "\${m# }"; `;
 const pathMissing = new Map();
 
@@ -8916,10 +8917,11 @@ function* jLinesOf(name) {
   } finally { closeSync(fd); }
 }
 const jWhere = r => { const n = (r.sub || []).map(nodeById).find(Boolean); return n ? ` on ${sparkName(n)}` : ''; };
-// (a command's record names the command too: one line, cut short)
-// (a command's own line after the title; one that ends in a hidden key ends in a space, so masking the notice again
-// never takes the closing quote with it)
-const jTitle = r => `${ACTIONS.get(r.act)?.title || r.act || r.k}${r.k === 'cmd' && typeof r.args?.command === 'string' ? `: $ ${r.args.command.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 120).replace(/\[hidden\]$/, '[hidden] ')}` : ''}`;
+const jTitle = r => ACTIONS.get(r.act)?.title || r.act || r.k;
+// A cut-off change's own command, after its title, in the owner's own chat (R43, R59: a command is read back only by a
+// caller that may run one, so never in a chat an agent started, nor in the needs-you line). One that ends in a hidden
+// key ends in a space, so masking the notice again never takes the closing quote with it.
+const jCommand = (r, conv) => (r.k === 'cmd' && !conv?.agent && typeof r.args?.command === 'string' ? `: $ ${r.args.command.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 120).replace(/\[hidden\]$/, '[hidden] ')}` : '');
 // How a record is shown by recall: short, its own text one call away. A call's or a tool call's arguments and error only
 // when the caller may read them (open, jOpen).
 const jView = (r, open = true) => ({ id: r.id, at: r.at, kind: r.k, ...Object.fromEntries(['act', 'op', 'chat', 'turn', 'via', 'actor', 'ok', 'outcome', 'failure', 'n', 'brain', 'endedAt', 'wh', 'noWh']
@@ -9041,7 +9043,7 @@ function journalAfterRestart() {
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
       if (!conv) continue;
       const at = new Date().toISOString();
-      conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
+      conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
       conv.updatedAt = at;
     }
     saveChats();
@@ -15449,7 +15451,8 @@ function runnerRefuses(node, sorted, ctx) {
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (Access → Agents), so nothing ran.');
   if (sorted?.class !== 'change') throw new HttpError(409, `That is not a plain change (the sorter calls it ${sorted?.class || 'nothing'}), so the runner didn’t run it.`);
 }
-const runnerLine = c => maskSecrets(lookClean(`$ ${String(c).slice(0, 1200)}`)).replace(/\s*\n\s*/g, ' ').slice(0, 300);
+// (a notice names the change by its record, never by its command: fleet events reach every agent, and a command is read
+// back only by a caller that may run one, R43 and R59)
 const runnerWaysDiff = (a = {}, b = {}) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => a[k] !== b[k]).sort();
 
 async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RUNNER_SECONDS } = {}) {
@@ -15487,7 +15490,7 @@ async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RU
       if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the command: ${why}. Nothing ran.`);
       // (the Spark stopped answering mid-change: what it did is unknown, and the owner is told once, here)
       if (a.kind === 'unreachable') {
-        fleetEvent({ type: 'notice', spark: node.id, text: maskSecrets(`${at} stopped answering while a change ran there (${runnerLine(command)}): whether it finished is unknown. It won’t be run again by itself; its copies are kept (${set}).`) });
+        fleetEvent({ type: 'notice', spark: node.id, text: `${at} stopped answering while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself; its copies are kept (${set}).` });
         throw new HttpError(503, `${at} stopped answering while the change ran, so whether it finished is unknown. It won’t be run again by itself.`);
       }
       throw new HttpError(502, `The command on ${at} didn’t answer the way the root helper does${why ? `: ${why}` : ''}. Nothing is known to have run.`);
@@ -15501,14 +15504,14 @@ async function runChange(node, command, sorted, viewer, ctx = {}, { seconds = RU
       if (differ.length) {
         const back = await copiesOn(node, 'restore', { set, sha: copied.sha, check: false });
         putBack = { differed: differ, restored: back.restored, notRestored: back.notRestored };
-        const why = maskSecrets(`a change on ${at} (${runnerLine(command)}) changed a way in: ${differ.slice(0, 6).join(', ')}; what it had copied first is put back${back.notRestored.length ? `, but not ${back.notRestored.slice(0, 4).map(x => x.path).join(', ')}` : ''}`);
+        const why = maskSecrets(`a change on ${at} (record ${rid}) changed a way in: ${differ.slice(0, 6).join(', ')}; what it had copied first is put back${back.notRestored.length ? `, but not ${back.notRestored.slice(0, 4).map(x => x.path).join(', ')}` : ''}`);
         // (the pause's own notice says what differed; when changes were paused already, this one does)
         if (agentSettings().halted) fleetEvent({ type: 'notice', spark: node.id, text: `${why[0].toUpperCase()}${why.slice(1)}. Changes stay paused.` });
         else tripBreaker(why);
       }
     } catch (e) { putBack = { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     const unknown = a.kind === 'ended';
-    if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: maskSecrets(`${at} didn’t answer in time while a change ran there (${runnerLine(command)}): whether it finished is unknown. It won’t be run again by itself.`) });
+    if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: copied.kept.length, notKept: copied.notKept.length,
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${command}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
