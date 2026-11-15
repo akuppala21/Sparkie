@@ -3,7 +3,8 @@ Spark Console: bringing Spark 2 back after its disk is lost
 Read this on GitHub (deploy/REBUILD.txt) or in your copy of the repository on your Mac. You need the Mac, Spark 3 or
 Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.local/share/spark-console/ on Spark 2.
 
-1. On Spark 2, by hand: DGX OS, the same user name as before, Docker working, Node.js 18 or newer, Tailscale joined
+1. On Spark 2, by hand: DGX OS, the same user name as before, Docker working, Node.js 18 or newer from the system's
+   packages (sudo apt install nodejs: the installer won't use code-server's), Tailscale joined
    under the same machine name (the address and your passkeys depend on it), then
      sudo loginctl enable-linger $USER
    then ssh-keygen and ssh-copy-id from Spark 2 to Spark 3 and Spark 4, and ssh-copy-id from the Mac to Spark 2.

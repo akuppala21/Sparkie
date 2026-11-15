@@ -8,8 +8,9 @@
 // programs from the fixed path (`path-check.sh`'s); a `.curlrc` and a user-site `.pth` in the home are never read by
 // install.sh, restore.sh or the watchdog, and every Python and curl call in the three scripts says `-I` and `-q`. The
 // stand-in switch is an argument only (--stand-in): set in their environment, it switches nothing. The watchdog writes
-// its three files whole, by rename, never through a link that is there. On macOS it runs under bash 3.2 with `tar` and
-// `find` shims; a Linux run is the full proof.
+// its three files whole, by rename, never through a link that is there. E10f: the console runs on a Node of Spark 2's own
+// (from the fixed path), never code-server's: with only that one, an install is refused before anything changes. On
+// macOS it runs under bash 3.2 with `tar` and `find` shims; a Linux run is the full proof.
 //
 // The installer's Spark 2 half (the install.sh inside deploy/host-on-portal.sh), its restore.sh and its watchdog, run on
 // this machine (F4, H1, S5). Nothing real is touched: each case gets its own short HOME, stand-ins come first on PATH
@@ -586,6 +587,34 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.match(readFileSync(join(S, 'watchdog-restarts'), 'utf8'), /^\d+\n$/);
     assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '0');
     unlinkSync(join(home, 'unit-state'));
+  });
+
+  // (E10f: Spark 2's own Node, never code-server's)
+  // code-server's Node, as code-server installs it under the home (here it runs this machine's node).
+  const codeServerNode = home => {
+    const dir = join(home, '.local', 'opt', 'code-server-4.96.2', 'lib');
+    mkdirSync(dir, { recursive: true });
+    sh(join(dir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+    return dir;
+  };
+  const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+  const fixedNode = spawnSync('sh', ['-c', 'command -v node'], { env: { PATH: FIXED }, encoding: 'utf8' }).stdout.trim();
+  test('28. the console runs on Spark 2\'s own Node, from the fixed path: with code-server\'s first on the PATH, install.sh takes the other', { ...CASE, skip: !fixedNode && 'no node on the fixed path here' }, async () => {
+    const home = makeHome(), cs = codeServerNode(home);
+    sh(join(home, 'in', 'path-check.sh'), '#!/bin/sh\nexit 0\n');
+    const r = await run(home, ['check'], { PATH: `${cs}:${envFor(home).PATH}` }, false);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, new RegExp(`Node\\.js v\\d+[^ ]* \\(${fixedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\): ok`));
+    assert.doesNotMatch(r.out, /code-server/);
+  });
+
+  test('29. with only code-server\'s Node on Spark 2, an install is refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), cs = codeServerNode(home), b = stage(home, 'good', 1);
+    // (no node on the PATH given: the stand-in fleet's tests take Node from it)
+    const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:/usr/bin:/bin` });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, new RegExp(`STOP: Spark 2 has no Node\\.js of its own, and Spark Console no longer runs on code-server's \\(${join(cs, 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\): that goes when Spark 2 is cleared\\. Install Node\\.js 18 or newer from the system's packages, so it is at /usr/bin/node or /usr/local/bin/node \\(on Spark 2: sudo apt install nodejs, then node --version\\), then run this again\\. Nothing was changed\\.`));
+    assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
   });
 });
 

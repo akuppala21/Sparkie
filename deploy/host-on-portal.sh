@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs or updates Spark Console on Spark 2 (the name is from when it ran next to the original portal):
 #   https://<Spark 2>:8443/console/      the UI (static files; :8443/ serves the same folder since the portal's cutover)
-#   https://<Spark 2>:8443/console/api/  its service: status, live metrics, models, deploys, chats, files, VS Code
+#   https://<Spark 2>:8443/console/api/  its service: status, live metrics, models, deploys, chats
 # The :8443/ route is left alone here; deploy/cutover.sh owns it.
 #
 #   bash spark-console/deploy/host-on-portal.sh [user@host]
@@ -141,9 +141,20 @@ path_check() {
   fail "Spark 2 is missing programs Spark Console's commands call. $out. Nothing was changed. Install them where that path finds them (not in your home), then run this again."
 }
 
-# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes.
-NODE=$(command -v node || ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
-[ -n "$NODE" ] && [ -x "$NODE" ] || fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again."
+# The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes: Spark
+# 2's own, from the fixed path (R53), never code-server's (~/.local/opt/code-server-*/lib/node: it goes when Spark 2 is
+# cleared, E 2.6) nor one kept in the home. (With --stand-in, the stand-in fleet's tests, from the PATH they give.)
+NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+[ -z "$STAND_IN" ] || NODE_FROM=$PATH
+NODE=$(PATH=$NODE_FROM command -v node 2>/dev/null || true)
+NODE_HOW='Install Node.js 18 or newer from the system'"'"'s packages, so it is at /usr/bin/node or /usr/local/bin/node (on Spark 2: sudo apt install nodejs, then node --version), then run this again. Nothing was changed.'
+if [ -z "$NODE" ]; then
+  CS_NODE=$(ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
+  [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE): that goes when Spark 2 is cleared. $NODE_HOW"
+  fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again. ($NODE_HOW)"
+fi
+case "$NODE" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home; Spark Console runs only on a Node.js of Spark 2's own. $NODE_HOW" ;; esac
+[ -x "$NODE" ] || fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again. ($NODE_HOW)"
 NODE_V=$("$NODE" --version 2>/dev/null || true)
 NODE_MAJOR=${NODE_V#v}; NODE_MAJOR=${NODE_MAJOR%%.*}
 [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 18 ] \
