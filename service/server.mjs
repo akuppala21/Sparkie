@@ -3012,7 +3012,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
   return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
@@ -7739,9 +7739,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
 // A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
-// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills. A
+// planned sleep or wake (Spark Console's own, `planned` on the event, D4) isn't an outage, so it doesn't count.
 const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
-const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
@@ -8235,7 +8236,10 @@ function noteSparkStates(nodes) {
     const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
+    // (planned: a sleep Spark Console put it to, or a wake from one (its record still there, a power operation on it, or a
+    // power-on since it went dark), never an outage: crash restarts aren't held back after it, maybeHeal, D4)
+    const wake = online && flipped && (consoleOff(n.id) || powerOpOn([n.id]) || plannedWake(n.id));
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null, ...(wake ? { planned: true } : {}) } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked', planned: true } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
@@ -8269,6 +8273,11 @@ setTimeout(() => { watchFleet(); setInterval(watchFleet, WATCH_EVERY).unref(); }
 // saw there stays in the record as it was (healing, the passkey gate and the intent gate read it), but no view calls
 // it running now (F16). Called only at run time, never at load.
 const sparkOff = id => knowledge.sparks[id]?.online === false;
+// A Spark Spark Console turned on since it last went dark (a spark-powered-on after its last spark-offline): a planned wake.
+function plannedWake(id) {
+  const dark = Math.max(0, ...events.filter(e => e.type === 'spark-offline' && e.spark === id).map(e => Date.parse(e.at) || 0));
+  return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
+}
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
@@ -8276,8 +8285,8 @@ function fleetNotes(viewer) {
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
-    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
-    if (off) return `${sparkName(n)}: ${off.words}`;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
+    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
@@ -8407,6 +8416,134 @@ async function beatSave(url, via) {
   // (only a copy whose tick was started, the one that holds the port, beats)
   if (beat.started) await beatStart();
 }
+/* ───────── the dangerous ask's "came from": what the command names and where it was read (A10b) ───────── */
+// Area: safety        Rules: R54        Tests: danger.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner
+// did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only
+// searched and never shown.
+// The search's bounds, after the reads' own: the first 64 things, in the order they were found, and 64 Mi characters
+// looked through in all (the owner's words, the reads and the answers, once per thing). A short thing in a crafted text
+// costs about 8 ns a character, so the worst case stays near half a second; past either bound the ask says not all was
+// searched.
+const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20, DANGER_THINGS = 64, DANGER_WORK = 64 * 2 ** 20;
+// The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
+// one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
+// pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
+const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
+function dangerThings(text) {
+  let t = String(text || '');
+  const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
+  // (what is taken is blanked where it stands, as long as it was, so nothing after it moves and nothing else is touched)
+  const blank = s => ' '.repeat(s.length);
+  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, blank); };
+  take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
+  // (packages and images before addresses with no scheme: an image's name can look like one; each name is kept with
+  // where it stands, [at, name])
+  const named = [], ok = w => !w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w);
+  const words = m => [...m[1].matchAll(/\S+/g)].map(w => [m.index + m[0].length - m[1].length + w.index, w[0]]);
+  for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    for (const w of words(m)) if (ok(w[1])) named.push(w);
+  }
+  for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    const w = words(m).find(x => !x[1].startsWith('-'));
+    if (w && ok(w[1])) named.push(w);
+  }
+  for (const [, w] of named) add(w);
+  // Each name blanked at its own place only, in one pass: the same letters in an address or path after it stay
+  // ("torch" in torch.evil.example/i.sh, "etc" in /etc/sudoers.d).
+  let rest = '', end = 0;
+  for (const [at, w] of [...named].sort((a, b) => a[0] - b[0])) {
+    if (at + w.length <= end) continue;
+    const from = Math.max(at, end);
+    rest += t.slice(end, from) + ' '.repeat(at + w.length - from);
+    end = at + w.length;
+  }
+  t = rest + t.slice(end);
+  // (a host right after "@" counts: root@evil.example, git@github.com:evil/repo.git)
+  take(new RegExp(`(?<![\\w/.-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
+  for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
+  for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
+  for (const m of t.matchAll(new RegExp(`(?<![\\w/.-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
+  return [...out];
+}
+// A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
+// "github.com", "/srv" in "/srv/old", "torch" in "pytorch").
+function dangerWhole(text, thing) {
+  for (let i = text.indexOf(thing); i >= 0; i = text.indexOf(thing, i + 1)) {
+    const before = text[i - 1] || '', after = text[i + thing.length] || '', next = text[i + thing.length + 1] || '';
+    if (/[A-Za-z0-9._/-]/.test(before) || /[A-Za-z0-9_-]/.test(after) || (/[./]/.test(after) && /[A-Za-z0-9_-]/.test(next))) continue;
+    return true;
+  }
+  return false;
+}
+// "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
+// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
+// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+function cameFrom(things, ownerMessages, reads, answers) {
+  const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
+  const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
+  const rs = [...(reads || [])].sort(newest);
+  let cut = rs.length > DANGER_READS || rs.some(r => r.cut), budget = DANGER_READ_BYTES;
+  const searched = [];
+  for (const r of rs.slice(0, DANGER_READS)) {
+    const text = String(r.text ?? '');
+    if (text.length > budget) { cut = true; break; }
+    budget -= text.length;
+    searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
+  }
+  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const lines = [], labels = [], list = [...(things || [])];
+  // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
+  if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
+  let work = DANGER_WORK;
+  // The first of xs that holds t (undefined: none does); null when the work ran out first.
+  const seek = (xs, t) => { for (const x of xs) { if ((work -= x.lower.length) < 0) return null; if (x.lower.includes(t)) return x; } return undefined; };
+  for (const thing of list.slice(0, DANGER_THINGS)) {
+    const t = String(thing).toLowerCase();
+    if (!t) continue;
+    if ((work -= own.length) < 0) { cut = true; break; }
+    if (dangerWhole(own, t)) continue;
+    const r = seek(searched, t);
+    if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
+    const a = r === null ? null : seek(said, t);
+    if (a === null) { cut = true; break; }
+    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+  }
+  return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
+}
+// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
+function dangerJournalText(id, max) {
+  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
+  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
+    if (!line.includes(`"id":"${id}"`)) continue;
+    const r = jParse(line);
+    if (r?.id !== id || !Array.isArray(r.o)) continue;
+    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
+    let fd;
+    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
+    // (and a record the journal itself cut at its size counts as not all searched)
+    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
+  }
+  return null;
+}
+// What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
+function dangerReadsLoaded(reads) {
+  let left = DANGER_READ_BYTES, cut = false;
+  const out = [];
+  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
+    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
+    // (a read whose text can't be read back was not searched, and the ask says so)
+    if (!got) { cut = true; continue; }
+    out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
+    left -= got.text.length;
+    if (got.cut || left <= 0) { cut = true; break; }
+  }
+  if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
+  return out;
+}
 /* ───────── the dangerous ask: hard to tap by reflex (A10b) ───────── */
 // Area: safety        Rules: R54        Tests: danger.test.mjs
 // Owns: none
@@ -8430,7 +8567,6 @@ const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'],
 // either, so most tests are not held up by the ones before them)
 const dangerEnvMs = (name, ms) => (ALL_LOCAL && /^\d+$/.test(process.env[name] || '') ? Number(process.env[name]) : ms);
 const DANGER_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_MS', 15 * 60000), DANGER_LATE_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_LATE_MS', 60000), DANGER_LONG = 300;
-const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20;
 // The one open ask; when recent ones were built (the third inside ten minutes is sent a minute late); the buttons of
 // asks that closed, so a later press is told so (the newest 200); the ask closed last, for a pair typed after it.
 let dangerOpen = null, dangerLastPair = null, dangerRecent = null;
@@ -8484,99 +8620,6 @@ function dangerMore(f) {
   return out;
 }
 
-// The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
-// one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
-// pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
-const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
-function dangerThings(text) {
-  let t = String(text || '');
-  const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
-  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, ' '); };
-  take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
-  // (packages and images before addresses with no scheme: an image's name can look like one)
-  const named = [];
-  for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    for (const w of m[1].trim().split(/\s+/)) if (!w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
-  }
-  for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
-    const w = m[1].trim().split(/\s+/).find(x => !x.startsWith('-'));
-    if (w && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w)) named.push(w);
-  }
-  for (const w of named) { add(w); t = t.split(w).join(' '); }
-  take(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
-  for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
-  for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
-  for (const m of t.matchAll(new RegExp(`(?<![\\w/.@-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
-  return [...out];
-}
-// A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
-// "github.com", "/srv" in "/srv/old", "torch" in "pytorch").
-function dangerWhole(text, thing) {
-  for (let i = text.indexOf(thing); i >= 0; i = text.indexOf(thing, i + 1)) {
-    const before = text[i - 1] || '', after = text[i + thing.length] || '', next = text[i + thing.length + 1] || '';
-    if (/[A-Za-z0-9._/-]/.test(before) || /[A-Za-z0-9_-]/.test(after) || (/[./]/.test(after) && /[A-Za-z0-9_-]/.test(next))) continue;
-    return true;
-  }
-  return false;
-}
-// "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
-// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
-// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
-// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
-function cameFrom(things, ownerMessages, reads, answers) {
-  const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
-  const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
-  const rs = [...(reads || [])].sort(newest);
-  let cut = rs.length > DANGER_READS || rs.some(r => r.cut), budget = DANGER_READ_BYTES;
-  const searched = [];
-  for (const r of rs.slice(0, DANGER_READS)) {
-    const text = String(r.text ?? '');
-    if (text.length > budget) { cut = true; break; }
-    budget -= text.length;
-    searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
-  }
-  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
-  const lines = [], labels = [];
-  for (const thing of things || []) {
-    const t = String(thing).toLowerCase();
-    if (!t || dangerWhole(own, t)) continue;
-    const r = searched.find(x => x.lower.includes(t));
-    if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
-    const a = said.find(x => x.lower.includes(t));
-    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
-  }
-  return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
-}
-// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
-function dangerJournalText(id, max) {
-  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
-  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
-    if (!line.includes(`"id":"${id}"`)) continue;
-    const r = jParse(line);
-    if (r?.id !== id || !Array.isArray(r.o)) continue;
-    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
-    let fd;
-    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
-    // (and a record the journal itself cut at its size counts as not all searched)
-    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
-  }
-  return null;
-}
-// What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
-function dangerReadsLoaded(reads) {
-  let left = DANGER_READ_BYTES, cut = false;
-  const out = [];
-  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
-    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
-    // (a read whose text can't be read back was not searched, and the ask says so)
-    if (!got) { cut = true; continue; }
-    out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
-    left -= got.text.length;
-    if (got.cut || left <= 0) { cut = true; break; }
-  }
-  if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
-  return out;
-}
 // Line 2: the gate's own answer for this call, as sparkieCheck's: the owner's words in this request ask for this
 // action's kind of change (never a question, a "don't" or a mixed one) and name this Spark. An action with no kind is
 // "not asked" unless its raiser, which knows better (rule 2 of A 2.5, R25's word kinds), says so with facts.asked.
@@ -8603,6 +8646,10 @@ function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, c
   const install = ks.includes('install'), code = install ? null : dangerCodeOf(shown || {});
   if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
     throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
+  }
+  // (a file's path is shown on one line as it is: one that line would flatten or cut is not asked)
+  if (shown?.path != null && dangerPlain(shown.path, 400) !== String(shown.path)) {
+    throw new HttpError(400, 'The file’s path holds a line break, a tab, two spaces together, a space at either end or more than 400 characters, so it can’t be shown on one line as it is. Nothing was asked or run.');
   }
   // Shown whole or not asked: a part the masks would hide is a part the owner could not read before saying yes.
   const masked = x => maskSecrets(x) !== x;
@@ -8750,13 +8797,18 @@ function dangerWrong(a) {
   if (a.tries >= 3) { dangerClose(a, 'three wrong pairs'); return 'That was the third wrong pair, so the ask is closed and nothing was run. Ask again.'; }
   return 'Those aren’t the two digits from the ask, so nothing was run. Type them again, or press No.';
 }
+// Whether text holds the open ask's two digits as a number of their own (alone, or among other words).
+const dangerHolds = (a, t) => Boolean(a?.digits) && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(String(t));
+// The page's own chat box (24-handler.mjs, the owner's messages): one holding the open ask's pair is refused there,
+// before Sparkie, the chat file or the journal see it; the pair goes in the ask's own field.
+const dangerPairInChat = text => dangerHolds(dangerLive(), text);
 // The owner's next message in the paired chat (tgUpdate): after a press, the pair (spaces or punctuation around it
 // allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
 // ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
 // or the journal). null: not about an ask (it goes on to Sparkie).
 function dangerTypedHere(text) {
   const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
-  const holds = Boolean(a?.digits) && !pair && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(t);
+  const holds = !pair && dangerHolds(a, t);
   if (!a || !a.telegram) {
     if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
     return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;
@@ -11844,6 +11896,7 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
+  ctx.touched?.add(w);
   if (/[\x00-\x1f\x7f]/.test(w.text)) unsure('It names a file with a line break, a tab or another control sign in its name.');
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
@@ -11862,9 +11915,18 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     ctx.changes.set(p, ctx.changes.get(p) || wide);
   }
 }
-const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
+const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
+  || (ctx.before.length > 0 && ([p, ...sortUp(p)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, p, ctx))));
 // A path written before this command (opts.written, a * kept): p is it or under it.
-const sortBefore = (b, p) => (b === '/' || (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`)));
+// (each pattern tested against p and each folder above it is a step of the work bound, so a full list can't make the
+// sorter slow)
+const sortBefore = (b, p, ctx) => {
+  if (b === '/') return true;
+  if (!/[*?[]/.test(b)) return p === b || p.startsWith(`${b}/`);
+  const up = [p, ...sortUp(p)];
+  if ((ctx.steps += up.length) > SORT_STEPS) unsure('It names more places than the sorter reads against what the task wrote before.');
+  return up.some(a => sortGlob(b).test(a));
+};
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
@@ -12370,6 +12432,9 @@ async function recallAnswer({ about, id, kind, spark, when, since, until, limit 
 // one-word name, a name of the fleet or of a service that turns a name into the number in it (nip.io), or forces an
 // address (--resolve, --connect-to, a proxy, a socket) is asked; a name that DNS alone turns into the Spark is not seen.
 const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
+// A host of the fleet or the home network: a one-word name, a fleet name, a private, link-local or tailnet address, or a
+// name under .local, .lan, .home.arpa, .internal or .ts.net.
+const sortNear = (h, ctx) => !!h && (!h.includes('.') || !!sortHost(ctx, h.split('.')[0]) || /^(?:10|127)\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^169\.254\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^\[|(?:^|\.)(?:local|lan|home\.arpa|internal|ts\.net|localhost)\.?$/i.test(h));
 const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
   && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
 // A far path, from the far home ('' and . are the home), placed as a path there (wide when it is where a copy lands).
@@ -12393,6 +12458,11 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'change', `${sortQ(name)} reaches the network, which a look’s wall has none of.`);
     ctx.piped = ctx.fetchSeen = ctx.fetched = true;
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
+    const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `${sortQ(name)} reaches ${sortQ(near)}, a Spark or the home network: inside the wall there is no route there, so it is asked.`);
+    // (an option that decides where it connects, or reads its addresses from a file, may point at the same: asked)
+    const via = o.opts.find(([n]) => (name === 'curl' ? /^(?:resolve|connect-to|x|proxy|preproxy|socks\w*|dns-servers|doh-url)$/ : /^(?:i|input-file|B|base|e|execute)$/).test(n));
+    if (via) raise(r, 'risky', `${sortQ(name)} ${sortQ(`${via[0].length > 1 ? '--' : '-'}${via[0]}`)} decides where it connects, maybe a Spark or the home network: asked.`);
     if (ctx.root) {
       const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
       const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
@@ -12468,6 +12538,8 @@ Object.assign(SORT_HANDLERS, {
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
+      // (a copy from another Spark too: inside the wall it has no key and no route, so it is asked, not left to fail)
+      else raise(r, 'risky', `It copies from ${sortQ(m[1])}, another Spark: inside the wall there is no key and no route there, so it is asked.`);
       sortFar(m[2], ctx, r, rec && lastOne);
     });
     // (each source lands in the folder under its own name, a source ending in / as what it holds; rsync -b keeps what
@@ -12490,6 +12562,62 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });
+/* ───────── the sorter's plain shape: what a command run at once must look like (R64) ───────── */
+// Area: safety        Rules: R64        Tests: sort.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null.
+// The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as
+// a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain
+// redirections (> >> < &> to a path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set
+// before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a
+// cd as the last command; the /proc status files. 20-sort.mjs asks a change that is not of the shape (a doubt), and a
+// look only for a {…}: the tables' lock-out and risky answers stand. New spellings fall outside the shape and are
+// asked, so the tables no longer have to be complete.
+const SHAPE_PROC = /^\/proc\/(?:meminfo|cpuinfo|loadavg|uptime|version|stat|vmstat|swaps|mounts|partitions|diskstats|pressure\/(?:cpu|memory|io)|net\/dev|self\/status|driver\/nvidia\/version)$/;
+const SHAPE_REDIR = /^(?:>|>>|<|&>|&>>)$/;
+// (the names a command may set before it and keep the shape: the safe ones, and a few Hugging Face and logging switches)
+const SHAPE_SAFE = /^(?:HF_HUB_ENABLE_HF_TRANSFER|HF_HUB_OFFLINE|HF_HUB_DISABLE_\w+|TOKENIZERS_PARALLELISM|WANDB_MODE)$/;
+const sortShapeWord = (w, cmd, ctx) => {
+  if (w.brace || sortNested(w.bare ?? '')) return [`${sortQ(w.text)} holds a {…}`, true];
+  const echo = cmd.words[0]?.text === 'echo' && cmd.words[0] !== w && cmd.words.includes(w);
+  if (w.unknown && !echo && !(!w.vars && w.subs?.length && w.subs.every(sortNproc))) return [`${sortQ(w.text || '$…')} holds a $ or a command`];
+  if (w.glob && !ctx.touched.has(w)) return [`${sortQ(w.text)} holds a pattern in a word that is not a file it changes`];
+  for (const m of w.text.matchAll(/\/(?:dev|proc)(?:\/[^\s'"=:,;]*)?/g)) if (m[0] !== '/dev/null' && !SHAPE_PROC.test(m[0])) return [`${sortQ(w.text)} names ${sortQ(m[0])}`];
+  return null;
+};
+function sortShape(items, ctx) {
+  const cds = [];
+  let why = null, brace = false;
+  const no = (x, b = false) => { why ??= x; brace ||= b; };
+  const walk = (list, top) => list.forEach((pipe, n) => {
+    if (pipe.op === '&' && n < list.length - 1) no('it sends a command off with & before the end');
+    for (const cmd of pipe) {
+      if (cmd.group) { no('it holds a group or a subshell'); walk(cmd.group, false); }
+      if (/^(?:cd|pushd|popd)$/.test(cmd.words[0]?.text ?? '')) cds.push({ cmd, pipe, n, top, last: top && n === list.length - 1 });
+      const prog = cmd.words[0]?.text ?? '';
+      for (const d of cmd.redirs) {
+        if (/^<</.test(d.op)) { if (!/^(?:cat|tee)$/.test(prog)) no('it hands a program here-text'); continue; }
+        if (/^[<>]&$/.test(d.op) && /^[12]$/.test(d.w.text) && !d.w.unknown) continue;
+        // (its path is a word like the others below: quoted is a name, a pattern only where it is placed)
+        if (!SHAPE_REDIR.test(d.op) || (d.fd != null && !/^[012]$/.test(d.fd))) no(`it has the redirection ${sortQ(`${d.fd ?? ''}${d.op}${d.w.text}`)}`);
+      }
+      for (const w of [...cmd.assigns, ...cmd.words, ...cmd.redirs.map(d => d.w)]) {
+        const bad = sortShapeWord(w, cmd, ctx);
+        if (bad) no(bad[0], bad[1]);
+        for (const s of w.subs ?? []) walk(s, false);
+      }
+    }
+  });
+  walk(items, true);
+  // (every way a name is set goes through sortAssign: before a program, env, export and its kin, read, unset)
+  for (const n of ctx.sets ?? []) if (!SAFE_ENV.test(n) && !SHAPE_SAFE.test(n)) { no(`it sets ${sortQ(n)}`); break; }
+  // (one cd: the first word, cd <folder> &&; or, allowed, a plain cd as the last command)
+  const ok = c => c.top && sortIsCd(c.pipe) && c.cmd.words[0].text === 'cd' && c.cmd.words.length === 2 && c.cmd.words[1].plain && !/^-/.test(c.cmd.words[1].text) && !c.cmd.words[1].glob && !c.cmd.words[1].brace
+    && ((c.n === 0 && c.pipe.op === '&&') || c.last);
+  if (cds.length > 1 || cds.some(c => !ok(c))) no('it changes folder other than once, first, as cd <folder> &&');
+  return why ? { why: `It is not of the plain shape a command run at once has: ${why}.`, brace } : null;
+}
 /* ───────── how bash reads a command: words, pipelines, here-documents (for the sorter) ───────── */
 // Area: safety        Rules: R55        Tests: sort.test.mjs
 // Owns: none
@@ -12732,6 +12860,7 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
 function sortAssign(name, ctx, r, prefix) {
+  ctx.sets?.add(name);
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
@@ -12743,7 +12872,7 @@ function sortAssign(name, ctx, r, prefix) {
 // pipe's part changes no folder after it (the folders it may be in only grow).
 const sortIsCd = p => p.length === 1 && !p[0].group && /^(?:cd|pushd)$/.test(p[0].words[0]?.text ?? '') && !p[0].words[0].unknown;
 const sortOneCd = p => sortIsCd(p) && !p[0].neg && p[0].words[0].text === 'cd' && p[0].words.length === 2 && !p[0].assigns.length && !p[0].redirs.length
-  && !/^-/.test(p[0].words[1].text) && !p[0].words[1].unknown && !p[0].words[1].glob && !p[0].words[1].brace;
+  && p[0].words[1].plain && !/^-/.test(p[0].words[1].text) && !p[0].words[1].glob && !p[0].words[1].brace;
 function sortList(items, ctx, r, inPipe = false, top = false) {
   if (items.length > 1) r.simple = false;
   let start = new Set(ctx.cwds), reached = [], narrowed = false;
@@ -12819,7 +12948,8 @@ function sortCmd(cmd, ctx, r, inPipe) {
 // (make alone, a one-liner that imports from where it starts), when a word names a folder it wrote into (pip install
 // /tmp/p, node /tmp/p), or as root.
 const sortWroteIn = (d, ctx) => [...ctx.written].some(p => p.startsWith(d === '/' ? '/' : `${d}/`)) || [...ctx.under].some(u => d === u || d.startsWith(`${u}/`) || u.startsWith(`${d}/`))
-  || ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`) || sortBefore(b, d));
+  || (ctx.before.length > 0 && ((ctx.steps += Math.ceil(ctx.before.length / 64)) > SORT_STEPS ? unsure('It names more places than the sorter reads against what the task wrote before.')
+    : ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`)) || [d, ...sortUp(d)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, d, ctx))));
 function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
@@ -12945,6 +13075,8 @@ function sortFile(name, kind, args, ctx, r) {
     if (src) to(a, `${at}/${a.text.replace(/\/+$/, '').split('/').pop()}`);
     if (src && o.has('parents')) to(a, `${at}/${a.text.replace(/^\/+/, '')}`);
   }
+  // (install -d, and mkdir with a mode, set the mode of each folder they name: a folder above a way in reaches it)
+  if ((name === 'install' && o.has('d', 'directory')) || (/^(?:mkdir|mkfifo)$/.test(name) && o.has('m', 'mode'))) { for (const a of files) sortTouch(a, ctx, r, true, false); return; }
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
@@ -12955,7 +13087,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], cloned: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -12972,6 +13104,8 @@ function sortCommand(command, opts) {
       if (typeof b !== 'string' || !/^(?:~(?:\/|$)|\/)/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
       ctx.before.push(sortNorm(b, null, home));
     }
+    ctx.beforePlain = new Set(ctx.before.filter(b => !/[*?[]/.test(b)));
+    ctx.beforeGlob = ctx.before.filter(b => /[*?[]/.test(b));
     if (ctx.at !== 'compute' && ctx.at !== 'hub') { ctx.at = 'hub'; unsure('Where it runs is not one the sorter knows.'); }
     const dir = o.dir == null ? '~' : String(o.dir);
     if (/[$`\\\x00-\x1f\x7f]|^~[^/]|(?:^|\/)proc(?:\/|$)/.test(dir)) unsure('The folder it starts in is not one the sorter can place.');
@@ -12984,7 +13118,8 @@ function sortCommand(command, opts) {
       const odd = /[^\t\n\x20-\x7e]/u.exec(text);
       if (odd) unsure(`It holds the sign U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, which isn’t plain ASCII: such a sign can look like ; | > or a quote and not be one.`);
       form = lookForm(text);
-      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r, false, true);
+      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.';
+      else { const items = shellParse(shellLex(text).toks); sortList(items, ctx, r, false, true); ctx.shape = sortShape(items, ctx); }
       if (r.class !== 'look') sortSee(ctx.words, ctx, r);
     }
   } catch (e) {
@@ -13001,6 +13136,8 @@ function sortCommand(command, opts) {
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
+      // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
+      if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
     }
     sortAt(r, ctx);
   } catch { raise(r, 'risky', 'The sorter could not read this command.'); }
@@ -13224,10 +13361,10 @@ function sortWrap(args, ctx, r, x, name) {
     if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
-    // (env -u takes a name away, as unset does; env -i or a lone - empties the environment, where the run wall keeps
-    // git's hooks off: asked)
+    // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
+    // wall keeps git's hooks off: asked)
     if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
-    if (name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) raise(r, 'risky', 'env empties the environment, where the run wall keeps git’s hooks and settings off: asked.');
+    if ((name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) || (name === 'exec' && /^-[^-]*c/.test(t))) raise(r, 'risky', `${sortQ(name)} empties the environment, where the run wall keeps git’s hooks and settings off: asked.`);
     if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;
@@ -13681,6 +13818,8 @@ Object.assign(SORT_HANDLERS, {
     for (const c of v === 'rebase' ? o.all('x', 'exec') : v === 'difftool' ? o.all('x', 'extcmd') : []) sortElsewhere([c], ctx, r, `git ${v} -x`);
     if (cut >= 0 && v === 'bisect') sortProgram(own.slice(cut + 1), ctx, r, x);
     if (cut >= 0 && v === 'submodule') { const s = own.slice(cut + 1), n = s.findIndex(w => !/^(?:--recursive|-q|--quiet)$/.test(w.text)); sortElsewhere(n < 0 ? [] : s.slice(n), ctx, r, 'git submodule foreach'); }
+    // (timers that run git by themselves, or settings written for every repository)
+    if ((v === 'maintenance' && /^(?:start|register|schedule)$/.test(p[0]?.text ?? '')) || (v === 'lfs' && /^(?:install|update)$/.test(p[0]?.text ?? ''))) raise(r, 'risky', `git ${sortQ(v)} ${sortQ(p[0].text)} sets timers or settings later git commands run by themselves.`);
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
@@ -13691,6 +13830,9 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
+    // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
+    const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
     if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && o.has('hard')) || (v === 'checkout' && (o.has('f', 'force') || rest.some(s => /^(?:--|\.)$/.test(s)))) || (v === 'stash' && /^(?:drop|clear)$/.test(p[0]?.text))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
@@ -13798,8 +13940,12 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:upload|upload-large-folder|repo|repo-files|tag|lfs-\S+|jobs)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes files or runs jobs on the Hugging Face hub, another machine.`);
     if (/^(?:login|logout|auth)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes the Hugging Face sign-in on that Spark.`);
     if (p[0] === 'delete-cache' || (p[0] === 'cache' && /^(?:rm|delete|prune)$/.test(p[1]))) sortGone(ctx, r, `${sortQ(name)} ${sortQ(p[0])} removes downloaded models.`);
-    const d = o.all('local-dir').at(-1);
+    // (a download goes where it says, or into the model store under the repository's own name: the whole store when the
+    // name, its kind or the store is not plain)
+    const d = o.all('local-dir').at(-1), id = o.plain[1], kind = o.all('repo-type').at(-1), cd = o.all('cache-dir').at(-1);
+    const store = cd ?? { text: '~/.cache/huggingface/hub', bare: '', tilde: true, plain: true, subs: [] }, sure = [id, kind, cd].every(w => !w || !(w.unknown || w.glob || w.brace));
     if (d) sortInto(d, ctx, r);
+    else if (p[0] === 'download' && id) sortInto(sure ? { ...store, text: `${store.text.replace(/\/+$/, '')}/${kind?.text ?? 'model'}s--${id.text.replace(/\//g, '--')}` } : store, ctx, r);
     for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false);
   },
   systemctl(a, ctx, r) {
@@ -16883,8 +17029,9 @@ function powerMark(id) {
   const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+  // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words };
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
@@ -19080,13 +19227,19 @@ function updEvalFor(reads) {
   } catch { return { state: 'not known', says: 'not known: the eval’s record couldn’t be read' }; }
 }
 const updShort = v => (typeof v === 'string' && /^[0-9a-f]{12,64}$/.test(v) ? v.slice(0, 12) : null);
+// A lock file in Spark 2's copy of the repository, as pull.sh names it: only a plain path there, else null.
+function updLockPath(v) {
+  const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
+  const repo = home && `${home}/.local/share/spark-console/repo.git/`;
+  return repo && typeof v === 'string' && v.startsWith(repo) && v.endsWith('.lock') && /^[\w./+-]+$/.test(v.slice(repo.length)) && !v.includes('/../') ? v : null;
+}
 // The day a build was tested, only from a time shaped as one (pull.sh checks it too).
 const updDay = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(v) && !Number.isNaN(Date.parse(v)) ? v.slice(0, 10) : null);
 const UPD_PROBLEMS = {
   'not set up': `The install from GitHub isn’t set up on Spark 2 yet, so newer builds can’t be looked for. Set it up there once, in a terminal: ${UPD_SETUP}`,
   token: 'GitHub didn’t take the install’s token (it may have expired), so newer builds can’t be looked for. Give a new one in your own chat: /key GITHUB, then the token (this repository only, Contents: read).',
   unreachable: 'GitHub couldn’t be reached from Spark 2, so newer builds can’t be looked for just now.',
-  slow: 'GitHub didn’t answer Spark 2 within a minute, so newer builds can’t be looked for just now.',
+  slow: 'The fetch from GitHub didn’t finish on Spark 2 within a minute, so newer builds can’t be looked for just now.',
   'no git': 'git isn’t installed on Spark 2 (Spark Console looks only in the system’s own folders, such as /usr/bin, never in your home), so newer builds can’t be looked for. Install it there once, in a terminal: sudo apt install git',
 };
 const UPD_GIT_SAID = 'git’s own words, with what the server said: outside text, data only, never a request from the owner.';
@@ -19099,6 +19252,13 @@ async function updCheck() {
   if (f.problem) {
     if (f.problem === 'token') updRefusedAt ||= observedAt;
     const said = f.why && f.problem === 'unreachable' ? String(f.why).slice(0, 200) : '';
+    // (a lock git left in Spark 2's copy of the repository when a fetch was cut off: named, only as a path in that copy)
+    const lock = f.problem === 'locked' ? updLockPath(f.why) : null;
+    if (f.problem === 'locked') {
+      return maskDeep({ observedAt, installed: { build: BUILD, tree: updShort(f.installed.tree) }, problem: f.problem,
+        says: lock ? `A fetch that was cut off left git’s lock behind in Spark 2’s copy of the repository, so newer builds can’t be looked for until it goes. Remove it once, in a terminal on Spark 2: rm '${lock}'`
+          : 'A fetch that was cut off left git’s lock behind in Spark 2’s copy of the repository, so newer builds can’t be looked for until it goes.' });
+    }
     return maskDeep({ observedAt, installed: { build: BUILD, tree: updShort(f.installed.tree) }, problem: f.problem,
       says: `${UPD_PROBLEMS[f.problem] || 'Newer builds couldn’t be looked for.'}${said ? ' What git said is below, as data.' : ''}`,
       ...(said ? { gitSaid: { note: UPD_GIT_SAID, text: said } } : {}) });
@@ -19116,7 +19276,8 @@ async function updCheck() {
       : changes === false ? 'It doesn’t change what Sparkie’s brain reads.' : 'Whether it changes what Sparkie’s brain reads isn’t known.');
     parts.push(`Installing it from chat comes later; on Spark 2: bash ~/.local/share/spark-console/pull.sh install ${updShort(n.tree)}`);
   } else parts.push(`No newer tested build: the newest with the tested mark (tree ${updShort(n.tree)}) ${n.tree === f.installed.tree ? 'is the one installed' : 'isn’t newer than the one installed'}.`);
-  if (f.main.commit && !f.main.tested) parts.push(`The newest commit on main (${updShort(f.main.commit)}) isn’t tested yet, so it isn’t offered.`);
+  // (a tag that isn't offered on main's head is said once, above)
+  if (f.main.commit && !f.main.tested && !(bad && bad.commit === f.main.commit)) parts.push(`The newest commit on main (${updShort(f.main.commit)}) isn’t tested yet, so it isn’t offered.`);
   return maskDeep({
     observedAt, says: parts.join(' '),
     installed: { build: BUILD, tree: updShort(f.installed.tree), commit: updShort(f.installed.commit) },
@@ -21301,6 +21462,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;

@@ -64,3 +64,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R60](rules/R60.md): The lock-out net: confirm, or it goes back.
 - [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and its walls).
 - [R63](rules/R63.md): What bounds a plain change.
+- [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
