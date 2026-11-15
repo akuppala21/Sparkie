@@ -13,6 +13,9 @@
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
 #                               attempt shows outside, one per line: "<attempt> works|not-there [what]".
 #                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
+#   sw-guard-<id>               the lock-out net's timer: armed, never fired here (a test runs restore.sh itself, as the
+#                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
+#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
 import json, os, shutil, sys
 
@@ -99,13 +102,24 @@ if unit.startswith('sw-prove-'):
                 word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
                 say('P', n, how, word, 'stand-in')
     elif part == 'post':
-        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run')):
+        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run'), (19, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     elif part == 'after':
         say('V', 5, 'outside', 'works', 'stand-in')
         say('V', 12, 'outside', 'works', 'stand-in')
         for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+        for n in (15, 16, 17, 18):
+            for wall in ('look', 'run'):
+                say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+    sys.exit(0)
+
+if unit.startswith('sw-guard-'):
+    if knob('guard-sleep') is not None:   # (systemd slow to take the timer: a test hangs up the call meanwhile)
+        import time
+        time.sleep(float(knob('guard-sleep')))
+    os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
+    open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
     sys.exit(0)
 
 def wall_view():
