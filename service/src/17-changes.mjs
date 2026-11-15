@@ -54,7 +54,10 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false } = {}) {
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+  // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
+  const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
+  if (test) return test;
   // An owner-only question asked of a direct call (an agent's tool call, POST /actions, a saved step): no conversation
   // shows its button and nobody else may answer it, so it hands back no choice ids. It says how the owner says yes.
   if (ownerOnly && !ctx.onQuestion && ctx.via !== 'page') {
@@ -73,7 +76,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
     pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
-      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}) });
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
@@ -82,7 +85,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
   // In one of the owner's own chats it is also asked in the paired Telegram chat (20-tg-approve.mjs, A10a).
-  if (ownerOnly && ctx.conv) tgAsk(viewer, ctx, out);
+  if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),

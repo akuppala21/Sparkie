@@ -81,7 +81,8 @@ function tgApproving(choice) {
   const c = pendingChoices.get(choice), sent = tgAsks.get(choice);
   if (!c?.ownerOnly) {
     if (sent) tgAsks.delete(choice);
-    return sent ? { answer: 'That button has expired. Ask again.' } : null;
+    // (a dangerous ask's button after it closed: 20-danger.mjs)
+    return sent || dangerGone(choice) ? { answer: dangerGone(choice) || 'That button has expired. Ask again.' } : null;
   }
   const conv = chatData().conversations.find(x => sparkieWho(tgOwner(), x.id) === c.who);
   if (!conv) return { answer: 'That button has expired. Ask again.' };
@@ -92,6 +93,8 @@ function tgApproving(choice) {
     audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approval-held', args: { chat: conv.id }, ok: true });
     return { answer: held };
   }
+  // A dangerous ask's yes runs only with its two digits, typed as the next message here (20-danger.mjs).
+  if (c.danger && c.action) return { answer: dangerPressedHere(choice) };
   return { conv, c };
 }
 // Counted before it runs: a yes that then fails still counts.
@@ -104,13 +107,14 @@ function tgApprovalCounted(ask) {
 // Every approval is echoed on the page: runChoice's line in the chat says so, and this notice.
 function tgApproved(ask, conv, r) {
   if (!ask.c.action || r?.outcome === 'declined') return;
-  const label = maskSecrets(String(ask.c.label || '')).slice(0, 200);
+  const label = maskSecrets(String((ask.c.danger && dangerHeadOf(ask.c.danger)) || ask.c.label || '')).slice(0, 200);
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approved', args: { label, chat: conv.id }, ok: r?.outcome !== 'error' });
   fleetEvent({ type: 'notice', text: `Approved from Telegram: “${label}”. If that wasn’t you, send /lock there, or turn approvals from Telegram off in your account menu → Agents and Telegram.` });
 }
 
 // everywhere: the whole ask is void (a new pairing: the page's buttons go grey too); else only its Telegram side.
 function tgAsksVoid(everywhere) {
+  dangerTelegramGone(everywhere);
   if (everywhere && tgAsks.size) {
     const groups = new Set([...tgAsks.values()].map(x => x.group)), convs = new Set([...tgAsks.values()].map(x => x.conv));
     for (const [id, c] of pendingChoices) if (groups.has(c.group)) pendingChoices.delete(id);
