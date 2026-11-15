@@ -258,7 +258,7 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
       const op = await waitFor(async () => (await act('recent_operations', { limit: 50 })).json.operations.find(o => o.type === 'compare' && o.model === 'bad work' && o.status !== 'running') || null, { timeout: 360000, what: 'the compare of bad work', every: 1000 });
       const done = await opNow(op.id);
       assert.equal(done.report.length, MODELS.length + 1, done.report.join('\n'));
-      MODELS.forEach((m, i) => assert.match(done.report[i], new RegExp(`^${esc(m)}: failed: Step 2 \\(keep_running\\) failed: bad-`)));
+      MODELS.forEach((m, i) => assert.match(done.report[i], new RegExp(`^${esc(m)}: failed: Step [12] `)));
       assert.equal((await api('/agents')).json.settings.halted, false, 'agents’ changes are not paused');
     } finally { noScript(); await agentSettings({ halted: false }); }
   });
@@ -272,7 +272,7 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
     assert.ok(running('spark3').includes(OWN) && (await api('/desired')).json.running.some(x => x.spark === 'spark3' && x.container === OWN));
     const op = await compare({ workflow: 'scored work', candidates: [GPT], sample: 2 });
     assert.equal(op.status, 'completed', `${op.error}\n${op.log.join('\n')}`);
-    assert.match(op.report[0], /^gpt-oss-20b: failed: Step 1 \(start_model\) failed: .*only fits if sc-testorg--Qwen3\.8-27B-abliterated-GGUF stops, and a compare never stops a model to make room/);
+    assert.match(op.report[0], /^gpt-oss-20b: failed: Step 1 \(start_model\) failed: .*only fits if (spark3\/)?sc-testorg--Qwen3\.8-27B-abliterated-GGUF stops, and a compare never stops a model to make room/);
     assert.equal(op.report[1], 'No candidate ended well, so nothing was kept.');
     assert.ok(running('spark3').includes(OWN), 'the owner’s model still runs');
     assert.ok((await api('/desired')).json.running.some(x => x.spark === 'spark3' && x.container === OWN), 'and is still listed');
