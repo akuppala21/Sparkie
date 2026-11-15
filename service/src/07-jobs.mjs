@@ -14,6 +14,7 @@ function newJob(type, meta) {
   // Cancelling ends the job's long commands (downloads, copies, pulls) straight away.
   Object.defineProperty(job, 'abort', { value: new AbortController(), enumerable: false });
   jobs.set(job.id, job);
+  opEnergyStart(job);
   // Its start goes on the fleet's record (on disk), so an operation cut off by a restart is reported, never forgotten.
   try { fleetEvent({ type: 'operation', id: job.id, operation: type, status: 'started', model: job.model || null, spark: job.node || null, ...(job.nodes ? { sparks: job.nodes } : {}),
     ...(job.actor ? { actor: job.actor } : {}), ...(Array.isArray(meta?.stops) && meta.stops.length ? { stops: meta.stops } : {}) }); } catch {}

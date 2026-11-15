@@ -259,7 +259,7 @@ export function cleanFlags(list, repo) {
       continue;
     }
     const eq = t.startsWith('--') ? t.indexOf('=') : -1;
-    const name = eq > 0 ? t.slice(0, eq) : t;
+    const name = eq > 0 ? t.slice(0, eq) : t, shown = name.slice(0, 40).replace(/[\x00-\x1f\x7f]/g, ' ');
     const next = words[i + 1];
     const takes = eq < 0 && !has(BOOL_FLAGS, name) && next != null && !(next.startsWith('-') && !/^-\d/.test(next));
     const value = eq > 0 ? t.slice(eq + 1) : takes ? next : null;
@@ -269,17 +269,17 @@ export function cleanFlags(list, repo) {
     // Allowed only for JSON options that are safe as JSON too (--speculative-config.model x is the same as the JSON form).
     if (name.startsWith('--') && name.includes('.')) {
       const base = flagKey(name.slice(0, name.indexOf('.')));
-      if (!JSON_FLAGS.has(base) || ['--hf-overrides', '--kv-transfer-config'].includes(base) || has(UNSAFE, base)) { problems.push(`uses a dotted flag (${name})`); continue; }
+      if (!JSON_FLAGS.has(base) || ['--hf-overrides', '--kv-transfer-config'].includes(base) || has(UNSAFE, base)) { problems.push(`uses a dotted flag (${shown})`); continue; }
     }
-    if (has(UNSAFE, name) || abbreviates(UNSAFE, name)) { problems.push(`uses ${name}`); continue; }
+    if (has(UNSAFE, name) || abbreviates(UNSAFE, name)) { problems.push(`uses ${shown}`); continue; }
     if (flagKey(name) === '--tokenizer' && value != null && repo && !sameRepoName(value, repo)) { problems.push(`takes its tokenizer from another repo (${value.slice(0, 60)})`); continue; }
     if (isRemoteCode(name) && flagKey(name) !== REMOTE_CODE) { out.push(REMOTE_CODE); continue; }
     // A model config override can point at code to download and run (auto_map): never from a recipe.
-    if (flagKey(name) === '--hf-overrides' && value != null && /auto_map/i.test(value)) { problems.push(`uses ${name} with auto_map`); continue; }
-    if (dynamic(t) || (value != null && dynamic(value))) { problems.push(`uses shell variables (${name})`); continue; }
-    if (value != null && !looksJson(value) && /\{\w+\}/.test(value)) { problems.push(`has a blank to fill in (${name})`); continue; }
+    if (flagKey(name) === '--hf-overrides' && value != null && /auto_map/i.test(value)) { problems.push(`uses ${shown} with auto_map`); continue; }
+    if (dynamic(t) || (value != null && dynamic(value))) { problems.push(`uses shell variables (${shown})`); continue; }
+    if (value != null && !looksJson(value) && /\{\w+\}/.test(value)) { problems.push(`has a blank to fill in (${shown})`); continue; }
     if (value != null && !has(JSON_FLAGS, name) && !looksJson(value) && (/^(\/|~|\.\.?\/)/.test(value) || /\.(ya?ml|jinja2?|json|py|txt|gguf)$/i.test(value))) {
-      problems.push(`needs a file from the author’s machine (${name})`);
+      problems.push(`needs a file from the author’s machine (${shown})`);
       continue;
     }
     out.push(t);

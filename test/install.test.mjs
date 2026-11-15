@@ -420,6 +420,24 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: 'the build before, put back by the watchdog' });
     assert.ok(!existsSync(markFile), 'once: the mark is gone');
   });
+
+  test('20. a ps that fails doesn\'t end an install: with no update\'s way back armed, it goes on as before', CASE, async () => {
+    const home = makeHome();
+    sh(join(home, 'bin', 'ps'), '#!/bin/sh\nexit 1\n');
+    const b = stage(home, 'good', 1), r = await install(home, nextStamp(), b);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/);
+    assert.equal((await health(home))?.build, b);
+  });
+
+  // (E2d: the Mac half stages it with the other recovery files, RECOVERY_FILES; rebuild.test.mjs checks that list)
+  test('21. the rebuild steps (REBUILD.txt) land beside RECOVERY.txt at the fixed path, byte for byte', CASE, async () => {
+    const home = makeHome();
+    copyFileSync(join(REPO, 'deploy', 'REBUILD.txt'), join(home, 'in', 'REBUILD.txt'));
+    await firstGood(home);
+    assert.equal(read(home, '.local', 'share', 'spark-console', 'REBUILD.txt'), readFileSync(join(REPO, 'deploy', 'REBUILD.txt'), 'utf8'));
+    byHandFiles(home);
+  });
 });
 
 describe('install.sh verify and undo\'s snapshot, against the real service', { concurrency: 1 }, () => {

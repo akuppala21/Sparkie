@@ -64,6 +64,14 @@ async function stepOpEnd(j, id) {
   }
   return jobs.get(id);
 }
+// Who a saved step is, as the gates see it: a run an agent asked for (its key, its own call through the door, or its chat
+// with Sparkie) is that agent's in each of its steps too, so every rule that asks an agent (a job run again, a GPU app
+// started again, a power-off) asks in the step as in the agent's own call, and a key removed during the run stops its
+// next step (runAction reads the key again). The owner's run stays the owner's.
+function savedStepAgent(viewer, ctx) {
+  const agentId = ctx.agentId || viewer?.agentKey?.id || null;
+  return viewer?.agentKey || ctx.agent || agentId || ctx.via === 'agent' ? { agent: true, ...(agentId ? { agentId } : {}) } : {};
+}
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
 // part. Nothing for a step that answered anything else (already, kept, a stop).
@@ -81,6 +89,9 @@ function startedBy(action, args, out, keep = false) {
 // the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
   const stopped = [], kept = [], failed = [];
+  // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
+  // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
+  // never leaves the run's leftovers running for nobody, or a question no one can answer)
   const c = { via: 'workflow', actor: `${title} (saved workflow)`, request: `${title}, stopping what it started`, canChange: true, conv: ctx.conv || null, ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) };
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
@@ -92,7 +103,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (r.code === 0 && r.out.trim() !== 'running') continue;
       }
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+        : await stopAppStarted(viewer, x, c);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
@@ -102,6 +113,15 @@ async function stopWhatRan(ran, viewer, ctx, title) {
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
+// what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).
+async function stopAppStarted(viewer, x, c) {
+  try { return await runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c); } catch (e) {
+    if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
+    await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
+    return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
+  }
 }
 // The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
 // error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
@@ -151,6 +171,7 @@ async function placeStep(j, n, args, viewer, title) {
     step(j, `Step ${n}: turning on ${at}, which Spark Console powered off`);
     keepAwake(spark, why);
     (j.keptAwake ||= new Map()).set(spark, why);
+    savedRunKeep(j, { awake: [...j.keptAwake.keys()] });
     try { await power.wake(spark, 'workflow', viewer); } catch (e) { throw new Error(`Step ${n} (keep_running): ${at} couldn’t be turned on: ${firstSentence(e)}`); }
     note(j, `Step ${n}: ${at} is on`);
   }
