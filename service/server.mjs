@@ -4039,9 +4039,9 @@ const GROUP_WORDS = [
   ['past', 'what happened on the fleet: its events', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|history|events?|yesterday|last\s+(?:night|week)|earlier\s+today)\b/i],
   ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', /https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:md|txt|json|csv|ya?ml|log|py|sh|html|org|com|io|ai|dev|net))\b/i],
   ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
-  ['control', 'operations under way: follow one, cancel it, undo the last change', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|wait\s+for|operations?|progress)\b/i],
+  // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
+  ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress)\b/i],
   ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:memory|memories|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
-  ['updates', 'Spark Console’s own updates: go back a build', /\b(?:updates?|upgrade\w*|builds?|go\s+back\s+a\s+build)\b/i],
   ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
@@ -6414,7 +6414,7 @@ action({
   run: async (_, viewer, ctx) => { const job = startTestChanges(viewer, ctx.via || 'agent'); return { outcome: 'started', operation: job.id, next: `wait_operation {"id":"${job.id}"}` }; },
 });
 action({
-  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'updates',
+  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use only when the owner asks to undo the last update of Spark Console itself (roll back the console, not a model: for a model, undo_last_change). Puts back the build from before the last install; Spark Console restarts a moment later.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => {

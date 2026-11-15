@@ -54,7 +54,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
 | [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
-| [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group closes the oldest one opened by words”, “hidden is not forbidden”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
+| [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group closes the oldest one opened by words”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -133,7 +133,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 7.8 | no test yet |  | no acceptance test lists it |
 | 7.9 | built | `test/change.test.mjs` (“start_model across a "full" pair (Spark 3 + Spark 4)”) | holds T54 |
 | 7.10 | no test yet |  | T67: no test holds it yet |
-| 7.11 | no test yet |  | T122: no test holds it yet |
+| 7.11 | built | `test/tools.test.mjs` (“guide {tools} lists a group and opens it for the next round”) | holds T122 |
 | 8.0 | no test yet |  | T39, T40: no test holds them yet |
 | 8.1 | no test yet |  | T2, T7: no test holds them yet |
 | 8.2 | no test yet |  | T8, T51: no test holds them yet |

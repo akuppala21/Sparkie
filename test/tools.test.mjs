@@ -80,7 +80,6 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     routines: 'list my saved workflows',
     control: 'cancel the operation that is running',
     memory: 'what do you remember about me?',
-    updates: 'is there a newer build of spark console?',
     checks: 'run the self-test please',
   };
   test('each group: words that open it, and exactly the core and that group offered; a line naming a tool comes only with it', { timeout: 300000 * SLOW }, async () => {
@@ -143,12 +142,12 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     assert.deepEqual(sorted(all.core), sorted(CORE_TOOLS));
   });
 
+  // T122: a call to an undo that was not offered that round still runs, and is still checked.
   describe('hidden is not forbidden: a call to a tool that wasn\'t offered runs through runAction, and opens its group', { concurrency: 1 }, () => {
     for (const [tool, args, words, group] of [
       ['undo_last_change', {}, 'please do the thing from before', 'control'],
       ['cancel_operation', { id: '0123456789ab' }, 'please drop the thing from earlier', 'control'],
-      // ("revert" opens control by its words, not updates, so undo_update isn't offered)
-      ['undo_update', {}, 'revert that', 'updates'],
+      ['undo_update', {}, 'go back to how it was before', 'control'],
     ]) {
       test(`${tool}`, { timeout: 60000 * SLOW }, async () => {
         const from = requests().length, audits = auditLines().length;
@@ -157,15 +156,29 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
         assert.ok(!first.tools.includes(tool), `${tool} was offered`);
         assert.deepEqual(r.tools.map(t => t.name), [tool]);
         // It reached runAction, which answered as it does for a call that was offered: a button for a change the words
-        // didn't ask for; undo_update, asked for by "revert", ran (and found no earlier build to go back to).
+        // didn't ask for.
         const [result] = results(words, from);
         assert.doesNotMatch(result, /No tool called/);
-        if (tool === 'undo_update') {
-          assert.match(result, /no earlier build to go back to/);
-          assert.ok(auditLines().slice(audits).some(l => l.action === tool && l.via === 'sparkie'), 'runAction’s record');
-        } else assert.ok(r.message.choices?.length, result);
+        assert.ok(r.message.choices?.length, result);
+        assert.ok(!auditLines().slice(audits).some(l => l.action === 'rollback'), 'nothing went back a build');
         assert.ok(inGroup(group).every(t => second.tools.includes(t)), `${group} offered next: ${second.tools}`);
       });
+    }
+  });
+
+  // The two undos sit in one group: a request is offered both or neither, never only one, which could be the wrong one
+  // (undo_update goes back a build; undo_last_change reverses this chat's last model change).
+  test('every request with an undo in its words is offered both undos or neither, never one', { timeout: 180000 * SLOW }, async () => {
+    const BOTH = ['undo that', 'undo the update', 'undo that, then tell me why the build failed', 'undo the last change, then test the new build',
+      'undo that, the logs show the upgrade broke it', 'roll back spark console', 'revert the console to the last version', 'the build is broken, undo that',
+      'go back a build', 'go back to the previous version', 'put it back the way it was', 'cancel that and undo the update', 'revert that'];
+    const EITHER = ['revert it, the test build was the wrong file', 'undo it, why did it fail? show me the log file and the plan', 'roll back the console and check the logs'];
+    const from = requests().length;
+    await withScript([QUIET], async () => { for (const words of [...BOTH, ...EITHER]) await say(await newChat(), words); });
+    for (const words of [...BOTH, ...EITHER]) {
+      const [first] = rounds(words, from), undos = ['undo_last_change', 'undo_update'].filter(t => first.tools.includes(t));
+      assert.notEqual(undos.length, 1, `only ${undos} for “${words}”`);
+      if (BOTH.includes(words)) assert.equal(undos.length, 2, `neither undo for “${words}”`);
     }
   });
 
