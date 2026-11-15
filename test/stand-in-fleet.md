@@ -58,7 +58,9 @@ covers, is in `test/README.md`.
     (the last user message, fleet record left out): "what's running", "start <model> [on spark N]", "stop/restart
     <container> on spark N", "restart <container> on spark N once you've read its logs" (two rounds: `container_logs`,
     then `restart_model`), "why did it fail"; or from rules a test writes to `$MOCK_DIR/model-script.json`
-    (`{match, calls}` or `{match, rounds: [[calls], [calls]]}`; `offered: false` calls a tool Sparkie isn't offered);
+    (`{match, calls}` or `{match, rounds: [[calls], [calls]]}`); a call is made whether or not Sparkie was offered that
+    tool (the console runs any action it is asked for, R46), so a scripted call no longer shows a tool was offered:
+    `offered: true` on a call makes it only when it was, and `test/tools.test.mjs` tests what is offered;
     "take N seconds" makes it wait; a rule's `answerWhen` (a file name) holds the answer after its tools' results until
     `$MOCK_DIR/<that file>` is there; `$MOCK_DIR/model-fail` makes one request fail, once, in a way its head lists;
     every request goes to `$MOCK_DIR/model-requests.jsonl` with the system prompt, the whole last user message, the
@@ -76,3 +78,8 @@ covers, is in `test/README.md`.
     offset rules, 409 on a second poller, 4,096-character messages); `/__push` queues updates, `/__mode` makes it
     refuse (401), be in use (409), be down (502) or slow down (429); every call goes to `telegram-calls.jsonl`.
 - All tokens in the stand-ins (`hf_secret…`, `sk-abc…`, `nvapi-ABC…` and the like) are fake, to check masking.
+- What no test reaches: the real `worker.py` status code, real ssh, the Mac half of the installer, real systemd
+  and Tailscale's routes, and the locked TCP mode. `test/install.test.mjs` runs the installer's Spark 2 half,
+  `restore.sh` and the watchdog with a stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a
+  Linux run is the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14 or the
+  cable rule in R17.

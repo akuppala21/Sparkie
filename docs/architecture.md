@@ -4,11 +4,6 @@ Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, tim
 `docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
-This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
-`docs/rules/` (index: `docs/rules.md`), where "Today" marks where existing code does not keep its rule; where new
-things go, one card per kind of work, in `docs/how/`; who holds each fact, in `docs/state.md`; the checklist, in
-`AGENTS.md` ("Before you say done").
-
 ## 1. In one paragraph
 
 Spark Console is one Node process with no dependencies, a systemd user unit on Spark 2. It manages every Spark in its
@@ -124,29 +119,8 @@ flowchart TD
   STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
-Not drawn: the Telegram loop (one long poll at a time, started in the local port's listen callback; `telegram.json`
-keeps its offset, current chat, a turn under way and operations started there; a secrets file that can't be read is
-read again every 60 s); the owner's words (R34): the page's chat route and `tgUpdate` answer them by code before
-`sparkieTurn`, and `/stop` reaches a reply under way through `liveTurns`; the fault record (`recordFault`,
-`23-http.mjs`): every 500 the handler answers, the agent door's unexpected errors and promises nobody caught are
-printed and counted in memory, an uncaught error writes `last-crash.json` just before the process ends
-(`recordCrash`), and `sparkie_setup` shows both with the watchdog's last five restarts (`faultView`); `checkRoute` and
-`refreshBlocked` (every 60 s, read Tailscale; set the TCP lock, `funnelOn` and the Sparks' blocked addresses;
-`funnelOn`, `/health`'s `internet`, stays null, "not known", until an answer names the main address (the same answer
-sets `doorOn`, whether port 10000 goes to the app door, R40): right after a boot tailscaled answers with nothing
-loaded. `checkRoute` also runs on the stand-in fleet, where `test/mock/bin/tailscale` answers it); `watchHeld` (60 s);
-the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start, and
-`selfTestRecover` (5 s after start: stops what a cut-off self-test started); the daily copy’s clock (`backupIfDue`: 10
-minutes after start, then hourly, until a copy has worked that UTC day); the
-needs-me tick (`needsMeTick`, every 60 s, started beside the Telegram loop: reads
-the open-problems list and sends at most one fixed line, R32); the open-problems list (`openProblems`, 20-needs, built
-on each ask, never stored); the update record at start (`noteUpdate`, in the listen callback: when
-the build differs from the last one in `updates.json` it adds one record and one notice, "Spark Console is now build
-X. It was build Y."); daily research (first run 3 minutes after start, 20 models a day); live metrics (one
-long-running sampler per Spark through `spawnOn` while a page is open, `startSampler` in `04-metrics.mjs`); a third
-caller of the brain (the Hugging Face search helper asks the chat route's model for search terms, `searchTerms` in
-`10-recipes.mjs`); shutdown (SIGTERM refuses new jobs and waits up to 60 s for running ones; replies are not waited
-for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
+Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems
+list (`docs/state.md`); the owner's words (R34); the brain's third caller, `searchTerms` (`docs/recipes.md`).
 
 ## 3. One sentence, start to finish
 
@@ -237,11 +211,7 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
   round after a Spark comes back they read as running again before the watcher has looked; one failed status call
   pauses crash restarts there for 30 minutes; the intent gate picks a stop or restart target from the watcher’s view,
   up to a minute old.
-- **Tests skip real paths:** the real `worker.py` status code, real ssh, the Mac half of the installer, real systemd
-  and Tailscale's routes, and the locked TCP mode. `test/install.test.mjs` runs the installer's Spark 2 half,
-  `restore.sh` and the watchdog with a stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a
-  Linux run is the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14 or the
-  cable rule in R17.
+- **Tests skip real paths:** `test/stand-in-fleet.md` lists them (“What no test reaches”).
 - **Found by reading, not run:** `pausedCheck` (`17-changes.mjs`) has no self-healing exception, so under an automatic
   pause a heal job fails at once.
 - **`fleetNotes` throws on an event with no `at`** (a hand-edited `events.jsonl`): that turn ends with an error and

@@ -13,14 +13,14 @@ test that holds an acceptance test (a comment in it that starts with the test’
 
 | Rule | Status | Tests | Note |
 |---|---|---|---|
-| [R1](rules/R01.md) | partly | `test/change.test.mjs` (“Spark 2 (where Sparkie runs) is never used”, “spark2 (Sparkie's): a start there is refused even when named”); `test/apps.test.mjs`; `test/hub.test.mjs` (“a model on disk with no Spark named never lands on the console's Spark”, “a download with no Spark named never goes to the console's Spark”) | falls short today: its file says where |
+| [R1](rules/R01.md) | partly | `test/change.test.mjs` (“Spark 2 (where Sparkie runs) is never used”, “spark2 (Sparkie's): a start there is refused even when named”); `test/apps.test.mjs`; `test/hub.test.mjs` (“a model on disk with no Spark named never lands on the console's Spark”, “a download with no Spark named never goes to the console's Spark”); `test/clear-spark2.test.mjs` (“--check lists the units, containers, ports and folders it was given”) | falls short today: its file says where |
 | [R2](rules/R02.md) | partly | `test/change.test.mjs` (“memory: 8 GB stays free”, “a GPU app or job holds its Spark’s GPU”); `test/apps.test.mjs` (“any workload”) | falls short today: its file says where |
-| [R3](rules/R03.md) | partly | `test/abilities.test.mjs` | review; falls short today: its file says where |
+| [R3](rules/R03.md) | partly | `test/abilities.test.mjs`; `test/clear-spark2.test.mjs` (“the script holds no command that breaks it”) | review; falls short today: its file says where |
 | [R4](rules/R04.md) | no test yet |  | test: each new route as nobody, a member, cross-site, through Funnel, from a Spark’s address |
 | [R5](rules/R05.md) | built | `test/internet.test.mjs` (“a Tailscale identity it brings counts for nothing”); `test/fleet.test.mjs` (“requests from the Sparks themselves”) |  |
 | [R6](rules/R06.md) | built | `test/passkey.test.mjs` (“a confirmation is for exactly one change”, “the change can be named with or without /console/api”) |  |
 | [R7](rules/R07.md) | partly | `test/door.test.mjs` (“secret masking”); `test/detail.test.mjs`; `test/faults.test.mjs`; `test/sparkie-more.test.mjs` (“a key in the model's error is hidden in the saved chat”, “a key in a line Sparkie offers to remember”, “a key in a failed operation's error is hidden”); `test/heal.test.mjs` (“a restart that fails with a key in its error”) | falls short today: its file says where |
-| [R8](rules/R08.md) | partly | `test/change.test.mjs` (“containers Spark Console didn't start, Sparkie's model, protected names”, “a console container labelled spark.protect=true is protected too”) | falls short today: its file says where |
+| [R8](rules/R08.md) | partly | `test/change.test.mjs` (“containers Spark Console didn't start, Sparkie's model, protected names”, “a console container labelled spark.protect=true is protected too”); `test/clear-spark2.test.mjs` (“the script holds no command that breaks it”) | falls short today: its file says where |
 | [R9](rules/R09.md) | built | `test/pause.test.mjs` (“after three of their operations fail in a row”, “after 3 changes in an hour”, “the owner's own failed work”); `test/ask.test.mjs` (“removed while Sparkie is answering it”, “made look-only while Sparkie is answering it”, “an operation it started keeps running”, “an undo it asked for keeps running”) |  |
 | [R10](rules/R10.md) | no test yet |  | grep: ssh is spawned only in `02-ssh.mjs`; falls short today: its file says where |
 | [R11](rules/R11.md) | partly | `test/change.test.mjs` (“every change is refused; reads keep working; nothing runs”); `test/selftest.test.mjs` (“the healing drill kills only the container this run started”, “one the owner starts there during the test is never cancelled”, “the model it stops is the container it started, by id”); `test/selftest-cleanup.test.mjs` (“a restart of Spark Console in the middle”, “its clean-up still stops the model”) | review; falls short today: its file says where |
@@ -53,6 +53,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
+| [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group closes the oldest one opened by words”, “hidden is not forbidden”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
