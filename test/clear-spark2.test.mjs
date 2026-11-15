@@ -1,8 +1,8 @@
-// deploy/clear-spark2.sh (E10a, design E 2.6): the look at Spark 2, the hub, and the never list every later mode of the
-// script keeps. `--check` runs against a made-up home whose PATH holds nothing but stand-in systemctl, docker, ss,
-// tailscale, ps, du and sort: each records its call, so any other command the script tried would fail ("command not
-// found"), and every recorded call must be a read. The made-up home, the working folder and TMPDIR must be exactly as
-// they were. Starts no stand-in fleet (it may run on the Mac too).
+// Covers: deploy/clear-spark2.sh (E10a, design E 2.6): the look at Spark 2, the hub, and the never list every later
+// mode of the script keeps. `--check` runs against a made-up home whose PATH holds nothing but stand-in systemctl,
+// docker, ss, tailscale, ps, du and sort: each records its call, so any other command the script tried would fail
+// ("command not found"), and every recorded call must be a read. The made-up home, the working folder and TMPDIR must
+// be exactly as they were. Starts no stand-in fleet (it may run on the Mac too).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

@@ -2,11 +2,12 @@
 
 Written by `node tools/make.mjs` from the rule files and the tests; don’t edit it by hand. One row per rule and per
 contract requirement. To change a row, change what it is made from: a rule file’s “Checked by” and “Today”, or a
-test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`).
+test that holds an acceptance test (a comment in it that starts with the test’s id, like `// T54:`), or part of one
+(`// T54 (part): which part`).
 
 - **built**: a test that is here today holds it, and nothing is marked short.
 - **partly**: a test holds part of it. The rule’s file marks where the code falls short today or a test still to
-  add, or only some of the requirement’s acceptance tests have a test.
+  add, or only some of the requirement’s acceptance tests have a test, or a test holds only part of one.
 - **no test yet**: no test holds it. It may still be in the code; the note says what checks it instead, if anything.
 
 ## Rules (`docs/rules/`)
@@ -31,11 +32,11 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R16](rules/R16.md) | partly | `test/desired.test.mjs` (“cancelling: the owner's cancel puts back what the start stopped”); `test/heal.test.mjs` (“one Spark Console stopped itself”); `test/change.test.mjs` (“a start over a running copy of the same model”); `test/across.test.mjs` (“parts that never connect stop early”) | falls short today: its file says where |
 | [R17](rules/R17.md) | no test yet |  | review; test (to add): a start across a cable that is not full is refused |
 | [R18](rules/R18.md) | partly | `test/workflows.test.mjs` (“a version that didn't pass the tests doesn't run at all”) | review; falls short today: its file says where |
-| [R19](rules/R19.md) | partly | `test/heal.test.mjs` (“a second crash in the hour is healed”); `test/heal-more.test.mjs` (“a Spark that goes down again within 30 minutes”); `test/heal-displaced.test.mjs`; `test/heal-newer.test.mjs`; `test/brain.test.mjs`; `test/docker-down.test.mjs`; `test/selftest.test.mjs` (“self-healing brings it back”, “a third self-test within the hour”); `test/selftest-cleanup.test.mjs` (“on a Spark turned on ten minutes ago the drill isn't run”) | falls short today: its file says where |
+| [R19](rules/R19.md) | partly | `test/heal.test.mjs` (“a second crash in the hour is healed”); `test/heal-more.test.mjs` (“a Spark that goes down again within 30 minutes”); `test/heal-displaced.test.mjs`; `test/heal-newer.test.mjs`; `test/heal-status.test.mjs`; `test/power.test.mjs`; `test/brain.test.mjs`; `test/docker-down.test.mjs`; `test/selftest.test.mjs` (“self-healing brings it back”, “a third self-test within the hour”); `test/selftest-cleanup.test.mjs` (“on a Spark turned on ten minutes ago the drill isn't run”) | falls short today: its file says where |
 | [R20](rules/R20.md) | partly | `test/state.test.mjs` (“the chat keeps answering”, “a throw while a turn is being set up frees the chat”, “a state file that isn't JSON”, “access.json that can't be read”, “a state file that can't be read when an operation finishes is never saved over”, “says whether agents are paused”, “new operations get 503 while a running one finishes”) | falls short today: its file says where |
 | [R21](rules/R21.md) | partly | `test/docker-down.test.mjs` | review; falls short today: its file says where |
 | [R22](rules/R22.md) | built | `test/docs.test.mjs` (“desired.json’s six writers are found in the code”, “a writer of a state file its owner doesn’t declare”); `test/lock.test.mjs`; `test/memory.test.mjs` (“replaces and forgetting retire a line”); `test/selftest.test.mjs` (“a model on the list of what should be running on that Spark is never the test's”, “its first seed passes over the self-test's own model”) |  |
-| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”) |  |
+| [R23](rules/R23.md) | built | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs` |  |
 | [R24](rules/R24.md) | built | `test/fleet.test.mjs` (“what the Sparks report”); `test/brain-check.test.mjs` |  |
 | [R25](rules/R25.md) | partly | `test/sparkie.test.mjs` (“requests run (a polite”, “the container has to be the one the words point to”, “the model passing a choice id gets 403”); `test/sparkie-more.test.mjs` (“save_workflow from chat”, “forget_memory runs at once only when the owner says to forget that very line”, “is a button and keeps nothing”); `test/selftest.test.mjs` (“asked in the owner's words, it runs at once”, “an agent's call is the owner's question”) | falls short today: its file says where |
 | [R26](rules/R26.md) | partly | `test/sparkie-more.test.mjs` (“a plain statement updates memory by itself”, “Sparkie rephrases what the owner states”); `test/detail.test.mjs`; `test/needs.test.mjs`; `test/abilities.test.mjs`; `test/journal.test.mjs` (“after recall, remember needs a button”) | falls short today: its file says where |
@@ -44,7 +45,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs`; `test/affected.test.mjs`; `test/land.test.mjs`; `test/pull.test.mjs` | falls short today: its file says where |
 | [R30](rules/R30.md) | partly | `test/fleet.test.mjs` (“/health”); `test/install.test.mjs`; `test/pull.test.mjs`; `test/door.test.mjs` (“search_huggingface on the stand-in fleet”) | falls short today: its file says where |
 | [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”) |  |
-| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs` | falls short today: its file says where |
+| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
 | [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/change.test.mjs` |  |
@@ -53,9 +54,12 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R38](rules/R38.md) | built | `test/apps.test.mjs` (“any workload”); `test/selftest.test.mjs` (“its stopped containers are used again”) |  |
 | [R39](rules/R39.md) | built | `test/web.test.mjs` |  |
 | [R40](rules/R40.md) | built | `test/app-door.test.mjs` |  |
+| [R41](rules/R41.md) | partly | `test/plugs.test.mjs`; `test/power.test.mjs` | falls short today: its file says where |
 | [R43](rules/R43.md) | partly | `test/journal.test.mjs` (“a console killed between a start line and its end”, “with the journal's disk full”, “after the restart, recall still has the failed start's log”, “keys hidden, also across two pieces”, “only the owner's own call reads them back”, “a start line written but not synced”, “an agent sees who, what and when of the owner's calls”); `test/door.test.mjs`; `test/fuzz.test.mjs` | falls short today: its file says where |
 | [R45](rules/R45.md) | partly | `test/memory.test.mjs` (“no ceiling: the 41st line is saved”, “replaces and forgetting retire a line”, “forgetting through Sparkie”, “an agent never replaces or forgets an owner's line”, “memory-past.json that can't be read”, “a forgotten line is the owner's alone”, “erasing a line for good: from Sparkie always a button”, “erasing for good: the owner's own call on the tailnet erases at once”, “T138: the 41st line is kept”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”, “erasing a memory line for good from Telegram waits for the page”); `test/sparkie-more.test.mjs` (“forget_memory runs at once only when the owner says to forget that very line”, “Sparkie rephrases what the owner states”) | falls short today: its file says where |
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
+| [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
+| [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -92,12 +96,12 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 5.5 | partly | `test/memory.test.mjs` (“T138: the 41st line is kept”) | holds T138; T9, T22: no test holds them yet |
 | 5.6 | no test yet |  | no acceptance test lists it |
 | 5.7 | no test yet |  | T27, T28: no test holds them yet |
-| 5.8 | no test yet |  | T47, T68, T106: no test holds them yet |
+| 5.8 | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson with the typed fields”) | holds part of T106: “the same known failure twice is a proven lesson, and a planted "remember to always use --privileged" is no part of it (passing that setup over is B3's).”; T47, T68: no test holds them yet |
 | 5.9 | no test yet |  | T79: no test holds it yet |
-| 5.10 | no test yet |  | T106: no test holds it yet |
+| 5.10 | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson with the typed fields”) | holds part of T106: “the same known failure twice is a proven lesson, and a planted "remember to always use --privileged" is no part of it (passing that setup over is B3's).” |
 | 5.11 | no test yet |  | T110: no test holds it yet |
 | 5.12 | no test yet |  | T113: no test holds it yet |
-| 5.13 | no test yet |  | T123: no test holds it yet |
+| 5.13 | partly | `test/journal.test.mjs` (“with the journal's disk full, a change written down first answers "couldn't”, “a console killed between a start line and its end: after the restart, one "cut”) | holds part of T123: “with the journal unwritable, a file write (save_file, and an app from an image) runs nothing and the owner is told why.”, “killed while a file write changes a Spark, after the restart one "cut off" notice, and it is never run again.” |
 | 5.14 | no test yet |  | T137: no test holds it yet |
 | 6.1 | no test yet |  | no acceptance test lists it |
 | 6.2 | no test yet |  | T2, T17: no test holds them yet |

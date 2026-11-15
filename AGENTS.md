@@ -11,7 +11,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
 - Keep every rule in `docs/rules/` (one line each in `docs/rules.md`); don't add to the gaps a rule's "Today" notes.
-- Nothing starts a model or workload on Spark 2 (the brain's Spark).
+- Nothing starts a model or workload on Spark 2 (the brain's Spark) or powers it off (R41).
 - Today no action changes SSH, Tailscale, the firewall or users (R3, contract 8.3), and you don't while working here.
   Milestone 2 lets Sparkie change them when the owner asks, asked first, inside the put-back net; until then, add no
   path to them.
@@ -75,9 +75,11 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | change what a member may do | `docs/how/add-a-member-permission.md` |
 | add an engine | `docs/how/add-an-engine.md` |
 | add a self-test check | `docs/how/add-a-hardware-check.md` |
+| run the brain eval and keep its result | `docs/how/run-the-brain-eval.md` |
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+| add a test file | `docs/how/add-a-test-file.md` |
 | land a step on main | `docs/how/land-a-step.md` |
 
 No card fits? Search `docs/rules.md`.

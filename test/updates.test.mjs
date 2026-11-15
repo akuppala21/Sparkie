@@ -1,3 +1,8 @@
+// Covers: The update record (`updates.json`, S5): a first record on a fresh state folder with no notice; nothing added
+// on a restart of the same build; a new build recorded with the build it replaced, the snapshot's stamp and the
+// installer's note (a key in it hidden), one notice, the newest 20 kept and five in `sparkie_setup`; the build held in
+// the newest snapshot running again recorded as `went back`; the installer's three note lines.
+//
 // Spark Console's own update record (S5): updates.json in the state folder, written by the build that runs, once, as it
 // starts (noteUpdate in 18-workflows.mjs), and only when its build differs from the last one on record. The newest five
 // are in sparkie_setup. Each test starts its own short-lived service on the stand-in fleet with a seeded state folder

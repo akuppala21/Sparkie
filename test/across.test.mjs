@@ -1,3 +1,15 @@
+// Covers: One model across Spark 3 and Spark 4 with the brain's proven setup (the brain's own Qwen, in Recipes): SGLang
+// split in two over the cable, without the draft model, the stretched context or Spark 2's cache folders. The cable
+// before and during a start: a Spark that refuses connections (pings still pass) stops the start before anything stops,
+// naming the Spark and the command to let the cable in; engines that can't connect (Gloo) fail in the short engine test
+// before the parts start, in Gloo's words, with no second try; parts that never connect are stopped early with where
+// each was waiting (their stack dumps) and, stuck in NCCL, tried once more over plain sockets, and the one-Spark copy
+// that had the first part's name runs again; NCCL that only hangs over RoCE is caught by the engine check and starts
+// over plain sockets, and that run is kept; a Spark that misses a cable re-test keeps its pairs' last result. A pair
+// with room on Spark 4 only if a container started by hand stops (F11): an owner-only question that names it (also when
+// no Sparks were named), asking stops nothing, an agent gets no choice to send back, and the owner's Yes on the page
+// starts it across both Sparks with that stop in the plan.
+//
 // One model across two Sparks with the brain's proven setup (docs/contract.md 15, 2026-11-08). The brain runs on one
 // Spark, and its runs aren't repeated as they are (a draft model only Spark 2 has, a stretched context). When the only
 // proven setup for a model is the brain's, a start across Spark 3 and Spark 4 uses it made plain: the same engine and
@@ -56,6 +68,9 @@ test('across Spark 3 and Spark 4, a model whose only proven setup is the brain\'
     const args = readFileSync(join(T.fleet.root, spark, '.mock', 'last-run-args'), 'utf8').split('\n');
     const after = flag => args[args.indexOf(flag) + 1];
     assert.ok(args.includes('sglang.launch_server'), `${spark}: SGLang, the brain's engine`);
+    // (its /metrics on where it answers, the first part, and never twice: the idle power-off reads it, 21-power.mjs)
+    assert.ok(args.filter(x => x === '--enable-metrics').length <= 1, `${spark}: --enable-metrics at most once`);
+    if (rank === '0') assert.equal(args.filter(x => x === '--enable-metrics').length, 1, `${spark}: the part that answers has its /metrics on`);
     assert.equal(args.find(a => a.startsWith('lmsysorg/sglang')), 'lmsysorg/sglang:v0.5.23', `${spark}: the brain's image`);
     assert.equal(after('--tp'), '2', `${spark}: split in two`);
     assert.equal(after('--node-rank'), rank);

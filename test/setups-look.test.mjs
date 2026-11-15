@@ -1,12 +1,14 @@
-// Nothing looks for setups by the clock (design C step 7, as cut on 2026-11-14; owner decision 5; contract 7.11 and
-// 8.0; R27). The service runs on mock/clock.mjs with MOCK_CLOCK_DATES=1, so moving its clock days ahead moves Date.now()
-// and a look's date (new Date()) together. The stand-in for the setups' sources is a copy of mock/dig-fixture.json
-// (SPARK_CONSOLE_DIG_FIXTURE): each look reads it once, as one `dig` operation. Left alone with its clock a day and two
-// days on, the console looks for nothing and opens no connection outside the stand-in fleet (no heartbeat address is
-// saved, so the heartbeat sends nothing either). Asked (find_setups), it looks at once. recipe_detail on setups over a
-// week old looks once, then answers from the fresh list. A look that can't read its source keeps the old list in use,
-// and recipe_detail says how old that is. SPARK_CONSOLE_DIG_EVERY_MS was the stand-in's day for the daily look, which is
-// gone: it is set here so that a build that still has that timer shows it.
+// Covers: Nothing looks for setups by the clock (design C step 7, as cut on 2026-11-14; owner decision 5; contract
+// 7.11 and 8.0; R27). Left alone with its clock a day and two days on, the console looks for nothing and opens no
+// connection outside the stand-in fleet. Asked (`find_setups`), it looks at once. `recipe_detail` on setups over a week
+// old looks once, then answers from the fresh list; a look that can't read its source keeps the old list in use, and
+// `recipe_detail` says how old that is.
+//
+// The service runs on mock/clock.mjs with MOCK_CLOCK_DATES=1, so moving its clock days ahead moves Date.now() and a
+// look's date (new Date()) together. The stand-in for the setups' sources is a copy of mock/dig-fixture.json
+// (SPARK_CONSOLE_DIG_FIXTURE): each look reads it once, as one `dig` operation. No heartbeat address is saved, so the
+// heartbeat sends nothing either. SPARK_CONSOLE_DIG_EVERY_MS was the stand-in's day for the daily look, which is gone:
+// it is set here so that a build that still has that timer shows it.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
