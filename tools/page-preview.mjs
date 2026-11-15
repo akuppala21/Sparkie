@@ -18,16 +18,16 @@
 // service's cross-site check passes for the page and still refuses any other site.
 //
 // What the page has to show (seeded through the service's own API and the stand-in fleet's own switches, never by
-// writing the service's state files): the stand-in Sparks and their running models; one chat with Sparkie in which a
-// question used a tool, a stop of gpt-oss-20b on Spark 2 was offered as a button, pressed, ran and finished, a stop of
-// the model on Spark 4 is offered as a button still open, and /status says what needs you; Spark 2's disk nearly full
-// (the needs-you line). The stand-in brain answers any other message
-// with one tool call (fleet_status) and a short reply saying what the tool said; "start …", "stop … on spark N",
-// "restart … on spark N" and "what's running" still work as the stand-in model's own patterns.
+// writing the service's state files): the stand-in Sparks and their running models; Spark 2's disk nearly full (the
+// needs-you line); and the owner's chat with Sparkie (a member or the public sees none), in which a question used a
+// tool, a stop of gpt-oss-20b on Spark 2 was offered as a button, pressed, ran and finished, a stop of the model on
+// Spark 4 is offered as a button still open, and /status says what needs you. The stand-in brain answers any message
+// with one tool call (fleet_status) and a short reply saying what the tool said, except its own patterns: "start …",
+// "stop … on spark N", "restart … on spark N", "what's running" (test/stand-in-fleet.md).
 //
-// What can't work here: passkeys (WebAuthn needs the real https address; with --as public, "Sign in" can't finish),
-// the editors, and anything that reaches outside this computer (the stand-in fleet refuses it). The page's update check
-// is off, as for any copy whose app.js still says BUILD = 'dev'.
+// What can't work here: passkeys (WebAuthn needs the real https address: "Sign in" with --as public, and a change that
+// asks for the owner's passkey, can't finish), the editors, and anything that reaches outside this computer (the
+// stand-in fleet refuses it). The page's update check is off, as for any copy whose app.js still says BUILD = 'dev'.
 //
 // It listens on 127.0.0.1 only (--host takes nothing else), needs only Node, and never touches a real Spark, the real
 // brain, Tailscale or any other host. It is a developer tool: nothing in deploy/ or service/ ships or names it.
