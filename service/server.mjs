@@ -8590,14 +8590,21 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   return message;
 }
 // A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
-// get every kept value hidden and are saved once if a message changed, so the daily copy stops carrying it. A chat
-// that never held one is left exactly as it was (nor is its time touched). Says whether one of the owner's own messages
-// held `value`, the key just given (then the journal's `said` record does too), and whether one of them was on Telegram.
+// (messages, titles, a carried-on request) get every kept value hidden and are saved once if one changed, so the daily
+// copy stops carrying it. A chat that never held one is left exactly as it was (nor is its time touched). Says whether
+// one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too), and
+// whether one of them was on Telegram.
 function hideKeptInChats(value) {
   const owner = accessList().owner, left = { said: false, telegram: false };
   let changed = false;
   for (const c of chatData().conversations) {
     if (c.login !== owner) continue;
+    // (its title and a carried-on request are the owner's words too)
+    for (const [o, k] of [[c, 'title'], [c.task, 'request']]) {
+      if (typeof o?.[k] !== 'string') continue;
+      const t = keptHidden(o[k]);
+      if (t !== o[k]) { o[k] = t; changed = true; }
+    }
     for (const m of c.messages) {
       if (typeof m.content !== 'string') continue;
       const t = keptHidden(m.content);

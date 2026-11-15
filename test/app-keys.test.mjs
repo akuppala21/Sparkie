@@ -274,6 +274,7 @@ describe('keys given once', { concurrency: 1 }, () => {
     const msgs = await chatMessages(early);
     assert.equal(msgs[0].content, 'my wandb key is [hidden] for later');
     assert.match(msgs[1].content, /my wandb key is \[hidden\] for later/, 'the brain\'s answer that quoted it');
+    assert.equal((await api('/chats')).json.chats.find(c => c.id === early).title, 'my wandb key is [hidden] for later', 'the title the words gave');
     const sent = await withHistory(async () => { await say(early, 'thanks for keeping it'); return historyLog().at(-1); });
     assert.equal(sent.words, 'thanks for keeping it');
     assert.ok(sent.history.some(h => h === 'my wandb key is [hidden] for later'), JSON.stringify(sent.history));
