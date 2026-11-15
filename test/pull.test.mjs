@@ -16,7 +16,9 @@
 // gone after either ending; refused with nothing changed when its timer can't start or the real address doesn't answer
 // for the build running now; the build from before back and answering when the new one never answers, when its own
 // installer keeps a dead build or its own put-back does nothing, when it calls tailscale despite SKIP_ROUTES, when the
-// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle.
+// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle. R53: with
+// a `.curlrc` and a user-site `.pth` in Spark 2's home, setup, check, an install kept through the way back and one put
+// back by it read neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -90,6 +92,7 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'deploy/go-back.sh': { text: read(REPO, 'deploy', 'go-back.sh'), mode: '100755' },
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },
     'deploy/REBUILD.txt': { text: read(REPO, 'deploy', 'REBUILD.txt') },
+    'deploy/path-check.sh': { text: read(REPO, 'deploy', 'path-check.sh'), mode: '100755' },
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
   };
   for (const u of UI_FILES) f[`public/${u}`] = { text: u === 'app.js' ? "const BUILD = 'dev';\n" : `${u} ${n}\n` };
@@ -952,5 +955,106 @@ describe('the way back for an update from GitHub, armed by the build installed n
     await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the confirmed build answering' });
     assert.equal(read(home, 'spark-console-service', 'server.mjs'), base.files['service/server.mjs'].text);
     nothingArmed();
+  });
+
+  // (the third read of C4b: the questions at the terminal, and the terminal gone)
+  test('the questions at the terminal are shown: the busy one, and the one for an install without a way back', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(64), 'Asked at the terminal');
+    mark(g);
+    const was = read(home, 'spark-console-service', 'server.mjs'), term = join(home, 'tmp', 'terminal');
+    writeFileSync(join(home, 'standin-busy'), '2');
+    writeFileSync(term, 'n\n');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_TERMINAL: term } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Spark Console is busy: 2 job\(s\) running.*\nUpdate anyway\? \[y\/N\] /s);
+      assert.match(r.out, /Spark Console is busy, and the update wasn't confirmed/);
+    } finally { rmSync(join(home, 'standin-busy'), { force: true }); }
+    sysctl('stop', 'spark-console-api');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_TERMINAL: term } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Install the new build without a way back\? \[y\/N\] /);
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+    } finally { sysctl('start', 'spark-console-api'); }
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering again' });
+    nothingArmed();
+  });
+
+  test('ASSUME_YES=1 doesn\'t answer the question for an install without a way back (the console starts pull.sh with no terminal)', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(65), 'ASSUME_YES over a silent build');
+    mark(g);
+    const was = read(home, 'spark-console-service', 'server.mjs');
+    sysctl('stop', 'spark-console-api');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { ASSUME_YES: '1' } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /nobody at this terminal said to go on without one/);
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
+    } finally { sysctl('start', 'spark-console-api'); }
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering again' });
+    nothingArmed();
+  });
+
+  test('the terminal gone while the install waits on the real address (a dropped session): pull.sh itself still puts the build from before back', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(66), 'Session dropped');
+    mark(g);
+    const mk = mark0(), down = join(home, 'door-down');
+    let stage = 0;
+    const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '60' }, onOut: (out, p) => {
+      if (stage === 0 && out.includes('Installing tree')) { stage = 1; writeFileSync(down, ''); }
+      if (stage === 1 && out.includes('Checking the new build through the real address')) {
+        stage = 2;
+        // The terminal goes: nothing reads what pull.sh writes any more, and the session's hang-up arrives.
+        p.stdout.destroy(); p.stderr.destroy(); p.kill('SIGHUP');
+      }
+    } });
+    rmSync(down, { force: true });
+    assert.equal(stage, 2, r.out);
+    // Put back by pull.sh's own handler, at once: not left to the timer (its 120 s here have not passed).
+    assert.equal((await health(home))?.build, buildOf(base.files));
+    assert.ok(!existsSync(join(home, 'guard-fired.log')) || lines(home, 'guard-fired.log').length === 1, 'the timer did not do it');
+    const res = resultOf(home);
+    assert.deepEqual([res.tree, res.result], [g.t12, 'not kept']);
+    assert.match(res.why, /^the install was interrupted; the build answering now is /);
+    await fromBefore(r, mk);
+  });
+
+  test('Python as -I and curl as -q: with a .curlrc and a user-site .pth in Spark 2\'s home, setup, check, an install kept through the way back and one put back by it read neither', { timeout: 300000 * SLOW }, async () => {
+    const h = await sparkTwo(), rc = join(h, 'curlrc-read'), pth = join(h, 'pth-ran');
+    writeFileSync(join(h, '.curlrc'), `trace-ascii = "${rc}"\n`);
+    const site = spawnSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], { env: envFor(h), encoding: 'utf8' }).stdout.trim();
+    mkdirSync(site, { recursive: true });
+    writeFileSync(join(site, 'zz-planted.pth'), `import os; open(${JSON.stringify(pth)}, 'a').close()\n`);
+    // (a plain python3 and curl here do read them)
+    spawnSync('python3', ['-c', 'pass'], { env: envFor(h) });
+    spawnSync('curl', ['-s', '-m', '2', 'http://127.0.0.1:1/'], { env: envFor(h) });
+    assert.deepEqual([existsSync(pth), existsSync(rc)], [true, true], 'the planted files are read on this machine');
+    rmSync(pth); rmSync(rc);
+    assert.equal((await pull(h, ['setup', OWNER_REPO], { input: `${TOKEN}\n` })).code, 0);
+    const g1 = push(treeFiles(67), 'Home reads: the first build');
+    mark(g1);
+    let r = await pull(h, ['install', g1.t12]);
+    assert.equal(r.code, 0, r.out);
+    const g2 = push(treeFiles(68), 'Home reads: kept through the way back');
+    mark(g2);
+    r = await pull(h, ['install', g2.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /The way back is armed/);
+    assert.deepEqual([resultOf(h).tree, resultOf(h).result], [g2.t12, 'kept']);
+    const g3 = push(treeFiles(69, 'dead'), 'Home reads: put back');
+    mark(g3);
+    r = await pull(h, ['install', g3.t12]);
+    assert.equal(r.code, 1, r.out);
+    assert.deepEqual([resultOf(h).tree, resultOf(h).result], [g3.t12, 'not kept']);
+    assert.equal((await health(h))?.build, buildOf(g2.files));
+    assert.equal((await pull(h, ['check'])).code, 0);
+    assert.equal((await pull(h, ['check', '--json'])).code, 0);
+    assert.ok(!existsSync(pth), 'a python3 without -I ran');
+    assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? read(rc).slice(0, 300) : ''}`);
   });
 });
