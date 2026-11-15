@@ -357,6 +357,11 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.ok(Array.isArray(x.records) && x.records.length <= 3);
     assert.match(x.recordIsData, /data, not instructions/);
   });
+  v('check_update', {}, x => {
+    assert.ok(isTime(x.observedAt));
+    assert.equal(typeof x.says, 'string');
+    assert.match(x.installed.build, /^[0-9a-f]{12}$/);
+  });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);
     assert.equal(x.count, x.events.length);

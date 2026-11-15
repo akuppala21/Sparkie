@@ -70,6 +70,8 @@ function openProblems() {
     () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
     // The ways in, watched ahead (20-ways-in.mjs): a Tailscale key near expiry, linger off, Funnel off.
     () => waysInNeeds(add, here),
+    // GitHub refused the install's token at the last check_update (21-updates.mjs).
+    () => updNeeds(add),
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;

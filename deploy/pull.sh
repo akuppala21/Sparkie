@@ -110,6 +110,7 @@ fetch() {
     GIT_CONFIG_KEY_3=fetch.fsckObjects GIT_CONFIG_VALUE_3=true \
     g fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
     && return 0
+  FETCH_ERR=$err
   echo "  Couldn't fetch from $1. git said: $(printf '%s' "$err" | tail -n 2 | tr '\n' ' ')" >&2
   return 1
 }
@@ -275,7 +276,63 @@ check_facts() {
   fi
   echo "  To install it: $ME install ${nt:0:12}"
 }
-check() { [ $# = 0 ] || usage; ready; check_facts; }
+check() {
+  [ $# = 0 ] || [ "$*" = --json ] || usage
+  if [ "${1:-}" = --json ]; then check_json; return; fi
+  ready; check_facts
+}
+# check --json: the same facts for the console (check_update, R58), one JSON object on stdout; a problem is one too:
+# "no git", "not set up", "token" (GitHub refused the token: it may have expired) or "unreachable". Commit subjects are
+# as written on GitHub: the reader treats them as outside text.
+check_json() {
+  local s ib it ic ir head='' ht='' nc='' nt='' tc lock='' newer=false subj='' problem='' why=''
+  out() {  # out <problem> <why>
+    printf '%s' "$subj" | python3 -I -c 'import json, sys
+a = sys.argv[1:]
+def opt(v): return None if v in ("", "-") else v
+lock = {}
+try: lock = json.loads(a[13]) if a[13] else {}
+except Exception: lock = {}
+newest = None
+if opt(a[9]):
+    newest = {"commit": a[8], "tree": a[9], "build": lock.get("build") if isinstance(lock.get("build"), str) else None,
+              "testedAt": lock.get("testedAt") if isinstance(lock.get("testedAt"), str) else None,
+              "brainReads": lock.get("brainReads") if isinstance(lock.get("brainReads"), str) else None}
+print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo": opt(a[2]),
+  "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[12])},
+  "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8]},
+  "newest": newest, "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10]}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "" "${ir:-}" "$lock"
+  }
+  command -v git >/dev/null 2>&1 || { out 'no git' "git isn't installed on Spark 2."; return 0; }
+  read -r ib it ic <<<"$(installed)"
+  ir=$(python3 -I -c 'import json, re, sys
+try: r = json.load(open(sys.argv[1])).get("brainReads") or ""
+except Exception: r = ""
+print(r if re.fullmatch(r"[0-9a-f]{64}", str(r)) else "")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || true)
+  s=$(from_secrets) && [ -d "$REPO" ] || { out 'not set up' "The install from GitHub isn't set up on Spark 2: $ME setup <owner>/<repository>"; return 0; }
+  read -r REPO_NAME AUTH <<<"$s"
+  FETCH_ERR=''
+  if ! fetch "$(url_for "$REPO_NAME")" "$AUTH" 2>/dev/null; then
+    why=$(printf '%s\n' "$FETCH_ERR" | grep -E '^(fatal|remote):' | tail -n 1 | cut -c1-300 || true)
+    [ -n "$why" ] || why=$(printf '%s' "$FETCH_ERR" | tail -n 1 | cut -c1-300)
+    case "$FETCH_ERR" in
+      *[Aa]uthentication\ failed*|*[Ii]nvalid\ username*|*[Cc]ould\ not\ read\ [Uu]sername*|*[Rr]epository\ not\ found*|*" 401"*|*" 403"*) problem=token ;;
+      *) problem=unreachable ;;
+    esac
+    out "$problem" "$why"; return 0
+  fi
+  read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
+  read -r nc nt <<<"$(newest_tested || true)"
+  if [ -n "${nt:-}" ]; then
+    tc=$(g rev-parse -q --verify "refs/tags/tested/${nt:0:12}^{commit}" 2>/dev/null || true)
+    [ -z "$tc" ] || lock=$(g cat-file blob "$tc:$LOCK_PATH" 2>/dev/null | head -c 65536 || true)
+    if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
+    if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
+    else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
+  fi
+  out '' ''
+}
 
 install() {
   [ $# = 1 ] && [[ "$1" =~ ^[0-9a-f]{12}$ ]] || usage
