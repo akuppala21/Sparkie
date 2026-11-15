@@ -177,7 +177,7 @@ async function waitJob(id, ms = 30 * 60000) {
 }
 
 action({
-  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'control',
   description: 'Use to see the owner’s list of what should be running on each Spark (every model a change started, and every app kept running with keep_running, with its link and whether it answers now), and how each is now: running, changing, or held (and why). Held ones can be brought back.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => ({ observedAt: new Date().toISOString(), ...(await desiredNow({ check: true })) }),
