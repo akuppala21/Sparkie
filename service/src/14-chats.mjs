@@ -128,6 +128,8 @@ function outcomeText(label, out) {
   return out?.note || `${label}: done.`;
 }
 async function runChoice(viewer, conv, id, by) {
+  // (a dangerous ask past its life is closed first, so a late press is told so: 20-danger.mjs)
+  dangerLive();
   for (const [k, c] of pendingChoices) if (Date.now() - c.at > 15 * 60000) pendingChoices.delete(k);
   const c = pendingChoices.get(String(id || ''));
   if (!c || c.who !== sparkieWho(viewer, conv.id)) {

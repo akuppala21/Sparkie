@@ -2593,7 +2593,8 @@ PAGES.sparkie = function sparkiePage(view, r) {
           h('div', { class: 'msg-meta' }, h('strong', {}, 'Spark Console'), h('span', {}, fmt.time(m.createdAt))),
           h('div', { class: 'msg-body' }, (d.lines || []).map((l, i) => h('p', { style: { margin: '0 0 4px', ...(i ? {} : { 'font-weight': '600' }) } }, l)),
             d.long ? h('p', { style: { margin: '0 0 4px' } }, 'Long: read all of it before you answer.') : null,
-            d.code != null ? h('pre', { style: { 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere', margin: '6px 0' } }, d.code) : null,
+            // (framed, under a label of the page's own, so a line inside the command never reads as one of the ask's)
+            d.code != null ? h('div', { class: 'danger-cmd' }, h('p', {}, 'The exact command:'), h('pre', {}, d.code)) : null,
             end ? h('p', { style: { margin: '0' } }, end) : null),
           choiceRow(m)));
     }
