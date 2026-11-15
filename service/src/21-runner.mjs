@@ -204,7 +204,7 @@ function runnerHoldClaim(node, unit, until, release) {
 // Whether systemd on that Spark still runs a change's unit: 'live', 'gone' or 'unknown' (not answering).
 async function runnerUnitLive(node, unit) {
   if (!/^sw-run-[0-9a-f]{24}$/.test(String(unit || ''))) return 'unknown';
-  const r = await run(node, `systemctl is-active --quiet -- ${q(`${unit}.service`)}`, { timeout: 10000 }).catch(() => ({ code: -1 }));
+  const r = await run(node, `systemctl is-active --quiet ${q(`${unit}.service`)}`, { timeout: 10000 }).catch(() => ({ code: -1 }));
   return r.code === 0 ? 'live' : r.code === 3 || r.code === 4 ? 'gone' : 'unknown';
 }
 // A change a console restart cut off (journalAfterRestart): its Spark is held until its unit is gone or its time limit

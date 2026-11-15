@@ -35,6 +35,9 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUT
     put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\n", 0o755);
   } }, async () => {
   keys.act = await createActKey('ladder-act');
+  // (the console's first look at the tailnet, 1.5 s after it starts: until then no change runs at once, A7c)
+  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').includes('status --json'), { what: 'the first look at the tailnet' });
+  await sleep(500);
 });
 
 const H3 = () => join(T.fleet.root, 'spark3'), at3 = p => join(H3(), p), text = p => readFileSync(at3(p), 'utf8');
@@ -137,8 +140,9 @@ test('an agent\'s change is a button for the owner; not done, the lock-out class
   const chat = await newChat();
   const r = await turn(chat, 'fix the keys on spark 3', [[RUN('chmod 600 ~/.ssh/authorized_keys')]]);
   assert.equal(r.tools[0].ok, false);
-  assert.match(r.tools[0].tail, /^It can lock you out of Spark 3 \(It names “~\/\.ssh\/authorized_keys”/);
-  assert.match(r.tools[0].tail, /waits for the lock-out net/);
+  assert.match(r.tools[0].tail, /^Nothing ran: a change that can lock you out of Spark 3 waits for the lock-out net \(a later build\)/);
+  const [lock] = sentBack('fix the keys on spark 3');
+  assert.match(lock.error, /\. It names “~\/\.ssh\/authorized_keys”, one of the ways in/, JSON.stringify(lock));
   const hub = await run('touch notes/x.txt', 'spark2');
   assert.equal(hub.status, 403, hub.text);
   assert.equal(hub.json.error, 'Spark 2 runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.');
@@ -178,9 +182,10 @@ test('a change whose end is unknown holds its Spark until its time limit has pas
   assert.equal(second.status, 409, second.text);
   assert.match(second.json.error, /^Something is already changing on Spark 3 \(a command Sparkie is running there\)/);
   assert.ok(!existsSync(at3('notes/beside.txt')));
-  await waitFor(() => Date.now() - t0 > (SECONDS + 6 + 1) * 1000, { every: 250, what: 'the time limit to pass' });
-  const third = await run('touch notes/beside.txt');
-  assert.equal(third.status, 200, third.text);
+  // (systemd says its unit is gone: the Spark is let go then, before the time limit)
+  await waitFor(() => existsSync(at3('notes/held-done')), { every: 200, what: 'the change to end on the Spark' });
+  await waitFor(async () => (await run('touch notes/beside.txt')).status === 200, { every: 500, timeout: 5000, what: 'the Spark to be let go once its unit is gone' });
+  assert.ok(Date.now() - t0 < (SECONDS + 6) * 1000, 'let go before the time limit');
 });
 
 test('/undo, the owner\'s word, puts back this chat\'s last change while changes are paused', { timeout: 120000 * SLOW }, async () => {
@@ -236,7 +241,7 @@ test('a change starts in the work folder, ~/work, which the console makes first 
 test('a change the sorter places in the model store is asked, and runs after the yes; until the helper takes ~/ for --protect none is passed', { timeout: 120000 * SLOW }, async () => {
   mkdirSync(at3('models/m1'), { recursive: true });
   const chat = await newChat();
-  const r = await turn(chat, 'fix the model settings on spark 3', [[RUN('touch ~/models/m1/spark.json')]]);
+  const r = await turn(chat, 'fix the model settings on spark 3', [[RUN('touch models/m1/spark.json')]]);
   const [asked] = sentBack('fix the model settings on spark 3');
   assert.match(asked?.question || '', /\nAsked because it changes ~\/models, which a change gets only after your yes\.\n/, JSON.stringify(asked));
   assert.ok(!existsSync(at3('models/m1/spark.json')));
@@ -244,7 +249,7 @@ test('a change the sorter places in the model store is asked, and runs after the
   assert.equal(p.status, 200, p.text);
   assert.ok(existsSync(at3('models/m1/spark.json')), p.text);
   // (the owner's own call is refused, in the runner's words: no button to show there)
-  const d = await run('touch ~/models/m1/other.json');
+  const d = await run('touch models/m1/other.json');
   assert.equal(d.status, 409, d.text);
   assert.match(d.json.error, /^It changes ~\/models, which a change gets only after the owner’s yes, so nothing ran\.$/);
   // (HELPER_TAKES.homeProtect: off until the helper that takes --protect '~/…' is pinned; then the unit gets them)

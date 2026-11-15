@@ -121,7 +121,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) 
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
-  if (sorted.class === 'lockout') throw new HttpError(403, `It can lock you out of ${at} (${sorted.why}), so it waits for the lock-out net, which puts such a change back unless you confirm it: a later build. Nothing ran.`);
+  if (sorted.class === 'lockout') throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on).
   if (ctx.button && ctx.ownerConfirmed) {
     const key = workKey(node, command, ctx), was = workAsks.get(key);
