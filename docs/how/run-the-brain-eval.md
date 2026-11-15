@@ -24,13 +24,13 @@ Without the brain (to try the runner): `--stand-in --only <case> --runs 1 --out 
 The memory questions (design G 3.7): `--set memory` runs `test/eval/memory.json`, and the record names its file
 (`setFile`). Each memory addition is measured against the baseline with `--memory-off <names>` (of `names`, `past`,
 `time`, `digest`, `count`, `said`): each case's stand-in console gets `SPARK_CONSOLE_MEMORY_OFF`, a feature reads its
-name there, and the record says which were on (`memorySwitches`). A case may also have `before` (earlier chats),
-`seed` (memory lines and journal records, with dates), `has` and `hasNot` (words in the brain's requests for the
-turn), `answerHas` and `answerHasNot` (words in the answer, graded apart), `kind` and `switch` (the addition it
-measures), `as: "agent"` (one of the owner's agents asks, over the agent door) and `standIn` (the stand-in brain's
-rules); `test/eval.mjs`'s header has their shapes. The run prints each
-case and each kind with its rounds and seconds. `--set memory-held-out` is the held-out set: run it beside, and never
-copy its words into a prompt, a tool text, a document or another case file, or tune memory by it.
+name there, and the record says which were on (`memorySwitches`). A case may also have `before` (earlier chats), `seed`
+(memory lines, journal records, lessons, a long event log, with dates), `has` and `hasNot` (words in the brain's
+requests for the turn), `answerHas` and `answerHasNot` (words in the answer, graded apart), `kind` and `switch` (the
+addition it measures), `as: "agent"` (one of the owner's agents asks, over the agent door) and `standIn` (the stand-in
+brain's rules); `test/eval.mjs`'s header has their shapes. The run prints each case and each kind with its rounds and
+seconds. `--set memory-held-out` is the held-out set: run it beside, and never copy its words into a prompt, a tool
+text, a document or another case file, or tune memory by it.
 
 ## Also update
 

@@ -58,13 +58,16 @@
 //             engine, nodes, best: {decodeTokS}, runs?, at?}] (runs that worked, verified.json); newer: N made-up lines
 //             after the case's own, about nothing a question names, so memory is past its block; unreadable: true
 //             (memory.json can't be read); lessons: [{id: "l_…", kind, subject, tried, failure, failed, state, firstAt?,
-//             lastAt?}] (lessons.json, as Spark Console writes it). A date may also be "last-month" (its 15th) or
-//             "last-tuesday" (that day of last week, weeks starting on Monday as recall's)
+//             lastAt?}] (lessons.json, as Spark Console writes it); events: [{type, at?, …, errorLines?: {count, each,
+//             put}}] (events.jsonl; errorLines makes the event's error a long log: count lines of each, "{n}" its number,
+//             put: {"<line number>": its own text}). A date may also be "last-month" (its 15th) or "last-tuesday" (that
+//             day of last week, weeks starting on Monday as recall's)
 //   as        "agent": one of the owner's agents asks (a key made for it, ask_sparkie over the agent door), in its own
 //             chat; left out, the owner asks in a page chat
 //   has       words that must each be in a request the brain got for the case's turn (any round, any message; capitals
 //             or not); hasNot: words that must be in none. A run's record lists those that failed (missing, unwanted)
-//   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in
+//   standIn   rules for the stand-in brain (test/mock/model.mjs's model-script.json), used only with --stand-in; an
+//             argument "$record" is the record of the last digest the brain was sent (fillRecord)
 //   answerHas words that must each be in the answer (exact names, numbers); answerHasNot: words that must not be. Kept
 //             apart from has and hasNot, so what the brain is sent is graded exactly; a run's record lists those that
 //             failed (answerMissing, answerUnwanted)
@@ -166,8 +169,10 @@ const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id a
   : c.seed !== undefined && (!c.seed || typeof c.seed !== 'object' || !listOf(c.seed.memory, seedLineOk) || !listOf(c.seed.past, seedLineOk)
     || !listOf(c.seed.journal, r => /^[a-z]+$/.test(String(r?.k)) && (r.at === undefined || when(r.at)))
     || !listOf(c.seed.proven, v => filled(v?.model) && filled(v?.engine) && Array.isArray(v.nodes) && (v.at === undefined || when(v.at)))
+    || !listOf(c.seed.events, e => filled(e?.type) && (e.at === undefined || when(e.at)) && (e.errorLines === undefined
+      || (Number.isInteger(e.errorLines.count) && e.errorLines.count > 0 && e.errorLines.count <= 100000 && filled(e.errorLines.each))))
     || !listOf(c.seed.lessons, l => /^l_[0-9a-f]{8}$/.test(String(l?.id)) && [l.firstAt, l.lastAt].every(x => x === undefined || when(x)))
-    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], lessons: [{id: l_…, …}], newer: N and unreadable'
+    || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], lessons: [{id: l_…, …}], events: [{type, at?, errorLines?}], newer: N and unreadable'
     : c.as !== undefined && c.as !== 'agent' ? 'as: "agent" (one of the owner\'s agents asks), or left out (the owner)'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
 for (const c of CASE_LIST) { const p = caseProblem(c); if (p) { console.error(`${SET_FILE}: the case ${c?.id ?? '(no id)'} ${p}.`); process.exit(1); } }
@@ -193,11 +198,22 @@ function seedCase(c, stateDir) {
   // (lessons as Spark Console writes them, lessons.json, newest first; firstAt and lastAt may be dates as above)
   const lessons = (c.seed?.lessons || []).map(l => ({ ...l, firstAt: at(l.firstAt ?? l.lastAt), lastAt: at(l.lastAt ?? l.firstAt) })).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
   if (lessons.length) writeFileSync(join(stateDir, 'lessons.json'), JSON.stringify({ lessons }), { mode: 0o600 });
+  // (fleet events, events.jsonl; errorLines makes a long error: count lines of each, "{n}" its number, put by number)
+  const events = (c.seed?.events || []).map(({ errorLines: e, ...ev }) => ({ ...ev, at: at(ev.at),
+    ...(e ? { error: Array.from({ length: e.count }, (_, i) => e.put?.[i + 1] ?? e.each.replaceAll('{n}', String(i + 1))).join('\n') } : {}) }));
+  if (events.length) writeFileSync(join(stateDir, 'events.jsonl'), events.map(e => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
   for (const r of c.seed?.journal || []) {
     const t = at(r.at), folder = join(dir, 'journal');
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     appendFileSync(join(folder, `journal-${t.slice(0, 7)}.jsonl`), `${JSON.stringify({ id: `j_${randomBytes(6).toString('hex')}`, ...r, at: t })}\n`, { mode: 0o600 });
   }
+}
+// "$record" in a case's stand-in rules is the record of the last digest the brain was sent (a long result, kept whole in
+// the journal): the relay fills it in before the stand-in reads its rules again, so its next call can be recall {id,
+// find}. With no digest sent (the switch digest off) it stays "$record", and that call is refused.
+function fillRecord(c, stateDir, msgs) {
+  const record = msgs.filter(m => m?.role === 'tool').map(m => { try { return JSON.parse(m.content)?.record; } catch { return null; } }).filter(x => /^j_[0-9a-f]{12}$/.test(String(x))).at(-1);
+  if (record) writeFileSync(join(stateDir, '..', 'model-script.json'), JSON.stringify(c.standIn).replaceAll('"$record"', JSON.stringify(record)));
 }
 // A made-up line for seed.newer: about a hallway clock, so no question's names or rare words are in it.
 const NEWER_LINE = n => `note ${n}: the hallway clock ran ${n} minutes fast after the storm, so the kitchen timer was set by hand again`;
@@ -221,7 +237,7 @@ const CHANGES = ['start_model', 'stop_model', 'restart_model', 'cancel_operation
 // A relay on this machine in front of the brain, one for each run: every request passes unchanged, and the requests
 // whose user message holds the case's words (one for each round of that turn) are counted, and their messages kept for
 // has and hasNot.
-async function relay(target, words) {
+async function relay(target, words, onTurn = null) {
   const u = new URL(target), lib = u.protocol === 'https:' ? https : http, base = u.pathname.replace(/\/$/, '');
   let rounds = 0, seen = [];
   const server = http.createServer((req, res) => {
@@ -232,7 +248,7 @@ async function relay(target, words) {
       if (req.method === 'POST' && /\/chat\/completions$/.test(req.url)) {
         try {
           const msgs = JSON.parse(body).messages;
-          if (msgs?.some(m => m?.role === 'user' && String(m.content).includes(words))) { rounds++; seen.push(msgs.map(m => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))).join('\n')); }
+          if (msgs?.some(m => m?.role === 'user' && String(m.content).includes(words))) { rounds++; seen.push(msgs.map(m => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))).join('\n')); onTurn?.(msgs); }
         } catch {}
       }
       const up = lib.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: `${base}${req.url}`, method: req.method,
@@ -316,7 +332,7 @@ async function runCase(c) {
         m.current = SETUP;
       }
       link?.close();
-      link = await relay(STAND_IN ? `http://127.0.0.1:${m.presets[m.current].port}` : BRAIN, c.say);
+      link = await relay(STAND_IN ? `http://127.0.0.1:${m.presets[m.current].port}` : BRAIN, c.say, STAND_IN && JSON.stringify(c.standIn || []).includes('"$record"') ? msgs => fillRecord(c, stateDir, msgs) : null);
       for (const p of Object.values(m.presets)) p.port = link.port;
       setup = { id: m.current, ...m.presets[m.current] };
       runAs(root, setup, SERVING?.ran);
