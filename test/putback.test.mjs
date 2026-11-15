@@ -9,13 +9,13 @@
 // the removed passkey and key stay out, and a counter older in the copy than in the passkey breaks nothing. The next
 // start holds no more. A new disk (a number in the state, no secrets file) holds too. go-back.sh and an update's way
 // back put back program files only and never trip it; restore.sh --with-state brings the older number back.
-import { test, describe, after } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { T, request, call, newChat, say, eventLines, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, request, call, newChat, say, eventLines, waitFor, sleep, createActKey, api, ASK, SLOW } from './lib.mjs';
 import { startMock, serviceConfig, REPO } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
@@ -251,5 +251,68 @@ describe('go-back.sh and an update’s way back never trip the hold', () => {
     const stateWrites = [...g.matchAll(/"\$STATE\/([\w.-]+)"/g)].map(m => m[1]);
     assert.deepEqual([...new Set(stateWrites)].sort(), ['api.sock', 'update-result.json']);
     assert.doesNotMatch(g, /auth-serial|secrets\.json|\.config\/spark-console/);
+  });
+});
+
+// The paired Telegram chat under the hold (the pairing is in the secrets file: it never came back). The owner's own
+// everyday requests there are answered and run; a press on an approval there is refused with its line; an agent's
+// change asked through its chat with Sparkie is refused. Held from the start: a state number below the secrets file's.
+describe('under the hold, the paired Telegram chat', { concurrency: 1 }, () => {
+  const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
+  const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
+  const TG_LINE = 'Spark Console’s state was put back from a copy, so this waits until you have looked at what came back: open Spark Console once on your tailnet.';
+  let P, agent, msgId = 1;
+  before(async () => {
+    P = await startMock({ telegram: true, knowledge: true, watchMs: 60000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' }, prepare: ({ dir, stateDir }) => {
+      mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner',
+        pairedAt: '2026-11-10T00:00:00.000Z', approve: true }, auth: { serial: 2 } }), { mode: 0o600 });
+      writeFileSync(join(stateDir, 'auth-serial.json'), JSON.stringify({ serial: 1 }), { mode: 0o600 });
+    } });
+    use(P);
+    agent = await createActKey('putback-tg');
+    await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
+  }, { timeout: 180000 * SLOW });
+  after(() => P?.stop(), { timeout: 30000 });
+  const tgPost = async (path, body) => (await fetch(`http://127.0.0.1:${P.telegramPort}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+  const tgSent = (from = 0) => { const f = join(P.dir, 'telegram-calls.jsonl'); return (existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : []).slice(from).filter(c => c.method === 'sendMessage'); };
+  const tgCount = () => { const f = join(P.dir, 'telegram-calls.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).length : 0; };
+  const tgSay = text => tgPost('/__push', { message: { message_id: msgId++, date: Math.floor(Date.now() / 1000), chat: { id: OWNER_TG, type: 'private' }, from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, text } });
+  const tgPress = data => tgPost('/__push', { callback_query: { id: String(msgId++), from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, data,
+    message: { message_id: msgId++, chat: { id: OWNER_TG, type: 'private' }, date: Math.floor(Date.now() / 1000) } } });
+  const stateOf = (spark, name) => readFileSync(join(P.root, spark, '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+
+  test('it holds, and the owner’s everyday requests in the paired chat are answered and run', { timeout: 180000 * SLOW }, async () => {
+    assert.equal((await net(P, '/whoami')).json.held, LINE);
+    let from = tgCount();
+    await tgSay('/status');
+    assert.ok((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the answer to /status' })).body.text.length > 0);
+    from = tgCount();
+    await tgSay(`stop ${RADIX} on spark 4`);
+    await waitFor(() => stateOf('spark4', RADIX) === 'exited', { timeout: 60000, what: 'the owner’s stop, asked on Telegram' });
+    assert.ok((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the reply on Telegram' })).body.text.length > 0);
+  });
+
+  test('an approval pressed there is refused with its line, and nothing runs', { timeout: 180000 * SLOW }, async () => {
+    is(await ask(P, '/main/route', { method: 'POST', body: { role: 'agents', choice: `deploy:spark3:${TESTORG}` } }), 200, 'the model answers agents: its stop is the owner’s call');
+    let from = tgCount();
+    const r = await say(await newChat(), `stop ${TESTORG} on spark 3`);
+    const yes = (r.message.choices || []).find(c => c.label === `Yes, stop ${TESTORG}`);
+    assert.ok(yes, JSON.stringify(r.message));
+    await waitFor(() => tgSent(from).find(m => m.body.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === yes.id))), { timeout: 30000, every: 200, what: 'the ask on Telegram' });
+    from = tgCount();
+    await tgPress(yes.id);
+    assert.equal((await waitFor(() => tgSent(from)[0], { timeout: 60000, every: 200, what: 'the answer to the press' })).body.text, TG_LINE);
+    await sleep(1000);
+    assert.equal(stateOf('spark3', TESTORG), 'running', 'nothing stopped');
+  });
+
+  test('an agent’s change asked through its chat with Sparkie is refused, and nothing runs', { timeout: 180000 * SLOW }, async () => {
+    // (the owner's stop above left it exited: a restart is a change)
+    const was = stateOf('spark4', RADIX);
+    const r = await call(agent.token, ASK, { message: `restart ${RADIX} on spark 4` });
+    assert.match(r.raw, /state was put back from a copy, so agents can’t change anything/, r.raw);
+    await sleep(1000);
+    assert.equal(stateOf('spark4', RADIX), was, 'nothing changed there');
   });
 });
