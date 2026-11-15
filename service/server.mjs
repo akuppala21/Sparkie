@@ -5811,7 +5811,7 @@ function changeLabel(name, input) {
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
   // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
-  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”`;
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'run_workflow') {
     const given = Object.entries(input.inputs || {}).map(([k, v]) => `${k} ${maskSecrets(String(v)).slice(0, 60)}`);
@@ -9575,9 +9575,14 @@ function memoryNamesIn(text, max = ABOUT_MAX) {
   return [...new Set(kept.map(m => m.name))].slice(0, max);
 }
 
-// The index: the live lines, each with its names, and each name's lines in the file's order; each word's lines too, for
-// the picker's rare words (byWord). `sig` is memory.json as the index last saw it (its inode, size and times), so a look
-// needs no read while the file is unchanged.
+// Spark 2's own day, YYYY-MM-DD; whether a line is past its last day (`until`, G4: 20-memory-time.mjs); live if not.
+// (memoryEnded takes one argument: it is handed to filter.)
+const memoryDay = (t = new Date()) => new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const memoryEnded = e => typeof e?.until === 'string' && e.until < memoryDay() && !memoryOffFor('time');
+const memoryLive = e => !memoryEnded(e);
+// The index: the live lines (none past its day: it is made again when the day turns), each with its names, and each
+// name's lines in the file's order; each word's lines too, for the picker's rare words (byWord). `sig` is memory.json as
+// the index last saw it (its inode, size and times), so a look needs no read while the file is unchanged.
 let memIndex = null;
 function memorySig() {
   try { const s = statSync(MEMORY_FILE, { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; } catch (e) { return e.code === 'ENOENT' ? 'none' : null; }
@@ -9589,19 +9594,19 @@ function memoryNamed(lines) {
   return lines.map(e => (Array.isArray(e.about) ? e : { ...e, about: (was.get(e.id)?.text === e.text && was.get(e.id).about) || memoryNamesIn(e.text) }));
 }
 function memoryIndexOf(entries, sig) {
-  const lines = memoryNamed(entries), byName = new Map(), byWord = new Map();
+  const lines = memoryNamed(entries.filter(memoryLive)), byName = new Map(), byWord = new Map();
   const put = (map, k, e) => { const at = map.get(k); if (at) at.push(e); else map.set(k, [e]); };
   for (const e of lines) {
     for (const n of new Set(e.about)) if (typeof n === 'string') put(byName, n, e);
     for (const w of new Set(pickWords(e.text))) put(byWord, w, e);
   }
-  memIndex = { sig, lines, byName, byWord };
+  memIndex = { sig, lines, byName, byWord, day: memoryDay() };
   return memIndex;
 }
 // The index as memory.json is now: read again only when the file changed (a read error throws, as memoryEntries does).
 function memoryIndexNow() {
   const sig = memorySig();
-  if (memIndex && sig && sig === memIndex.sig) return memIndex;
+  if (memIndex && sig && sig === memIndex.sig && memIndex.day === memoryDay()) return memIndex;
   const entries = memoryEntries(), after = memorySig();
   return memoryIndexOf(entries, after === sig ? after : null);
 }
@@ -9713,7 +9718,7 @@ function memoryPicks(words, setup) {
   return { lines, left: ranked - lines.length, names, ms: performance.now() - t0 };
 }
 // A picked line says where it came from: the owner (on Telegram, if said there) or the agent that noted it.
-const pickLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}, ${e.by === 'owner' ? `said by the owner${e.src?.channel === 'telegram' ? ' on Telegram' : ''}` : `noted by ${e.by || 'an agent'}`}) ${e.text}`;
+const pickLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}${e.until && !memoryOffFor('time') ? `, until ${e.until}` : ''}, ${e.by === 'owner' ? `said by the owner${e.src?.channel === 'telegram' ? ' on Telegram' : ''}` : `noted by ${e.by || 'an agent'}`}) ${e.text}`;
 // The picks as they go in Spark Console's record ahead of the owner's words (brainContext), or null when none.
 function memoryPickBlock(words, setup) {
   const p = memoryPicks(words, setup);
@@ -9725,6 +9730,84 @@ function memoryPickBlock(words, setup) {
 setTimeout(() => {
   try { memoryNameBook(); memoryIndexNow(); } catch (e) { console.error(`Memory’s index wasn’t made at start (${e.message}); it is made when memory is next read.`); }
 }, 0);
+/* ───────── memory's lines in time: an end date, a fact said again, the other lines about the same thing ───────── */
+// Area: record        Rules: R45        Tests: memory-time.test.mjs
+// Owns: none        Timers: none        Wakes: none
+// Design G's third addition (A3, step 4). The brain eval switches it off with `time` in SPARK_CONSOLE_MEMORY_OFF
+// (test/eval.mjs): then memory is as the build before this one kept it, and an `until` given to remember is not kept.
+// - `until`: the last day a line is true (YYYY-MM-DD, Spark 2's own day). After it the line is in no prompt and no
+//   pick; `memory {past: true}` shows it as past (why "expired"), and the next save of memory moves it to
+//   memory-past.json. It is never deleted. A day already gone when the line is saved is refused. Sparkie keeps a line
+//   with an end at once only when the owner's words hold a time word ("until Friday"); else it is a button.
+// - A fact said again: a new line about the same names as a live line, with that line's numbers and at least 0.8 of its
+//   own words (common words left out), takes that line's place, and the result says which ("instead of"). An agent's
+//   line never takes an owner's line's place: it joins it, and nothing new is kept.
+// - The other live lines about the same names come back on the result (two at most, newest first), so the brain and
+//   the owner see at once a line the new one may make untrue ("I also have: … Still true?").
+const NEAR_SHARE = 0.8, ALSO_MAX = 2;
+// Whether one of the additions of design G 3 is switched off for this run: the brain eval's switches (test/eval.mjs),
+// on the stand-in fleet only, as the picker's (memoryPicking). Whether a line is past its day is memoryEnded's
+// (20-memory-names.mjs: the index holds only the live lines).
+const memoryOffFor = name => ALL_LOCAL && String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').map(s => s.trim()).includes(name);
+// A line past its day, as memory's history keeps it: gone at the start of the next day, by Spark Console.
+function memoryExpired(e) {
+  const at = new Date(`${e.until}T00:00:00`);
+  at.setDate(at.getDate() + 1);
+  return { ...e, gone: { at: Number.isNaN(at.getTime()) ? new Date().toISOString() : at.toISOString(), why: 'expired', who: 'Spark Console' } };
+}
+// At a save: the lines past their day leave the live list for the past file (saveMemory).
+const memoryExpire = (entries, gone) => (entries.some(memoryEnded) ? [entries.filter(memoryLive), [...gone, ...entries.filter(memoryEnded).map(memoryExpired)]] : [entries, gone]);
+// `until` as remember takes it: a real day, from today on. null when none was given, or with `time` off.
+function memoryUntil(until) {
+  if (until === undefined || until === null || memoryOffFor('time')) return null;
+  const d = new Date(`${until}T00:00:00Z`), today = memoryDay();
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== until) throw new HttpError(400, `until isn’t a real day: ${until}. Give the last day it is true, as YYYY-MM-DD.`);
+  if (until < today) throw new HttpError(400, `That end (${until}) has already passed: today is ${today}. Nothing was kept. Say it again with no end, or with a day from today on.`);
+  return until;
+}
+// The owner's words name a time, so a line with an end may be kept from them without a button (memoryClear).
+const TIME_WORDS = /\b(?:until|till|til|through|thru|today|tonight|tomorrow|weekend|(?:this|next|coming)\s+(?:week|month|year)|end\s+of|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|january|february|march|april|june|july|august|september|october|november|december|(?:jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.?|for\s+(?:the\s+)?(?:next\s+)?(?:a|an|one|two|three|four|five|six|seven|\d+)\s+(?:days?|weeks?|months?)|\d{4}-\d\d-\d\d|\d{1,2}\/\d{1,2})\b/i;
+
+// Words that say nothing about what a line is about: left out when two lines are compared. So are memoryClear's.
+const SAID_AGAIN_SKIP = new Set(('a an the is are was were be been being am on in at of to for from with by about into onto over under up down out off ' +
+  'and or but nor so if then than as it its this that these those there here i me my mine we us our you your yours he him his she her ' +
+  'they them their do does did done doing has have had having not no never don doesn didn isn aren wasn won cannot will would should could ' +
+  'can may might must shall now just only also still too very really all any some each every more most what which who whom whose when ' +
+  'where why how one ones thing things').split(' '));
+// A line's own words, to compare: lower case, a Spark said by number one word, no web address, no common word. Numbers stay.
+const lineWords = text => new Set(nameWords(text).filter(w => !SAID_AGAIN_SKIP.has(w) && !MEMORY_FILLER.has(w) && (w.length > 1 || /\d/.test(w))));
+const sameNames = (a, b) => [...new Set(a || [])].sort().join(' ') === [...new Set(b || [])].sort().join(' ');
+// The live line a new one says again, if any: about the same names, holding that line's numbers, and at least 0.8 of
+// its own words. The closest, the newest of equals. None with `time` off.
+function memorySaidAgain(text, about, lines) {
+  if (memoryOffFor('time')) return null;
+  const mine = lineWords(text);
+  let best = null, share = 0;
+  for (const e of memoryNamed(lines.filter(memoryLive))) {
+    const theirs = [...lineWords(e.text)];
+    if (!theirs.length || !sameNames(e.about, about) || theirs.some(w => /\d/.test(w) && !mine.has(w))) continue;
+    const s = theirs.filter(w => mine.has(w)).length / theirs.length;
+    if (s >= NEAR_SHARE && s >= share) { best = e; share = s; }
+  }
+  return best;
+}
+// The other live lines about the names of a line just kept, from the names index: two at most, newest first.
+function memoryAlso(entry) {
+  if (memoryOffFor('time') || !entry.about?.length) return [];
+  try {
+    const seen = new Set([entry.id]), out = [];
+    for (const n of entry.about) for (const e of memoryLinesAbout(n)) if (!seen.has(e.id) && memoryLive(e)) { seen.add(e.id); out.push(e); }
+    return out.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, ALSO_MAX).map(e => ({ id: e.id, text: e.text, at: e.at, by: e.by }));
+  } catch (e) {
+    console.error(`The other lines about what a memory line names weren’t read (${e.message}).`);
+    return [];
+  }
+}
+// How a kept line is said back: "I’ll remember: …", what it took the place of, its end, and the other lines to check.
+function memorySaid(line, { until = null, gone = null, also = [] } = {}) {
+  const others = also.map(a => `“${a.text}” (${String(a.at).slice(0, 10)})`).join(' and ');
+  return `I’ll remember: ${line}${until ? ` (until ${until})` : ''}${gone ? ` (instead of: ${gone.text})` : ''}${others ? `${/[.!?]$/.test(line) ? '' : '.'} I also have: ${others}. Still true?` : ''}`;
+}
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
 // Area: record        Rules: R20, R22, R25, R26, R45        Tests: sparkie-more.test.mjs, memory.test.mjs
 // Owns: memory.json (writers: saveMemory), memory-past.json (writers: saveMemory)
@@ -9752,6 +9835,8 @@ const memoryPast = () => { const f = readKept(MEMORY_PAST_FILE); return Array.is
 // An erase (`erased`, a line's id) takes every record of it out of the past file and saves both files twice, so neither
 // copy from before the last save (<file>.prev, writePrivate) still holds its words.
 function saveMemory(entries, gone = [], erased = null) {
+  // (a line past its last day leaves the live list at the save, as expired: 20-memory-time.mjs)
+  [entries, gone] = memoryExpire(entries, gone);
   // (every line is written with what it is about, and the index follows the save: 20-memory-names.mjs)
   [entries, gone] = [memoryNamed(entries), memoryNamed(gone)];
   const past = gone.length || erased ? [...memoryPast().filter(p => p.id !== erased && !gone.some(g => g.id === p.id)), ...gone] : null;
@@ -9778,7 +9863,7 @@ function notTheOwners(e, ctx) {
   throw new HttpError(403, 'That line is the owner’s: an agent never replaces or forgets it, so nothing was changed. The owner can, in their own chat with Sparkie.');
 }
 // (each line shows its id, so a line that's no longer true can be replaced or forgotten by it)
-const memoryLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}) ${e.text}`;
+const memoryLine = e => `- [${e.id}] (${e.kind}, ${String(e.at).slice(0, 10)}${e.until && !memoryOffFor('time') ? `, until ${e.until}` : ''}) ${e.text}`;
 // The block in Sparkie's prompt: owner's lines first, then agents', oldest first so it only grows at the end.
 // A memory.json that can't be read (permissions, too many open files) gives a turn without the lines and one fixed line
 // saying so: the turn never fails for it, and the file is left alone (remember and forget_memory still refuse, R20).
@@ -9799,7 +9884,8 @@ function memoryFit(all) {
 // (chosen: the lines, the ones shown and the line after them, as the picker's memorySystem gives them, 20-memory-names.mjs)
 function memoryPrompt(chosen = null) {
   try {
-    const all = chosen ? chosen.all : memoryEntries();
+    // (a line past its last day is in no prompt: 20-memory-names.mjs memoryLive)
+    const all = (chosen ? chosen.all : memoryEntries()).filter(memoryLive);
     if (!all.length) return null;
     const fit = chosen ? chosen.shown : memoryFit(all), more = all.length - fit.length;
     const owner = fit.filter(e => e.by === 'owner'), others = fit.filter(e => e.by !== 'owner');
@@ -9817,8 +9903,10 @@ function memoryPrompt(chosen = null) {
 // agent door, or Sparkie in an agent's chat) or sent out to Telegram (review of G1, 2026-11-14).
 function memoryWithPast(ctx) {
   if (ctx.via === 'agent' || ctx.agent || ctx.channel) throw new HttpError(403, 'The lines that were replaced or forgotten are shown to the owner only, in Spark Console.');
-  const entries = memoryEntries(), live = new Set(entries.map(e => e.id)), past = memoryPast().filter(p => !live.has(p.id));
-  const textOf = id => (entries.find(e => e.id === id) || past.find(p => p.id === id))?.text ?? null;
+  const all = memoryEntries(), live = new Set(all.map(e => e.id)), entries = all.filter(memoryLive);
+  // (a line past its last day is shown as past, expired, until the next save moves it there: 20-memory-time.mjs)
+  const past = [...memoryPast().filter(p => !live.has(p.id)), ...all.filter(memoryEnded).map(memoryExpired)];
+  const textOf = id => (all.find(e => e.id === id) || past.find(p => p.id === id))?.text ?? null;
   const shown = ctx.via === 'api' ? x => x : withoutAbout;
   return { entries: entries.map(shown), past: past.map(p => shown(p.gone?.by ? { ...p, replacedBy: { id: p.gone.by, text: textOf(p.gone.by) } } : p)) };
 }
@@ -9828,8 +9916,29 @@ action({
   description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory), who it is from (by) and where it came from (src). Sparkie already sees these; agents read them here. With past: true (the owner’s own, in Spark Console), also the lines replaced or forgotten (kept, no longer used), each with when, why and what replaced it.',
   input: { type: 'object', properties: { past: { type: 'boolean', description: 'true: also list the lines that were replaced or forgotten (the owner’s own, in Spark Console).' } }, additionalProperties: false },
   // (the owner's own call sees what each line is about, from the index; Sparkie and agents see the lines as before)
-  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: ctx.via === 'api' ? memoryIndexNow().lines : memoryEntries().map(withoutAbout) }),
+  run: async ({ past } = {}, viewer, ctx = {}) => (past ? memoryWithPast(ctx) : { entries: ctx.via === 'api' ? memoryIndexNow().lines.filter(memoryLive) : memoryEntries().filter(memoryLive).map(withoutAbout) }),
 });
+// What remember does: one line kept, through saveMemory. An end (`until`), a fact said again and the other lines about the
+// same names are 20-memory-time.mjs's.
+function keepLine({ text, kind = 'preference', replaces, until: end }, ctx) {
+  const line = String(text).replace(/\s+/g, ' ').trim();
+  if (maskSecrets(line) !== line) throw new HttpError(400, 'That looks like it has a secret in it (a key, token or password). Memory never keeps those.');
+  const until = memoryUntil(end);
+  const before = memoryEntries(), old = replaces ? before.find(e => e.id === replaces) : null;
+  if (replaces && !old) throw new HttpError(404, 'There’s no such line in memory to replace (memory lists them).');
+  notTheOwners(old, ctx);
+  const all = before.filter(e => e !== old);
+  if (all.some(e => memoryLive(e) && e.text.toLowerCase() === line.toLowerCase() && !(until && e.until !== until))) return { outcome: 'already', note: `Already remembered: ${line}` };
+  const about = memoryNamesIn(line), again = old ? null : memorySaidAgain(line, about, all);
+  // (an agent saying an owner's line again joins it: it never takes an owner's line's place, R45)
+  if (again?.by === 'owner' && (ctx.via === 'agent' || ctx.agent)) return { outcome: 'already', joined: { id: again.id, text: again.text }, note: `The owner already said nearly that: “${again.text}”. Nothing new was kept.` };
+  const gone = old || again;
+  const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line, about,
+    by: lineBy(ctx), at: new Date().toISOString(), src: lineSrc(ctx), ...(gone ? { replaces: gone.id } : {}), ...(until ? { until } : {}) };
+  saveMemory([...all.filter(e => e.id !== again?.id), entry], gone ? [retired(gone, 'replaced', ctx, entry.id)] : []);
+  const also = gone ? [] : memoryAlso(entry);
+  return { outcome: 'remembered', id: entry.id, ...(again ? { replaced: { id: again.id, text: again.text } } : {}), ...(also.length ? { also } : {}), note: memorySaid(line, { until, gone, also }) };
+}
 action({
   name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
   description: 'Use when the owner tells you something lasting: a fact about the fleet or themselves, how they want things done, or a correction ("Spark 4 is on Ethernet now", "from now on…", "no, I meant…"), whether or not they say “remember”. One short line in their words, kept across chats. If it makes a line you remember untrue, pass that line’s id as replaces (one call, not forget then remember). Not for one-off requests, or things the live system already says (what runs where). Say back what you’ll remember.',
@@ -9837,20 +9946,9 @@ action({
     text: { type: 'string', minLength: 3, maxLength: 300, description: 'What to remember, in one line, in the owner’s words.' },
     kind: { type: 'string', enum: MEMORY_KINDS, description: 'preference (how they want things), correction (what you got wrong), fact (about the fleet or them), lesson (what worked or failed).' },
     replaces: { type: 'string', pattern: '^[0-9a-f]{8}$', description: 'The id of a remembered line this one replaces (it’s no longer true), from the list in your instructions or from memory.' },
+    until: { type: 'string', pattern: '^\\d{4}-\\d\\d-\\d\\d$', description: 'Only when the owner gave an end (“until Friday”): the last day it is true, YYYY-MM-DD. After it the line is no longer used.' },
   }, required: ['text'], additionalProperties: false },
-  run: async ({ text, kind = 'preference', replaces }, viewer, ctx) => {
-    const line = String(text).replace(/\s+/g, ' ').trim();
-    if (maskSecrets(line) !== line) throw new HttpError(400, 'That looks like it has a secret in it (a key, token or password). Memory never keeps those.');
-    const before = memoryEntries(), old = replaces ? before.find(e => e.id === replaces) : null;
-    if (replaces && !old) throw new HttpError(404, 'There’s no such line in memory to replace (memory lists them).');
-    notTheOwners(old, ctx);
-    const all = before.filter(e => e !== old);
-    if (all.some(e => e.text.toLowerCase() === line.toLowerCase())) return { outcome: 'already', note: `Already remembered: ${line}` };
-    const entry = { id: randomBytes(4).toString('hex'), kind: MEMORY_KINDS.includes(kind) ? kind : 'preference', text: line, about: memoryNamesIn(line),
-      by: lineBy(ctx), at: new Date().toISOString(), src: lineSrc(ctx), ...(old ? { replaces: old.id } : {}) };
-    saveMemory([...all, entry], old ? [retired(old, 'replaced', ctx, entry.id)] : []);
-    return { outcome: 'remembered', id: entry.id, note: `I’ll remember: ${line}${old ? ` (instead of: ${old.text})` : ''}` };
-  },
+  run: async ({ text, kind = 'preference', replaces, until }, viewer, ctx) => keepLine({ text, kind, replaces, until }, ctx),
 });
 action({
   name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'memory',
@@ -9954,6 +10052,8 @@ function memoryClear(name, input, ctx, asked) {
   // Forgetting: the line exists, this message says to forget, and the line is what they're talking about (never skipped).
   if (name === 'forget_memory') { const e = entry(input.id); return Boolean(e) && saysForget(ctx.request) && about(e.text) >= 0.3; }
   if (refusesRemember(ctx)) return false;
+  // (a line with an end, only when the owner's words name a time: 20-memory-time.mjs)
+  if (input.until && !memoryOffFor('time') && !TIME_WORDS.test(words)) return false;
   const line = shared(input.text);
   if (ctx.readOutside ? line.share < 0.6 : line.share < 0.25 && line.hits < 2) return false;
   if (input.replaces && !(entry(input.replaces) && about(entry(input.replaces).text) >= 0.3)) return false;
