@@ -535,7 +535,7 @@ const handler = async (req, res) => {
       return send(res, 202, publicJob(startTestChanges(viewer, 'page')));
     }
     // Telegram (21-telegram.mjs, R32): connecting and pairing need the passkey (the gate above); disconnecting never does.
-    if (path === '/telegram' || path === '/telegram/pair' || path === '/telegram/needs') {
+    if (path === '/telegram' || path === '/telegram/pair' || path === '/telegram/needs' || path === '/telegram/approve') {
       ownerOnly();
       return await telegramRoute(req, res, path, viewer);
     }

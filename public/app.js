@@ -3100,6 +3100,12 @@ async function telegramNeedsMe(box) {
   try { state.telegram = await capi('telegram/needs', 'PUT', { on }); } catch (e) { if (box.isConnected) box.checked = !on; failToast(e); }
   runLive();
 }
+// Approve from Telegram (A10a): on needs the passkey; off never does. /lock in the paired chat turns it off too.
+async function telegramApprove(box) {
+  const on = box.checked;
+  try { state.telegram = await capi('telegram/approve', 'PUT', { on }); } catch (e) { if (box.isConnected) box.checked = !on; failToast(e); }
+  runLive();
+}
 function watchPairing() {
   if (telegramPoll || !state.telegram?.code) return;
   telegramPoll = setTimeout(async () => { telegramPoll = null; if (document.querySelector('.agents-drawer')) { await loadTelegram(); watchPairing(); } }, 4000);
@@ -3126,6 +3132,8 @@ function telegramPanel() {
       // The needs-me line (H5): off until switched on here, with the passkey; off never needs it.
       h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.needsMe), onchange: e => telegramNeedsMe(e.target) }),
         'Tell me on Telegram when something new needs me (at most 3 a day)'));
+    put(body, h('label', { class: 'toggle', style: { 'margin-bottom': '10px' } }, h('input', { type: 'checkbox', role: 'switch', checked: Boolean(t.approve), onchange: e => telegramApprove(e.target) }),
+      'Let me approve changes from Telegram (at most 3 an hour, 10 a day; /lock there turns this off)'));
   } else if (t.code) {
     watchPairing();
     put(body, note(`Open this on the device with your Telegram and press Start. It works once, until ${fmt.when(t.code.expiresAt)}.`),
