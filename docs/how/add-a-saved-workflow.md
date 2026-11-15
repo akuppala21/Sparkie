@@ -17,6 +17,7 @@ the map's "Where new things go", row "A saved workflow".
 - A `keep_running` step may leave out its Spark: `pickSpark` places it when the run reaches it, waking one if it must.
 - “Save that as X” is `save_workflow {title, from: "this request"}`: the request's changes, from the journal (R35).
 - The owner's yes to a save covers the images its steps start (`approved`); a changed step asks again (R35, D6c).
+- `compare_models` runs one with each candidate model (a `model` input) and keeps the winner as `best` (R57).
 
 ## Also update
 
