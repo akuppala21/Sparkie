@@ -2,8 +2,9 @@
 // answers 4 at once it gets SPARK_MODEL_URL (Spark Console's one address, which answers with its models), SPARK_MODEL_NAME
 // "sparkie" and SPARK_MODEL_PARALLEL 2 (its 4 less 2: one place for another app, one for the owner's chat); after a step
 // that started or found a model, that model's name and 4 at once; a name the step sets itself is kept; a job run again by
-// name is handed nothing (it keeps what it was made with). A brain that answers one call at a time, or whose setup doesn't
-// say it can chat, isn't handed, and the run says why.
+// name is handed nothing (it keeps what it was made with), and so is a job step that names its image when its container
+// is there already (the workloads review, C1: it runs again as it was made). A brain that answers one call at a time, or
+// whose setup doesn't say it can chat, isn't handed, and the run says why.
 //
 // A new image in a saved step is the owner's question until a save's yes covers it (D6c), so each run here ends at that
 // question, after the settings are added: the question's words list the job's settings exactly as it would run. The
@@ -12,9 +13,9 @@
 // sc-gpt-oss-20b.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, request, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, request, api, waitFor, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 const GPT20 = 'sc-gpt-oss-20b', IMAGE = 'python:3.12-slim';
@@ -76,6 +77,26 @@ describe('a job is handed the one model address (D7)', { concurrency: 1 }, () =>
     // (no image: keep_running with a name only; nothing is added to what the container was made with)
     const again = await runOn(T.base, T.origin, 'by name', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-a1' } }]);
     assert.ok(!logOf(again).some(l => /is handed|isn’t handed/.test(l)), again.log.join('\n'));
+  });
+
+  // The workloads review's C1: the owner ran a job once (outside a run), then saved it with the arguments it was made
+  // with, image included, as "save that as …" keeps them. A run of it runs it again as it was made.
+  test('a job step that names its image, with its container there already: handed nothing, it runs again as it was made', { timeout: 180000 * SLOW }, async () => {
+    const jobsRun = join(T.fleet.root, 'spark4', '.mock', 'jobs-run');
+    const runs = () => { const f = join(T.fleet.root, 'spark4', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs', 'wl-d7', 'runs.txt'); return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0; };
+    const args = { spark: 'spark4', container: 'wl-d7', image: IMAGE, once: true, command: ['sh', '-c', 'echo ran >> runs.txt'] };
+    writeFileSync(jobsRun, '');
+    try {
+      const made = await api('/actions/keep_running', { method: 'POST', body: args });
+      assert.equal(made.json?.outcome, 'started', made.text);
+      await waitFor(async () => ['completed', 'failed'].includes((await api(`/jobs/${made.json.operation}`)).json?.status) || null, { timeout: 60000, what: 'wl-d7 made', every: 250 });
+      await waitFor(() => runs() === 1 || null, { timeout: 30000, what: 'wl-d7 ran once' });
+      const run = await runOn(T.base, T.origin, 'again with its image', [{ action: 'keep_running', args }]);
+      assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+      assert.ok(logOf(run).includes('Step 1: wl-d7 is there already on Spark 4, so it runs again as it was made: a job is handed a model only when it is made'), run.log.join('\n'));
+      assert.ok(!logOf(run).some(l => /is handed \S+ at /.test(l)), run.log.join('\n'));
+      assert.equal(runs(), 2, 'the job ran again');
+    } finally { rmSync(jobsRun, { force: true }); }
   });
 });
 

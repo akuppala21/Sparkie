@@ -7,13 +7,15 @@
 // it goes: its title, the chat that asked, how many steps and which one it is at, what its finished steps started
 // (`started`, as stopWhatRan reads it), what a step under way has answered `started` for and is still bringing up
 // (`pending`: a restart_model or keep_running step's container, known from its own arguments; a start's container is
-// known only once its operation has ended), and the Sparks it keeps awake. The record goes when the run ends, however it
+// known only once its operation has ended, so a start under way is kept as its operation, `starting`), and the Sparks
+// it keeps awake. The record goes when the run ends, however it
 // ends. At start-up the watcher's report of operations a restart cut off (19-watcher.mjs, its existing one-shot look,
 // no new timer) calls savedRunsRecover: for each run still on record, what it started is stopped newest first under the
 // same rules as a failure (stopWhatRan: keep: true and "already" left alone, a job only while it still runs), the
 // keep-awake holds are already gone with the old process, one notice says what happened (in the chat that asked too),
 // and nothing is run again. The generic "a restart cut off …, start it again" line is not given for the run's own
-// operation or its steps' (savedRunCutOff): the notice above says what is true. No state copy holds the file (sendCopy,
+// operation or its steps' (savedRunCutOff), but for a start under way it is: the notice above says what is true, and
+// never that nothing was running when the run was cut inside a start. No state copy holds the file (sendCopy,
 // COPY_IGNORES) and restore.sh --with-state removes it: a start on a record from back then would stop what runs now.
 const SAVED_RUNS_FILE = `${STATE_DIR}/saved-runs.json`;
 const savedRunsNow = () => { const f = readKept(SAVED_RUNS_FILE); return f && typeof f.runs === 'object' && f.runs && !Array.isArray(f.runs) ? f : { runs: {} }; };
@@ -49,9 +51,12 @@ function savedRunPending(action, args, out, keep) {
 }
 // An operation the start-up report found cut off that a run on record will speak for: the run's own, or one of its
 // steps' (its actor, since the run began).
+// A start step's own operation is not one of those: its container is known only once it ends, so the run can't stop it,
+// and its own line says to check it (`starting`, the workloads review, C5).
 function savedRunCutOff(e) {
   let runs = [];
   try { runs = Object.values(savedRunsNow().runs); } catch { return false; }
+  if (runs.some(r => r?.starting === e.id)) return false;
   return runs.some(r => r?.operation === e.id || (r?.title && e.actor === `${r.title} (saved workflow)` && String(e.at) >= String(r.since || '~')));
 }
 async function savedRunsRecover() {
@@ -66,7 +71,9 @@ async function savedRunsRecover() {
     let words;
     try { words = await stopWhatRan(items, healOwner(), {}, title); } catch (e) { words = `What it started couldn’t be stopped: ${savedRunWords(e)}.`; }
     const awake = (Array.isArray(r.awake) ? r.awake : []).filter(id => nodeById(id));
-    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || 'Nothing it had started was still running.'}`
+    // (a run cut inside a start step: what that start brought up may be running; its own line says so)
+    const none = r.starting ? `The start at step ${r.step} was still under way: its own line says what to check.` : 'Nothing it had started was still running.';
+    const text = `A restart of Spark Console cut off the saved workflow “${title}”${r.step ? ` at step ${r.step} of ${r.steps}` : ''}. ${words || none}`
       + `${awake.length ? ` ${awake.map(id => sparkName(nodeById(id))).join(' and ')}, which it had turned on, ${awake.length > 1 ? 'are' : 'is'} no longer held awake for it.` : ''} Nothing was run again: ask for it again if it’s still wanted.`;
     fleetEvent({ type: 'notice', text });
     const conv = /^sc_[0-9a-f]{16}$/.test(String(r.chat || '')) ? chatData().conversations.find(c => c.id === r.chat && c.login === accessList().owner) : null;

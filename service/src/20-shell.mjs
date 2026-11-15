@@ -72,6 +72,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
         lines.push(line);
       }
       h.tok.body = lines.join('\n');
+      h.tok.quoted = h.quoted;
       if (!h.quoted && /\$\(|`|\$\{|<\(/.test(h.tok.body)) unsure('Its here-document runs commands of its own ($( … ) or `…`).');
     }
     return j;
