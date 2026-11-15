@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 47 parts in `service/src/`, joined in name order into `service/server.mjs` (14329 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 48 parts in `service/src/`, joined in name order into `service/server.mjs` (14379 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -72,7 +72,7 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-mcp`, `20-memory`, `20-needs`, `20-tell`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-editor`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-beat`, `20-desired`, `20-heal`, `20-journal`, `20-lessons`, `20-mcp`, `20-memory`, `20-needs`, `20-op-energy`, `20-tell`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-door`, `21-editor`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `22-passkey`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
@@ -153,12 +153,12 @@ Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the Conne
 ### `07-jobs.mjs`: jobs
 
 - **Area:** ground. **Rules:** R7, R9, R13, R14, R15, R16, R21. **Tests:** change.test.mjs, state.test.mjs, pause.test.mjs
-- **Lines:** 236
+- **Lines:** 237
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `newJob`, `note`, `step`, `publicJob`, `claimSparks`, `claimed`, `stopList`, `runJob`, `copyModel`, `unapprovedStops`, `planMoved`, `deploy`, `stopContainer`
-- **Uses:** `01-setup` (`HttpError`, `nodeById`, `HF_HUB`, `CONFIG`, `hfSnap`, `q`, `sleep`, `ALL_LOCAL`), `02-ssh` (`spawnOn`, `run`), `03-identity` (`accessList`, `mustUse`), `05-library` (`plan`, `containerName`, `withHow`, `inventory`, `engineOf`, `ENGINES`, `memNow`, `memoryShare`, `dockerRunCommand`, `imageOf`), `08-cluster` (`asideBack`), `09-verified` (`answers`, `recordVerified`), `12-status` (`sparkName`), `14-chats` (`postResult`), `15-routes` (`sparkCalls`), `16-actions` (`tripBreaker`, `agentCache`), `17-changes` (`withoutRejected`, `fixFlags`, `causeLines`), `18-workflows` (`recordWorkflowRun`, `consoleStopped`), `19-watcher` (`fleetEvent`), `20-desired` (`cancelCheck`, `desiredAfter`), `20-journal` (`journalNote`, `journalOp`), `20-lessons` (`learnFrom`), `20-mcp` (`maskSecrets`), `20-tell` (`tellAwaitDone`)
+- **Uses:** `01-setup` (`HttpError`, `nodeById`, `HF_HUB`, `CONFIG`, `hfSnap`, `q`, `sleep`, `ALL_LOCAL`), `02-ssh` (`spawnOn`, `run`), `03-identity` (`accessList`, `mustUse`), `05-library` (`plan`, `containerName`, `withHow`, `inventory`, `engineOf`, `ENGINES`, `memNow`, `memoryShare`, `dockerRunCommand`, `imageOf`), `08-cluster` (`asideBack`), `09-verified` (`answers`, `recordVerified`), `12-status` (`sparkName`), `14-chats` (`postResult`), `15-routes` (`sparkCalls`), `16-actions` (`tripBreaker`, `agentCache`), `17-changes` (`withoutRejected`, `fixFlags`, `causeLines`), `18-workflows` (`recordWorkflowRun`, `consoleStopped`), `19-watcher` (`fleetEvent`), `20-desired` (`cancelCheck`, `desiredAfter`), `20-journal` (`journalNote`, `journalOp`), `20-lessons` (`learnFrom`), `20-mcp` (`maskSecrets`), `20-op-energy` (`opEnergyStart`), `20-tell` (`tellAwaitDone`)
 - **Used by:** `03-identity`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `16-actions`, `17-changes`, `18-workflows`, `20-desired`, `20-heal`, `20-journal`, `20-mcp`, `20-memory`, `20-tell`, `20-words`, `21-apps`, `21-guide`, `21-power`, `21-selftest`, `21-telegram`, `21-web`, `24-handler`, `25-backup-and-start`
 
 ### `08-cluster.mjs`: one model across two linked Sparks
@@ -224,7 +224,7 @@ deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-conso
 - **Wakes:** none
 - **Functions:** `plugMap`, `switchablePlug`, `plugAsk`, `plugNodes`, `plugAttr`, `plugNumber`, `wallOf`, `refreshPlugs`, `wallFor`, `wallView`, `wallWords`, `freshWall`, `switchPlug`
 - **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `nodeById`, `sleep`), `03-identity` (`readJson`), `12-status` (`sparkName`), `17-changes` (`brainSparks`), `23-http` (`send`)
-- **Used by:** `12-status`, `16-actions`, `21-power`
+- **Used by:** `12-status`, `16-actions`, `20-op-energy`, `21-power`
 
 ### `12-status.mjs`: Spark status (taking over from the original portal)
 
@@ -237,7 +237,7 @@ Each Spark's status comes from the portal's own worker.py (now shipped with the 
 - **Wakes:** none
 - **Functions:** `runWorker`, `sparkName`, `cleanStatus`, `addEnergy`, `sampleEnergy`, `energyView`, `collectStatus`, `statusFor`, `sparkFor`, `workerCall`, `sparkFiles`, `sparkAction`, `checkSparkAction`
 - **Uses:** `01-setup` (`HERE`, `q`, `STATE_DIR`, `NODES`, `nodeById`, `HttpError`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`), `03-identity` (`readJson`, `refreshNodes`, `canUse`, `ownerPermissions`, `accessList`), `07-jobs` (`step`, `note`, `jobs`), `12-plugs` (`wallFor`), `16-actions` (`action`), `19-watcher` (`noteSparkStates`), `21-editor` (`editorPath`), `21-power` (`powerMark`)
-- **Used by:** `03-identity`, `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-needs`, `20-tell`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Used by:** `03-identity`, `05-library`, `07-jobs`, `08-cluster`, `12-plugs`, `14-chats`, `15-routes`, `16-actions`, `17-changes`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `20-journal`, `20-needs`, `20-op-energy`, `20-tell`, `20-words`, `21-apps`, `21-door`, `21-power`, `21-selftest`, `22-passkey`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `13-main-model.mjs`: Sparkie's main model
 
@@ -397,7 +397,7 @@ Spark Console's own record of what happens through it, so it is still known afte
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `journalId`, `jSub`, `jErr`, `jArgs`, `jArgsKept`, `jFile`, `jMasker`, `jSlices`, `jBody`, `jLine`, `journal`, `journalFirstFor`, `jCall`, `journalFirst`, `journalCalled`, `journalLooks`, `journalLook`, `journalSaid`, `journalTool`, `journalTurn`, `journalNote`, `jOpText`, `journalOp`, `journalEvent`, `journalFiles`, `jParse`, `jLinesOf`, `jWhere`, `jTitle`, `jView`, `jMerge`, `jOwnCall`, `jWho`, `jOpen`, `jShut`, `jRecord`, `journalAfterRestart`, `journalNeeds`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `JOURNAL_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`ACTIONS`, `sizeWords`, `action`, `sparkArg`, `tokensOf`), `17-changes` (`START_FAILURES`, `knownStartFailure`), `20-mcp` (`maskSecrets`, `maskDeep`), `20-needs` (`SAVE_WHY`, `tilde`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `JOURNAL_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`ACTIONS`, `sizeWords`, `action`, `sparkArg`, `tokensOf`), `17-changes` (`START_FAILURES`, `knownStartFailure`), `20-mcp` (`maskSecrets`, `maskDeep`), `20-needs` (`SAVE_WHY`, `tilde`), `20-op-energy` (`opWh`)
 - **Used by:** `07-jobs`, `14-chats`, `14-rounds`, `16-actions`, `19-watcher`, `20-lessons`, `20-needs`, `25-backup-and-start`
 
 ### `20-lessons.mjs`: lessons: what failed, written by code when an operation ends (B2, R48)
@@ -452,6 +452,19 @@ One list of open problems, built by code each time it is asked for, from facts S
 - **Functions:** `tilde`, `openProblems`, `needsLines`
 - **Uses:** `01-setup` (`NODES`, `STATE_DIR`, `nodeById`), `03-identity` (`ownAccess`, `accessBad`, `saveFailed`, `saveWorkedAt`, `readJson`), `03-secrets` (`SECRETS_FILE`, `secretsRead`), `12-status` (`sparkName`, `statusCache`), `14-chats` (`chatsUnsaved`), `16-actions` (`gbOfGiB`), `19-watcher` (`knowledge`, `sparkOff`), `20-beat` (`beatLate`), `20-desired` (`heldLast`, `keyOf`), `20-journal` (`journalNeeds`), `21-power` (`powerState`), `23-http` (`WATCHDOG_RESTARTS_FILE`, `LAST_CRASH_FILE`), `25-backup-and-start` (`backupLate`, `lastBackup`)
 - **Used by:** `16-actions`, `19-watcher`, `20-journal`, `20-tell`, `20-words`
+
+### `20-op-energy.mjs`: an operation's energy at the wall (D9 as cut: one number, on its journal end line)
+
+When an operation ends, its journal end line (journalOp) says how much electricity its Sparks drew at the wall while it ran: wh, in watt-hours, the sum over its Sparks from its start (createdAt) to its end (finishedAt). It comes from the wall counter the status loop already keeps (sampleEnergy, 12-status.mjs: each plug's watts every 30 s, added up between readings), read twice: as the operation begins (newJob) and as it ends. No timer and no plug read of its own. Each end is moved to the operation's own moment with the watts read last there. When the readings in hand can't cover the …
+
+- **Area:** record. **Rules:** R41, R43. **Tests:** op-energy.test.mjs
+- **Lines:** 49
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `opWallNow`, `opEnergyStart`, `opWh`
+- **Uses:** `01-setup` (`nodeById`), `12-plugs` (`wallFor`), `12-status` (`energy`, `sparkName`)
+- **Used by:** `07-jobs`, `20-journal`
 
 ### `20-tell.mjs`: telling the owner on Telegram
 
