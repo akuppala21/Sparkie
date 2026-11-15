@@ -346,21 +346,39 @@ holds it for the command and everything the command starts. The helper runs no w
   is never put on the unit's command line: systemd expands `${…}` there, and the switch that turns that off
   (`--expand-environment=no`) arrived only in 254.
 - **The hidden list** (one list for both walls, in the helper's own text, so only the owner's command can shorten
-  it). In every home folder: `.ssh` but for `authorized_keys`, `known_hosts`, `config` and `*.pub`; `.gnupg`; the
-  token files of 2.3; shell histories; Spark Console's secrets folder, its sign-in files and its sockets
-  (`api.sock`, the door's); and `~/.local/share/spark-console` (old texts, state copies, snapshots). On the system:
-  `/run`; `/root`; `/etc/shadow*` and `/etc/gshadow*`; the host keys in `/etc/ssh`; `/etc/ssl/private`;
-  `/etc/netplan` and NetworkManager's connections; `/var/lib/tailscale`; Docker's and containerd's data folders;
+  it). In every home folder: `.ssh` but for `authorized_keys`, `known_hosts`, `config` and `*.pub` (plain files,
+  put back read-only); `.gnupg`; `.docker` whole (a change could steer every `docker` the console runs through its
+  `config.json`); `.config/code-server`; the token files of 2.3; shell histories; Spark Console's secrets folder;
+  its state folder whole, with every plain file in it put back read-only but the sign-in files and the sockets
+  (`api.sock`, the door's), so a name the console later renames into place there is never seen; and
+  `~/.local/share/spark-console` (old texts, state copies, snapshots). On the system: `/run`; `/root`;
+  `/etc/shadow*` and `/etc/gshadow*`; the host keys in `/etc/ssh`; `/etc/ssl/private`; `/etc/netplan` and
+  NetworkManager's connections; `/var/lib/tailscale`; Docker's and containerd's data folders;
   `/var/lib/spark-console`; `/var/backups`; swap files. A path that is not on a Spark is skipped.
-- **The read-only list** (run wall). In the owner's home: the shell start files, `.config/systemd`,
-  `.config/environment.d`, `.config/autostart`, and what is left of `.ssh`. Spark Console's code and its source.
-  The helper and its line.
+- **The read-only list** (run wall). In the owner's home: the shell start files (with `.bash_aliases`), what the
+  owner's service manager reads (`.config/systemd`, `.local/share/systemd`, `.config/environment.d`,
+  `.config/autostart`, the two `user-tmpfiles.d` folders), `~/.cache/spark-console` (engine caches and the set-up
+  scripts staged there), the editor's programs (`.local/opt`, `.local/share/code-server`), and what is left of
+  `.ssh`. Spark Console's page, code and source. The helper and its line.
+- **What the run wall holds in the owner's home is there, real and pinned** (added 2026-11-14, from the
+  wall-escape analysis of that day, rows 1 to 3). A setting sits on its own path only, so three things would
+  undo a listed path: renaming a folder above it and making a new one in its place; making it when it is not there
+  yet; replacing a link that the setting followed. So: each folder between the home and a held path is bound onto
+  itself (`BindPaths`), and a mount point cannot be renamed or replaced, while what is inside stays writable; a set
+  of names must be there (the start files, `.ssh`, `.docker`, the service manager's folders,
+  `.cache/spark-console`), and the one-time command makes the missing ones, before the password, as the owner (a
+  `.bash_profile` it makes is one line that reads what bash read without one); and a held path in the home must be
+  the real thing, not a link nor under one. `run` refuses by name when a name is missing or a link; a look, which
+  writes nothing, is not refused. `--check` names them, says whether PAM reads `~/.pam_environment`, lists enabled
+  units of the owner's whose program is in the home outside the read-only list, and says whether Tailscale SSH is on.
 - **What the walls cannot promise.** A key in a file nobody listed (2.3). A file a walled change may write that the
-  owner later runs outside the wall (a project script, something on the owner's `PATH`). A start file that does not
-  exist yet can be made; the plain ways-in check of 2.8 puts it back. A socket that has no file can be reached from
-  the run wall; the proof lists any that listen on the Spark. A walled change can call another Spark's open ports
-  and the console's own door, as any program on the tailnet can; the console's sign-in is what stands there. A disk
-  mounted while a look runs is not read-only to it. Inside a look `>/dev/stderr` cannot be reopened (`>&2` works).
+  owner later runs outside the wall (a project script, something on the owner's `PATH`), or that a start file
+  itself reads. A socket that has no file can be reached from the run wall; the proof lists any that listen on the
+  Spark. A walled change can call another Spark's open ports and the console's own address, as any program on the
+  tailnet can: the console answers the Sparks' own addresses on `/v1/` only (R5), so a model call, never a person;
+  but if Tailscale SSH is on for a Spark, any program on the tailnet signed in as the owner gets a shell there with
+  no key, outside every wall, so `--check` says whether it is on. A disk mounted while a look runs is not read-only
+  to it. Inside a look `>/dev/stderr` cannot be reopened (`>&2` works).
 
 **What the helper refuses.** It starts no unit when: the Spark lacks what a wall needs; the proof has not passed for
 this helper on this systemd and kernel; its own file, or a folder above it, can be written by anyone but root; it was
@@ -390,12 +408,12 @@ code chose for that call, so a command's output cannot forge one.
 
 **The proof of its walls.** Each attempt is made outside the wall first, as the owner's user, where it must work or
 the thing must be absent ("not there"); then inside, directly and from a child process, where it must fail. Attempts
-1 to 4 are step 1's own; 5 to 13 are what this mechanism makes necessary.
+1 to 4 are step 1's own; 5 to 14 are what this mechanism makes necessary.
 
 | # | The attempt | Look | Run | Why it is here |
 |---|---|---|---|---|
 | 1 | A write through a link: a link in a writable place that points at a read-only or hidden file | yes | yes | step 1 |
-| 2 | An open connection: to an outside address, to another Spark, to its own address and to its own loopback | all four | the loopback | step 1 |
+| 2 | An open connection: to its own loopback, to this Spark's own Tailscale (`100.100.100.100:53`, standing for the tailnet) and to its own address. No host outside the owner's own is contacted | all three | the loopback | step 1 |
 | 3 | The Docker socket, the Tailscale socket, `api.sock` and the door's socket, each by its path and by a second path the proof makes to it | yes | yes | step 1 |
 | 4 | Another process's environment (`/proc/<pid>/environ`) | yes | yes | step 1 |
 | 5 | A write that stays: one file in every mounted disk, in `/tmp`, `/var/tmp` and `/dev/shm`, looked for from outside afterwards | yes | the read-only list | read-only is set mount by mount |
@@ -407,6 +425,7 @@ the thing must be absent ("not there"); then inside, directly and from a child p
 | 11 | A disk device and the GPU | yes | | read-only is about files and folders; a device is neither |
 | 12 | Something left behind: a child put in the background is gone when the command ends | yes | yes | "nothing outlives it" (2.5) |
 | 13 | Root with no net: `root` when no timer can be armed | | | the one page, section 7, item 2 |
+| 14 | Moving the folder above a read-only one out of the way, and making a new one in its place (the proof's own folder at the top of the home, its `--protect` folder two levels inside) | | yes | a setting sits on its own path only: the folders above are pinned |
 
 - **When it runs.** At the end of the one-time command. By the console before the helper's first use on a Spark, and
   whenever `check` says the proof is out of date. In `self_test`, on every Spark that is on. A pass writes a
