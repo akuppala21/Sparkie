@@ -52,6 +52,7 @@ flowchart TD
   INSTALL["test/lock.mjs (here, on a compute Spark or in GitHub's suite job), then deploy/host-on-portal.sh"]
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
+  GUARD["Update guard (pull.sh, update-guard.sh): the installed build's copy and one timer, for one install"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
@@ -59,7 +60,8 @@ flowchart TD
   INSTALL -->|"files, lock, config, restart. Keeps the update only if /health names the build, the same process still answers 40 s later, the owner is the owner on the socket, /mcp and /v1/models answer, one chat turn calls a tool and answers, and Telegram polls again if it did before; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
-  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
+  DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses; go-back.sh once after 15 minutes silent within a day of an install"| LISTEN
+  GUARD -->|"armed before the incoming installer runs; kept only if the real address answers with the new build within 10 minutes, else the build from before goes back"| LISTEN
   ROLL -->|"puts back the newest whole snapshot not marked same (files, not state), restarts; ends with the unit started"| LISTEN
   LISTEN -->|"every request, /health aside"| GATE
   LISTEN -->|"WebSocket upgrades skip the handler: editorUpgrade repeats the gate"| EDITOR
