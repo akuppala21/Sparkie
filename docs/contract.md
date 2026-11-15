@@ -913,7 +913,7 @@ More checking agents are added only where the eval (10.1) shows they catch real 
   power follow the list. Changing the list is always asked first. A new Spark holds copies of chats and sign-in
   files only after the owner says so.
 - 9.27 **Whole workloads.** A saved workflow may leave the Spark open, and code places the step. It waits for a
-  job to end before the next step. When it fails or is cancelled it stops what it started, and only that; one that ends well stops nothing. A workload uses
+  job to end before the next step. When it ends or fails it stops what it started, and only that. A workload uses
   the brain first, through the one address (9.9); another Spark wakes only for what the brain cannot do. To compare
   models, code starts each candidate, runs the sample, reads the score and stops it; the winner is kept, and the
   owner picks when the scores are close.

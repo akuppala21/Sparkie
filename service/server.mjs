@@ -1992,7 +1992,9 @@ async function recordVerified(job, { model, engine, image, args: rawArgs = [], e
   const list = verifiedList(), now = new Date().toISOString(), found = list.find(v => v.key === key);
   const entry = found || { key, model: model.name, repo: model.repo || null, title: model.manifest?.title || model.repo || model.name, engine, image, args, env, sparks, ...(file ? { file } : {}), firstAt: now, runs: 0 };
   Object.assign(entry, { nodes, lastAt: now, by: viewer?.login || null, runs: entry.runs + 1, sizeBytes: model.sizeBytes || entry.sizeBytes || null,
-    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}) });
+    setupId: how?.setupId || entry.setupId || null, sourceUrl: how?.sourceUrl || entry.sourceUrl || null, ...(brain ? { brain: true } : {}),
+    // (a run whose context was cut to fit keeps the free memory then, so a later start can try the full context: B3)
+    ...(job?.contextCut ? { contextCut: job.contextCut } : {}) });
   if (measured) {
     entry.measured = { ...measured, at: now, nodes };
     if (!entry.best || measured.decodeTokS > entry.best.decodeTokS) entry.best = entry.measured;
@@ -3705,7 +3707,7 @@ function postResult(job) {
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
   const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
-    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
+    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';
@@ -5902,22 +5904,39 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
 }
 
 // The setup to run it with: the fastest run that worked here before, else the best one-click setup, else defaults.
-function bestHow(m, sparks, viewer, library) {
+// over(how): true passes that one over (B3, bestHowNow); free: the least free memory on its Sparks now (fullContext).
+function bestHow(m, sparks, viewer, library, { over = null, free = null } = {}) {
   const runs = verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === sparks && (v.source !== 'seen' || v.approved === true))
     .sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
   const setups = recipeCatalog().models.flatMap(r => r.setups || []).filter(s => s.deployable !== false && s.sparks === sparks && m.repo && sameRepo(s.repo, m.repo) && s.source?.kind !== 'forum')
     .sort((a, b) => (CREDIBILITY[a.credibility] ?? 3) - (CREDIBILITY[b.credibility] ?? 3) || (b.perf?.decodeTokS || 0) - (a.perf?.decodeTokS || 0));
   const tryHow = body => { try { const how = resolveHow(body, viewer, m.name, sparks, library); return how && !dig.remoteCode(how.args) ? how : null; } catch { return null; } };
+  const ok = how => Boolean(how) && !over?.(how);
   // Ordinary runs first; then the brain's proven run, made ordinary (its draft model and stretched context are Spark
   // 2's); then Recipes' one-click setups. The brain runs on one Spark; across two, the same engine and settings split
   // the model over the cable (the start adds its own two-Spark flags), which beats the engine's defaults: those
   // couldn't start the brain's hybrid Qwen at all (2026-11-08).
-  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = tryHow({ verified: v.key }); if (how) return how; }
+  for (const v of runs.filter(x => !x.brain && !needsDraftModel(x.args || []))) { const how = fullContext(tryHow({ verified: v.key }), v, free); if (ok(how)) return how; }
   const brainRuns = sparks === 1 ? runs : verifiedList().filter(v => (v.model === m.name || (m.repo && sameRepo(v.repo, m.repo))) && v.sparks === 1 && (v.source !== 'seen' || v.approved === true)
     && ['sglang', 'vllm'].includes(v.engine)).sort((a, b) => (b.best?.decodeTokS || 0) - (a.best?.decodeTokS || 0));
-  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (how) return how; }
-  for (const s of setups) { const how = tryHow({ setup: s.id }); if (how) return how; }
+  for (const v of brainRuns.filter(x => x.brain || needsDraftModel(x.args || []))) { const how = plainFromBrain(v, m, viewer); if (ok(how)) return how; }
+  for (const s of setups) { const how = tryHow({ setup: s.id }); if (ok(how)) return how; }
   return null;
+}
+// A run that worked only once its context was cut to fit (out of memory: startWithFixes notes the free memory then, and
+// recordVerified keeps it as contextCut) isn't locked into the shorter context: when its Sparks have more free memory
+// now, by the 8 GB kept free and more, it goes first with its full context (its setup's own, or the engine's). If that
+// runs out of memory, the start cuts it again, and the new figure is kept.
+function fullContext(how, v, free) {
+  const flag = ENGINES[how?.engine]?.ctxFlag, cut = Number(v.contextCut?.free);
+  if (!flag || !Number.isFinite(free) || !(cut > 0) || free < cut + HEADROOM) return how;
+  const at = how.args.findLastIndex(a => String(a).split('=')[0] === flag), pair = String(how.args[at]).includes('=') ? 1 : 2;
+  return at < 0 ? how : { ...how, args: how.args.filter((a, i) => i < at || i >= at + pair), fullContext: { free: cut, now: free } };
+}
+// The least free memory on these Sparks right now, or null when one can't be read.
+async function freeOn(ids) {
+  const mem = await Promise.all(ids.map(id => memNow(nodeById(id)).catch(() => null)));
+  return mem.every(x => Number.isFinite(x?.available)) ? Math.min(...mem.map(x => x.available)) : null;
 }
 
 // Starts the model where placed; if it fails, stops the new parts and starts again what it stopped.
@@ -6015,6 +6034,7 @@ async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
   job.setupTried = setupTried(m, how, placed);
+  if (how?.fullContext) note(job, `Trying its full context first: ${Math.round(how.fullContext.now / 2 ** 30)} GB is free on ${placed.nodes.map(id => sparkName(nodeById(id) || { id })).join(' + ')} now, ${Math.round(how.fullContext.free / 2 ** 30)} GB when its context was cut to fit (if it runs out of memory, it is cut again)`);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -6031,6 +6051,8 @@ async function startWithFixes(job, m, placed, how, attempt) {
       const known = knownStartFailure(e.message);
       if (known) tried.push(known.id);
       const next = known && n < 3 && Date.now() - began < FIX_WINDOW_MS ? known.next({ fix, how, tried, message: e.message }) : null;
+      // (the context first cut to fit: the free memory then goes with the run that works, recordVerified's contextCut)
+      if (next?.fix?.contextCap && !fix.contextCap) job.contextCut = { free: await freeOn(placed.nodes), at: new Date().toISOString() };
       if (!next) {
         await putBack(job, m, placed);
         if (!known && n > 1) throw new Error(`It didn’t start after ${n} attempts (it fixed ${tried.map(id => START_FAILURES.find(f => f.id === id)?.title || id).join('; ')}, then failed another way): ${e.message}`);
@@ -6241,12 +6263,16 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ]);
     }
-    const how = setup ? resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library) : bestHow(m, placed.two ? 2 : 1, viewer, inv.library);
+    // (a setup that failed twice the same known way is passed over, and the result says so: B3, 20-lessons.mjs)
+    const best = setup ? { how: resolveHow({ setup }, viewer, m.name, placed.two ? 2 : 1, inv.library), passed: [] } : bestHowNow(m, placed, viewer, inv, (across || ctx).workflowVersion, args.tryPassedOver === true);
+    const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
+    if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
     if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
-    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
+    for (const line of passedOver) note(job, line);
+    return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, ...(passedOver.length ? { passedOver } : {}), setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };
   }
   // Not on disk yet: download the best version that fits now, then start it, in one operation. Never for a call at the
@@ -6297,7 +6323,9 @@ async function startModel(args, viewer, ctx) {
     }
     // Its best setups are looked for first (a model just downloaded may never have been looked up), then picked.
     await refreshSetups(viewer, v.repo, { job: j, wait: true }).catch(() => null);
-    const how = bestHow(m, placed.two ? 2 : 1, viewer, fresh.library);
+    const best = bestHowNow(m, placed, viewer, fresh, j.workflowVersion, args.tryPassedOver === true), how = best.how;
+    if (best.only && !askedByOwner(viewer, ctx, args)) { const { what, failed } = passedWords(best.passed[0]); throw new Error(`Downloaded ${v.repo}, but its only setup here, ${what}, ${failed}, so it wasn’t started; ask again to choose.`); }
+    for (const line of passedOverLines(best, args)) note(j, line);
     note(j, how?.setupId ? `Starting it with recipe setup ${how.setupId}` : how ? 'Starting it with a run that worked here before' : 'No setup is known for it, so it starts with the engine’s defaults');
     const release = claimSparks(placed.nodes, `starting ${v.repo}`);
     try { await deployPlaced(j, viewer, ctx, m, placed, how); } finally { release(); }
@@ -6528,13 +6556,16 @@ action({
 // only). Cancelling the run ends the wait at once (sleepUnless, and the look under way is stopped by the operation's
 // abort signal), and cancels the step's own operation under way, which puts back what it did. /stop never cancels an
 // operation (R34), so it doesn't end the run.
-// A run that ends badly (a step failed or asked, a job ended badly or ran past the limit, or the run was cancelled)
-// stops what its own steps started, newest first, and only that (runCleanUp): each step whose answer was `started` is
-// noted as it finishes (startedBy): a model a start or restart ran (stop_model), an app keep_running started (keep_running
-// stop, which takes it off the list) and a job (the same, only while it still runs). A step that answered `already` (it
-// was running before the run) is never stopped, and what a step stopped stays stopped. Each stop is an ordinary action
-// call as the run (via workflow), so the pause and the claims hold; one that fails is said after the first error, never
-// in its place. A run that ends well stops nothing.
+// What a run started is stopped again, newest first, and only that (contract 9.27, design D 2.3; stopWhatRan): each step
+// whose answer was `started` is noted as it finishes (startedBy): a model a start or restart ran (stop_model), an app
+// keep_running started (its stop, which takes it off the list) and a job (the same, only while it still runs). A step
+// that answered `already` (it was running before the run) is never stopped, a step saved with keep: true is left
+// running, and what a step stopped stays stopped. When: a run that ends badly (a step failed or asked, a job ended badly
+// or ran past the limit, or the run was cancelled), every run (runCleanUp); a run that ends well, only a workload, a run
+// with a job step (j.workload, set by jobStepEnd): its models and apps were started for its job (runEndWell), and its
+// jobs, which have ended, stay with their files. A run with no job step (a routine, a stack) keeps what it started.
+// Each stop is an ordinary action call as the run (via workflow), so the pause and the claims hold; one that fails is
+// said after the first error, never in its place. What was stopped and what was kept is said in the run's result.
 const STEP_JOB_MS = Number(process.env.SPARK_CONSOLE_STEP_JOB_MS || 6 * 3600000);
 const STEP_JOB_LINES = 10;
 const forHowLong = ms => (ms >= 3600000 ? `${+(ms / 3600000).toFixed(1)} hours` : ms >= 60000 ? `${Math.round(ms / 60000)} minutes` : `${Math.round(ms / 1000)} seconds`);
@@ -6549,6 +6580,7 @@ const sleepUnless = (ms, signal) => new Promise(resolve => {
 async function jobStepEnd(j, n, args, out) {
   const spark = sparkIdOf(out?.spark || args.spark) || String(args.spark), container = String(out?.starting || out?.container || args.container);
   const node = nodeById(spark), at = sparkName(node || { id: spark });
+  j.workload = true;
   step(j, `Step ${n}: ${container} runs on ${at}; waiting for it to end (${forHowLong(STEP_JOB_MS)} at most)`);
   let end;
   try { end = await waitJobEnd(node, container, { limitMs: STEP_JOB_MS, job: j }); } catch (e) {
@@ -6579,24 +6611,24 @@ async function stepOpEnd(j, id) {
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere; a start a power-on handed over, its inner one's), each once, by its first
 // part. Nothing for a step that answered anything else (already, kept, a stop).
-function startedBy(action, args, out) {
+function startedBy(action, args, out, keep = false) {
   if (out?.outcome !== 'started' || !out.operation) return [];
   const op = jobs.get(out.operation), inner = op?.inner ? jobs.get(op.inner) : null, id = v => sparkIdOf(v) || String(v);
   if (action === 'start_model') {
-    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1] }));
+    return [...new Set([...(op?.ranHere || []), ...(inner?.ranHere || [])])].filter(k => !/-part2$/.test(k)).map(k => ({ kind: 'model', spark: k.split('/')[0], container: k.split('/')[1], keep }));
   }
-  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container) }];
-  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container) }];
+  if (action === 'restart_model') return [{ kind: 'model', spark: id(args.spark), container: String(args.container), keep }];
+  if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
-// The run ended badly with `e`: stop what `ran` holds, newest first, and say so. Returns the error to end the run with:
-// the first error's first line, then what was stopped and what couldn't be, then the rest of the first error. Its words
-// are also kept on the run (cleanUp) for the chat line and the cancel's answer.
-async function runCleanUp(j, ran, e, viewer, ctx, title) {
-  const stopped = [], failed = [];
+// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended. Returns
+// the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
+async function stopWhatRan(ran, viewer, ctx, title) {
+  const stopped = [], kept = [], failed = [];
   const c = { via: 'workflow', actor: `${title} (saved workflow)`, request: `${title}, stopping what it started`, canChange: true, conv: ctx.conv || null, ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) };
   for (const x of [...ran].reverse()) {
     const node = nodeById(x.spark), name = `${x.container} on ${sparkName(node || { id: x.spark })}`;
+    if (x.keep) { kept.push(name); continue; }
     try {
       // (a job that already ended has nothing to stop)
       if (x.kind === 'job') {
@@ -6613,11 +6645,33 @@ async function runCleanUp(j, ran, e, viewer, ctx, title) {
       if (out?.outcome !== 'already') stopped.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
-  const words = [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...failed].join(' ');
+  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+}
+// The run ended badly with `e`: stop what it started, and say so. Returns the error to end the run with: the first
+// error's first line, then what was stopped, kept and couldn't be stopped, then the rest of the first error. Its words
+// are also kept on the run (cleanUp) for the chat line and the cancel's answer.
+async function runCleanUp(j, ran, e, viewer, ctx, title) {
+  const words = await stopWhatRan(ran, viewer, ctx, title);
   j.cleanUp = words || 'Nothing it had started was still running.';
   if (words) note(j, `After the end: ${words}`);
   const [first, ...rest] = String(e?.message || e).split('\n');
   return Object.assign(new Error([`${first}${words ? ` ${words}` : ''}`, ...rest].join('\n')), e?.cancelled || j.cancelled ? { cancelled: true } : {});
+}
+// The run ended well: a workload (a run with a job step) stops the models and apps it started for its job; its jobs have
+// ended and stay. Any other run keeps what it started. The words go on the run (cleanUp) and in the chat line.
+async function runEndWell(j, ran, viewer, ctx, title) {
+  if (!j.workload) return;
+  const words = await stopWhatRan(ran.filter(x => x.kind !== 'job'), viewer, ctx, title);
+  if (words) { j.cleanUp = words; note(j, `At the end: ${words}`); }
+}
+// A saved step's keep: true or false, for a step that starts something (D 2.3's word); anything else is refused.
+const SAVED_STEP_KEYS = new Set(['action', 'args', 'keep']);
+const savedStepStarts = (action, args) => action === 'start_model' || action === 'restart_model' || (action === 'keep_running' && (args?.do ?? 'keep') === 'keep');
+function savedStepShape(st, i) {
+  const extra = Object.keys(st || {}).find(k => !SAVED_STEP_KEYS.has(k));
+  if (extra) throw new HttpError(400, `Step ${i + 1}: ${String(extra).slice(0, 40)} isn’t part of a step. A step has action, args and, for one that starts something, keep.`);
+  if (st.keep !== undefined && typeof st.keep !== 'boolean') throw new HttpError(400, `Step ${i + 1}: keep is true or false.`);
+  if (st.keep === true && !savedStepStarts(st.action, st.args || {})) throw new HttpError(400, `Step ${i + 1} (${st.action}): keep is only for a step that starts something.`);
 }
 // A step that keeps something running (keep_running, keep) may leave its Spark out (D6a): code places it when the run
 // reaches it (placeStep). Saved and checked against keep_running's own inputs with only `spark` not required.
@@ -6713,7 +6767,20 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   startingNow, runsWhereNamed, resolveModelName, pickVersion, downloadVersion, launch, deployPlaced, startWithFixes, knownStartFailure, causeLines, rejectedFlags,
   withoutRejected, withoutFlags, fixFlags, shareIn, memoryShare, answerTest, answers, httpJson, putBack, recordVerified, stopContainer, resolveHow, needsDraftModel, plainFromBrain, bestHow, hfMounts,
   recipeCatalog, refreshSetups, setupsStale, recipeIdOf, ENGINE_CACHE_ENV, engineCacheDir, engineCache, addModel, versionOf, hfFixture, namedInFull,
-  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne];
+  powerFirst, parkedFor, wakeNames, offFor, metricsFlags, setupTried, wakeOne,
+  lessonOf,
+  lessonsKept,
+  PASS_OVER_FAILURES,
+  failedTwice,
+  bestHowNow,
+  passedWords,
+  passedOverLines,
+  askedByOwner,
+  passedOverAsk,
+  fullContext,
+  freeOn,
+  memNow,
+];
 const WORKFLOWS = [
   { id: 'start_model', action: 'start_model', title: 'Start a model on one Spark',
     when: 'The owner wants a model running on one Spark: from a recipe, by name, or one already on disk. For one model across Sparks, start_model_across; to bring back a stopped container exactly as it was, restart_model.',
@@ -6860,7 +6927,7 @@ function fillIn(v, inputs) {
   return v;
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
-const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {} })),
+const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
   savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
@@ -6875,7 +6942,7 @@ function stepArgs(st) {
 const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => {
   const a = stepArgs(st), action = String(st?.action || '');
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}`;
+  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}${st?.keep === true ? ', kept running' : ''}`;
 }).join('; ');
 // A saved step can't carry the answer to a question; that's given when it's asked.
 const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
@@ -6959,12 +7026,14 @@ action({
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
-      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' } }, required: ['action'], additionalProperties: false } },
+      items: { type: 'object', properties: { action: { type: 'string', maxLength: 60 }, args: { type: 'object' },
+        keep: { type: 'boolean', description: 'For a step that starts something in a run with a job: leave it running when the run ends. Without it, a run with a job stops what it started at its end.' } }, required: ['action'], additionalProperties: false } },
   }, required: ['title', 'steps'], additionalProperties: false },
   run: async (input, viewer) => {
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
     for (const [i, st] of input.steps.entries()) {
+      savedStepShape(st, i);
       if (!ACTIONS.has(st.action)) throw new HttpError(400, `Step ${i + 1}: there’s no action called ${String(st.action).slice(0, 60)}. The actions are the tools you can call.`);
       if (NOT_A_STEP.has(st.action)) throw new HttpError(400, `Step ${i + 1}: ${st.action} can’t be a step in a saved workflow.`);
       const unknown = placeholders(st.args).filter(k => !declared.includes(k));
@@ -6978,7 +7047,7 @@ action({
       const missing = missingTarget(st.action, st.args || {});
       if (missing) throw new HttpError(400, `Step ${i + 1} (${st.action}): ${missing}`);
     }
-    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {} })),
+    const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
@@ -7034,10 +7103,11 @@ action({
             if (done?.status !== 'completed') throw new Error(`Step ${i + 1} (${st.action}) didn’t finish: ${String(done?.error || done?.status || 'still running').split('\n')[0]}`);
             note(j, `Step ${i + 1} done (operation ${out.operation})`);
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
-          ran.push(...startedBy(st.action, args, out));
+          ran.push(...startedBy(st.action, args, out, st.keep === true));
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
+        await runEndWell(j, ran, viewer, ctx, w.title);
       } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
@@ -8819,7 +8889,7 @@ async function tgKeys(m) {
   return true;
 }
 /* ───────── lessons: what failed, written by code when an operation ends (B2, R48) ───────── */
-// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs
+// Area: record        Rules: R7, R20, R22, R48        Tests: lessons.test.mjs, passed-over.test.mjs
 // Owns: lessons.json (writers: recordLesson)
 // Timers: none        Wakes: none
 // A lesson is Spark Console's own short record of a failure (contract 5.10; design B 2.2 as cut): what was tried, on
@@ -8832,8 +8902,9 @@ async function tgKeys(m) {
 // failure of an app leaves none. The same failure of the same setup again adds to its count: two or more of the same
 // known failure with no success between make it proven, while an unknown one stays seen. A later success of the same
 // setup takes its lessons out (the journal keeps what happened). No fix: a start that worked after a fix is replayed by
-// its proven run (verified.json). Nothing reads lessons to change what a start does yet: passing over a setup that
-// failed twice is B3, cards for the brain B4.
+// its proven run (verified.json). A start reads them before it picks a setup (B3): one that failed twice the same known
+// way is passed over while its image, Sparks and start code are what the start would use (failedTwice, bestHowNow).
+// Cards for the brain are B4.
 const LESSONS_FILE = `${STATE_DIR}/lessons.json`;
 // (a cap, never reached in use: the newest are kept)
 const LESSONS_MAX = 500;
@@ -8929,6 +9000,76 @@ function learnFrom(job, evidence) {
     const l = lessonOf(job);
     if (l) recordLesson(l, job.status === 'completed', evidence);
   } catch (e) { console.error(`Couldn’t keep the lesson of operation ${job?.id}: ${e.message}`); }
+}
+
+// Which known failures count toward passing a setup over (B3, decided 2026-11-14). The setup's own count. One whose
+// cause is outside the setup never does: every setup meets the same wall, and the setup would stay passed over after
+// that was put right. A lesson still records it (R48); a failure not listed here doesn't count.
+const PASS_OVER_FAILURES = [
+  // [failure, counts, why]
+  ['out-of-memory', true, 'the setup asks for more memory than its Sparks have'],
+  ['bad-flag', true, 'the engine refuses one of its settings'],
+  ['garbage', true, 'its engine or image answers only garbage'],
+  ['no-answer', true, 'its engine or chat template doesn’t answer'],
+  ['gated', false, 'a Hugging Face sign-in or license, the same for every setup'],
+  ['port-busy', false, 'another program holds the model port'],
+  ['image', false, 'the network, while the image downloads'],
+  ['memory-share', false, 'other work holds the memory'],
+  ['never-connected', false, 'the cable between the two Sparks'],
+];
+// B3 (design B 2.4; contract 5.10): a setup that failed twice the same known way with no success between (a proven
+// lesson) is passed over while what that lesson was true of is what this start would use: its image, its Sparks and its
+// start code (the start workflow's version). When one differs, it is tried again. The lesson the setup would leave is
+// worked out as a failure would write it (setupTried, lessonOf) and looked for among the kept ones. Lessons that can't
+// be read pass nothing over: a lesson never stops a start by itself. Only failures of the setup's own count
+// (PASS_OVER_FAILURES).
+function failedTwice(m, how, placed, code) {
+  try {
+    const l = lessonOf({ type: 'deploy', status: 'failed', setupTried: setupTried(m, how, placed), workflowVersion: code });
+    if (!l?.subject.model || !l.tried.how || !l.tried.flags || !l.tried.on) return null;
+    return lessonsKept().find(x => x.kind === 'start' && x.state === 'proven' && PASS_OVER_FAILURES.some(([id, counts]) => counts && id === x.failure)
+      && JSON.stringify(x.subject) === JSON.stringify(l.subject)
+      && ['how', 'flags', 'image', 'on', 'code'].every(k => x.tried?.[k] === l.tried[k])) || null;
+  } catch { return null; }
+}
+// The setup a start runs with: bestHow's, each one that failed twice passed over while another is left. { how, passed:
+// [{ how, lesson }], only }: only when every setup there is failed twice, and how is then the best of them. again (the
+// yes to passedOverAsk): nothing is passed over, and what failed twice is still said. free: the least free memory on its
+// Sparks now, for a context that was cut to fit (fullContext).
+function bestHowNow(m, placed, viewer, inv, code, again = false) {
+  const passed = [], over = how => { const lesson = failedTwice(m, how, placed, code); if (lesson) passed.push({ how, lesson }); return Boolean(lesson) && !again; };
+  const free = Math.min(...placed.nodes.map(id => Number(inv.sparks.find(s => s.id === id)?.memAvailable) || NaN));
+  const how = bestHow(m, placed.two ? 2 : 1, viewer, inv.library, { over, free });
+  if (how || !over(null)) return { how, passed };
+  return { how: passed[0].how, passed, only: true };
+}
+// A setup that failed twice, in the owner's words: what it is, and how it failed.
+const passedWords = ({ how, lesson: l }) => ({
+  what: how?.setupId ? `recipe setup ${how.setupId}` : how?.fromBrain ? 'the brain’s proven setup' : how ? 'a run that worked here before' : 'its own setup (its spark.json, or the engine’s defaults)',
+  failed: `failed ${l.failed} times the same way on ${String(l.tried?.on || '').split('+').map(id => sparkName(nodeById(id) || { id })).join(' + ')} (${START_FAILURES.find(f => f.id === l.failure)?.title || l.failure}), last on ${String(l.lastAt).slice(0, 10)}` });
+// What the start's result and its operation's log say: each setup passed over, and the one tried again though it failed
+// twice, with why.
+function passedOverLines(best, args) {
+  return best.passed.map(p => {
+    const { what, failed } = passedWords(p), id = p.lesson.id;
+    if (p.how === best.how) return `Tried again ${args.tryPassedOver === true ? 'as asked' : 'at the owner’s own request'}, though ${what} ${failed}${best.only ? ': it is the only setup there is' : ''} (lesson ${id}).`;
+    return `Passed over ${what}: it ${failed}, with the image, Sparks and start code this start would use (lesson ${id}). ${p.how?.setupId ? `To try it anyway, ask for setup ${p.how.setupId}.` : 'It is tried again when its image, its Sparks or its start code change.'}`;
+  });
+}
+// The owner's own request: their own call (POST /actions), the page's own controls (the self-test too), or the yes to
+// passedOverAsk. A button pressed for another question isn't one.
+const askedByOwner = (viewer, ctx, args) => args.tryPassedOver === true || (viewer.role === 'owner' && (ctx.via === 'api' || (ctx.via === 'page' && !ctx.button)));
+// When every setup there is failed twice (design B 2.4): the owner's own request runs the best of them, and says so;
+// self-healing and a call to the model address leave it, saying why; Sparkie or an agent gets a question whose yes runs
+// it. null: run it.
+function passedOverAsk(viewer, ctx, args, m, placed, best) {
+  if (askedByOwner(viewer, ctx, args)) return null;
+  const title = m.repo || m.name, { what, failed } = passedWords(best.passed[0]);
+  if (ctx.via === 'watcher' || ctx.via === 'gateway') throw new HttpError(409, `${title}’s only setup here, ${what}, ${failed}, so it isn’t tried again by itself; the owner can ask for it.`);
+  return question(viewer, ctx, `${title}’s only setup here, ${what}, ${failed}, with the same image, Sparks and start code. Try it again anyway?`, [
+    { label: `Yes, try ${title} with it again`, call: { action: 'start_model', args: { model: m.name, ...(placed.two ? { sparks: placed.nodes } : { spark: placed.nodes[0] }),
+      ...(args.allowStop?.length ? { allowStop: args.allowStop } : {}), ...(args.allowBusy?.length ? { allowBusy: args.allowBusy } : {}), tryPassedOver: true } } },
+    { label: 'No, leave it', call: null }]);
 }
 /* ───────── the agent door (MCP) ───────── */
 // Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
