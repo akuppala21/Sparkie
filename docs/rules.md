@@ -43,3 +43,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R38](rules/R38.md): Apps (2026-11-11): `keep_running` is the only way a container that is not a model is started, kept, restarted or stopped.
 - [R39](rules/R39.md): Web lookup (2026-11-12): `search_web` and `read_page` are reads, open-world (an agent’s 6 a minute at the door).
 - [R40](rules/R40.md): The app door (the owner, 2026-11-12: “once you’re signed in, you shouldn’t need a separate password”; every Spark in one environment): the owner opens an app kept with …
+- [R45](rules/R45.md): Memory keeps every line and believes only the owner's words.
