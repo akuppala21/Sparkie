@@ -8997,11 +8997,12 @@ function copyLateWords(here) {
   return `${g ? `Spark Console’s state hasn’t been copied to another Spark for over 7 days (the newest copy is from ${String(g.at).slice(0, 10)}, on ${hold}), and it has changed since.`
     : 'Spark Console’s state has never been copied to another Spark, and no copy has landed in over 7 days.'}${tried} A copy goes by itself the next time another Spark is on; none is turned on for it, so turn one on for a few minutes. Until then, losing ${here}’s disk would lose what changed.`;
 }
-// The notice (R23): once when the copy goes late, and not again until a copy lands (noticedOn: the day it went out).
+// The notice (R23): once when the copy goes late, and not again until a copy lands (noticedOn: the day it went out; one
+// from the day it went late or after was this late spell's).
 function copyLate() {
   if (!copyLateNow()) return;
-  const from = dayOf(Date.parse(lastBackup.good?.at || lastBackup.since));
-  if (lastBackup.noticedOn && lastBackup.noticedOn > from) return;
+  const late = dayOf(Date.parse(lastBackup.good?.at || lastBackup.since) + COPY_LATE_MS);
+  if (lastBackup.noticedOn && lastBackup.noticedOn >= late) return;
   lastBackup.noticedOn = dayOf(Date.now());
   try { writePrivate(BACKUP_FILE, lastBackup); } catch (e) { console.error(`Couldn’t save the copy’s record: ${e.message}`); }
   const hub = NODES.find(n => n.host === 'local');

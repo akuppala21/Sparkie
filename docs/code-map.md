@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 48 parts in `service/src/`, joined in name order into `service/server.mjs` (14438 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 48 parts in `service/src/`, joined in name order into `service/server.mjs` (14439 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -458,7 +458,7 @@ One list of open problems, built by code each time it is asked for, from facts S
 What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backupState, backup.json). This part says when one goes and where, so a copy never wakes a Spark and nothing is sent when nothing changed (owner decision 5, contract 6.25): - a compute Spark comes online (the status check sees it come back: by itself, by the owner's hand, or turned on by Spark Console): it gets a copy if the state changed since the newest good copy (copyOnWake, from 19-watcher.mjs); - just before Spark Console powers a Spark off: if the state changed since the newest good copy, that Spark gets one …
 
 - **Area:** safety. **Rules:** R23, R41. **Tests:** copy.test.mjs, state.test.mjs
-- **Lines:** 113
+- **Lines:** 114
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
