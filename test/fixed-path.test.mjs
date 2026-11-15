@@ -264,7 +264,7 @@ test('a spark.json whose image or setting names carry a sentence or a line break
     const plan = await waitFor(async () => { const r = await api('/actions/deploy_plan', { method: 'POST', body: { model: 'odd-settings-model', spark: 'spark3' } }); return r.status === 200 && r; },
       { timeout: 40000, what: 'deploy_plan for the new folder' });
     assert.ok(!plan.text.includes('Ignore'), plan.text);
-    assert.ok(plan.json.warnings.some(w => /its spark\.json names an image or settings that aren’t plain/.test(w)), plan.text);
+    assert.ok(plan.json.warnings.some(w => /its spark\.json holds an image or setting names that aren’t plain/.test(w)), plan.text);
     const across = await api('/actions/cluster_plan', { method: 'POST', body: { model: 'odd-settings-model', sparks: ['spark3', 'spark4'] } });
     assert.equal(across.status, 200, across.text);
     assert.ok(!across.text.includes('Ignore'), across.text);

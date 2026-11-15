@@ -71,12 +71,13 @@ function ggufOnDisk(b64) {
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
 // can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
-// The same for what a start passes on from spark.json: its image only shaped like an image reference, its setting names
-// only shaped like names. True when something was left out; the plans say so (PLAIN_NOTE), never what it was.
-const PLAIN_NOTE = 'its spark.json names an image or settings that aren’t plain, so Spark Console left them out';
+// The same for spark.json's image and setting names: a setting name not shaped like one is left out; an image not
+// shaped like an image reference is never shown (plainImage: the plans' steps), though a start still tries it as named
+// and fails there. True when either was found; the plans say so (PLAIN_NOTE), never what it was.
+const plainImage = v => (typeof v === 'string' && /^[A-Za-z0-9._/:@-]{1,200}$/.test(v) ? v : null);
+const PLAIN_NOTE = 'its spark.json holds an image or setting names that aren’t plain, so Spark Console shows none of them and leaves those settings out';
 function plainManifest(m) {
-  let out = false;
-  if (m.image !== undefined && !(typeof m.image === 'string' && /^[A-Za-z0-9._/:@-]{1,200}$/.test(m.image))) { delete m.image; out = true; }
+  let out = m.image !== undefined && !plainImage(m.image);
   for (const env of [m.env, m.cluster?.env]) {
     if (env && typeof env === 'object') for (const k of Object.keys(env)) if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) { delete env[k]; out = true; }
   }

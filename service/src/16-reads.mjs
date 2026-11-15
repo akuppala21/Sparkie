@@ -25,8 +25,8 @@ async function mustLibraryModel(name) {
 // A deploy's steps in plain terms: what stops (and why), what's copied or pulled, and how it starts.
 const planSteps = (steps, spark) => steps.map(s => (s.kind === 'stop' ? { do: 'stop', spark, container: s.container, why: s.reason, gpuGB: Math.round((s.gpuMiB || 0) / 1024), mustStop: Boolean(s.required) }
   : s.kind === 'copy' ? { do: 'copy', from: s.from, sizeGB: gbOf(s.bytes) }
-    : s.kind === 'pull' ? { do: 'download image', image: s.image }
-      : { do: 'start', engine: s.engine, image: s.image, port: s.port }));
+    : s.kind === 'pull' ? { do: 'download image', image: plainImage(s.image) }
+      : { do: 'start', engine: s.engine, image: plainImage(s.image), port: s.port }));
 // "canRun": it can run there once what's in wouldStop stops. "fitsNow": without stopping anything.
 function fitView(f) {
   if (f.error) return { spark: f.node, canRun: false, fitsNow: false, blockers: [f.error] };
