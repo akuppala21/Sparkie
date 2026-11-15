@@ -480,9 +480,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
 // A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
-// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills. A
+// planned sleep or wake (Spark Console's own, `planned` on the event, D4) isn't an outage, so it doesn't count.
 const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
-const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;

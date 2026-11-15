@@ -637,6 +637,9 @@ echo "Checking that this machine can reach the other Sparks without a password:"
 python3 -I - <<'PY'
 import json, os, subprocess
 cfg = json.load(open(os.path.expanduser('~/spark-console-service/config.json')))
+# (a Spark Spark Console powered off on purpose is asleep, not unreachable: its record in power.json, R41)
+try: asleep = {k: v for k, v in json.load(open(os.path.expanduser('~/.local/state/spark-console/power.json')))['off'].items() if isinstance(v, dict)}
+except Exception: asleep = {}
 for n in cfg['nodes']:
     if n['host'] == 'local':
         print(f"  {n['id']}: this machine"); continue
@@ -646,6 +649,8 @@ for n in cfg['nodes']:
         ok, why = r.stdout.strip() == 'ok', (r.stderr.strip().splitlines() or ['no answer'])[-1]
     except subprocess.TimeoutExpired:
         ok, why = False, 'timed out'
+    if not ok and n['id'] in asleep:
+        print(f"  {n['id']}: asleep (Spark Console powered it off at {str(asleep[n['id']].get('at') or '?')[:16].replace('T', ' ')} UTC; a start or power_on turns it on)"); continue
     print(f"  {n['id']}: " + ('ok' if ok else 'NOT reachable without a password: ' + why))
 PY
 fi

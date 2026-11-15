@@ -14,7 +14,7 @@ import { createGunzip, createInflate, createBrotliDecompress } from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, writeFileSync, appendFileSync, renameSync, mkdirSync, statSync, unlinkSync, chmodSync, readdirSync, openSync, fsyncSync, closeSync, copyFileSync, writeSync, readSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomInt, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as dig from './dig.mjs';
 import * as passkey from './passkey.mjs';
@@ -3012,7 +3012,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
   });
   return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
@@ -3630,16 +3630,20 @@ function outcomeText(label, out) {
   return out?.note || `${label}: done.`;
 }
 async function runChoice(viewer, conv, id, by) {
+  // (a dangerous ask past its life is closed first, so a late press is told so: 20-danger.mjs)
+  dangerLive();
   for (const [k, c] of pendingChoices) if (Date.now() - c.at > 15 * 60000) pendingChoices.delete(k);
   const c = pendingChoices.get(String(id || ''));
   if (!c || c.who !== sparkieWho(viewer, conv.id)) {
     const shown = conv.messages.flatMap(m => m.choices || []).find(x => x.id === id);
     if (shown) { for (const m of conv.messages) for (const x of m.choices || []) if (x.group === shown.group && x.state === 'open') x.state = 'gone'; saveChats(); }
-    throw new HttpError(409, 'That button has expired. Ask Sparkie again.');
+    throw new HttpError(409, dangerGone(id) || 'That button has expired. Ask Sparkie again.');
   }
   // (or an ask this console sent to the paired Telegram chat, pressed there while approvals from it are on, A10a)
   const fromTelegram = Boolean(c.ownerOnly && by.approved && by.via === 'telegram' && tgAskOpen(String(id), c));
   if (c.ownerOnly && by.via !== 'page' && !fromTelegram) throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
+  // A dangerous ask (20-danger.mjs): still open, its pair with the press, what it runs unchanged; a refusal runs nothing.
+  if (c.danger) await dangerPress(String(id), c, by);
   for (const [k, x] of pendingChoices) if (x.group === c.group) pendingChoices.delete(k);
   for (const m of conv.messages) for (const x of m.choices || []) {
     if (x.id === id) x.state = 'picked';
@@ -4095,8 +4099,9 @@ function budgetContext(setup) {
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
 // (continueTask: CONTINUE_MAX turns in CONTINUE_HOURS, not while agents are paused): only the owner's request that is a
 // task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
-function budgetCarries({ spent, agent, task, text, now }) {
-  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text))) return false;
+function budgetCarries({ spent, agent, task, text, now, conv }) {
+  // (never past a dangerous ask it is parked at: 20-danger.mjs)
+  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
   return t.continuations < CONTINUE_MAX && Date.now() - Date.parse(t.at) <= CONTINUE_HOURS * 3600000 && !(agentSettings().halted && !agentSettings().autoPaused);
 }
@@ -5873,7 +5878,10 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false } = {}) {
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+  // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
+  const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
+  if (test) return test;
   // An owner-only question asked of a direct call (an agent's tool call, POST /actions, a saved step): no conversation
   // shows its button and nobody else may answer it, so it hands back no choice ids. It says how the owner says yes.
   if (ownerOnly && !ctx.onQuestion && ctx.via !== 'page') {
@@ -5892,7 +5900,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
     pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
-      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}) });
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
@@ -5901,7 +5909,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
   if (ctx.onQuestion) ctx.onQuestion(out);
   // In one of the owner's own chats it is also asked in the paired Telegram chat (20-tg-approve.mjs, A10a).
-  if (ownerOnly && ctx.conv) tgAsk(viewer, ctx, out);
+  if (ownerOnly && ctx.conv && !danger) tgAsk(viewer, ctx, out);
   // Sparkie gets the words, not the ids: the buttons run it.
   if (ctx.conv && ctx.via === 'sparkie') {
     return { outcome: out.outcome, question: text, buttons: shown.map(c => c.label),
@@ -7715,9 +7723,10 @@ const HEAL_MIN_RUN = Number(process.env.SPARK_CONSOLE_HEAL_MIN_RUN_MS || 10 * 60
 // 10-minute rule doesn't hold it back: that model answered its test prompt moments before. Every other rule holds.
 const healDrills = new Set();
 // A container's crash restarts in the last hour (two at most), and when its Spark last went off or came back on within
-// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills.
+// the last half hour (0 when it didn't): maybeHeal's rules, which the self-test's drill also asks before it kills. A
+// planned sleep or wake (Spark Console's own, `planned` on the event, D4) isn't an outage, so it doesn't count.
 const healTriesThisHour = key => (healTries.get(key) || []).filter(t => Date.now() - t < 3600000);
-const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
+const lastOnOff = id => Math.max(0, ...events.filter(e => (e.type === 'spark-offline' || e.type === 'spark-online') && !e.planned && !e.poweredOff && e.spark === id && Date.now() - Date.parse(e.at) < 30 * 60000).map(e => Date.parse(e.at)));
 async function maybeHeal(node, w) {
   const s = agentSettings();
   if (!s.selfHeal || (s.halted && !s.autoPaused) || w.kind !== 'model' || !w.byConsole || w.oomKilled || w.labels?.['spark.cluster'] || w.labels?.['spark.role'] === 'main' || w.protected) return;
@@ -8211,7 +8220,10 @@ function noteSparkStates(nodes) {
     const flipped = s.online !== undefined && s.online !== online, cameOn = online && s.online !== true;
     // (one Spark Console powered off itself says so, with why: on purpose, not a fault, 21-power.mjs)
     const off = !online && flipped ? powerState().off[n.id] : null;
-    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked' } : {}) });
+    // (planned: a sleep Spark Console put it to, or a wake from one (its record still there, a power operation on it, or a
+    // power-on since it went dark), never an outage: crash restarts aren't held back after it, maybeHeal, D4)
+    const wake = online && flipped && (consoleOff(n.id) || powerOpOn([n.id]) || plannedWake(n.id));
+    if (flipped) fleetEvent(online ? { type: 'spark-online', spark: n.id, upSeconds: s.gpu?.upSeconds ?? null, ...(wake ? { planned: true } : {}) } : { type: 'spark-offline', spark: n.id, last: lastReading(s), ...(off ? { poweredOff: POWER_WHY[off.why] || off.why || 'asked', planned: true } : {}) });
     s.online = online;
     // Written at once, so a console restart while a Spark is dark doesn't announce it going dark again.
     if (flipped) saveKnowledge();
@@ -8245,6 +8257,11 @@ setTimeout(() => { watchFleet(); setInterval(watchFleet, WATCH_EVERY).unref(); }
 // saw there stays in the record as it was (healing, the passkey gate and the intent gate read it), but no view calls
 // it running now (F16). Called only at run time, never at load.
 const sparkOff = id => knowledge.sparks[id]?.online === false;
+// A Spark Spark Console turned on since it last went dark (a spark-powered-on after its last spark-offline): a planned wake.
+function plannedWake(id) {
+  const dark = Math.max(0, ...events.filter(e => e.type === 'spark-offline' && e.spark === id).map(e => Date.parse(e.at) || 0));
+  return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
+}
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
@@ -8252,8 +8269,8 @@ function fleetNotes(viewer) {
   const apps = new Set(desired().running.filter(x => x.app).map(keyOf));
   const lines = NODES.map(n => {
     const ws = running.filter(w => w.spark === n.id), off = sparkOff(n.id) ? powerMark(n.id) : null;
-    // (powered off by Spark Console on purpose, 21-power.mjs: said as that, never as dark)
-    if (off) return `${sparkName(n)}: ${off.words}`;
+    // (powered off by Spark Console on purpose, 21-power.mjs: said as asleep, never as dark)
+    if (off) return `${sparkName(n)}: asleep, on purpose (not a fault). ${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
       return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
@@ -8382,6 +8399,450 @@ async function beatSave(url, via) {
   audit({ via, actor: 'owner', action: 'heartbeat-saved', args: {}, ok: true });
   // (only a copy whose tick was started, the one that holds the port, beats)
   if (beat.started) await beatStart();
+}
+/* ───────── the dangerous ask's "came from": what the command names and where it was read (A10b) ───────── */
+// Area: safety        Rules: R54        Tests: danger.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its bytes name, and for each one the owner
+// did not write, the read or earlier answer that holds it. The reads' text comes back from the journal by id, is only
+// searched and never shown.
+// The search's bounds, after the reads' own: the first 64 things, in the order they were found, and 64 Mi characters
+// looked through in all (the owner's words, the reads and the answers, once per thing). A short thing in a crafted text
+// costs about 8 ns a character, so the worst case stays near half a second; past either bound the ask says not all was
+// searched.
+const DANGER_READS = 40, DANGER_READ_BYTES = 64 * 2 ** 20, DANGER_FROM_LINES = 8, DANGER_ANSWERS = 20, DANGER_THINGS = 64, DANGER_WORK = 64 * 2 ** 20;
+// The things line 4 looks for, from the bytes of line 7 (and a file's path): every address (with a scheme or without
+// one: a host with its path whole, or a host alone), path, IP address, and package or image name after install, add,
+// pull or run of the programs that fetch them, or after a runner (npx). Printable ASCII only, no spaces.
+const DANGER_HOST = '(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}';
+function dangerThings(text) {
+  let t = String(text || '');
+  const out = new Set(), add = x => { const v = x.replace(/[.,;:)\]'"]+$/, ''); if (v.length >= 3) out.add(v.slice(0, 200)); };
+  // (what is taken is blanked where it stands, as long as it was, so nothing after it moves and nothing else is touched)
+  const blank = s => ' '.repeat(s.length);
+  const take = re => { for (const m of t.matchAll(re)) add(m[1] ?? m[0]); t = t.replace(re, blank); };
+  take(/\b(?:https?|ftp):\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/gi);
+  // (packages and images before addresses with no scheme: an image's name can look like one; each name is kept with
+  // where it stands, [at, name])
+  const named = [], ok = w => !w.startsWith('-') && /^[A-Za-z0-9@][A-Za-z0-9._@/:=<>~+-]*$/.test(w);
+  const words = m => [...m[1].matchAll(/\S+/g)].map(w => [m.index + m[0].length - m[1].length + w.index, w[0]]);
+  for (const m of t.matchAll(/\b(?:pip(?:\d+(?:\.\d+)?)?|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|brew|cargo|go|docker|podman|snap|gem)\s+(?:pip\s+)?(?:install|add|pull|run)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    for (const w of words(m)) if (ok(w[1])) named.push(w);
+  }
+  for (const m of t.matchAll(/\b(?:npx|pnpx|bunx|uvx)\b((?:[ \t]+[^\s;&|<>]+)+)/gi)) {
+    const w = words(m).find(x => !x[1].startsWith('-'));
+    if (w && ok(w[1])) named.push(w);
+  }
+  for (const [, w] of named) add(w);
+  // Each name blanked at its own place only, in one pass: the same letters in an address or path after it stay
+  // ("torch" in torch.evil.example/i.sh, "etc" in /etc/sudoers.d).
+  let rest = '', end = 0;
+  for (const [at, w] of [...named].sort((a, b) => a[0] - b[0])) {
+    if (at + w.length <= end) continue;
+    const from = Math.max(at, end);
+    rest += t.slice(end, from) + ' '.repeat(at + w.length - from);
+    end = at + w.length;
+  }
+  t = rest + t.slice(end);
+  // (a host right after "@" counts: root@evil.example, git@github.com:evil/repo.git)
+  take(new RegExp(`(?<![\\w/.-])${DANGER_HOST}\\/[A-Za-z0-9._~%/+=-]*`, 'gi'));
+  for (const m of t.matchAll(/(?:^|[\s"'`=:(<>|;&])((?:~|\.{1,2})?\/[A-Za-z0-9._@%+~/-]+)/g)) add(m[1]);
+  for (const m of t.matchAll(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g)) add(m[0]);
+  for (const m of t.matchAll(new RegExp(`(?<![\\w/.-])${DANGER_HOST}(?![\\w/-])`, 'gi'))) add(m[0]);
+  return [...out];
+}
+// A thing the owner wrote stands whole in their words: never a piece of a longer word, address or path ("hub.com" in
+// "github.com", "/srv" in "/srv/old", "torch" in "pytorch").
+function dangerWhole(text, thing) {
+  for (let i = text.indexOf(thing); i >= 0; i = text.indexOf(thing, i + 1)) {
+    const before = text[i - 1] || '', after = text[i + thing.length] || '', next = text[i + thing.length + 1] || '';
+    if (/[A-Za-z0-9._/-]/.test(before) || /[A-Za-z0-9_-]/.test(after) || (/[./]/.test(after) && /[A-Za-z0-9_-]/.test(next))) continue;
+    return true;
+  }
+  return false;
+}
+// "Came from" (line 4), with no model call: for each thing, nothing when the owner's own messages of this request hold
+// it whole (ignoring case); else the first read that holds it, newest first, then the first of Sparkie's earlier answers. A
+// pure function: reads are [{label, at, text}] (the text read back from the journal, only searched, never shown; the
+// newest 40 and 64 MB in all), answers [{at, text}] (the newest 20). A label is built by code and never quotes its source.
+function cameFrom(things, ownerMessages, reads, answers) {
+  const own = (ownerMessages || []).map(m => String(m).toLowerCase()).join('\n');
+  const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
+  const rs = [...(reads || [])].sort(newest);
+  let cut = rs.length > DANGER_READS || rs.some(r => r.cut), budget = DANGER_READ_BYTES;
+  const searched = [];
+  for (const r of rs.slice(0, DANGER_READS)) {
+    const text = String(r.text ?? '');
+    if (text.length > budget) { cut = true; break; }
+    budget -= text.length;
+    searched.push({ what: dangerPlain(r.label, 120) || 'something read', at: r.at, lower: text.toLowerCase() });
+  }
+  const said = [...(answers || [])].sort(newest).slice(0, DANGER_ANSWERS).map(a => ({ at: a.at, lower: String(a.text ?? '').toLowerCase() }));
+  const lines = [], labels = [], list = [...(things || [])];
+  // (things past the first 64 are not looked for: when there was something to look in, the ask says so)
+  if (list.length > DANGER_THINGS && (searched.length || said.length)) cut = true;
+  let work = DANGER_WORK;
+  // The first of xs that holds t (undefined: none does); null when the work ran out first.
+  const seek = (xs, t) => { for (const x of xs) { if ((work -= x.lower.length) < 0) return null; if (x.lower.includes(t)) return x; } return undefined; };
+  for (const thing of list.slice(0, DANGER_THINGS)) {
+    const t = String(thing).toLowerCase();
+    if (!t) continue;
+    if ((work -= own.length) < 0) { cut = true; break; }
+    if (dangerWhole(own, t)) continue;
+    const r = seek(searched, t);
+    if (r) { lines.push(`${thing}: ${r.what} (read ${dangerHhmm(r.at)})`); labels.push(r.what); continue; }
+    const a = r === null ? null : seek(said, t);
+    if (a === null) { cut = true; break; }
+    if (a) { lines.push(`${thing}: Sparkie’s earlier answer (${dangerHhmm(a.at)})`); labels.push('Sparkie’s earlier answer'); }
+  }
+  return { lines: lines.slice(0, DANGER_FROM_LINES), more: Math.max(0, lines.length - DANGER_FROM_LINES), cut, labels: [...new Set(labels)] };
+}
+// A read's long text, read back from the journal by its id (never shown; only searched by cameFrom).
+function dangerJournalText(id, max) {
+  if (!/^j_[0-9a-f]{12}$/.test(String(id || ''))) return null;
+  for (const f of journalFiles()) for (const line of jLinesOf(f)) {
+    if (!line.includes(`"id":"${id}"`)) continue;
+    const r = jParse(line);
+    if (r?.id !== id || !Array.isArray(r.o)) continue;
+    const [offset, length] = r.o, n = Math.max(0, Math.min(length, max));
+    let fd;
+    try { fd = openSync(jFile(f.slice(8, 15), 'out'), 'r'); } catch { return null; }
+    // (and a record the journal itself cut at its size counts as not all searched)
+    try { const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, offset); return { text: buf.toString(), cut: length > max || Boolean(r.cut) }; } finally { closeSync(fd); }
+  }
+  return null;
+}
+// What this request read ({id, label, at}, newest first; a test may hand in {label, at, text}), with its text.
+function dangerReadsLoaded(reads) {
+  let left = DANGER_READ_BYTES, cut = false;
+  const out = [];
+  for (const r of [...(Array.isArray(reads) ? reads : [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, DANGER_READS)) {
+    const got = typeof r.text === 'string' ? { text: r.text.slice(0, left), cut: r.text.length > left } : dangerJournalText(r.id, left);
+    // (a read whose text can't be read back was not searched, and the ask says so)
+    if (!got) { cut = true; continue; }
+    out.push({ label: r.label, at: r.at, text: got.text, cut: got.cut });
+    left -= got.text.length;
+    if (got.cut || left <= 0) { cut = true; break; }
+  }
+  if (cut || (Array.isArray(reads) && reads.length > DANGER_READS)) out.push({ label: '', at: '', text: '', cut: true });
+  return out;
+}
+/* ───────── the dangerous ask: hard to tap by reflex (A10b) ───────── */
+// Area: safety        Rules: R54        Tests: danger.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A
+// 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no
+// word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came
+// from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes.
+// One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text
+// (the Telegram message; the page's copy, filled in when the owner's page reads the chat): never in chats.json, the
+// journal, the audit, a button's label, a tool result or an event. On the page one request carries the press and the
+// pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
+// minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
+// close it; /lock and the switch going off close its Telegram side. Nothing on main raises one yet (the raisers come
+// with A7c, A12, A13, C5 and D12); on the stand-in fleet a test raises one through dangerForTest.
+const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
+// Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
+const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
+// (an ask's life is 15 minutes, every button's, and a third inside ten minutes waits one; the stand-in fleet may shorten
+// either, so most tests are not held up by the ones before them)
+const dangerEnvMs = (name, ms) => (ALL_LOCAL && /^\d+$/.test(process.env[name] || '') ? Number(process.env[name]) : ms);
+const DANGER_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_MS', 15 * 60000), DANGER_LATE_MS = dangerEnvMs('SPARK_CONSOLE_DANGER_LATE_MS', 60000), DANGER_LONG = 300;
+// The one open ask; when recent ones were built (the third inside ten minutes is sent a minute late); the buttons of
+// asks that closed, so a later press is told so (the newest 200); the ask closed last, for a pair typed after it.
+let dangerOpen = null, dangerLastPair = null, dangerRecent = null;
+const dangerBuilt = [], dangerGoneIds = new Map();
+// An agent's conversation whose ask was just declined, and when: it waits a minute before it may ask again.
+const dangerDeclined = new Map(), DANGER_AGENT_WAIT_MS = 60000;
+// Text that is not the command: one line, no control or invisible character, cut. Names, labels and facts pass here,
+// so nothing from elsewhere can make a line of its own.
+const dangerPlain = (s, n = 200) => String(s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  .slice(0, n).replace(/[\ud800-\udbff]$/, '');
+// The command may hold line breaks, tabs and plain spaces, never another control, format, invisible or unassigned
+// character, nor a space that is not a space to the shell: what is shown is what runs.
+const DANGER_HIDDEN = /(?![\n\t ])[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u2800]/u;
+const dangerHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? '?' : d.toTimeString().slice(0, 5); };
+const dangerSha = s => createHash('sha256').update(s).digest('hex');
+const dangerSame = (typed, digits) => typeof digits === 'string' && /^\d{2}$/.test(typed) && timingSafeEqual(Buffer.from(typed), Buffer.from(digits));
+
+// Line 1: the kinds and the place, in capitals. A command of two kinds is one ask: "ROOT on Spark 2 · CAN LOCK YOU OUT".
+function dangerHead(kinds, where) {
+  const place = where ? sparkName(nodeById(where) || { id: dangerPlain(where, 40) }) : 'Spark Console';
+  return kinds.map((k, i) => (i ? DANGER_HEAD[k][0] : `${DANGER_HEAD[k][0]} ${DANGER_HEAD[k][1]} ${place}`)).join(' · ');
+}
+// Line 7, the bytes the press runs: a command; a file's path with its lines that change; a script's text.
+function dangerCodeOf(shown) {
+  if (typeof shown.script === 'string') return { text: shown.script, before: [`The script's SHA-256 begins ${dangerSha(shown.script).slice(0, 12)}.`] };
+  if (typeof shown.path === 'string') {
+    const rows = (sign, t) => String(t ?? '').split('\n').filter((l, i, all) => l || i < all.length - 1).map(l => `${sign} ${l}`);
+    return { text: [...rows('-', shown.before), ...rows('+', shown.after)].join('\n'), before: [`The file ${dangerPlain(shown.path, 400)}: the lines that change, old (-) and new (+).`] };
+  }
+  return { text: String(shown.command ?? ''), before: [] };
+}
+// Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
+function dangerBack(f) {
+  if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
+  if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
+  if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
+  return [];
+}
+// Lines 5 and 6: the ways-in files a command names; an install's tree, when it was tested, what differs, what the brain
+// reads; why it runs outside the wall.
+function dangerMore(f) {
+  const out = [];
+  if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
+  if (f.install) {
+    const d = Array.isArray(f.install.differs) ? f.install.differs : [];
+    out.push(`The tree ${dangerPlain(f.install.tree, 80)}, tested ${f.install.testedAt ? dangerHhmm(f.install.testedAt) : 'never'}.`,
+      d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
+    if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
+  }
+  if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  return out;
+}
+
+// Line 2: the gate's own answer for this call, as sparkieCheck's: the owner's words in this request ask for this
+// action's kind of change (never a question, a "don't" or a mixed one) and name this Spark. An action with no kind is
+// "not asked" unless its raiser, which knows better (rule 2 of A 2.5, R25's word kinds), says so with facts.asked.
+function dangerAskedFor(ctx, conv, where, action) {
+  if (conv.agent || ctx.agent || !['sparkie', 'page'].includes(ctx.via)) return false;
+  const kinds = ACTION_KIND[action] || [], i = ctx.intent || {}, has = (list, k) => (list || []).includes(k);
+  return kinds.length > 0 && kinds.some(k => has(i.asked, k)) && !kinds.some(k => has(i.negated, k) || has(i.mixed, k))
+    && Boolean(where) && tokensOf(ctx.said || ctx.request || '').has(where);
+}
+// The owner's own messages of this request: the one that began it and the later ones (never an agent's or a carry-on's).
+function dangerOwnerWords(conv) {
+  const own = conv.messages.filter(m => m.role === 'user' && !m.from && !m.auto);
+  const since = conv.task?.at ? own.filter(m => String(m.createdAt) >= String(conv.task.at)) : [];
+  return (since.length ? since : own.slice(-1)).map(m => String(m.content || ''));
+}
+
+// kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
+// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
+// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
+// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
+  const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
+  if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
+  const install = ks.includes('install'), code = install ? null : dangerCodeOf(shown || {});
+  if ((code && DANGER_HIDDEN.test(code.text)) || DANGER_HIDDEN.test(String(shown?.path || ''))) {
+    throw new HttpError(400, 'What it would run holds invisible characters, so what would be shown isn’t what would run. Nothing was asked or run.');
+  }
+  // (a file's path is shown on one line as it is: one that line would flatten or cut is not asked)
+  if (shown?.path != null && dangerPlain(shown.path, 400) !== String(shown.path)) {
+    throw new HttpError(400, 'The file’s path holds a line break, a tab, two spaces together, a space at either end or more than 400 characters, so it can’t be shown on one line as it is. Nothing was asked or run.');
+  }
+  // Shown whole or not asked: a part the masks would hide is a part the owner could not read before saying yes.
+  const masked = x => maskSecrets(x) !== x;
+  if ((code && masked(code.text)) || masked(String(shown?.path || ''))) {
+    throw new HttpError(400, 'What it would run holds something shaped like a key or password, so it can’t be shown whole: give the key by its name. Nothing was asked or run.');
+  }
+  const head = dangerHead(ks, where), yesWords = install ? 'Install it' : facts.switchBrain ? 'Switch the brain' : 'Run it';
+  const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  // No conversation to show it in (an agent's own tool call, POST /actions, a saved step even when run from a chat,
+  // which carries the chat but no way to answer, as question() judges it), or not the owner's: nowhere.
+  if (!conv || String(conv.login || '').toLowerCase() !== String(accessList().owner || '').toLowerCase() || viewer?.role !== 'owner' || (!ctx.onQuestion && ctx.via !== 'page')) {
+    return { outcome: 'question', question: head, choices: [{ label: yesWords, choice: null }, { label: 'No', choice: null }],
+      note: 'Only the owner can answer this one, and nothing was done or shown anywhere. The owner asks Sparkie for this in their own chat in Spark Console. Tell them that.' };
+  }
+  const byAgent = Boolean(conv.agent || ctx.agent);
+  let open = dangerLive();
+  // The owner's own chat goes ahead of an agent's conversation for the one place.
+  if (open && open.agent && !byAgent) { dangerClose(open, 'the owner asked'); open = null; }
+  // (an agent is told only that it waits, never what the open ask is about)
+  if (open) return byAgent ? { outcome: 'waiting', question: 'An ask waits for the owner.', note: 'Waiting: another ask is open for the owner. Nothing was asked or run.' }
+    : { outcome: 'waiting', question: open.head, note: `Waiting for your answer to the ask already open (${open.head}). Nothing was asked or run.` };
+  if (byAgent && Date.now() - (dangerDeclined.get(conv.id) || 0) < DANGER_AGENT_WAIT_MS) {
+    return { outcome: 'waiting', question: 'An ask waits for the owner.', note: 'Asked again too soon: the owner just declined an ask in this conversation. Wait a minute. Nothing was asked or run.' };
+  }
+  const now = Date.now();
+  while (dangerBuilt.length && now - dangerBuilt[0] > 600000) dangerBuilt.shift();
+  const opensAt = dangerBuilt.length >= 2 ? now + DANGER_LATE_MS : now;
+  dangerBuilt.push(now);
+  const asked = typeof facts.asked === 'boolean' ? facts.asked : dangerAskedFor(ctx, conv, where, call.action), agent = byAgent ? dangerPlain(conv.agent?.name, 60) || 'An agent' : null;
+  const answers = conv.messages.filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  const from = install ? null : cameFrom(dangerThings(`${code.text}\n${shown?.path || ''}`), dangerOwnerWords(conv), dangerReadsLoaded(ctx.reads), answers);
+  const lines = [head, asked ? 'You asked for this.' : agent ? `You did not ask for this. ${agent} did.` : 'You did not ask for this.', ...dangerBack(facts),
+    ...(from?.lines.length ? ['Came from, not from you:', ...from.lines.map(l => `  ${l}`), ...(from.more ? [`  and ${from.more} more`] : [])] : []),
+    ...(from?.cut ? ['Not all of what was read was searched.'] : []), ...dangerMore(facts), ...(code?.before || [])].map(l => maskSecrets(l));
+  const longLine = code && code.text.length >= DANGER_LONG ? 'Long: read all of it before you answer.' : null;
+  const id = randomBytes(6).toString('hex');
+  let q = null;
+  question(viewer, { ...ctx, onQuestion: x => { q = x; } }, head, [{ label: yesWords, call }, { label: 'No', call: null }], 'question', { ownerOnly: true, danger: id });
+  const [yes, no] = q.choices.map(c => c.choice);
+  // (its fifteen minutes start when it is sent)
+  for (const c of [yes, no]) pendingChoices.get(c).at = opensAt;
+  let digits;
+  do digits = String(randomInt(10, 100)); while (digits === dangerLastPair);
+  dangerLastPair = digits;
+  const recheck = typeof facts.recheck === 'function' ? facts.recheck : null;
+  const a = { id, head, kinds: ks, where, act: call.action, yes, no, group: q.group, conv: conv.id, digits, tries: 0, opensAt, asked, agent, yesWords, lines, longLine,
+    code: code ? code.text : null, from: from?.labels || [], whoApproves: Boolean(facts.whoApproves), recheck, wall: facts.wall || null, raw: code?.text ?? null,
+    pressedAt: 0, pairOk: false, taken: false, telegram: null };
+  // What it binds: its kinds, Spark, wall, verb and arguments and the exact bytes; and what a script holds now.
+  a.sha = dangerBound(a, call.action, call.args);
+  // (what recheck gives at the press must be the very text shown: a script read again, which may take a while)
+  a.bytesSha = recheck ? dangerSha(code?.text ?? '') : null;
+  conv.messages.push({ role: 'assistant', notice: true, createdAt: new Date().toISOString(),
+    // (in an agent's conversation the words its tools read back say only that it waits: the ask itself is the owner's)
+    content: agent ? 'Spark Console asked the owner about this as its own message. Only the owner can answer it.'
+      : [...lines, ...(longLine ? [longLine] : []), ...(a.code !== null ? [a.code] : []), `To run it: press ${yesWords}, then type the two digits shown with this ask.`].join('\n'),
+    danger: { ask: id, lines, long: Boolean(longLine), code: a.code, yes: yesWords },
+    choices: [{ id: yes, label: yesWords, state: 'open', group: q.group, pair: true }, { id: no, label: 'No', state: 'open', group: q.group }] });
+  conv.updatedAt = new Date().toISOString();
+  saveChats();
+  dangerOpen = a;
+  dangerJournal(a, 'asked', { via: ctx.via || null, actor: ctx.actor || null });
+  if (opensAt > now) setTimeout(() => { dangerTell(a).catch(() => {}); }, opensAt - now).unref?.();
+  else dangerTell(a).catch(() => {});
+  // (an agent is told only that it waits; a button's notice and a saved step's failure name the ask's first line)
+  return { outcome: 'question', question: agent ? 'An ask waits for the owner.' : head, asked: 'as its own message', note: agent
+    ? 'asked: it waits for the owner. Only the owner answers it, in Spark Console or their paired Telegram chat; you can answer nothing.'
+    : 'Asked as its own message in this chat (and in the owner’s Telegram while approvals from there are on), with what it changes and the exact command: only the owner answers it. Say in one short line why you proposed it, then stop. Don’t repeat the command.' };
+}
+const dangerBound = (a, action, args) => dangerSha(JSON.stringify([a.kinds, a.where, a.wall, action, args ?? null, a.raw]));
+// The journal's line for the ask, its answer and its end (2.11): never the digits.
+function dangerJournal(a, outcome, more = {}) {
+  journal('call', { act: a.act, chat: a.conv, ...more, danger: a.kinds, asked: a.asked, from: a.from, outcome, sub: jSub(a.where) });
+}
+
+// The open ask, or null once it closed: answered, No, void, or 15 minutes after it was sent.
+function dangerLive() {
+  const a = dangerOpen;
+  if (!a) return null;
+  if (a.taken) return null;
+  if (pendingChoices.has(a.yes) && Date.now() - a.opensAt <= DANGER_MS) return a;
+  dangerClose(a, pendingChoices.has(a.yes) ? 'expired' : 'gone');
+  return null;
+}
+// Closes it: no button of it answers again (a later press or pair is told so), and its buttons go grey on the page.
+function dangerClose(a, why, more = {}) {
+  if (!a || a.closedAt) { if (dangerOpen === a) dangerOpen = null; return; }
+  Object.assign(a, { closedAt: Date.now(), closed: why, digits: null, pressedAt: 0, pairOk: false, taken: true });
+  if (dangerOpen === a) dangerOpen = null;
+  dangerRecent = a;
+  if (a.agent && (why === 'no' || why === 'gone')) dangerDeclined.set(a.conv, Date.now());
+  for (const id of [a.yes, a.no]) { pendingChoices.delete(id); tgAsks.delete(id); dangerGoneIds.set(id, Date.now()); }
+  while (dangerGoneIds.size > 200) dangerGoneIds.delete(dangerGoneIds.keys().next().value);
+  if (why !== 'answered' && why !== 'no') {
+    const conv = chatData().conversations.find(c => c.id === a.conv);
+    for (const m of conv?.messages || []) for (const x of m.choices || []) if (x.group === a.group && x.state === 'open') x.state = 'gone';
+    if (conv) saveChats();
+  }
+  dangerJournal(a, why === 'answered' ? 'answered' : why === 'no' ? 'declined' : 'void', { ...(why !== 'answered' && why !== 'no' ? { why } : {}), ...more });
+}
+const dangerGone = id => (dangerGoneIds.has(String(id)) ? 'That ask is no longer open. Ask again.' : null);
+// What an approval of it from Telegram is echoed as on the page (tgApproved): its first line, not its yes words.
+const dangerHeadOf = id => (dangerRecent?.id === id ? dangerRecent.head : dangerOpen?.id === id ? dangerOpen.head : null);
+// /stop in the chat that asked; /pause; a new pairing: closed. /lock and the switch off: its Telegram side only.
+function dangerStopped(conv) { const a = conv && dangerLive(); if (!a || a.conv !== conv.id) return false; dangerClose(a, 'stopped'); return true; }
+function dangerPaused() { if (dangerOpen) dangerClose(dangerOpen, 'paused'); }
+function dangerTelegramGone(everywhere) {
+  if (!dangerOpen) return;
+  if (everywhere) return dangerClose(dangerOpen, 'a new pairing');
+  Object.assign(dangerOpen, { telegram: null, pressedAt: 0, pairOk: false });
+}
+// A task parked at a dangerous ask is not carried past it by the loop's budgets (budgetCarries, 14-rounds.mjs).
+const dangerParked = conv => Boolean(conv && dangerLive()?.conv === conv.id);
+// The owner's page reads the chat (GET /chats/:id): the open ask's copy carries its digits once it is sent.
+const dangerShown = messages => (dangerLive() && dangerOpen && !dangerOpen.taken
+  ? messages.map(m => (m.danger?.ask !== dangerOpen.id ? m : Date.now() < dangerOpen.opensAt ? { ...m, opensAt: new Date(dangerOpen.opensAt).toISOString() } : { ...m, pair: dangerOpen.digits }))
+  : messages);
+
+// Sends it to the paired chat while approvals from there are on: its facts, the command as a fixed-width block, then the
+// digits, with its two buttons. Over 3,500 characters, or when it changes who may approve: the facts, and that it waits
+// in Spark Console, with no button.
+async function dangerTell(a) {
+  const p = tgPaired();
+  if (!p || !tgApproveOn() || dangerOpen !== a || a.taken) return false;
+  const head = a.lines.join('\n'), end = `To run it: press ${a.yesWords}, then type ${a.digits}.`;
+  if (a.whoApproves || (a.code !== null && a.code.length > TG_ASK_MAX) || head.length + (a.code?.length || 0) + 200 > TELL_PART) return tell('ask', `${head}\n\nThis one waits for you in Spark Console.`);
+  const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: a.group, conv: a.conv };
+  for (const id of [a.yes, a.no]) tgAsks.set(id, sent);
+  a.telegram = sent;
+  const buttons = [{ id: a.yes, label: a.yesWords }, { id: a.no, label: 'No' }];
+  const ok = a.code === null ? await tell('ask', `${head}\n\n${end}`, { buttons }) : await tell('ask', `${head}${a.longLine ? `\n${a.longLine}` : ''}`, { buttons, pre: a.code, tail: end });
+  if (!ok) { for (const id of [a.yes, a.no]) if (tgAsks.get(id) === sent) tgAsks.delete(id); if (a.telegram === sent) a.telegram = null; }
+  return ok;
+}
+// Its yes pressed in the paired chat (tgApproving, once A10a's checks pass): answered, and the next message is compared.
+function dangerPressedHere(choice) {
+  const a = dangerLive();
+  if (!a || a.yes !== choice || !a.telegram) return dangerGone(choice) || 'That ask is no longer open. Ask again.';
+  if (Date.now() < a.opensAt) return `This ask opens at ${dangerHhmm(a.opensAt)}: read it meanwhile.`;
+  a.pressedAt = Date.now();
+  return 'Type the two digits from the ask to run it.';
+}
+function dangerWrong(a) {
+  a.tries += 1;
+  if (a.tries >= 3) { dangerClose(a, 'three wrong pairs'); return 'That was the third wrong pair, so the ask is closed and nothing was run. Ask again.'; }
+  return 'Those aren’t the two digits from the ask, so nothing was run. Type them again, or press No.';
+}
+// Whether text holds the open ask's two digits as a number of their own (alone, or among other words).
+const dangerHolds = (a, t) => Boolean(a?.digits) && new RegExp(`(?:^|[^0-9])${a.digits}(?:[^0-9]|$)`).test(String(t));
+// The page's own chat box (24-handler.mjs, the owner's messages): one holding the open ask's pair is refused there,
+// before Sparkie, the chat file or the journal see it; the pair goes in the ask's own field.
+const dangerPairInChat = text => dangerHolds(dangerLive(), text);
+// The owner's next message in the paired chat (tgUpdate): after a press, the pair (spaces or punctuation around it
+// allowed) is compared, and anything else forgets the press; the pair with no press is told to press first. While an
+// ask is open, a message that holds its pair as a number of its own never goes on to Sparkie (nor so to the chat file
+// or the journal). null: not about an ask (it goes on to Sparkie).
+function dangerTypedHere(text) {
+  const t = String(text).trim(), a = dangerLive(), pair = /^[^\p{L}\p{N}]{0,4}(\d{2})[^\p{L}\p{N}]{0,4}$/u.exec(t)?.[1] || null;
+  const holds = !pair && dangerHolds(a, t);
+  if (!a || !a.telegram) {
+    if (a && (pair || holds)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
+    return pair && dangerRecent && Date.now() - dangerRecent.closedAt < DANGER_MS ? tell('system', 'That ask is no longer open. Ask again.') : null;
+  }
+  if (!a.pressedAt) return pair ? tell('system', `Press ${a.yesWords} first.`) : holds ? tell('system', `Press ${a.yesWords} first, then type only the two digits.`) : null;
+  if (holds) return tell('system', 'Type only the two digits.');
+  if (!pair) { a.pressedAt = 0; return null; }
+  if (!dangerSame(pair, a.digits)) return tell('system', dangerWrong(a));
+  const c = pendingChoices.get(a.yes), conv = chatData().conversations.find(x => x.id === a.conv);
+  if (!c || !conv || !tgAskOpen(a.yes, c)) return tell('system', 'That ask isn’t answered here: answer it in Spark Console.');
+  const held = tgApprovalsHeld();
+  if (held) return tell('system', held);
+  if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Type the two digits again when I’m done.');
+  a.pairOk = true;
+  return tgRun(conv, a.yes, { c, conv });
+}
+// runChoice's check of any press on a dangerous ask, before anything runs: open, the owner's own press with its pair,
+// and what it shows still what would run. A refusal throws (it says why) and runs nothing.
+async function dangerPress(id, c, by) {
+  const no = (status, why) => Object.assign(new HttpError(status, why), { danger: true });
+  const a = dangerLive();
+  if (!a || (a.yes !== id && a.no !== id)) throw no(409, 'That ask is no longer open. Ask again.');
+  if (!['page', 'telegram'].includes(by.via) || by.agentId) throw no(403, 'Only the owner answers this one, in Spark Console or their paired Telegram chat.');
+  if (Date.now() < a.opensAt) throw no(409, `This ask opens at ${dangerHhmm(a.opensAt)}: read it meanwhile.`);
+  if (id === a.no) return dangerClose(a, 'no', { gate: `asked:${by.via}` });
+  if (by.via === 'page') {
+    const pair = String(by.pair ?? '').trim();
+    if (!/^\d{2}$/.test(pair)) throw no(400, `Type the two digits from the ask, then press ${a.yesWords}.`);
+    if (!dangerSame(pair, a.digits)) { const why = dangerWrong(a); throw no(a.closedAt ? 409 : 403, why); }
+  } else if (!(a.pairOk && a.pressedAt)) throw no(403, 'Type the two digits from the ask to run it.');
+  // (taken now: a second press, here or in the other place, at the same instant or later, runs nothing)
+  a.taken = true;
+  let same = dangerBound(a, c.action, c.args) === a.sha;
+  try { if (same && a.recheck) same = dangerSha(String(await a.recheck())) === a.bytesSha; } catch { same = false; }
+  if (!same) { dangerClose(a, 'changed'); throw no(409, 'What that ask showed is no longer what would run, so nothing was run. Ask again: a new ask shows the new text.'); }
+  dangerClose(a, 'answered', { gate: `asked:${by.via}` });
+}
+
+// On the stand-in fleet only: a test raises a dangerous ask through the next owner-only question (question(),
+// 17-changes.mjs), from STATE_DIR/.test-danger.json ({kinds, where, facts, shown, reads}; shown.file: a script on this
+// machine, read again at the press). Never on a real console, where nothing raises one yet.
+function dangerForTest(viewer, ctx, choices) {
+  if (!ALL_LOCAL) return null;
+  const f = `${STATE_DIR}/.test-danger.json`;
+  if (!existsSync(f)) return null;
+  let t;
+  try { t = JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
+  const call = choices.find(c => c.call)?.call, file = t.shown?.file;
+  if (!call) return null;
+  return dangerAsk(viewer, { ...ctx, reads: t.reads || [] }, { kinds: t.kinds, where: t.where, facts: { ...(t.facts || {}), ...(file ? { recheck: () => sleep(400).then(() => readFileSync(file, 'utf8')) } : {}) },
+    shown: file ? { script: readFileSync(file, 'utf8') } : t.shown || {}, call });
 }
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
 // Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
@@ -8623,6 +9084,9 @@ action({
       : { outcome: 'cancelled', operation: id, status: done?.status, note: done?.cleanUp || 'What it had done was put back.' };
   },
 });
+// When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
+// (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
+const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
@@ -8630,7 +9094,7 @@ action({
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
     // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone)?.at || '');
+    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
     if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
@@ -12873,7 +13337,13 @@ const tellClean = (text, token) => {
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
-async function tell(why, text, { buttons = null, to = null } = {}) {
+// pre: an exact command, sent whole in a fixed-width block after text, then tail (20-danger.mjs): one message, never cut;
+// too long for one, and nothing is sent.
+const tellBlock = (head, code, tail) => {
+  const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
+  return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
+};
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '' } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -12883,7 +13353,7 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   if (later && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = tellParts(tellClean(text, b.token));
+  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);
@@ -12891,9 +13361,9 @@ async function tell(why, text, { buttons = null, to = null } = {}) {
   let ok = true;
   for (const [i, p] of parts.entries()) {
     tellSends.push(Date.now());
-    ok = (await tgSend(b, p, { silent, buttons: i === parts.length - 1 ? buttons : null })) && ok;
+    ok = (await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities })) && ok;
   }
-  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + p.length, 0) }, ok });
+  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok });
   return ok;
 }
 
@@ -13090,7 +13560,8 @@ function tgApproving(choice) {
   const c = pendingChoices.get(choice), sent = tgAsks.get(choice);
   if (!c?.ownerOnly) {
     if (sent) tgAsks.delete(choice);
-    return sent ? { answer: 'That button has expired. Ask again.' } : null;
+    // (a dangerous ask's button after it closed: 20-danger.mjs)
+    return sent || dangerGone(choice) ? { answer: dangerGone(choice) || 'That button has expired. Ask again.' } : null;
   }
   const conv = chatData().conversations.find(x => sparkieWho(tgOwner(), x.id) === c.who);
   if (!conv) return { answer: 'That button has expired. Ask again.' };
@@ -13102,6 +13573,8 @@ function tgApproving(choice) {
     audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approval-held', args: { chat: conv.id }, ok: true });
     return { answer: held };
   }
+  // A dangerous ask's yes runs only with its two digits, typed as the next message here (20-danger.mjs).
+  if (c.danger && c.action) return { answer: dangerPressedHere(choice) };
   return { conv, c };
 }
 // Counted before it runs: a yes that then fails still counts.
@@ -13114,13 +13587,14 @@ function tgApprovalCounted(ask) {
 // Every approval is echoed on the page: runChoice's line in the chat says so, and this notice.
 function tgApproved(ask, conv, r) {
   if (!ask.c.action || r?.outcome === 'declined') return;
-  const label = maskSecrets(String(ask.c.label || '')).slice(0, 200);
+  const label = maskSecrets(String((ask.c.danger && dangerHeadOf(ask.c.danger)) || ask.c.label || '')).slice(0, 200);
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approved', args: { label, chat: conv.id }, ok: r?.outcome !== 'error' });
   fleetEvent({ type: 'notice', text: `Approved from Telegram: “${label}”. If that wasn’t you, send /lock there, or turn approvals from Telegram off in your account menu → Agents and Telegram.` });
 }
 
 // everywhere: the whole ask is void (a new pairing: the page's buttons go grey too); else only its Telegram side.
 function tgAsksVoid(everywhere) {
+  dangerTelegramGone(everywhere);
   if (everywhere && tgAsks.size) {
     const groups = new Set([...tgAsks.values()].map(x => x.group)), convs = new Set([...tgAsks.values()].map(x => x.conv));
     for (const [id, c] of pendingChoices) if (groups.has(c.group)) pendingChoices.delete(id);
@@ -13555,6 +14029,8 @@ async function statusText() {
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
   setAgentSettings({ halted: true, autoPaused: false });
+  // (an open dangerous ask closes: 20-danger.mjs)
+  dangerPaused();
   putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
@@ -13606,7 +14082,10 @@ async function restartWord(via) {
 // /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs). It
 // never cancels an operation and never stops a model.
 function stopWord(conv) {
+  // (a dangerous ask this chat asked closes too: 20-danger.mjs)
+  const asked = dangerStopped(conv);
   if (conv && stopTurn(conv)) return 'Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request. Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.';
+  if (asked) return 'Stopped. The ask in this chat that waited for your answer is closed, and nothing was run.';
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }
 
@@ -15073,6 +15552,142 @@ action({
       next: `wait_operation {"id":"${job.id}"}` };
   },
 });
+/* ───────── pruning the copies on a Spark (A8) ───────── */
+// Area: features        Rules: R61        Tests: prune.test.mjs, runner.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// The copies program's pruning (21-copies.mjs joins this text into it): when a new set opens on a Spark, older sets
+// there go: any older than COPIES_DAYS, all but the newest COPIES_SETS (the new one counts), then the oldest until the
+// copies on that Spark hold COPIES_BYTES. Never the new set, a set the console names (runnerKeep: the newest set of a chat
+// that can still undo it), nor one whose unit systemd says still runs or can't tell. A set's age is its folder's
+// modification time, which only this program writes (both walls hide the folder). What goes leaves its manifest, its
+// after-look and a pruned.json, so an undo can say "pruned" file by file (pruned_answer); that mark goes too after
+// COPIES_MARK_DAYS, past the journal's two months undo reads. One look at the copies folder (os.scandir), sizes only of
+// the sets left, and at most COPIES_PRUNE_MOST removed in one go, so a folder someone made long costs one listing. No
+// link is followed.
+const COPIES_DAYS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_DAYS) || 7;
+const COPIES_SETS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_SETS) || 20;
+const COPIES_BYTES = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_COPIES_BYTES) || 2 * 2 ** 30;
+const COPIES_PRUNE_MOST = 200, COPIES_MARK_DAYS = 62;
+const COPIES_PRUNE_PY = String.raw`
+SETNAME = re.compile(r'^s[0-9a-z]{8,24}$')
+
+def tree_size(top):
+    # the bytes of the plain files under a set, never through a link
+    n = 0
+    for dp, dns, fns in os.walk(top, followlinks=False):
+        for x in fns:
+            try:
+                st = os.lstat(os.path.join(dp, x))
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                n += st.st_size
+    return n
+
+def prune(base):
+    # Older sets go when a new one opens (A8): older than the days given, all but the newest sets given (the new one
+    # counts), then the oldest until the copies on this Spark hold the bytes given. Never the new set, one the console
+    # names (keep: the newest set of a chat that can still undo it), nor one whose unit systemd says still runs or can't
+    # tell. What goes leaves its manifest and a pruned.json behind, so an undo can say "pruned" file by file; such a
+    # mark goes too once it is older than the journal's window. One look at the folder, sizes only of what is left, and
+    # at most the given number removed in one go.
+    P = A['prune']
+    now, sets, marks = time.time(), [], []
+    with os.scandir(base) as it:
+        for d in it:
+            if d.name == A['set'] or not SETNAME.match(d.name):
+                continue
+            try:
+                st = d.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+                continue
+            (marks if os.path.lexists(os.path.join(base, d.name, 'pruned.json')) else sets).append((st.st_mtime, d.name))
+    keep = set(P.get('keep') or [])
+    for t, n in sets:
+        unit = (P.get('units') or {}).get(n)
+        if unit and unit_live(unit) not in (3, 4):
+            keep.add(n)
+    sets.sort(reverse=True)
+    gone, rest = [], []
+    for i, (t, n) in enumerate(sets):
+        if n in keep:
+            rest.append((t, n))
+        elif now - t > P['days'] * 86400:
+            gone.append((n, 'older than %d days' % P['days']))
+        elif i + 2 > P['sets']:
+            gone.append((n, 'past the newest %d sets on this Spark' % P['sets']))
+        else:
+            rest.append((t, n))
+    total, sizes = tree_size(os.path.join(base, A['set'])), {}
+    for t, n in rest:
+        sizes[n] = tree_size(os.path.join(base, n))
+        total += sizes[n]
+    for t, n in reversed(rest):
+        if total <= P['bytes']:
+            break
+        if n not in keep:
+            gone.append((n, 'past the %s the copies on this Spark keep' % (('%g GB' % (P['bytes'] / 2 ** 30)) if P['bytes'] >= 2 ** 30 else ('%g MB' % round(P['bytes'] / 2 ** 20, 1)))))
+            total -= sizes[n]
+    out = []
+    for n, why in gone[:P['most']]:
+        sd = os.path.join(base, n)
+        info = {'set': n, 'why': why, 'files': 0, 'bytes': 0, 'paths': []}
+        try:
+            man = json.loads(read(os.path.join(sd, 'manifest.json'), 64 << 20))
+            kept = [e for e in man.get('entries', []) if e.get('kind') == 'file' and not e.get('way')]
+            info.update(files=len(kept), bytes=sum(e.get('size', 0) for e in kept), paths=[show(e['path']) for e in kept[:20]])
+            mark = True
+        except (OSError, OverflowError, ValueError, AttributeError):
+            mark = False
+        for x in os.listdir(sd):
+            # (the manifest and the after-look stay: what the set held, and whether its change was cut off)
+            if mark and x in ('manifest.json', 'after.json'):
+                continue
+            q = os.path.join(sd, x)
+            if stat.S_ISDIR(os.lstat(q).st_mode):
+                shutil.rmtree(q)
+            else:
+                os.unlink(q)
+        if mark:
+            put(os.path.join(sd, 'pruned.json'), json.dumps({'at': now, 'why': why}).encode())
+        else:
+            os.rmdir(sd)
+        out.append(info)
+    for t, n in marks[:P['most']]:
+        if now - t > P['marks'] * 86400:
+            shutil.rmtree(os.path.join(base, n))
+    return out
+
+
+def pruned_answer(sd, man, after, only):
+    # a set pruned since: its copies are gone and only its manifest is left, so each file says so (and the answer ends)
+    try:
+        gone = json.loads(read(os.path.join(sd, 'pruned.json'), 1 << 20))
+    except (OSError, OverflowError, ValueError):
+        gone = None
+    if gone is not None:
+        when = time.strftime('%Y-%m-%d', time.localtime(gone.get('at', 0)))
+        missed, same = [], []
+        for e in man['notKept']:
+            if only is None or e['path'] in only:
+                missed.append({'path': e['path'], 'why': 'never kept: ' + e['why']})
+        for e in sorted(man['entries'], key=lambda e: e['path']):
+            p = e['path']
+            if only is not None and p not in only:
+                continue
+            before = {'absent': 'absent', 'link': 'link:' + e.get('target', ''), 'dir': 'dir:%o' % e.get('mode', 0), 'file': 'file:%o:%s' % (e.get('mode', 0), e.get('sha', ''))}[e['kind']]
+            if fp(p) == before:
+                same.append(p)
+            elif e['kind'] == 'absent':
+                missed.append({'path': p, 'why': 'it was not there before the change: left as it is'})
+            else:
+                missed.append({'path': p, 'why': 'pruned: its copy was removed on %s (%s)' % (when, gone.get('why', 'pruned'))})
+        OUT.update(restored=[], same=[show(p) for p in same], notRestored=[dict(e, path=show(e['path'])) for e in missed], cutOff=after is None, pruned={'at': when, 'why': gone.get('why', 'pruned')})
+        done()
+`;
 /* ───────── the copies a change makes first, and putting them back (A7b) ───────── */
 // Area: features        Rules: R61        Tests: runner.test.mjs
 // Owns: none
@@ -15083,7 +15698,8 @@ action({
 // folder 0700, files 0600, the bytes, the mode and the path of each kept, so a restore is exact. At most 16 MB a file
 // and 128 MB a command; a file past a limit, unreadable or not a plain file, and what a named link points to, is "not
 // kept", with why. The set's name is made by code. One fixed Python program does it all on the Spark, as the owner, in
-// one of four modes: copy (the set and its manifest; the ways-in fingerprints too), after (the fingerprints once the
+// one of four modes: copy (the set and its manifest; the ways-in fingerprints too; then older sets pruned,
+// 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
 // O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
@@ -15094,7 +15710,7 @@ const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
 const COPIES_COUNT_MAX = 20000;
 const copiesSetName = () => `s${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
 const COPIES_PY = String.raw`
-import base64, glob, hashlib, json, os, re, secrets, stat, subprocess, sys, time
+import base64, glob, hashlib, json, os, re, secrets, shutil, stat, subprocess, sys, time
 A = json.loads(base64.b64decode(sys.argv[1]).decode())
 HOME = os.path.realpath(os.environ['HOME'])
 BASE = os.path.join(HOME, '.local', 'share', 'spark-console', 'before')
@@ -15260,6 +15876,7 @@ def put(path, data):
     finally:
         os.close(fd)
 
+` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
         raw = read(os.path.join(sd, 'manifest.json'), 64 << 20)
@@ -15333,6 +15950,12 @@ if A['mode'] == 'copy':
     man['at'] = time.time()
     raw = json.dumps(man).encode()
     put(os.path.join(sd, 'manifest.json'), raw)
+    # (the older sets on this Spark, now that this one is open: a problem there never stops the change)
+    if A.get('prune'):
+        try:
+            OUT['pruned'] = prune(os.path.dirname(sd))
+        except OSError as x:
+            OUT['pruneProblem'] = x.strerror or 'error'
     OUT.update(sha=hashlib.sha256(raw).hexdigest(), kept=[dict({'path': show(e['path']), 'kind': e['kind']}, **({'way': True} if e.get('way') else {})) for e in man['entries']],
                notKept=[dict(e, path=show(e['path'])) for e in man['notKept']], ways=ways_now())
     done()
@@ -15359,6 +15982,7 @@ if A['mode'] == 'restore':
     except (OSError, OverflowError, ValueError):
         after = None
     only = None if A.get('only') is None else set(whole(p) or p for p in A['only'])
+    pruned_answer(sd, man, after, only)
     restored, same, missed = [], [], []
     for e in man['notKept']:
         if only is None or e['path'] in only:
@@ -16085,8 +16709,9 @@ function powerMark(id) {
   const name = sparkWord(id), why = POWER_WHY[r.why] || r.why || 'asked';
   const words = r.problem ? `Shut down by Spark Console (${why}) at ${atWords(r.at)}. ${r.problem}`
     : `Powered off by Spark Console (${why}) at ${atWords(r.at)}.${parked.length ? ` Parked: ${parked.join(', ')}.` : ''} Say “turn on ${name}” to turn it on${parked.length ? '; a call to a parked model turns it on too' : ''}.`;
+  // (asleep: on purpose and not a fault, in the words a look gives, D4; fleet_status and /status carry it)
   return { at: r.at || null, why, by: r.by || null, parkedModels: parked, plugCut: r.plugCut === true, ...(r.problem ? { problem: r.problem } : {}),
-    howToTurnOn: `power_on {"spark":"${id}"}`, words };
+    howToTurnOn: `power_on {"spark":"${id}"}`, words, asleep: asleepView().find(a => a.spark === id)?.words || null };
 }
 
 // The setting and what may be switched, for fleet_status (code-built words).
@@ -17053,7 +17678,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   const ending = ({ text = null, ...fields }) => { if (rid && !end) { end = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, set, ms: Date.now() - t0, ...fields }, text); } };
   try {
     await appRoom(node, 8, 'the command');
-    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds });
+    const copied = await copiesOn(node, 'copy', { set, placed: sorted.placed || [], wide: sorted.wide || [], ways: RUNNER_WAYS, seconds,
+      prune: { days: COPIES_DAYS, sets: COPIES_SETS, bytes: COPIES_BYTES, most: COPIES_PRUNE_MOST, marks: COPIES_MARK_DAYS, ...runnerKeep() } });
+    runnerPruned(node, copied, ctx);
     const said = x => ({ path: maskSecrets(x.path).slice(0, 300), why: x.why });
     // (copied: the command's own files whose bytes were kept; not the ways in, a mark for one not there, nor a folder)
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
@@ -17129,9 +17756,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   } finally { release(); }
 }
 
-// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
-function runnerLatest(conv) {
-  const undone = new Set(), never = new Set(), starts = [];
+// The runner's lines in the journal's two newest months: the sets an undo put back, the commands the helper never
+// started, every start line, and each start's end line.
+function runnerScan() {
+  const undone = new Set(), never = new Set(), starts = [], ends = new Map();
   for (const f of journalFiles().slice(0, 2)) {
     for (const line of jLinesOf(f)) {
       if (!line.includes('"set":"') || !line.includes('"k":"cmd"')) continue;
@@ -17140,11 +17768,47 @@ function runnerLatest(conv) {
       // (an undo that ended well; one that failed may be asked for again; a command the helper never started)
       if (r.act === 'undo_last_change' && r.end && r.ok) undone.add(r.set);
       else if (r.act === 'run' && r.end && r.ran === false) never.add(r.id);
-      else if (r.start && r.act === 'run' && r.chat === conv && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      else if (r.start && r.act === 'run' && /^[0-9a-f]{64}$/.test(r.sha || '')) starts.push(r);
+      if (r.act === 'run' && r.end) ends.set(r.id, r);
     }
   }
-  const best = starts.filter(r => !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
+  return { undone, never, starts, ends };
+}
+// The chat's newest set (the runner's start lines, the journal's two newest months), unless an undo has put it back.
+function runnerLatest(conv, scan = runnerScan()) {
+  const { undone, never, starts } = scan;
+  const best = starts.filter(r => r.chat === conv && !never.has(r.id)).sort((a, b) => b.at.localeCompare(a.at))[0];
   return best && !undone.has(best.set) ? { at: best.at, set: best.set, sha: best.sha, spark: runnerSparkOf(best), id: best.id, unit: /^sw-run-[0-9a-f]{24}$/.test(best.unit || '') ? best.unit : null } : null;
+}
+// What pruning never takes (A8): the newest set of each chat that can still undo it, as runnerUndo would find it (newer
+// than that chat's last model change not undone); and every set whose change may still run (no end line, or one that
+// neither says it finished nor that it never started), which the Spark keeps while systemd says its unit runs or can't
+// tell (a set with no unit of its own name is kept).
+function runnerKeep() {
+  const scan = runnerScan(), keep = [], units = {};
+  let revisions = [];
+  try { revisions = desired().revisions || []; } catch {}
+  for (const conv of new Set(scan.starts.map(r => r.chat).filter(Boolean))) {
+    const last = runnerLatest(conv, scan), since = undoSince(conv, revisions);
+    if (last && last.at > since) keep.push(last.set);
+  }
+  for (const r of scan.starts) {
+    const end = scan.ends.get(r.id);
+    if (scan.never.has(r.id) || ['ran', 'ended', 'cut'].includes(end?.outcome)) continue;
+    if (/^sw-run-[0-9a-f]{24}$/.test(r.unit || '')) units[r.set] = r.unit;
+    else keep.push(r.set);
+  }
+  return { keep, units };
+}
+// What a new set's opening pruned on that Spark: one journal line names each set that went, why, and what it held (the
+// owner's files' paths, in its text): their copies are gone for good.
+function runnerPruned(node, copied, ctx) {
+  if (copied.pruneProblem) console.error(`Pruning the copies on ${sparkName(node)}: ${copied.pruneProblem}`);
+  const gone = Array.isArray(copied.pruned) ? copied.pruned : [];
+  if (!gone.length) return;
+  journal('cmd', { act: 'prune', where: 'host', class: 'prune', via: ctx.via || null, actor: ctx.actor || null, chat: ctx.chat || null, args: { spark: node.id }, ok: true,
+    outcome: 'pruned', sub: jSub(node.id), pruned: gone.map(p => ({ set: p.set, why: p.why, files: p.files, bytes: p.bytes })) },
+  gone.map(p => `${p.set} (${p.why}): ${p.files} file${p.files === 1 ? '' : 's'}, ${sizeWords(p.bytes)}${(p.paths || []).map(x => `\n  ${x}`).join('')}${p.files > (p.paths || []).length ? `\n  and ${p.files - p.paths.length} more` : ''}`).join('\n'));
 }
 const runnerSparkOf = r => (r.args && typeof r.args === 'object' ? r.args.spark : null) || (r.sub || []).find(x => nodeById(x)) || null;
 // undo_last_change for files (20-desired.mjs): the chat's newest set, when it is newer than the chat's last model
@@ -17163,13 +17827,14 @@ async function runnerUndo(viewer, ctx, since = '') {
     if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
     // (not beside the change's own unit while it still runs: a cut-off change may)
     const r = await copiesOn(node, 'restore', { set: last.set, sha: last.sha, check: true, unit: last.unit, slack: RUNNER_CUT_SLACK });
-    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome: r.notRestored.length ? 'partly' : 'restored', set: last.set,
+    const outcome = r.pruned ? 'pruned' : r.notRestored.length ? 'partly' : 'restored';
+    journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: true, outcome, set: last.set,
       restored: r.restored.length, notRestored: r.notRestored.length, ms: Date.now() - t0 });
     const said = p => maskSecrets(String(p)).slice(0, 300);
     return {
-      outcome: r.notRestored.length ? 'partly' : 'restored', spark: node.id, set: last.set,
+      outcome, spark: node.id, set: last.set, ...(r.pruned ? { pruned: r.pruned } : {}),
       restored: r.restored.map(said), alreadyAsBefore: r.same.map(said), notRestored: r.notRestored.map(x => ({ path: said(x.path), why: x.why })),
-      note: `${r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
+      note: `${r.pruned ? `Nothing was put back on ${at}: the copies of that change were pruned on ${r.pruned.at} (${r.pruned.why}).` : r.restored.length ? `Put back on ${at}: ${r.restored.length} file${r.restored.length === 1 ? '' : 's'}.` : `Nothing needed putting back on ${at}.`}${r.notRestored.length ? ` Not put back: ${r.notRestored.length} (each says why).` : ''}${r.cutOff ? ' That change was cut off, so what it did is unknown.' : ''}`,
     };
   } catch (e) {
     if (rid) journal('cmd', { id: rid, end: true, act: 'undo_last_change', chat: ctx.chat || ctx.conv, ok: false, outcome: 'failed', err: jErr(e), ms: Date.now() - t0 });
@@ -17697,8 +18362,8 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
   throw new TgError('unreachable');
 }
 // One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once.
-async function tgSend(b, text, { silent = false, buttons = null } = {}) {
-  const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}),
+async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
+  const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
   for (let i = 0, waited = false; i < 3; i++) {
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
@@ -17811,6 +18476,9 @@ async function tgUpdate(u) {
   if (typeof m.text !== 'string' || !m.text.trim()) return tell('system', 'I only read text here.');
   const text = m.text.slice(0, 4000).trim();
   if (TG_TOKEN_IN.test(text)) return tell('system', 'That looks like a bot token. Revoke it in @BotFather and paste the new one in Spark Console.');
+  // The two digits of a dangerous ask pressed here, or why not; never sent on to Sparkie (20-danger.mjs).
+  const pair = dangerTypedHere(text);
+  if (pair) return pair;
   // The owner's words (R34) are answered by code before the one-turn check, so they work while Sparkie answers. Never
   // resume or /undo update here (R32): /undo update goes to Sparkie, whose undo_update waits for the page.
   const word = ownerWord(text);
@@ -17931,6 +18599,10 @@ async function tgPress(cq) {
   if (ask?.answer) return tell('system', ask.answer);
   const conv = ask ? ask.conv : /^[a-f0-9]{10}$/.test(choice) ? chatData().conversations.find(c => c.channel === 'telegram' && c.login === accessList().owner && c.messages.some(m => (m.choices || []).some(x => x.id === choice))) : null;
   if (!conv) return tell('system', 'That button has expired. Ask again.');
+  return tgRun(conv, choice, ask);
+}
+// A press that may run, or a dangerous ask's right pair (20-danger.mjs): one at a time, answered with a fixed line.
+async function tgRun(conv, choice, ask) {
   if (tg.busy || replying.has(conv.id)) return tell('system', 'Still answering the last one. Press it again when I’m done.');
   tg.busy = true;
   try {
@@ -17944,7 +18616,8 @@ async function tgPress(cq) {
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
     return await tell('system', 'Done.');
   } catch (e) {
-    return tell('system', e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
+    // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
+    return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
 }
 // /status: from Spark Console's own record, no brain.
@@ -20254,9 +20927,10 @@ const handler = async (req, res) => {
         if (req.method !== 'POST') throw new HttpError(405, 'Use POST to press a button.');
         if (!owner) throw new HttpError(403, 'Only the owner’s conversations have buttons.');
         if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
-        const { choice } = await readBody(req, 2000);
+        // (pair: a dangerous ask's two digits, in the same request as its press, 20-danger.mjs)
+        const { choice, pair } = await readBody(req, 2000);
         if (typeof choice !== 'string' || !/^[a-f0-9]{10}$/.test(choice)) throw new HttpError(400, 'Which button?');
-        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner' });
+        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner', ...(typeof pair === 'string' ? { pair: pair.slice(0, 8) } : {}) });
         return send(res, 200, { outcome: r.outcome, operation: r.operation || null, message: r.message, ...chatSummary(conv), messages: conv.messages });
       }
       if (chatMatch[2] && req.method === 'POST') {
@@ -20265,6 +20939,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;
@@ -20274,7 +20951,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: conv.messages });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);
