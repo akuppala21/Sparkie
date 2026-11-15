@@ -1,5 +1,5 @@
 /* ───────── Sparkie’s rounds ───────── */
-// Area: brain        Rules: R7, R26, R34, R36, R43, R46        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs
+// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
@@ -11,7 +11,9 @@
 function howAsked({ target, tuned, tools }) {
   const base = { model: target.model, stream: true, max_tokens: tuned.maxTokens || 4096, ...(tuned.sampling || { temperature: 0.7, top_p: 0.8 }),
     ...(tools.length && !tuned.sampling ? { temperature: 0.3 } : {}),
-    chat_template_kwargs: { enable_thinking: Boolean(tuned.thinking), ...(tuned.templateKwargs || {}) } };
+    chat_template_kwargs: { enable_thinking: Boolean(tuned.thinking), ...(tuned.templateKwargs || {}) },
+    // (the brain's own count of tokens, when its setup has a token budget: 13-ask.mjs)
+    ...usageAsked(tuned) };
   return { base };
 }
 // Tool rounds per message, and changes among them: the setup's, else 6 and 4.
@@ -40,10 +42,12 @@ function roundTools(turn) {
 }
 // One call to the model, streamed: text goes out as it comes; tool calls are collected.
 function modelStep(turn, sent) {
-  const { emit, link, target, messages, base } = turn;
+  const { emit, link, target, messages, base, tuned } = turn;
   return new Promise((resolve, reject) => {
-    const calls = [];
-    let content = '', stepFinish = null;
+    // (read as its brain setup says, 13-ask.mjs: thinking, in whichever field or tags it comes, never reaches the answer)
+    const read = answerReader(tuned);
+    let content = '';
+    const say = pieces => { for (const t of pieces) { content += t; turn.answer += t; emit({ type: 'delta', text: t }); } };
     modelInUse++;
     // Every way the call ends settles it once and gives the model back: the answer's end, an error on the request or
     // the answer, an answer that closes before it ends, the timeout, and the owner's /stop (link.cancel, whatever state
@@ -74,19 +78,13 @@ function modelStep(turn, sent) {
           if (data === '[DONE]') continue;
           let ev;
           try { ev = JSON.parse(data); } catch { continue; }
-          const choice = ev.choices?.[0];
-          if (choice?.delta?.reasoning_content && !turn.thinking) { turn.thinking = true; emit({ type: 'thinking' }); }
-          if (choice?.delta?.content) { content += choice.delta.content; turn.answer += choice.delta.content; emit({ type: 'delta', text: choice.delta.content }); }
-          for (const tc of choice?.delta?.tool_calls || []) {
-            const c = (calls[tc.index ?? 0] ||= { id: '', name: '', args: '' });
-            if (tc.id) c.id = tc.id;
-            if (tc.function?.name) c.name += tc.function.name;
-            if (tc.function?.arguments) c.args += tc.function.arguments;
-          }
-          if (choice?.finish_reason) stepFinish = choice.finish_reason;
+          const got = read.take(ev);
+          if (got.thinking && !turn.thinking) { turn.thinking = true; emit({ type: 'thinking' }); }
+          say(got.text);
         }
       });
-      r.on('end', () => settle(resolve, { content, calls: calls.filter(c => c && c.name), finish: stepFinish }));
+      // (text held back at its start that was no thinking goes out first, unless the call has already ended)
+      r.on('end', () => { if (!settled) say(read.end()); settle(resolve, { content, ...read.result() }); });
     });
     link.upstream = up;
     up.on('timeout', () => up.destroy(new Error('The model stopped responding.')));
@@ -99,10 +97,13 @@ async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    const r = await modelStep(turn, tools.length && round < ROUNDS ? roundTools(turn) : null);
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs)
+    const last = round >= ROUNDS || overBudget(turn);
+    const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
+    turn.usage = r.usage || turn.usage;
     if (link.gone) throw new Error(TURN_STOPPED);
-    if (!r.calls.length || round >= ROUNDS) break;
+    if (!r.calls.length || last) break;
     await roundCalls(turn, round, r);
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
