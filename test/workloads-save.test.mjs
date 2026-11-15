@@ -5,7 +5,8 @@
 // the owner's POST /actions (no chat), can't use from; steps and from together are refused.
 //
 // The stand-in fleet: Spark 3's model of Spark Console's is stopped first, so gpt-oss-20b starts there without a
-// question; on Spark 4 the owner has made two jobs that end at once (~/.mock/jobs-run), run again by name in the chat.
+// question; on Spark 4 the owner has made two jobs that end at once (~/.mock/jobs-run), run again by name in the chat
+// once the watcher (every 3 s here) has seen them.
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -16,7 +17,7 @@ const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GPT20 = 'sc-gpt-oss-20b';
 const SINCE = '2026-11-12T08:00:00.000Z';
 const SEEDED_RUNNING = [{ spark: 'spark4', container: RADIX, model: 'RadixArk--Qwen3.8-27B-NVFP4', since: SINCE, by: 'owner' }];
 const keys = {};
-useFleet({ watchMs: 60000,
+useFleet({ watchMs: 3000,
   prepare: ({ root, stateDir }) => {
     const list = join(root, 'spark3', '.mock', 'containers');
     writeFileSync(list, readFileSync(list, 'utf8').replace(/^(sc-testorg--Qwen3\.8-27B-abliterated-GGUF)\|running\|[^|]*\|/m, '$1|exited|Exited (0) 2 hours ago|'));
@@ -38,6 +39,8 @@ describe('save that as …: a saved workflow from the request before (D6e)', { c
       assert.equal(r.json?.outcome, 'started', r.text);
       assert.equal((await opEnd(r.json.operation, `${container} made`)).status, 'completed');
     }
+    // (Sparkie traces a container named in the owner's words through what the watcher has seen)
+    await waitFor(async () => { const w = (await act('workloads', { spark: 'spark4' })).json?.workloads || []; return ['wl-y', 'wl-z'].every(n => w.some(x => x.name === n)); }, { timeout: 60000, what: 'the watcher seeing wl-y and wl-z' });
   }, { timeout: 120000 * SLOW });
 
   test('after "start gpt-oss-20b on spark 3, then run wl-y on spark 4", "save that as nightly" saves those two steps with their arguments, and nothing from another chat', { timeout: 300000 * SLOW }, async t => {
