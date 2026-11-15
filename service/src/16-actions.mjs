@@ -141,6 +141,8 @@ const CHANGE_WORDS = [
   ['powerset', /\b(?:set|change|make|switch|lower|raise)\b[^.?!;\n]{0,60}?\b(?:idle|auto(?:matic)?(?:ally)?|shut\s*down|shutdown|power[\s-]*off)\b/gi],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
+  // Work on a Spark itself, a command run as a change (run, 21-ladder.mjs hostClear; design A 2.5).
+  ['work', /\b(fix|install|set\s+up|change|edit|build|clean\s*up|update|try)\b/gi],
 ];
 // … and, after a "not", the other forms rule it out too ("without stopping anything", "not restarting it").
 const CHANGE_FORMS = [
@@ -235,6 +237,7 @@ const ACTION_KIND = {
   power_settings: ['poweroff', 'stop', 'powerset'],
   remember: ['remember'],
   restart_model: ['restart', 'start'],
+  run: ['work'],
   run_workflow: ['start'],
   save_file: ['file'],
   save_workflow: ['save'],
@@ -476,7 +479,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
-  if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
+  // (and the owner's own typed word, /undo, answered by code on the page and on Telegram: 20-words.mjs)
+  if (ctx.via !== 'page' && !ctx.ownerWord && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
   if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);

@@ -221,7 +221,8 @@ function postResult(job) {
 // with its operation's result, as before (no extra turn on the brain).
 const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|it\s+is)|when\s+(?:it'?s|that'?s)\s+(?:done|up|running|finished)|and\s+(?:then\s+)?(?:start|run|test|benchmark|measure|tell|let\s+me\s+know|report|check|wire|set\s+up|switch))\b/i;
 // ("shut down Spark 4" is one request: its words also read as a stop, 21-power.mjs)
-const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
+// (work, a command on a Spark, is not a step of its own: "install gemma" is one start, A7c)
+const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.filter(k => k !== 'work').map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
 const chatBusy = id => replying.has(id) || [...jobs.values()].some(j => j.status === 'running' && j.conv === id);

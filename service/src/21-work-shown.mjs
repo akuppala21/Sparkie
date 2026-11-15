@@ -6,7 +6,8 @@
 // the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line
 // ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root
 // (whether it ran as root), kept (the journal record that holds the whole command and output, when it ran) and look
-// (the result's own line saying it ran as a look: nothing changed, nothing sent). Code builds them from the call's
+// (the result's own line saying it ran as a look: nothing changed, nothing sent), and putBack (true when a change's
+// ways-in check put back what it had copied first, A7c). Code builds them from the call's
 // arguments and from the result exactly as the brain and the journal got it (masked by the chat loop), never from the
 // brain's prose or the command's output, so nothing rides the event that the journal does not hold. Each text is
 // cleaned as a look's output is (lookClean), masked with maskSecrets before it is cut, and cut by whole
@@ -38,6 +39,8 @@ function commandShown(c, ok, out) {
   let tail;
   if (!ok) tail = shownFirst(shownText(String(out).replace(/^\[error\] /, '')));
   else if (value?.ran === false) tail = shownFirst(shownText(value.why || 'Nothing ran.'));
+  // (a change asked first, A7c: nothing ran yet, the owner's yes runs it)
+  else if (['needs-ok', 'question', 'waiting'].includes(value?.outcome)) tail = value.asked === 'as its own message' ? 'Asked first, as its own message: nothing ran yet.' : 'Asked first, with a button: nothing ran yet.';
   else {
     const text = String(value?.output ?? '').replace(/\s+$/, ''), last = text.slice(text.lastIndexOf('\n') + 1);
     const end = Number.isInteger(value?.exit) ? `exit ${value.exit}` : value?.cut ? shownFirst(shownText(value.cut)) : 'ended before it finished (no exit code)';
@@ -46,5 +49,7 @@ function commandShown(c, ok, out) {
   const kept = ok && value?.ran === true && /^j_[0-9a-f]{12}$/.test(value.record || '') ? value.record : null;
   // (the result's own first line, built by code, when it ran as a look: nothing changed, nothing sent)
   const look = ok && value?.ran === true && typeof value.look === 'string' ? shownFirst(shownText(value.look)) : null;
-  return { where: node ? sparkName(node) : null, line, tail, root: root === true, kept, look };
+  // (a change whose ways-in check differed: what it had copied first was put back, its own mark, never `kept`, A7c)
+  const putBack = ok && value?.ran === true && Array.isArray(value.putBack?.differed) && value.putBack.differed.length > 0;
+  return { where: node ? sparkName(node) : null, line, tail, root: root === true, kept, look, ...(putBack ? { putBack: true } : {}) };
 }

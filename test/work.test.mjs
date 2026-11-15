@@ -408,7 +408,14 @@ test('key files are never read back: by name, through a link, through *, and und
   await refused('cd project && grep -rn BEGIN', 403, /^Not run: it would read every file under project on Spark 3/);
   await refused('cat $HOME/.ssh/id_ed25519', 403, /^Not run: ~\/\.ssh\/id_ed25519 is a key file/);
   // sudo is refused as a command, never as a word to look for.
-  for (const command of ['sudo cat /etc/shadow', 'sudo ls', 'true && sudo ls', 'env sudo ls', 'ls | sudo tee x', 'echo $(sudo id)']) await refused(command, 400, /^Leave out sudo/);
+  for (const command of ['sudo cat /etc/shadow', 'sudo ls', 'true && sudo ls', 'env sudo ls', 'echo $(sudo id)']) await refused(command, 400, /^Leave out sudo/);
+  await refused('sudo cat f | head', 400, /^Leave out sudo/);
+  // A sudo line whose rest is a change is root (design A 2.8, "set root"; A7c): refused in the runner's words, with
+  // nothing run and nothing written.
+  for (const command of ['ls | sudo tee x', 'true && sudo touch x']) {
+    await refused(command, 403, /^A change as root waits for the put-back net, which isn’t built yet, so nothing ran\.$/);
+    assert.ok(!existsSync(join(home('spark3'), 'x')), `${command}: nothing written`);
+  }
   for (const command of ['grep sudo /var/log/auth.log', 'ls -l /usr/bin/sudo', 'journalctl -t sudo']) {
     const r = await look({ on: 'spark3', command });
     assert.equal(r.status, 200, `${command}: ${r.text}`);

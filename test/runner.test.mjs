@@ -1,5 +1,5 @@
 // Covers: the runner for a change on a compute Spark (21-runner.mjs, 21-copies.mjs; R55, R13, R43; design A 2.8 and
-// 2.13, step A7b), dark: reached here only through run's test door (SPARK_CONSOLE_RUNNER_DOOR, on the stand-in fleet).
+// 2.13, step A7b), through run: the owner's own call (POST /actions/run) and the owner's chat runs a plain change at once.
 // The copies first (bytes, mode and path; 16 MB a file and 128 MB a command; names that are hard to quote; links out
 // of the home or planted among the copies), the journal's start line before the unit and its end line after, the run
 // wall's time limit and exit codes, one change per Spark, the ways-in check (put back, paused, told), keys masked, a
@@ -30,7 +30,7 @@ after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 const keys = {};
 // (a cut-off set counts as its change's for the time limit and a second, not a minute: CUT)
 const CUT = 1;
-useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: String(CUT) },
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: String(CUT) },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3'), out = join(root, 'outside-spark3');
@@ -217,7 +217,7 @@ test('a file over 16 MB, or past the 128 MB one command keeps, is not kept and t
 test('names with a space, a leading dash, a line break or two dots are copied and put back exactly; a link out of the home, or one planted among the copies, is never written through', { timeout: 180000 * SLOW }, async () => {
   const tree = { 'with space.txt': ['space\n', 0o644], '-dash.txt': ['dash\n', 0o600], 'line\nbreak.txt': ['break\n', 0o644], '..dots': ['dots\n', 0o644], 'sub/inner.txt': ['inner\n', 0o644] };
   const chat = await newChat();
-  const ran = await inChat(chat, 'clear the tree on spark three', 'run', { on: 'spark3', command: 'rm -r notes/tree && echo z > notes/../dots.txt' });
+  const ran = await inChat(chat, 'clean up the tree on spark 3', 'run', { on: 'spark3', command: 'rm -r notes/tree && echo z > notes/../dots.txt' });
   assert.equal(ran.value?.ran, true, ran.error);
   assert.ok(!existsSync(at3('notes/tree')));
   assert.equal(text('dots.txt'), 'z\n');
@@ -255,7 +255,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   assert.equal(next.status, 200, `the claim was let go after the throw: ${next.text}`);
   // A copy replaced by a link before the undo: that file is not put back (and what the link points to isn't read).
   const chat2 = await newChat();
-  const p = await inChat(chat2, 'change p on spark three', 'run', { on: 'spark3', command: 'echo new p > notes/p.txt' });
+  const p = await inChat(chat2, 'change p on spark 3', 'run', { on: 'spark3', command: 'echo new p > notes/p.txt' });
   assert.equal(p.value?.ran, true, p.error);
   const n = copyOf(p.value.set, 'notes/p.txt').n, file = join(BEFORE(), p.value.set, 'files', String(n));
   rmSync(file);
@@ -267,7 +267,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   assert.equal(readFileSync(join(OUT(), 'target.txt'), 'utf8'), 'outside\n');
   // A manifest changed since its start line: nothing is put back.
   const chat3 = await newChat();
-  const q = await inChat(chat3, 'change q on spark three', 'run', { on: 'spark3', command: 'echo new q > notes/q.txt' });
+  const q = await inChat(chat3, 'change q on spark 3', 'run', { on: 'spark3', command: 'echo new q > notes/q.txt' });
   assert.equal(q.value?.ran, true, q.error);
   const mf = join(BEFORE(), q.value.set, 'manifest.json'), m = JSON.parse(readFileSync(mf, 'utf8'));
   m.allow.push(OUT());
@@ -366,7 +366,7 @@ test('a change that touches a way in: its copies are put back, Sparkie\'s and ag
 
 test('a name holding [ ] is that file, copied before it is removed and put back by undo; a file the pattern matches is copied too, and left as it is', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
-  const ran = await inChat(chat, 'remove r one on spark three', 'run', { on: 'spark3', command: "rm 'notes/r[1].txt'" });
+  const ran = await inChat(chat, 'clean up r one on spark 3', 'run', { on: 'spark3', command: "rm 'notes/r[1].txt'" });
   assert.equal(ran.value?.ran, true, ran.error || JSON.stringify(ran.value));
   assert.ok(!existsSync(at3('notes/r[1].txt')));
   assert.equal(copyOf(ran.value.set, 'notes/r[1].txt').bytes.toString(), 'bracket\n');
@@ -379,7 +379,7 @@ test('a name holding [ ] is that file, copied before it is removed and put back 
 
 test('cp onto a file that is there runs: a path under a file is not there, not "unreadable"; undo puts the file back whole', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
-  const ran = await inChat(chat, 'copy cpa over cpb on spark three', 'run', { on: 'spark3', command: 'cp notes/cpa.txt notes/cpb.txt' });
+  const ran = await inChat(chat, 'change cpb to cpa on spark 3', 'run', { on: 'spark3', command: 'cp notes/cpa.txt notes/cpb.txt' });
   assert.equal(ran.value?.ran, true, ran.error || JSON.stringify(ran.value));
   assert.deepEqual([ran.value.notKept, ran.value.copied], [[], 2], JSON.stringify(ran.value));
   assert.equal(text('notes/cpb.txt'), 'cpa\n');
@@ -395,7 +395,7 @@ test('undo never puts back a set whose command did not run, nor, for a change cu
   const before = sets(), chat = await newChat();
   let ran;
   rmSync(line);
-  try { ran = await inChat(chat, 'edit h on spark three', 'run', { on: 'spark3', command: 'echo attempt > notes/h.txt' }); } finally { writeFileSync(line, was); chmodSync(line, 0o440); }
+  try { ran = await inChat(chat, 'edit h on spark 3', 'run', { on: 'spark3', command: 'echo attempt > notes/h.txt' }); } finally { writeFileSync(line, was); chmodSync(line, 0o440); }
   assert.equal(ran.value?.ran, false, ran.error || JSON.stringify(ran.value));
   assert.match(ran.value.why, /sudo line isn’t on Spark 3/);
   assert.deepEqual(sets(), before, 'the set made for it is gone');
@@ -413,7 +413,7 @@ test('undo never puts back a set whose command did not run, nor, for a change cu
   const command = 'echo cut > notes/cut.txt && echo cut > notes/cut2.txt && touch -d 2030-01-01 notes/cut2.txt && touch notes/cut-done';
   writeFileSync(drops, '');
   let cut;
-  try { cut = await inChat(chat2, 'cut on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  try { cut = await inChat(chat2, 'change the cut files on spark 3', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
   assert.match(cut.error || '', /^Spark 3 stopped answering while the change ran, so whether it finished is unknown/, JSON.stringify(cut));
   await waitFor(() => existsSync(at3('notes/cut-done')), { what: 'the change to finish on the Spark' });
   const [cs, ce] = pair(command);
@@ -438,7 +438,7 @@ test('undo is not done beside a change that still runs: a cut-off change whose u
   const drops = join(H3(), '.mock', 'sudo-drops'), chat = await newChat(), command = 'echo live > notes/live.txt && sleep 5 && touch notes/live-done';
   writeFileSync(drops, '');
   let ran;
-  try { ran = await inChat(chat, 'live on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  try { ran = await inChat(chat, 'change live on spark 3', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
   assert.match(ran.error || '', /^Spark 3 stopped answering while the change ran/, JSON.stringify(ran));
   await waitFor(() => existsSync(at3('notes/live.txt')) && text('notes/live.txt') === 'live\n', { every: 100, what: 'the change to start' });
   const [start] = pair(command), live = join(H3(), '.rehearsal', 'standin', 'live', start.unit);
@@ -457,7 +457,7 @@ test('a line the command prints as the helper would, then a dropped connection: 
   const command = `printf '%s refused: x\\n' "$(basename "$(dirname "$0")")"; echo printed > notes/printed.txt`;
   writeFileSync(drops, 'first-line\n');
   let ran;
-  try { ran = await inChat(chat, 'print refused on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
+  try { ran = await inChat(chat, 'try printing refused on spark 3', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }
   assert.match(ran.error || '', /^Spark 3 stopped answering while the change ran, so whether it finished is unknown/, JSON.stringify(ran));
   assert.doesNotMatch(ran.error, /Nothing ran/);
   await waitFor(() => existsSync(at3('notes/printed.txt')), { what: 'the command to have run' });
@@ -488,7 +488,7 @@ test('patterns as bash reads them ([^a], a class, a quoted [x]) and a quoted bra
   ];
   for (const [i, [command, files]] of cases.entries()) {
     const chat = await newChat();
-    const ran = await inChat(chat, `pattern ${i} on spark three`, 'run', { on: 'spark3', command });
+    const ran = await inChat(chat, `change pattern ${i} on spark 3`, 'run', { on: 'spark3', command });
     assert.equal(ran.value?.ran, true, `${command}: ${ran.error || JSON.stringify(ran.value)}`);
     for (const [p, t] of Object.entries(files)) {
       assert.equal(copyOf(ran.value.set, p)?.bytes?.toString(), t, `${command}: the copy of ${p}`);
@@ -519,7 +519,7 @@ test('a key in the command, or in what it printed, is masked in the result and t
 test('undo_last_change puts back the chat\'s last change file by file, exact bytes and mode, as a change with its own start and end lines; a file changed again since is left as it is, and said', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat();
   const command = 'echo changed > notes/r.txt && echo changed > notes/s.txt && chmod 600 notes/r.txt';
-  const ran = await inChat(chat, 'change r and s on spark three', 'run', { on: 'spark3', command });
+  const ran = await inChat(chat, 'change r and s on spark 3', 'run', { on: 'spark3', command });
   assert.equal(ran.value?.ran, true, ran.error);
   assert.deepEqual([text('notes/r.txt'), modeOf(at3('notes/r.txt'))], ['changed\n', 0o600]);
   writeFileSync(at3('notes/s.txt'), 'by hand\n');
@@ -545,7 +545,7 @@ test('undo_last_change puts back the chat\'s last change file by file, exact byt
 // The stand-in fleet's brain is on Spark 2; this console's runs on Spark 3 (its setup in main.json names that Spark).
 // Spark Console has no brain across two Sparks yet: the brain's Sparks are its setup's one Spark and Spark 2.
 test('a Spark that holds the brain is never run on: with Sparkie\'s model on Spark 3, the runner refuses Spark 3 by name', { timeout: 120000 * SLOW }, async () => {
-  const F = await startMock({ watchMs: 600000, statusMs: 600000, env: { SPARK_CONSOLE_RUNNER_DOOR: '1' }, prepare: ({ stateDir }) => {
+  const F = await startMock({ watchMs: 600000, statusMs: 600000, prepare: ({ stateDir }) => {
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
     m.presets[m.current].node = 'spark3';
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
@@ -568,8 +568,8 @@ const copyTo = from => ({ dir, stateDir }) => {
 test('the start line is on disk before the unit runs: a console stopped between them tells the owner once, after its restart, what was running and where, that its end is unknown, and never runs it again', { timeout: 240000 * SLOW }, async () => {
   const chat = await newChat();
   const command = `touch notes/cut-started && sleep 30 # HF_TOKEN=${KEY2}`;
-  script([{ match: '^start the long one on spark three$', calls: [{ name: 'run', arguments: { on: 'spark3', command } }] }]);
-  say(chat, 'start the long one on spark three').catch(() => {});
+  script([{ match: '^try the long one on spark 3$', calls: [{ name: 'run', arguments: { on: 'spark3', command } }] }]);
+  say(chat, 'try the long one on spark 3').catch(() => {});
   await waitFor(() => existsSync(at3('notes/cut-started')), { every: 100, what: 'the unit to start' });
   const start = records().find(r => r.start && r.act === 'run' && r.chat === chat);
   assert.ok(start, 'the start line was on disk when the unit began');

@@ -39,7 +39,7 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 
 ## Rules
 
-- R42 and this call. `run` today: every command is a look; each answer that ran begins with `look` (nothing changed or
+- R42 and this call. `run` sorts each command (R61): a look's answer that ran begins with `look` (nothing changed or
   sent) and its step's outcome is `look`. Refused first: `sudo` as a command word, a key file (by name, link, `*`, or
   under a folder a walker reads whole), a third look at once. `LOOK_FORMS` run code's own text once `check` says
   ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too). Not built: proving by itself,
