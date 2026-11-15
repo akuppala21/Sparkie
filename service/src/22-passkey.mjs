@@ -55,6 +55,7 @@ function describeChange(method, path, body = {}) {
     body.selfHeal === true ? 'turn on automatic restarts' : body.selfHeal === false ? 'turn off automatic restarts' : null].filter(Boolean).join(', ') || 'Change agent settings';
   if (method === 'DELETE' && pk) return `Remove the passkey “${keyName(pk[1])}”`;
   if (method === 'POST' && path === '/auth/passkey/register') return `Add a new passkey, “${clean(body.name, 60)}”`;
+  if (method === 'POST' && path === '/auth/putback/keep') return 'Keep what came back with the copy of Spark Console’s state: its passkeys and agent keys work again, from the internet too';
   if (method === 'POST' && path === '/auth/device/approve') {
     const d = deviceCodes.get(String(body.code || '').toUpperCase());
     return d ? `Let ${d.kind === 'terminal' ? 'a terminal' : 'a browser'} called “${d.name}” sign in as you (code ${d.userCode}, asked from ${d.from || 'an unknown address'})`
@@ -119,6 +120,7 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/agents/settings') return !(body && Object.keys(body).length === 1 && body.halted === true);
   if (method === 'DELETE' && path.startsWith('/auth/passkeys/')) return true;
   if (method === 'POST' && path === '/auth/passkey/register') return haveKeys;
+  if (method === 'POST' && path === '/auth/putback/keep') return true;
   // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a chat.
   if (method === 'DELETE' && /^\/chats\/[^/]+$/.test(path)) return true;
   // Letting a new device in (4.10). Validation runs, "Test the changes" and going back to the last good build no longer

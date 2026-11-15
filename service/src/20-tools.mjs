@@ -31,6 +31,12 @@ const GIT_LOOK = new Set('status log show diff rev-parse ls-files ls-tree cat-fi
 // change may set (any other decides what later git commands run: hooks, pagers, helpers, aliases, transports).
 const GIT_VERBS = new Set(Object.keys(SORT_OPTS).filter(k => k.startsWith('git:')).map(k => k.slice(4)));
 const GIT_PLAIN_KEYS = /^(?:user\.(?:name|email)|pull\.(?:rebase|ff)|push\.(?:default|autoSetupRemote|followTags)|init\.defaultBranch|fetch\.(?:prune|pruneTags)|merge\.(?:ff|conflictStyle)|rebase\.(?:autoSquash|autoStash|updateRefs)|rerere\.enabled|color\.[\w.]+|advice\.\w+|status\.\w+|log\.\w+|tag\.sort|column\.ui|commit\.verbose|branch\.(?:sort|autoSetupMerge|autoSetupRebase|[\w./-]+\.(?:remote|merge|rebase))|remote\.[\w./-]+\.(?:url|fetch|pushurl|prune)|diff\.(?:algorithm|colorMoved|renames|mnemonicPrefix))$/i;
+// What git itself writes in its work tree, or a clone: the folder is git's own after it, and later git there runs no
+// settings another program brought, unless another program writes there afterwards (sortTouch takes it back).
+const sortGitOwn = (dir, ctx, r) => {
+  sortInto(dir, ctx, r);
+  for (const d of dir ? (dir.unknown ? [] : sortPaths(dir.text, ctx)) : [...ctx.cwds]) if (d != null) ctx.cloned.add(d);
+};
 const SORT_BUILD_VERBS = { cargo: /^(?:build|b|check|c|test|t|run|r|bench|doc|fmt|clippy|clean|update|tree|metadata|new|init|add|remove|fetch|fix|search|version|help|vendor|package|generate-lockfile|locate-project|pkgid|verify-project|rustc|rustdoc)$/,
   go: /^(?:build|run|test|vet|fmt|mod|get|install|list|env|version|clean|generate|doc|work|tool|fix|help)$/ };
 function sortBuild(a, ctx, r, x, name) {
@@ -60,6 +66,9 @@ Object.assign(SORT_HANDLERS, {
         || (v === 'stash' && /^(?:list|show)$/.test(rest[0])) || (v === 'config' && rest.some(s => /^--(?:get\S*|list)$|^-l$/.test(s))) || (/^(?:worktree|reflog)$/.test(v) && /^(?:list|show)?$/.test(rest[0] ?? ''))) return;
     raise(r, 'change', `git ${sortQ(v)} changes the repository or its files.`);
     if (ctx.root) raise(r, 'risky', 'As root, a git command that changes something runs the repository’s hooks and settings: asked.');
+    // (in a folder this command or the task wrote or fetched into, the repository's own settings came with it, and git
+    // runs what they name: a credential helper, a gpg program, a filter, an ssh command)
+    if ((dir ? (dir.unknown ? [null] : sortPaths(dir.text, ctx)) : [...ctx.cwds]).some(d => d == null || (![...ctx.cloned].some(c => d === c || d.startsWith(`${c}/`)) && (sortWrote(d, ctx) || sortWroteIn(d, ctx))))) raise(r, 'risky', `git ${sortQ(v)} works in a folder this command or the task wrote into, whose own git settings it runs.`);
     if (v === 'filter-branch') unsure('git filter-branch runs the shell code it is given on every commit, which the sorter does not read.');
     if (!GIT_VERBS.has(v) && !GIT_LOOK.has(v)) unsure(`The sorter doesn’t know git ${sortQ(v)}: an alias the repository’s settings define, or a sub-command it doesn’t read.`);
     // (bisect run and submodule foreach: git's own options stop where the command it runs begins)
@@ -71,7 +80,8 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
-      const key = /^(?:set|unset|get)$/.test(p[0]?.text) ? p[1] : p[0], sets = p[0]?.text === 'set' || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all');
+      // (unsetting, or removing or renaming a section, writes the settings as setting does)
+      const key = /^(?:set|unset|get|remove-section|rename-section)$/.test(p[0]?.text) ? p[1] : p[0], sets = /^(?:set|unset|remove-section|rename-section)$/.test(p[0]?.text) || (p[0]?.text !== 'get' && p.length >= 2) || o.has('add', 'replace-all', 'unset', 'unset-all', 'remove-section', 'rename-section');
       if (key && sets && (key.unknown || !GIT_PLAIN_KEYS.test(key.text))) raise(r, 'risky', `git config sets ${sortQ(key.text)}, which can decide what later git commands run (hooks, helpers, pagers, aliases): asked.`);
     }
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
@@ -82,9 +92,12 @@ Object.assign(SORT_HANDLERS, {
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
     // reaches the folder it stands in (-C's, or where a cd left it), everything under it; a clone, the folder it makes.
     if (/^(?:pull|checkout|switch|restore|merge|rebase|cherry-pick|revert|clean|bisect|sparse-checkout|am)$/.test(v) || (v === 'apply' && !(o.has('check', 'stat', 'numstat', 'summary') && !o.has('apply')))
-      || (v === 'reset' && o.has('hard', 'merge', 'keep')) || (v === 'stash' && !/^(?:drop|clear|list|show)$/.test(p[0]?.text ?? '')) || (v === 'submodule' && /^(?:update|add|init)$/.test(p[0]?.text)) || (v === 'lfs' && /^(?:pull|checkout)$/.test(p[0]?.text))) sortInto(dir, ctx, r);
+      || (v === 'reset' && o.has('hard', 'merge', 'keep')) || (v === 'stash' && !/^(?:drop|clear|list|show)$/.test(p[0]?.text ?? '')) || (v === 'submodule' && /^(?:update|add|init)$/.test(p[0]?.text)) || (v === 'lfs' && /^(?:pull|checkout)$/.test(p[0]?.text))) sortGitOwn(dir, ctx, r);
     else if (dir) sortTouch(dir, ctx, r, true, false);
-    if (v === 'clone') { const u = p[0]?.text ?? '', to = p[1] ?? { ...p[0], text: u.replace(/\/+$|\.git$/g, '').split(/[/:]/).pop() || '.' }; sortInto(dir && !/^[~/]/.test(to.text) ? { ...to, text: `${dir.text}/${to.text}` } : to, ctx, r); }
+    if (v === 'clone') {
+      const u = p[0]?.text ?? '', to0 = p[1] ?? { ...p[0], text: u.replace(/\/+$|\.git$/g, '').split(/[/:]/).pop() || '.' }, to = dir && !/^[~/]/.test(to0.text) ? { ...to0, text: `${dir.text}/${to0.text}` } : to0;
+      sortGitOwn(to, ctx, r);
+    }
     // (the words that name files it writes: a look's, those of a sub-command that changes the work tree, and -o)
     for (const w of GIT_LOOK.has(v) ? own : [...(/^(?:checkout|restore|reset|clean|stash|rm|mv|add|init|worktree|submodule|sparse-checkout)$/.test(v) && cut < 0 ? p : []), ...o.all('o', 'output', 'output-directory')]) sortTouch(w, ctx, r, v === 'worktree');
     if (o.unknown) unsure(`The sorter doesn’t know git ${sortQ(v)}’s option ${sortQ(o.unknown)}.`);
@@ -120,7 +133,8 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
     if (v === 'uninstall') return sortGone(ctx, r, `${sortQ(name)} uninstall removes packages, which are not put back.`);
     for (const s of a.map(w => w.text)) if (/:\/\/|^git\+/.test(s)) raise(r, 'risky', `${sortQ(name)} ${sortQ(v)} installs code from an address: ${sortQ(s)}, always asked.`);
-    for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable'), ...o.plain.slice(1).filter(w => /^[.~/]|\.(?:whl|zip|tar\.gz)$/.test(w.text))]) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
+    // (a list it installs, a folder of packages it takes from, a local path with or without [extras]: code that runs)
+    for (const f of [...o.all('r', 'requirement', 'c', 'constraint', 'e', 'editable', 'f', 'find-links').filter(w => !/:\/\//.test(w.text)), ...o.plain.slice(1).filter(w => /^[.~/]|^file:|\.(?:whl|zip|tar\.gz)(?:\[[^\]]*\])?$/.test(w.text))].map(w => ({ ...w, text: w.text.replace(/\[[^\]]*\]$/, '').replace(/^file:(?:\/\/)?/, '') }))) sortRuns(f.text, ctx, r, `${sortQ(name)} ${sortQ(v)} ${sortQ(f.text)} builds and runs local code, or installs what a list names.`);
     for (const d of o.all('t', 'target', 'prefix', 'root')) sortInto(d, ctx, r);
     for (const d of o.all('d', 'dest')) sortTouch(d, ctx, r);
   },
@@ -139,6 +153,8 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|create|remove|uninstall|update|upgrade|env|config|clean|rename|compare|package|notices|doctor)$/.test(v) && !(v === 'shell' && p[0] === 'hook')) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (v === 'config') raise(r, 'risky', `${sortQ(name)} config changes where every later install comes from.`);
     const t = a.map(w => w.text);
+    // (a channel that is a folder here is packages whose scripts run)
+    for (const c of o.all('c', 'channel')) if (/^(?:[.~/]|file:)/.test(c.text)) sortRuns(c.text.replace(/^file:(?:\/\/)?/, ''), ctx, r, `${sortQ(name)} installs from the folder ${sortQ(c.text)}, whose packages' scripts run.`);
     if (t.some((s, i) => /:\/\//.test(s) && (/^-c$|^--channel$/.test(t[i - 1] ?? '') || /^--channel=|^-c./.test(s)))) raise(r, 'risky', `${sortQ(name)} installs from a channel at an address: always asked.`);
     if (/^(?:remove|uninstall)$/.test(v) || (v === 'env' && p[0] === 'remove')) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages or an environment, which are not put back.`);
     // (env export -f writes the list; elsewhere -f is a list it installs)
@@ -160,7 +176,7 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
     // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
     // fetched into that folder, or as root)
-    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
+    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global|link|ln)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
     // (a package from a folder or a file is code whose install scripts run)
     for (const w of o.plain.slice(1)) if (/^(?:\.{0,2}\/|~|file:)|\.(?:tgz|tar\.gz|tar)$/.test(w.text)) sortRuns(w.text.replace(/^file:/, ''), ctx, r, `${sortQ(name)} ${sortQ(v)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
   },
@@ -214,3 +230,6 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'lockout', `loginctl ${sortQ(v)} changes sessions or linger, which keep the ways in running.`);
   },
 });
+// (what git itself writes in its handler is git's own: it leaves the folder git's; a program git runs is not git)
+const sortGitBody = SORT_HANDLERS.git;
+SORT_HANDLERS.git = (a, ctx, r, x, n) => { const was = ctx.gitTouch; ctx.gitTouch = true; try { return sortGitBody(a, ctx, r, x, n); } finally { ctx.gitTouch = was; } };

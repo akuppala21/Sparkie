@@ -39,7 +39,8 @@ function setAgentSettings(change) {
 // Why nothing may stop: the owner said so, it is self-healing bringing something back (it never stops anything else), or
 // it is the self-test (21-selftest.mjs).
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
-  : ctx?.selfTest ? 'and the self-test never stops anything' : 'and the owner said not to stop anything');
+  : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
+    : 'and the owner said not to stop anything');
 const pausedCheck = ctx => {
   const s = agentSettings();
   if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');

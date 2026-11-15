@@ -1,7 +1,7 @@
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
 // Area: safety
 // Rules: R7, R8, R11, R18, R19, R21, R34, R38
-// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs, workloads-heal.test.mjs
 // Owns: none
 // Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
@@ -54,8 +54,9 @@ function healSkip(x, why) {
 // Which of the list's entries need bringing back now, and why; null when it's fine or not for self-healing now.
 function healReason(x, inv) {
   const sparks = x.sparks || [x.spark], sps = sparks.map(id => inv.sparks.find(s => s.id === id));
-  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark)
-  if (x.parked || sparks.some(consoleOff)) return null;
+  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark. Or put
+  // back by a run's clean-up, which stopped it on purpose: 20-desired.mjs desiredPutBack)
+  if (x.parked || x.putBack || sparks.some(consoleOff)) return null;
   // (a Spark whose Docker didn't answer the look is "couldn't read", not "its parts are gone": nothing is healed there, F6)
   if (sps.some(sp => !sp?.online || !sp.dockerOk)) return null;
   // (the status check hasn't seen it back yet: until it records this power-on, what is known of power-ons is the one
@@ -241,7 +242,7 @@ async function healPass() {
       if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id))) continue;
       // Parked by the power rules, or on a Spark Spark Console powered off (21-power.mjs): nothing heals against an
       // intentional power-off; it comes back when its Spark is turned on, or on its next call.
-      if (x.parked || (x.sparks || [x.spark]).some(consoleOff)) continue;
+      if (x.parked || x.putBack || (x.sparks || [x.spark]).some(consoleOff)) continue;
       // An app kept running (21-apps.mjs) has its own rules.
       if (x.app) { await healApp(x, inv).catch(e => console.error(`Self-healing ${x.container}: ${e.message}`)); continue; }
       const r = healReason(x, inv);
