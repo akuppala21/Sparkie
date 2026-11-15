@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 79 parts in `service/src/`, joined in name order into `service/server.mjs` (19862 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 79 parts in `service/src/`, joined in name order into `service/server.mjs` (19866 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -889,10 +889,10 @@ The owner opens an app kept running (keep_running, R38) on any Spark that isn't 
 
 ### `21-guard.mjs`: the lock-out net: its calls to the root helper (dark: only tests call them)
 
-The lock-out net (R60; design A 2.8, step A13a). The root helper's `run --net` copies the ways in, writes restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; when nothing differs afterwards it disarms by itself, and otherwise what differs goes back when the timer fires unless `keep` stopped it. Nothing in the console calls these yet (A13b turns the net on): guardScript builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build ships), and guardAnswer reads what came back. The guard's id is the …
+The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `run --net` copies the ways in, writes restore.sh beside them and arms a timer in the Spark's own systemd before the change runs; it disarms only on the console's word (`keep`, after the check from outside), and otherwise what differs goes back when the timer fires, or at once with `putback`. Nothing in the console calls these yet (A13b's console half turns the net on): guardScript builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build ships), and …
 
 - **Area:** features. **Rules:** R60, R42. **Tests:** root-helper.test.mjs
-- **Lines:** 55
+- **Lines:** 59
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

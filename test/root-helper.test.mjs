@@ -1357,13 +1357,14 @@ describe('the lock-out net (R60)', () => {
     assert.ok(!readFileSync(join(s.R, 'etc/hosts'), 'utf8').includes('1.2.3.4'), 'a name a change left beside it did not block it');
     // A folder that cannot be made again ends that path only.
     const t = netted();
-    t.put('var/lib/tailscale/tailscaled.state', 'state-one');
-    const q = net(t, `rm -rf ${R}/var/lib/tailscale; chmod 555 ${R}/var/lib; ${SSH_CHANGE}`);
+    t.put('var/lib/systemd/linger/owner', '');
+    const q = net(t, `rm -rf ${R}/var/lib/systemd/linger; chmod 555 ${R}/var/lib/systemd; ${SSH_CHANGE}`);
     try {
       assert.equal(fire(t, q.id).status, 0);
       assert.equal(readFileSync(join(t.R, SSHD), 'utf8'), 'Port 22\n', 'the rest went back');
-      assert.ok(readFileSync(join(G(t, q.id), 'result'), 'utf8').includes('not put back /var/lib/tailscale/tailscaled.state: /var/lib/tailscale could not be made again (Permission denied)'));
-    } finally { chmodSync(join(t.R, 'var/lib'), 0o755); }
+      assert.ok(readFileSync(join(G(t, q.id), 'result'), 'utf8').includes('not put back /var/lib/systemd/linger/owner: /var/lib/systemd/linger could not be made again (Permission denied)'),
+        readFileSync(join(G(t, q.id), 'result'), 'utf8'));
+    } finally { chmodSync(join(t.R, 'var/lib/systemd'), 0o755); }
   });
 
   test('a put-back that fails is tried three times, 20 s apart, each failure written down, and pending stays', { timeout: 120000 }, () => {
