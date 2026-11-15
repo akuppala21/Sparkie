@@ -6819,6 +6819,50 @@ function requestSteps(viewer, ctx) {
   if (steps.length > 12) throw new HttpError(409, `The request before this one made ${steps.length} changes; a saved workflow holds 12 at most, so nothing was saved.`);
   return { steps, left };
 }
+/* ───────── the yes at save covers a saved workflow's images (D6c) ───────── */
+// Area: core        Rules: R35, R38        Tests: workloads-images.test.mjs
+// Owns: none (saved-workflows.json's `approved`, written by writeSaved in 18-workflows.mjs)
+// Timers: none        Wakes: none
+// A new image is code that runs on a Spark, so keep_running starts one at once only for the owner on their tailnet, and
+// otherwise asks the owner (R38). A saved workflow's steps run as `workflow`, so until now a step with a new image always
+// asked. Now the owner's yes to a save is also the yes to the images its steps name (contract 9.27; design D 2.3, and
+// its question 2 as recommended). The yes is a button the owner presses, whose label lists every step with its image
+// (pageOnlyLabel, stepWords): Sparkie's save button pressed on the page by the owner on their tailnet, or an owner-only
+// button pressed there with the passkey (a save from Telegram waits for one). A save with no button (the owner's own
+// POST /actions, a save Sparkie makes at once) showed nobody the images, so it isn't the yes; nor is anything an agent,
+// an agent's chat or a device signed in over the internet without the passkey does. Then save_workflow keeps
+// `approved: {images, steps, by, at}` on the workflow, and its answer says which images it covers (savedImagesWords).
+// What the yes binds to: each image reference exactly as the button showed it, the tag as typed, or the digest when the
+// reference carries one (name@sha256:…), compared as text; and `steps`, a hash of the saved steps exactly as they were
+// saved. A run of that workflow passes a step's image as approved (stepImagesYes) only when the steps still hash the same,
+// that step's image is literal (not from an input) and on the list, and the run is the owner's own (never an agent's
+// key or an agent's chat). Anything else asks as before: a changed step, another tag or digest, an image from an input, a
+// workflow saved with no button or by an agent, an agent's run. A tag is a name: if it later points at another image, a
+// Spark that already has the old one runs that copy (keep_running pulls only an image the Spark doesn't have), and a
+// Spark that pulls gets what the tag names then; the owner pins one exactly by saving name@sha256:… .
+const savedStepsHash = steps => createHash('sha256').update(JSON.stringify(steps)).digest('hex').slice(0, 16);
+// The literal images a save's steps start from (a keep_running step that names one; one with an {input} isn't literal).
+const savedImages = steps => [...new Set(steps.filter(st => st.action === 'keep_running' && typeof st.args?.image === 'string' && !placeholders(st.args.image).length).map(st => st.args.image))];
+const savedImagesFromInputs = steps => steps.filter(st => st.action === 'keep_running' && typeof st.args?.image === 'string' && placeholders(st.args.image).length).map(st => st.args.image);
+// Whether this save is the owner's own yes to `images`: a pressed button that listed them (see above).
+function savedImagesYes(viewer, ctx, images) {
+  if (!images.length) return false;
+  if (ctx.ownerConfirmed) return true;
+  return Boolean(ctx.button) && ctx.via === 'page' && !viewer?.session && !viewer?.agentKey && !ctx.agent && !ctx.agentId;
+}
+// What the save's answer says of its images: those its yes covers, or that a run asks.
+function savedImagesWords(images, fromInputs, yes) {
+  const one = list => list.length > 1 ? 'them' : 'it';
+  return [...(images.length ? [yes ? `Your yes to this save covers ${images.join(', ')}: a run of exactly these steps starts ${one(images)} without asking again.`
+    : `A run asks before it starts ${images.join(', ')}: only your yes to a save’s button, which lists its steps, covers the images ${one(images)} names.`] : []),
+    ...(fromInputs.length ? [`${fromInputs.join(', ')} ${fromInputs.length > 1 ? 'come' : 'comes'} from an input, so a run asks for ${one(fromInputs)}.`] : [])].join(' ');
+}
+// The images step `st` of saved workflow `w` may start without asking, in a run by this caller: [] or [its image].
+function stepImagesYes(w, st, viewer, ctx) {
+  const a = w.approved, img = st.args?.image;
+  if (st.action !== 'keep_running' || !a || typeof img !== 'string' || placeholders(img).length || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img)) return [];
+  return viewer?.agentKey || ctx.agent || ctx.agentId || !['page', 'api', 'sparkie'].includes(ctx.via) ? [] : [img];
+}
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
 // Area: core        Rules: R35, R38        Tests: steps.test.mjs, workloads.test.mjs, workloads-place.test.mjs
 // Owns: none
@@ -7219,7 +7263,7 @@ function fillIn(v, inputs) {
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -7342,9 +7386,13 @@ action({
     }
     const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
+    // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
+    const images = savedImages(w.steps), yes = savedImagesYes(viewer, ctx, images), fromInputs = savedImagesFromInputs(w.steps);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
+      ...(images.length || fromInputs.length ? { images: savedImagesWords(images, fromInputs, yes) } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -7389,8 +7437,10 @@ action({
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
+            const yes = stepImagesYes(w, st, viewer, ctx);
+            if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
-            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null,
+            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
@@ -11880,7 +11930,8 @@ action({
     // A new image is code that runs on a Spark: at once only for the owner on their tailnet (as undo_update), else an
     // owner-only button, pressed in Spark Console.
     const ownerHere = ['page', 'api', 'sparkie'].includes(ctx.via) && !viewer.session && !viewer.agentKey && !ctx.agent && !ctx.channel;
-    if (!ownerHere && !ctx.ownerConfirmed) {
+    // (or a saved workflow's step whose save was the owner's yes to exactly this image, D6c: 18-saved-yes.mjs)
+    if (!ownerHere && !ctx.ownerConfirmed && !(ctx.imagesApproved || []).includes(input.image)) {
       const label = changeLabel('keep_running', input);
       return question(viewer, ctx, `${label}? Starting a new image is the owner’s call.`,
         [{ label, call: { action: 'keep_running', args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });

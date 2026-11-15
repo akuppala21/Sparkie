@@ -520,7 +520,8 @@ action({
     // A new image is code that runs on a Spark: at once only for the owner on their tailnet (as undo_update), else an
     // owner-only button, pressed in Spark Console.
     const ownerHere = ['page', 'api', 'sparkie'].includes(ctx.via) && !viewer.session && !viewer.agentKey && !ctx.agent && !ctx.channel;
-    if (!ownerHere && !ctx.ownerConfirmed) {
+    // (or a saved workflow's step whose save was the owner's yes to exactly this image, D6c: 18-saved-yes.mjs)
+    if (!ownerHere && !ctx.ownerConfirmed && !(ctx.imagesApproved || []).includes(input.image)) {
       const label = changeLabel('keep_running', input);
       return question(viewer, ctx, `${label}? Starting a new image is the owner’s call.`,
         [{ label, call: { action: 'keep_running', args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });

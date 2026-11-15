@@ -188,7 +188,7 @@ function fillIn(v, inputs) {
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -311,9 +311,13 @@ action({
     }
     const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
+    // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
+    const images = savedImages(w.steps), yes = savedImagesYes(viewer, ctx, images), fromInputs = savedImagesFromInputs(w.steps);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
     const before = findSaved(id);
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
+      ...(images.length || fromInputs.length ? { images: savedImagesWords(images, fromInputs, yes) } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -358,8 +362,10 @@ action({
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
+            const yes = stepImagesYes(w, st, viewer, ctx);
+            if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
-            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null,
+            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
