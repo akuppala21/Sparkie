@@ -1,4 +1,4 @@
-// Covers: Long tasks (design E 2.1 as cut, step 6; R50), second and third pieces (E6b, E6c): a job's end wakes the task
+// Covers: Long tasks (design E 2.1 as cut, step 6; R66), second and third pieces (E6b, E6c): a job's end wakes the task
 // it was started for, as an operation's result does, and the task waits for it (the carry-on turn after the start owes
 // the job's end); a task that reaches its limit of carry-on turns stops, its last reply says how to go on and carries
 // the mark, and it stands as one needs-you line until the owner writes there; "go on", as that reply says, gives it a

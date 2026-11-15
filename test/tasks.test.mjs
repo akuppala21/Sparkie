@@ -1,4 +1,4 @@
-// Covers: Long tasks (design E 2.1 as cut, step 6; R50), first piece (E6a): a task's limits come from the owner's own
+// Covers: Long tasks (design E 2.1 as cut, step 6; R66), first piece (E6a): a task's limits come from the owner's own
 // instruction when it is made and are kept on it in chats.json: an ordinary request with a next step has 2 hours and 8
 // carry-on turns, "on your own", "overnight" or "while I'm away" 4 hours and 60, hours it is asked to work for ("for 6
 // hours") those hours and 15 turns an hour, bounded at 72 hours; a question, words after a "not", words about something

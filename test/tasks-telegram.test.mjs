@@ -1,4 +1,4 @@
-// Covers: Long tasks (design E 2.1 as cut, step 6; R50), first piece (E6a), on Telegram (R32): a task made from the
+// Covers: Long tasks (design E 2.1 as cut, step 6; R66), first piece (E6a), on Telegram (R32): a task made from the
 // paired chat keeps which pairing it came from (a mark, never the chat's ids). The owner's /stop there takes the task
 // off the record on disk at once, though no answer is saved in the chat. A new bot token ends a task from Telegram, as
 // Disconnect does; so does a new pairing, made while a task from the pairing before is still on disk (the look after a
