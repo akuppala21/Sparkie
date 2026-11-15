@@ -536,7 +536,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
   # kept it: a tree with the same service code (only the page, documents or worker.py changed) answers with the same
   # build even when its installer changed nothing or went back.
   if ! { [ "$now" = "$code_build" ] && [ "$it" = "$t" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; }; then
-    failed=$(grep -E 'STOP:|didn.t pass' "$W/install.log" | tail -n 1 | sed 's/^ *//' | cut -c1-400 || true)
+    failed=$(grep -E 'STOP:|didn.t pass' "$W/install.log" | tail -n 1 | sed 's/^ *//' | cut -c1-800 || true)
     if [ -z "$failed" ] && grep -q "kept: build $code_build passed its checks" "$W/install.log"; then
       failed="its installer said it kept build $code_build, but the build answering is ${now:-none}"
     fi

@@ -144,21 +144,29 @@ path_check() {
 # The Node.js the service runs with (it's written into the systemd unit below), checked before anything changes: Spark
 # 2's own, from the fixed path (R53), never code-server's (~/.local/opt/code-server-*/lib/node: it goes when Spark 2 is
 # cleared, E 2.6) nor one kept in the home. (With --stand-in, the stand-in fleet's tests, from the PATH they give.)
-NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+# (no /snap/bin: a snap's Node doesn't start under the unit's NoNewPrivileges)
+NODE_FROM=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 [ -z "$STAND_IN" ] || NODE_FROM=$PATH
 NODE=$(PATH=$NODE_FROM command -v node 2>/dev/null || true)
-NODE_HOW='Install Node.js 18 or newer from the system'"'"'s packages, so it is at /usr/bin/node or /usr/local/bin/node (on Spark 2: sudo apt install nodejs, then node --version), then run this again. Nothing was changed.'
+# (22 or newer: the plug control uses Node's built-in WebSocket client, 12-plugs.mjs. NodeSource's package has it; Ubuntu's
+# own is older, a snap doesn't start)
+NODE_HOW='Install Node.js 22 from NodeSource: curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs. Then run this again. Nothing was changed.'
 if [ -z "$NODE" ]; then
   CS_NODE=$(ls -d "$HOME"/.local/opt/code-server-*/lib/node 2>/dev/null | tail -1 || true)
-  [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE): that goes when Spark 2 is cleared. $NODE_HOW"
-  fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again. ($NODE_HOW)"
+  [ -z "$CS_NODE" ] || fail "Spark 2 has no Node.js of its own, and Spark Console no longer runs on code-server's ($CS_NODE). $NODE_HOW"
+  fail "No Node.js found on Spark 2. $NODE_HOW"
 fi
-case "$NODE" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home; Spark Console runs only on a Node.js of Spark 2's own. $NODE_HOW" ;; esac
-[ -x "$NODE" ] || fail "No Node.js found on Spark 2. Spark Console needs Node.js 18 or newer; install it, then run this again. ($NODE_HOW)"
+# (where it leads, not only its name: a link on the fixed path into the home is the home's)
+NODE_REAL=$(readlink -f "$NODE" 2>/dev/null || echo "$NODE")
+case "$NODE_REAL" in "$HOME"/*) fail "The Node.js found ($NODE) is in your home ($NODE_REAL); Spark Console runs only on Spark 2's own. $NODE_HOW" ;; esac
+[ -x "$NODE" ] || fail "No Node.js found on Spark 2. $NODE_HOW"
 NODE_V=$("$NODE" --version 2>/dev/null || true)
 NODE_MAJOR=${NODE_V#v}; NODE_MAJOR=${NODE_MAJOR%%.*}
-[[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 18 ] \
-  || fail "Spark Console needs Node.js 18 or newer, but the one it would run with ($NODE) is ${NODE_V:-unreadable}. Install a newer one, then run this again."
+[[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 22 ] \
+  || fail "Spark Console needs Node.js 22 or newer, but the one it would run with ($NODE) is ${NODE_V:-unreadable}. $NODE_HOW"
+# What the service needs of it, looked at before anything changes: the built-in WebSocket client (the plug control).
+"$NODE" -e 'process.exit(typeof WebSocket === "function" ? 0 : 1)' 2>/dev/null \
+  || fail "The Node.js it would run with ($NODE, $NODE_V) has no built-in WebSocket client, which the plug control needs. $NODE_HOW"
 
 # /health on the socket Tailscale uses (empty if nothing answers).
 socket_health() { curl -q -s -m 3 --unix-socket "$API" http://localhost/health 2>/dev/null || true; }
@@ -384,6 +392,9 @@ put_back "$S/spark-console" "$HOME/spark-console"
 put_back "$S/spark-console-service" "$HOME/spark-console-service"
 if [ -f "$S/spark-console-api.service" ]; then
   mkdir -p "$HOME/.config/systemd/user"; cp -p "$S/spark-console-api.service" "$HOME/.config/systemd/user/"
+  # (said plainly when the Node that unit starts the service with is no longer there, as code-server's goes, E 2.6)
+  n=$(sed -n 's/^ExecStart=\([^ ]*\) .*/\1/p' "$S/spark-console-api.service" | head -n 1)
+  [ -z "$n" ] || [ -x "$n" ] || echo "  The build put back starts with the Node.js at $n, which is no longer there, so it can't start. Install Node.js 22 from NodeSource, then install again." >&2
 fi
 if [ -n "$WITH_STATE" ] && [ -d "$S/state" ]; then
   mkdir -p "$HOME/.local/state/spark-console"

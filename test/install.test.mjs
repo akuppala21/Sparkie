@@ -597,7 +597,9 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     sh(join(dir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
     return dir;
   };
-  const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
+  const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+  // (what every Node refusal says to do, word for word, as a pattern)
+  const HOW = 'Install Node\\.js 22 from NodeSource: curl -fsSL https://deb\\.nodesource\\.com/setup_22\\.x \\| sudo -E bash - && sudo apt-get install -y nodejs\\. Then run this again\\. Nothing was changed\\.';
   const fixedNode = spawnSync('sh', ['-c', 'command -v node'], { env: { PATH: FIXED }, encoding: 'utf8' }).stdout.trim();
   test('28. the console runs on Spark 2\'s own Node, from the fixed path: with code-server\'s first on the PATH, install.sh takes the other', { ...CASE, skip: !fixedNode && 'no node on the fixed path here' }, async () => {
     const home = makeHome(), cs = codeServerNode(home);
@@ -613,8 +615,42 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     // (no node on the PATH given: the stand-in fleet's tests take Node from it)
     const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:/usr/bin:/bin` });
     assert.equal(r.code, 1, r.out);
-    assert.match(r.out, new RegExp(`STOP: Spark 2 has no Node\\.js of its own, and Spark Console no longer runs on code-server's \\(${join(cs, 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\): that goes when Spark 2 is cleared\\. Install Node\\.js 18 or newer from the system's packages, so it is at /usr/bin/node or /usr/local/bin/node \\(on Spark 2: sudo apt install nodejs, then node --version\\), then run this again\\. Nothing was changed\\.`));
+    assert.match(r.out, new RegExp(`STOP: Spark 2 has no Node\\.js of its own, and Spark Console no longer runs on code-server's \\(${join(cs, 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)\\. ${HOW}`));
     assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+  });
+
+  // (the sixth read of C4b: 22 or newer with the built-in WebSocket client; where the found node leads)
+  const nodeStub = (dir, version, ws) => { mkdirSync(dir, { recursive: true }); sh(join(dir, 'node'), `#!/bin/sh\ncase "$1" in --version) echo ${version} ;; -e) exit ${ws ? 0 : 1} ;; *) exec ${JSON.stringify(process.execPath)} "$@" ;; esac\n`); return dir; };
+  test('30. a Node older than 22, or one without the built-in WebSocket client, or one that leads into the home: refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), b = stage(home, 'good', 1), out = mkdtempSync(join(tmpdir(), 'scin-node-'));
+    homes.push(out);
+    const cases = [
+      [nodeStub(join(out, 'old'), 'v18.19.1', true), /STOP: Spark Console needs Node\.js 22 or newer, but the one it would run with \([^)]*\) is v18\.19\.1\./],
+      [nodeStub(join(out, 'nows'), 'v22.11.0', false), /STOP: The Node\.js it would run with \([^)]*, v22\.11\.0\) has no built-in WebSocket client, which the plug control needs\./],
+    ];
+    // (a node on the PATH given that is a link to one in the home)
+    const inHome = nodeStub(join(home, '.nvm', 'bin'), 'v22.11.0', true), link = join(out, 'link');
+    mkdirSync(link); symlinkSync(join(inHome, 'node'), join(link, 'node'));
+    cases.push([link, /STOP: The Node\.js found \([^)]*\) is in your home \([^)]*\.nvm\/bin\/node\); Spark Console runs only on Spark 2's own\./]);
+    for (const [dir, re] of cases) {
+      const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${dir}:/usr/bin:/bin` });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, re);
+      assert.match(r.out, new RegExp(HOW));
+      assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+    }
+    const ok = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${nodeStub(join(out, 'good'), 'v22.11.0', true)}:/usr/bin:/bin` });
+    assert.equal(ok.code, 0, ok.out);
+  });
+
+  test('31. restore.sh says so when the unit it puts back starts the service with a Node that is gone', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const stamp = nextStamp();
+    assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
+    const unit = join(snapDir(home, stamp), 'spark-console-api.service');
+    writeFileSync(unit, readFileSync(unit, 'utf8').replace(/^ExecStart=\S+ /m, `ExecStart=${join(home, 'gone', 'node')} `));
+    const r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8', timeout: 60000 * SLOW });
+    assert.match(r.stdout + r.stderr, new RegExp(`The build put back starts with the Node\\.js at ${join(home, 'gone', 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, which is no longer there, so it can't start\\.`));
   });
 });
 
