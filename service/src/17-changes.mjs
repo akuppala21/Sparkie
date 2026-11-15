@@ -198,7 +198,7 @@ async function placeModel(m, inv, viewer, { spark, sparks, allowStop = [], noSto
   if (sparks && !inRecipes(m)) return { ok: false, why: `${m.repo || m.name} isn’t in Recipes, and only models from Recipes run across two Sparks` };
   if (sparks) {
     const link = (lastCheck?.pairs || []).find(p => sparks.includes(p.a) && sparks.includes(p.b))?.fastLink || 'not tested';
-    if (link !== 'full') return { ok: false, why: `the ${sparks.join('–')} cable is “${link}”; it has to pass the connection test first (Clusters → Test connections)` };
+    if (link !== 'full') return { ok: false, why: `the ${sparks.join('–')} cable is “${link}”; it has to pass the cable check first (Check cables, on a Spark’s Checks tab)` };
     const cp = await clusterPlan(m.name, sparks, viewer, inv);
     const parts = cp.members.map(x => ({ x, r: railsFor({ node: x.node, steps: x.steps }, { fits: x.fits, stop: x.stop, spare: x.spare, unknown: !Number.isFinite(x.memory.available) }, allowStop) }));
     const bad = parts.find(y => !y.r.ok);
@@ -447,7 +447,7 @@ async function resolveModelName(name, inv) {
 // Spark isn't chosen; a repo from outside Recipes only goes on one Spark.
 async function pickVersion(recipe, repo, viewer, outside, only = null) {
   const status = await statusFor(viewer, false);
-  const online = status.nodes.filter(n => n.state === 'online' && canUse(viewer, n.id) && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
+  const online = status.nodes.filter(n => n.state === 'online' && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
   const free = id => gbOfGiB(online.find(n => n.id === id)?.memoryFreeGiB) ?? 0, disk = id => gbOfGiB(online.find(n => n.id === id)?.diskFreeGiB) ?? 0;
   const pairs = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.some(n => n.id === p.a) && online.some(n => n.id === p.b));
   const versions = recipe.variants.filter(v => (!repo || sameRepo(v.repo, repo)) && v.needGB != null && v.sizeGB != null && (v.sparks ?? 1) <= (outside ? 1 : 2))
@@ -518,7 +518,7 @@ async function startModel(args, viewer, ctx) {
   // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
   const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
-  for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
+  mustUse(viewer);
   if (!ctx.poweredOn) {
     // (a Spark being turned on for this very model: that operation, not a second one)
     const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
@@ -618,7 +618,7 @@ async function startModel(args, viewer, ctx) {
   if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
   if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
-  mustUse(viewer, pick.nodes);
+  mustUse(viewer);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);
   const going = startingNow([v.repo, found.repo], spark ? [spark] : sparks);
   if (going) return alreadyStarting(going, v.repo);
@@ -694,7 +694,7 @@ action({
     sparkOf(viewer, spark);
     const dep = (await inventory(null)).sparks.find(sp => sp.id === spark)?.deployments.find(d => d.container === container);
     if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}. Only those can be stopped this way; running_models lists them.`);
-    if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model is started and stopped by the owner, on Models.');
+    if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model is started and stopped by the owner, with /main/start and /main/stop.');
     const label = await run(nodeById(spark), `docker inspect -f '{{index .Config.Labels "spark.protect"}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
     if (isProtected(container, label.out.trim())) throw new HttpError(403, `${container} is protected.`);
     if (dep.state !== 'running') return { outcome: 'already', note: `${container} isn’t running.` };
@@ -725,7 +725,7 @@ async function stoppedForSure(job, spark, container) {
 async function restartChecked(viewer, ctx, spark, container) {
   const inv = await inventory(null), sp = inv.sparks.find(x => x.id === spark), dep = sp?.deployments.find(d => d.container === container);
   if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s models on ${spark}.`);
-  if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model restarts by itself; the owner manages it on Models.');
+  if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s own model restarts by itself; the owner starts and stops it with /main/start and /main/stop.');
   if (dep.cluster) throw new HttpError(409, 'It runs across two Sparks; use start_model to start it again.');
   if (dep.state === 'running') return null;
   notBrainsSpark([spark]);
@@ -795,7 +795,7 @@ action({
     const { spark, container } = input.choice ? redeemChoice(viewer, ctx, 'restart_model', input.choice) : input;
     if (!spark || !container) throw new HttpError(400, 'Missing argument: spark and container.');
     sparkOf(viewer, spark);
-    mustUse(viewer, [spark]);
+    mustUse(viewer);
     const job = await restartChecked(viewer, ctx, spark, container);
     if (!job) return { outcome: 'already', note: `${container} is running.` };
     return { outcome: 'started', operation: job.id, restarting: container, next: `wait_operation {"id":"${job.id}"}` };
@@ -807,7 +807,7 @@ action({
 // reads only maintained sources, and Recipes lists only setups that hold up (recipeCatalog).
 action({
   name: 'find_setups', title: 'Find setups for a model', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'find',
-  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also does this by itself every day, so usually recipe_detail already has them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
+  description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also looks them up by itself when a start needs them and they are over a week old, so recipe_detail may already have them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
   input: { type: 'object', properties: { model: modelArg, choice: choiceArg }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (input.choice && Object.keys(input).length > 1) throw new HttpError(400, 'Send the choice alone: {"choice": id}.');

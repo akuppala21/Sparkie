@@ -330,7 +330,7 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
     assert.equal(x.reachable, false);
     assert.equal(typeof x.problem, 'string');
   });
-  for (const service of ['console', 'sparkie', 'editor']) {
+  for (const service of ['console', 'sparkie']) {
     v(`service_logs (${service})`, () => ({ spark: ctx.spark, service }), x => {
       assert.equal(x.service, service);
       assert.equal(typeof x.log, 'string');
@@ -503,7 +503,7 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['cluster_plan', () => ({ model: ctx.model, sparks: val }), re, 'invalid', `sparks=${JSON.stringify(val)}`]);
   }
   // enums
-  for (const s of ['model', 'ray', 'portal', 'CONSOLE', '']) cases.push(['service_logs', () => ({ spark: sp(), service: s }), /service should be one of: editor, console, sparkie/, 'invalid', `service=${JSON.stringify(s)}`]);
+  for (const s of ['model', 'ray', 'portal', 'CONSOLE', '']) cases.push(['service_logs', () => ({ spark: sp(), service: s }), /service should be one of: console, sparkie/, 'invalid', `service=${JSON.stringify(s)}`]);
   cases.push(['workloads', () => ({ kind: 'models' }), /kind should be one of: model, service, sparkie, other/, 'invalid', 'kind=models']);
   cases.push(['fleet_events', () => ({ type: 'nope' }), /type should be one of: started/, 'invalid', 'type=nope']);
   cases.push(['recall', () => ({ kind: 'nope' }), /kind should be one of: said, tool, call/, 'invalid', 'kind=nope']);

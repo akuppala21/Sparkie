@@ -187,7 +187,7 @@ const letSleep = j => { for (const [id, why] of j.keptAwake || []) doneWith(id, 
 // files under /in its command names (the shared folder is one per Spark). None: one Spark it powered off whose record
 // has room (wakeOne, as a start that fits nowhere), unless the command names files, which a sleeping Spark can't show.
 async function pickSpark(j, n, args, viewer) {
-  const name = String(args.container), inv = await inventory(null), usable = computeSparks().filter(id => canUse(viewer, id));
+  const name = String(args.container), inv = await inventory(null), usable = computeSparks();
   const on = usable.filter(id => inv.sparks.find(s => s.id === id)?.online), asleep = usable.filter(id => consoleOff(id));
   for (const id of on) {
     const r = await run(nodeById(id), `docker inspect -f '{{.State.Status}}' ${q(name)} 2>/dev/null || echo missing`, { timeout: 20000 });
