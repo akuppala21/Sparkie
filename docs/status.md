@@ -60,6 +60,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
+| [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
