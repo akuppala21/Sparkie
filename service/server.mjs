@@ -3656,6 +3656,7 @@ async function runChoice(viewer, conv, id, by) {
     // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
       ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
+      ...(c.covers ? { covers: c.covers } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -5854,7 +5855,9 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
   const shown = choices.slice(0, 4).map(c => {
     if (!c.call && !ctx.conv) return { label: c.label, choice: null };
     const id = randomBytes(5).toString('hex');
-    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation });
+    // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
+    pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
@@ -6864,7 +6867,9 @@ function requestSteps(viewer, ctx) {
 // over the internet without the passkey does. Then save_workflow keeps `approved: {images, steps, by, at}` on the
 // workflow, and its answer and the chat line after the press say which images it covers (savedImagesWords). It covers
 // only what the button showed whole (stepCovered): a step with an {input} in any argument, or with part of its line
-// hidden as a key, is asked on every run (the workloads review, A1 and A2).
+// hidden as a key, is asked on every run (the workloads review, A1 and A2). What a press covers is fixed when its button
+// is built: the button keeps its covered steps' keys (savedShown), the press covers only those (savedCover), and
+// `approved.covered` keeps them for every run, so a key no longer kept later never makes a step covered (second read).
 // What the yes binds to: each image reference exactly as the button showed it, the tag as typed, or the digest when the
 // reference carries one (name@sha256:…), compared as text; and `steps`, a hash of the saved steps exactly as they were
 // saved. A run of that workflow passes a step's image as approved (stepImagesYes) only when the steps still hash the same,
@@ -6875,11 +6880,24 @@ function requestSteps(viewer, ctx) {
 // Spark that pulls gets what the tag names then; the owner pins one exactly by saving name@sha256:… .
 const savedStepsHash = steps => createHash('sha256').update(JSON.stringify(steps)).digest('hex').slice(0, 16);
 // A step the yes covers: keep_running from a literal image, with no {input} in any of its arguments (a run's input is on
-// no button, the workloads review's A2), and its line on the button whole: nothing in it hidden as a key (A1).
-const stepCovered = st => st?.action === 'keep_running' && typeof st.args?.image === 'string' && !placeholders(st.args).length && !stepLine(st).includes('[hidden]');
-// The images a save's yes covers, and the steps naming an image that a run asks about all the same.
+// no button, the workloads review's A2), and its line on the button whole: nothing in it hidden as a key (A1), and no
+// character the line leaves out (stepLine strips direction and zero-width ones, the second read's Later 2).
+const stepCovered = st => st?.action === 'keep_running' && typeof st.args?.image === 'string' && !placeholders(st.args).length && !stepLine(st).includes('[hidden]')
+  && !NOT_SHOWN.test(JSON.stringify(st.args));
+// One step, as saved (savedStepKey), and the covered steps a save button showed when it was built (savedShown): kept with
+// the button on the server (question, 17-changes.mjs), so a key no longer kept by the time it is pressed never makes
+// the press cover more than the button said (the second read's Later 1).
+const savedStepKey = st => createHash('sha256').update(JSON.stringify([String(st?.action ?? ''), st?.args || {}, st?.keep === true])).digest('hex').slice(0, 16);
+const savedShown = args => (args?.from === undefined && Array.isArray(args?.steps) ? args.steps.filter(stepCovered).map(savedStepKey) : []);
+// The images a save's yes would cover now (the button's words).
 const savedImages = steps => [...new Set(steps.filter(stepCovered).map(st => st.args.image))];
-const savedStepsAsked = steps => steps.map((st, i) => (st?.action === 'keep_running' && st.args?.image !== undefined && !stepCovered(st) ? i + 1 : 0)).filter(Boolean);
+// What a save covers: the steps stepCovered holds, and for a press only those its button showed as covered (`shown`);
+// their images and keys, and the other steps that name an image, which a run asks about all the same.
+function savedCover(steps, shown) {
+  const covered = steps.filter(st => stepCovered(st) && (!shown || shown.includes(savedStepKey(st))));
+  return { images: [...new Set(covered.map(st => st.args.image))], keys: covered.map(savedStepKey),
+    asked: steps.map((st, i) => (st?.action === 'keep_running' && st.args?.image !== undefined && !covered.includes(st) ? i + 1 : 0)).filter(Boolean) };
+}
 const TAG_WORDS = 'a tag is a name and can later point at another image (name@sha256:… pins one)';
 // What the save button adds when its press would cover images: that runs then start them without asking again.
 function savedImagesLabel(steps) {
@@ -6902,7 +6920,7 @@ function savedImagesWords(images, asked, yes) {
 // The images step `st` of saved workflow `w` may start without asking, in a run by this caller: [] or [its image].
 function stepImagesYes(w, st, viewer, ctx) {
   const a = w.approved, img = st.args?.image;
-  if (!a || !stepCovered(st) || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img)) return [];
+  if (!a || !stepCovered(st) || a.steps !== savedStepsHash(w.steps) || !a.images?.includes(img) || (a.covered && !a.covered.includes(savedStepKey(st)))) return [];
   return viewer?.agentKey || ctx.agent || ctx.agentId || !['page', 'api', 'sparkie'].includes(ctx.via) ? [] : [img];
 }
 /* ───────── a saved workflow's run: steps placed, job steps waited on, and what a failed run started stopped (D6a, D6b, D6d) ───────── */
@@ -7341,11 +7359,15 @@ function stepArgs(st) {
 const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
 // One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
 // image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+// A control, direction or zero-width character is left out, so none turns how the rest of the label reads (the second
+// read's Later 2; a step holding one is never covered, stepCovered).
+const NOT_SHOWN = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+const notShown = t => t.replace(new RegExp(NOT_SHOWN.source, 'g'), '');
 function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
-  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return maskSecrets(changeLabel(action, a)).slice(0, 140);
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return notShown(maskSecrets(changeLabel(action, a))).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  const words = maskSecrets(`${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`);
+  const words = notShown(maskSecrets(`${ACTIONS.get(action)?.title || notShown(action) || 'not a step'}${given ? ` (${given})` : ''}`));
   if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
   return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
 }
@@ -7427,7 +7449,7 @@ action({
   name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. A keep_running step may leave out spark: Spark Console picks one with room when the step runs. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
-    title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
+    title: { type: 'string', minLength: 2, maxLength: 80, pattern: '^[^\\x00-\\x1f\\x7f-\\x9f\\u00ad\\u061c\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2069\\ufeff]+$', description: 'Its name, like "coding mode".' },
     when: { type: 'string', maxLength: 300, description: 'When to use it, in the owner’s words.' },
     inputs: { type: 'object', description: 'What it asks for when it runs: name → what it is, like {"model": "the model to start"}.', additionalProperties: { type: 'string', maxLength: 200 } },
     steps: { type: 'array', minItems: 1, maxItems: 12, description: 'In order. Each: {"action": one of these actions, "args": its arguments}.',
@@ -7460,8 +7482,10 @@ action({
       by: viewer.login, at: new Date().toISOString() };
     // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
     // (and its answer, and the chat line after the press, say what that yes covers)
-    const images = savedImages(w.steps), yes = !carried && savedImagesYes(viewer, ctx, images), asked = savedStepsAsked(w.steps);
-    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
+    // (a press covers no more than its button showed when it was built: ctx.covers, kept with it; one that carried
+    // `from` is no yes at all, and its words say so)
+    const { images, keys, asked } = savedCover(w.steps, ctx.button && !carried ? ctx.covers || [] : null), yes = !carried && savedImagesYes(viewer, ctx, images);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), covered: keys, by: viewer.login, at: w.at };
     const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
     return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
