@@ -3,18 +3,21 @@
 // oldest first; all but the newest 20; any older than 7 days. One journal line names each set that went, why, and the
 // owner's files it held. Never a set whose change still runs (its unit is live), nor the newest set of a chat that can
 // still undo it; once its unit has ended, a set that is no chat's to undo goes. A pruned set keeps its manifest, so an
-// undo that comes to it (after the chat's model change was undone first) says, file by file, that its copy was pruned.
+// undo that comes to it (after the chat's model change was undone first) says, file by file, that its copy was pruned;
+// /undo, the owner's word, says the same.
 // Ages are the sets' folder times, set here as they would be days later. The stand-in fleet with the real root helper
 // set up for Spark 3 (test/rehearsal.mjs), as in runner.test.mjs. Linux only: run it on a Spark.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, utimesSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 const SECONDS = 20, RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
-useFleet({ knowledge: true, env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: '1', SPARK_CONSOLE_COPIES_BYTES: String(3.5 * 2 ** 20) },
+// (run reaches the runner through its ladder, A7c: the owner's own call, or chat words that ask for work on Spark 3,
+// starting in ~ as these commands are written; the tailnet is read every second)
+useFleet({ knowledge: true, env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: '1', SPARK_CONSOLE_COPIES_BYTES: String(3.5 * 2 ** 20), SPARK_CONSOLE_ROUTE_MS: '1000' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
@@ -22,7 +25,15 @@ useFleet({ knowledge: true, env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE
       mkdirSync(dirname(join(h, p)), { recursive: true });
       writeFileSync(join(h, p), data);
     }
-  } });
+  } }, async () => {
+  // (no change runs at once until the console has read the tailnet, A7c: two looks after a request, which gave it the
+  // Sparks' addresses)
+  const looks = () => (existsSync(join(T.fleet.dir, 'tailscale-calls')) ? readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').split('\n').filter(l => l === 'status --json').length : 0);
+  await api('/health');
+  const n = looks();
+  await waitFor(() => looks() >= n + 2, { what: 'two looks at the tailnet after a request' });
+  await sleep(300);
+});
 
 const H3 = () => join(T.fleet.root, 'spark3'), at3 = p => join(H3(), p), text = p => readFileSync(at3(p), 'utf8');
 const BEFORE = () => at3('.local/share/spark-console/before'), setDir = n => join(BEFORE(), n);
@@ -43,7 +54,7 @@ function fake({ days = 0, bytes = 0 } = {}) {
   age(n, days);
   return n;
 }
-const run = command => api('/actions/run', { method: 'POST', body: { on: 'spark3', command } });
+const run = command => api('/actions/run', { method: 'POST', body: { on: 'spark3', command, dir: '~' } });
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
 const records = () => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).sort().flatMap(f => lines(join(T.fleet.journalDir, f))).filter(r => r.k === 'cmd');
 const prunes = () => records().filter(r => r.act === 'prune');
@@ -93,12 +104,16 @@ test('all but the newest 20 sets on a Spark go when a new one opens (the new one
 
 test('past 7 days a set goes, but never one whose change still runs nor the newest set of a chat that can still undo it; once its unit ends, a set no chat can undo goes', { timeout: 300000 * SLOW }, async () => {
   const chat = await newChat();
-  const one = await inChat(chat, 'first change on spark three', 'run', { on: 'spark3', command: 'echo one > notes/x1.txt' });
-  const two = await inChat(chat, 'second change on spark three', 'run', { on: 'spark3', command: 'echo two > notes/x2.txt' });
+  const one = await inChat(chat, 'first change on spark 3', 'run', { on: 'spark3', command: 'echo one > notes/x1.txt', dir: '~' });
+  const two = await inChat(chat, 'second change on spark 3', 'run', { on: 'spark3', command: 'echo two > notes/x2.txt', dir: '~' });
   assert.ok(one.value?.set && two.value?.set, JSON.stringify([one, two]));
-  // A change cut off while its unit lives on (the connection drops as it starts; the command runs on).
-  const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo live > notes/live.txt && sleep 15 && touch notes/live-done';
+  // A change cut off while its unit lives on (the connection drops as it starts; the command runs on), here past its
+  // time limit too (a systemd that failed to end it: the stand-in's past-limit). The console holds Spark 3 after an end
+  // it can't know until that limit has passed (A7c); then a new change opens a set beside one whose change may still run.
+  const drops = join(H3(), '.mock', 'sudo-drops'), command = 'echo live > notes/live.txt && sleep 40 && touch notes/live-done';
+  const pastLimit = join(H3(), '.rehearsal', 'standin', 'past-limit');
   writeFileSync(drops, '');
+  writeFileSync(pastLimit, '');
   let cut;
   try { cut = await run(command); } finally { rmSync(drops, { force: true }); }
   assert.equal(cut.status, 503, cut.text);
@@ -107,6 +122,10 @@ test('past 7 days a set goes, but never one whose change still runs nor the newe
   const old = fake({ days: 8 });
   for (const n of [one.value.set, two.value.set, running]) age(n, 8);
   assert.ok(existsSync(join(H3(), '.rehearsal', 'standin', 'live', unit)), 'its unit still runs');
+  rmSync(pastLimit, { force: true });
+  // (the hold ends at the unit's time limit and the 6 s systemd is given to stop it, seen at the hold's next look)
+  const started = Date.parse(records().find(r => r.start && r.set === running).at);
+  await sleep(Math.max(0, started + (SECONDS + 6) * 1000 + 3000 - Date.now()));
   const r = await run('echo week > notes/week.txt');
   assert.equal(r.json?.ran, true, r.text);
   assert.ok(existsSync(join(H3(), '.rehearsal', 'standin', 'live', unit)), 'its unit still ran while the set opened');
@@ -122,7 +141,7 @@ test('past 7 days a set goes, but never one whose change still runs nor the newe
 
 test('undo that comes to a pruned set says, file by file, that its copy was pruned, and puts nothing back', { timeout: 600000 * SLOW }, async () => {
   const chat = await newChat();
-  const change = await inChat(chat, 'change p on spark three', 'run', { on: 'spark3', command: 'echo p changed > notes/p1.txt' });
+  const change = await inChat(chat, 'change p on spark 3', 'run', { on: 'spark3', command: 'echo p changed > notes/p1.txt', dir: '~' });
   assert.ok(change.value?.set, JSON.stringify(change));
   // Then a model change in the same chat: its undo comes first, so the set is not this chat's to undo now.
   const stop = await inChat(chat, `stop ${RADIX} on spark 4`, 'stop_model', { spark: 'spark4', container: RADIX });
@@ -143,6 +162,27 @@ test('undo that comes to a pruned set says, file by file, that its copy was prun
   assert.deepEqual(v.notRestored.filter(x => x.path.startsWith('~/notes/')), [{ path: '~/notes/p1.txt', why: `pruned: its copy was removed on ${v.pruned.at} (older than 7 days)` }]);
   assert.match(v.note, new RegExp(`^Nothing was put back on Spark 3: the copies of that change were pruned on ${v.pruned.at} \\(older than 7 days\\)\\. Not put back: \\d+ \\(each says why\\)\\.$`));
   assert.equal(text('notes/p1.txt'), 'p changed\n');
+  const end = records().filter(x => x.act === 'undo_last_change' && x.end && x.set === change.value.set).at(-1);
+  assert.equal(end?.outcome, 'pruned');
+});
+
+// /undo, the owner's word (A7c), where A8 meets it: it answers with undo_last_change's own words for a pruned set.
+test('/undo, the owner\'s word, says of a pruned set what undo_last_change says: nothing put back, and why', { timeout: 600000 * SLOW }, async () => {
+  const chat = await newChat();
+  const change = await inChat(chat, 'change p again on spark 3', 'run', { on: 'spark3', command: 'echo p again > notes/p1.txt', dir: '~' });
+  assert.ok(change.value?.set, JSON.stringify(change));
+  const stop = await inChat(chat, `stop ${RADIX} on spark 4`, 'stop_model', { spark: 'spark4', container: RADIX });
+  assert.ok(stop.value?.operation, JSON.stringify(stop));
+  assert.equal((await finished(stop.value.operation)).status, 'completed');
+  age(change.value.set, 8);
+  const r = await run('echo prune again > notes/x2.txt');
+  assert.equal(r.json?.ran, true, r.text);
+  assert.ok(pruned(change.value.set), 'pruned: the chat could not undo it then');
+  const first = await inChat(chat, 'undo that', 'undo_last_change');
+  assert.equal((await finished(first.value.operation)).status, 'completed');
+  const word = await say(chat, '/undo');
+  assert.match(word.text, /^\/undo\nNothing was put back on Spark 3: the copies of that change were pruned on [^\n]+ \(older than 7 days\)\. Not put back: \d+ \(each says why\)\.$/);
+  assert.equal(text('notes/p1.txt'), 'p again\n');
   const end = records().filter(x => x.act === 'undo_last_change' && x.end && x.set === change.value.set).at(-1);
   assert.equal(end?.outcome, 'pruned');
 });

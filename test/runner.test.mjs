@@ -77,9 +77,12 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_
     symlinkSync(out, join(h, 'notes/linkdir'));
   } }, async () => {
   keys.act = await createActKey('runner-act');
-  // (the console's first look at the tailnet, 1.5 s after it starts: until then no change runs at once, A7c)
-  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
-  await sleep(500);
+  // (the console's looks at the tailnet, the first 1.5 s after it starts: until one has read it, no change runs at once,
+  // A7c. The Sparks' tailnet addresses come with the first request, so two looks after this one count)
+  const looks = () => (existsSync(join(T.fleet.dir, 'tailscale-calls')) ? readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').split('\n').filter(l => l === 'status --json').length : 0);
+  const n = looks();
+  await waitFor(() => looks() >= n + 2, { what: 'two looks at the tailnet after a request' });
+  await sleep(300);
 });
 
 const H3 = () => join(T.fleet.root, 'spark3'), at3 = p => join(H3(), p), real = p => join(realpathSync(H3()), p);

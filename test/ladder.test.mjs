@@ -37,9 +37,12 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUT
     put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\n", 0o755);
   } }, async () => {
   keys.act = await createActKey('ladder-act');
-  // (the console's first look at the tailnet, 1.5 s after it starts: until then no change runs at once, A7c)
-  await waitFor(() => existsSync(join(T.fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
-  await sleep(500);
+  // (the console's looks at the tailnet, the first 1.5 s after it starts: until one has read it, no change runs at once,
+  // A7c. The Sparks' tailnet addresses come with the first request, so two looks after this one count)
+  const looks = () => (existsSync(join(T.fleet.dir, 'tailscale-calls')) ? readFileSync(join(T.fleet.dir, 'tailscale-calls'), 'utf8').split('\n').filter(l => l === 'status --json').length : 0);
+  const n = looks();
+  await waitFor(() => looks() >= n + 2, { what: 'two looks at the tailnet after a request' });
+  await sleep(300);
 });
 
 const H3 = () => join(T.fleet.root, 'spark3'), at3 = p => join(H3(), p), text = p => readFileSync(at3(p), 'utf8');
@@ -317,9 +320,12 @@ test('with no eval on record, a plain change Sparkie proposes is a button like a
   const was = { fleet: T.fleet, base: T.base, mcp: T.mcp, origin: T.origin };
   Object.assign(T, { fleet, base: fleet.base, mcp: fleet.mcp, origin: fleet.origin });
   try {
-    await waitFor(() => existsSync(join(fleet.dir, 'tailscale-calls')) && /^status --json$/m.test(readFileSync(join(fleet.dir, 'tailscale-calls'), 'utf8')), { what: 'the first look at the tailnet' });
-    await sleep(500);
-    const chat = await newChat();
+    // (as the setup waits: two looks at the tailnet after a request, which gave the console the Sparks' addresses)
+    const chat = await newChat(), looks = () => readFileSync(join(fleet.dir, 'tailscale-calls'), 'utf8').split('\n').filter(l => l === 'status --json').length;
+    await waitFor(() => existsSync(join(fleet.dir, 'tailscale-calls')), { what: 'a look at the tailnet' });
+    const n = looks();
+    await waitFor(() => looks() >= n + 2, { what: 'two looks at the tailnet after a request' });
+    await sleep(300);
     const r = await turn(chat, 'fix the notes r on spark 3', [[RUN('echo railed > notes/r.txt')]]);
     assert.equal(r.tools[0]?.tail, 'Asked first, with a button: nothing ran yet.', JSON.stringify(r.tools));
     const [asked] = sentBack('fix the notes r on spark 3');
