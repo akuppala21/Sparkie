@@ -92,7 +92,7 @@ New actions show up in `spark` and in every agent automatically; nothing to upda
 | `linked_sparks` | Which Sparks can run a model together (the last cable test) |
 | `spark_detail`, `spark_diagnostics` | One Spark right now; health checks, or why it's unreachable |
 | `recent_operations`, `operation_log` | The console's own operations and their logs |
-| `container_logs`, `service_logs` | The newest lines of any container's log; the console's, Sparkie's or the editor's log |
+| `container_logs`, `service_logs` | The newest lines of any container's log; the console's or Sparkie's log |
 | `sparkie_setup` | Sparkie's model and which model answers chats and apps; Spark Console's build, its own recent errors, its last crash and the watchdog's restarts. With `about: "abilities"`: what Sparkie can look up and change (every action's title) and its limits. Who is signed in and the recovery codes left come only on the owner's own call, never to an agent |
 | `files` | “What’s in my shared folder on Spark 3?” The files and folders in one Spark's shared folder, or one text file there (the first 8,000 characters, with keys hidden: known token formats, private keys, settings like `SECRET_KEY=<random>`, a password in an address; plain words never); hidden files, links and key files are never opened. A Spark with no shared folder yet says so (a look never makes one); more than two file operations at once answers `[busy, retry later]`, saying to try again |
 
