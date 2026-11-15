@@ -360,13 +360,21 @@ action({
   }, required: ['name'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
     // (a compare's run of the brain gets the workflow less its {model} start and stop steps, 21-compare.mjs)
-    const w = ctx.compare?.workflow || findSaved(input.name);
-    if (!w) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    const saved = ctx.compare?.workflow || findSaved(input.name);
+    if (!saved) throw new HttpError(404, `No saved workflow called “${input.name}”. Saved: ${savedWorkflows().map(x => x.title).join(', ') || 'none yet'}.`);
+    let w = saved;
     const given = { ...(input.inputs || {}) }, missing = Object.keys(w.inputs || {}).filter(k => !(k in given));
     // (a model a compare kept for this workflow fills its model input when none is given, 21-compare.mjs)
     const usedBest = missing.includes('model') && w.best?.model ? String(w.best.model) : null;
     if (usedBest) { given.model = usedBest; missing.splice(missing.indexOf('model'), 1); }
     if (missing.length) throw new HttpError(400, `“${w.title}” needs ${missing.map(k => `${k} (${w.inputs[k]})`).join(', ')}.`);
+    // (Sparkie's own model, given or kept by a compare, runs the brain's view of it, as the compare ran it: its {model}
+    // start and stop steps left out; refused in the compare's words when the brain can't be asked)
+    if (!ctx.compare && 'model' in (w.inputs || {}) && compareIsBrain(given.model ?? '')) {
+      const why = compareBrainWhy();
+      if (why) throw new HttpError(409, `“${w.title}” can’t run with Sparkie’s own model: ${why}.`);
+      w = compareBrainView(w);
+    }
     // Every step against the Sparks now, before step 1 changes anything. If the check itself fails, the run goes ahead
     // as before and says so: a bug in the checker never stops a workflow.
     let check = null, skipped = null;
@@ -381,7 +389,7 @@ action({
     }
     const job = newJob('workflow-run', { model: w.title, by: viewer.login, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null });
     if (usedBest) job.usedBest = usedBest;
-    const steps = JSON.stringify(w.steps);
+    const steps = JSON.stringify(saved.steps);
     const record = ok => writeSaved(savedWorkflows().map(x => (x.id === w.id && JSON.stringify(x.steps) === steps ? { ...x, lastRun: { at: new Date().toISOString(), ok, operation: job.id } } : x)));
     runJob(job, async j => {
       note(j, check ? `Checked each step first: ${check.map(l => `${l.step} ${l.result}`).join('; ')}` : `The check before step 1 was skipped (${skipped}); running as asked`);
@@ -406,8 +414,9 @@ action({
             const yes = stepImagesYes(w, st, viewer, ctx);
             if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
+            // (a compare's candidate run stops nothing to make room: the owner's models stay as they were, D)
             out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
-              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
+              ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx), ...(ctx.compare ? { noStops: true, compareRun: true } : {}) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
           savedRunKeep(j, { step: i + 1, pending: startedListed(savedRunPending(st.action, args, out, st.keep === true), listed),
@@ -419,7 +428,8 @@ action({
           } else note(j, `Step ${i + 1}: ${out?.outcome || 'done'}${out?.note ? ` (${String(out.note).slice(0, 160)})` : ''}`);
           ran.push(...startedListed(startedBy(st.action, args, out, st.keep === true), listed));
           savedRunKeep(j, { started: ran, pending: [], starting: null });
-          j.jobModel = jobModel(st.action, args, out) || j.jobModel;
+          // (in a compare's run only the {model} step's model is handed on: the candidate, never a fixed helper's, D)
+          if (!ctx.compare || placeholders(st.args).includes('model')) j.jobModel = jobModel(st.action, args, out) || j.jobModel;
           if (st.action === 'keep_running' && (out?.job || args.once === true)) await jobStepEnd(j, i + 1, args, out);
         }
         record(true);
