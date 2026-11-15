@@ -12,6 +12,8 @@
 //   systemd-run  --user (the owner's service manager) runs what follows its options, logged in ~/.user-units; any
 //                other call is test/mock/bin/systemd-run's, a look's unit held to its RuntimeMaxSec; with ~/.prove-hangs
 //                (seconds) a proof's outside unit waits that long first, holding the proof open
+//   flock        a lock taken to run `true` (`flock … <file> true`) is held a second, as when two callers check at once;
+//                every other call is the real one
 // Spark 2 and Spark 3 are set up and proven; Spark 4 has no helper until the self-test's test sets one up whose proof
 // lets one attempt through. What this cannot show: the stand-ins build no wall, so a look runs unwalled here. The tests
 // show what the console asks the helper for and how it reads the answers; what a Spark grants is its own proof's word.
@@ -43,6 +45,10 @@ R="$HOME/.rehearsal"
 shift
 R=$(realpath "$R")
 exec env SUDO_UID=1000 SUDO_USER=owner SUDO_GID=1000 SPARK_CONSOLE_REHEARSAL="$R" "$R/usr/local/sbin/spark-console-root" "$@"
+`, { mode: 0o755 });
+writeFileSync(join(BIN, 'flock'), `#!/bin/bash
+if [ $# -ge 2 ] && [ "\${@: -1}" = true ]; then set -- "\${@:1:$#-1}" sleep 1; fi
+exec /usr/bin/flock "$@"
 `, { mode: 0o755 });
 writeFileSync(join(BIN, 'systemd-run'), `#!/bin/bash
 if [ "$1" = --user ]; then
@@ -221,7 +227,7 @@ test('a helper whose sudo line is gone, one this build does not know, or one who
   assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
 });
 
-test('a look while a proof of the walls holds its lock there: "being proven right now", nothing runs, and afterwards it runs', { timeout: 120000 * SLOW }, async () => {
+test('a look while a proof of the walls holds its lock there: "being proven right now", nothing runs, and afterwards it runs', { timeout: 180000 * SLOW }, async () => {
   const h = home('spark3'), R = realpathSync(join(h, '.rehearsal'));
   writeFileSync(join(h, '.prove-hangs'), '8');
   rmSync(join(h, '.prove-hanging'), { force: true });
@@ -235,9 +241,22 @@ test('a look while a proof of the walls holds its lock there: "being proven righ
     assert.equal(r.status, 409, r.text);
     assert.equal(r.json.error, 'The walls on Spark 3 are being proven right now; try again in a minute. Nothing ran.');
     assert.equal(sudoCalls('spark3').length, calls, 'the helper is not called');
-  } finally { rmSync(join(h, '.prove-hangs'), { force: true }); }
+  } finally {
+    // The shared fleet gets Spark 3 back whatever happened above: the hang let go, the proof ended (ended for it if it
+    // has not ended by itself), and its lock free again, shown by a plain look that runs.
+    rmSync(join(h, '.prove-hangs'), { force: true });
+    if (await Promise.race([ended.then(() => false), sleep(30000 * SLOW).then(() => true)])) proof.kill('SIGKILL');
+    await waitFor(async () => (await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json?.ran === true,
+      { timeout: 30000, what: 'the proof’s lock on Spark 3 let go (a plain look there runs again)' });
+  }
   assert.equal(await ended, 0, 'the proof passes');
-  assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
+});
+
+test('two looks at once on one Spark both run: checking for a proof takes no lock of its own', { timeout: 60000 * SLOW }, async () => {
+  // (with the stand-in flock, a check that took the lock would hold it a second, and the other look would hear "being
+  // proven", as two lookups of one round on a loaded Spark once did)
+  const both = await Promise.all([look({ on: 'spark3', command: 'cat docs/plain.txt' }), look({ on: 'spark3', command: 'ls docs' })]);
+  assert.deepEqual(both.map(r => [r.status, r.json.ran, r.json.output]), [[200, true, 'hello from spark 3\n'], [200, true, 'plain.txt\ntodo.txt\n']], JSON.stringify(both.map(r => r.json)));
 });
 
 test('every answer of a command that ran says, first, that it ran as a look: nothing changed and nothing sent', { timeout: 60000 * SLOW }, async () => {
