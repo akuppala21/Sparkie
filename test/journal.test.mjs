@@ -156,7 +156,8 @@ test('an agent sees who, what and when of the owner\'s calls but not what they c
   assert.ok(mine.some(v => v.act === 'find_recipes' && /zebra unicorn/.test(v.args)), JSON.stringify(mine));
   assert.equal((await call(act.token, 'recall', { kind: 'call', about: 'zebra' })).value.count, 0);
   // Through ask_sparkie: no more than the agent's own call.
-  script([{ match: '^what did the owner keep', rounds: [[...asks.slice(0, 4), { id: 'j_000000000000' }].map(a => ({ name: 'recall', arguments: a })), asks.slice(4).map(a => ({ name: 'recall', arguments: a }))] }]);
+  // (four calls a round at most)
+  script([{ match: '^what did the owner keep', rounds: [asks.slice(0, 4).map(a => ({ name: 'recall', arguments: a })), [...asks.slice(4), { id: 'j_000000000000' }].map(a => ({ name: 'recall', arguments: a }))] }]);
   const from = readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').length;
   assert.equal((await call(asker.token, ASK, { message: 'what did the owner keep about doors?' })).isError, false);
   await waitFor(() => readFileSync(join(T.fleet.dir, 'model-requests.jsonl'), 'utf8').slice(from).includes('no record j_000000000000'), { what: 'the tool results at the brain' });
