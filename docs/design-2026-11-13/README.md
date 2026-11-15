@@ -1,6 +1,7 @@
 # The next phase of Spark Console, in one page
 
 Amended 2026-11-14 after the first outside review (`docs/review-astra/reply-1.md`): P-1 to P-7; items 4, 7, 8, 9, 11, 12 and 13; clean-up 1, 3 and 4; trash.
+Amended again the same day: what builds the root helper's walls (section 4, and three rows of section 8).
 
 Agreed with the owner on 2026-11-13. Seven designs and two reviews sit beside this page; where they differ from it,
 this page wins (it was written last, after the reviews and after owner decisions 18 to 22). Nothing here is built yet.
@@ -67,6 +68,15 @@ Spark or `"box"`. Code, never the brain, sorts every command:
   (an ordinary command with the Docker and Tailscale sockets, the secrets and the sign-in files hidden) and *net*.
   Until that command has run on a Spark, `run` and `write_file` do not work there: Sparkie uses today's typed
   actions and gives the owner the command.
+- **What builds the walls.** Nothing is installed on a Spark. For each command the helper asks the Spark's own
+  systemd for a short-lived unit with a fixed list of settings, and the kernel holds them for the command and
+  everything it starts. A look runs as a throw-away account with root's read rights and no other power, so `root`
+  adds nothing to a look. A change runs as the owner's user, unable to see or signal any other program, to reach a
+  local-only port on its own Spark, or to become root. A root command runs only with the net's timer armed in the
+  same call. The helper refuses a wall it has not proven on that Spark, and proves again when the Spark's systemd,
+  its kernel or the helper itself changes. A command that needs something the run wall hides is asked, and the ask says it
+  runs outside the wall. Only the owner's command puts the helper on a Spark or replaces it: a build that ships a
+  changed helper answers with that one command again (`a-workspace.md`, 2.13).
 - **The net: confirm, or it goes back.** Armed for every root command and every command on Spark 2. Copy first; a
   timer in the Spark's own systemd, armed before the change, that survives a restart; apply; make it live; test the
   ways in from outside the Spark. The timer is set to the command's own time limit plus ten minutes, so it never
@@ -156,6 +166,9 @@ From `critic-safety.md` (29 findings). The ones that change a design:
 | Question | Default |
 |---|---|
 | A code for dangerous presses on Telegram | Off. A tap, with two digits shown on the ask. A once-a-day code is a switch |
+| Replacing the root helper on a Spark | Only the owner's one command, run again; Sparkie never does it. This one is the owner's call: decision 22 could also read "asked, as a dangerous change" |
+| What a look may read | Root's read rights for every look, less the hidden list. A look has no other power, so `root` matters only for a change |
+| The owner's own token files (Hugging Face, git, Docker, cloud) inside the run wall | Hidden, as in a look. A walled command gets a key by its name, or is asked and runs outside the wall |
 | A kept key going to a new image or host | Asked once per new place, then remembered |
 | Keys after a dead Spark 2 disk | Given again; no copy elsewhere |
 | Sign-ins after state is put back from a copy | Every device signs in again. Passkeys, agent keys, people and "always" entries that came back do not work from the internet until the owner has looked at the list once, on the sign-in page, on the tailnet. A task found running is parked |
