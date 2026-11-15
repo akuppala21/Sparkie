@@ -176,9 +176,12 @@ test('when every setup there is failed twice: an agent and Sparkie are asked and
     assert.equal((await finished(own.operation)).status, 'failed');
     assert.equal(about(ONLY)[0].failed, 4);
     // A new image: tried with nothing passed over; failing again, its lesson is written anew from one.
+    // (on every Spark that holds it: the library reads a model's spark.json from its preferred home, Spark 3)
     const was = about(ONLY)[0];
-    const manifest = join(T.fleet.root, 'spark4', 'models', ONLY, 'spark.json');
-    writeFileSync(manifest, readFileSync(manifest, 'utf8').replace(IMG_A, IMG_B));
+    for (const sp of ['spark3', 'spark4']) {
+      const manifest = join(T.fleet.root, sp, 'models', ONLY, 'spark.json');
+      writeFileSync(manifest, readFileSync(manifest, 'utf8').replace(IMG_A, IMG_B));
+    }
     for (const n of [1, 2]) {
       const x = await start({ model: ONLY, spark: 'spark4' });
       assert.equal(x.passedOver, undefined, `start ${n} with the new image: ${JSON.stringify(x)}`);
