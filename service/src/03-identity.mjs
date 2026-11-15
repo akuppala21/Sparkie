@@ -1,4 +1,8 @@
 /* ───────── who's asking ───────── */
+// Area: ground        Rules: R5, R10, R20        Tests: state.test.mjs, internet.test.mjs, passkey.test.mjs
+// Owns: access.json (writers: changeMembers, changeAccess), access.json.good (writers: ownAccess; a copy of the last
+//   good access.json)
+// Timers: none        Wakes: none
 // The owner, the members and the Spark list live in the console's own owner-only file on this Spark, managed in
 // Spark Console (Access). Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
 const ACCESS_FILE = `${STATE_DIR}/access.json`;
