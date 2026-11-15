@@ -599,6 +599,8 @@ const handler = async (req, res) => {
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Ask for the check when that’s done.');
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
+    // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
+    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const kept = storeBrainEval(await readBody(req)); return send(res, kept.stored ? 201 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');
