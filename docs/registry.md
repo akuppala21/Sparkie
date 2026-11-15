@@ -175,7 +175,6 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
 | `self-test` | `self_test` (21-selftest) |
-| `spark-action` | `handler` (24-handler) |
 | `start-model` | `startModel` (17-changes) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |
 | `undo` | `undo_last_change` (20-desired) |
