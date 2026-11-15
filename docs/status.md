@@ -64,8 +64,10 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”); `test/turn-budgets.test.mjs` | falls short today: its file says where |
 | [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “an agent's /key keeps nothing”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “a value typed in plain words, then given with /key”, “a kept key that reached the secrets file another way”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
-| [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”) | falls short today: its file says where |
+| [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”); `test/install.test.mjs` (“reads its miss count as text”, “asks path-check.sh first”, “take their programs from the fixed path”, “Python as -I and curl as -q”); `test/pull.test.mjs` (“Python as -I and curl as -q”) | falls short today: its file says where |
+| [R55](rules/R55.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
 | [R57](rules/R57.md) | partly | `test/workloads-agent.test.mjs`; `test/workloads-restart.test.mjs`; `test/workloads-address.test.mjs`; `test/workloads.test.mjs` | falls short today: its file says where |
+| [R58](rules/R58.md) | partly | `test/check-update.test.mjs`; `test/tools.test.mjs` (“everyday requests”) | falls short today: its file says where |
 | [R59](rules/R59.md) | partly | `test/memory-reads.test.mjs` (“Telegram: recall there gives back no words”, “Telegram: forget_memory with the id of a line no longer live”, “an agent that may change things”, “a chat an agent started”, “a kept key in a memory line”, “a value given as a key after a lesson card was made”); `test/recall.test.mjs` (“never: a retired line to an agent's key, an agent's chat or Telegram”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”); `test/digest.test.mjs`; `test/work.test.mjs` (“recall {id, find} on a look's record”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
@@ -160,7 +162,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 8.11 | no test yet |  | T15, T51, T74, T130, T131: no test holds them yet |
 | 8.12 | no test yet |  | T88: no test holds it yet |
 | 8.13 | no test yet |  | T90, T92: no test holds them yet |
-| 8.14 | no test yet |  | T91, T124, T125, T127: no test holds them yet |
+| 8.14 | partly | `test/sort.test.mjs` (“the table: each command gets its class, with the reason in plain words”) | holds part of T127: “code sorts a command on Spark 2, a final delete, a root script and code piped from the network into a shell as risky (never at once, so no go-ahead covers …”; T91, T124, T125: no test holds them yet |
 | 8.15 | no test yet |  | T91, T124: no test holds them yet |
 | 8.16 | no test yet |  | T126: no test holds it yet |
 | 8.17 | built | `test/tg-approve.test.mjs` | holds T128 |

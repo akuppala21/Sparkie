@@ -50,7 +50,7 @@ usage() {
 }
 # The result of this install, for the record (and, later, for the console to tell): written whole, owner-only.
 result() {  # result <kept|not kept|refused> <why> [build]
-  ( umask 077; mkdir -p "$STATE" ) && python3 -c 'import datetime, json, os, sys, tempfile
+  ( umask 077; mkdir -p "$STATE" ) && python3 -I -c 'import datetime, json, os, sys, tempfile
 path, tree, res, why, build = sys.argv[1:6]
 d = {"tree": tree, "build": build or None, "result": res, "why": why[:600],
      "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
@@ -63,12 +63,15 @@ refuse() { echo "  STOP: $1 Nothing was changed." >&2; [ -z "$WANT" ] || result 
 ask() {
   local a='' from=/dev/tty
   if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -n "${SPARK_CONSOLE_TERMINAL:-}" ]; then from=$SPARK_CONSOLE_TERMINAL; fi
-  read -rp "$1" a <"$from" 2>/dev/null || a=''
+  printf '%s' "$1" >&2 || true
+  read -r a <"$from" 2>/dev/null || a=''
   echo "$a"
 }
 # Cut off (Ctrl-C, the terminal closed) once the way back is armed: it puts back what differs, and the result says what
 # answers then. (A cut at the very end, while the confirmed build's copy is being removed, leaves that build running.)
 interrupted() {
+  # (with the terminal gone, a line written to it fails: nothing here may stop before the put-back)
+  set +e; trap '' PIPE
   trap - INT TERM HUP
   echo "  The install was interrupted." >&2
   bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted" 9>&- || true
@@ -110,12 +113,13 @@ fetch() {
     GIT_CONFIG_KEY_3=fetch.fsckObjects GIT_CONFIG_VALUE_3=true \
     g fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
     && return 0
+  FETCH_ERR=$err
   echo "  Couldn't fetch from $1. git said: $(printf '%s' "$err" | tail -n 2 | tr '\n' ' ')" >&2
   return 1
 }
 # The repository and its credentials from the secrets file: "<owner/repo> <base64 of x-access-token:token>".
 from_secrets() {
-  python3 -c 'import base64, json, re, sys
+  python3 -I -c 'import base64, json, re, sys
 try:
     g = json.load(open(sys.argv[1])).get("github") or {}
     repo, token = g["repo"], g["token"]
@@ -140,7 +144,7 @@ sha12() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -
 # test/mock/root/, or an absolute target under /hf/ with no .. in it (that cache's path inside a model's container; on
 # Spark 2 it points at nothing).
 links_ok() {
-  python3 -c 'import os, sys
+  python3 -I -c 'import os, sys
 f = sys.stdin.buffer.read().split(b"\0")
 if f and f[-1] == b"": f.pop()
 if len(f) % 2: print("(a link that could not be read)"); sys.exit()
@@ -165,7 +169,7 @@ newest_tested() {
 }
 # The installed build, from its lock: "<build> <tree or -> <commit or ->".
 installed() {
-  python3 -c 'import json, sys
+  python3 -I -c 'import json, sys
 try: d = json.load(open(sys.argv[1]))
 except Exception: d = {}
 print(d.get("build") or "-", d.get("tree") or "-", d.get("commit") or "-")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || echo '- - -'
@@ -173,7 +177,7 @@ print(d.get("build") or "-", d.get("tree") or "-", d.get("commit") or "-")' "$HO
 # The real address, the way in the owner uses: config.json's origin, as installed now (a test's own, only with ALL_LOCAL).
 door_url() {
   if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -n "${SPARK_CONSOLE_DOOR_URL:-}" ]; then echo "$SPARK_CONSOLE_DOOR_URL"; return 0; fi
-  python3 -c 'import json, re, sys
+  python3 -I -c 'import json, re, sys
 try: o = json.load(open(sys.argv[1])).get("origin") or ""
 except Exception: o = ""
 if not re.fullmatch(r"https://[a-z0-9.-]+(:[0-9]{1,5})?", o): sys.exit(1)
@@ -182,17 +186,17 @@ print(o)' "$HOME/spark-console-service/config.json" 2>/dev/null
 # door_get <path>: the status code through the real address (000: no answer at all); the body in $W/door.body.
 door_get() {
   local c
-  c=$(curl -s -m 10 --max-redirs 0 -o "$W/door.body" -w '%{http_code}' "$DOOR$1" 2>/dev/null) || true
+  c=$(curl -q -s -m 10 --max-redirs 0 -o "$W/door.body" -w '%{http_code}' "$DOOR$1" 2>/dev/null) || true
   [[ "$c" =~ ^[0-9]{3}$ ]] || c=000
   echo "$c"
 }
-json_build() { python3 -c 'import json, sys
+json_build() { python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(d.get("build") or "" if d.get("ok", True) is True else "")' 2>/dev/null || true; }
 # The service's build through the real address; "ok" when it answers ok but names no build (a caller that comes in
 # through Funnel gets only {"ok":true}); nothing otherwise.
 door_build() { [ "$(door_get /console/api/health)" = 200 ] && door_ok < "$W/door.body" || true; }
-door_ok() { python3 -c 'import json, sys
+door_ok() { python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 if d.get("ok") is True: print(d.get("build") or "ok")' 2>/dev/null || true; }
 # door_page <path>: the build of the page served at <path> (its version.json), when <path> answers.
@@ -203,7 +207,7 @@ door_page() {
 ui_build() { { json_build < "$HOME/spark-console/version.json"; } 2>/dev/null || true; }
 span() { if [ "$1" -ge 120 ]; then echo "$(($1 / 60)) minutes"; else echo "$1 seconds"; fi; }
 health_build() {
-  curl -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
+  curl -q -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(d.get("build") or "" if d.get("ok") is True else "")' 2>/dev/null || true
 }
@@ -229,7 +233,7 @@ setup() {
   fetch "$url" "$auth" || die "GitHub didn't accept that token for $1, or couldn't be reached. Nothing was saved."
   # Into the secrets file beside Telegram's: read whole, written whole (a temporary file renamed over it, 0600). A file
   # that exists but can't be read is never written over.
-  PULL_TOKEN="$token" python3 -c 'import json, os, sys, tempfile
+  PULL_TOKEN="$token" python3 -I -c 'import json, os, sys, tempfile
 path, repo = sys.argv[1], sys.argv[2]
 token = os.environ.pop("PULL_TOKEN")
 d = os.path.dirname(path)
@@ -275,7 +279,63 @@ check_facts() {
   fi
   echo "  To install it: $ME install ${nt:0:12}"
 }
-check() { [ $# = 0 ] || usage; ready; check_facts; }
+check() {
+  [ $# = 0 ] || [ "$*" = --json ] || usage
+  if [ "${1:-}" = --json ]; then check_json; return; fi
+  ready; check_facts
+}
+# check --json: the same facts for the console (check_update, R58), one JSON object on stdout; a problem is one too:
+# "no git", "not set up", "token" (GitHub refused the token: it may have expired) or "unreachable". Commit subjects are
+# as written on GitHub: the reader treats them as outside text.
+check_json() {
+  local s ib it ic ir head='' ht='' nc='' nt='' tc lock='' newer=false subj='' problem='' why=''
+  out() {  # out <problem> <why>
+    printf '%s' "$subj" | python3 -I -c 'import json, sys
+a = sys.argv[1:]
+def opt(v): return None if v in ("", "-") else v
+lock = {}
+try: lock = json.loads(a[13]) if a[13] else {}
+except Exception: lock = {}
+newest = None
+if opt(a[9]):
+    newest = {"commit": a[8], "tree": a[9], "build": lock.get("build") if isinstance(lock.get("build"), str) else None,
+              "testedAt": lock.get("testedAt") if isinstance(lock.get("testedAt"), str) else None,
+              "brainReads": lock.get("brainReads") if isinstance(lock.get("brainReads"), str) else None}
+print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo": opt(a[2]),
+  "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[12])},
+  "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8]},
+  "newest": newest, "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10]}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "" "${ir:-}" "$lock"
+  }
+  command -v git >/dev/null 2>&1 || { out 'no git' "git isn't installed on Spark 2."; return 0; }
+  read -r ib it ic <<<"$(installed)"
+  ir=$(python3 -I -c 'import json, re, sys
+try: r = json.load(open(sys.argv[1])).get("brainReads") or ""
+except Exception: r = ""
+print(r if re.fullmatch(r"[0-9a-f]{64}", str(r)) else "")' "$HOME/spark-console-service/workflows.lock.json" 2>/dev/null || true)
+  s=$(from_secrets) && [ -d "$REPO" ] || { out 'not set up' "The install from GitHub isn't set up on Spark 2: $ME setup <owner>/<repository>"; return 0; }
+  read -r REPO_NAME AUTH <<<"$s"
+  FETCH_ERR=''
+  if ! fetch "$(url_for "$REPO_NAME")" "$AUTH" 2>/dev/null; then
+    why=$(printf '%s\n' "$FETCH_ERR" | grep -E '^(fatal|remote):' | tail -n 1 | cut -c1-300 || true)
+    [ -n "$why" ] || why=$(printf '%s' "$FETCH_ERR" | tail -n 1 | cut -c1-300)
+    case "$FETCH_ERR" in
+      *[Aa]uthentication\ failed*|*[Ii]nvalid\ username*|*[Cc]ould\ not\ read\ [Uu]sername*|*[Rr]epository\ not\ found*|*" 401"*|*" 403"*) problem=token ;;
+      *) problem=unreachable ;;
+    esac
+    out "$problem" "$why"; return 0
+  fi
+  read -r head ht <<<"$(g log -1 --format='%H %T' refs/heads/main 2>/dev/null || echo '- -')"
+  read -r nc nt <<<"$(newest_tested || true)"
+  if [ -n "${nt:-}" ]; then
+    tc=$(g rev-parse -q --verify "refs/tags/tested/${nt:0:12}^{commit}" 2>/dev/null || true)
+    [ -z "$tc" ] || lock=$(g cat-file blob "$tc:$LOCK_PATH" 2>/dev/null | head -c 65536 || true)
+    if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
+    if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
+    else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
+  fi
+  out '' ''
+}
 
 install() {
   [ $# = 1 ] && [[ "$1" =~ ^[0-9a-f]{12}$ ]] || usage
@@ -316,7 +376,7 @@ install() {
   # The lock names this tree and the build this code is.
   lockf=$(g cat-file -s "$tc:$LOCK_PATH" 2>/dev/null || echo 0)
   [ "$lockf" -gt 0 ] && [ "$lockf" -le 65536 ] || refuse "The lock in tested/$WANT is missing or too big."
-  fields=$(g cat-file blob "$tc:$LOCK_PATH" | python3 -c 'import json, re, sys
+  fields=$(g cat-file blob "$tc:$LOCK_PATH" | python3 -I -c 'import json, re, sys
 d = json.loads(sys.stdin.read())
 ok = lambda k, p: isinstance(d.get(k), str) and re.fullmatch(p, d[k])
 if not (isinstance(d, dict) and ok("build", "[0-9a-f]{12}") and isinstance(d.get("versions"), dict)): sys.exit(1)
@@ -380,13 +440,13 @@ print(d["build"], d["tree"] if ok("tree", "[0-9a-f]{40}([0-9a-f]{24})?") else "-
     # (through Funnel /health names no build: then the page's version.json, served there, has to name the build)
     [ "$pg" = "$before" ] || { [ "$pg" = ok ] && [ -n "$pages" ]; } \
       || refuse "The real address ($DOOR) doesn't answer with the build running now ($before; it answered ${pg:-nothing}), so a new build couldn't be confirmed through it."
-    busy=$(curl -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -c 'import json, sys
+    busy=$(curl -q -s -m 5 --unix-socket "$STATE/api.sock" http://localhost/health 2>/dev/null | python3 -I -c 'import json, sys
 d = json.loads(sys.stdin.read())
 print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null || echo '0 0')
     if [ "$busy" != '0 0' ] && [ "${ASSUME_YES:-}" != 1 ]; then
       answer=''
       echo "Spark Console is busy: ${busy% *} job(s) running, and Sparkie is answering in ${busy#* } chat(s). Updating restarts it, which interrupts them."
-      read -rp "Update anyway? [y/N] " answer </dev/tty 2>/dev/null || answer=''
+      answer=$(ask "Update anyway? [y/N] ")
       case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
     fi
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
@@ -471,7 +531,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     echo "  Kept: build $code_build (tree $WANT) is running."
     return 0
   fi
-  echo "  Not kept: $failed." >&2
+  echo "  Not kept: $failed." >&2 || true
   [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed" 9>&- || true
   trap - INT TERM HUP
   now=$(health_build)
