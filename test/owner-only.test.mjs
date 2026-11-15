@@ -78,7 +78,7 @@ const ROUTES = ['/actions', '/actions/fleet_status', '/agents', '/agents/0123456
   '/heartbeat', '/jobs', '/jobs/0123456789ab', '/jobs/0123456789ab/cancel', '/main', '/main/check', '/main/choices', '/main/eval', '/main/plan', '/main/route',
   '/main/start', '/main/stop', '/main/use', '/mcp', '/metrics', '/models', '/nodes/spark3/workloads', '/nodes/spark3/diagnostics', '/nodes/spark3/logs/console',
   `/nodes/spark3/logs/container-${'a'.repeat(64)}`, '/nodes/spark3/files', '/recipes', '/recipes/add', '/recipes/add-list', '/recipes/dig', '/recipes/download',
-  '/recipes/search', '/rollback', '/status', '/stop', '/telegram', '/telegram/needs', '/telegram/pair', '/verified', '/v1/models', '/v1/chat/completions',
+  '/recipes/search', '/rollback', '/status', '/stop', '/telegram', '/telegram/approve', '/telegram/needs', '/telegram/pair', '/verified', '/v1/models', '/v1/chat/completions',
   '/workflows', '/workflows/validate',
   // gone with members and sharing (E10d): unknown paths now
   '/access', '/access/ask', '/access/requests', '/access/invite', '/access/0123456789abcdef', '/public/ask'];

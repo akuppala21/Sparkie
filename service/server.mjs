@@ -10517,7 +10517,7 @@ const tgApproveOn = () => { const p = tgPaired(); return Boolean(p && p.approve 
 // Whether approvals from Telegram are on, in one plain line (sparkie_setup, and /status in the paired chat).
 const tgApprovalsLine = () => (!tgPaired() ? 'Approvals from Telegram: off (no Telegram chat is paired).'
   : tgApproveOn() ? `Approvals from Telegram: on. A press in your paired chat counts as your yes for a change Spark Console asks about, at most ${TG_APPROVALS.hour} an hour and ${TG_APPROVALS.day} a day; /lock there turns it off.`
-    : 'Approvals from Telegram: off. What needs your yes waits for you in Spark Console; turn it on there (Access → Agents), with your passkey.');
+    : 'Approvals from Telegram: off. What needs your yes waits for you in Spark Console; turn it on there (your account menu → Agents and Telegram), with your passkey.');
 // A pending choice whose answer may come from Telegram: owner-only, and not an action that never runs from a channel.
 const tgAskable = c => Boolean(c?.ownerOnly && !(c.action && PAGE_ONLY.has(c.action)));
 
@@ -10596,7 +10596,7 @@ function tgApproved(ask, conv, r) {
   if (!ask.c.action || r?.outcome === 'declined') return;
   const label = maskSecrets(String(ask.c.label || '')).slice(0, 200);
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approved', args: { label, chat: conv.id }, ok: r?.outcome !== 'error' });
-  fleetEvent({ type: 'notice', text: `Approved from Telegram: “${label}”. If that wasn’t you, send /lock there, or turn approvals from Telegram off in Access → Agents.` });
+  fleetEvent({ type: 'notice', text: `Approved from Telegram: “${label}”. If that wasn’t you, send /lock there, or turn approvals from Telegram off in your account menu → Agents and Telegram.` });
 }
 
 // everywhere: the whole ask is void (a new pairing: the page's buttons go grey too); else only its Telegram side.
@@ -10626,7 +10626,7 @@ function tgLock() {
   let kept = true;
   try { if (tgBinding()) secretsWrite(s => ({ ...s, telegram: { ...s.telegram, approve: false } })); } catch (e) { kept = false; console.error(`/lock wasn’t saved: ${e.message}`); }
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-approve', args: { on: false, word: '/lock' }, ok: kept });
-  if (was) fleetEvent({ type: 'notice', text: 'Approvals from Telegram were turned off from Telegram (/lock). Only you can turn them on again, in Access → Agents, with your passkey.' });
+  if (was) fleetEvent({ type: 'notice', text: 'Approvals from Telegram were turned off from Telegram (/lock). Only you can turn them on again, in your account menu → Agents and Telegram, with your passkey.' });
   return `${was ? 'Locked' : 'Already locked'}: nothing is approved from here now. What needs your yes waits for you in Spark Console, where you can turn approvals from Telegram on again with your passkey.${kept ? '' : ' Spark Console couldn’t save this, so it holds only until it restarts: turn them off there too.'}`;
 }
 // PUT /telegram/approve {on} (telegramRoute): on needs the passkey (the gate) and a paired chat; off never does.
