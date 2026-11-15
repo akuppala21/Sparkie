@@ -1,4 +1,9 @@
 /* ───────── power-aware Sparks (contract 9.22, R41) ───────── */
+// Area: features        Rules: R19, R22, R23, R32, R41        Tests: power.test.mjs, heal-status.test.mjs
+// Owns: power.json (writers: savePower)
+// Timers: powerTick (every 60 s, first 5 minutes after start)
+// Wakes: a compute Spark it powered off, or one shut down with a switchable plug, never Spark 2: power_on, a start or
+//   call that needs it (powerThen), power.wake
 // The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idle, or when I tell chat, an agent or
 // the API"; idle models are parked. A Spark with a plug Spark Console may switch (switchablePlug, 12-plugs.mjs) is
 // powered off cleanly and on again:
@@ -260,7 +265,7 @@ const pairWords = (plan, ids) => plan.models.filter(m => m.sparks.some(id => !id
   .map(m => `${m.head} runs across ${sparksWords(m.sparks)}, so it stops on both; ${sparksWords(m.sparks.filter(id => !ids.includes(id)))} stays on.`).join(' ');
 
 action({
-  name: 'power_off', title: 'Power off a Spark', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
+  name: 'power_off', title: 'Power off a Spark', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true, group: 'power',
   description: 'Use when the owner asks to shut down, power off or turn off a Spark (“shut down Spark 4”, “turn off Sparks 3 and 4”), not a model. Spark Console stops its own models and kept apps there first and parks them (they come back when the Spark is turned on, or when a parked model is called), shuts the Spark down cleanly, waits until it stops answering and its plug draws under 15 W, then switches its smart plug off. A model across two Sparks stops on both; the other Spark stays on. Refused for Spark 2 (it runs Spark Console and Sparkie), for a Spark without a switchable plug, and while anything runs there that Spark Console didn’t start or that is protected (it names them). Pass the Sparks the owner named. It may ask first; answer with {"choice": id}. From an agent it always waits for the owner’s yes in Spark Console: tell the owner, and don’t answer it yourself. Returns an operation id at once; follow it with wait_operation (about 2 minutes).',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'The Spark to power off, as the owner named it.' },
@@ -560,7 +565,7 @@ async function bringBackParked(j, ids, skip = null) {
 }
 
 action({
-  name: 'power_on', title: 'Turn on a Spark', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'power_on', title: 'Turn on a Spark', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'power',
   description: 'Use when the owner asks to turn on, power on or boot a Spark (“turn on Spark 3”). Switches its smart plug on (off and on again if it is shut down with its plug on), waits until it answers (about 2 minutes), then brings back what Spark Console parked there when it powered it off. Does nothing to a Spark that already answers, except bring back what is parked there; never switches anything for one that draws power but doesn’t answer (it says so). Spark 2 is never switched. Starting a model on a Spark Spark Console powered off turns it on by itself, so this is only for turning one on as such. Returns an operation id at once; follow it with wait_operation.',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'The Spark to turn on, as the owner named it.' },
@@ -696,7 +701,7 @@ function powerSettingsClear(input, saidText) {
 }
 
 action({
-  name: 'power_settings', title: 'Idle power-off setting', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'power_settings', title: 'Idle power-off setting', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'power',
   description: 'Use when the owner sets how long a Spark must be idle before Spark Console powers it off by itself (“power off idle Sparks after an hour”: 60), or turns that off (“stop auto shutdown”: 0). Idle means: no operation on it, nothing running there that Spark Console didn’t start, GPU under 5%, low load, no call to its models at the model address and no open editor, for that many minutes. Then its models are parked and it is powered off (both Sparks of a model across two together); Spark 2 never. The default is 30 minutes. From an agent it waits for the owner’s yes in Spark Console. fleet_status shows the setting (power).',
   input: { type: 'object', properties: {
     idleMinutes: { type: 'integer', minimum: 0, maximum: 1440, description: 'Minutes a Spark must be idle before it is powered off; 0 turns the idle power-off off.' },

@@ -1,3 +1,7 @@
+/* ───────── setup: the build id, config.json, the Sparks, test switches and shared helpers ───────── */
+// Area: ground        Rules: R8, R28, R29, R30        Tests: build.test.mjs, fleet.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Generated: this file is service/src/*.mjs joined in name order (node tools/build-server.mjs). Edit the parts.
 // Spark Console API: live metrics, the model library and deployments across the Spark fleet.
 // Runs on the portal host behind `tailscale serve --set-path=/console/api`, next to the portal.

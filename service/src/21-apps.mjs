@@ -1,4 +1,7 @@
 /* ───────── apps kept running (R38) ───────── */
+// Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
 // WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running
 // (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the
@@ -319,7 +322,7 @@ async function healApp(x, inv) {
 }
 
 action({
-  name: 'keep_running', title: 'Keep an app running', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
+  name: 'keep_running', title: 'Keep an app running', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true, group: 'core',
   description: 'Use when the owner asks to keep an app or service that isn’t a model running (Open WebUI, a database, any container), or to restart or stop one kept that way. A container already on that Spark joins the list of what should be running (should_be_running): Spark Console starts it again if it stops by itself or its Spark is powered off and on. With image and port, for one that isn’t there yet, it starts it first, opened on your tailnet only. With gpu true it has the Spark’s GPU to itself (say memoryGB; nothing else may use the GPU there, so it starts only where no model runs). With command, the words it runs in the image. With once true it’s a job: it runs to its end (a script, a fine-tune; no port needed), isn’t kept running, reads the shared folder at /in, writes its files to jobs/<container> there (at /out), and Spark Console posts in this chat when it ends. A Jupyter (jupyter/…-notebook) or code-server (codercom/code-server) image given no command runs with no password: Spark Console adds the words start-notebook.py --IdentityProvider.token= --ServerApp.password= (Jupyter) or --auth none (code-server), and anyone on the owner’s tailnet, or the owner signed in anywhere through the app door, can use it; with a command of its own it has no password only when that command has those words. do "restart" restarts it; do "stop" stops it and takes it off the list. It gives the link to open it at and whether it answers (with the app door on, the door’s link first, which the owner opens from anywhere signed in, then the tailnet link). Never on Sparkie’s Spark, never a model (start_model, stop_model and restart_model are for those), never a protected container. Starting a new image, or from an agent running a job again, starting a stopped GPU app or changing a container Spark Console didn’t start, may come back as a question for the owner.',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'The Spark the app is on, or should run on (never Sparkie’s).' },

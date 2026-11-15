@@ -1,4 +1,7 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
+// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired)
+// Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
 // isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console,
@@ -199,13 +202,13 @@ async function waitJob(id, ms = 30 * 60000) {
 }
 
 action({
-  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'should_be_running', title: 'What should be running', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use to see the owner’s list of what should be running on each Spark (every model a change started, and every app kept running with keep_running, with its link and whether it answers now), and how each is now: running, changing, or held (and why). Held ones can be brought back.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => ({ observedAt: new Date().toISOString(), ...(await desiredNow({ check: true })) }),
 });
 action({
-  name: 'cancel_operation', title: 'Cancel an operation', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'cancel_operation', title: 'Cancel an operation', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner (or you, for your own) wants a running operation stopped: it stops at its next step and puts back what it did. Agents can cancel only operations they started.',
   input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{12}$', description: 'The operation id.' } }, required: ['id'], additionalProperties: false },
   run: async ({ id }, viewer, ctx) => {
@@ -223,7 +226,7 @@ action({
   },
 });
 action({
-  name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (input, viewer, ctx) => {

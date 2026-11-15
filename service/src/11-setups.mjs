@@ -1,4 +1,7 @@
 /* ───────── finding setups ───────── */
+// Area: knowledge        Rules: R10, R22, R27        Tests: dig.test.mjs
+// Owns: none
+// Timers: daily (the daily research: 3 minutes after start, then every 24 hours)        Wakes: none
 // For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai,
 // Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only).
 // The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads

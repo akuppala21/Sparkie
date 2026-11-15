@@ -1,4 +1,9 @@
 /* ───────── actions: what the console can do, as one list for people, Sparkie and agents ───────── */
+// Area: core
+// Rules: R3, R7, R9, R11, R12, R18, R21, R23, R25, R26, R32, R33, R35, R36, R37, R38, R46
+// Tests: change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each
 // time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the
 // page's buttons move onto the same list, with the same checks. Each action says:
@@ -141,6 +146,23 @@ const CHANGE_FORMS = [
   ['restart', /\b(restart(?:s|ed|ing)|reboot(?:s|ed|ing))\b/gi],
   ['cancel', /\b(cancel(?:s|led|ed|ling|ing)|abort(?:s|ed|ing))\b/gi],
   ['undo', /\b(undo(?:es|ing|ne)|revert(?:s|ed|ing))\b/gi],
+];
+// The brain's tool groups (R46): each action outside the core has one (its `group`). A round offers the core and the
+// groups this request opened (21-guide.mjs); these words in the owner's request open them, in the order they come.
+// [group, what it holds (guide's description lists it), its words]
+const GROUP_WORDS = [
+  ['find', 'which model to run: recipes, Hugging Face, models on disk, where one fits, its setups', /\b(?:which|what|best|good|recommend\w*|suggest\w*|new(?:est|er)?|latest|biggest|smallest|fastest)\b[^.?!\n]{0,40}\bmodels?\b|\b(?:fits?|recipes?|hugging\s*face|on\s+disk|downloaded|setups?|configs?)\b/i],
+  ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
+  ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*)\b/i],
+  ['past', 'what happened on the fleet: its events', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|history|events?|yesterday|last\s+(?:night|week)|earlier\s+today)\b/i],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', /https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:md|txt|json|csv|ya?ml|log|py|sh|html|org|com|io|ai|dev|net))\b/i],
+  ['routines', 'saved workflows: list, save, run and forget them', /\b(?:workflows?|routines?|pipelines?)\b/i],
+  ['control', 'operations under way: follow one, cancel it, undo the last change', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|wait\s+for|operations?|progress)\b/i],
+  ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:memory|memories|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
+  ['updates', 'Spark Console’s own updates: go back a build', /\b(?:updates?|upgrade\w*|builds?|go\s+back\s+a\s+build)\b/i],
+  ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
+  // (power: a Spark itself switched by name, never a model: "turn off Spark 3’s model" opens it but power_off refuses it)
+  ['power', 'turning a Spark off or on, and the idle power-off', /\b(?:power(?:ed|ing|s)?[\s-]*(?:on|off|up|down)|power(?:ed|ing|s)?\s+(?:it|them|(?:the\s+)?sparks?\b[\s\d,+&]*(?:and\s+\d\s*)?)\s*(?:on|off|up|down)|wake|wakes|waking|woke|sleep\w*|asleep|plugs?|watts?|idle|shutdown|shut\s*down\s+(?:the\s+)?sparks?|shut(?:s|ting)?\s+(?:the\s+)?sparks?\b[^.?!\n]{0,20}?\bdown|turn(?:s|ed|ing)?\s+(?:on|off)\s+(?:the\s+)?sparks?|turn(?:s|ed|ing)?\s+(?:the\s+|all\s+)?sparks?\b[^.?!\n]{0,20}?\b(?:on|off)|boot(?:s|ed|ing)?\s+(?:up\s+)?(?:the\s+)?sparks?)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
 // After "could you", these ask for information ("could you tell me whether to stop it"), not for a change.
@@ -557,7 +579,7 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
   : { sparks: p.nodes, canRun: Boolean(p.fits), fitsNow: Boolean(p.fits) && !p.stop.length, wouldStop: p.stop.map(s => ({ spark: s.node, container: s.container })), link: 'full' });
 
 action({
-  name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose (idle, or asked) has state "off" and offOnPurpose (when, why, its parked models, how to turn it on): that is not a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
@@ -581,7 +603,7 @@ action({
 });
 
 action({
-  name: 'running_models', title: 'Running models', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'running_models', title: 'Running models', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use for “what models are running and how do I call them?”. Each model server: its Spark, container, and callWith (the OpenAI-compatible base URL and the exact model name to send), including models across two Sparks, Sparkie’s own model, servers started outside Spark Console, other containers, and stopped deploys. With client (“how do I use Sparkie from my app / curl / Open WebUI / Codex?”): a paste card for that app, built by Spark Console; it shows the card under your answer, so don’t repeat its block. With detail (“what is GLM running with?”): only that one running model, with its exact settings read from Docker now: image, engine, its command (secrets hidden), context length, memory share, its Sparks, port, when it started, and the Recipes setup those settings came from, if Spark Console has it on record.',
   input: { type: 'object', properties: {
     client: { type: 'string', minLength: 1, maxLength: 60, description: 'The app the owner wants to use Sparkie from, in their words ("any app", "curl", "Open WebUI", "Codex").' },
@@ -710,7 +732,7 @@ function pasteCard(client, baseUrl) {
 }
 
 action({
-  name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
   description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => {
@@ -727,7 +749,7 @@ action({
 
 const wordStart = w => new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
 action({
-  name: 'find_recipes', title: 'Find recipes', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'find_recipes', title: 'Find recipes', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
   description: 'Use for “what’s a good model for X that fits?”. Searches the recipes (models worth running on DGX Sparks), best first: each with versions (quantization, download and memory in GB, how many Sparks), which Sparks already have it, and runs that worked here before. Filter by category, memory or Sparks. Next: recipe_detail for setups, where_it_fits for placement.',
   input: { type: 'object', properties: {
     query: { type: 'string', maxLength: 120, description: 'Words that must each start a word in the recipe, like "qwen coder" or "gpt-oss 120b".' },
@@ -762,7 +784,7 @@ action({
 
 const CREDIBILITY = { high: 0, medium: 1, low: 2 };
 action({
-  name: 'recipe_detail', title: 'One recipe in full', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'recipe_detail', title: 'One recipe in full', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
   description: 'Use after find_recipes to choose how to run a model. Its versions and its best setups (engine, image, flags, environment names, measured speed, source and credibility), deployable ones first, plus runs that worked here. Shows 5 setups; pass setup for one, or all for every one.',
   input: { type: 'object', properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,120}$', description: 'A recipe id from find_recipes.' },
@@ -790,7 +812,7 @@ action({
 });
 
 action({
-  name: 'search_huggingface', title: 'Search Hugging Face', kind: 'read', scope: 'fleet:read', who: 'owner', openWorld: true,
+  name: 'search_huggingface', title: 'Search Hugging Face', kind: 'read', scope: 'fleet:read', who: 'owner', openWorld: true, group: 'find',
   description: 'Use when the model isn’t in the recipes (find_recipes found nothing). Finds any model by name on Hugging Face: versions that fit DGX Sparks (quantization, download and memory in GB, how many Sparks), downloads, and whether it is already a recipe. At most 6 searches a minute.',
   input: { type: 'object', properties: { query: { type: 'string', maxLength: 200, pattern: '\\S\\S', description: 'The model you’re after, like "glm 4.6" or "a small vision model".' } }, required: ['query'], additionalProperties: false },
   run: async ({ query }) => {
@@ -833,7 +855,7 @@ async function estimateFit(name, viewer, inv) {
 }
 
 action({
-  name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
   description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. Next: deploy_plan or cluster_plan for the exact dry run.',
   input: { type: 'object', properties: { model: modelArg }, required: ['model'], additionalProperties: false },
   run: async ({ model }, viewer) => {
@@ -851,7 +873,7 @@ action({
 });
 
 action({
-  name: 'deploy_plan', title: 'Deploy plan (dry run)', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'deploy_plan', title: 'Deploy plan (dry run)', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
   description: 'Dry run, changes nothing. Exactly what deploying a downloaded model on one Spark would do: what stops and why, any copy or image download, the engine and image, memory needed and free in GB, warnings, the address it would answer at, and whether it can run (canRun) or fits without stopping anything (fitsNow).',
   input: { type: 'object', properties: { model: modelArg, spark: sparkArg }, required: ['model', 'spark'], additionalProperties: false },
   run: async ({ model, spark }, viewer, ctx = {}) => {
@@ -868,7 +890,7 @@ action({
 });
 
 action({
-  name: 'cluster_plan', title: 'Plan across two Sparks (dry run)', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'cluster_plan', title: 'Plan across two Sparks (dry run)', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
   description: 'Dry run, changes nothing. What running one downloaded model across two linked Sparks would do: half on each, what stops on each, copies, memory per Spark in GB, the cable’s test result, and whether it can run (needs a "full" link). The first Spark answers requests.',
   input: { type: 'object', properties: { model: modelArg, sparks: sparksArg }, required: ['model', 'sparks'], additionalProperties: false },
   run: async ({ model, sparks }, viewer, ctx = {}) => {
@@ -889,7 +911,7 @@ action({
 
 const LINK_WHY = { full: 'every cable between them passed at full size', partial: 'some cables fail or only pass small packets', fail: 'no cable answered', 'no-shared-subnet': 'no cable between them' };
 action({
-  name: 'linked_sparks', title: 'Linked Sparks', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'linked_sparks', title: 'Linked Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
   description: 'Use before running one model across two Sparks. Which pairs are cabled together and whether each can run a model together (the last connection test). Pass detail for each Spark’s ConnectX links (speed, MTU, addresses).',
   input: { type: 'object', properties: { detail: { type: 'boolean', description: 'Include each Spark’s network links.' } }, additionalProperties: false },
   run: async ({ detail = false }) => {
@@ -903,7 +925,7 @@ action({
 });
 
 action({
-  name: 'spark_detail', title: 'One Spark right now', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'spark_detail', title: 'One Spark right now', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
   description: 'Use for “what exactly is on Spark N right now?”. Every container (running or not, and whether it’s protected), processes using the GPU, the busiest processes and running services. For how each container was started, use workloads.',
   input: { type: 'object', properties: { spark: sparkArg }, required: ['spark'], additionalProperties: false },
   run: async ({ spark }, viewer) => {
@@ -917,7 +939,7 @@ action({
 });
 
 action({
-  name: 'recent_operations', title: 'Recent operations', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'recent_operations', title: 'Recent operations', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'dig',
   description: 'Use for “what did Spark Console do, and did it work?”. Its latest operations (deploys, stops, downloads, copies), newest first, with where, who, and running / completed / failed with the error. Next: operation_log for one operation’s log; fleet_events for everything else that happened.',
   input: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 50, description: 'At most this many (default 15).' } }, additionalProperties: false },
   run: async ({ limit = 15 }) => {
@@ -933,7 +955,7 @@ action({
 });
 
 action({
-  name: 'operation_log', title: 'Operation log', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'operation_log', title: 'Operation log', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'dig',
   description: 'The log of one operation from recent_operations (its last 120 lines), to see why it failed.',
   input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{12}$', description: 'An operation id from recent_operations.' } }, required: ['id'], additionalProperties: false },
   run: async ({ id }) => {
@@ -944,7 +966,7 @@ action({
 });
 
 action({
-  name: 'container_logs', title: 'A container’s log', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'container_logs', title: 'A container’s log', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'dig',
   description: 'Use for “why did it fail / what is it doing?”. The newest lines a container on a Spark wrote (a model server, a service, anything). Container names come from fleet_status, running_models, spark_detail or workloads.',
   input: { type: 'object', properties: { spark: sparkArg, container: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$', description: 'The container’s name.' } }, required: ['spark', 'container'], additionalProperties: false },
   run: async ({ spark, container }, viewer) => {
@@ -957,7 +979,7 @@ action({
 });
 
 action({
-  name: 'spark_diagnostics', title: 'Spark diagnostics', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'spark_diagnostics', title: 'Spark diagnostics', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'dig',
   description: 'Use when a Spark looks wrong, is offline, or went dark (“why did Spark 4 go dark?”). Health checks on one Spark (reachable, Docker, GPU, disk, editor and more), each with what it found. For an offline Spark: what failed and when it was last seen. Always: its last five dark periods, each with when, the last reading before it (GPU load, watts, hottest sensor), whether it restarted, and one finding worded “consistent with”: relay it as that, not as a cause.',
   input: { type: 'object', properties: { spark: sparkArg }, required: ['spark'], additionalProperties: false },
   run: async ({ spark }, viewer) => {
@@ -973,7 +995,7 @@ action({
 });
 
 action({
-  name: 'service_logs', title: 'Service logs', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'service_logs', title: 'Service logs', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'dig',
   description: 'Recent log of one of Spark Console’s own services on a Spark: "console" (Spark Console itself), "sparkie" (Sparkie’s model) or "editor" (VS Code in the browser).',
   input: { type: 'object', properties: { spark: sparkArg, service: { type: 'string', enum: LOG_SERVICES, description: 'console, sparkie or editor.' } }, required: ['spark', 'service'], additionalProperties: false },
   run: async ({ spark, service }, viewer) => {
@@ -1012,7 +1034,7 @@ async function sharedFolder(viewer, node, request) {
 }
 
 action({
-  name: 'files', title: 'Files in the shared folder', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'files', title: 'Files in the shared folder', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'reading',
   description: 'Use for “what’s in my shared folder on Spark 3?” and “show me notes/todo.md there”. Each Spark has one shared folder. With folder (or neither): the files and folders in it, with sizes and dates. With file: that text file’s contents (the first 8,000 characters; keys and passwords hidden). Hidden files, links and anything outside the shared folder are never opened. To write a file, use save_file.',
   input: { type: 'object', properties: {
     spark: sparkArg,
@@ -1079,7 +1101,7 @@ function abilities() {
   };
 }
 action({
-  name: 'sparkie_setup', title: 'Sparkie’s setup', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'sparkie_setup', title: 'Sparkie’s setup', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use for “what can you do?” (pass about: "abilities"), “what is Sparkie running on?” and “which build of Spark Console is running?” and “what changed in Spark Console, and was anything undone?” and “did Spark Console crash, or is something in it failing?”, and, when the owner asks, “who is signed in?” and “how many recovery codes are left?”. With about "abilities": only what Sparkie can look up and change today, from Spark Console’s own action list, and its limits. Otherwise: Sparkie, the fleet’s own assistant: its model, Spark, state and health, which model answers chats and which answers apps at the /v1 address, the saved setups it can switch to, Spark Console’s own build and its last five updates (which build replaced which, when, the note given at install, and whether it went back a build), its own recent errors, its last crash and the watchdog’s restarts, and whether Telegram works. For the owner only, never an agent: access, with the devices signed in without Tailscale, the passkeys by name and the recovery codes left (names, times and counts; no addresses).',
   input: { type: 'object', properties: {
     about: { type: 'string', enum: ['abilities'], description: '"abilities" for what Sparkie can look up and change, and its limits. Only that comes back.' },
@@ -1105,7 +1127,7 @@ action({
 });
 
 action({
-  name: 'workloads', title: 'Everything on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'workloads', title: 'Everything on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use for “what runs (or ran) on the Sparks, and how was it started?”. Every container Spark Console has seen on each Spark — models, services (Open WebUI, databases, …), Sparkie, and anything started by hand — with what it is, whether it runs now, image, ports, GPU use, served models, when it started or stopped and why, and whether it was saved as a recipe. Pass detail for the command (secrets hidden), mounts and environment variable names. Seen every minute. On a Spark that is off or not answering, what was last seen there is listed with running false, state “unknown (Spark off or not answering)” and lastSeenRunning true.',
   input: { type: 'object', properties: {
     spark: sparkArg,
@@ -1138,7 +1160,7 @@ action({
 
 const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'spark-powered-off', 'spark-powered-on', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
 action({
-  name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'past',
   description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, Sparks Spark Console powered off or on (on purpose: why, and what it parked), model servers learned as recipes, and Spark Console’s own operations with their result.',
   input: { type: 'object', properties: {
     since: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+Z?)?$', description: 'An ISO time; only events after it.' },

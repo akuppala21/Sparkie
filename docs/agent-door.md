@@ -34,7 +34,7 @@ Operations Sparkie starts post their result into the conversation when they fini
 
 ## Connect an agent
 
-1. In Spark Console open **Access → Agents → Connect an agent**, name it after the tool and computer ("Claude Code on
+1. In Spark Console open the account menu (your initials) → **Agents and Telegram → Connect an agent**, name it after the tool and computer ("Claude Code on
    my MacBook"), and tick **Can start and stop models** if it should.
 2. Copy what the dialog shows. The key is shown once; the console keeps only its fingerprint.
    - **Claude Code** (once, in a terminal):
@@ -108,13 +108,11 @@ Errors start with a code (`[not_found]`, `[invalid]`, `[unreachable, retry later
 | `restart_model` | Starts one of Spark Console's stopped or crashed models again |
 | `keep_running` | Keeps an app that isn't a model (Open WebUI, a database) running: one already on a Spark joins the list of what should be running and comes back after a crash or a power cycle; `do` restart or stop; with `image` and `port`, starts a new one (a memory cap, named volumes, opened on your tailnet only); `gpu` gives it the Spark's GPU (with `memoryGB`; only where no model or other GPU app runs), `command` the words it runs, and `once` makes a job that runs to its end, needs no port, writes into `jobs/<name>` in the shared folder and is told in the chat when it ends. From an agent (or Telegram), a new image, keeping, restarting or stopping a container Spark Console didn't start, running a job again, or starting a stopped app that uses the GPU is a question only the owner answers. Up means it keeps running; a link is given when it answers web requests (a database is up without one). A name that's there with another image, port, volumes or settings is refused (`[conflict]`, saying what differs); a port Docker doesn't publish for it, or above 65535, is refused; a stopped one starts only within its own memory limit (or a `memoryGB` you give when it has none); a stop while its Spark is off takes it off the list (`forgotten`). Never on Spark 2, never a model (by its image, Spark Console's model label or what the watcher saw), never by the start of a container's id |
 | `save_file` | Saves one new text file (at most 64 KB) in a Spark's shared folder; never replaces a file that's there, never makes a folder, never writes a hidden file or text holding a key shape (a known token format, a private key, `SECRET_KEY=<random>`, a password in an address: plain notes and code are fine). The name has no invisible or direction-changing characters |
-| `power_off` | Shuts a Spark down and cuts its plug, parking Spark Console’s models first; never Spark 2. Waits for the owner (R41) |
-| `power_on` | Turns a Spark on and brings back what was parked there |
-| `power_settings` | Idle minutes before a Spark is powered off (`idleMinutes`, 0 is never). Waits for the owner |
+| `power_off`, `power_on`, `power_settings` | A Spark off (models parked; never Spark 2) or on; the idle minutes. Off and minutes wait for the owner |
 | `wait_operation` | Follows an operation (reads only) |
 
 **Who can:** Sparkie, in your chats and in conversations with agents you allowed. Your agents, once you turn on **Can
-change things** for that agent (Access → Agents); new agents can only look. A start already under way for the same
+change things** for that agent (Agents and Telegram); new agents can only look. A start already under way for the same
 model returns that operation (`already-starting`) instead of starting a second copy; a change that takes over 50
 seconds answers `[still_running]` (don't call it again; check `recent_operations`).
 
@@ -149,7 +147,7 @@ when your message names the Spark and the whole file name as one word. An app ru
 it and the Spark; a new image, its port, volumes and settings must be typed as whole words.
 Results of what it starts are posted in the conversation when they finish.
 
-**Your switches** (Access → Agents): **Pause agents’ changes** stops every change at once (Sparkie's too; looking
+**Your switches** (Agents and Telegram): **Pause agents’ changes** stops every change at once (Sparkie's too; looking
 still works; your own clicks always go through). Agents also pause themselves after 12 changes in an hour or three
 of their operations failing within an hour, with a note in Activity; resuming that needs no passkey. **Restart crashed models automatically** (on by default): one of Spark
 Console's models that crashes is started again if there's room, at most twice an hour (counted across restarts);
@@ -193,4 +191,5 @@ record, so when you ask Sparkie about the fleet it knows what's running and what
 
 - MCP over HTTP (Streamable HTTP, JSON responses, stateless): `initialize`, `tools/list`, `tools/call`, `ping`.
 - Keys: `~/.local/state/spark-console/agents.json` on Spark 2 (fingerprints, names, last use).
-- The action list: `ACTIONS` in `service/server.mjs`; `GET /console/api/actions` lists it (owner).
+- The action list: `ACTIONS` in `service/server.mjs`; `GET /console/api/actions` lists it (owner), each action with
+  its group (R46). Sparkie is offered a few groups a round; an agent sees every action, and is told to call `guide` first.

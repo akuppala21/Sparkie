@@ -14,6 +14,8 @@
 //   sizes    each document within its limit in bytes, and no line over 400 characters
 //   shape    each rule file and each card has its fixed headings; AGENTS.md's task table and docs/how/ agree;
 //            docs/rules.md is what docs/rules/ makes
+//   groups   where the parts define GROUP_WORDS (R46): every action has one group (core, or one of those); the core
+//            holds at most 12 actions and a group at most 6
 // Dated records are never checked: docs/history/, docs/design-2026-11-13/ and docs/review-astra/.
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -26,7 +28,7 @@ const KB = 1024;
 // docs/review-astra/ holds a review with an outside reviewer (its evidence quotes line numbers and old names on purpose).
 const DATED = [/^docs\/history\//, /^docs\/design-2026-11-13\//, /^docs\/review-astra\//];
 // Written by tools: never edited by hand. tools/make.mjs rebuilds them; build.test.mjs and this checker compare them.
-const GENERATED = ['docs/code-map.md', 'docs/rules.md'];
+const GENERATED = ['docs/code-map.md', 'docs/registry.md', 'docs/rules.md', 'docs/status.md'];
 // Not the app's documents: the agent bar (a separate trial harness that names its own run outputs) and anything inside
 // the stand-in fleet.
 const NOT_DOCS = [/^agentbar\//, /^test\/mock\//];
@@ -42,7 +44,7 @@ const LIMITS = [
   [/^docs\/state\.md$/, 24 * KB],
   [/^docs\/rules\/R\d\d\.md$/, 8 * KB],
   [/^docs\/how\/[a-z0-9-]+\.md$/, 4 * KB],
-  [/^docs\/contract\.md$/, 120 * KB, 139 * KB],
+  [/^docs\/contract\.md$/, 120 * KB],
   [/^README\.md$/, 4 * KB, 15 * KB],
   [/^test\/README\.md$/, 12 * KB, 48 * KB],
   [/^docs\/agent-door\.md$/, 16 * KB, 17 * KB],
@@ -66,7 +68,11 @@ const NOT_PATHS = {
   'deploy/short-address.sh': 'retired 2026-11-11; the contract names it as gone',
   'deploy/web-page.sh': 'retired 2026-11-11; the contract names it as gone',
   'service/workflows.lock.json': 'written by node test/lock.mjs; not kept in git',
+  'test/affected-map.json': 'written by node test/lock.mjs with SPARK_TEST_MAP=1; not kept in git',
 };
+
+// The brain's tool groups (R46): every round carries the core, and at most two groups beside it.
+const CORE_MAX = 12, GROUP_MAX = 6;
 
 const RULE_HEADINGS = ['Rule', 'Why', 'Today', 'Where', 'Checked by'];
 const CARD_HEADINGS = ['Touch', 'Also update', 'Never', 'Rules', 'Tests', 'Copy from'];
@@ -267,6 +273,33 @@ function checkShape(tree, out) {
   }
 }
 
+// Every action's group, read from its own line (name: 'x', title: …, group: 'g'), against GROUP_WORDS' names. A tree
+// whose parts have no GROUP_WORDS has no groups to check.
+function checkGroups(tree, out) {
+  const table = Object.entries(tree.parts).find(([, t]) => /^const GROUP_WORDS = \[/m.test(t));
+  if (!table) return;
+  const [home, homeText] = table, at = homeText.search(/^const GROUP_WORDS = \[/m), rest = homeText.slice(at);
+  const names = [...rest.slice(0, rest.search(/^\];/m)).matchAll(/^\s*\['([a-z]+)',/gm)].map(m => m[1]);
+  const choices = `core or one of ${names.join(', ')} (GROUP_WORDS in service/src/${home})`;
+  const members = new Map();
+  for (const [part, text] of Object.entries(tree.parts)) {
+    for (const m of text.matchAll(/^\s*name: '([a-z_]+)', title: '[^']+', kind: '(?:read|change)'.*$/gm)) {
+      const say = message => out.push({ check: 'groups', file: `service/src/${part}`, line: lineAt(text, m.index), message });
+      const group = m[0].match(/\bgroup: '([a-z]+)'/)?.[1];
+      if (!group) { say(`the action ${m[1]} has no group: add group: '…' at the end of its line (name: '${m[1]}', title: …), with ${choices}`); continue; }
+      if (group !== 'core' && !names.includes(group)) { say(`the action ${m[1]} has the group ${group}, which isn’t one: use ${choices}, or add the group to GROUP_WORDS with its words`); continue; }
+      members.set(group, [...(members.get(group) || []), m[1]]);
+    }
+  }
+  for (const [group, list] of members) {
+    const max = group === 'core' ? CORE_MAX : GROUP_MAX;
+    if (list.length <= max) continue;
+    out.push({ check: 'groups', file: `service/src/${home}`, line: lineAt(homeText, at), message: group === 'core'
+      ? `the core has ${list.length} actions (${list.join(', ')}); every round carries it, so at most ${max}: give one of them a group`
+      : `the group ${group} has ${list.length} actions (${list.join(', ')}); at most ${max}: move one to another group, or add a group to GROUP_WORDS with its words` });
+  }
+}
+
 // The Rule paragraph of a rule file, its lines joined: the text as it was in the map's table.
 export function ruleText(text) {
   const m = text.match(/^## Rule\n\n([\s\S]*?)\n\n## /m);
@@ -311,6 +344,7 @@ export function checkDocs(root = ROOT) {
   for (const [f, text] of Object.entries(tree.parts)) checkIds(tree, `service/src/${f}`, text, out, { code: true });
   for (const f of tree.tests) checkIds(tree, f, read(root, f), out, { code: true });
   checkShape(tree, out);
+  checkGroups(tree, out);
   return out;
 }
 

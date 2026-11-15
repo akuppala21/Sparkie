@@ -1,4 +1,7 @@
 /* ───────── Spark status (taking over from the original portal) ───────── */
+// Area: knowledge        Rules: R10, R24, R30, R37        Tests: fleet.test.mjs, dark.test.mjs, files.test.mjs
+// Owns: energy.json (writers: sampleEnergy)
+// Timers: collectStatus (every 30 s, after a first round 2 s after start)        Wakes: none
 // Each Spark's status comes from the portal's own worker.py (now shipped with the service), run over the same SSH
 // as everything else, with the same fields the portal reported. It's collected every 30 seconds whether or not
 // anyone is looking, like the portal did, which also keeps the GPU energy total going.

@@ -1,4 +1,7 @@
 /* ───────── recipes ───────── */
+// Area: knowledge        Rules: R20, R27, R30        Tests: detail.test.mjs, intent.test.mjs, gateway.test.mjs
+// Owns: added-models.json (writers: addModel), found-setups.json (writers: digModel)
+// Timers: none        Wakes: none
 // Recipes: service/catalog.json (built by tools/build-catalog.py from the research): models → versions → setups, plus
 // models the owner added (~/.local/state/spark-console/added-models.json) and the setups the finder dug up for any
 // model (found-setups.json, one entry per model, replaced each time it looks again).

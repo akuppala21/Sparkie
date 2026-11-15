@@ -1,4 +1,7 @@
 /* ───────── one model across two linked Sparks ───────── */
+// Area: ground        Rules: R14, R15, R16, R17        Tests: across.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // NVIDIA's two-Spark method (build.nvidia.com/spark/vllm-cluster, advanced): native vLLM multi-node, one tensor-parallel
 // rank per Spark, talking over the direct cable. The first Spark is the head and serves the API on its Tailscale address,
 // port 8000, like a single-Spark deploy; the second runs headless. This service starts each part over its own SSH.

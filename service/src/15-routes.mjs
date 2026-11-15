@@ -1,4 +1,7 @@
 /* ───────── choosing what Sparkie and agents use ───────── */
+// Area: brain        Rules: R5, R36        Tests: gateway.test.mjs, paste.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Running models this service can point Sparkie or agents at: its own main model, console deploys (they listen on the
 // tailnet too), and other model servers on its own Spark. Servers that only listen on another Spark's own address
 // are listed but can't be reached from here.

@@ -240,23 +240,15 @@ const state = {
   following: new Map(),
   machine: new Map(),
   chat: { conv: null, spark: null, model: null, sending: false, waiting: false, search: '', pendingPrompt: null, draft: '' },
-  files: { node: null, area: 'personal', path: '', entries: null, total: 0, nextOffset: null, busy: false, error: null, epoch: 0, editorPath: null },
   memberPreview: false,
   live: new Map(),
   liveHist: new Map(),
   liveOn: false,
   lib: { data: null, error: null, missing: false, loading: false, at: 0 },
-  recipes: { data: null, error: null, missing: false, loading: false },
   fabric: { sparks: null, pairs: null, checkedAt: null, error: null, missing: false, outdated: false, loading: false, checking: false },
   main: { data: null, error: null },
   consoleChats: null,
-  access: null,
   passkeys: null,
-  recipeQuery: '',
-  recipeFilter: 'All',
-  recipeKind: 'all',
-  recipeOpen: new Set(),
-  recipeSearch: null,
   svcJobs: new Map(),
 };
 
@@ -272,15 +264,7 @@ function perms() {
   return state.boot?.viewer?.permissions || {};
 }
 const canChat = () => owner() || Boolean(perms().chat);
-const canFiles = () => owner() || ['read', 'write'].includes(perms().files) || ['read', 'write'].includes(perms().sharedFiles);
-// Everyone sees the whole fleet. A member acts only on the Sparks shared with them ("mine"), and runs or stops models
-// there only if the owner allowed it; the service enforces the same rules. Elsewhere their buttons are hidden.
-const mine = id => owner() || (perms().nodeIds || []).includes(id);
-const canRun = () => owner() || perms().deploy === true;
-const canActOn = (...ids) => canRun() && ids.every(mine);
-const fileAccess = () => (owner() ? 'write' : perms()[state.files.area === 'shared' ? 'sharedFiles' : 'files'] || 'none');
-
-// Every Spark, for everyone (members only act on theirs; see mine()).
+// Every Spark, for everyone.
 function nodes() {
   return (state.boot?.nodes || [])
     .map(n => withLive({ ...n, ...(state.status?.nodes || []).find(s => s.id === n.id) }));
@@ -878,18 +862,23 @@ async function nodeAction(n, action) {
 function route() {
   const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
-  return { view: parts[0] || 'fleet', a: parts[1], b: parts[2], params: new URLSearchParams(query) };
+  return { view: parts[0] || 'sparkie', a: parts[1], b: parts[2], params: new URLSearchParams(query) };
 }
 // Going to the page that's already open draws it again (no hashchange fires for the same address).
 const go = path => { const to = `#/${path}`; if (location.hash === to) render(); else location.hash = to; };
-// Old addresses still work: they're replaced by where that page lives now.
+// Old addresses still work: they're replaced by where that page lives now. Home, Models, Files and Access are off the
+// page (the owner uses chat and the APIs), so their addresses open the chat.
 const MOVED = {
   chat: hash => hash.replace(/^#\/?chat/, '#/sparkie'),
-  recipes: () => '#/models/find',
+  recipes: () => '#/',
   clusters: () => '#/',
   overview: () => '#/',
   home: () => '#/',
-  sharing: () => '#/access',
+  sharing: () => '#/',
+  fleet: () => '#/',
+  models: () => '#/',
+  files: () => '#/',
+  access: () => '#/',
 };
 
 const PAGES = {};
@@ -903,31 +892,21 @@ function render() {
   view.className = 'view';
   set(view);
   closeNav(false);
-  const names = { fleet: 'Home', spark: nodeName(r.a), models: 'Models', sparkie: ASSISTANT, files: 'Files', access: 'Access' };
+  const names = { spark: nodeName(r.a), sparkie: ASSISTANT };
   document.title = names[r.view] ? `${names[r.view]} · Spark Console` : 'Spark Console';
   (Object.hasOwn(PAGES, r.view) ? PAGES[r.view] : notFoundPage)(view, r);
   runLive();
 }
 
 function notFoundPage(view) {
-  put(view, h('div', { class: 'empty' }, icon('search'), h('strong', {}, 'Nothing here'), h('p', {}, 'That page doesn’t exist.'), h('a', { class: 'btn', href: '#/' }, 'Back to Home')));
+  put(view, h('div', { class: 'empty' }, icon('search'), h('strong', {}, 'Nothing here'), h('p', {}, 'That page doesn’t exist.'), h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
 }
 
-// A page's own sections, as links (each has its own address, so Back and reloads keep the tab).
-const pageTabs = (label, tabs, current) => h('nav', { class: 'tabs', 'aria-label': label }, tabs.map(([href, text, ic]) =>
-  h('a', { class: 'tab', href, 'aria-current': href === current ? 'page' : null }, ic ? icon(ic) : null, text)));
-
 /* ───────── shell ───────── */
-// The main places: path, view, label, icon, who sees it. navBadge (below) can put a count on one.
+// The main places: path, view, label, icon, who sees it.
 const NAV = [
-  ['', 'fleet', 'Home', 'grid', () => true],
   ['sparkie', 'sparkie', ASSISTANT, 'chat', canChat],
-  ['models', 'models', 'Models', 'sparkle', () => true],
-  ['files', 'files', 'Files', 'folder', canFiles],
-  ['access', 'access', 'Access', 'users', () => true],
 ];
-// A number to show on a nav item, or null: for the owner, the people waiting on Access.
-const navBadge = view => (view === 'access' && owner() ? state.access?.requests?.length || null : null);
 const THEMES = [['dark', 'Dark'], ['light', 'Light'], ['system', 'Match my system']];
 const currentTheme = () => document.documentElement.dataset.theme || 'system';
 const THEME_NEXT = { dark: 'light', light: 'system', system: 'dark' };
@@ -1018,9 +997,7 @@ function shell() {
   live(() => {
     const r = route();
     redraw(nav, ...NAV.filter(([, , , , allowed]) => allowed()).map(([path, view, label, ic]) => {
-      const count = navBadge(view);
-      return h('a', { class: 'nav-item', href: `#/${path}`, 'aria-current': r.view === view ? 'page' : null }, icon(ic), h('span', {}, label),
-        count ? h('span', { class: 'badge', 'aria-label': `${count} waiting` }, count) : null);
+      return h('a', { class: 'nav-item', href: `#/${path}`, 'aria-current': r.view === view ? 'page' : null }, icon(ic), h('span', {}, label));
     }));
   }, shellLive);
 
@@ -1101,8 +1078,6 @@ function tickLive() {
 
 function setMemberPreview(on) {
   state.memberPreview = on;
-  state.files.area = 'personal';
-  state.files.node = null;
   render();
 }
 
@@ -1118,6 +1093,7 @@ function accountMenu() {
     owner() && typeof state.boot?.passkeys === 'number' ? { label: 'Your passkey', icon: 'key', onSelect: openPasskeys } : null,
     { label: 'Your devices', icon: 'monitor', hint: owner() ? 'phone, SSH' : 'phone', onSelect: openDevices },
     owner() ? { label: 'Let a device in', icon: 'plus', onSelect: () => letDeviceIn() } : null,
+    owner() ? { label: 'Agents and Telegram', icon: 'link', onSelect: openAgents } : null,
     'sep',
     { heading: 'Theme' },
     ...THEMES.map(([key, label]) => ({ label, icon: theme === key ? 'check' : THEME_ICON[key], onSelect: () => setTheme(key) })),
@@ -1237,12 +1213,6 @@ function openDevices() {
 }
 
 /* ───────── shared bits ───────── */
-function pageHead(title, sub, ...actions) {
-  actions = actions.filter(Boolean);
-  return h('div', { class: 'page-head' },
-    h('div', {}, h('h1', {}, title), sub ? h('div', { class: 'page-sub' }, sub) : null),
-    actions.length ? h('div', { class: 'btn-row' }, actions) : null);
-}
 const dot = () => h('span', { class: 'sep', 'aria-hidden': 'true' });
 // Something didn't load: say what, why, and offer to try again.
 const failBanner = (title, message, retry) => h('div', { class: 'banner bad' }, icon('alert'),
@@ -1257,7 +1227,7 @@ const empty = (iconName, title, text, ...actions) =>
   h('div', { class: 'empty' }, icon(iconName), h('strong', {}, title), text ? h('p', {}, text) : null, actions.length ? h('div', { class: 'btn-row' }, actions) : null);
 
 function openTargets(n) {
-  if (!owner()) return mine(n.id) ? [{ label: 'Browse files', icon: 'folder', onSelect: () => go(`files/${n.id}`) }] : [];
+  if (!owner()) return [];
   const ssh = sshCommand(n.id);
   return [
     { heading: `Open ${n.name}` },
@@ -1266,14 +1236,11 @@ function openTargets(n) {
     conn(n.id) ? { label: 'Cursor', icon: 'monitor', href: desktopUrl(n.id, 'cursor'), hint: 'Remote SSH' } : null,
     'sep',
     ssh ? { label: 'Copy SSH command', icon: 'terminal', hint: ssh, onSelect: () => copy(ssh, `Copied: ${ssh}`) } : null,
-    { label: 'Browse files', icon: 'folder', onSelect: () => go(`files/${n.id}`) },
   ];
 }
 
 function openButton(n, size = 'sm') {
-  if (!owner()) {
-    return canFiles() && mine(n.id) ? h('a', { class: `btn ${size}`, href: `#/files/${n.id}`, 'aria-label': `Files on ${n.name}` }, icon('folder'), 'Files') : null;
-  }
+  if (!owner()) return null;
   return h('div', { class: 'btn-group' },
     h('a', { class: `btn ${size} primary`, href: editorUrl(n), target: '_blank', rel: 'noopener noreferrer', title: `Open VS Code on ${n.name} in a new tab`, 'aria-label': `Open VS Code on ${n.name}` }, icon('code'), 'VS Code'),
     h('button', {
@@ -1294,212 +1261,12 @@ function sparkActions(n, onPage = false) {
   ];
 }
 
-/* ───────── home ───────── */
-PAGES.fleet = function fleetPage(view) {
-  const headline = h('h1', {}, 'Home');
-  const sub = h('div', { class: 'page-sub' });
-  const alerts = h('div');
-  const stats = h('div', { class: 'card stats' });
-  const grid = h('div', { class: 'fleet' });
-  const activity = h('div', { class: 'rows' });
-  const clustersBox = h('div');
-
-  put(view,
-    h('div', { class: 'page-head' },
-      h('div', {}, headline, sub),
-      h('div', { class: 'btn-row' },
-        canRun() ? h('button', { class: 'btn', type: 'button', onclick: e => openDeployPicker({ button: e.currentTarget }) }, icon('play'), 'Start a model') : null,
-        canChat() ? h('a', { class: 'btn', href: '#/sparkie/new', title: `Ask ${ASSISTANT} about all your Sparks` }, icon('chat'), `Ask ${ASSISTANT}`) : null)),
-    alerts, stats, grid, clustersBox,
-    h('div', { style: { 'margin-top': '16px' } },
-      panel('Recent activity', activity, { tight: true, actions: [h('button', { class: 'btn ghost sm', type: 'button', onclick: () => openActivity() }, 'All activity', icon('chevronRight'))] })));
-
-  live(() => {
-    const list = nodes();
-    if (!state.status) { redraw(sub, h('span', {}, 'Checking your Sparks…')); return; }
-    const jobs = [...state.svcJobs.values()].filter(underWay).length;
-    const m = state.main.data, chat = m?.routes?.chat;
-    redraw(sub, ...joinDots([
-      jobs ? h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity() }, `${plural(jobs, 'job')} in progress`) : null,
-      // The owner can change it on Models; everyone else just sees which model it is.
-      m?.configured || chat ? (owner() ? h('a', { href: '#/models', title: `Change what ${ASSISTANT} answers with` }, `${ASSISTANT}: ${chat?.title || m.title} on ${nodeName(chat?.node || m.node)} ›`)
-        : h('span', {}, `${ASSISTANT}: ${chat?.title || m.title} on ${nodeName(chat?.node || m.node)}`)) : null,
-    ]));
-  });
-
-  // Linked Sparks: which two could run one model together right now. Only when there's something to show.
-  live(() => {
-    const pairs = linkedPairs();
-    if (!pairs.length) { redraw(clustersBox); return; }
-    redraw(clustersBox, panel('Linked Sparks', h('div', { class: 'cluster-strip' }, linkMap(), h('div', { class: 'rows' }, pairs.map(p => pairRow(p)))),
-      { tight: true, sub: 'Two Sparks joined by a direct cable can run one model together', cls: 'cluster-panel' }));
-  });
-  if (!state.fabric.loading && (!state.fabric.sparks || Date.now() - (state.fabric.at || 0) > 300000)) loadFabric();
-  // What each Spark runs is named after its model, which comes from the library.
-  if (!state.lib.loading && (!state.lib.data || Date.now() - state.lib.at > 60000)) loadLibrary();
-
-  live(() => redraw(alerts, ...attentionBanners()));
-
-  const stat = (label, ic) => {
-    const value = h('span'), unit = h('small'), foot = h('div', { class: 'stat-foot' });
-    put(stats, h('div', { class: 'stat' }, h('div', { class: 'stat-label' }, icon(ic), label), h('div', { class: 'stat-value' }, value, unit), foot));
-    return { value, unit, foot };
-  };
-  const sOnline = stat('Sparks online', 'server'), sWork = stat('Models running', 'box'), sMem = stat('Memory', 'layers');
-  const sPower = stat('GPU power', 'zap');
-  fast(() => {
-    const list = nodes(), up = list.filter(isUp), busySparks = up.filter(n => workloads(n).length);
-    const running = busySparks.reduce((t, n) => t + workloads(n).length, 0);
-    const total = sum(up, 'memoryTotalGiB'), used = total - sum(up, 'memoryFreeGiB');
-    sOnline.value.textContent = state.status ? up.length : '—';
-    sOnline.unit.textContent = `/ ${list.length}`;
-    sOnline.foot.textContent = !state.status ? 'Checking…' : list.length - up.length ? `${list.length - up.length} offline` : 'All online';
-    sWork.value.textContent = state.status ? running : '—';
-    sWork.foot.textContent = !state.status ? 'Checking…' : busySparks.length ? `on ${plural(busySparks.length, 'Spark')}` : 'Nothing running';
-    glide(sMem.value, total ? used * GB_PER_GIB : null, used * GB_PER_GIB >= 100 ? 0 : 1);
-    sMem.unit.textContent = `/ ${fmt.gib(total)} GB`;
-    sMem.foot.textContent = total ? `${Math.round((used / total) * 100)}% in use across ${plural(up.length, 'Spark')}` : '—';
-    glide(sPower.value, state.status ? sum(up, 'gpuPowerWatts') : null, 1);
-    sPower.unit.textContent = 'W';
-    const walls = list.filter(x => wallState(x).has).map(x => x.wall);
-    sPower.foot.textContent = !state.status ? '—' : walls.length
-      ? `At the wall: ${fmt.watts(walls.reduce((a, w) => a + w.watts, 0))} (${plural(walls.length, 'plug')})` : `across ${plural(up.length, 'Spark')}`;
-  });
-
-  // Cards follow the Spark list: new Sparks get a card, removed ones drop out, without a reload.
-  const cards = new Map();
-  let cardIds = '';
-  live(() => {
-    const ids = nodes().map(n => n.id);
-    if (ids.join() === cardIds) return;
-    cardIds = ids.join();
-    for (const id of ids) if (!cards.has(id)) cards.set(id, sparkCard(id));
-    redraw(grid, ...ids.map(id => cards.get(id)));
-  });
-
-  live(() => {
-    const jobs = activityJobs().slice(0, 5);
-    // Spark Console's notices from the last day come first here too (all of them are in Activity).
-    const notes = (state.notices || []).filter(n => Date.now() - Date.parse(n.at) < 86400000).slice(0, 2).map(noticeRow);
-    if (state.recentJobs === null && !jobs.length) redraw(activity, h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
-    else if (!jobs.length && !notes.length) redraw(activity, empty('activity', 'Nothing yet', 'Models started and stopped, downloads and setup searches show up here, with their progress.'));
-    else redraw(activity, ...notes, ...jobs.map(j => jobRow(j, { onOpen: () => openActivity(j.id) })));
-  });
-
-  if (state.recentJobs === null) loadJobs();
-};
-
-function attentionBanners() {
-  if (!state.status) return [];
-  if (isStale()) {
-    return [h('div', { class: 'banner warn' }, icon('clock'),
-      h('div', { class: 'banner-text' }, h('strong', {}, 'Status is out of date'), h('p', {}, `The last status check was ${fmt.ago(Date.parse(state.status.updatedAt))}.`)),
-      h('button', { class: 'btn sm', type: 'button', onclick: e => busy(e.currentTarget, () => loadStatus(true)) }, icon('refresh'), 'Refresh'))];
-  }
-  return [];
-}
-const issueText = n => (n.issues?.length ? n.issues.join(' · ') : 'Something on this Spark needs attention.');
-
-function sparkCard(id) {
-  const card = h('article', { class: 'spark-card' });
-  const body = h('a', { class: 'sc-link', href: `#/spark/${id}` });
-  const foot = h('div', { class: 'sc-foot' });
-  card.append(body, foot);
-  let footKey = null, bodyKey = null, refs = null;
-  const metric = (label, unit) => {
-    const value = h('span');
-    return [value, h('div', { class: 'sc-metric' }, h('div', { class: 'k' }, label), h('div', { class: 'v' }, value, h('small', {}, unit)))];
-  };
-
-  // Structure: rebuilt only when what the card shows changes (reachability, workloads, warnings).
-  live(() => {
-    const n = node(id);
-    if (!n) return;
-    const cond = condition(n), up = isUp(n), work = workloads(n), portalHost = portalHostId() === n.id;
-    const wall = wallState(n), off = !up && n.poweredOff?.words ? n.poweredOff.words : null;
-    const key = [up, up ? cond === 'degraded' : cond, work.join('\n'), portalHost, cond === 'degraded' ? issueText(n) : '', up ? wall.has : wall.words, off].join('|');
-    if (key !== bodyKey) {
-      bodyKey = key;
-      const pillEl = condPill(cond);
-      const head = h('div', { class: 'sc-head' },
-        h('div', { class: 'sc-title' },
-          h('span', { class: 'sc-chip' }, icon('chip')),
-          h('div', { style: { 'min-width': '0' } },
-            h('h3', {}, n.name, portalHost ? h('span', { class: 'tag', title: 'This Spark runs Spark Console. Keep it on.' }, 'Host') : null),
-            h('div', { class: 'sc-sub' }, hardware(n)))),
-        pillEl);
-      if (!up) {
-        set(body, head, h('div', { class: 'sc-offline' },
-          icon(cond === 'unknown' || cond === 'stale' ? 'clock' : 'wifiOff'),
-          cond === 'offline' ? null : h('strong', {}, cond === 'unknown' ? 'Checking…' : 'Status out of date'),
-          h('span', {}, cond === 'unknown' ? 'Waiting for the first status report.' : cond === 'stale' ? 'Refresh to check again.'
-            // (powered off by Spark Console on purpose: its own words, when, why and what was parked)
-            : off || wall.words || 'Spark Console can’t reach it over Tailscale. Check that it’s on and signed in.')));
-        refs = { pill: pillEl };
-      } else {
-        const [gpu, gpuBox] = metric('GPU', '%'), [power, powerBox] = metric(wall.has ? 'Wall power' : 'GPU power', 'W'), [temp, tempBox] = metric('Temp', '°F');
-        const memUsed = h('span'), memTotal = h('span'), barFill = h('span'), graph = h('div', { class: 'sc-spark' }), span = h('span');
-        set(body, head,
-          cond === 'degraded' ? h('div', { class: 'sc-issue' }, icon('alert'), h('span', {}, issueText(n))) : null,
-          h('div', { class: 'sc-work' },
-            h('div', { class: 'sc-work-head' }, h('span', {}, 'Workloads'), h('strong', {}, work.length)),
-            h('div', { class: 'sc-work-list' }, work.length
-              ? [...work.slice(0, 2).map(w => h('div', { class: 'sc-work-item', title: w }, led('running'), h('span', {}, w))),
-                work.length > 2 ? h('div', { class: 'sc-work-more' }, `+${work.length - 2} more`) : null]
-              : h('div', { class: 'sc-work-empty' }, 'Nothing running'))),
-          h('div', { class: 'meter-row' }, h('span', {}, 'Memory'), h('strong', {}, memUsed, ' / ', memTotal, ' GB')),
-          h('div', { class: 'bar' }, barFill),
-          h('div', { class: 'sc-metrics' }, gpuBox, powerBox, tempBox),
-          graph,
-          h('div', { class: 'sc-caption' }, h('span', {}, 'GPU use'), span));
-        refs = { pill: pillEl, gpu, power, temp, memUsed, memTotal, barFill, graph, span };
-      }
-    }
-    const fkey = `${cond === 'offline'}|${up}|${n.model?.running}|${owner()}|${Boolean(conn(id))}|${canSparkChat(n)}`;
-    if (fkey === footKey) return;
-    footKey = fkey;
-    const ssh = owner() && cond === 'offline' ? sshDirect(id) : null;
-    // Each button names its Spark, so a screen reader's list of buttons tells the cards apart.
-    set(foot,
-      up ? openButton(n) : owner() && cond === 'offline'
-        ? h('button', { class: 'btn sm', type: 'button', 'aria-label': `Run checks on ${n.name}`, onclick: () => go(`spark/${id}/diagnostics?run=1`) }, icon('clipboard'), 'Run checks')
-        : null,
-      ssh ? h('button', { class: 'btn sm', type: 'button', title: ssh, 'aria-label': `Copy SSH command for ${n.name}`, onclick: () => copy(ssh, `Copied: ${ssh}`) }, icon('terminal'), 'Copy SSH') : null,
-      canSparkChat(n) ? h('a', { class: 'btn sm', href: sparkChatHref(id), title: `Ask ${ASSISTANT} about ${n.name}`, 'aria-label': `Chat about ${n.name}` }, icon('chat'), 'Chat') : null,
-      h('span', { class: 'grow' }),
-      owner() ? menuButton(() => sparkActions(node(id)), { label: `More actions for ${n.name}` }) : h('a', { class: 'btn ghost sm', href: `#/spark/${id}`, 'aria-label': `Details for ${n.name}` }, 'Details'));
-  });
-
-  // Numbers, bar, status and graph: updated in place on every live tick.
-  fast(() => {
-    const n = node(id);
-    if (!n || !refs) return;
-    const cond = condition(n), [label, kind] = COND[cond];
-    card.dataset.cond = cond;
-    body.setAttribute('aria-label', `${n.name}: ${label}`);
-    refs.pill.className = `pill ${kind}`;
-    refs.pill.textContent = label;
-    if (!refs.gpu) return;
-    const total = n.memoryTotalGiB, used = num(total) && num(n.memoryFreeGiB) ? total - n.memoryFreeGiB : null;
-    const share = num(used) && total ? Math.max(0, Math.min(1, used / total)) : 0;
-    glide(refs.memUsed, num(used) ? used * GB_PER_GIB : null, Math.abs(used * GB_PER_GIB) >= 100 ? 0 : 1);
-    refs.memTotal.textContent = fmt.gib(total);
-    refs.barFill.style.width = `${(share * 100).toFixed(1)}%`;
-    refs.barFill.parentElement.classList.toggle('bad', share > 0.95);
-    glide(refs.gpu, n.gpuUtilization, 0);
-    glide(refs.power, wallState(n).has ? n.wall.watts : n.gpuPowerWatts, 1);
-    glide(refs.temp, toF(n.temperature), 0);
-    set(refs.graph, sparkline(series(id, 'gpu'), { max: 100, label: `${n.name} GPU use, ${windowLabel(id)}` }));
-    refs.span.textContent = windowLabel(id);
-  });
-  return card;
-}
-
+/* ───────── activity ───────── */
 // Something Spark Console wants you to know (agents paused by themselves, an operation a restart cut off).
 // One about agents pausing leads to where they're resumed.
 const noticeRow = n => h('div', { class: 'notice-row' }, icon('alert'),
   h('span', {}, n.text, n.workflows && owner() ? [' ', h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity('workflows') }, 'Test it now')]
-    : /paused/i.test(n.text) && owner() ? [' ', h('a', { class: 'link', href: '#/access/agents' }, 'Open Agents')] : null),
+    : /paused/i.test(n.text) && owner() ? [' ', h('button', { class: 'link-btn', type: 'button', onclick: openAgents }, 'Open Agents')] : null),
   n.workflows ? null : h('span', { class: 'muted' }, fmt.ago(Date.parse(n.at))));
 
 function jobRow(j, { onOpen, open = false } = {}) {
@@ -1551,7 +1318,7 @@ function workflowsFold() {
   const fold = h('details', { class: 'invite-fold workflows-fold' }, h('summary', {}, 'Workflows', sum), rows);
   const draw = () => capi('workflows').then(({ workflows: list = [] }) => {
     const waiting = list.filter(w => w.state !== 'active').length;
-    // The one tap tests these; a start across two Sparks needs its own run, from Deploy.
+    // The one tap tests these; a start across two Sparks needs its own run (a real start across two Sparks).
     const testable = list.filter(w => w.state === 'needs-validation' && w.id !== 'start_model_across');
     const testing = (state.recentJobs || []).some(j => j.type === 'validate-workflows' && !TERMINAL.has(j.status));
     const lastTest = (state.recentJobs || []).find(j => j.type === 'validate-workflows');
@@ -1662,12 +1429,12 @@ PAGES.spark = function sparkPage(view, r) {
   const id = r.a;
   const n0 = node(id);
   if (!n0) {
-    put(view, empty('chip', 'Spark not found', 'It may not be shared with you.', h('a', { class: 'btn', href: '#/' }, 'Back to Home')));
+    put(view, empty('chip', 'Spark not found', 'It may not be shared with you.', h('a', { class: 'btn', href: '#/' }, `Back to ${ASSISTANT}`)));
     return;
   }
   const tabs = owner()
-    ? [['overview', 'Overview', 'grid'], ['workloads', 'Workloads', 'box'], ['logs', 'Logs', 'logs'], ['diagnostics', 'Checks', 'clipboard'], ['files', 'Files', 'folder']]
-    : [['overview', 'Overview', 'grid'], canFiles() && mine(id) ? ['files', 'Files', 'folder'] : null].filter(Boolean);
+    ? [['overview', 'Overview', 'grid'], ['workloads', 'Workloads', 'box'], ['logs', 'Logs', 'logs'], ['diagnostics', 'Checks', 'clipboard']]
+    : [['overview', 'Overview', 'grid']];
   const tab = tabs.some(([k]) => k === r.b) ? r.b : 'overview';
 
   const title = h('h1', {});
@@ -1677,7 +1444,6 @@ PAGES.spark = function sparkPage(view, r) {
   const facts = h('div', { class: 'facts' });
   const content = h('div');
   put(view, 
-    h('div', { class: 'crumbs' }, h('a', { href: '#/' }, 'Home'), icon('chevronRight'), h('span', {}, n0.name)),
     h('div', { class: 'detail-head' }, h('div', { class: 'detail-title' }, chipEl, h('div', { style: { 'min-width': '0' } }, title, meta)), actions),
     facts,
     h('nav', { class: 'tabs', 'aria-label': `${n0.name} sections` }, tabs.map(([key, label, ic]) =>
@@ -1705,7 +1471,7 @@ PAGES.spark = function sparkPage(view, r) {
     }
   });
 
-  const TABS = { overview: overviewTab, workloads: workloadsTab, logs: logsTab, diagnostics: diagnosticsTab, files: (box, n) => put(box, filesBrowser(n.id)) };
+  const TABS = { overview: overviewTab, workloads: workloadsTab, logs: logsTab, diagnostics: diagnosticsTab };
   TABS[tab](content, n0, r);
 };
 
@@ -2370,23 +2136,6 @@ function loadLibrary() {
   })());
 }
 
-async function loadRecipes() {
-  if (state.recipes.loading) return;
-  state.recipes.loading = true;
-  try {
-    state.recipes.data = await capi('recipes');
-    state.recipes.error = null;
-    state.recipes.missing = false;
-  } catch (e) {
-    state.recipes.error = e.message;
-    state.recipes.missing = Boolean(e.missing);
-    if (e.missing) { clearTimeout(state.recipes.retry); state.recipes.retry = setTimeout(loadRecipes, 6000); }
-  } finally {
-    state.recipes.loading = false;
-    runLive();
-  }
-}
-
 // A model named by the service (library name or Hugging Face repo), by its title when the library knows it.
 const titleOf = name => { const m = (state.lib.data?.library || []).find(x => x.name === name) || libFor(name); return m ? modelTitle(m) : name; };
 const SVC_LABEL = {
@@ -2432,14 +2181,11 @@ async function followServiceJob(job) {
   state.svcJobs.set(j.id, j);
   const found = j.result && num(j.result.found) ? `${plural(j.result.found, 'setup')} found, ${j.result.oneClick} one click` : null;
   dismissedToasts.delete(key);
-  const deployNow = j.type === 'download' && j.status === 'completed' && canRun()
-    ? h('button', { class: 'link-btn', type: 'button', onclick: async () => { await loadLibrary(); const m = libFor(j.repo); if (m) startModel(m); else go('models/library'); } }, 'Start it') : null;
-  if (j.status === 'completed') toast(`${label}: done`, { sub: [j.endpoint ? `Serving at ${j.endpoint}${j.tailnetLink ? ` (on your tailnet: ${j.tailnetLink})` : ''}` : found, deployNow].filter(Boolean), id: key, timeout: deployNow ? 15000 : 9000 });
+  if (j.status === 'completed') toast(`${label}: done`, { sub: [j.endpoint ? `Serving at ${j.endpoint}${j.tailnetLink ? ` (on your tailnet: ${j.tailnetLink})` : ''}` : found].filter(Boolean), id: key, timeout: 9000 });
   else toast(`${label} failed`, { kind: 'bad', sub: [String(j.error || '').split('\n')[0], ' ', h('button', { class: 'link-btn', type: 'button', onclick: () => openActivity(j.id) }, 'See what happened')], id: key, timeout: 20000 });
   loadJobs();
   loadLibrary();
-  if (['download', 'dig', 'add-list'].includes(j.type)) loadRecipes();
-  if (j.type.startsWith('main-')) { loadMain(); loadMainChoices(); }
+  if (j.type.startsWith('main-')) loadMain();
   loadStatus();
   return j;
 }
@@ -2520,1012 +2266,6 @@ function toolLines(tools, asked = false) {
     return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? 'Started' : 'Couldn’t'}: ${title}`)
       : t.ok ? `Checked ${title}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
   }));
-}
-
-const engineName = engine =>({ sglang: 'SGLang', trtllm: 'TensorRT-LLM', 'llama.cpp': 'llama.cpp', triton: 'Triton', ollama: 'Ollama', lmstudio: 'LM Studio', other: 'Custom setup' }[engine] || (engine && engine !== 'vllm' ? engine : 'vLLM'));
-
-// The same model from different publishers or in different quantizations (RadixArk/…, unsloth/…, nvidia/…Qwen3.8-27B-NVFP4,
-// …-FP8) is one Library row with its versions underneath, opened on request. Draft models and fine-tunes (other names)
-// stay their own rows.
-const QUANT_RE = /[-_.](nvfp4|mxfp4|fp8(-dynamic)?|fp4|bf16|fp16|awq|gptq|int4|int8|w4a16|w8a8|gguf|4bit|8bit)$/i;
-const modelBase = m => {
-  let base = String(m.repo || m.name).split(/\/|--/).pop();
-  for (let i = 0; i < 3 && QUANT_RE.test(base); i++) base = base.replace(QUANT_RE, '');
-  return base;
-};
-const modelQuant = m => (String(m.repo || m.name).match(/(NVFP4|MXFP4|FP8|FP4|BF16|AWQ|GPTQ|INT4|INT8|W4A16|GGUF)/i)?.[1] || m.dtype || '').toUpperCase();
-const modelPublisher = m => (m.repo ? m.repo.split('/')[0] : String(m.name).includes('--') ? m.name.split('--')[0] : null);
-const libOpen = new Set();
-function libraryRows(d, row) {
-  const groups = new Map();
-  for (const m of d.library) {
-    const key = m.role === 'draft' ? 'drafts' : modelBase(m).toLowerCase();
-    groups.set(key, [...(groups.get(key) || []), m]);
-  }
-  const drafts = groups.get('drafts');
-  groups.delete('drafts');
-  if (drafts) groups.set('drafts', drafts);
-  return [...groups].flatMap(([key, list]) => {
-    if (key === 'drafts') {
-      const open = libOpen.has(key), toggle = () => { if (open) libOpen.delete(key); else libOpen.add(key); runLive(); };
-      return [h('tr', { class: 'lib-group' },
-        h('td', {}, h('div', { class: 'cell-main' }, h('span', { class: 'row-icon' }, icon('layers')),
-          h('div', { style: { 'min-width': '0' } }, h('strong', {}, plural(list.length, 'draft model')),
-            h('div', { class: 'row-sub' }, 'Helpers for speculative decoding. They run alongside their main model, not on their own.')))),
-        h('td', {}),
-        h('td', { class: 'num' }, h('button', { class: 'btn sm', type: 'button', 'aria-expanded': String(open), onclick: toggle }, open ? 'Hide' : 'Show', icon(open ? 'chevronDown' : 'chevronRight')))),
-        ...(open ? list.map(m => { const tr = row(m); tr.classList.add('lib-child'); return tr; }) : [])];
-    }
-    if (list.length === 1) return [row(list[0])];
-    const open = libOpen.has(key), toggle = () => { if (open) libOpen.delete(key); else libOpen.add(key); runLive(); };
-    const sparks = [...new Set(list.flatMap(m => m.copies || []))];
-    const running = d.sparks.filter(sp => sp.deployments.some(x => list.some(m => m.name === x.model) && x.state === 'running' && !x.rank)).map(sp => sp.id);
-    const head = h('tr', { class: 'lib-group' },
-      h('td', {}, h('div', { class: 'cell-main' }, h('span', { class: 'row-icon' }, icon('layers')),
-        h('div', { style: { 'min-width': '0' } }, h('strong', {}, modelBase(list[0]),
-          list.some(m => m.verified?.length) ? [' ', h('span', { class: 'tag' }, 'Verified')] : null),
-          h('div', { class: 'row-sub' }, `${list.length} versions: ${list.map(m => [modelQuant(m), modelPublisher(m)].filter(Boolean).join(' · ')).join(', ')}`)))),
-      h('td', {}, h('div', { class: 'members' }, running.length
-        ? running.map(id => h('span', { class: 'chip ok' }, led('running'), `Running on ${nodeName(id)}`))
-        : sparks.map(id => h('span', { class: 'chip' }, icon('disk'), nodeName(id))))),
-      h('td', { class: 'num' }, h('button', { class: 'btn sm', type: 'button', 'aria-expanded': String(open), onclick: toggle }, open ? 'Hide versions' : 'Show versions', icon(open ? 'chevronDown' : 'chevronRight'))));
-    return [head, ...(open ? list.map(m => { const tr = row(m); tr.classList.add('lib-child'); return tr; }) : [])];
-  });
-}
-const gb = bytes => (num(bytes) ? `${Math.round(bytes / 1e9)} GB` : '—');
-// The best speed measured on these Sparks for a library model (on this many Sparks, when given).
-function measuredText(m, sparks = null) {
-  const runs = (m?.verified || []).filter(v => v.best && (!sparks || v.sparks === sparks)).sort((a, b) => b.best.decodeTokS - a.best.decodeTokS);
-  const v = runs[0];
-  return v ? [`${tokS(v.best.decodeTokS)} measured${sparks ? '' : ` on ${sparksText(v.sparks)}`}`, ...perfBits({ ttftMs: v.best.ttftMs })].join(', ') : null;
-}
-// Every Start button comes here: the start dialog, with where the model fits best already picked.
-const startModel = (m, options) => openDeploy(m, options);
-// Where apps that use the OpenAI API reach Sparkie's model (and the others, by name).
-const appsEndpoint = () => new URL(`${CONSOLE_API}v1`, location.href).href;
-
-/* ───────── models page: Running · On your Sparks · Find more ───────── */
-const MODEL_TABS = [['#/models', 'Running', 'zap'], ['#/models/library', 'On your Sparks', 'disk'], ['#/models/find', 'Find more', 'search']];
-PAGES.models = function modelsPage(view, r) {
-  const tab = r.a === 'library' || r.a === 'find' ? r.a : 'running';
-  const sub = {
-    running: 'What’s answering on your Sparks right now.',
-    library: 'Every model stored on your online Sparks. Start any of them on any online Spark.',
-    find: 'Models that run well on DGX Spark, the setups people use and how fast they are.',
-  }[tab];
-  const content = h('div', { class: 'stack' });
-  put(view,
-    pageHead('Models', sub,
-      tab !== 'find' && canRun() ? h('button', { class: 'btn', type: 'button', onclick: e => openDeployPicker({ button: e.currentTarget }) }, icon('play'), 'Start a model') : null,
-      tab !== 'find' ? h('button', { class: 'btn icon-only', type: 'button', 'aria-label': 'Refresh', title: 'Refresh', onclick: e => busy(e.currentTarget, loadLibrary) }, icon('refresh')) : null),
-    pageTabs('Models', MODEL_TABS, tab === 'running' ? '#/models' : `#/models/${tab}`),
-    content);
-  ({ running: runningTab, library: libraryTab, find: findMoreTab })[tab](content);
-  if (!state.lib.loading && (!state.lib.data || Date.now() - state.lib.at > 10000)) loadLibrary();
-};
-
-// Running: Sparkie's model, then everything else that answers on the Sparks.
-function runningTab(box) {
-  const lib = state.lib, mainBox = h('div'), running = h('div');
-  put(box, mainBox, running);
-
-  // Sparkie: which model it answers with (any running model, or one on disk started as its own), and, under Advanced,
-  // which model apps get at Sparkie's address.
-  let mainKey = null;
-  live(() => {
-    const m = state.main.data, choices = state.mainChoices;
-    if (!m?.configured && !m?.routes?.chat) { redraw(mainBox); return; }
-    const key = JSON.stringify([m, choices, owner()]);
-    if (key === mainKey) return;
-    mainKey = key;
-    const [label, kind] = mainState(m), on = ['running', 'restarting'].includes(m.state);
-    const chat = m.routes?.chat, agents = m.routes?.agents, onMain = !chat || chat.kind === 'main';
-    const problems = [
-      !m.online ? m.error : null,
-      m.online && !m.ready?.model ? `${m.model} isn’t on ${nodeName(m.node)}.` : null,
-      m.online && m.draft && !m.ready?.draft ? `${m.draft} (its draft model) isn’t on ${nodeName(m.node)}.` : null,
-      m.online && !m.local ? `It’s set to run on ${nodeName(m.node)}, but chats can only reach a model on the Spark that runs Spark Console.` : null,
-    ].filter(Boolean);
-    const endpoint = appsEndpoint();
-    // Next to the model: the dedicated model's state and Start/Stop when Sparkie uses it, else whether the running
-    // model it uses answers.
-    const startStop = owner() && m.configured && m.online && !m.busy
-      ? (on ? h('button', { class: 'btn sm', type: 'button', onclick: stopMain }, icon('stop'), 'Stop')
-        : h('button', { class: 'btn sm primary', type: 'button', disabled: problems.length > 0, onclick: openMainStart }, icon('play'), 'Start'))
-      : null;
-    const modelRow = h('div', { class: 'sparkie-row' },
-      owner() ? mainSelect('chat', m, choices) : h('strong', {}, chat?.title || m.title),
-      onMain ? [pill(label, kind), startStop] : pill(chat?.healthy ? 'Answering' : 'Not answering', chat?.healthy ? 'ok' : 'warn'));
-    const detail = onMain
-      ? h('span', { title: 'Spark Console keeps it running: it restarts after a reboot, and starting other models never stops it.' },
-        [nodeName(m.node), engineName(m.engine), m.about, m.healthy && m.startedAt ? `up since ${fmt.when(m.startedAt)}` : null].filter(Boolean).join(' · '))
-      : h('span', {}, `${nodeName(chat.node)} · already running there`,
-        m.configured && on ? [` · ${m.title}, ${ASSISTANT}’s own model, is still running on ${nodeName(m.node)}. `,
-          owner() && !m.busy ? h('button', { class: 'btn ghost sm', type: 'button', onclick: stopMain }, icon('stop'), 'Stop it') : null] : null);
-    // "Model for apps": what anything using the OpenAI API gets at Sparkie's address (the service calls this route
-    // "agents"; Agents on Access are something else).
-    redraw(mainBox, panel(ASSISTANT, [
-      h('div', { class: 'sparkie-fields' },
-        h('div', { class: 'sparkie-control' }, modelRow, h('div', { class: 'row-sub', style: { 'white-space': 'normal' } }, detail)),
-        onMain && problems.length ? h('div', { class: 'banner warn', style: { margin: '0' } }, icon('alert'), h('div', { class: 'banner-text' }, problems.map(t => h('p', {}, t)))) : null),
-      h('details', { class: 'fold sparkie-advanced' }, h('summary', {}, 'Advanced'),
-        h('div', { class: 'fold-body' },
-          h('div', { class: 'field' }, h('span', {}, 'Model for apps'),
-            h('div', { class: 'sparkie-row' },
-              owner() ? mainSelect('agents', m, choices) : h('strong', {}, agents?.same ? `Same as ${ASSISTANT}` : agents?.title || '—'),
-              h('button', { class: 'btn sm', type: 'button', title: `Apps that use the OpenAI API connect at ${endpoint}, with model “sparkie” and any API key.`,
-                onclick: () => copy(endpoint, `Copied: ${endpoint}`) }, icon('copy'), 'Copy address'))))),
-    ], { tight: true, sub: `The model ${ASSISTANT} answers with. Pick a running model, or one on disk to start.` }));
-  });
-  if (owner() && !state.mainChoicesLoading) loadMainChoices();
-
-  live(() => {
-    const d = lib.data, rows = [], m = state.main.data;
-    if (lib.missing) { redraw(running, serviceMissing('Running models')); return; }
-    // Sparkie's dedicated model first. It only listens on its own Spark, so other tools reach it through Spark Console's
-    // OpenAI-compatible address, by its own model name (stop it from the Sparkie panel above).
-    const sparkieOn = m?.configured && ['running', 'restarting'].includes(m.state);
-    if (sparkieOn) {
-      const endpoint = appsEndpoint();
-      rows.push(h('div', { class: 'row' },
-        h('div', { class: 'row-main' }, h('span', { class: `row-icon ${m.healthy ? 'ok' : ''}` }, icon('sparkle')),
-          h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, m.title),
-            h('div', { class: 'row-sub', style: { 'white-space': 'normal' } }, [nodeName(m.node), `${ASSISTANT}’s model`, m.healthy ? null : 'loading', measuredText(d?.library.find(x => x.name === m.model || repoKey(x.repo || x.name) === repoKey(m.model)), 1)].filter(Boolean).join(' · ')))),
-        h('div', { class: 'row-side' },
-          h('button', { class: 'btn ghost sm', type: 'button', title: `${endpoint} · model ${m.served} · any API key`, onclick: () => copy(endpoint, `Copied: ${endpoint} · model ${m.served}`) }, icon('copy'), 'Copy address'),
-          pill(m.healthy ? 'Running' : 'Loading', m.healthy ? 'ok' : 'info'))));
-    }
-    for (const sp of d?.sparks || []) {
-      // A model running across Sparks shows once, on the Spark that answers (its other part has rank 1).
-      for (const dep of sp.deployments.filter(x => x.state === 'running' && x.role !== 'main' && !x.rank)) {
-        const lm = d.library.find(x => x.name === dep.model);
-        rows.push(h('div', { class: 'row' },
-          h('div', { class: 'row-main' }, h('span', { class: 'row-icon ok' }, icon(dep.cluster ? 'link' : 'sparkle')),
-            h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, lm ? modelTitle(lm) : dep.model),
-              h('div', { class: 'row-sub' }, [dep.cluster ? `Across ${dep.cluster.split('+').map(nodeName).join(' + ')}` : nodeName(sp.id), dep.status,
-                measuredText(lm, dep.cluster ? dep.cluster.split('+').length : 1)].filter(Boolean).join(' · ')))),
-          h('div', { class: 'row-side' },
-            dep.endpoint ? h('button', { class: 'btn ghost sm', type: 'button', title: `${dep.endpoint} (works with apps that use the OpenAI API)`, onclick: () => copy(dep.endpoint, `Copied: ${dep.endpoint}`) }, icon('copy'), 'Copy address') : null,
-            canActOn(...(dep.cluster ? dep.cluster.split('+') : [sp.id])) ? h('button', { class: 'btn sm', type: 'button', onclick: () => stopDeployment(sp.id, dep) }, icon('stop'), 'Stop') : null)));
-      }
-    }
-    // Model servers started outside the console, like benchmarks. Shown, never stopped from here.
-    for (const sp of d?.sparks || []) {
-      for (const ext of sp.external || []) {
-        rows.push(h('div', { class: 'row' },
-          h('div', { class: 'row-main' }, h('span', { class: 'row-icon' }, icon('box')),
-            h('div', { class: 'row-text' }, h('div', { class: 'row-title', title: ext.models.join(', ') }, containerTitle(ext.container)),
-              h('div', { class: 'row-sub', title: ext.port ? `${ext.container} · port ${ext.port}` : ext.container }, `${nodeName(sp.id)} · started outside Spark Console`))),
-          h('div', { class: 'row-side' }, pill('Running', 'ok'))));
-      }
-    }
-    // Sparkie's own model already has its panel above; this list is for everything else that runs.
-    const others = rows.length - (sparkieOn ? 1 : 0);
-    redraw(running, others > 0 ? panel('Running now', h('div', { class: 'rows' }, rows), { tight: true })
-      : !d ? (lib.error ? failBanner('Couldn’t load what’s running', lib.error, loadLibrary) : h('div', { class: 'card' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' }))))
-        : h('div', { class: 'card' }, empty('box', sparkieOn ? `Only ${ASSISTANT}’s model is running` : 'Nothing is running',
-          'Start one of the models on your Sparks, or find a new one.',
-          canRun() ? h('button', { class: 'btn primary', type: 'button', onclick: e => openDeployPicker({ button: e.currentTarget }) }, icon('play'), 'Start a model') : null,
-          h('a', { class: 'btn', href: '#/models/find' }, icon('search'), 'Find more'))));
-  });
-}
-
-// On your Sparks: every model stored on the online Sparks, versions of one model grouped together.
-function libraryTab(box) {
-  const lib = state.lib, library = h('div');
-  put(box, library);
-  live(() => {
-    if (lib.missing) { redraw(library, serviceMissing('The models on your Sparks')); return; }
-    if (!lib.data) {
-      redraw(library, lib.error ? failBanner('Couldn’t load the models on your Sparks', lib.error, loadLibrary)
-        : h('div', { class: 'card' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' }))));
-      return;
-    }
-    const d = lib.data;
-    const offline = d.sparks.filter(sp => !sp.online).map(sp => nodeName(sp.id));
-    const note = text => h('p', { class: 'muted lib-note' }, text);
-    const offlineNote = offline.length ? note(`${offline.join(', ')} ${offline.length === 1 ? 'is' : 'are'} offline; what’s stored there shows when ${offline.length === 1 ? 'it’s' : 'they’re'} back.`) : null;
-    if (!d.libraryOnline) {
-      redraw(library, h('div', { class: 'banner bad' }, icon('wifiOff'),
-        h('div', { class: 'banner-text' }, h('strong', {}, 'No Sparks are reachable'), h('p', {}, 'This list is whatever your online Sparks hold, so it’s empty until one is back.'))));
-      return;
-    }
-    // Models that can't start yet: still downloading, or only partly downloaded.
-    const notReady = reason => {
-      const byRepo = new Map();
-      for (const x of (d.incomplete || []).filter(x => (x.reason || 'downloading') === reason)) byRepo.set(x.repo, [...(byRepo.get(x.repo) || []), nodeName(x.node)]);
-      return [...byRepo].map(([repo, where]) => `${repo} (${where.join(', ')})`).join(', ');
-    };
-    const partialNote = [
-      notReady('downloading') ? note(`Still downloading: ${notReady('downloading')}.`) : null,
-      notReady('no-weights') ? note(`Only partly downloaded, so they can’t start: ${notReady('no-weights')}.`) : null,
-    ];
-    // Where models live on a Spark, for adding one by hand.
-    const byHand = h('details', { class: 'rc-notes lib-note' }, h('summary', {}, 'Adding a model by hand'),
-      h('p', {}, `Put each model in its own folder in ${d.modelsDir} on any Spark, or download it with hf download into the Hugging Face cache (${d.hfDir}). ${nodeName(d.modelsHost)} is where new ones go by default.`));
-    if (!d.library.length) {
-      redraw(library, h('div', { class: 'card' }, empty('box', 'No models on your Sparks yet', 'Find one under Find more: it downloads in one click.',
-        h('a', { class: 'btn primary', href: '#/models/find' }, icon('search'), 'Find more')), partialNote, offlineNote, byHand));
-      return;
-    }
-    const count = d.library.filter(m => m.role !== 'draft').length;
-    redraw(library, panel(plural(count, 'model'), [h('div', { class: 'table-wrap' }, h('table', { class: 'data lib-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Model'), h('th', {}, 'Where'), h('th', { class: 'num' }, h('span', { class: 'sr-only' }, 'Actions')))),
-      h('tbody', {}, libraryRows(d, m => {
-        const where = d.sparks.flatMap(sp => {
-          const dep = sp.deployments.find(x => x.model === m.name && x.state === 'running');
-          if (dep?.cluster) return dep.rank ? [] : [h('span', { class: 'chip ok' }, led('running'), `Running across ${dep.cluster.split('+').map(nodeName).join(' + ')}`)];
-          if (dep) return [h('span', { class: 'chip ok' }, led('running'), `Running on ${nodeName(sp.id)}`)];
-          if (sp.models.includes(m.name)) {
-            const tip = `Stored on ${nodeName(sp.id)}${m.stores?.[sp.id] === 'hf' ? ' (Hugging Face cache)' : ''}${m.locked?.[sp.id] ? '. Read-only there: it starts on this Spark, but can’t be copied to another.' : ''}`;
-            return [h('span', { class: 'chip', title: tip }, icon(m.locked?.[sp.id] ? 'lock' : 'disk'), nodeName(sp.id))];
-          }
-          return [];
-        });
-        return h('tr', {},
-          h('td', {}, h('div', { class: 'cell-main' }, h('span', { class: 'row-icon' }, icon('sparkle')),
-            h('div', { style: { 'min-width': '0' } }, h('strong', {}, modelTitle(m),
-              m.verified?.length ? [' ', h('span', { class: 'tag', title: m.verified.map(v => `${v.sparks} Spark${v.sparks > 1 ? 's' : ''} · ${v.engine}${v.best ? ` · ${v.best.decodeTokS} tokens/s` : ''} · ${v.runs}× since ${fmt.when(v.firstAt)}`).join('\n') }, 'Verified')] : null),
-              h('div', { class: 'row-sub' }, [fmt.bytes(m.sizeBytes), m.format === 'gguf' ? `GGUF ${(m.ggufQuants || []).join(', ')}` : /^(compressed-tensors|modelopt|auto)$/i.test(m.dtype || '') ? null : m.dtype, m.contextLength ? `${Math.round(m.contextLength / 1024)}k context` : null,
-                engineName(m.manifest?.engine || (m.format === 'gguf' ? 'llama.cpp' : null)), measuredText(m)].filter(Boolean).join(' · '))))),
-          h('td', {}, h('div', { class: 'members' }, where)),
-          // Plain buttons: a column of filled ones down the table would shout.
-          h('td', { class: 'num' }, !canRun() || m.role === 'draft' ? null
-            : h('button', { class: 'btn sm', type: 'button', 'aria-label': `Start ${modelTitle(m)}`, onclick: () => startModel(m) }, icon('play'), 'Start')));
-      })))), partialNote, offlineNote,
-      h('p', { class: 'muted lib-note' }, 'Looking for another model? ', h('a', { class: 'link', href: '#/models/find' }, 'Find more'), '.'), byHand],
-      { tight: true, sub: `across ${plural(new Set(d.library.flatMap(m => m.copies || [])).size, 'Spark')}` }));
-  });
-}
-
-async function loadMainChoices() {
-  state.mainChoicesLoading = true;
-  // If the list can't be read, the dropdown says so and it tries again shortly.
-  try { state.mainChoices = await capi('main/choices'); state.mainChoicesError = null; } catch (e) { state.mainChoices = null; state.mainChoicesError = e.message; setTimeout(() => { if (!state.mainChoices) loadMainChoices(); }, 15000); } finally { state.mainChoicesLoading = false; }
-  runLive();
-}
-
-// A dropdown of what Sparkie (role 'chat') or apps (role 'agents') can use: running models first, then (for Sparkie) models on disk,
-// which start as Sparkie's own model on its Spark.
-function mainSelect(role, m, choices) {
-  const route = m.routes?.[role], running = choices?.running || [];
-  const routeId = role === 'agents' && route?.same ? 'same'
-    : !route || route.kind === 'main' ? 'main'
-      : running.find(c => c.kind === 'endpoint' && c.title === route.title && c.node === route.node)?.id || 'current';
-  const opt = (value, text, extra = {}) => h('option', { value, ...extra }, text);
-  const runningOpts = running.map(c => opt(c.id,
-    `${c.title} · ${nodeName(c.node)}${c.kind === 'main' ? ` · ${ASSISTANT}’s own${c.running ? '' : ', stopped'}` : ''}${c.reachable ? '' : ` (${c.reason})`}`,
-    { disabled: !c.reachable, title: c.kind === 'main' ? `Spark Console keeps this model running for ${ASSISTANT}` : '' }));
-  const onDisk = role === 'chat' ? [
-    ...(choices?.presets || []).filter(p => !p.current).map(p => opt(`preset:${p.id}`, `${p.title} · saved setup`)),
-    // A Library model that already has a saved setup (made the last time it was Sparkie's) is listed once, as that setup.
-    ...(choices?.library || []).filter(x => !(choices.presets || []).some(p => p.id === `lib-${x.id}`))
-      .map(x => opt(`model:${x.id}`, `${x.title} · ${fmt.bytes(x.sizeBytes)}${x.onSparkieSpark ? '' : `, copied to ${nodeName(choices.sparkieSpark)} first`}`)),
-  ] : [];
-  const select = h('select', { class: 'select', 'aria-label': role === 'chat' ? `${ASSISTANT}’s model` : 'Model for apps', onchange: () => chooseMain(role, select.value, select) },
-    role === 'agents' ? opt('same', `Same as ${ASSISTANT}`) : null,
-    routeId === 'current' ? opt('current', `${route.title} · ${nodeName(route.node)}`) : null,
-    !choices ? opt(routeId, state.mainChoicesError ? 'Couldn’t load the list · retrying' : 'Loading…') : null,
-    running.length ? h('optgroup', { label: 'Running now' }, runningOpts) : null,
-    onDisk.length ? h('optgroup', { label: `On disk · starts on ${nodeName(choices.sparkieSpark)}` }, onDisk) : null);
-  select.value = routeId;
-  select.dataset.current = routeId;
-  return select;
-}
-
-async function chooseMain(role, value, select) {
-  const m = state.main.data, revert = () => { select.value = select.dataset.current; };
-  if (value.startsWith('preset:') || value.startsWith('model:')) {
-    const [kind, id] = [value.slice(0, value.indexOf(':')), value.slice(value.indexOf(':') + 1)];
-    const title = select.selectedOptions[0]?.textContent.split(' · ')[0] || id;
-    const job = await openMainPlan({
-      title: `Make ${title} ${ASSISTANT}’s model?`, confirm: 'Switch',
-      intro: `It replaces ${m.title} on ${nodeName(m.node)} and stays on. If it doesn’t start, ${ASSISTANT} goes back to ${m.title}.`,
-      query: `?${kind}=${encodeURIComponent(id)}`, submit: keep => capi('main/use', 'POST', { [kind]: id, keep }),
-    });
-    if (!job) revert();
-    return;
-  }
-  const choice = (state.mainChoices?.running || []).find(c => c.id === value);
-  if (role === 'chat' && value !== 'main') {
-    const ok = await dialog({
-      title: `Answer with ${choice?.title || 'this model'}?`, confirm: 'Use it',
-      description: `${ASSISTANT}’s chats go to ${choice?.title} on ${nodeName(choice?.node)}, which is already running. Nothing restarts.${m.healthy ? ` ${m.title} keeps running; stop it below if you don’t need it.` : ''}`,
-    });
-    if (!ok) { revert(); return; }
-  }
-  try {
-    await capi('main/route', 'POST', { role, choice: value });
-    toast(role === 'chat' ? `${ASSISTANT} now answers with ${choice?.title || m.title}` : value === 'same' ? `Apps use the same model as ${ASSISTANT}` : `Apps now use ${choice?.title || m.title}`);
-  } catch (e) {
-    toast(e.message, { kind: 'bad', timeout: 9000 });
-  }
-  await loadMain();
-}
-
-function mainState(m) {
-  if (!m.online) return ['Offline', 'bad'];
-  if (m.busy) return ['Changing…', 'info'];
-  if (m.state === 'running') return m.healthy ? ['Ready', 'ok'] : ['Loading', 'info'];
-  if (m.state === 'restarting') return ['Restarting', 'warn'];
-  if (m.state === 'missing') return ['Not started', ''];
-  return m.exitCode ? ['Stopped with an error', 'bad'] : ['Stopped', ''];
-}
-
-// Starting a model as Sparkie's own (the one it has, or a new one): what else on that Spark's GPU stops (each with
-// Keep running, like a deploy), any copy or download, then the start. Resolves with the job, or null if cancelled.
-async function openMainPlan({ title, confirm, intro, query = '', submit }) {
-  const keep = new Set();
-  let plan = null;
-  const body = h('div', { class: 'plan' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' }), 'Checking what’s running there…'));
-  const draw = () => {
-    const stops = plan.steps.filter(s => s.kind === 'stop');
-    const freed = stops.filter(s => !keep.has(s.container)).reduce((t, s) => t + s.gpuMiB * 2 ** 20, 0);
-    redraw(body,
-      stops.length ? h('div', { class: 'plan-steps' }, stops.map(s => h('label', { class: 'check-row' },
-        h('input', { type: 'checkbox', checked: !keep.has(s.container), onchange: e => { if (e.target.checked) keep.delete(s.container); else keep.add(s.container); draw(); } }),
-        h('span', {}, `Stop ${containerTitle(s.container)}`),
-        h('span', { class: 'muted' }, [s.reason, s.gpuMiB ? gb(s.gpuMiB * 2 ** 20) : null].filter(Boolean).join(' · '))))) : null,
-      h('p', { class: 'plan-sentence' }, planSentence(plan)),
-      memoryNote(plan, freed, 'Stop more first.'),
-      warnBanner(plan.warnings));
-  };
-  const job = await dialog({
-    title, wide: true, confirm,
-    body: [h('p', { class: 'muted' }, intro), body],
-    setup: ({ ok }) => {
-      ok.disabled = true;
-      capi(`main/plan${query}`).then(p => { plan = p; draw(); ok.disabled = false; })
-        .catch(e => set(body, h('div', { class: 'banner bad' }, icon('alert'), h('div', { class: 'banner-text' }, h('p', {}, e.message)))));
-    },
-    onConfirm: () => submit([...keep]),
-  });
-  if (job?.id) followServiceJob(job);
-  return job?.id ? job : null;
-}
-
-function openMainStart() {
-  const m = state.main.data;
-  return openMainPlan({
-    title: `Start ${m.title}?`, confirm: 'Start', submit: keep => capi('main/start', 'POST', { keep }),
-    intro: `It runs on ${nodeName(m.node)} and stays on: it restarts after a reboot, and starting other models never stops it.`,
-  });
-}
-
-async function stopMain() {
-  const m = state.main.data;
-  const ok = await dialog({
-    title: `Stop ${m.title}?`, confirm: 'Stop', danger: true,
-    description: `${ASSISTANT} can’t answer until it’s started again, and it stays off after a reboot.`,
-  });
-  if (!ok) return;
-  try { followServiceJob(await capi('main/stop', 'POST', {})); } catch (e) { toast(e.message, { kind: 'bad' }); }
-}
-
-async function stopDeployment(nodeId, dep) {
-  const ok = await dialog({
-    title: `Stop ${containerTitle(dep.container)} on ${dep.cluster ? dep.cluster.split('+').map(nodeName).join(' + ') : nodeName(nodeId)}?`, confirm: 'Stop', danger: true,
-    description: `${dep.cluster ? 'It stops on both Sparks. ' : ''}Requests in flight are cut off. The model stays on disk, so starting it again is quick.`,
-  });
-  if (!ok) return;
-  try { followServiceJob(await capi('stop', 'POST', { node: nodeId, container: dep.container })); } catch (e) { toast(e.message, { kind: 'bad' }); }
-}
-
-// The fastest run of a model that's been verified on these Sparks with this many of them (from deploys that came up healthy).
-const verifiedSpeed = (m, sparks) => (m?.verified || []).filter(v => v.sparks === sparks && v.best).sort((a, b) => b.best.decodeTokS - a.best.decodeTokS)[0] || null;
-const verifiedNote = (m, sparks) => { const v = verifiedSpeed(m, sparks); return v ? `verified ${v.best.decodeTokS} tokens/s here` : null; };
-
-// The steps after the stops, as one plain sentence: copy, download, start, and the memory it needs.
-function planSentence(p, engine) {
-  const parts = p.steps.filter(s => s.kind !== 'stop').map(s => (s.kind === 'copy' ? `copies ${fmt.bytes(s.bytes)} from ${nodeName(s.from)} first`
-    : s.kind === 'pull' ? `downloads the ${engineName(engine || s.engine)} image first` : `starts it with ${engineName(s.engine)} and waits until it answers`));
-  if (p.memory?.need) parts.push(p.memory.need < 1e9 ? 'needs under 1 GB' : `needs about ${gb(p.memory.need)}`);
-  return parts.length ? `${cap(parts.join(', '))}.` : '';
-}
-// "X stops", "X and Y stop", "X, Y and Z stop".
-const stopsText = names => `${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]} ${names.length > 1 ? 'stop' : 'stops'}`;
-// A plan's notes (what's protected, a busy port) in one quiet banner, not one per line.
-const warnBanner = list => (list.length ? h('div', { class: 'banner warn', style: { margin: '0' } }, icon('alert'),
-  h('div', { class: 'banner-text' }, list.map(w => h('p', {}, w)))) : null);
-// Only when memory is short: a note on what's missing.
-function memoryNote(p, freed, hint) {
-  const known = num(p.memory?.available), after = known ? p.memory.available + freed : null;
-  if (!known || !p.memory.need || after >= p.memory.need) return null;
-  return h('div', { class: 'banner warn', style: { margin: '0' } }, icon('alert'),
-    h('div', { class: 'banner-text' }, h('p', {}, `Needs about ${gb(p.memory.need)}, but only about ${gb(after)} would be free. ${hint}`)));
-}
-
-// Start a model from anywhere: pick one on disk, then the usual start dialog (best Spark, or the pair asked for, picked).
-async function openDeployPicker({ pair = null, button = null } = {}) {
-  if (!state.lib.data) await busy(button, loadLibrary);
-  if (!state.lib.data) { toast(state.lib.error || 'Couldn’t load the models. Try again.', { kind: 'bad' }); return; }
-  const models = (state.lib.data.library || []).filter(m => m.role !== 'draft');
-  if (!models.length) { toast('No models on your Sparks yet', { sub: 'Pick one under Find more; it downloads in one click.' }); go('models/find'); return; }
-  let picked = null;
-  // Each model says where it fits right now; what fits without stopping anything comes first.
-  const rows = new Map();
-  const list = h('div', { class: 'radio-cards' }, models.map(m => {
-    const fit = h('p', {}, fmt.bytes(m.sizeBytes), ' · ', h('span', { class: 'muted' }, 'checking where it fits…'));
-    const card = h('label', { class: 'radio-card' },
-      h('input', { type: 'radio', name: 'deploy-model', value: m.name, onchange: () => { picked = m; } }),
-      h('div', {}, h('strong', {}, modelTitle(m)), fit));
-    rows.set(m.name, { m, card, fit });
-    return card;
-  }));
-  const both = nodes => nodes.map(nodeName).join(' + ');
-  // Opened for a pair, each model says what matters there: whether it needs both, not where it fits alone.
-  const fitText = o => (pair ? (o.across ? [`Running across ${both(o.across)}`, 2] : o.error ? [`Can’t check right now: ${o.error}`, 4]
-    : o.needsTwo ? ['Needs two Sparks', 0] : o.best ? ['Also fits on one Spark', 1] : ['No single Spark has room for it now', 0])
-    : o.across ? [`Running across ${both(o.across)}`, 2] : o.running.length ? [`Running on ${o.running.map(nodeName).join(', ')}`, 2]
-      : o.best && !o.best.stop.length ? [`Fits on ${nodeName(o.best.node)} now`, 0]
-        : o.best ? [`Fits on ${nodeName(o.best.node)} if ${stopsText(o.best.stop.map(containerTitle))}`, 1]
-          : o.pair ? [`Fits across ${both(o.pair.nodes)}${o.pair.stop.length ? ` if ${stopsText(o.pair.stop.map(x => containerTitle(x.container)))}` : ''}`, 1]
-            : o.error ? [`Can’t check right now: ${o.error}`, 4]
-              : o.needsTwo ? ['Too big for one Spark · needs two linked Sparks, and none have room now', 3] : ['Doesn’t fit on any Spark right now', 3]);
-  capi('deploy/options').then(r => {
-    const order = [];
-    for (const o of r.models || []) {
-      const row = rows.get(o.model);
-      if (!row) continue;
-      const [text, rank] = fitText(o);
-      set(row.fit, `${fmt.bytes(row.m.sizeBytes)} · ${text}`);
-      // Across two Sparks, the models too big for one come first: that's what a pair is for.
-      order.push([pair ? (o.needsTwo ? 0 : 10) + rank : rank, row.card]);
-    }
-    order.sort((a, b) => a[0] - b[0]).forEach(([, card]) => list.append(card));
-  }, e => rows.forEach(row => set(row.fit, `${fmt.bytes(row.m.sizeBytes)} · on ${row.m.copies.map(nodeName).join(', ')}`)));
-  const ok = await dialog({
-    title: pair ? `Start a model across ${pair.map(nodeName).join(' + ')}` : 'Start a model', confirm: 'Next', wide: true,
-    description: pair ? 'Models too big for one Spark are listed first. A smaller one also runs across both, usually faster.' : null, body: [list],
-    onConfirm: () => { if (!picked) throw new Error('Pick a model.'); return true; },
-  });
-  if (ok && picked) openDeploy(picked, { pair });
-}
-
-// From Find more, a start can name a setup or a verified run (with how many Sparks it's for); a setup that needs the
-// model to run its own code shows a checkbox that must be ticked.
-async function openDeploy(model, { pair = null, setup = null, verified = null, sparks: only = null, remoteCode = false } = {}) {
-  const d = state.lib.data;
-  if (!d) return;
-  const keep = new Set(), fits = new Map(), cards = new Map();
-  let chosen = null, current = null, token = 0, okButton = null;
-  const plan = h('div', { class: 'plan' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' }), 'Finding where it fits best…'));
-  const sparks = d.sparks.filter(sp => sp.online && node(sp.id) && mine(sp.id));
-  const both = ids => ids.map(nodeName).join(' + ');
-  // One short line per Spark, then per pair of linked Sparks: whether it fits and what would have to stop.
-  // The best fit is pre-selected (or the pair this was opened for).
-  const picker = h('div', { class: 'radio-cards' }, sparks.map(sp => {
-    const n = node(sp.id);
-    const line = h('p', {}, 'Checking…'), tag = h('span', { class: 'tag', hidden: true }, 'Best fit');
-    const input = h('input', { type: 'radio', name: 'deploy-spark', value: sp.id, onchange: () => pick(sp.id) });
-    const card = h('label', { class: 'radio-card' }, input, h('div', {}, h('strong', {}, n.name, ' ', tag), line));
-    cards.set(sp.id, { card, line, tag, input, copyNote: sp.models.includes(model.name) ? null : `copies ${fmt.bytes(model.sizeBytes)} over first` });
-    return card;
-  }));
-  const pairHead = h('p', { class: 'muted', hidden: true, style: { margin: '4px 0 0', 'font-size': '12.5px' } }, 'Or across two linked Sparks');
-  const pairBox = h('div', { class: 'radio-cards' });
-  // Where this model runs now: alone on one Spark, or across a pair (named by its group, e.g. "spark2+spark3").
-  const live = d.sparks.flatMap(sp => sp.deployments.filter(x => x.model === model.name && x.state === 'running' && !x.rank).map(x => ({ node: sp.id, group: x.cluster })));
-  const alone = live.filter(x => !x.group).map(x => x.node), across = live.find(x => x.group)?.group || null;
-  const sameGroup = ids => across && across.split('+').sort().join() === [...ids].sort().join();
-  // A deploy only stops things on the Sparks it uses: overlapping where the model runs now moves it, otherwise it's a
-  // second copy and the first keeps running.
-  const elsewhere = ids => {
-    if (across) return across.split('+').some(id => ids.includes(id)) ? `stops it across ${both(across.split('+'))} first` : `a second copy; it keeps running across ${both(across.split('+'))}`;
-    const here = alone.filter(id => ids.includes(id)), there = alone.filter(id => !ids.includes(id));
-    return here.length && ids.length > 1 ? `moves it from ${both(here)} alone to both` : there.length ? `a second copy; it keeps running on ${both(there)}` : null;
-  };
-  const fitLine = f => (f.error ? `Can’t check right now: ${f.error}`
-    : alone.includes(f.node) ? 'Already running here · starting it again restarts it'
-      : !f.fits ? (f.plan?.sparkieHere ? `Not enough room next to ${ASSISTANT}’s model` : 'Not enough memory, even if everything stops')
-        : [f.stop.length ? `Fits if ${stopsText(f.stop.map(containerTitle))}` : 'Fits · nothing has to stop', verifiedNote(model, 1), elsewhere([f.node])].filter(Boolean).join(' · '));
-  const pairLine = p => (p.error ? `Can’t use them together right now: ${p.error}`
-    : sameGroup(p.nodes) ? 'Already running across both · starting it again restarts it'
-      : !p.fits ? (p.sparkie?.length ? `Not enough room next to ${ASSISTANT}’s model on ${both(p.sparkie)}` : 'Not enough memory across both, even if everything stops')
-        : [p.stop.length ? `Fits across both if ${stopsText(p.stop.map(x => `${containerTitle(x.container)} on ${nodeName(x.node)}`))}` : 'Fits across both · nothing has to stop',
-          verifiedNote(model, 2), elsewhere(p.nodes)].filter(Boolean).join(' · '));
-  async function rank() {
-    try {
-      const r = await capi(`deploy/plans?model=${encodeURIComponent(model.name)}`);
-      for (const f of r.sparks) {
-        const c = cards.get(f.node);
-        if (!c) continue;
-        if (only === 2) { c.card.remove(); continue; }
-        fits.set(f.node, f);
-        c.line.textContent = [fitLine(f), f.error ? null : c.copyNote].filter(Boolean).join(' · ');
-        c.tag.hidden = f.node !== r.recommended;
-        picker.append(c.card);
-      }
-      for (const p of only === 1 ? [] : r.pairs || []) {
-        const id = p.nodes.join('+'), tag = h('span', { class: 'tag', hidden: id !== r.recommended }, 'Best fit');
-        const input = h('input', { type: 'radio', name: 'deploy-spark', value: id, disabled: Boolean(p.error), onchange: () => pick(id) });
-        const line = h('p', {}, [pairLine(p), !p.error && p.copy ? 'copies the model over first' : null].filter(Boolean).join(' · '));
-        const card = h('label', { class: 'radio-card' }, input, h('div', {}, h('strong', {}, both(p.nodes), ' ', tag), line));
-        cards.set(id, { card, line, tag, input });
-        fits.set(id, p);
-        pairBox.append(card);
-      }
-      pairHead.hidden = !(r.pairs || []).length;
-      const want = pair ? [pair.join('+'), [...pair].reverse().join('+')].find(id => cards.has(id) && !fits.get(id)?.error) : null;
-      const firstPair = (r.pairs || []).find(p => p.fits && !p.error)?.nodes.join('+');
-      const first = want || (only === 2 ? firstPair : only === 1 ? (r.recommended && !r.recommended.includes('+') ? r.recommended : r.sparks.find(f => !f.error)?.node) : r.recommended || r.sparks.find(f => !f.error)?.node);
-      if (first && !chosen) { cards.get(first).input.checked = true; pick(first); }
-      else if (!first) set(plan, h('p', { class: 'muted' }, 'No online Spark can take it right now.'));
-    } catch (e) {
-      for (const c of cards.values()) c.line.textContent = c.copyNote || 'already has it';
-      set(plan, h('p', { class: 'muted' }, 'Pick a Spark to see exactly what will happen. Nothing changes until you click Start.'));
-    }
-  }
-
-  async function pick(id) {
-    chosen = id;
-    const f = fits.get(id), across = id.includes('+');
-    if (!across && f?.plan) {
-      // Keep everything the model doesn't need stopped; the plan still lets you change each one.
-      current = f.plan;
-      keep.clear();
-      for (const s of f.plan.steps) if (s.kind === 'stop' && !f.stop.includes(s.container)) keep.add(s.container);
-      drawPlan();
-      return;
-    }
-    const mine = ++token;
-    okButton.disabled = true;
-    set(plan, h('div', { class: 'empty' }, h('span', { class: 'spinner' }), across ? 'Checking both Sparks and their cable…' : 'Checking what’s running there…'));
-    try {
-      const p = across
-        ? await capi(`deploy/cluster-plan?model=${encodeURIComponent(model.name)}&nodes=${encodeURIComponent(id.split('+').join(','))}`)
-        : await capi(`deploy/plan?model=${encodeURIComponent(model.name)}&node=${encodeURIComponent(id)}`);
-      if (mine !== token) return;
-      current = p;
-      keep.clear();
-      if (across) for (const m of p.members) for (const s of m.steps) if (s.kind === 'stop' && !m.stop.includes(s.container)) keep.add(s.container);
-      drawPlan();
-    } catch (e) {
-      if (mine === token) set(plan, h('div', { class: 'banner bad' }, icon('alert'), h('div', { class: 'banner-text' }, h('p', {}, e.message))));
-    }
-  }
-
-  const stopRow = (s, where) => h('label', { class: 'check-row' },
-    h('input', { type: 'checkbox', checked: !keep.has(s.container), onchange: e => { if (e.target.checked) keep.delete(s.container); else keep.add(s.container); drawPlan(); } }),
-    h('span', {}, `Stop ${containerTitle(s.container)}${where ? ` on ${nodeName(where)}` : ''}`,
-      s.group ? h('span', { class: 'muted' }, ` (runs across ${both(s.group.split('+'))}; both parts stop)`) : null),
-    h('span', { class: 'muted' }, [s.reason, s.gpuMiB ? gb(s.gpuMiB * 2 ** 20) : null, !s.gpuMiB && s.required ? 'has to stop' : null].filter(Boolean).join(' · ')));
-
-  // Short of memory with what's ticked to stop, and whether stopping everything listed would be enough.
-  const freedBy = (steps, all) => steps.filter(s => s.kind === 'stop' && (all || !keep.has(s.container))).reduce((t, s) => t + s.gpuMiB * 2 ** 20, 0);
-  const shortOf = (p, freed) => num(p.memory?.available) && p.memory.need > 0 && p.memory.available + freed < p.memory.need;
-  const fixHint = (p, where) => (shortOf(p, freedBy(p.steps, true)) ? `Pick ${where ? 'other Sparks' : 'another Spark'}.` : `Tick more above to stop them, or pick ${where ? 'other Sparks' : 'another Spark'}.`);
-  function drawPlan() {
-    const p = current;
-    if (p.members) okButton.disabled = p.members.some(m => shortOf(m, freedBy(m.steps)));
-    else okButton.disabled = shortOf(p, freedBy(p.steps));
-    if (p.members) {
-      // Across two Sparks: what stops on each, then one sentence for the rest.
-      const [a, b] = p.nodes;
-      const rest = [
-        ...p.members.flatMap(m => m.steps.filter(s => s.kind === 'copy').map(s => `copies ${fmt.bytes(s.bytes)} to ${nodeName(m.node)}`)),
-        ...p.members.filter(m => m.steps.some(s => s.kind === 'pull')).map(m => `downloads the vLLM image on ${nodeName(m.node)}`),
-        `starts it on both over their direct cable, with ${nodeName(a)} answering requests`, `needs about ${gb(p.each)} on each`,
-      ];
-      redraw(plan,
-        h('div', { class: 'plan-steps' }, p.members.flatMap(m => m.steps.filter(s => s.kind === 'stop').map(s => stopRow(s, m.node)))),
-        h('p', { class: 'plan-sentence' }, `${cap(rest.join(', '))}.`),
-        p.members.map(m => memoryNote(m, freedBy(m.steps), `That’s on ${nodeName(m.node)}. ${fixHint(m, true)}`)),
-        warnBanner([...new Set(p.members.flatMap(m => m.warnings.map(w => `${nodeName(m.node)}: ${w}`)))]));
-      return;
-    }
-    const stops = p.steps.filter(s => s.kind === 'stop');
-    const freed = stops.filter(s => !keep.has(s.container)).reduce((t, s) => t + s.gpuMiB * 2 ** 20, 0);
-    redraw(plan,
-      stops.length ? h('div', { class: 'plan-steps' }, stops.map(s => stopRow(s, null))) : null,
-      h('p', { class: 'plan-sentence' }, planSentence(p, p.model.engine)),
-      memoryNote(p, freed, fixHint(p, false)),
-      warnBanner(p.warnings));
-  }
-
-  if (only === 2) picker.hidden = true;
-  const allow = h('input', { type: 'checkbox' });
-  const how = { ...(setup ? { setup } : {}), ...(verified ? { verified } : {}), ...(remoteCode ? { allowRemoteCode: true } : {}) };
-  const job = await dialog({
-    title: `Start ${modelTitle(model)}`, wide: true, confirm: 'Start',
-    description: setup ? 'With the setup you picked.' : verified ? 'With the settings it ran with before.' : null,
-    body: [h('div', { class: 'field' }, 'Where should it run?', picker, pairHead, pairBox), plan,
-      remoteCode ? h('label', { class: 'check-row' }, allow, h('span', {}, 'Let this model run its own code (this setup needs it)')) : null],
-    setup: ({ ok }) => { okButton = ok; ok.disabled = true; rank(); },
-    onConfirm: () => {
-      if (remoteCode && !allow.checked) throw new Error('This setup needs the model to run its own code. Tick the box to allow it.');
-      // Exactly what the plan on screen stops, so anything that starts using the GPU meanwhile isn't stopped unseen.
-      const stopping = (steps, node) => steps.filter(s => s.kind === 'stop' && !keep.has(s.container)).map(s => `${node}/${s.container}`);
-      const stop = current?.members ? current.members.flatMap(m => stopping(m.steps, m.node)) : current ? stopping(current.steps, chosen) : [];
-      return chosen.includes('+')
-        ? capi('deploy/cluster', 'POST', { model: model.name, nodes: chosen.split('+'), keep: [...keep], stop, ...how })
-        : capi('deploy', 'POST', { model: model.name, node: chosen, keep: [...keep], stop, ...how });
-    },
-  });
-  if (job?.id) followServiceJob(job);
-}
-
-/* ───────── models page: Find more ───────── */
-// Every model worth running on the Sparks (the catalog of recipes), its versions (quantizations), and the setups
-// people published with their speeds; "Verified" marks what has actually run on these Sparks. Filters by how many
-// Sparks it needs (one, or a linked pair), plus a kind.
-const RECIPE_FILTERS = ['All', '1 Spark', '2 Sparks', 'Verified'];
-// The number of Sparks picked in the filter, or null for All and Verified.
-const wantedSparks = () => { const x = /^(\d) Spark/.exec(state.recipeFilter); return x ? Number(x[1]) : null; };
-// Hugging Face links or org/model names, as pasted (an empty list when it's words to search for).
-const HF_LINK = /^(https?:\/\/)?(www\.)?(huggingface\.co|hf\.co)\//i;
-function hfRepos(text) {
-  const words = String(text || '').trim().split(/[\s,;]+/).filter(Boolean);
-  const ok = words.length && words.every(w => (HF_LINK.test(w) && /^[\w.-]+\/[\w.-]+/.test(w.replace(HF_LINK, ''))) || /^[\w.-]+\/[\w.-]+$/.test(w));
-  return ok ? [...new Set(words.map(w => w.replace(HF_LINK, '').split(/[/?#]/).slice(0, 2).join('/')))] : [];
-}
-const RECIPE_KINDS = [['all', 'All kinds'], ['chat', 'Chat'], ['coding', 'Coding'], ['reasoning', 'Reasoning'], ['vision', 'Vision'],
-  ['rag', 'Embeddings & rerank'], ['small', 'Small & fast']];
-const kindOf = (m, k) => k === 'all' || (k === 'rag' ? m.categories.some(c => ['embedding', 'rerank'].includes(c)) : m.categories.includes(k));
-const tokS = n => (num(n) ? `${Math.round(n)} tokens/s` : null);
-const sparksText = n => `${n} Spark${n > 1 ? 's' : ''}`;
-// Fastest published speed for a model on n Sparks (credible sources); your own runs show separately.
-function bestSpeed(m, n) {
-  const theirs = m.setups.filter(st => st.sparks === n && num(st.perf?.decodeTokS) && st.credibility !== 'low').sort((a, b) => b.perf.decodeTokS - a.perf.decodeTokS)[0];
-  return theirs ? { speed: theirs.perf.decodeTokS, verified: false } : null;
-}
-const yourSpeed = m => (m.verified || []).filter(v => v.best).sort((a, b) => b.best.decodeTokS - a.best.decodeTokS)[0] || null;
-// The speed numbers besides one user's decode speed, in plain words: prefill, several users at once, first token.
-const bigNum = n => Math.round(n).toLocaleString();
-const perfBits = (p = {}) => [
-  num(p.prefillTokS) ? `prefill ${bigNum(p.prefillTokS)} tokens/s` : null,
-  num(p.aggregateTokS) ? `${bigNum(p.aggregateTokS)} tokens/s ${p.concurrency > 1 ? `with ${p.concurrency} users` : 'with several users'}` : null,
-  num(p.ttftMs) ? (p.ttftMs < 100 ? 'first token in under 0.1 s' : `first token in ${(p.ttftMs / 1000).toFixed(1)} s`) : null,
-].filter(Boolean);
-// How precise a quantization is, roughly: 16-bit > 8-bit > 5/6-bit > 4-bit.
-// The weights' own format decides, not a layer kept in higher precision ("NVFP4, BF16 lm_head" is 4-bit).
-const precisionOf = q => { const s = String(q || '').toUpperCase(); return /NVFP4|MXFP4|FP4|INT4|W4|\bI?Q[234]|AWQ|GPTQ|4-?BIT/.test(s) ? 1 : /\bQ[56]/.test(s) ? 2 : /FP8|INT8|\bQ8|W8|8-?BIT/.test(s) ? 3 : /BF16|FP16|\bF16\b/.test(s) ? 4 : 0; };
-// A model's options side by side: for each version and number of Sparks, the fastest known way to run it (your own
-// runs first, then published setups), plus forum reports, plus versions nobody has published a setup for yet.
-// With n, only the ways on n Sparks, and the trade-offs are tagged among those.
-function modelOptions(m, n = null) {
-  const byKey = new Map(), variant = repo => m.variants.find(v => repoKey(v.repo) === repoKey(repo));
-  // Per row, the better of two: one with a speed beats one without; then your own measured run; then the faster.
-  const score = o => [num(o.speed) ? 1 : 0, o.mine ? 1 : 0, o.speed || 0];
-  const better = (a, b) => { const x = score(a), y = score(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
-  const offer = (key, o) => { const cur = byKey.get(key); if (!cur || better(o, cur) > 0) byKey.set(key, o); };
-  // Your run of a published setup is that setup's row; your run with other settings is a row of its own, so it never
-  // hides a faster one-click recipe for the same version.
-  const mineIds = new Set((m.verified || []).map(r => r.setupId).filter(Boolean));
-  for (const r of m.verified || []) if (r.repo) offer(`${repoKey(r.repo)}|${r.sparks}|${r.setupId || 'mine'}`, { repo: r.repo, v: variant(r.repo), sparks: r.sparks, engine: r.engine, speed: r.best?.decodeTokS ?? null, perf: { ttftMs: r.best?.ttftMs }, mine: true, run: r });
-  for (const st of m.setups) {
-    if (!st.report && !st.repo) continue;
-    // A one-click setup and a faster hand-built one for the same version are both worth seeing.
-    offer(st.report ? `report|${st.id}` : `${repoKey(st.repo)}|${st.sparks}|${mineIds.has(st.id) ? st.id : st.deployable ? 1 : 0}`, { repo: st.repo, v: st.repo ? variant(st.repo) : null, quant: st.quant, sparks: st.sparks, engine: st.engine, speed: st.perf?.decodeTokS ?? null, perf: st.perf || {}, setup: st, report: Boolean(st.report) });
-  }
-  // Versions with nothing published still run, with the engine's default settings.
-  for (const v of m.variants) if (v.sparks && ![...byKey.values()].some(o => !o.report && o.repo && repoKey(o.repo) === repoKey(v.repo))) offer(`${repoKey(v.repo)}|${v.sparks}|0`, { repo: v.repo, v, sparks: v.sparks, engine: v.engine || null, speed: null, perf: {} });
-  // A run of yours that was never measured adds nothing next to other rows for that version (it's under Deployed before).
-  const all = [...byKey.values()];
-  const list = all.filter(o => o.sparks >= 1 && o.sparks <= 4 && (!n || o.sparks === n))
-    .filter(o => !(o.mine && !num(o.speed) && all.some(x => x !== o && repoKey(x.repo) === repoKey(o.repo) && x.sparks === o.sparks)))
-    .sort((a, b) => a.sparks - b.sparks || (b.speed || 0) - (a.speed || 0));
-  // The trade-offs, each on one option: fastest (credible, runnable), smallest, most precise.
-  const tag = (o, t) => { if (o && !o.tags.includes(t)) o.tags.push(t); };
-  for (const o of list) o.tags = [];
-  const runnable = list.filter(o => !o.report), q = o => precisionOf(o.v?.quant || o.quant);
-  const fast = runnable.filter(o => num(o.speed) && o.setup?.credibility !== 'low').sort((a, b) => b.speed - a.speed);
-  if (fast.length > 1) tag(fast[0], 'Fastest');
-  const sized = runnable.filter(o => num(o.v?.needGB) && !(o.engine === 'llama.cpp' && !o.v.quants)).sort((a, b) => a.v.needGB - b.v.needGB);
-  if (sized.length > 1 && sized[0].v.needGB < sized[sized.length - 1].v.needGB) tag(sized[0], 'Smallest');
-  const precise = runnable.filter(o => q(o) > 0).sort((a, b) => q(b) - q(a) || (b.speed || 0) - (a.speed || 0));
-  if (precise.length > 1 && q(precise[0]) > q(precise[precise.length - 1])) tag(precise[0], 'Most precise');
-  return list;
-}
-// Fewest Sparks it fits: from the versions' sizes when known, else from the setups people ran.
-const minSparks = m => {
-  const known = m.variants.map(v => v.sparks).filter(Boolean);
-  return known.length ? Math.min(...known) : Math.min(99, ...m.setups.map(st => st.sparks));
-};
-
-function findMoreTab(box) {
-  const r = state.recipes;
-  if (!RECIPE_FILTERS.includes(state.recipeFilter)) state.recipeFilter = 'All';
-  // One box: words filter the list (Enter searches Hugging Face too); a Hugging Face link or org/model name is added.
-  const search = h('input', { class: 'input', type: 'search', placeholder: 'Search, or paste a Hugging Face link', 'aria-label': 'Search models, or paste a Hugging Face link', value: state.recipeQuery,
-    oninput: () => { state.recipeQuery = search.value; draw(); },
-    onkeydown: e => { if (e.key !== 'Enter') return; e.preventDefault(); if (owner() && hfRepos(state.recipeQuery).length) addLinks(); else if (canRun()) searchHub(); } });
-  // Hugging Face search: Sparkie turns the words into search terms; the service reads the real sizes and formats.
-  async function searchHub() {
-    const q = state.recipeQuery.trim();
-    if (q.length < 2) return;
-    state.recipeSearch = { q, loading: true };
-    draw();
-    try { state.recipeSearch = { q, data: await capi(`recipes/search?q=${encodeURIComponent(q)}`) }; } catch (e) { state.recipeSearch = { q, error: e.message }; }
-    draw();
-  }
-  // Links (owner): each is added to the list, then Spark Console looks for setups that run it on DGX Spark.
-  async function addLinks(button = null) {
-    const text = state.recipeQuery.trim();
-    const job = await busy(button, () => capi('recipes/add-list', 'POST', { text }));
-    if (!job?.id) return;
-    state.recipeQuery = search.value = '';
-    draw();
-    followServiceJob(job);
-  }
-  const kind = h('select', { class: 'select', 'aria-label': 'Kind', onchange: () => { state.recipeKind = kind.value; draw(); } },
-    RECIPE_KINDS.map(([v, t]) => h('option', { value: v, selected: v === state.recipeKind }, t)));
-  const filters = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Sparks' });
-  const body = h('div', { class: 'stack' });
-  put(box,
-    h('div', { class: 'files-bar find-bar' }, search, kind, h('div', { class: 'filter-scroll' }, filters)),
-    body);
-
-  function draw() {
-    redraw(filters, RECIPE_FILTERS.map(f => h('button', { type: 'button', 'aria-pressed': String(state.recipeFilter === f), onclick: () => { state.recipeFilter = f; draw(); } }, f)));
-    if (r.missing) { redraw(body, serviceMissing('The model list')); return; }
-    if (!r.data) {
-      redraw(body, r.error ? failBanner('Couldn’t load the model list', r.error, loadRecipes) : h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
-      return;
-    }
-    const d = r.data, typed = state.recipeQuery.trim(), repos = hfRepos(typed), f = state.recipeFilter;
-    // A pasted link finds its model in the list too, by its org/model name.
-    const terms = repos.length ? repos.map(repoKey) : typed ? [typed.toLowerCase()] : [];
-    const has = text => !terms.length || terms.some(t => text.toLowerCase().includes(t));
-    const showAll = () => terms.length > 0 || f !== 'All' || state.recipeKind !== 'all' || state.recipeOpen.has('*all');
-    const sparksWanted = wantedSparks();
-    const matches = m => has(`${m.title} ${m.family} ${m.about || ''} ${m.variants.map(v => v.repo).join(' ')}`)
-      && kindOf(m, state.recipeKind)
-      && (!sparksWanted || m.setups.some(st => st.sparks === sparksWanted) || (sparksWanted === minSparks(m)))
-      && (f !== 'Verified' || (m.verified || []).length);
-    // Within a rank: what's on your Sparks or verified first, then what people run most.
-    const here = m => ((m.verified || []).length ? 2 : 0) + (m.variants.some(v => (v.onDisk || []).length) ? 1 : 0);
-    const models = d.models.filter(matches).sort((a, b) => b.rank - a.rank || here(b) - here(a) || b.setups.length - a.setups.length);
-    const yours = [...(d.models.flatMap(m => (m.verified || []).map(v => ({ ...v, catalogTitle: m.title })))), ...(d.yours || [])]
-      .filter(v => has(`${v.title} ${v.repo}`)).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
-    const hs = state.recipeSearch;
-    const next = owner() && repos.length
-      ? h('button', { class: 'btn primary', type: 'button', title: 'It’s added to the list, then Spark Console looks for setups that run it on DGX Spark.', onclick: e => addLinks(e.currentTarget) },
-        icon('plus'), repos.length === 1 ? `Add ${repos[0]}` : `Add ${repos.length} models`)
-      : canRun() && typed.length >= 2 && (!hs || hs.q !== typed) ? h('button', { class: 'btn', type: 'button', onclick: searchHub }, icon('search'), `Search Hugging Face for “${typed}”`) : null;
-    redraw(body,
-      next ? h('div', {}, next) : null,
-      hs ? hubSection(hs) : null,
-      yours.length && (f === 'All' || f === 'Verified') ? h('section', {},
-        h('div', { class: 'section-head' }, h('h2', {}, 'Your recipes'), h('span', { class: 'muted' }, 'Started before, with the settings they ran with')),
-        h('div', { class: 'card' }, h('div', { class: 'rows' }, yours.map(yourRow)))) : null,
-      h('section', {},
-        h('div', { class: 'section-head' }, h('h2', {}, 'All models'), h('span', { class: 'muted' }, `${models.length} of ${d.models.length}`)),
-        models.length ? h('div', { class: 'rc-list' }, (showAll() ? models : models.slice(0, 12)).map(modelRow)) : h('div', { class: 'card' }, empty('book', 'No matching models', null)),
-        !showAll() && models.length > 12 ? h('button', { class: 'btn', type: 'button', style: { 'margin-top': '10px' }, onclick: () => { state.recipeOpen.add('*all'); draw(); } }, `Show all ${models.length}`) : null));
-  }
-
-  function hubSection(hs) {
-    const head = h('div', { class: 'section-head' }, h('h2', {}, 'From Hugging Face'),
-      hs.data ? h('span', { class: 'muted' }, `searched ${hs.data.terms.map(t => `“${t}”`).join(', ')}${hs.data.by === 'sparkie' ? ` (terms from ${ASSISTANT})` : ''}`) : null,
-      h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { state.recipeSearch = null; draw(); } }, 'Clear'));
-    if (hs.loading) return h('section', {}, head, h('div', { class: 'card' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' }), 'Searching…')));
-    if (hs.error) return h('section', {}, head, failBanner('Couldn’t search Hugging Face', hs.error, () => searchHub()));
-    const results = hs.data.results;
-    return h('section', {}, head, results.length ? h('div', { class: 'rc-list' }, results.map(res => h('article', { class: 'card rc-model' },
-      h('div', { class: 'rc-head', style: { cursor: 'default' } },
-        h('div', { class: 'rc-title' }, h('strong', {}, res.title),
-          res.inRecipes ? h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { state.recipeOpen.add(res.inRecipes.id); state.recipeOpen.add('*all'); state.recipeSearch = null; state.recipeQuery = ''; search.value = ''; draw(); } }, 'In the list', icon('chevronRight'))
-            : owner() ? h('button', { class: 'btn sm primary', type: 'button', onclick: e => busy(e.currentTarget, () => addFound(res)) }, icon('plus'), 'Add') : null)),
-      h('div', { class: 'rc-detail' }, h('div', { class: 'rows' }, res.versions.slice(0, 5).map(v => h('div', { class: 'row' },
-        h('div', { class: 'row-main' }, h('div', { class: 'row-text' },
-          h('div', { class: 'row-title' }, h('a', { href: `https://huggingface.co/${v.repo}`, target: '_blank', rel: 'noopener noreferrer' }, v.repo)),
-          h('div', { class: 'row-sub' }, [v.quant, v.sizeGB ? `${Math.round(v.sizeGB)} GB` : null, v.sparks ? (v.sparks === 1 ? 'fits 1 Spark' : `needs ${v.sparks} Sparks`) : null,
-            v.gated ? 'license to accept' : null, `${v.downloads >= 1e6 ? `${(v.downloads / 1e6).toFixed(1)}M` : v.downloads >= 1e3 ? `${Math.round(v.downloads / 1e3)}k` : v.downloads} downloads`].filter(Boolean).join(' · ')))))))))))
-      : h('div', { class: 'card' }, empty('search', 'Nothing that fits your Sparks matched', 'Try a model family name, like “Qwen3-Coder” or “gemma-4”, or paste its Hugging Face link.')));
-  }
-  async function addFound(res) {
-    try {
-      const added = await capi('recipes/add', 'POST', { title: res.title, repos: res.versions.slice(0, 6).map(v => v.repo) });
-      toast(`Added ${res.title}`, { sub: added.job ? 'Looking for setups that run it on DGX Spark…' : null });
-      if (added.job) followServiceJob(added.job);
-      await loadRecipes();
-      res.inRecipes = { id: (state.recipes.data.models.find(m => m.variants.some(v => res.versions.some(x => repoKey(x.repo) === repoKey(v.repo)))) || {}).id, title: res.title };
-      draw();
-    } catch (e) { toast(e.message, { kind: 'bad', timeout: 9000 }); }
-  }
-
-  function yourRow(v) {
-    const lib = (state.lib.data?.library || []).find(m => m.name === v.model || repoKey(m.repo) === repoKey(v.repo));
-    const main = state.main.data, sparkieRuns = main?.healthy && repoKey(main.model) === repoKey(v.repo || v.model);
-    const runningOn = sparkieRuns ? main.node : lib && state.lib.data.sparks.find(sp => sp.deployments.some(x => x.model === lib.name && x.state === 'running'))?.id;
-    return h('div', { class: 'row' },
-      h('div', { class: 'row-main' }, h('span', { class: 'row-icon ok' }, icon('check')),
-        h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, v.title),
-          h('div', { class: 'row-sub' }, [sparksText(v.sparks), engineName(v.engine), v.file, v.best ? tokS(v.best.decodeTokS) : null, ...perfBits({ ttftMs: v.best?.ttftMs }), `last ${fmt.when(v.lastAt)}`, v.runs > 1 ? `${v.runs} runs` : null].filter(Boolean).join(' · ')))),
-      h('div', { class: 'row-side' }, runningOn ? pill(`Running on ${nodeName(runningOn)}`, 'ok') : canRun() && lib && v.sparks <= 2
-        ? h('button', { class: 'btn sm primary', type: 'button', onclick: () => startModel(lib, { verified: v.key, sparks: v.sparks }) }, icon('play'), 'Start')
-        : h('span', { class: 'muted', style: { 'font-size': '12.5px' } }, lib ? '' : 'not on disk now')));
-  }
-
-  function modelRow(m) {
-    const open = state.recipeOpen.has(m.id), toggle = () => { if (open) state.recipeOpen.delete(m.id); else state.recipeOpen.add(m.id); draw(); };
-    const fits = minSparks(m), where = [...new Set(m.variants.flatMap(v => v.onDisk || []))];
-    // The headline speed is on the fewest Sparks it fits (else the fewest with a number); the rest are inside.
-    // Under a Spark filter, the speed is the one on that many Sparks.
-    const want = wantedSparks();
-    const speeds = [1, 2, 3, 4].map(n => [n, bestSpeed(m, n)]).filter(([, b]) => b);
-    const top = want ? speeds.find(([n]) => n === want) : speeds.find(([n]) => n === fits) || speeds[0];
-    const mineBest = want ? (m.verified || []).filter(v => v.best && v.sparks === want).sort((a, b) => b.best.decodeTokS - a.best.decodeTokS)[0] || null : yourSpeed(m);
-    return h('article', { class: 'card rc-model' },
-      h('button', { class: 'rc-head', type: 'button', 'aria-expanded': String(open), onclick: toggle },
-        h('div', { class: 'rc-title' }, h('strong', {}, m.title), pill(m.family, 'plain'), (m.verified || []).length ? h('span', { class: 'tag' }, 'Verified') : null),
-        m.about ? h('p', {}, m.about) : null,
-        h('div', { class: 'recipe-meta' },
-          fits < 99 ? h('span', { class: 'chip' }, icon('server'), fits === 1 ? 'Fits 1 Spark' : m.setups.some(st => st.sparks < fits) ? `Usually ${sparksText(fits)}` : `Needs ${fits} Sparks`) : null,
-          top || mineBest ? h('span', { class: 'chip', title: mineBest ? `Measured on your Sparks: ${tokS(mineBest.best.decodeTokS)} on ${sparksText(mineBest.sparks)}` : null }, icon('zap'),
-            top ? `≈ ${tokS(top[1].speed)}${top[0] !== fits ? ` on ${sparksText(top[0])}` : ''}` : `${tokS(mineBest.best.decodeTokS)} measured here`) : null,
-          where.length ? h('span', { class: 'chip ok' }, icon('disk'), `On ${where.map(nodeName).join(', ')}`) : null,
-          h('span', { class: 'muted rc-more' }, icon(open ? 'chevronDown' : 'chevronRight')))),
-      open ? modelDetail(m) : null);
-  }
-
-  // The ways to run it, side by side: version, Sparks, memory, speeds and what runs it, with the trade-offs tagged.
-  // Buttons only where a click gives what the row shows: a one-click setup, your own run, or default settings.
-  function optionsTable(m) {
-    // Under a Spark filter, only the ways on that many Sparks; one line says what else there is.
-    const want = wantedSparks(), everyKey = `${m.id}:every`, every = state.recipeOpen.has(everyKey);
-    const list = modelOptions(m, every ? null : want);
-    if (!list.length) return null;
-    const others = want ? modelOptions(m).filter(o => o.sparks !== want) : [];
-    const counts = [...new Set(others.map(o => o.sparks))].sort();
-    const flip = () => { if (every) state.recipeOpen.delete(everyKey); else state.recipeOpen.add(everyKey); draw(); };
-    const scope = !others.length ? null : h('div', { class: 'rc-dig' },
-      h('span', { class: 'muted' }, every ? 'Showing every number of Sparks.' : `Showing ${sparksText(want)}. ${plural(others.length, 'more way')} on ${counts.join(' or ')} Spark${counts.length > 1 || counts[0] > 1 ? 's' : ''}.`),
-      h('button', { class: 'btn ghost sm', type: 'button', onclick: flip }, every ? `Only ${sparksText(want)}` : 'Show them'));
-    // Six rows: the tagged trade-offs, your runs, the best one-click way on each number of Sparks, what's on disk, a
-    // forum report, then the fastest of the rest. Everything else is in "All versions and setups".
-    const pick = new Set(), add = o => { if (o && pick.size < 7) pick.add(o); };
-    const oneClick = o => Boolean(o.mine || o.setup?.deployable);
-    const headN = want && !every ? want : minSparks(m);
-    list.filter(o => o.tags.length).forEach(add);
-    // The row the card's speed comes from (fastest credible setup on that many Sparks).
-    add(list.filter(o => !o.report && o.sparks === headN && num(o.speed) && o.setup?.credibility !== 'low').sort((a, b) => b.speed - a.speed)[0]);
-    list.filter(o => o.mine).forEach(add);
-    for (const n of [1, 2, 3, 4]) add(list.find(o => o.sparks === n && oneClick(o)) || list.find(o => o.sparks === n && !o.report));
-    add(list.find(o => !o.report && o.repo && libFor(o.repo)));
-    add(list.find(o => o.report));
-    [...list].sort((a, b) => (b.speed || 0) - (a.speed || 0)).forEach(add);
-    const shown = list.filter(o => pick.has(o));
-    const action = o => {
-      if (!canRun()) return null;
-      if (o.report || (o.setup && !o.setup.deployable && !o.mine)) {
-        const u = o.setup?.source?.url;
-        return u ? h('a', { class: 'btn ghost sm', href: u, target: '_blank', rel: 'noopener noreferrer', title: o.report ? null : o.setup.why }, icon('external'), o.report ? 'Read it' : 'See how') : null;
-      }
-      const lib = o.repo && libFor(o.repo);
-      if (o.sparks > 2) return h('span', { class: 'muted', style: { 'font-size': '12px' } }, 'Not one click yet');
-      if (lib && o.setup?.deployable) return h('button', { class: 'btn sm primary', type: 'button', onclick: () => startModel(lib, { setup: o.setup.id, sparks: o.sparks, remoteCode: o.setup.args.some(a => a.startsWith('--trust-remote-code')) }) }, icon('play'), 'Start');
-      if (lib && o.run) return h('button', { class: 'btn sm primary', type: 'button', onclick: () => startModel(lib, { verified: o.run.key, sparks: o.sparks }) }, icon('play'), 'Start');
-      if (lib) return h('button', { class: 'btn sm', type: 'button', onclick: () => startModel(lib, { sparks: o.sparks }) }, icon('play'), 'Start');
-      if (o.v) return h('button', { class: 'btn ghost sm', type: 'button', disabled: !d().libraryOnline || downloading(o.v.repo), onclick: () => downloadVersion(o.v, d()) }, icon('download'), downloading(o.v.repo) ? 'Downloading…' : 'Download');
-      return null;
-    };
-    // A llama.cpp run of a safetensors version loads some GGUF conversion of it, whose size isn't known here.
-    const memOf = o => (o.engine === 'llama.cpp' && o.v && !o.v.quants ? null : num(o.v?.needGB) ? `${o.v.needGB} GB` : num(o.v?.sizeGB) ? `${Math.round(o.v.sizeGB * 1.15 + 4)} GB` : null);
-    const how = o => (o.mine ? 'measured here' : o.report ? 'forum report' : !o.setup ? 'default settings' : o.setup.deployable ? 'one click' : 'hand-built');
-    const runsWith = o => (o.engine === 'other' ? (o.report ? 'Forum report' : 'Hand-built') : `${engineName(o.engine || o.v?.engine || 'vllm')} · ${how(o)}`);
-    return [h('div', { class: 'table-wrap rc-options' }, h('table', { class: 'data' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Version'), h('th', { class: 'num' }, 'Sparks'), h('th', { class: 'num' }, 'Memory'), h('th', {}, 'Speed'), h('th', {}, 'Runs with'), h('th', { class: 'num' }, h('span', { class: 'sr-only' }, 'Actions')))),
-      h('tbody', {}, shown.map(o => h('tr', {},
-        h('td', { class: 'opt-ver' }, h('div', {}, h('strong', {}, o.v?.quant || o.quant || (o.report ? 'Forum report' : '—')), o.tags.map(t => [' ', h('span', { class: 'tag' }, t)])),
-          h('div', { class: 'row-sub' }, o.report ? (o.perf.context || '') : String(o.repo || '').split('/')[0]),
-          h('div', { class: 'row-sub opt-mobile' }, [sparksText(o.sparks), memOf(o), runsWith(o)].filter(Boolean).join(' · '))),
-        h('td', { class: 'num opt-hide-sm' }, String(o.sparks)),
-        h('td', { class: 'num opt-hide-sm' }, memOf(o) || '—'),
-        h('td', { class: 'opt-speed' }, h('div', {}, num(o.speed) ? tokS(o.speed) : h('span', { class: 'muted' }, '—')),
-          perfBits(o.perf).length ? h('div', { class: 'row-sub' }, perfBits(o.perf).join(' · ')) : null),
-        h('td', { class: 'opt-hide-sm' }, h('span', { class: 'row-sub' }, runsWith(o))),
-        h('td', { class: 'num opt-act' }, action(o))))))), scope];
-  }
-
-  // Under the table: where the setups came from and when (owner: look again).
-  function digLine(m) {
-    const job = [...state.svcJobs.values()].find(j => j.type === 'dig' && j.modelId === m.id && underWay(j));
-    const from = m.dug ? m.dug.sources.filter(x => x.found).map(x => x.name) : [];
-    const text = !m.dug ? (owner() ? 'Look for setups in NVIDIA’s recipes, the forums, Spark Arena and the model cards.' : null)
-      : from.length ? `Setups from ${plural(from.length, 'source')} · checked ${fmt.when(m.dug.at)}` : `No published setups yet (checked ${fmt.when(m.dug.at)}). It starts with default settings.`;
-    if (!text && !job) return null;
-    return h('div', { class: 'rc-dig' },
-      job ? [h('span', { class: 'spinner sm' }), h('span', { class: 'muted' }, `${job.step}…`)] : h('span', { class: 'muted', title: from.join(', ') || null }, text),
-      owner() && !job ? h('button', { class: 'btn ghost sm', type: 'button', onclick: e => busy(e.currentTarget, async () => {
-        try { followServiceJob(await capi('recipes/dig', 'POST', { model: m.id })); } catch (err) { toast(err.message, { kind: 'bad', timeout: 9000 }); }
-      }) }, icon('search'), m.dug ? 'Look again' : 'Find setups') : null);
-  }
-
-  function modelDetail(m) {
-    // Setups: verified here first, then one-click, then by speed; reports and the rest after.
-    const verifiedSet = new Set((m.verified || []).map(v => v.setupId).filter(Boolean));
-    const setupRank = st => (verifiedSet.has(st.id) ? 0 : st.deployable ? 1 : st.report ? 3 : 2);
-    const want = wantedSparks(), setups = m.setups.filter(st => !want || st.sparks === want)
-      .sort((a, b) => setupRank(a) - setupRank(b) || (b.perf?.decodeTokS || 0) - (a.perf?.decodeTokS || 0));
-    const shown = state.recipeOpen.has(`${m.id}:all`) ? setups : setups.slice(0, 6);
-    // Versions that are on disk or fit first; the rest behind "Show more".
-    const order = v => ((v.onDisk || []).length ? 0 : 1) * 10 + (v.sparks || 9);
-    const versions = [...m.variants].sort((a, b) => order(a) - order(b));
-    const allVersions = state.recipeOpen.has(`${m.id}:versions`), shownVersions = allVersions ? versions : versions.slice(0, 4);
-    const versionSpeed = v => m.setups.filter(st => repoKey(st.repo) === repoKey(v.repo) && num(st.perf?.decodeTokS)).sort((a, b) => b.perf.decodeTokS - a.perf.decodeTokS)[0];
-    const options = optionsTable(m), foldKey = `${m.id}:more`;
-    const more = [
-      h('h3', {}, `Versions (${m.variants.length})`),
-      h('div', { class: 'rows' }, shownVersions.map(v => {
-        const lib = libFor(v.repo), fast = versionSpeed(v);
-        return h('div', { class: 'row' },
-          h('div', { class: 'row-main' }, h('div', { class: 'row-text' },
-            h('div', { class: 'row-title' }, h('a', { href: `https://huggingface.co/${v.repo}`, target: '_blank', rel: 'noopener noreferrer' }, v.repo)),
-            h('div', { class: 'row-sub' }, [v.quant, v.sizeGB ? `${Math.round(v.sizeGB)} GB` : null, v.sparks ? (v.sparks === 1 ? 'fits 1 Spark' : `needs ${v.sparks} Sparks`) : null,
-              fast ? `≈ ${tokS(fast.perf.decodeTokS)} on ${sparksText(fast.sparks)}` : null, v.quants?.length > 1 ? `${v.quants.length} sizes to pick from` : null,
-              v.gated ? 'license to accept' : null, (v.onDisk || []).length ? `on ${v.onDisk.map(nodeName).join(', ')}` : null].filter(Boolean).join(' · ')))),
-          h('div', { class: 'row-side' }, !canRun() ? null : lib
-            ? h('button', { class: 'btn sm primary', type: 'button', onclick: () => startModel(lib) }, icon('play'), 'Start')
-            : h('button', { class: 'btn ghost sm', type: 'button', disabled: !d().libraryOnline || downloading(v.repo), onclick: () => downloadVersion(v, d()) }, icon('download'), downloading(v.repo) ? 'Downloading…' : 'Download')));
-      })),
-      !allVersions && versions.length > 4 ? h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { state.recipeOpen.add(`${m.id}:versions`); draw(); } }, `Show ${versions.length - 4} more versions`) : null,
-      h('h3', {}, `Setups people use (${setups.length})`),
-      shown.length ? h('div', { class: 'rows' }, shown.map(st => {
-        const lib = libFor(st.repo) || m.variants.map(v => libFor(v.repo)).find(Boolean);
-        const sameRepo = lib && st.repo && repoKey(lib.repo || lib.name.replace('--', '/')) === repoKey(st.repo);
-        const src = st.source || {}, extra = perfBits(st.perf);
-        return h('div', { class: 'row' },
-          h('div', { class: 'row-main' }, h('div', { class: 'row-text' },
-            h('div', { class: 'row-title' }, [sparksText(st.sparks), engineName(st.engine), tokS(st.perf?.decodeTokS)].filter(Boolean).join(' · '),
-              verifiedSet.has(st.id) ? [' ', h('span', { class: 'tag' }, 'Verified')] : st.report ? [' ', h('span', { class: 'tag' }, 'Report')] : null),
-            extra.length || st.quant ? h('div', { class: 'row-sub' }, [st.report ? null : st.quant, ...extra].filter(Boolean).join(' · ')) : null,
-            h('details', { class: 'rc-notes' }, h('summary', {}, [src.author ? `by ${src.author}` : (src.kind === 'nvidia' ? 'NVIDIA' : null), src.date].filter(Boolean).join(', ') || 'Details'),
-              h('p', {}, [st.report ? st.perf?.context : null, st.speculative ? `speculative decoding: ${st.speculative}` : null, st.report ? null : st.perf?.context, st.perf?.quote ? `“${st.perf.quote}”` : null,
-                st.imageNote || null, `${st.credibility} confidence`].filter(Boolean).join(' · '),
-                src.url ? [' · ', h('a', { href: src.url, target: '_blank', rel: 'noopener noreferrer' }, 'source')] : null)))),
-          h('div', { class: 'row-side' }, st.report
-            ? (src.url ? h('a', { class: 'btn ghost sm', href: src.url, target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'Read it') : null)
-            : !canRun() ? null : st.deployable && sameRepo
-              ? h('button', { class: 'btn sm', type: 'button', onclick: () => startModel(lib, { setup: st.id, sparks: st.sparks, remoteCode: st.args.some(a => a.startsWith('--trust-remote-code')) }) }, icon('play'), 'Start')
-              : h('span', { class: 'muted', style: { 'font-size': '12px', 'max-width': '180px', 'text-align': 'right' } }, st.deployable ? (st.repo ? `download ${st.repo.split('/')[0]}’s version first` : '') : st.why)));
-      })) : h('p', { class: 'muted' }, 'No setups with numbers yet.'),
-      setups.length > shown.length ? h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { state.recipeOpen.add(`${m.id}:all`); draw(); } }, `Show all ${setups.length}`) : null,
-      m.engineNotes ? h('details', { class: 'rc-notes' }, h('summary', {}, 'Serving notes'), h('p', {}, m.engineNotes)) : null,
-    ];
-    // The table is the one list always shown; every version and setup is one click away.
-    return h('div', { class: 'rc-detail' },
-      options ? [h('h3', {}, 'Ways to run it'), options] : null,
-      digLine(m),
-      options ? h('details', { class: 'rc-more-fold', open: state.recipeOpen.has(foldKey), ontoggle: e => { if (e.target.open) state.recipeOpen.add(foldKey); else state.recipeOpen.delete(foldKey); } },
-        h('summary', {}, `All ${plural(m.variants.length, 'version')} and ${plural(setups.length, 'setup')}${want ? ` on ${sparksText(want)}` : ''}`), h('div', { class: 'rc-detail-inner' }, more)) : more);
-  }
-  const d = () => r.data;
-  const downloading = repo => [...state.svcJobs.values()].some(j => j.type === 'download' && repoKey(j.repo) === repoKey(repo) && underWay(j));
-
-  live(draw);
-  if (!r.loading && (!r.data || r.error)) loadRecipes();
-}
-
-async function downloadVersion(v, data) {
-  let target = data.defaultTarget;
-  // A GGUF version holds several sizes (quantizations): pick one; the default fits one Spark.
-  let file = v.file || null;
-  const sizeNow = () => (file && v.quants ? v.quants.find(x => x.file === file)?.sizeGB : v.sizeGB) || null;
-  const fileSelect = v.quants?.length > 1 ? h('select', { class: 'select', 'aria-label': 'Size', onchange: e => { file = e.target.value; draw(); } },
-    v.quants.map(x => h('option', { value: x.file, selected: x.file === file }, `${x.file} · ${Math.round(x.sizeGB)} GB${x.needGB > 105 ? ' · too big for one Spark' : ''}`))) : null;
-  const picker = h('div', { class: 'radio-cards' }), sizeLine = h('p', { class: 'muted', style: { margin: '0' } });
-  const draw = () => {
-    const size = sizeNow() ? sizeNow() * 1e9 : null;
-    const spots = data.targets.filter(t => mine(t.id)), roomy = t => !(size && num(t.diskFree) && t.diskFree < size * 1.05);
-    // Never leave a Spark chosen that's full or not yours.
-    if (!spots.some(t => t.id === target && roomy(t))) target = spots.find(roomy)?.id || null;
-    set(sizeLine, sizeNow() ? `About ${Math.round(sizeNow())} GB` : '');
-    set(picker, spots.map(t => h('label', { class: 'radio-card' },
-      h('input', { type: 'radio', name: 'download-spark', value: t.id, checked: t.id === target, disabled: !roomy(t), onchange: () => { target = t.id; } }),
-      h('div', {}, h('strong', {}, nodeName(t.id)),
-        h('p', {}, num(t.diskFree) ? `${fmt.disk(t.diskFree / 2 ** 30)} free${roomy(t) ? '' : ' · not enough room'}` : 'free space unknown')))));
-  };
-  draw();
-  const ok = await dialog({
-    title: `Download ${v.repo}?`, confirm: 'Download',
-    description: `From Hugging Face onto that Spark. Any Spark can start it afterwards; it’s copied over the first time.${v.engine === 'llama.cpp' ? ' It runs with llama.cpp, on one Spark.' : ''}${v.gated ? ' It needs its license accepted on huggingface.co and a Hugging Face sign-in on that Spark.' : ''}`,
-    body: [fileSelect ? h('label', { class: 'field' }, 'Size', fileSelect) : null, sizeLine, h('div', { class: 'field' }, 'Download to', picker)],
-    onConfirm: () => { if (!target) throw new Error('None of your Sparks has room for it.'); return true; },
-  });
-  if (!ok || !target) return;
-  try { followServiceJob(await capi('recipes/download', 'POST', { repo: v.repo, node: target, ...(file ? { file } : {}) })); } catch (e) { toast(e.message, { kind: 'bad', timeout: 9000 }); }
 }
 
 /* ───────── chat ───────── */
@@ -3628,7 +2368,7 @@ function codeBlock(code, lang) {
 const SNAPSHOT_MARK = '[Fleet snapshot from Spark Console';
 const SNAPSHOT_SEP = '\n\n---\n';
 
-// What Sparkie answers with: whatever it's set to on Models (its dedicated model, or another running model).
+// What Sparkie answers with: whatever it's set to (its dedicated model, or another running model).
 function sparkieModel() {
   const main = state.main.data, chat = main?.routes?.chat, healthy = chat ? chat.healthy : main?.healthy;
   return { name: chat?.title || main?.title || `${ASSISTANT}’s model`, up: Boolean(healthy && (chat?.node || main?.node)) };
@@ -3702,8 +2442,8 @@ PAGES.sparkie = function sparkiePage(view, r) {
   const scroller = h('div', { class: 'messages' }, inner);
   const ta = h('textarea', { rows: '1', 'aria-label': 'Message', value: c.draft });
   const subject = h('div', { class: 'btn-row' });
-  // The model Sparkie answers with; the owner changes it on Models.
-  const modelBtn = owner() ? h('a', { class: 'btn ghost sm composer-model', href: '#/models', title: `${ASSISTANT}’s model. Change it on Models.` }) : h('span', { class: 'chip composer-model' });
+  // The model Sparkie answers with.
+  const modelBtn = h('span', { class: 'chip composer-model' });
   const sendBtn = h('button', { class: 'btn primary sm', type: 'submit' }, icon('send'), 'Send');
   const note = h('p', { class: 'composer-note' });
   const alert = h('div', { class: 'composer-alert' });
@@ -3796,16 +2536,15 @@ PAGES.sparkie = function sparkiePage(view, r) {
       : h('button', { class: 'btn ghost sm', type: 'button', 'aria-haspopup': 'menu', title: 'Ask about all your Sparks, or just one',
         onclick: e => openMenu(e.currentTarget, subjectMenu(), 'start') }, label, icon('chevronDown')));
     const model = sparkieModel(), main = state.main.data;
-    redraw(modelBtn, icon('sparkle'), model.name, owner() ? icon('chevronRight') : null);
+    redraw(modelBtn, icon('sparkle'), model.name);
     ta.placeholder = n ? `Ask ${ASSISTANT} about ${n.name}…` : `Ask ${ASSISTANT}…`;
     const down = !model.up;
     const why = main?.state === 'running' && main.routes?.chat?.kind !== 'endpoint'
       ? `${model.name} is still loading on ${nodeName(main.node)}. That takes a few minutes after a start.`
-      : `${model.name} isn’t running. ${owner() ? 'Start it from Models, then come back.' : 'Ask the owner to start it.'}`;
+      : `${model.name} isn’t running. ${owner() ? 'Type /restart sparkie to start it again.' : 'Ask the owner to start it.'}`;
     // Until Sparkie's state has loaded, just hold Send; don't flash a warning.
     redraw(alert, down && main ? h('div', { class: 'banner warn' }, icon('alert'),
-      h('div', { class: 'banner-text' }, h('strong', {}, `${ASSISTANT} can’t answer right now`), h('p', {}, why, owner() ? ' Type /help for what still works.' : '')),
-      owner() ? h('a', { class: 'btn sm', href: '#/models' }, 'Open Models') : null) : null);
+      h('div', { class: 'banner-text' }, h('strong', {}, `${ASSISTANT} can’t answer right now`), h('p', {}, why, owner() ? ' Type /help for what still works.' : ''))) : null);
     syncSend();
     sendBtn.toggleAttribute('aria-busy', c.sending);
     // Sparkie's tools are the owner's: in other people's chats it still only answers.
@@ -4141,16 +2880,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   } else if (!matchMedia('(pointer: coarse)').matches) ta.focus();
 };
 
-/* ───────── files ───────── */
-const fileApi = (nodeId, operation, path, extra = {}) => capi(`nodes/${nodeId}/files`, 'POST', { operation, path, area: state.files.area, ...extra });
-const joinPath = (...parts) => parts.filter(Boolean).join('/');
-const isFolder = e => e.kind === 'folder' || e.kind === 'directory' || e.type === 'directory' || e.isDirectory === true;
-function encodeBase64(bytes) {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(s);
-}
-const decodeBase64 = data => Uint8Array.from(atob(data), ch => ch.charCodeAt(0));
+/* ───────── saving a file (a Spark's log) ───────── */
 function saveBlob(name, bytes, type = 'application/octet-stream') {
   const url = URL.createObjectURL(new Blob([bytes], { type }));
   const a = h('a', { href: url, download: name });
@@ -4158,210 +2888,6 @@ function saveBlob(name, bytes, type = 'application/octet-stream') {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
-
-PAGES.files = function filesPage(view, r) {
-  if (!canFiles()) { put(view, empty('lock', 'Files aren’t shared with you', 'Ask the owner for file access.')); return; }
-  const list = nodes().filter(n => n.configured !== false && mine(n.id));
-  const id = r.a && list.some(n => n.id === r.a) ? r.a : state.files.node && list.some(n => n.id === state.files.node && isUp(n)) ? state.files.node : (list.find(isUp) || list[0])?.id;
-  if (!id) { put(view, empty('folder', 'No Sparks available', null)); return; }
-  const picker = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Spark' });
-  live(() => redraw(picker, ...list.map(n => h('button', {
-    type: 'button', 'aria-pressed': String(n.id === id), disabled: !isUp(n), title: isUp(n) ? null : `${n.name} is offline`,
-    onclick: () => go(`files/${n.id}`),
-  }, led(condition(n)), n.name))));
-  const p = perms();
-  const areas = owner() ? [] : [['personal', 'My files', p.files], ['shared', 'Shared', p.sharedFiles]].filter(([, , a]) => a && a !== 'none');
-  if (areas.length && !areas.some(([k]) => k === state.files.area)) state.files.area = areas[0][0];
-  put(view, 
-    pageHead('Files', owner() ? 'Browse, preview, upload and download across your Sparks.' : 'Your space on each Spark, plus a shared space.', picker,
-      areas.length > 1 ? h('div', { class: 'segmented', role: 'group', 'aria-label': 'File space' }, areas.map(([key, label]) =>
-        h('button', { type: 'button', 'aria-pressed': String(state.files.area === key), onclick: () => { state.files.area = key; state.files.node = null; render(); } }, label))) : null),
-    filesBrowser(id));
-};
-
-function filesBrowser(nodeId) {
-  const f = state.files;
-  if (f.node !== nodeId) Object.assign(f, { node: nodeId, path: '', entries: null, error: null, total: 0, nextOffset: null, editorPath: null });
-  const n0 = node(nodeId);
-  const pathEl = h('div', { class: 'path', 'aria-label': 'Folder path' });
-  const tools = h('div', { class: 'btn-row' });
-  const body = h('div');
-  const foot = h('div', { class: 'muted', style: { padding: '10px 16px', 'font-size': '12.5px', display: 'flex', 'justify-content': 'space-between', 'align-items': 'center', gap: '10px', 'border-top': '1px solid var(--border)' } });
-  const upload = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { uploadFiles([...upload.files]); upload.value = ''; } });
-  const card = h('section', { class: 'panel' }, h('div', { class: 'panel-head' }, pathEl, tools), body, foot, upload);
-
-  card.addEventListener('dragover', e => { if (fileAccess() === 'write' && e.dataTransfer?.types.includes('Files')) { e.preventDefault(); card.classList.add('dropzone'); } });
-  card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) card.classList.remove('dropzone'); });
-  card.addEventListener('drop', e => {
-    card.classList.remove('dropzone');
-    if (fileAccess() !== 'write' || !e.dataTransfer?.files.length) return;
-    e.preventDefault();
-    uploadFiles([...e.dataTransfer.files]);
-  });
-
-  async function load(path = f.path, offset = 0) {
-    if (!isUp(node(nodeId))) { draw(); return; }
-    const epoch = ++f.epoch, moved = path !== f.path;
-    f.path = path;
-    f.busy = true;
-    if (!offset) f.entries = null;
-    draw();
-    // The list it was opened from is gone: focus moves to where you are now, the last part of the path.
-    if (moved) pathEl.querySelector('button:last-of-type')?.focus();
-    try {
-      const res = await fileApi(nodeId, 'list', path, { offset, limit: 200 });
-      if (epoch !== f.epoch) return;
-      f.entries = offset ? [...(f.entries || []), ...(res.entries || [])] : res.entries || [];
-      f.total = res.total ?? f.entries.length;
-      f.nextOffset = res.nextOffset ?? null;
-      f.editorPath = res.editorPath || null;
-      f.maxFileBytes = res.maxFileBytes || null;
-      if (!path) {
-        try { f.rootLabel = new URL(f.editorPath, location.origin).searchParams.get('folder')?.replace(/^\/home\/[^/]+/, '~') || null; } catch { f.rootLabel = null; }
-      }
-      f.error = null;
-    } catch (e) {
-      if (epoch === f.epoch) f.error = e.message;
-    } finally {
-      if (epoch === f.epoch) { f.busy = false; if (card.isConnected) draw(); }
-    }
-  }
-
-  async function uploadFiles(files) {
-    const folder = f.path;
-    for (const file of files) {
-      const key = `upload-${file.name}-${file.size}`;
-      if (f.maxFileBytes && file.size > f.maxFileBytes) {
-        toast(`${file.name} is too large for browser upload`, { kind: 'bad', timeout: 10000, sub: `Uploads here go up to ${fmt.bytes(f.maxFileBytes)}. Use VS Code (drag into its explorer) or scp for bigger files.` });
-        continue;
-      }
-      toast(`Uploading ${file.name}`, { kind: 'busy', sub: `${fmt.bytes(file.size)} to ${nodeName(nodeId)}`, timeout: 0, id: key });
-      try {
-        const data = encodeBase64(new Uint8Array(await file.arrayBuffer()));
-        await fileApi(nodeId, 'write', joinPath(folder, file.name), { data, revision: null });
-        toast(`Uploaded ${file.name}`, { sub: `${nodeName(nodeId)} · ${folder || 'home'}`, id: key });
-      } catch (e) {
-        toast(`Couldn’t upload ${file.name}`, { kind: 'bad', sub: e.message, id: key, timeout: 10000 });
-      }
-    }
-    if (f.node === nodeId && f.path === folder) load(folder);
-  }
-
-  async function newFolder() {
-    const name = await promptText({ title: 'New folder', label: 'Folder name', confirm: 'Create' });
-    if (!name) return;
-    if (/[/\\]/.test(name)) return toast('Use a name without slashes.', { kind: 'bad' });
-    try { await fileApi(nodeId, 'mkdir', joinPath(f.path, name)); load(); } catch (e) { toast(e.message, { kind: 'bad' }); }
-  }
-
-  async function revisionOf(entry) {
-    return isFolder(entry) ? entry.revision : (await fileApi(nodeId, 'read', joinPath(f.path, entry.name))).revision;
-  }
-
-  async function rename(entry) {
-    const name = await promptText({ title: `Rename ${isFolder(entry) ? 'folder' : 'file'}`, label: 'New name', value: entry.name, confirm: 'Rename' });
-    if (!name || name === entry.name) return;
-    if (/[/\\]/.test(name)) return toast('Use a name without slashes.', { kind: 'bad' });
-    try {
-      await fileApi(nodeId, 'rename', joinPath(f.path, entry.name), { destination: joinPath(f.path, name), revision: await revisionOf(entry) });
-      load();
-      refocus();
-    } catch (e) { toast(e.message, { kind: 'bad' }); }
-  }
-
-  async function remove(entry) {
-    const ok = await dialog({
-      title: `Delete ${entry.name}?`, confirm: 'Delete', danger: true,
-      description: isFolder(entry) ? 'Only empty folders can be deleted.' : `This permanently deletes the file from ${nodeName(nodeId)}.`,
-    });
-    if (!ok) return;
-    try {
-      await fileApi(nodeId, 'delete', joinPath(f.path, entry.name), { revision: await revisionOf(entry) });
-      load();
-      refocus();
-    } catch (e) { toast(e.message, { kind: 'bad' }); }
-  }
-
-  // After a rename or delete the row (and its menu button) is rebuilt: keep focus nearby, on Refresh.
-  const refocus = () => tools.querySelector('[aria-label="Refresh files"]')?.focus();
-
-  async function download(entry) {
-    try {
-      const file = await fileApi(nodeId, 'read', joinPath(f.path, entry.name));
-      saveBlob(entry.name, decodeBase64(file.data || ''));
-    } catch (e) { toast(e.message, { kind: 'bad' }); }
-  }
-
-  async function preview(entry) {
-    const path = joinPath(f.path, entry.name);
-    const content = h('div', { class: 'empty' }, h('span', { class: 'spinner' }));
-    const dl = h('button', { class: 'btn sm', type: 'button', onclick: () => download(entry) }, icon('download'), 'Download');
-    drawer({ title: entry.name, body: content, wide: true, actions: [dl], foot: `${nodeName(nodeId)} · ${path}` });
-    try {
-      const file = await fileApi(nodeId, 'read', path);
-      const bytes = decodeBase64(file.data || '');
-      const ext = entry.name.split('.').pop().toLowerCase();
-      if (IMAGE_TYPES[ext]) {
-        content.replaceWith(h('img', { class: 'preview-img', alt: entry.name, src: `data:${IMAGE_TYPES[ext]};base64,${file.data}` }));
-        return;
-      }
-      let text = null;
-      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); if (text.includes('\0')) text = null; } catch {}
-      if (text === null) set(content, icon('file'), h('strong', {}, 'No preview for this file type'), h('p', {}, `${fmt.bytes(bytes.length)} · download it to open locally.`));
-      else content.replaceWith(h('pre', { class: 'preview-pre' }, text.length > 400000 ? `${text.slice(0, 400000)}\n\n… truncated for preview. Download for the full file.` : text));
-    } catch (e) {
-      set(content, icon('alert'), h('strong', {}, 'Couldn’t open this file'), h('p', {}, e.message));
-    }
-  }
-
-  function draw() {
-    const write = fileAccess() === 'write';
-    const segments = f.path ? f.path.split('/') : [];
-    redraw(pathEl,
-      h('button', { type: 'button', title: f.rootLabel || null, onclick: () => load('') }, `${n0.name} · ${owner() ? f.rootLabel || 'home' : state.files.area === 'shared' ? 'shared' : 'my files'}`),
-      ...segments.flatMap((seg, i) => [icon('chevronRight'), h('button', { type: 'button', onclick: () => load(segments.slice(0, i + 1).join('/')) }, seg)]));
-    redraw(tools, 
-      write ? h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Upload', title: 'Upload', onclick: () => upload.click() }, icon('upload'), h('span', { class: 'hide-sm' }, 'Upload')) : null,
-      write ? h('button', { class: 'btn sm', type: 'button', 'aria-label': 'New folder', title: 'New folder', onclick: newFolder }, icon('plus'), h('span', { class: 'hide-sm' }, 'New folder')) : null,
-      owner() && isUp(node(nodeId)) ? h('a', { class: 'btn sm', href: f.editorPath || editorUrl(node(nodeId)), target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open in VS Code', title: 'Open in VS Code' }, icon('code'), h('span', { class: 'hide-sm' }, 'Open in VS Code')) : null,
-      h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': 'Refresh files', title: 'Refresh', onclick: () => load() }, icon('refresh')));
-
-    if (!isUp(node(nodeId))) { set(tools); set(body, empty('wifiOff', `${n0.name} is offline`, 'Its files are here again when it’s back.')); set(foot); return; }
-    if (f.error) { set(body, h('div', { style: { padding: '14px' } }, failBanner('Couldn’t list this folder', f.error, () => load()))); set(foot); return; }
-    if (!f.entries) { set(body, h('div', { class: 'empty' }, h('span', { class: 'spinner' }))); set(foot); return; }
-    if (!f.entries.length) {
-      set(body, empty('folder', 'This folder is empty', write ? 'Drop files here or use Upload.' : null));
-    } else {
-      set(body, h('div', { class: 'table-wrap' }, h('table', { class: 'data' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', { class: 'num hide-sm' }, 'Size'), h('th', { class: 'hide-sm' }, 'Modified'), h('th', {}, h('span', { class: 'sr-only' }, 'Actions')))),
-        h('tbody', {}, f.entries.map(entry => {
-          const folder = isFolder(entry);
-          const ext = entry.name.split('.').pop().toLowerCase();
-          const openEntry = () => (folder ? load(joinPath(f.path, entry.name)) : preview(entry));
-          return h('tr', { class: 'clickable', onclick: e => { if (!e.target.closest('button')) openEntry(); } },
-            h('td', {}, h('div', { class: 'cell-main' }, icon(folder ? 'folder' : IMAGE_TYPES[ext] ? 'image' : 'file', `file-icon${folder ? ' folder' : ''}`),
-              h('button', { class: 'link-btn', type: 'button', style: { border: 'none', background: 'none', padding: '0', 'text-align': 'left', 'font-weight': folder ? '600' : '500' }, onclick: openEntry }, entry.name))),
-            h('td', { class: 'num hide-sm muted' }, folder ? '—' : fmt.bytes(entry.size)),
-            h('td', { class: 'hide-sm muted' }, fmt.when(entry.modified ?? entry.modifiedAt ?? entry.mtime)),
-            h('td', { class: 'num' }, menuButton([
-              folder ? { label: 'Open', icon: 'folder', onSelect: openEntry } : { label: 'Preview', icon: 'eye', onSelect: () => preview(entry) },
-              folder ? null : { label: 'Download', icon: 'download', onSelect: () => download(entry) },
-              write ? 'sep' : null,
-              write ? { label: 'Rename', icon: 'edit', onSelect: () => rename(entry) } : null,
-              write ? { label: 'Delete', icon: 'trash', danger: true, onSelect: () => remove(entry) } : null,
-            ], { label: `Actions for ${entry.name}` })));
-        })))));
-    }
-    set(foot, 
-      h('span', {}, `${f.entries.length}${f.total > f.entries.length ? ` of ${f.total}` : ''} items${write ? ` · drop files to upload${f.maxFileBytes ? ` (up to ${fmt.bytes(f.maxFileBytes)} each)` : ''}` : ''}`),
-      f.nextOffset != null ? h('button', { class: 'btn sm', type: 'button', onclick: () => load(f.path, f.nextOffset) }, 'Load more') : null);
-  }
-
-  if (f.entries === null && !f.busy) load();
-  else draw();
-  return card;
 }
 
 /* ───────── linked Sparks ───────── */
@@ -4384,47 +2910,6 @@ const ip4 = ip => ip.split('.').reduce((a, b) => (a << 8) + Number(b), 0) >>> 0;
 function sameNet(x, y) {
   const [a, bits] = x.split('/'), [b] = y.split('/'), mask = Number(bits) ? (~0 << (32 - Number(bits))) >>> 0 : 0;
   return a !== b && (ip4(a) & mask) === (ip4(b) & mask);
-}
-// Roughly the largest model (weights) a set of Sparks could hold together right now.
-function roomFor(ids) {
-  const free = ids.map(id => node(id)?.memoryFreeGiB).filter(num);
-  return free.length === ids.length ? Math.floor((Math.min(...free) * GB_PER_GIB * ids.length) / 1.15) : null;
-}
-
-// A small map of the Sparks and the direct cables that work between them.
-function linkMap() {
-  const ids = nodes().map(n => n.id), size = 112, r = 11;
-  const spots = [[0.22, 0.22], [0.78, 0.22], [0.78, 0.78], [0.22, 0.78]];
-  const at = id => spots[ids.indexOf(id) % spots.length].map(v => v * size);
-  const map = svg('svg', { viewBox: `0 0 ${size} ${size}`, class: 'link-map', role: 'img' });
-  const lines = [];
-  for (const p of linkedPairs()) {
-    const [x1, y1] = at(p.a), [x2, y2] = at(p.b);
-    map.append(svg('line', { x1, y1, x2, y2, class: `link ${p.tested ? 'ok' : 'untested'}` }));
-    lines.push(`${nodeName(p.a)}–${nodeName(p.b)}`);
-  }
-  for (const id of ids) {
-    const [cx, cy] = at(id), t = svg('text', { x: cx, y: cy + 4 });
-    t.textContent = String(id).replace(/^spark/, '');
-    map.append(svg('circle', { cx, cy, r, class: `spark-dot ${isUp(node(id)) ? 'on' : 'off'}` }), t);
-  }
-  map.setAttribute('aria-label', lines.length ? `Direct cables that work: ${lines.join(', ')}` : 'No working direct cables');
-  return map;
-}
-
-// One line per pair of linked Sparks: how big a model they could share, whether either is busy, and Start a model.
-function pairRow(p) {
-  const room = roomFor([p.a, p.b]), busy = [p.a, p.b].filter(id => workloads(node(id)).length);
-  return h('div', { class: 'row' },
-    h('div', { class: 'row-main' }, h('span', { class: 'row-icon ok' }, icon('link')),
-      h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, `${nodeName(p.a)} + ${nodeName(p.b)}`),
-        h('div', { class: 'row-sub' }, [room ? `fits a model up to about ${room} GB` : null,
-          busy.length === 2 ? 'both busy now' : busy.length ? `${nodeName(busy[0])} busy now` : 'both free',
-          p.tested ? null : 'cable not tested yet'].filter(Boolean).join(' · ')))),
-    // (never a start that takes in Sparkie's own Spark: nothing else runs there, and the service refuses it)
-    canActOn(p.a, p.b) && p.tested && ![p.a, p.b].includes(state.main.data?.node) ? h('div', { class: 'row-side' },
-      h('button', { class: 'btn sm', type: 'button', title: `Run one model across ${nodeName(p.a)} and ${nodeName(p.b)}`, 'aria-label': `Start a model across ${nodeName(p.a)} and ${nodeName(p.b)}`,
-        onclick: e => openDeployPicker({ pair: [p.a, p.b], button: e.currentTarget }) }, icon('play'), 'Start a model')) : null);
 }
 
 function testedAgo() {
@@ -4520,23 +3005,21 @@ function cablePanel(id) {
   return wrap;
 }
 
-/* ───────── access: people and agents ───────── */
-// The owner: People (who's waiting, who's in, inviting someone) and Agents (keys and the switches for them).
-// A member sees what they get and the address to use.
-PAGES.access = function accessPage(view, r) {
-  if (!owner()) { memberAccess(view); return; }
-  const tab = r.a === 'agents' ? 'agents' : 'people';
-  put(view,
-    pageHead('Access', tab === 'people' ? 'Who can open Spark Console and what they can do.' : 'Your own AI agents, each with its own key.'),
-    pageTabs('Access', [['#/access', 'People', 'users'], ['#/access/agents', 'Agents', 'key']], tab === 'people' ? '#/access' : '#/access/agents'),
-    passkeyNudge());
-  (tab === 'people' ? peopleTab : agentsTab)(view);
-};
+/* ───────── agents and Telegram ───────── */
+// The owner's agents and Telegram, in a drawer from the account menu. They were the Agents tab of Access, which is off
+// the page (the owner uses chat and the APIs); the passkey line above them came along.
+function openAgents() {
+  const box = h('div', { class: 'drawer-pad agents-drawer' }), unbind = [];
+  drawer({ title: 'Agents and Telegram', body: box, wide: true, onClose: () => unbind.forEach(f => f()) });
+  const bind = fn => unbind.push(drawerLive(fn));
+  put(box, passkeyNudge(bind));
+  agentsTab(box, bind);
+}
 
 // Until the owner has a passkey, a quiet line about it (it lives in the account menu, next to the avatar).
-function passkeyNudge() {
+function passkeyNudge(bind) {
   const box = h('div');
-  live(() => redraw(box, newDevicePasskey() && passkeysWork() ? h('div', { class: 'banner info' }, icon('key'),
+  bind(() => redraw(box, newDevicePasskey() && passkeysWork() ? h('div', { class: 'banner info' }, icon('key'),
     h('div', { class: 'banner-text' }, h('p', {}, 'Add a passkey on this device, so next time you sign in with Face ID or Touch ID. You can for 15 minutes after signing in here.')),
     // (adding one reloads the account, which ends this offer)
     h('button', { class: 'btn sm', type: 'button', onclick: addPasskey }, 'Add a passkey'))
@@ -4547,154 +3030,12 @@ function passkeyNudge() {
   return box;
 }
 
-// Spark Console's address, with a Copy button.
-function addressLines() {
-  const url = consoleAddress();
-  return [h('div', { class: 'address-line' },
-    h('span', { class: 'muted' }, 'Spark Console'),
-    h('div', { class: 'connect-line' }, h('code', {}, url),
-      h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': 'Copy Spark Console link', title: 'Copy', onclick: () => copy(url, 'Spark Console link copied') }, icon('copy'))))];
-}
-
-function memberAccess(view) {
-  const v = state.boot.viewer || {}, p = perms(), name = myName(), portalHost = portalHostId();
-  const describe = level => (level === 'write' ? 'Read & write' : level === 'read' ? 'Read only' : 'None');
-  const kv = (k, val) => h('div', {}, h('dt', {}, k), h('dd', {}, val));
-  put(view, pageHead('Access', 'What you can do here, and the address to use.'),
-    h('div', { class: 'grid-2' },
-      panel('You', h('div', { style: { display: 'grid', gap: '14px' } },
-        h('div', { class: 'identity' }, h('span', { class: 'avatar' }, initials(name)),
-          h('div', {}, h('strong', {}, name), h('div', { class: 'muted' }, v.login || ''))),
-        h('dl', { class: 'kv' },
-          kv('Role', pill('Member', 'info')),
-          kv('Can use', p.nodeIds ? (p.nodeIds.map(nodeName).join(', ') || 'None yet') : 'Every Spark'),
-          kv(ASSISTANT, p.chat ? 'On' : 'Off'),
-          kv('My files', describe(p.files)),
-          kv('Shared files', describe(p.sharedFiles)),
-          p.concurrentChats ? kv('Parallel chats', p.concurrentChats) : null))),
-      panel('Address', h('div', { style: { display: 'grid', gap: '12px' } }, addressLines(),
-        h('p', { class: 'muted', style: { 'font-size': '13px' } }, `Opens for people on the owner’s Tailscale network${portalHost ? ` while ${nodeName(portalHost)} is on` : ''}.`)))));
-}
-
-function peopleTab(view) {
-  // People who asked from Spark Console, first: approve with a starting point (fine-tune it under People), or decline.
-  const waiting = h('div'), people = h('div'), invite = h('div');
-  put(view, waiting, people, h('div', { style: { 'margin-top': '16px' } }, invite));
-  live(() => {
-    const list = state.access?.requests || [];
-    if (!list.length) { redraw(waiting); return; }
-    redraw(waiting, h('div', { style: { 'margin-bottom': '16px' } }, panel('Waiting for access', h('div', { class: 'rows' }, list.map(r => {
-      const preset = h('select', { class: 'select sm', 'aria-label': `What ${r.login} can do` },
-        [['look', 'Look around'], ['chat', 'Chat and files'], ['run', 'Start models too']].map(([v, t]) => h('option', { value: v }, t)));
-      // One decision at a time: both buttons wait while either runs.
-      const buttons = [];
-      const decide = decision => async e => {
-        for (const b of buttons) b.disabled = true;
-        await busy(e.currentTarget, async () => {
-          // An email typed on the public page: say what approving it means before it counts.
-          if (decision === 'approve' && !r.verified && !(await dialog({
-            title: `Let ${r.login} in?`, confirm: 'Approve',
-            description: `This came from the public page, so the email isn’t checked yet. It only works once someone signs in to Tailscale as ${r.login}: approve it only if you know who that is.`,
-          }))) return;
-          await capi('access/requests', 'POST', { login: r.login, decision, preset: preset.value });
-          toast(decision === 'decline' ? `Declined ${r.login}` : r.verified ? `${r.login} can open Spark Console now` : `Added ${r.login}`,
-            decision === 'approve' && !r.verified ? { sub: 'Send them the invite (Copy invite) so they can reach it with Tailscale.', timeout: 9000 } : {});
-          await loadAccess();
-        });
-        for (const b of buttons) b.disabled = false;
-      };
-      buttons.push(h('button', { class: `btn sm${list.length === 1 ? ' primary' : ''}`, type: 'button', 'aria-label': `Approve ${r.login}`, onclick: decide('approve') }, 'Approve'),
-        h('button', { class: 'btn ghost sm', type: 'button', 'aria-label': `Decline ${r.login}`, onclick: decide('decline') }, 'Decline'));
-      return h('div', { class: 'row' },
-        h('div', { class: 'row-main' }, h('span', { class: 'avatar sm' }, initials(r.name || r.login)),
-          // The login first, whole: a name can't push it out of sight.
-          h('div', { class: 'row-text' }, h('div', { class: 'row-title', style: { 'white-space': 'normal', 'overflow-wrap': 'anywhere' } }, r.login),
-            h('div', { class: 'row-sub', style: { 'white-space': 'normal' } },
-              [r.name ? `says they’re ${r.name}` : null, r.verified ? 'signed in with Tailscale' : 'from the public page, email not checked yet', fmt.when(r.at), r.note ? `“${r.note}”` : null].filter(Boolean).join(' · ')))),
-        h('div', { class: 'row-side' }, preset, buttons));
-    })), { tight: true, sub: 'Approving adds them under People, where you can change it any time.' })));
-  });
-
-  // People: everyone besides the owner who can open Spark Console, and what they get.
-  const level = { read: 'read only', write: 'read & write' };
-  live(() => {
-    const a = state.access;
-    redraw(people, panel('People', !a ? h('div', { class: 'empty' }, h('span', { class: 'spinner' }), 'Loading…')
-      : a.error ? h('div', { style: { padding: '10px' } }, failBanner('Couldn’t load People', a.error, loadAccess))
-        : a.members.length ? h('div', { class: 'rows' }, a.members.map(u => h('div', { class: 'row' },
-          h('div', { class: 'row-main' }, h('span', { class: 'avatar sm' }, initials(u.login)),
-            h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, u.login),
-              h('div', { class: 'row-sub', style: { 'white-space': 'normal' } }, [
-                `Uses ${u.permissions.nodeIds.map(nodeName).join(', ')}`, u.permissions.deploy ? 'starts and stops models there' : null, u.permissions.chat ? `chats with ${ASSISTANT}` : 'no chat',
-                u.permissions.files !== 'none' ? `My files: ${level[u.permissions.files]}` : null,
-                u.permissions.sharedFiles !== 'none' ? `Shared files: ${level[u.permissions.sharedFiles]}` : null,
-              ].filter(Boolean).join(' · ')))),
-          h('div', { class: 'row-side' },
-            h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': `Change access for ${u.login}`, title: 'Change access', onclick: () => personDialog(u) }, icon('edit')),
-            h('button', { class: 'btn ghost sm icon-only', type: 'button', 'aria-label': `Remove ${u.login}`, title: 'Remove', onclick: () => removePerson(u) }, icon('trash'))))))
-          : h('p', { class: 'muted', style: { padding: '12px 14px', margin: '0', 'font-size': '13px' } }, 'Only you so far.'),
-    { tight: true, sub: 'Who else can open Spark Console.', actions: [h('button', { class: 'btn sm', type: 'button', id: 'add-person', onclick: () => personDialog(null) }, icon('plus'), 'Add someone')] }));
-  });
-  // Fresh on every visit (the nav's count may be a minute old).
-  loadAccess();
-
-  // Invite someone: one Tailscale share link (kept here), then a message to copy and send. The address and what
-  // members get sit underneath.
-  const portalHost = portalHostId();
-  const yes = () => h('span', { class: 'cap-yes', title: 'Yes' }, icon('check'), h('span', { class: 'sr-only' }, 'Yes'));
-  const no = () => h('span', { class: 'cap-no', title: 'No' }, h('span', { 'aria-hidden': 'true' }, '—'), h('span', { class: 'sr-only' }, 'No'));
-  const capRow = (label, member) => h('tr', {}, h('td', {}, label), h('td', {}, member ? yes() : no()));
-  const step = (title, ...body) => h('div', { class: 'step' }, h('div', {}, h('strong', {}, title), ...body));
-  live(() => {
-    const acc = state.access || {}, link = consoleAddress();
-    const device = portalHost ? conn(portalHost)?.alias || nodeName(portalHost) : 'the Spark that runs Spark Console';
-    const field = h('input', { class: 'input', type: 'url', placeholder: 'https://login.tailscale.com/…', value: acc.invite?.url || '', 'aria-label': 'Tailscale share link' });
-    const save = h('button', { class: 'btn sm', type: 'button', onclick: e => busy(e.currentTarget, async () => {
-      await capi('access/invite', 'PUT', { url: field.value.trim() });
-      toast(field.value.trim() ? 'Share link saved' : 'Share link removed');
-      await loadAccess();
-    }) }, 'Save');
-    const age = acc.invite?.at ? Math.floor((Date.now() - Date.parse(acc.invite.at)) / 86400000) : null;
-    const message = () => [
-      'You’re invited to Spark Console, where I run my NVIDIA DGX Sparks.',
-      acc.invite?.url ? `1. Accept this Tailscale invite. Tailscale is free; sign in with Google, Apple, GitHub or Microsoft: ${acc.invite.url}`
-        : '1. Install Tailscale (free) and sign in: https://tailscale.com/download',
-      `2. With Tailscale on, open ${link} and press Request access. I’ll approve it.`,
-    ].join('\n');
-    redraw(invite, panel('Invite someone', [
-      h('div', { class: 'steps' },
-        step('Copy a share link from Tailscale',
-          h('p', {}, `In Tailscale, open ${device} → Share → Copy share link. It works for 30 days.`),
-          h('a', { class: 'btn sm', href: 'https://login.tailscale.com/admin/machines', target: '_blank', rel: 'noopener noreferrer', style: { 'margin-top': '8px' } }, icon('external'), 'Open Tailscale')),
-        step('Paste it here', h('div', { class: 'invite-line' }, field, save),
-          age != null && age >= 25 ? h('p', { class: 'form-error' }, `Saved ${plural(age, 'day')} ago. Tailscale share links stop working after 30, so make a new one.`) : null),
-        step('Send the invite',
-          h('p', {}, 'They open Spark Console and press Request access; you approve them above.'),
-          h('button', { class: 'btn sm primary', type: 'button', style: { 'margin-top': '8px' }, onclick: () => copy(message(), 'Invite copied. Paste it into a message.') }, icon('copy'), 'Copy invite'))),
-      h('div', { class: 'invite-extra' },
-        addressLines(),
-        h('details', { class: 'invite-fold' }, h('summary', {}, 'What members get'),
-          h('div', { class: 'table-wrap' }, h('table', { class: 'data cap-table' },
-            h('thead', {}, h('tr', {}, h('th', {}, h('span', { class: 'sr-only' }, 'What they can do')), h('th', {}, 'Members'))),
-            h('tbody', {},
-              capRow('See every Spark’s health and what runs on it', true),
-              capRow(`Chat with ${ASSISTANT}`, true),
-              capRow('My files and Shared files on each Spark', true),
-              capRow('Start and stop models on their Sparks (if you allow it)', true),
-              capRow(`${ASSISTANT}’s model, People, VS Code and SSH`, false),
-              capRow('Use the Sparks not shared with them', false),
-              capRow('Logs, workloads and checks', false)))),
-          h('button', { class: 'btn sm', type: 'button', onclick: () => setMemberPreview(true) }, icon('eye'), 'Preview as a member'))),
-    ], { cls: 'invite-panel', sub: `Works for people on your Tailscale network${portalHost ? `; keep ${nodeName(portalHost)} on` : ''}.` }));
-  });
-}
-
 // Agents: your own AI agents (Claude Code, Cursor, the spark command) use the console's actions through the agent door,
 // each with its own key, without opening this page. Reloaded on every visit so "last used" is current.
-function agentsTab(view) {
+function agentsTab(view, bind) {
   const agentsBox = h('div'), telegramBox = h('div'), backup = h('p', { class: 'muted backup-line' });
   put(view, agentsBox, telegramBox, backup);
-  live(() => redraw(telegramBox, telegramPanel()));
+  bind(() => redraw(telegramBox, telegramPanel()));
   loadTelegram();
   // Spark Console copies its own state (people, keys, chats) to another Spark once a day.
   capi('health').then(x => {
@@ -4703,7 +3044,7 @@ function agentsTab(view) {
     backup.textContent = b.ok ? `Spark Console’s settings were last backed up ${fmt.when(b.at)} to ${nodeName(b.to)}.`
       : `The last backup of Spark Console’s settings didn’t work (${fmt.when(b.at)}${b.error ? `: ${b.error}` : ''}). ${b.good ? `The last good one is from ${fmt.when(b.good.at)}, on ${nodeName(b.good.to)}.` : 'There is no good one yet.'} It tries again every hour.`;
   }).catch(() => {});
-  live(() => {
+  bind(() => {
     const a = state.agents, titleOf = name => a?.actions?.find(x => x.name === name)?.title || name;
     const used = k => (k.lastUsedAt ? `Last used ${fmt.ago(Date.parse(k.lastUsedAt))}${k.lastAction ? ` · ${titleOf(k.lastAction)}` : ''}` : `Added ${fmt.ago(Date.parse(k.createdAt))} · not used yet`);
     const canAct = k => (k.scopes || []).includes('fleet:act');
@@ -4761,7 +3102,7 @@ async function telegramNeedsMe(box) {
 }
 function watchPairing() {
   if (telegramPoll || !state.telegram?.code) return;
-  telegramPoll = setTimeout(async () => { telegramPoll = null; if (location.hash.startsWith('#/access')) { await loadTelegram(); watchPairing(); } }, 4000);
+  telegramPoll = setTimeout(async () => { telegramPoll = null; if (document.querySelector('.agents-drawer')) { await loadTelegram(); watchPairing(); } }, 4000);
 }
 function telegramPanel() {
   const t = state.telegram;
@@ -4915,49 +3256,6 @@ async function removeAgent(k) {
   document.getElementById('connect-agent')?.focus();
 }
 
-async function loadAccess() {
-  try { state.access = await capi('access'); } catch (e) { state.access = { error: e.message, members: [], sparks: [] }; }
-  runLive();
-}
-// Add someone, or change what they get. The same choices as the portal had; parallel chats stay as they were.
-async function personDialog(u) {
-  const sparks = state.access?.sparks || [], p = u?.permissions || { nodeIds: [], chat: true, files: 'write', sharedFiles: 'read', concurrentChats: 1 };
-  const login = h('input', { class: 'input', type: 'email', placeholder: 'name@example.com', autocomplete: 'off', value: u?.login || '' });
-  const picks = sparks.map(sp => ({ id: sp.id, box: h('input', { type: 'checkbox', checked: p.nodeIds.includes(sp.id) }), name: sp.name }));
-  const chat = h('input', { type: 'checkbox', checked: p.chat });
-  const deploy = h('input', { type: 'checkbox', checked: Boolean(p.deploy) });
-  const choose =(label, value) => h('select', { class: 'select', 'aria-label': label },
-    [['none', 'None'], ['read', 'Read only'], ['write', 'Read & write']].map(([v, t]) => h('option', { value: v, selected: v === value }, t)));
-  const files = choose('My files', p.files), shared = choose('Shared files', p.sharedFiles);
-  const ok = await dialog({
-    title: u ? `Change ${u.login}` : 'Add someone', confirm: u ? 'Save' : 'Add',
-    description: u ? null : 'They sign in with Tailscale, so there’s no password. Also share this machine with them in Tailscale.',
-    body: h('div', { style: { display: 'grid', gap: '14px' } },
-      u ? null : h('label', { class: 'field' }, 'Their Tailscale login', login),
-      h('fieldset', { class: 'field' }, h('legend', {}, 'Their Sparks ', h('span', { class: 'hint' }, '(they see every Spark, but only use these)')),
-        h('div', { style: { display: 'grid', gap: '6px' } }, picks.map(x => h('label', { class: 'check-row' }, x.box, h('span', {}, x.name))))),
-      h('label', { class: 'check-row' }, deploy, h('span', {}, 'Can start and stop models on their Sparks')),
-      h('label', { class: 'check-row' }, chat, h('span', {}, `Can chat with ${ASSISTANT}`)),
-      h('div', { class: 'grid-2', style: { gap: '12px' } }, h('label', { class: 'field' }, 'My files (their own space)', files), h('label', { class: 'field' }, 'Shared files', shared))),
-    onConfirm: async () => {
-      const permissions = { nodeIds: picks.filter(x => x.box.checked).map(x => x.id), deploy: deploy.checked, chat: chat.checked, files: files.value, sharedFiles: shared.value, concurrentChats: p.concurrentChats || 1 };
-      if (u) await capi(`access/${u.id}`, 'PUT', { permissions });
-      else await capi('access', 'POST', { login: login.value.trim(), permissions });
-      return true;
-    },
-  });
-  if (!ok) return;
-  toast(u ? `Saved ${u.login}` : `Added ${login.value.trim()}`);
-  await loadAccess();
-}
-async function removePerson(u) {
-  const ok = await dialog({ title: `Remove ${u.login}?`, description: 'They lose access right away. Their chats and files stay on the Sparks.', confirm: 'Remove', danger: true });
-  if (!ok) return;
-  try { await capi(`access/${u.id}`, 'DELETE'); toast(`Removed ${u.login}`); } catch (e) { failToast(e); }
-  await loadAccess();
-  document.getElementById('add-person')?.focus();
-}
-
 /* ───────── command palette ───────── */
 function score(text, query) {
   const t = text.toLowerCase();
@@ -4980,16 +3278,8 @@ function score(text, query) {
 function paletteCommands() {
   const cmds = [];
   const add = (group, label, ic, run, extra = {}) => cmds.push({ group, label, icon: ic, run, ...extra });
-  add('Go to', 'Home', 'grid', () => go(''), { keywords: 'overview fleet dashboard' });
   if (canChat()) add('Go to', `Ask ${ASSISTANT} about your Sparks`, 'chat', () => { state.chat.conv = null; go('sparkie/new'); }, { keywords: 'new chat fleet conversation' });
-  add('Go to', 'Models', 'sparkle', () => go('models'), { keywords: 'running inference endpoints' });
-  add('Go to', 'Models on your Sparks', 'disk', () => go('models/library'), { keywords: 'library disk stored' });
-  add('Go to', 'Find more models', 'search', () => go('models/find'), { keywords: 'recipes download catalog hugging face' });
-  // Draft models only run next to their main model, so they aren't offered on their own.
-  if (canRun()) for (const m of (state.lib.data?.library || []).filter(x => x.role !== 'draft')) add('Start', `Start ${modelTitle(m)}…`, 'play', () => startModel(m), { keywords: `model deploy run serve ${m.name}` });
-  if (canFiles()) add('Go to', 'Files', 'folder', () => go('files'), { keywords: 'upload download browse' });
-  add('Go to', 'Access', 'users', () => go('access'), { keywords: 'sharing share invite people permissions' });
-  if (owner()) add('Go to', 'Agents', 'key', () => go('access/agents'), { keywords: 'keys mcp claude cursor pause auto-restart' });
+  if (owner()) add('Go to', 'Agents and Telegram', 'link', openAgents, { keywords: 'keys mcp claude cursor pause auto-restart telegram' });
   add('Go to', 'Activity', 'activity', openActivity, { keywords: 'jobs operations history' });
 
   for (const n of nodes()) {
@@ -5003,7 +3293,6 @@ function paletteCommands() {
         add('Open', `Copy SSH command for ${n.name}`, 'terminal', () => copy(sshCommand(n.id), `Copied: ${sshCommand(n.id)}`), { sub: sshCommand(n.id), keywords: 'terminal shell' });
       }
     }
-    if (canFiles() && up) add('Open', `Files on ${n.name}`, 'folder', () => go(`files/${n.id}`), { keywords: 'browse upload download' });
     if (canSparkChat(n)) add('Open', `Ask ${ASSISTANT} about ${n.name}`, 'chat', () => { state.chat.conv = null; go(`sparkie/new?spark=${n.id}`); }, { keywords: 'chat assistant' });
     if (owner()) {
       add('Inspect', `Logs on ${n.name}`, 'logs', () => go(`spark/${n.id}/logs`), { keywords: 'editor console sparkie output' });
@@ -5119,7 +3408,7 @@ function openPalette() {
 
 /* ───────── outside: the public page, and asking to be let in ───────── */
 // What anyone can see without signing in, from the internet too: the fleet's hardware and live load. Nothing about
-// what runs on it or who uses it. Anyone can ask to be let in; the owner approves on Access.
+// what runs on it or who uses it. Anyone can ask to be let in; the owner answers through the service (/access/requests).
 function outsidePage(who) {
   const app = $('#app');
   app.className = 'outside';
@@ -5405,10 +3694,10 @@ async function start() {
   connectLive();
   loadConnections();
   resumeJobs();
-  // The owner sees on the nav when someone is waiting to be let in.
-  if (realOwner()) loadAccess();
+  // What runs on a Spark is shown by its model's name, from the library (Home loaded it before it left the page).
+  loadLibrary();
   setInterval(() => { if (!document.hidden) { loadStatus(); loadMain(); } }, POLL_MS);
-  setInterval(() => { if (!document.hidden) { refreshBoot(); if (realOwner()) loadAccess(); } }, BOOT_POLL_MS);
+  setInterval(() => { if (!document.hidden) refreshBoot(); }, BOOT_POLL_MS);
   setInterval(tickLive, 1000);
 }
 

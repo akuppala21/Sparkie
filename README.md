@@ -41,12 +41,12 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
 
 - **Who can use it:** every request comes through Tailscale, which tells the service who the person is. The owner,
   the members (which Sparks they see, chat, file access) and the Spark list are in the console's own
-  `~/.local/state/spark-console/access.json` on Spark 2, copied once from the original portal. The owner manages people on
-  **Access → People**. Anything that changes a Spark is owner-only, and cross-site requests are refused.
+  `~/.local/state/spark-console/access.json` on Spark 2, copied once from the original portal. The owner manages people through
+  the service's `/access` routes. Anything that changes a Spark is owner-only, and cross-site requests are refused.
 - **One address:** Spark Console has one address, `https://akspark2.tailab9aa9.ts.net:8443/` (`origin` in
   `service/config.json`), on your tailnet, or from the internet through Funnel (`deploy/open-to-internet.sh`), where
   only the public fleet page answers until you sign in with your passkey. People ask for access there, and you
-  approve on Access → People. See [docs/sharing.md](docs/sharing.md).
+  answer through `/access/requests`. See [docs/sharing.md](docs/sharing.md).
 - **Old portal chats** are copied into Sparkie's chat history once each, as ordinary chats.
 - **Live metrics:** while someone has the page open, one lightweight reader per Spark streams GPU use, power,
   temperature and memory once a second. It stops about 20 seconds after the last viewer leaves, and hidden tabs disconnect.
@@ -64,18 +64,18 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
     (e.g. `Qwen/Qwen3-32B`).
   - **Cache location:** the service runs over SSH without your shell profile, so a cache moved with `HF_HOME` in `.bashrc`
     isn't seen. Use the default location.
-- **What fits where:** Home's **Deploy a model** lists every model with where it fits right now ("Fits on Spark 4 now",
-  "Fits on Spark 3 if X stops", "Running on …"), best options first. After picking one, each online Spark says whether it
-  fits and what would have to stop, and the best fit is preselected. The service ranks them from one GPU check per Spark
+- **What fits where:** `GET /deploy/options` lists every model with where it fits right now ("Fits on Spark 4 now",
+  "Fits on Spark 3 if X stops", "Running on …"), best options first. For one model, each online Spark says whether it
+  fits and what would have to stop, and the best fit comes first. The service ranks them from one GPU check per Spark
   (`GET /deploy/options`, `GET /deploy/plans?model=`): fits without stopping anything, then fewest stops, then no copy,
   then most memory to spare. Sparkie's model and other protected containers are never counted as stoppable.
 - **Deploy:** the plan shows exactly what will happen before anything runs. It stops containers using the GPU
-  (each one has a **Keep running** checkbox), copies the model if needed, downloads the serving image if missing,
+  (except those named in `keep`), copies the model if needed, downloads the serving image if missing,
   starts the model's engine (vLLM, SGLang, TensorRT-LLM, or llama.cpp for GGUF files), and waits until it answers on
   port 8000.
   Containers labeled `spark.protect=true` are never stopped.
-- **Running now** also lists model servers started outside the console, like benchmarks. It finds them by asking each
-  running container's published port for `/v1/models` (read-only). They're shown, never stopped from the Models page.
+- **What's running** (`GET /models`) also lists model servers started outside the console, like benchmarks. It finds them by asking each
+  running container's published port for `/v1/models` (read-only). They're shown with the rest.
 - **Sparkie's model (`main` in config.json):** the service runs one always-on chat model on its own Spark (Spark 2) as the
   container `sparkie-main`.
   - **Always on:** `--restart unless-stopped`, so it comes back after reboots until someone presses Stop. It's labeled
@@ -89,27 +89,27 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
     rope settings, the start stops with an error.
   - **Settings:** today it's the Aphex Qwen recipe: SGLang, `RadixArk/Qwen3.8-27B-NVFP4` with `z-lab/Qwen3.8-27B-DFlash2` for
     DFLASH speculative decoding, 1M context, one request at a time. Change `main` to change it.
-  - **Start and Stop:** from Models. Start shows what else on that GPU stops, with Keep running choices.
-- **Choosing Sparkie's model (Models → Sparkie):** Sparkie is the one main LLM; the model behind it is your choice.
-  - **Model dropdown:** any running model the service can reach, or a model on disk.
+  - **Start and Stop:** `POST /main/start` and `/main/stop`; the owner's `/restart sparkie` starts it again.
+- **Choosing Sparkie's model** (`/main/choices`, `/main/route`, `/main/use`): Sparkie is the one main LLM; the model behind it is your choice.
+  - **Choices:** any running model the service can reach, or a model on disk.
     - **Running:** Sparkie's own model, console deploys (they listen on the tailnet), and other model servers on Spark 2.
       Choosing one just points Sparkie there; nothing restarts.
     - **On disk:** a saved setup or any Library model. It starts as Sparkie's own model on Spark 2, copied over first if
       needed. If it doesn't start, Sparkie goes back to the previous model.
-  - **Agents dropdown:** "Same as Sparkie", or any running model.
+  - **For agents:** "Same as Sparkie", or any running model.
   - **Where it's kept:** the choices and setups made from Library models live in
     `~/.local/state/spark-console/main.json` on Spark 2.
   - **Not offered:** servers that only listen on another Spark's own address (`127.0.0.1` there) are shown but can't be
     picked.
 - **Agents (the agent door):** your own agents (Claude Code, Cursor, the `spark` command) use the console's actions
-  through one MCP address, each with its own key from Access → Agents; they can talk with Sparkie (`ask_sparkie`,
+  through one MCP address, each with its own key from Agents and Telegram (the page's account menu); they can talk with Sparkie (`ask_sparkie`,
   `spark ask`) or call actions directly, and change things only if you allow it. See
   [docs/agent-door.md](docs/agent-door.md); the plan for Sparkie acting on its own is [docs/history/sparkie-actions.md](docs/history/sparkie-actions.md).
 - **Sparkie for agents:** one OpenAI-compatible address that stays the same whichever model is behind it:
   `https://akspark2.tailab9aa9.ts.net:8443/console/api/v1`, model `sparkie`, any API key.
-  - **Model names:** `sparkie` goes to whatever the Agents choice on Models is. The dedicated model's own name (today
+  - **Model names:** `sparkie` goes to whatever the agents' choice (`/main/route`) is. The dedicated model's own name (today
     `qwen-aphex`) always reaches it, the way any deployed model has its own address. It only listens on Spark 2 itself,
-    so this is how other tools reach it; Models → Running now shows the address and name. Any other name goes to `sparkie`.
+    so this is how other tools reach it; `GET /main` names it (`served`). Any other name goes to `sparkie`.
   - **Thinking:** Qwen thinks before answering unless told not to. Send `"chat_template_kwargs": {"enable_thinking": false}`
     for short direct answers (Sparkie's own chat does), or allow enough `max_tokens` for the thinking.
   - **Supports:** `/v1/models`, `/v1/chat/completions` and `/v1/completions`, streamed or not.
@@ -127,9 +127,8 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
   - **Older chats:** the original portal's chats were copied in once, as ordinary chats, before it was switched off.
 - **Recipes:** every model worth running on the Sparks (80 as of 2026-11-04), each with its versions (NVFP4, FP8, …)
   and the setups people published: engine, image, flags, number of Sparks (1–4) and tokens/s, with the source and how
-  credible it is. **Verified** marks what has run on these Sparks; every deploy is recorded there automatically
-  ("Your recipes", with **Start**).
-  - **Adding any model** (owner): type in the one box on Models → Find more: words search Hugging Face, a link or `org/model` adds it. Safetensors and GGUF
+  credible it is. **Verified** marks what has run on these Sparks; every deploy is recorded there automatically.
+  - **Adding any model** (owner): `GET /recipes/search?q=` searches Hugging Face with words, and `POST /recipes/add-list` adds links or `org/model` names. Safetensors and GGUF
     both work, fine-tunes and abliterated models included. Spark Console then finds the setups people published for it
     (NVIDIA's recipes, recipes.vllm.ai, Spark Arena, eugr, the forums, model cards). The format, the sources and the
     one-click rules are in [docs/recipes.md](docs/recipes.md).
@@ -141,7 +140,7 @@ logs and VS Code in the browser. It replaced the original Spark Portal (see `doc
     they aren't one-click. A setup that needs `--trust-remote-code` only runs for the owner, after ticking a box.
   - **Updating the catalog:** `python3 -I tools/build-catalog.py <research dir> service/catalog.json` merges model lists
     and community setups (the research files from 2026-11-04 are the inputs).
-- **Direct-cable readiness** (each Spark → Checks; linked pairs on Home): reads each Spark's ConnectX links and addresses, and on request pings each pair
+- **Direct-cable readiness** (each Spark → Checks): reads each Spark's ConnectX links and addresses, and on request pings each pair
   over the cable at full packet size. It changes nothing. It's the first step toward serving one model across Sparks;
   see [docs/multi-spark.md](docs/multi-spark.md).
 

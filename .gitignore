@@ -8,3 +8,5 @@ __pycache__/
 test-results/
 # Written by node test/lock.mjs for the build it tested; on GitHub only the tested/<tree> tags carry it
 service/workflows.lock.json
+# Written by a whole run with SPARK_TEST_MAP=1 (tools/affected.mjs): which test files ran each function
+test/affected-map.json

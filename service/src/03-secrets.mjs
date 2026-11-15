@@ -1,4 +1,7 @@
 /* ───────── secrets: one owner-only file outside the state folder ───────── */
+// Area: ground        Rules: R20, R32        Tests: telegram.test.mjs, needs.test.mjs
+// Owns: secrets.json (writers: secretsWrite; outside the state folder)
+// Timers: none        Wakes: none
 // What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is
 // in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the
 // install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). It is typed

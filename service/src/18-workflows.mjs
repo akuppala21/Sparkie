@@ -1,4 +1,11 @@
 /* ───────── workflows ───────── */
+// Area: core
+// Rules: R10, R11, R18, R19, R20, R22, R25, R29, R30, R31, R32, R34, R35, R37
+// Tests: workflows.test.mjs, steps.test.mjs, validate.test.mjs, updates.test.mjs, heal.test.mjs
+// Owns: validations.json (writers: recordWorkflowRun), saved-workflows.json (writers: writeSaved), heal-tries.json
+//   (writers: saveHealTries), updates.json (writers: noteUpdate), update-note.json (writers: none; the installer
+//   writes it, noteUpdate reads it)
+// Timers: none        Wakes: none
 // Every change Spark Console makes is a workflow: a named procedure with checked inputs, fixed steps, a check that it
 // worked, a put-back, and its known problems with their fixes (docs/contract.md, section 6). Sparkie and agents choose a
 // workflow and fill in its inputs; they never make up the steps.
@@ -117,7 +124,7 @@ function pageWorkflow(req, id, owner) {
 }
 
 action({
-  name: 'workflows', title: 'Workflows', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'workflows', title: 'Workflows', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'routines',
   description: 'Use to see what Spark Console can change and how. Every change is one of these workflows. For each: when to use it (and not the similar ones), its inputs, what it changes, how long it takes, its known problems with their fixes, and whether it’s active (tested and validated on these Sparks). With name (one of the owner’s saved workflows): its steps, each checked against the Sparks now without running or changing anything. Use that for “rehearse coding mode”, “dry run it”, “can coding mode run now?”.',
   input: { type: 'object', properties: {
     name: { type: 'string', minLength: 2, maxLength: 80, description: 'One of the owner’s saved workflows, to check its steps without running it (steps that use its inputs are checked when it runs).' },
@@ -244,7 +251,7 @@ async function checkSteps(w, inputs, inv) {
 }
 
 action({
-  name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'save_workflow', title: 'Save a workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner describes a routine to run by name later ("make this a workflow", "save that as coding mode"). Saves named steps; each step is one of these actions (not the workflow ones) with its arguments, and {name} in an argument is filled in from the run’s inputs. Saving under an existing name replaces it. Changes nothing on the Sparks.',
   input: { type: 'object', properties: {
     title: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, like "coding mode".' },
@@ -278,7 +285,7 @@ action({
   },
 });
 action({
-  name: 'run_workflow', title: 'Run a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'run_workflow', title: 'Run a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner (or an agent) asks for one of the owner’s saved workflows by name ("coding mode"). `workflows` lists them under saved, with their inputs and steps. Runs the steps one after another, each as that action’s own workflow; the first that fails or needs an answer ends the run and says which.',
   input: { type: 'object', properties: {
     name: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, from workflows (saved).' },
@@ -331,7 +338,7 @@ action({
   },
 });
 action({
-  name: 'forget_workflow', title: 'Forget a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'forget_workflow', title: 'Forget a saved workflow', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'routines',
   description: 'Use when the owner wants one of their saved workflows gone. Changes nothing on the Sparks.',
   input: { type: 'object', properties: { name: { type: 'string', minLength: 2, maxLength: 80, description: 'Its name, from workflows (saved).' } }, required: ['name'], additionalProperties: false },
   run: async input => {
@@ -343,7 +350,7 @@ action({
 });
 
 action({
-  name: 'wait_operation', title: 'Follow an operation', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'wait_operation', title: 'Follow an operation', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'control',
   description: 'Use after start_model, stop_model or restart_model. Waits (up to 45 seconds) for the operation to move on, then says where it is: running with its current step, completed (with the address it answers at), or failed with why.',
   input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{12}$', description: 'The operation id.' }, seconds: { type: 'integer', minimum: 1, maximum: 45, description: 'How long to wait for news (default 30).' } }, required: ['id'], additionalProperties: false },
   run: async ({ id, seconds = 30 }) => {
@@ -573,13 +580,13 @@ async function undoUpdate(via) {
   return { ok: true, outcome: 'started', to: snap.stamp, note: `Going back to the build from before the update on ${snap.stamp}; Spark Console restarts in a moment.` };
 }
 action({
-  name: 'test_changes', title: 'Test the changes', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'test_changes', title: 'Test the changes', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'checks',
   description: 'Use after an update, or when the owner asks to test the changes: gives each changed workflow its test run (a small model on Spark 3 or 4, putting back what it stopped). Not needed for Sparkie’s own starts: the owner’s request is a validation run by itself.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => { const job = startTestChanges(viewer, ctx.via || 'agent'); return { outcome: 'started', operation: job.id, next: `wait_operation {"id":"${job.id}"}` }; },
 });
 action({
-  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'undo_update', title: 'Undo the last update', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'updates',
   description: 'Use only when the owner asks to undo the last update of Spark Console itself (roll back the console, not a model: for a model, undo_last_change). Puts back the build from before the last install; Spark Console restarts a moment later.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer, ctx) => {

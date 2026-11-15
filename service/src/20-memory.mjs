@@ -1,4 +1,7 @@
 /* ───────── Sparkie's memory (v3.1, 2026-11-11) ───────── */
+// Area: record        Rules: R20, R25, R26        Tests: sparkie-more.test.mjs
+// Owns: memory.json (writers: remember, forget_memory)
+// Timers: none        Wakes: none
 // What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is where models go"), corrections ("no, I
 // meant the FP4 one"), fleet facts ("Spark 4 is on Wi-Fi only") and lessons ("GLM needs sockets over the cable"). A few
 // dozen short lines in memory.json, put at the end of Sparkie's system prompt (so the prompt cache stays warm until it
@@ -30,13 +33,13 @@ function memoryPrompt() {
 }
 
 action({
-  name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner',
+  name: 'memory', title: 'Memory', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'memory',
   description: 'What Sparkie remembers across chats: the owner’s preferences, corrections, fleet facts and lessons, each with its id (for forget_memory). Sparkie already sees these; agents read them here.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => ({ entries: memoryEntries(), limit: { entries: MEMORY_MAX, characters: MEMORY_CHARS } }),
 });
 action({
-  name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'remember', title: 'Remember', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
   description: 'Use when the owner tells you something lasting: a fact about the fleet or themselves, how they want things done, or a correction ("Spark 4 is on Ethernet now", "from now on…", "no, I meant…"), whether or not they say “remember”. One short line in their words, kept across chats. If it makes a line you remember untrue, pass that line’s id as replaces (one call, not forget then remember). Not for one-off requests, or things the live system already says (what runs where). Say back what you’ll remember.',
   input: { type: 'object', properties: {
     text: { type: 'string', minLength: 3, maxLength: 300, description: 'What to remember, in one line, in the owner’s words.' },
@@ -60,7 +63,7 @@ action({
   },
 });
 action({
-  name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'forget_memory', title: 'Forget', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'memory',
   description: 'Use when the owner says to forget something Sparkie remembers ("forget that", "that’s not true any more"). Takes the line’s id from memory.',
   input: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9a-f]{8}$', description: 'The line’s id, from memory.' } }, required: ['id'], additionalProperties: false },
   run: async ({ id }) => {

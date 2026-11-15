@@ -1,3 +1,7 @@
+// Covers: `deploy/go-back.sh` against a made-up home: runs the newest complete snapshot's `restore.sh` not marked
+// `same`, with no options, refuses options, says so when there is none; `RECOVERY.txt` names the fixed path and
+// commands; the installer lists and copies both before it replaces anything.
+//
 // deploy/go-back.sh and deploy/RECOVERY.txt (H1): the by-hand way back when Spark Console doesn't answer. go-back.sh
 // runs against a made-up home (no fleet, no real snapshot); the installer is only read here (install.test.mjs runs its
 // copy step).

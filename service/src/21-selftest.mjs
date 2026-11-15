@@ -1,4 +1,9 @@
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
+// Area: features
+// Rules: R1, R11, R13, R19, R20, R22, R30, R38
+// Tests: selftest.test.mjs, selftest-cleanup.test.mjs
+// Owns: self-test.json (writers: keep, selfTest, selfTestRecover; removed when a run ends)
+// Timers: selfTestRecover (5 s after start, then each minute while the Spark doesn’t answer)        Wakes: none
 // "Run the self-test", "test the Sparks": one operation built from actions that exist, each run and waited on the way
 // "Test the changes" runs its steps (stepRun), as Spark Console itself, because what it runs is fixed here and in
 // config.json (selfTestImage), never chosen by the caller. On one compute Spark (computeSparks) that is on, free (no
@@ -336,7 +341,7 @@ async function selfTest(j, asked, where, image) {
 }
 
 action({
-  name: 'self_test', title: 'Test the Sparks (the self-test)', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'self_test', title: 'Test the Sparks (the self-test)', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'checks',
   description: 'Use when the owner asks to run the self-test or to test the Sparks (the hardware, not the code). On one compute Spark that is on and free (never Sparkie’s), it starts a small model and checks it answers, stops its container hard to see self-healing bring it back, stops it, runs a small web page and checks its link, and runs a job with the GPU that also calls the model address from inside its container. It reports one line per check, with its seconds. It stops nothing that was running and leaves nothing running; it wakes no Spark. It returns an operation id at once, and its report is posted here when it ends (a few minutes). Give spark only if the owner named one.',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'Only if the owner named the Spark to test (a compute Spark, never Sparkie’s).' },

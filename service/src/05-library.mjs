@@ -1,4 +1,7 @@
 /* ───────── model library and deployments ───────── */
+// Area: ground        Rules: R2, R8, R17, R21, R38        Tests: change.test.mjs, across.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 const INVENTORY_SCRIPT = `dir=${MODELS}
 if [ -d "$dir" ]; then
   for d in "$dir"/*/; do

@@ -1,4 +1,7 @@
 /* ───────── smart plugs: wall power (contract 9.22) ───────── */
+// Area: knowledge        Rules: R41        Tests: plugs.test.mjs, power.test.mjs
+// Owns: plugs.json (writers: none; deploy/plugs.sh writes it)
+// Timers: refreshPlugs (every 15 s, after a first read 2 s after start)        Wakes: none
 // deploy/plugs.sh runs a Matter controller (matterjs-server, container spark-console-plugs) on Spark 2, with its
 // WebSocket on 127.0.0.1:5580 only, and writes which plug (a controller node) is on which Spark to plugs.json. This part
 // reads every 15 seconds: whether each plug is on and what the whole Spark draws at the wall (watts, volts, amps).

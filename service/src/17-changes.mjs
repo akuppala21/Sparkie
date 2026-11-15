@@ -1,4 +1,9 @@
 /* ───────── actions that change things: say it, and it's done (checked inside) ───────── */
+// Area: core
+// Rules: R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38
+// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs
+// Owns: agent-settings.json (writers: setAgentSettings)
+// Timers: none        Wakes: none
 // Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is
 // checked the same way before anything happens:
 //   1. inputs (checkInput)  2. a fresh plan, never the cached view  3. the rails below, in code  4. one change per Spark
@@ -624,7 +629,7 @@ async function startModel(args, viewer, ctx) {
 }
 const choiceArg = { type: 'string', pattern: '^[a-f0-9]{10}$', description: 'The id of the choice the owner picked, from a question this action asked. Send it alone.' };
 action({
-  name: 'start_model', title: 'Start a model', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
+  name: 'start_model', title: 'Start a model', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true, group: 'core',
   description: 'Use when the owner asks to start, run or deploy a model. Pass the model as the owner named it (library name, Hugging Face repo, recipe id, or their words like "qwen coder"); it finds it, downloads it first if needed, picks the Spark (or two linked Sparks) with room, starts it with the best known setup, and checks it answers. A Hugging Face repo that isn’t in Recipes is added to them after its download, and its setups (its model card’s too) are looked up before it starts. For one already on disk, find_setups adds it. Give spark or sparks only if the owner said where. It may come back with a question for the owner instead; answer it with {"choice": id}. It returns an operation id at once; follow it with wait_operation.',
   input: { type: 'object', properties: {
     model: { ...modelArg, pattern: '^[A-Za-z0-9][A-Za-z0-9._/:+ -]{0,199}$', description: 'The model, as the owner named it.' },
@@ -644,7 +649,7 @@ action({
 });
 
 action({
-  name: 'stop_model', title: 'Stop a model', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true,
+  name: 'stop_model', title: 'Stop a model', kind: 'change', scope: 'fleet:act', who: 'owner', destructive: true, group: 'core',
   description: 'Use when the owner asks to stop a model Spark Console started. Stops both parts of a model running across two Sparks. Container names come from running_models. Never stops Sparkie’s own model or protected containers. It may ask the owner first; answer with {"choice": id}.',
   input: { type: 'object', properties: { spark: sparkArg, container: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$', description: 'The container, from running_models.' }, choice: choiceArg },
     additionalProperties: false },
@@ -747,7 +752,7 @@ function restartJob(viewer, ctx, spark, container) {
   return job;
 }
 action({
-  name: 'restart_model', title: 'Restart a model', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'restart_model', title: 'Restart a model', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'core',
   description: 'Use when one of Spark Console’s models (on one Spark) has stopped or crashed and the owner wants it back. Starts the same container again if there’s room, and checks it answers. For a model across two Sparks, use start_model.',
   input: { type: 'object', properties: { spark: sparkArg, container: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$', description: 'The container, from running_models (stopped) or workloads.' }, choice: choiceArg }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
@@ -767,7 +772,7 @@ action({
 // Looking up a model's setups now, when the owner asks (Spark Console also does it by itself, see refreshSetups). It
 // reads only maintained sources, and Recipes lists only setups that hold up (recipeCatalog).
 action({
-  name: 'find_setups', title: 'Find setups for a model', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'find_setups', title: 'Find setups for a model', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'find',
   description: 'Use when the owner wants a model’s setups (configs, recipes, speeds) looked up now, or recipe_detail shows they were never looked up or are over a week old. Reads NVIDIA’s DGX Spark recipe files, vLLM’s recipes, Spark Arena’s registry, eugr’s spark-vllm-docker and the model’s own card on Hugging Face, and keeps each setup with its command, image and the speed its source measured; Recipes lists only those that hold up. Changes nothing on the Sparks and downloads nothing. Spark Console also does this by itself every day, so usually recipe_detail already has them. A Hugging Face repo that isn’t in Recipes yet is added first (it may ask; answer with {"choice": id}).',
   input: { type: 'object', properties: { model: modelArg, choice: choiceArg }, additionalProperties: false },
   run: async (input, viewer, ctx) => {
@@ -799,7 +804,7 @@ action({
 // (a name that's taken is a conflict). It runs inside runAction (owner, schema, the pause, the intent gate, audit) and is
 // quick: no job and no claim. Every check passes before anything is written.
 action({
-  name: 'save_file', title: 'Save a file', kind: 'change', scope: 'fleet:act', who: 'owner',
+  name: 'save_file', title: 'Save a file', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'reading',
   description: 'Use when the owner asks to save or write something as a file on a Spark (“save this as notes.md on Spark 3”). Writes one new text file in that Spark’s shared folder, with exactly the text you pass. Pass the Spark and the file name as the owner said them. It never replaces a file that is already there, never makes a folder and never writes hidden files; if the name is taken it says so and writes nothing.',
   input: { type: 'object', properties: {
     spark: { ...sparkArg, description: 'The Spark the owner named.' },
