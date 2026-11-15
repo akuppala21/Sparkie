@@ -952,4 +952,71 @@ describe('the way back for an update from GitHub, armed by the build installed n
     assert.equal(read(home, 'spark-console-service', 'server.mjs'), base.files['service/server.mjs'].text);
     nothingArmed();
   });
+
+  // (the third read of C4b: the questions at the terminal, and the terminal gone)
+  test('the questions at the terminal are shown: the busy one, and the one for an install without a way back', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(64), 'Asked at the terminal');
+    mark(g);
+    const was = read(home, 'spark-console-service', 'server.mjs'), term = join(home, 'tmp', 'terminal');
+    writeFileSync(join(home, 'standin-busy'), '2');
+    writeFileSync(term, 'n\n');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_TERMINAL: term } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Spark Console is busy: 2 job\(s\) running.*\nUpdate anyway\? \[y\/N\] /s);
+      assert.match(r.out, /Spark Console is busy, and the update wasn't confirmed/);
+    } finally { rmSync(join(home, 'standin-busy'), { force: true }); }
+    sysctl('stop', 'spark-console-api');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_TERMINAL: term } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Install the new build without a way back\? \[y\/N\] /);
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+    } finally { sysctl('start', 'spark-console-api'); }
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering again' });
+    nothingArmed();
+  });
+
+  test('ASSUME_YES=1 doesn\'t answer the question for an install without a way back (the console starts pull.sh with no terminal)', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(65), 'ASSUME_YES over a silent build');
+    mark(g);
+    const was = read(home, 'spark-console-service', 'server.mjs');
+    sysctl('stop', 'spark-console-api');
+    try {
+      const r = await pull(home, ['install', g.t12], { extra: { ASSUME_YES: '1' } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /nobody at this terminal said to go on without one/);
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
+    } finally { sysctl('start', 'spark-console-api'); }
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering again' });
+    nothingArmed();
+  });
+
+  test('the terminal gone while the install waits on the real address (a dropped session): pull.sh itself still puts the build from before back', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(66), 'Session dropped');
+    mark(g);
+    const mk = mark0(), down = join(home, 'door-down');
+    let stage = 0;
+    const r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '60' }, onOut: (out, p) => {
+      if (stage === 0 && out.includes('Installing tree')) { stage = 1; writeFileSync(down, ''); }
+      if (stage === 1 && out.includes('Checking the new build through the real address')) {
+        stage = 2;
+        // The terminal goes: nothing reads what pull.sh writes any more, and the session's hang-up arrives.
+        p.stdout.destroy(); p.stderr.destroy(); p.kill('SIGHUP');
+      }
+    } });
+    rmSync(down, { force: true });
+    assert.equal(stage, 2, r.out);
+    // Put back by pull.sh's own handler, at once: not left to the timer (its 120 s here have not passed).
+    assert.equal((await health(home))?.build, buildOf(base.files));
+    assert.ok(!existsSync(join(home, 'guard-fired.log')) || lines(home, 'guard-fired.log').length === 1, 'the timer did not do it');
+    const res = resultOf(home);
+    assert.deepEqual([res.tree, res.result], [g.t12, 'not kept']);
+    assert.match(res.why, /^the install was interrupted; the build answering now is /);
+    await fromBefore(r, mk);
+  });
 });

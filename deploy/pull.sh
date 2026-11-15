@@ -63,12 +63,15 @@ refuse() { echo "  STOP: $1 Nothing was changed." >&2; [ -z "$WANT" ] || result 
 ask() {
   local a='' from=/dev/tty
   if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -n "${SPARK_CONSOLE_TERMINAL:-}" ]; then from=$SPARK_CONSOLE_TERMINAL; fi
-  read -rp "$1" a <"$from" 2>/dev/null || a=''
+  printf '%s' "$1" >&2 || true
+  read -r a <"$from" 2>/dev/null || a=''
   echo "$a"
 }
 # Cut off (Ctrl-C, the terminal closed) once the way back is armed: it puts back what differs, and the result says what
 # answers then. (A cut at the very end, while the confirmed build's copy is being removed, leaves that build running.)
 interrupted() {
+  # (with the terminal gone, a line written to it fails: nothing here may stop before the put-back)
+  set +e; trap '' PIPE
   trap - INT TERM HUP
   echo "  The install was interrupted." >&2
   bash "$SHARE/update-guard/update-guard.sh" put-back pull "the install was interrupted" 9>&- || true
@@ -443,7 +446,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     if [ "$busy" != '0 0' ] && [ "${ASSUME_YES:-}" != 1 ]; then
       answer=''
       echo "Spark Console is busy: ${busy% *} job(s) running, and Sparkie is answering in ${busy#* } chat(s). Updating restarts it, which interrupts them."
-      read -rp "Update anyway? [y/N] " answer </dev/tty 2>/dev/null || answer=''
+      answer=$(ask "Update anyway? [y/N] ")
       case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
     fi
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
@@ -528,7 +531,7 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
     echo "  Kept: build $code_build (tree $WANT) is running."
     return 0
   fi
-  echo "  Not kept: $failed." >&2
+  echo "  Not kept: $failed." >&2 || true
   [ -z "$ARMED" ] || bash "$SHARE/update-guard/update-guard.sh" put-back pull "$failed" 9>&- || true
   trap - INT TERM HUP
   now=$(health_build)
