@@ -166,7 +166,8 @@ test('T124\'s look: where the one-time command has not run, nothing runs and Spa
   // The typed actions still work there.
   assert.equal((await call(keys.look.token, 'spark_detail', { spark: 'spark4' })).isError, false);
   // Spark 3: it ran, through sudo -n, with a fresh id, the command's SHA-256 and its seconds, in the look wall's unit.
-  assert.deepEqual(r3.tools.map(t => [t.name, t.ok]), [['run', true]]);
+  assert.deepEqual(r3.tools.map(t => [t.name, t.ok, t.outcome]), [['run', true, 'look']], 'the step the page shows says it ran as a look');
+  assert.match(r3.text, /^I checked\. run said: \{"look":"It ran as a look: nothing on Spark 3 was changed and nothing was sent\./);
   assert.match(r3.text, /"ran":true/);
   assert.match(r3.text, /hello from spark 3/);
   const [s] = sudoCalls('spark3').filter(c => c.args[2] === 'look').slice(-1);
@@ -233,6 +234,17 @@ test('a look while a proof of the walls holds its lock there: "being proven righ
   } finally { rmSync(join(h, '.prove-hangs'), { force: true }); }
   assert.equal(await ended, 0, 'the proof passes');
   assert.equal((await look({ on: 'spark3', command: 'cat docs/plain.txt' })).json.ran, true);
+});
+
+test('every answer of a command that ran says, first, that it ran as a look: nothing changed and nothing sent', { timeout: 60000 * SLOW }, async () => {
+  for (const [command, output] of [["find ~/jobs/x -name '*.tmp' -delete 2>/dev/null; echo cleaned", 'cleaned\n'], ['ls docs', 'plain.txt\ntodo.txt\n']]) {
+    const r = await look({ on: 'spark3', command });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(Object.keys(r.json)[0], 'look', command);
+    assert.equal(r.json.look, 'It ran as a look: nothing on Spark 3 was changed and nothing was sent. A command that needs to write or to connect isn’t available yet.');
+    assert.equal(r.json.outcome, 'look');
+    assert.equal(r.json.output, output, command);
+  }
 });
 
 test('what a look prints comes back masked, without escape codes, cut to the first 2,000 and last 3,500 characters, and is kept whole in its one record', { timeout: 60000 * SLOW }, async () => {

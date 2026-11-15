@@ -2204,7 +2204,7 @@ async function streamChat(path, body, onEvent) {
 // What Sparkie did while answering, one quiet line each: "Checked Fleet status · 0.4 s", "Started: Start a model".
 // The same lookup made more than once is one line; changes are always listed one by one. A change that only asked
 // (which model? OK to stop this?) waits for a button below, so it doesn't say Started. The service marks those with
-// outcome; without it, buttons on the message say the same.
+// outcome; without it, buttons on the message say the same. A command run as a look (outcome look) says it changed nothing.
 // How a change was checked (docs/contract.md 7.9): its plan, folded away. And numbers in the answer no tool reported.
 const SOURCE_WORDS = { said: 'from your words', live: 'from what’s running', chosen: 'chosen by Spark Console', owner: 'you picked it' };
 const INPUT_NAMES = { spark: 'Spark', sparks: 'Sparks', model: 'Model', container: 'Model', setup: 'Recipe setup', id: 'Operation' };
@@ -2235,7 +2235,7 @@ function toolLines(tools, asked = false) {
     const title = t.title || t.name;
     const waits = t.outcome ? ['question', 'needs-ok'].includes(t.outcome) : asked;
     return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? 'Started' : 'Couldn’t'}: ${title}`)
-      : t.ok ? `Checked ${title}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
+      : t.ok ? `${t.outcome === 'look' ? `${title} as a look (nothing changed or sent)` : `Checked ${title}`}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
   }));
 }
 
