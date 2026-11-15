@@ -20,6 +20,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
   const end = () => {
     if (!w) return;
     w.brace = /\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(w.bare);
+    if (w.glob && !/[*?]|\[[^\]]*\]/.test(w.bare)) w.glob = false;
     toks.push({ w });
     if (want) { heres.push({ ...want, quoted: w.quoted, delim: w.text }); want = null; }
     w = null;
@@ -80,8 +81,8 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
     if (c === '\\') { if (src[i + 1] !== '\n') { const x = opaque(); x.text += src[i + 1] ?? ''; x.quoted = true; } i += 2; continue; }
     if (c === "'") { const k = src.indexOf("'", i + 1); if (k < 0) unsure("It holds a ' that never closes."); const x = opaque(); x.text += src.slice(i + 1, k); x.quoted = true; i = k + 1; continue; }
     if (c === '"') { i = dquote(i + 1); continue; }
-    if (c === '$') { i = dollar(i); continue; }
-    if (c === '`') { i = tick(i); continue; }
+    if (c === '$') { i = dollar(i); if (w?.unknown) w.split = true; continue; }
+    if (c === '`') { i = tick(i); w.split = true; continue; }
     if (c === '#' && !w) { const k = src.indexOf('\n', i); i = k < 0 ? src.length : k; continue; }
     if (c === ' ' || c === '\t') { end(); i++; continue; }
     if (c === '\n') { end(); if (want) unsure('It holds << with no word after it.'); toks.push({ op: '\n' }); i = bodies(i + 1); continue; }
@@ -132,6 +133,7 @@ function shellParse(toks) {
       const pipe = [command()];
       while (is('|') || is('|&')) { k++; nl(); pipe.push(command()); }
       items.push(pipe);
+      pipe.op = t()?.op ?? null;
       if (is(';') || is('&') || is('\n')) k++;
       else if (is('&&') || is('||')) { k++; nl(); if (k >= toks.length || closes(stop)) unsure('It ends with && or ||.'); }
       else if (k < toks.length && !closes(stop)) unsure(`It holds ${what(t())} where the sorter didn't expect one.`);
@@ -147,7 +149,7 @@ function shellParse(toks) {
     while (bare('!')) k++;
     if (bare('time')) { k++; if (bare('-p')) k++; }
     if (is('(') && toks[k + 1]?.op === '(') unsure('It holds (( … )), arithmetic the sorter does not read.');
-    if (is('(')) { k++; cmd.group = list(')'); k++; } else if (bare('{')) { k++; cmd.group = list('}'); k++; }
+    if (is('(')) { k++; cmd.group = list(')'); cmd.sub = true; k++; } else if (bare('{')) { k++; cmd.group = list('}'); k++; }
     else if (t()?.w && !t().w.quoted && SHELL_WORDS.has(t().w.text)) unsure(`It holds the shell word ${t().w.text}: a loop, a test or a function the sorter does not read.`);
     for (let x = t(); x && (x.w || x.redir); x = t()) {
       k++;

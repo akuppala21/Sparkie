@@ -85,10 +85,16 @@ function startedBy(action, args, out, keep = false) {
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
-// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended. Returns
-// the words for it: what was stopped, what was kept, what couldn't be stopped ('' when there was nothing to say).
+// What a step started that was on the list of what should be running before that step (`listed`: its entry then):
+// the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
+function startedListed(items, before) {
+  return items.map(x => { const was = before.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`); return was ? { ...x, listed: was } : x; });
+}
+// Stops what `ran` holds, newest first, but not what a step saved with keep marks, nor a job that has ended; what was on
+// the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
+// was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [];
+  const stopped = [], kept = [], failed = [], back = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -110,9 +116,12 @@ async function stopWhatRan(ran, viewer, ctx, title) {
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
       }
       if (out?.outcome !== 'already') stopped.push(name);
+      if (x.listed && desiredPutBack([x.listed]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
-  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []), ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
+  return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
+    ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
+    ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
 // An app or job a step started, stopped through keep_running. One whose start was cut off before it joined the list of
 // what should be running (a restart in the middle) is kept first, so that its stop takes it off again (as the self-test's).

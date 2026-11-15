@@ -6,7 +6,9 @@
 // back what it did; a stop that fails is said after the first error, never in its place. A workload (a run with a job
 // step) that ends well stops the models and apps it started for its job, except a step saved with keep: true, and says
 // so; one whose model ran before it leaves that running; a run with no job step (a stack) keeps what it started; keep
-// is refused when it isn't true or false, on a step that starts nothing, and beside an unknown field.
+// is refused when it isn't true or false, on a step that starts nothing, and beside an unknown field. An app on the
+// list of what should be running but stopped (held) that a step starts again is stopped at the end like the rest and
+// stays on the list (R57; the workloads review's Later 13).
 //
 // The stand-in fleet: Spark 3's model of Spark Console's is stopped before the service starts, so a restart_model step
 // there starts sc-gpt-oss-20b and stops nothing; Spark 4 keeps its model (on the list of what should be running, seeded
@@ -202,5 +204,24 @@ describe('a run that ends badly stops what it started, and only that (D6d)', { c
     assert.equal(run.cleanUp, 'Stopped what this run had started: sc-gpt-oss-20b on Spark 3.');
     assert.deepEqual([stateOf('spark4', RADIX), stateOf('spark3', GPT20)], ['running', 'exited']);
     assert.ok((await listed()).includes(`spark4/${RADIX}`));
+  });
+
+  test('an app on the list but stopped (held) that a step starts again is stopped when the workload ends, and stays on the list as it was', { timeout: 240000 * SLOW }, async () => {
+    const r = await act('keep_running', { spark: 'spark4', container: 'wl-held', image: 'nginx:1.27', port: `${await freePort()}:80` });
+    assert.equal((await opEnd(r.json.operation, 'wl-held made')).status, 'completed');
+    // (stopped outside Spark Console, as a power loss leaves it: still on the list, not running)
+    end('wl-held', 0);
+    // (the entry as kept: how it is now, its state and why, is worked out at each look)
+    const entry = async () => { const x = (await api('/desired')).json.running.find(y => y.container === 'wl-held'); return x && Object.fromEntries(['spark', 'container', 'app', 'port', 'memoryGB', 'since', 'by'].map(k => [k, x[k] ?? null])); };
+    const was = await entry();
+    assert.ok(was, 'on the list');
+    await save('held app for a job', [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-held' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-ok' } }]);
+    jobsRun(true);
+    const run = await opEnd(await runIt('held app for a job'), 'the run');
+    assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+    assert.ok(run.log.some(l => /Step 1 done/.test(l)), run.log.join('\n'));
+    assert.equal(run.cleanUp, 'Stopped what this run had started: wl-held on Spark 4. Still on the list of what should be running, as before this run: wl-held on Spark 4.');
+    assert.equal(stateOf('spark4', 'wl-held'), 'exited');
+    assert.deepEqual(await entry(), was);
   });
 });

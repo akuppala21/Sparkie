@@ -1,6 +1,6 @@
 /* ───────── what should be running (docs/contract.md 6.13, 8.8–8.10) ───────── */
-// Area: record        Rules: R9, R20, R21, R22, R38        Tests: desired.test.mjs, desired-look.test.mjs
-// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired)
+// Area: record        Rules: R9, R20, R21, R22, R38, R57        Tests: desired.test.mjs, desired-look.test.mjs, workloads.test.mjs
+// Owns: desired.json (writers: desiredAfter, keepApp, forgetApp, watchHeld, markUndone, handler, parkDesired, desiredPutBack)
 // Timers: watchHeld (every 60 s; its first round seeds desired.json)        Wakes: none
 // The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A
 // start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that
@@ -100,6 +100,17 @@ function parkDesired(keys, on) {
   for (const x of hit) { if (on) x.parked = new Date().toISOString(); else delete x.parked; }
   if (hit.length) writePrivate(DESIRED_FILE, d);
   return hit.map(keyOf);
+}
+// A saved workflow's clean-up stopped something that was on the list before its run had a step start it again
+// (stopWhatRan, 18-step-jobs.mjs): its entry goes back as it was then, so the list is what it was before the run. Read
+// with readKept itself, so a file that can't be read is never saved over; no revision (what should run hasn't changed
+// since before the run). The keys it put back.
+function desiredPutBack(entries) {
+  const d = readKept(DESIRED_FILE);
+  if (!d || !Array.isArray(d.running) || !Array.isArray(d.revisions)) return [];
+  const back = entries.filter(x => x && typeof x === 'object' && !d.running.some(y => keyOf(y) === keyOf(x)));
+  if (back.length) { d.running.push(...back.map(x => ({ ...x }))); writePrivate(DESIRED_FILE, d); }
+  return back.map(keyOf);
 }
 // Each entry, with how it is now: running, changing (an operation holds its Spark), parked (stopped while Spark Console
 // powered its Spark off, 21-power.mjs), or held, and why. An app also has its link, and (check) whether it answers there
