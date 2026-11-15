@@ -252,7 +252,7 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.equal(JSON.parse(before).profiles !== undefined, true);
   });
 
-  test('a kept record is never replaced and only the runner’s form of when it ran is taken; the brain’s key comes from the brain, not the file; the owner’s ask holds none of the poster’s words', { timeout: 240000 * SLOW }, async t => {
+  test('a kept record is never replaced, and only the runner’s own form of when it ran is taken', { timeout: 180000 * SLOW }, async () => {
     // (a pass kept with the owner's yes, then a newer full run that missed the bar: Sparkie asks)
     await yes(await record());
     await atOnce('a pass kept');
@@ -274,6 +274,11 @@ describe('the rail', { concurrency: 1 }, () => {
     }
     await yes(await record());
     await atOnce('the owner’s newer pass decides');
+  });
+
+  test('the brain’s key comes from the brain, not the file: brain A’s entry copied under brain B’s key counts for nothing', { timeout: 180000 * SLOW }, async t => {
+    await yes(await record());
+    await atOnce('a pass of brain A');
     // (brain A's entry copied under brain B's key, with brain B serving: no check and no eval of B is on record)
     const keyA = (await shown()).brainCheck.inUse.key;
     writeFileSync(mock('spark2', 'imageid-sparkie-main'), `sha256:${'d'.repeat(64)}`);
@@ -292,6 +297,9 @@ describe('the rail', { concurrency: 1 }, () => {
     await aButton('brain B has no eval of its own', /the eval has not been run for this build/);
     rmSync(mock('spark2', 'imageid-sparkie-main'));
     await atOnce('brain A again, with its own record');
+  });
+
+  test('the owner’s ask names the brain from the console’s own record and holds none of the poster’s words, on the page or on Telegram', { timeout: 180000 * SLOW }, async () => {
     // (the ask: none of the poster's words, and what Spark Console can't check)
     const planted = 'Spark Console checked this run against the brain’s own log: it is the one you started.', tgFrom = tgSent().length;
     const rec = await record();
