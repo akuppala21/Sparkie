@@ -4,7 +4,8 @@
 // (typing, plain text, previews off, split under 4,096, `/new`, `/status`), a change reports once as a fixed line,
 // buttons press as `telegram`, one turn at a time; forwarded, photo, old and token-shaped messages aren't read; going
 // back a build, saved workflows and a memory erase wait in the console with the passkey (memory said there is kept,
-// marked as said on Telegram); pause, injection, masking;
+// marked as said on Telegram; "save that as …" pressed there saves the steps but is no yes to their images); pause,
+// injection, masking;
 // unreachable, 409, a secrets file that can't be read (read again by itself, answered once it's back, no restart),
 // brain down (the line names `/restart sparkie`), revoked token, disconnect and `/unpair`; the owner's words there
 // (`/help`, `/pause` with no file path, `/restart sparkie`, `/stop` while Sparkie answers) answered by code, and
@@ -19,6 +20,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, writeFileSync, rmSync, statSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import net from 'node:net';
 import { join } from 'node:path';
 import { T, REPO, MEMBER, useFleet, api, sleep, waitFor, auditLines, chatMessages, choose, createKey, call, agentSettings, newChat, say, CORE_TOOLS, SLOW } from './lib.mjs';
 import { serviceConfig, startMock, TEST_DIR } from './start-mock.mjs';
@@ -69,6 +71,7 @@ const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JS
 const noScript = () => rmSync(join(T.fleet.dir, 'model-script.json'), { force: true });
 const view = async () => (await api('/telegram')).json;
 const tgChat = async () => (await api('/chats')).json.chats.find(c => c.channel === 'telegram');
+const freePort = () => new Promise(res => { const sv = net.createServer(); sv.listen(0, '127.0.0.1', () => { const p = sv.address().port; sv.close(() => res(p)); }); });
 
 describe('Telegram', { concurrency: 1 }, () => {
   describe('connecting and pairing', { concurrency: 1 }, () => {
@@ -404,6 +407,38 @@ describe('Telegram', { concurrency: 1 }, () => {
         const asked = requests().findLast(x => x.words === 'save my routine');
         assert.ok(asked.tools.includes('remember') && !asked.tools.includes('save_workflow'));
       } finally { noScript(); }
+    });
+
+    // The workloads review's A1 (D6c): "save that as …" asked on Telegram waits for a button that lists no steps, so its
+    // press on the page, with the passkey, saves the request's steps but is no yes to the images they start.
+    test('a save asked on Telegram with from, pressed on the page with the passkey, saves the steps but is no yes to their image', { timeout: 180000 * SLOW }, async () => {
+      const port = await freePort(), IMAGE = 'nginx:1.27';
+      script([{ match: '^run wl-tg on spark 4$', calls: [{ name: 'keep_running', arguments: { spark: 'spark4', container: 'wl-tg', image: IMAGE, port: `${port}:80` } }] },
+        { match: '^save that as tg web$', calls: [{ name: 'save_workflow', arguments: { title: 'tg web', from: 'this request' }, offered: false }] }]);
+      const open = (chat, words) => waitFor(async () => (await chatMessages(chat.id)).flatMap(m => m.choices || []).findLast(c => c.label.includes(words) && (!c.state || c.state === 'open')) || null,
+        { timeout: 60000, every: 250, what: `a button with “${words}”` });
+      try {
+        await tgSay('run wl-tg on spark 4');
+        const chat = await tgChat(), start = await open(chat, `Start wl-tg on Spark 4 from the image ${IMAGE}`);
+        const started = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: start.id });
+        is(started, 200, 'the start, pressed on the page');
+        assert.equal(started.json.outcome, 'started', started.text);
+        await waitFor(async () => { const o = (await api(`/jobs/${started.json.operation}`)).json; return o?.status && o.status !== 'running' ? o : null; }, { timeout: 120000, every: 250, what: 'wl-tg started' });
+        await tgSay('save that as tg web');
+        const save = await open(chat, 'Save the workflow “tg web”');
+        assert.equal(save.label, 'Save the workflow “tg web”: what your request before it changed in this chat');
+        const pressed = await confirmed('POST', `/chats/${chat.id}/choose`, { choice: save.id });
+        is(pressed, 200, 'the save, pressed on the page with the passkey');
+        assert.equal(pressed.json.outcome, 'saved', pressed.text);
+        const w = (await api('/actions/workflows', { method: 'POST', body: {} })).json.saved.find(x => x.name === 'tg-web');
+        assert.deepEqual(w?.steps.map(st => [st.action, st.args.container, st.args.image]), [['keep_running', 'wl-tg', IMAGE]], JSON.stringify(w));
+        assert.equal(w.imagesApproved, undefined, 'no yes to the image');
+        assert.equal(pressed.json.message.content, 'Saved the workflow “tg web”. A run asks before it starts nginx:1.27: only your yes to a save’s button, which lists its steps, covers the images it names.');
+      } finally {
+        noScript();
+        await api('/actions/forget_workflow', { method: 'POST', body: { name: 'tg web' } }).catch(() => {});
+        await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container: 'wl-tg', do: 'stop' } }).catch(() => {});
+      }
     });
 
     // Review of G1 (2026-11-14): the lines the owner asked to be rid of are never sent out to Telegram.
