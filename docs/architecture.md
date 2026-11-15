@@ -33,6 +33,7 @@ flowchart TD
   WEB["Outside web: Hugging Face, GitHub, vLLM recipes, image registries; DuckDuckGo (or the owner’s SearXNG) and public pages for web lookup"]
   TG["Telegram's Bot API: the owner's one paired chat (21-telegram, outbound long polling only)"]
   SECRETS["~/.config/spark-console/secrets.json (0600, outside the state folder): the bot token, the paired chat, recovery code hashes"]
+  JOURNAL["The journal (20-journal, R43): outside the state folder; never copied off Spark 2, never deleted"]
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
@@ -60,7 +61,7 @@ flowchart TD
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
   APPS -->|"OpenAI-style calls"| LISTEN
-  INSTALL -->|"files, lock, config, restart. Keeps the update only if /health names the build, the same process still answers 40 s later, the owner is the owner on the socket, /mcp and /v1/models answer, one chat turn calls a tool and answers, and Telegram polls again if it did before; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
+  INSTALL -->|"files, lock, config, restart. Keeps the update only if every check R30 lists passes; on a miss or a failed copy the previous files go back. Then posts /workflows/validate"| LISTEN
   INSTALL -->|"update-note.json: the build installed and the note typed with NOTE=, read once by the new build"| STATE
   INSTALL -->|"copies go-back.sh and RECOVERY.txt beside the snapshots"| ROLL
   DOG -->|"GET /health each minute (also while systemd is between tries), restart after 3 misses"| LISTEN
@@ -99,6 +100,10 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
+  RUN -->|"a start line, synced, before a change written down first (else nothing runs); each change's result; recall"| JOURNAL
+  CHAT -->|"the owner's words, each tool call and its result, the turn"| JOURNAL
+  JOBS -->|"an operation's end and log; a start's attempts"| JOURNAL
+  SENSE -->|"a copy of each event"| JOURNAL
   JOBS -->|"saved-workflow steps, undo steps, Test-the-changes and self-test steps (stepRun)"| RUN
   JOBS -->|"result notice, then wakeWork: a carry-on turn once that chat's operations and reply have all ended"| CHAT
   KNOW -->|"best setup for a start"| RUN
@@ -121,7 +126,7 @@ flowchart TD
   STATE -->|"access, sessions, agent keys, passkeys"| GATE
   STATE -->|"pause, validations"| RUN
   STATE -->|"desired list, heal tries, the brain's left-down mark"| HEAL
-  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
+  STATE -->|"tar, read back (gzip -t) and moved in (the oldest beyond 14 pruned) only once tar ended well too; hourly until one lands that day (backup.json)"| BACKUP
 ```
 
 Not drawn: the Telegram loop (one long poll at a time, started in the local port's listen callback; `telegram.json`
@@ -132,10 +137,10 @@ read again every 60 s); the owner's words (R34): the page's chat route and `tgUp
 printed and counted in memory, an uncaught error writes `last-crash.json` just before the process ends
 (`recordCrash`), and `sparkie_setup` shows both with the watchdog's last five restarts (`faultView`); `checkRoute` and
 `refreshBlocked` (every 60 s, read Tailscale; set the TCP lock, `funnelOn` and the Sparks' blocked addresses;
-`funnelOn`, `/health`'s `internet`, stays null, "not known", until an answer names the main address (the same answer
-sets `doorOn`, whether port 10000 goes to the app door, R40): right after a boot tailscaled answers with nothing
-loaded. `checkRoute` also runs on the stand-in fleet, where `test/mock/bin/tailscale` answers it); `watchHeld` (60 s);
-the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start, and
+`funnelOn` (`/health`'s `internet`) and `doorOn` (R40) stay null, not known, until an answer names the main address:
+right after a boot tailscaled answers with nothing loaded. `checkRoute` also runs on the stand-in fleet, where `test/mock/bin/tailscale` answers it); `watchHeld` (60 s);
+the agent last-use write (60 s); `adoptRunning` (once, 60 s after start); the cut-off-operation report at start (and
+the journal's, `journalAfterRestart`, R43), and
 `selfTestRecover` (5 s after start: stops what a cut-off self-test started); the daily copy’s clock (`backupIfDue`: 10
 minutes after start, then hourly, until a copy has worked that UTC day); the
 needs-me tick (`needsMeTick`, every 60 s, started in the local port's listen callback beside the Telegram loop: reads
@@ -239,9 +244,8 @@ for, the top-level `SIGTERM` handler in `25-backup-and-start.mjs`).
   up to a minute old.
 - **Tests skip real paths:** the real `worker.py` status code, real ssh, the Mac half of the installer, real systemd
   and Tailscale's routes, and the locked TCP mode. `test/install.test.mjs` runs the installer's Spark 2 half,
-  `restore.sh` and the watchdog with a stand-in `systemctl` (on macOS under bash 3.2 with `tar` and `find` shims; a
-  Linux run is the full proof); `deploy/go-back.sh` itself is run by `go-back.test.mjs`. No test covers R14 or the
-  cable rule in R17.
+  `restore.sh` and the watchdog with a stand-in `systemctl`; `deploy/go-back.sh` itself is run by `go-back.test.mjs`.
+  No test covers R14 or the cable rule in R17.
 - **Found by reading, not run:** `pausedCheck` (`17-changes.mjs`) has no self-healing exception, so under an automatic
   pause a heal job fails at once.
 - **`fleetNotes` throws on an event with no `at`** (a hand-edited `events.jsonl`): that turn ends with an error and

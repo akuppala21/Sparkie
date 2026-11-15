@@ -67,7 +67,8 @@ covers, is in `test/README.md`.
     `service/config.json` sets `editorPorts`. `clock.mjs` — loaded into the service with `NODE_OPTIONS=--import=…`,
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
-    listens to, `$MOCK_DIR/fault-throw` throws from a timer.
+    listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while
+    `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC).
   - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs`: only the routes the installer asks
     (`/health`, `/whoami`, `/mcp`, `/v1/models`, `/main`, `/chats` and a chat turn's stream) on
     `$HOME/.local/state/spark-console/api.sock`; the test puts `const MODE = '…'` in front of it (good, dead, dies,

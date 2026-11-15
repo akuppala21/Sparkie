@@ -56,6 +56,8 @@ function openProblems() {
       if (crashAt > since) { n++; last = Math.max(last, crashAt); }
       if (n) add('restarts', `Spark Console stopped and was started again ${n} time${n === 1 ? '' : 's'} in the last day (last at ${new Date(last).toISOString().slice(11, 16)} UTC). If it keeps happening, ask Sparkie what went wrong.`);
     },
+    // Its journal (20-journal.mjs): changes a restart cut off, writes failing, a journal past 20 GB.
+    () => journalNeeds(add, here),
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;

@@ -40,12 +40,12 @@ export const bug = reason => (process.env.SPARK_TEST_STRICT ? {} : { todo: `PROD
 export const TOOLS = ['fleet_status', 'running_models', 'models_on_disk', 'find_recipes', 'recipe_detail', 'search_huggingface', 'where_it_fits',
   'deploy_plan', 'cluster_plan', 'linked_sparks', 'spark_detail', 'recent_operations', 'operation_log', 'container_logs', 'spark_diagnostics',
   'service_logs', 'sparkie_setup', 'workloads', 'fleet_events', 'workflows', 'wait_operation', 'should_be_running', 'memory', 'files',
-  'search_web', 'read_page'];
+  'search_web', 'read_page', 'recall'];
 export const CHANGE_TOOLS = ['start_model', 'stop_model', 'restart_model', 'cancel_operation', 'undo_last_change', 'find_setups',
   'save_workflow', 'run_workflow', 'forget_workflow', 'remember', 'forget_memory', 'test_changes', 'undo_update', 'save_file', 'keep_running', 'self_test'];
 export const ALL_TOOLS = [...TOOLS, ...CHANGE_TOOLS];
 // Talking with Sparkie: every key sees it in tools/list (it isn't one of the actions GET /actions lists), so a key that
-// only looks sees 27 tools and one that can act 43.
+// only looks sees 28 tools and one that can act 44.
 export const ASK = 'ask_sparkie';
 export const DOOR_READ = [...TOOLS, ASK], DOOR_ACT = [...ALL_TOOLS, ASK];
 // The tools Sparkie itself is offered in the owner's chats: every action (lookups and workflows), the same as agents.

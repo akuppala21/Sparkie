@@ -52,14 +52,14 @@ back), `~/.config/spark-console/secrets.json` (keys), `~/spark-console-src` (the
 4. Run the tests closest to your change: `SPARK_TEST_STRICT=1 node --test test/<file>.test.mjs` (add
    `SPARK_TEST_SLOW=3` on a slow machine). They never touch the real Sparks.
 5. Before a release: `node test/lock.mjs` runs the whole suite strictly and, only if it all passes, marks the
-   build's workflows as tested in `service/workflows.lock.json`. Install with a line saying what changed:
+   build's workflows as tested in `service/workflows.lock.json`. Install with
    `NOTE='what changed, in plain words' bash deploy/host-on-portal.sh` (no secrets in it).
 6. After installing, check the change the way the owner would use it: through Sparkie's chat or
    `POST /console/api/actions/<name>`. Tests passing is not the same as working on the Sparks.
    The installer puts the previous files back on any miss (R30); `SKIP_CHAT_CHECK=1` updates with Sparkie's model down.
 
-From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`), and a pass
-on `main` leaves a `tested/` tag holding the commit and the lock the installer asks for. No SSH or fleet key needed.
+From another computer: a pull request runs the whole suite on GitHub (`.github/workflows/full-run.yml`); a pass on
+`main` leaves a `tested/` tag with the commit and the lock the installer asks for. No SSH or fleet key needed.
 
 ## I want to …
 
@@ -86,6 +86,7 @@ on `main` leaves a `tested/` tag holding the commit and the lock the installer a
 | find out why a model start failed | `docs/how/find-why-a-start-failed.md` |
 | find out why a model or app stopped | `docs/how/find-why-something-stopped.md` |
 | find out why a change was refused or asked | `docs/how/find-why-a-change-was-refused.md` |
+| use the journal | `docs/how/use-the-journal.md` |
 
 No card fits? Search `docs/rules.md`.
 
