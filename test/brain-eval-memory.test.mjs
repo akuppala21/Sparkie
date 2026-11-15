@@ -4,19 +4,19 @@
 // seeded journal records come back only through recall; has and hasNot pass and fail on a request that does and does
 // not hold a seeded line, and the record lists what failed; a case file from elsewhere is named without its folder; a
 // malformed case stops the run. A memory switch (--memory-off) reaches each case's console as
-// SPARK_CONSOLE_MEMORY_OFF and turns that feature off for the run (shown on a copy of the tree whose memory lines
-// honour it); the record says which switches were on and off, --store refuses such a run, and an unknown switch is
-// refused.
+// SPARK_CONSOLE_MEMORY_OFF and turns that feature off for the run: with memory past its block, the line the picker
+// chooses for a question about a Spark is in the request with every switch on and in none with `names` off; the record
+// says which switches were on and off, --store refuses such a run, and an unknown switch is refused.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { REPO, SLOW } from './lib.mjs';
 
-const TMP = mkdtempSync(join(tmpdir(), 'sct-eval-memory-')), TREE = join(TMP, 'tree');
+const TMP = mkdtempSync(join(tmpdir(), 'sct-eval-memory-'));
 process.on('exit', () => rmSync(TMP, { recursive: true, force: true }));
 const file = n => join(TMP, n), read = n => JSON.parse(readFileSync(file(n), 'utf8'));
 const SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
@@ -87,17 +87,15 @@ describe('the eval’s memory fields', { concurrency: 1 }, () => {
   });
 
   test('a memory switch turns its feature off for the run, and the record says which were on; --store refuses that run; an unknown switch is refused', { timeout: 360000 * SLOW }, async () => {
-    // No feature reads a switch yet (G2 to G6 add them): in a copy of the tree, memory lines honour "names".
-    cpSync(join(REPO, 'service'), join(TREE, 'service'), { recursive: true });
-    cpSync(join(REPO, 'test'), join(TREE, 'test'), { recursive: true, verbatimSymlinks: true });
-    const server = join(TREE, 'service', 'server.mjs'), text = readFileSync(server, 'utf8'), head = 'function memoryPrompt() {\n';
-    assert.equal(text.split(head).length, 2, 'memoryPrompt, once');
-    writeFileSync(server, text.replace(head, `${head}  if (String(process.env.SPARK_CONSOLE_MEMORY_OFF || '').split(',').includes('names')) return null;\n`));
-    writeFileSync(file('switch.json'), JSON.stringify([seeded('seeded-switch', { has: ['the attic'] })]));
-    const on = await runEval(['--stand-in', '--tree', TREE, '--cases', file('switch.json'), '--runs', '1', '--out', file('on.json')]);
+    // The picker (`names`, 20-memory-names.mjs): the line about Spark 4 is the oldest, and the newer lines alone are past
+    // the 4,000-character block, so the system prompt leaves it out; a question naming Spark 4 brings it back as a pick.
+    const newer = Array.from({ length: 60 }, (_, i) => ({ text: `note ${i + 1}: the hallway clock ran ${i + 1} minutes fast after the storm, so the kitchen timer was set by hand again`, kind: 'fact', at: '-1d' }));
+    assert.ok(newer.reduce((n, l) => n + l.text.length, 0) > 4000 + LINE.text.length, 'the newer lines fill the block without the line about Spark 4');
+    writeFileSync(file('switch.json'), JSON.stringify([{ ...seeded('seeded-switch', { has: ['the attic'] }), say: 'what do you remember about spark 4?', seed: { memory: [{ ...LINE, at: '-30d' }, ...newer] } }]));
+    const on = await runEval(['--stand-in', '--cases', file('switch.json'), '--runs', '1', '--out', file('on.json')]);
     assert.equal(on.code, 0, on.out);
     assert.deepEqual([read('on.json').memorySwitches, byId(read('on.json'))['seeded-switch'].passed], [{ on: SWITCHES, off: [] }, true], on.out);
-    const off = await runEval(['--stand-in', '--tree', TREE, '--cases', file('switch.json'), '--memory-off', 'names', '--runs', '1', '--out', file('off.json')]);
+    const off = await runEval(['--stand-in', '--cases', file('switch.json'), '--memory-off', 'names', '--runs', '1', '--out', file('off.json')]);
     assert.equal(off.code, 0, off.out);
     const rec = read('off.json');
     assert.deepEqual(rec.memorySwitches, { on: SWITCHES.filter(s => s !== 'names'), off: ['names'] });

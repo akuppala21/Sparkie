@@ -72,7 +72,7 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
       // From Telegram (R32): memory and saved workflows are changed in Spark Console, so the tools aren't offered.
       channel === 'telegram' ? 'The owner is writing from Telegram on their phone or laptop. Answer in plain, short text: no Markdown, tables or headings. Your memory, saved workflows and updates of Spark Console are changed in Spark Console itself, not from Telegram: if the owner asks for one, say it waits for them there.'
         : 'When the owner tells you something lasting (a fact about the fleet or themselves, how they want things, a correction), call remember with one short line as close to their own words as you can (change only “I” and “you”), whether or not they say “remember”; if it makes a line you remember untrue, pass that line’s id as replaces.',
-      'Every change is a workflow: call the workflow; never make up steps or commands. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
+      'Every change is a workflow: call the workflow; never make up its steps. To start, stop or restart a model, call start_model, stop_model or restart_model, passing the model as it was named. They check everything themselves (room, what has to stop, protected containers) and say what they did. For an app or service that isn’t a model (Open WebUI, a database), call keep_running instead: it keeps it running, restarts or stops it, and gives its link.',
       // Any workload (A13): what keep_running can run, and how Sparkie learns what it doesn't know.
       'With gpu true it uses the GPU (say memoryGB). With once true it runs to the end (a script, a fine-tune): its files go to jobs/<name> in the shared folder, and Spark Console posts here when it ends. What the owner didn’t type comes back as a button. The Sparks are ARM64. When it has worked, offer to save it as a workflow, so next time it is one sentence.',
       ACTIONS.has('search_web') ? 'If you don’t know the image, port, command or memory something needs, look it up first with search_web, and pass the exact settings you found.' : 'If you don’t know the image, port, command or memory something needs, ask the owner.',
@@ -177,6 +177,7 @@ const OP_WORDS = {
   stop: 'Stopping',
   'stop-model': 'Stopping',
   undo: 'Undoing the last change',
+  'workflow-run': 'The saved workflow',
 };
 function postResult(job) {
   const conv = chatData().conversations.find(c => c.id === job.conv);
@@ -186,8 +187,8 @@ function postResult(job) {
   const what = (/^power-/.test(job.type) ? `${OP_WORDS[job.type]} ${where}${job.model ? ` for ${job.model}` : ''}`
     : `${OP_WORDS[job.type] || job.type} ${job.model || job.container || ''}${where ? ` on ${where}` : ''}`).replace(/\s+/g, ' ').trim();
   const back = job.log.filter(l => / again$|start it from Spark Console/.test(l)).map(l => l.slice(10)).slice(-4);
-  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. What it had changed was put back.`)
-    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
+  const content = job.status === 'cancelled' ? (job.type === 'undo' ? `${what} was cancelled part-way; what it had already put back stays.` : `${what} was cancelled. ${job.cleanUp || 'What it had changed was put back.'}`)
+    : job.status === 'completed' ? `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.${job.cleanUp ? ` ${job.cleanUp}` : ''}${job.endpoint ? ` It answers at ${job.endpoint}${job.tailnetLink ? ` (on your tailnet: ${job.tailnetLink})` : ''}${job.measured?.decodeTokS ? ` (${job.measured.decodeTokS} tokens/s)` : ''}.` : ''}${job.fixed ? ` It needed a fix${job.fixed.gaveUp ? `, and runs with ${job.fixed.gaveUp}` : ''}.` : ''}`
     : `${what} failed: ${maskSecrets(String(job.error || 'unknown error').split('\n')[0].slice(0, 400))} Its log is in Activity.${back.length ? `\n${back.join('\n')}` : ''}`;
   // (the self-test's report: lines built by code, one per check, 21-selftest.mjs)
   const report = Array.isArray(job.report) && job.report.length ? `\n${job.report.map(l => maskSecrets(String(l).slice(0, 400))).join('\n')}` : '';

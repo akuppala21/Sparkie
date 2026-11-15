@@ -49,7 +49,7 @@ flowchart TD
   HEAL["Healing: maybeHeal, healPass every 60 s (bringBack, watchBrain, keepBrain)"]
   KNOW["Knowledge: recipes and setups, proven runs, memory"]
   STATE["State files in ~/.local/state/spark-console"]
-  BACKUP["Daily copy on another Spark (25-backup-and-start)"]
+  BACKUP["Copy on another Spark that is awake (25-backup-and-start, 20-state-copy)"]
   INSTALL["test/lock.mjs (here, on a compute Spark or in GitHub's suite job), then deploy/host-on-portal.sh"]
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
@@ -126,7 +126,7 @@ flowchart TD
   JOBS -->|"power jobs only: switchPlug, never Spark 2’s plug (R41)"| PLUGS
   JOBS -->|"a power-off: shutDownSpark"| SSH
   POWER -->|"idle Sparks: power_off via watcher; powerThen before a start"| RUN
-  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; tried hourly until one lands that day; backup.json keeps the last try and the last good copy"| BACKUP
+  STATE -->|"tar, read back (gzip -t), and moved into the old copy’s place (the oldest beyond 14 pruned) only once tar ended well too; sent when a Spark comes online, before a power-off and hourly, only if the state changed; backup.json keeps the last try and the last good copy"| BACKUP
 ```
 
 Not drawn: the timers and when each runs (`docs/registry.md`); what they keep, the fault record and the open-problems

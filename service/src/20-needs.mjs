@@ -38,11 +38,8 @@ function openProblems() {
       const names = [...new Set(readdirSync(STATE_DIR).map(f => /^([\w.-]+?\.jsonl?)\.unreadable-[\w-]+$/.exec(f)?.[1]).filter(Boolean))];
       if (names.length) add('aside', `Spark Console set aside ${names.length === 1 ? 'a file' : `${names.length} files`} it couldn’t read (${names.slice(0, 4).join(', ')}). What ${names.length === 1 ? 'it' : 'they'} held is kept in ${tilde(STATE_DIR)} on ${here}, with “.unreadable-” in the name. Look there; moving the kept file out of that folder clears this line.`);
     },
-    () => {
-      if (!backupLate()) return;
-      const g = lastBackup.good;
-      add('copy', `Spark Console’s state ${g ? `hasn’t been copied to another Spark since ${String(g.at).slice(0, 10)}` : 'has never been copied to another Spark'}. It tries every hour and needs another Spark on. Until then, losing ${here}’s disk would lose what changed since.`);
-    },
+    // The state's copy: none newer than 7 days, with changes since (20-state-copy.mjs).
+    () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
     () => memoryNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
