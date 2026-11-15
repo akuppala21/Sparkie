@@ -96,7 +96,7 @@ test('a query over more than one page: the count line counts every source, next 
   assert.equal(new Set(all).size, 14, `nothing repeated: ${all.join(' ')}`);
   for (const p of pages) assert.equal(p.count, 14);
   assert.equal(pages.at(-1).next, null);
-  const line = `14 about “kestrel”: 2 lines (1 retired), 12 journal records (8 messages of the owner; 4 calls, 1 failed); ${day(lastMonth(10))} to ${day(RECENT)}.`;
+  const line = `14 match: 2 lines (1 retired), 12 journal records (8 messages of the owner; 4 calls, 1 failed); ${day(lastMonth(10))} to ${day(RECENT)}.`;
   for (const p of pages) assert.equal(p.inAll, line);
   assert.equal(Object.keys(pages[0])[0], 'inAll', 'the count line comes first');
   // In order: the owner's live line, the retired one, then the journal, the owner's words first.
@@ -115,7 +115,7 @@ test('“What did I tell you about Spark 4 last month?”: the retired line with
   assert.deepEqual([wifi.at, wifi.text, wifi.source, wifi.retired.why, wifi.retired.by], [lastMonth(14), 'Spark 4 is on Wi-Fi only', 'said by the owner', 'replaced', ETH]);
   // (shown as the memory picker shows a line, and when and why it was retired)
   assert.equal(wifi.shown, `- [${WIFI}] (fact, ${lastMonth(14).slice(0, 10)}, said by the owner) Spark 4 is on Wi-Fi only (retired ${RECENT.slice(0, 10)}: replaced, by [${ETH}])`);
-  assert.equal(r.inAll, `2 about “Spark 4” (last-month): 1 line (1 retired), 1 journal record (1 message of the owner); ${day(lastMonth(14))}.`);
+  assert.equal(r.inAll, `2 match (last-month): 1 line (1 retired), 1 journal record (1 message of the owner); ${day(lastMonth(14))}.`);
   assert.equal(r.next, null);
   // Asked by id: the line whole, with where it came from and the line that replaced it.
   const one = await ok({ id: WIFI });
@@ -135,7 +135,7 @@ test('a lesson and a run that worked, about a named model, come back with their 
   assert.match(lesson.text, /^Starting glm-4\.7-flash with vllm on 2 Sparks \(spark3, spark4\) failed: /);
   assert.deepEqual([proven?.source, proven?.text], ['a run that worked here: 3 times', 'GLM 4.7 Flash ran with vllm on spark3, 41.5 tokens/s at best (image vllm/vllm-openai:v0.11.0).']);
   assert.ok(r.records.indexOf(lesson) < r.records.indexOf(proven), 'lessons before runs');
-  assert.match(r.inAll, /^\d+ about “glm-4\.7-flash”: 1 lesson, 1 run that worked/);
+  assert.match(r.inAll, /^\d+ match: 1 lesson, 1 run that worked/);
   const one = await ok({ id: LESSON });
   assert.deepEqual([one.record.id, one.record.tried.on, one.record.failed], [LESSON, 'spark3+spark4', 2]);
   // An agent reads them too (the console's own facts, as find_recipes shows proven runs).

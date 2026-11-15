@@ -359,7 +359,7 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
   });
   v('recall the owner\'s lines of this month', { about: 'gemma', kind: 'line', when: 'this-month', until: '2099-01-01', limit: 3 }, x => {
     assert.ok(Array.isArray(x.records) && x.records.every(r => r.kind === 'line'));
-    assert.match(x.inAll, /^\d+ about “gemma” \(this-month\)/);
+    assert.match(x.inAll, /^\d+ match \(this-month\)/);
   });
   v('fleet_events', { limit: 5, spark: 'Spark 2' }, x => {
     assert.ok(Array.isArray(x.events) && x.events.length <= 5);

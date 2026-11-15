@@ -9860,7 +9860,8 @@ function recallProven(v) {
 }
 const recallProvenText = v => [v.model, v.repo, v.title, v.engine, v.image, ...(Array.isArray(v.nodes) ? v.nodes : []), v.setupId].filter(x => typeof x === 'string').join(' ').toLowerCase();
 
-// The count line (A5): everything that matched, by kind, and from when to when.
+// The count line (A5): everything that matched, by kind, and from when to when. It never repeats the words asked: a
+// caller may not see them again in a record (R43), so they never come back in an answer at all.
 const RECALL_KINDS = { said: ['message of the owner', 'messages of the owner'], tool: ['tool call', 'tool calls'], call: ['call', 'calls'], attempt: ['failed try', 'failed tries'],
   op: ['operation', 'operations'], cmd: ['command', 'commands'], event: ['event', 'events'], turn: ['reply', 'replies'], pass: ['pass', 'passes'] };
 function recallInAll({ about, when, live, lessons, proven, past, j }) {
@@ -9871,7 +9872,7 @@ function recallInAll({ about, when, live, lessons, proven, past, j }) {
       .map(([k, t]) => `${n(t.n, RECALL_KINDS[k] || [k, k])}${t.failed ? `, ${t.failed} failed` : ''}`).join('; ')})`] : [])];
   const ats = [...[...live, ...past].map(e => e.at), ...[...lessons, ...proven].flatMap(x => [x.firstAt, x.lastAt]), ...Object.values(j.tally).flatMap(t => [t.from, t.to])]
     .filter(x => typeof x === 'string').sort(), first = ats.length ? recallDay(ats[0]) : '', last = ats.length ? recallDay(ats.at(-1)) : '';
-  return `${total} ${about ? `about “${about}”` : 'in all'}${when ? ` (${when})` : ''}${total ? `: ${parts.join(', ')}${first ? `; ${first}${last !== first ? ` to ${last}` : ''}` : ''}` : ''}.`;
+  return `${total} ${about ? 'match' : 'in all'}${when ? ` (${when})` : ''}${total ? `: ${parts.join(', ')}${first ? `; ${first}${last !== first ? ` to ${last}` : ''}` : ''}` : ''}.`;
 }
 
 // One piece whole, by its id: a journal record (with its text), a lesson, or a line (live, or retired when this caller
