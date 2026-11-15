@@ -1,7 +1,7 @@
 # One model across Sparks
 
-**Status:** built (2026-11-04), not yet run on the real Sparks. Deploy offers every pair whose cable tests good,
-next to single Sparks; each pair on Home has **Start a model**. It follows "How serving across Sparks will
+**Status:** built (2026-11-04), not yet run on the real Sparks. A start (`start_model` with two `sparks`) can use any pair
+whose cable tests good, next to single Sparks. It follows "How serving across Sparks will
 work" below: two Sparks only, vLLM only. The first Spark answers on its Tailscale address, and stopping either part stops
 both. Tested on the stand-in Sparks: plan, start, failure with both logs, stop, and moving a model between one Spark and
 a pair. Before the first real run, the vLLM image needs checking for DGX Spark (see Recipes research).
