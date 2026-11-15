@@ -16699,7 +16699,7 @@ function workWrote(ctx, sorted) {
 function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
-  if (sorted.class !== 'change') return `it is risky: ${sorted.why}`;
+  if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
   const reached = runnerProtected(sorted, dir);
   if (reached.length) return `it ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after your yes`;
   const outside = runnerOutside(sorted, command, dir, topDirs);

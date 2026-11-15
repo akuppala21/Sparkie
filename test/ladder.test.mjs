@@ -408,7 +408,8 @@ test('an asked change may reach the other Sparks (--fleet) or the GPU (--gpu), e
   const chat = await newChat(), cmd = 'curl -s http://spark4:8000/v1/models -o notes/models.json';
   const r = await turn(chat, 'fix the models list on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the models list on spark 3');
-  assert.match(asked?.question || '', /\nAsked because it reaches another Spark or your home network\.\nWith your yes it may also reach the other Sparks and your home network \(their addresses are closed to a change otherwise\)\.\n/, JSON.stringify(asked));
+  // (the sorter's own reason first, when it calls it risky: R64 asks for a command that reaches another Spark)
+  assert.match(asked?.question || '', /\nAsked because [^\n]*(?:another Spark|a Spark or the home network)[^\n]*[^.]\.\nWith your yes it may also reach the other Sparks and your home network \(their addresses are closed to a change otherwise\)\.\n/, JSON.stringify(asked));
   assert.equal(startOf(cmd), undefined, 'nothing ran');
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
