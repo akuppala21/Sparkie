@@ -1,14 +1,14 @@
 // Covers: The sorter (service/src/20-sort.mjs, 20-options.mjs, 20-places.mjs, 20-programs.mjs, 20-remote.mjs,
-// 20-shell.mjs, 20-tools.mjs; R55; design A 2.8): every command sorted, from its text and where it runs alone, into a
-// look, a change, risky, the lock-out class or not done, with the reason in the sorter's own words. A table of commands
-// with the class each must get (looks; looks made into changes; chains and substitution; wrappers; sudo and su;
-// download-and-run; every lock-out family; not done; Docker; Spark 2; root; look-alikes; the review of 2026-11-14 group
-// by group; its second and third reads; the options and sub-commands people type that stay a plain change; paths placed
-// against the owner's home alone), bounded work on hostile input with a deadline for long input, no throw for any
-// value, a reason no command can write a line of, what a change places for the copy first (placed, wide), a few
-// thousand looks with a change added that are never a look, 1,140 hidden forms of asked commands that stay asked, and
-// the proof that it is dark: run still sends every command to the look wall. Pure: no stand-in fleet, no port, so it
-// may run on the Mac.
+// 20-tables.mjs, 20-shell.mjs, 20-tools.mjs; R55; design A 2.8): every command sorted, from its text and where it runs
+// alone, into a look, a change, risky, the lock-out class or not done, with the reason in the sorter's own words. A
+// table of commands with the class each must get (looks; looks made into changes; chains and substitution; wrappers;
+// sudo and su; download-and-run; every lock-out family; not done; Docker; Spark 2; root; look-alikes; the review of
+// 2026-11-14 group by group; its second and third reads; the options and sub-commands people type that stay a plain
+// change; paths placed against the owner's home alone), bounded work on hostile input with a deadline for long input,
+// no throw for any value, a reason no command can write a line of, what a change places for the copy first (placed,
+// wide), a few thousand looks with a change added that are never a look, 1,140 hidden forms of asked commands that stay
+// asked, and the proof that it is dark: run still sends every command to the look wall. Pure: no stand-in fleet, no
+// port, so it may run on the Mac.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -33,7 +33,7 @@ writeFileSync(join(dir, 'sort.mjs'), [
   'const journal = () => {}, jErr = () => null, jSub = () => [], noteReach = () => {}, maskSecrets = String, agentKeys = () => [];',
   'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null }, knownOffline = () => hooks.offline;',
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
-  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shell|sort|tools)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
+  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shell|sort|tables|tools)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   'export { sortCommand, ACTIONS, hooks };',
 ].join('\n'));
