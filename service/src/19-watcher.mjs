@@ -33,6 +33,8 @@ setTimeout(() => {
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
   savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
+  // (a change inside the lock-out net that a restart cut off: put back, or found back or kept, and said, 21-net.mjs)
+  netRecover().catch(e => console.error(`The lock-out net after the restart: ${e.message}`));
 }, 0);
 function fleetEvent(e) {
   const x = { at: new Date().toISOString(), ...e };

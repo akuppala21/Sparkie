@@ -54,6 +54,8 @@ function dangerCodeOf(shown) {
 }
 // Line 3: whether it goes back, from typed facts (the net's time; how many files are copied; what would go).
 function dangerBack(f) {
+  // (the lock-out net on a compute Spark: kept by code's check from outside, else back at once or by its timer, 21-net.mjs)
+  if (f.net) return [dangerPlain(f.net, 400)];
   if (f.backAt) return [`It goes back by itself at ${dangerHhmm(f.backAt)} unless you confirm.`];
   if (Number.isInteger(f.kept) && f.kept > 0) return [`Can be put back: ${f.kept} file${f.kept === 1 ? ' is' : 's are'} copied first.`];
   if (f.gone) return [`This cannot be put back: ${dangerPlain(f.gone.what ?? f.gone, 200)}${Number(f.gone.bytes) > 0 ? ` (${sizeWords(Number(f.gone.bytes))})` : ''}.`];
@@ -63,6 +65,7 @@ function dangerBack(f) {
 // reads; why it runs outside the wall.
 function dangerMore(f) {
   const out = [];
+  if (f.lockWhy) out.push(`Why it can lock you out: ${dangerPlain(f.lockWhy, 300)}`);
   if (Array.isArray(f.waysIn) && f.waysIn.length) out.push(`It changes these ways in: ${f.waysIn.slice(0, 8).map(p => dangerPlain(p, 200)).join(', ')}.`);
   if (f.install) {
     const d = Array.isArray(f.install.differs) ? f.install.differs : [];
@@ -91,7 +94,7 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
+// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
 // bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
 // yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {

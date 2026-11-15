@@ -137,6 +137,8 @@ Object.assign(SORT_HANDLERS, {
     const v = a.find(w => !w.text.startsWith('-'))?.text ?? '';
     if (/^(?:status|ip|netcheck|ping|whois|version|bugreport|metrics|licenses)$/.test(v)) return sortOpen(ctx, r, `tailscale ${sortQ(v)} needs Tailscale’s socket, which the run wall hides.`);
     if (v === 'logout') r.lasting = 'A Tailscale logout needs a sign-in in a browser to undo; the net can’t put it back.';
+    // (a sign-in as another key: putting back the old state file would bring back the old key over the new one, A13a)
+    else if (['login', 'switch'].includes(v) || (v === 'up' && a.some(w => /^--force-reauth(?:=|$)/.test(w.text)))) r.lasting = `tailscale ${sortQ(v)} signs in again, as another key or account; the net can’t put that back.`;
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });

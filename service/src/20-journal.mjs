@@ -352,7 +352,8 @@ function journalAfterRestart() {
       // (a change on a Spark may still run there: that Spark is held until its time limit has passed, 21-runner.mjs)
       if (r.k === 'cmd' && r.act === 'run' && r.class === 'change') runnerHold(r);
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
-      if (!conv) continue;
+      // (one inside the lock-out net is put back at start, and that is what is said: netRecover, 21-net.mjs)
+      if (!conv || r.net) continue;
       const at = new Date().toISOString();
       conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
       conv.updatedAt = at;
