@@ -111,7 +111,7 @@ test('after a status round, a .pth in Python’s user site folder on that Spark 
 });
 
 test('a program missing from the fixed path on a Spark is one needs-you line naming it, gone when it is back', { timeout: 90000 * SLOW }, async () => {
-  const off = join(home('spark4'), '.mock', 'no-docker');
+  const off = join(home('spark4'), '.mock', 'off-path-docker');
   const line = l => /^Spark 4: docker isn’t on the fixed path Spark Console’s commands use there \(\/usr\/local\/sbin:[^)]*:\/snap\/bin\)/.test(l);
   writeFileSync(off, '');
   try {
