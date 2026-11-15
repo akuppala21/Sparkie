@@ -67,22 +67,29 @@ function cleanStatus(node, raw) {
   return value;
 }
 
-// GPU energy: power is averaged between readings (trapezoids); gaps over two minutes (a Spark offline, the
-// service restarting) aren't counted. Kept in an owner-only file next to the chats.
+// Energy, two totals per Spark: the GPU alone (its own power reading, while the Spark answers) and the whole Spark at
+// the wall (its smart plug, 12-plugs.mjs, also while it's dark: a shut-down Spark still draws a little). Power is
+// averaged between readings (trapezoids); gaps over two minutes (no reading, the service restarting) aren't counted.
+// Kept in an owner-only file next to the chats.
 const ENERGY_FILE = `${STATE_DIR}/energy.json`;
 let energy = null;
+function addEnergy(e, w, now, [kWh, seconds, last]) {
+  if (w !== null && e[last] && now - e[last].t <= 120000 && now > e[last].t) {
+    const dt = (now - e[last].t) / 1000;
+    e[kWh] = (e[kWh] || 0) + (((w + e[last].w) / 2) * dt) / 3.6e6;
+    e[seconds] = (e[seconds] || 0) + dt;
+  }
+  e[last] = w === null ? null : { t: now, w };
+}
 function sampleEnergy(nodes) {
   energy ||= readJson(ENERGY_FILE) || { since: null, nodes: {} };
   const now = Date.now();
   for (const n of nodes) {
     const e = (energy.nodes[n.id] ||= { kWh: 0, coverageSeconds: 0, last: null });
-    const w = n.reachable && typeof n.gpuPowerWatts === 'number' ? n.gpuPowerWatts : null;
-    if (w !== null && e.last && now - e.last.t <= 120000 && now > e.last.t) {
-      const dt = (now - e.last.t) / 1000;
-      e.kWh += (((w + e.last.w) / 2) * dt) / 3.6e6;
-      e.coverageSeconds += dt;
-    }
-    e.last = w === null ? null : { t: now, w };
+    addEnergy(e, n.reachable && typeof n.gpuPowerWatts === 'number' ? n.gpuPowerWatts : null, now, ['kWh', 'coverageSeconds', 'last']);
+    const wall = n.wall?.answering && typeof n.wall.watts === 'number' ? n.wall.watts : null;
+    if (wall !== null) e.wallSince ||= new Date(now).toISOString();
+    addEnergy(e, wall, now, ['wallKWh', 'wallCoverageSeconds', 'wallLast']);
   }
   energy.since ||= new Date(now).toISOString();
   try {
@@ -93,7 +100,8 @@ function sampleEnergy(nodes) {
 }
 const energyView = () => (energy ? {
   since: energy.since,
-  nodes: Object.fromEntries(Object.entries(energy.nodes).map(([id, e]) => [id, { kWh: e.kWh, coverageSeconds: Math.round(e.coverageSeconds) }])),
+  nodes: Object.fromEntries(Object.entries(energy.nodes).map(([id, e]) => [id, { kWh: e.kWh, coverageSeconds: Math.round(e.coverageSeconds),
+    ...(e.wallSince ? { wallKWh: e.wallKWh || 0, wallCoverageSeconds: Math.round(e.wallCoverageSeconds || 0), wallSince: e.wallSince } : {}) }])),
 } : null);
 
 let statusCache = null, statusPending = null;
@@ -105,6 +113,7 @@ function collectStatus() {
         return { id: n.id, name: sparkName(n), configured: true, reachable: false, state: 'unreachable' };
       }
     }));
+    for (const n of nodes) { const w = wallFor(n.id); if (w) n.wall = w; }
     sampleEnergy(nodes);
     noteSparkStates(nodes);
     statusCache = { at: Date.now(), value: { nodes, updatedAt: new Date().toISOString() } };
@@ -114,7 +123,14 @@ function collectStatus() {
 }
 async function statusFor(viewer, fresh) {
   const value = fresh || !statusCache || Date.now() - statusCache.at > STATUS_EVERY + 5000 ? await collectStatus() : statusCache.value;
-  return { ...value, nodes: value.nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
+  // (a Spark Spark Console powered off on purpose carries its mark, 21-power.mjs: when, why, what was parked)
+  // (the wall reading is taken again here, never from the cached copy: a plug plugs.json no longer maps to that Spark,
+  // or Spark 2's read-only mark taken away, shows at once, R41)
+  const nodes = value.nodes.map(n => {
+    const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off } : {}) };
+  });
+  return { ...value, nodes, ...(viewer.role === 'owner' ? { energy: energyView() } : {}), source: 'console' };
 }
 setTimeout(() => {
   collectStatus().catch(() => {});
@@ -175,7 +191,7 @@ async function sparkAction(job, node, action) {
 }
 async function checkSparkAction(node, action) {
   if (action !== 'editor-restart') throw new HttpError(400, 'Unsupported Spark action.');
-  if ([...jobs.values()].some(j => j.status === 'running' && j.node === node.id && ['spark-action', 'deploy', 'stop'].includes(j.type))) {
+  if ([...jobs.values()].some(j => j.status === 'running' && j.node === node.id && ['spark-action', 'deploy', 'stop', 'power-off', 'power-on'].includes(j.type))) {
     throw new HttpError(409, `Something is already changing on ${node.id}. Wait for it to finish.`);
   }
 }

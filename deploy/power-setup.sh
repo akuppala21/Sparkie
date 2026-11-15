@@ -37,6 +37,20 @@ sudo -n -l /usr/bin/systemctl poweroff >/dev/null && echo "  passwordless powero
 EOF
 
 HOST="${SPARK2:-akuppala@100.79.155.126}"
+# Never Spark 2 (R41): by its address or name here, and on the far side by its machine id, so no other name for it
+# (a hostname, another of its addresses) gets the shutdown rule either.
+HUB_ADDR="${HOST#*@}"
+for s in "${SPARKS[@]}"; do
+  case "${s#*@}" in
+    "$HUB_ADDR"|localhost|127.*|::1|akspark2|akspark2.*|spark2|spark-2)
+      echo "Refused: $s is Spark 2. It runs Spark Console and Sparkie and is never set up to shut down." >&2; exit 2 ;;
+  esac
+done
+HUB_ID=$(ssh "$HOST" 'cat /etc/machine-id' 2>/dev/null || true)
+[ -n "$HUB_ID" ] || { echo "Couldn't read Spark 2's machine id, so nothing was set up (it is how Spark 2 is told apart)." >&2; exit 2; }
+REMOTE="HUB_ID='$HUB_ID'
+[ \"\$(cat /etc/machine-id 2>/dev/null)\" = \"\$HUB_ID\" ] && { echo 'Refused: this is Spark 2. It runs Spark Console and Sparkie and is never set up to shut down.' >&2; exit 2; }
+$REMOTE"
 for s in "${SPARKS[@]}"; do
   echo "Setting up $s (through Spark 2) …"
   # A terminal on the far side, so sudo can ask for that Spark's password.

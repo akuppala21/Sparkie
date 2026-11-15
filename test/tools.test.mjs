@@ -91,6 +91,7 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     ['roll back spark console', 'control'], ['go back to the previous version', 'control'],
     ['what do you remember about me?', 'memory'], ['forget that I prefer gemma', 'memory'], ['what\'s in your memory?', 'memory'],
     ['run the self-test please', 'checks'], ['test spark 3', 'checks'],
+    ['is spark 4 asleep?', 'power'], ['shut down spark 4', 'power'], ['turn on spark 3', 'power'],
     // (longer: more groups match than fit, and the ones it began with stay)
     ['it crashed again, is it out of memory? which model fits instead?', 'dig', 'find'],
     ['why did it fail? check the logs and the config file', 'dig', 'find'],
@@ -103,7 +104,8 @@ describe('the brain\'s tool list', { concurrency: 1 }, () => {
     for (const g of catalog.brain.groups) assert.ok(REQUESTS.filter(([, ...groups]) => groups.includes(g.group)).length >= 2, `requests for ${g.group}`);
     const from = requests().length;
     await withScript([QUIET], async () => { for (const [words] of REQUESTS) await say(await newChat(), words); });
-    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/ };
+    const LINES = { read_page: /read one or two good results with read_page/, forget_memory: /forget_memory retires a line: it leaves what you read and stays in memory’s history, which only the owner sees\./, workflows: /The workflows tool lists every workflow/,
+      power_off: /To shut a Spark down or turn it on, call power_off/ };
     for (const [words, ...groups] of REQUESTS) {
       const [first] = rounds(words, from);
       assert.deepEqual(sorted(first.tools), coreAnd(...groups), `“${words}”: ${groups.join(' + ') || 'the core'}`);

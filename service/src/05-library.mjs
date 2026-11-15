@@ -144,6 +144,11 @@ const ENGINES = {
   'llama.cpp': { title: 'llama.cpp', entry: 'llama-server', head: ['-m'], tail: served => ['--host', '0.0.0.0', '--port', '8000', '--alias', served, '-ngl', '999'], ctxFlag: '-c', gguf: true },
 };
 const engineOf = model => (ENGINES[model.manifest?.engine] ? model.manifest.engine : model.format === 'gguf' ? 'llama.cpp' : 'vllm');
+// The flag that turns on a model server's own counters at /metrics, which the idle power-off reads to see the model used
+// at its own address (21-power.mjs): SGLang and llama.cpp have them only when asked; vLLM always; TensorRT-LLM gives no
+// counter there. Added by the start commands themselves (dockerRunCommand, clusterRunCommand), not in ENGINES, so
+// only the start workflows change with it; never twice, when a setup's own flags have it already.
+const metricsFlags = (engine, args = []) => (f => (f && !args.includes(f) ? [f] : []))({ sglang: '--enable-metrics', 'llama.cpp': '--metrics' }[engine] || null);
 const imageOf = model => model.manifest?.image || CONFIG.images[engineOf(model)] || null;
 
 function gpuUsersScript(image) {
@@ -395,6 +400,6 @@ mm=$(cd ${root} 2>/dev/null && ls *.gguf */*.gguf 2>/dev/null | grep -i mmproj |
     vision = ' ${mm:+--mmproj "$in/$mm"}';
   }
   const cache = engineCache(imageOf(model));
-  return prelude + cache.prelude + [...parts, ...(fromCache ? ['"${hfmounts[@]}"'] : ['-v', mount]), ...cache.mount, ...head.map(q), path, ...[...tail, ...args].map(q)].join(' ') + vision;
+  return prelude + cache.prelude + [...parts, ...(fromCache ? ['"${hfmounts[@]}"'] : ['-v', mount]), ...cache.mount, ...head.map(q), path, ...[...tail, ...metricsFlags(engineOf(model), args), ...args].map(q)].join(' ') + vision;
 }
 
