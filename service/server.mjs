@@ -7379,7 +7379,17 @@ function journal(kind, fields = {}, body = null) {
       finally { if (out !== null) try { closeSync(out); } catch {} }
     }
     const fd = openSync(jFile(month, 'jsonl'), 'a', 0o600);
-    try { writeSync(fd, `${jLine(rec)}\n`); if (fields.start) fsyncSync(fd); } finally { closeSync(fd); }
+    let written = false;
+    try {
+      writeSync(fd, `${jLine(rec)}\n`);
+      written = true;
+      if (fields.start) fsyncSync(fd);
+    } catch (e) {
+      // A start line written but not synced: the change is refused, so its end goes in at once (as far as it can), and a
+      // restart never reports a change that never ran as cut off.
+      if (written && fields.start) try { writeSync(fd, `${jLine({ id, at: new Date().toISOString(), k: kind, end: true, ok: false, outcome: 'refused' })}\n`); } catch {}
+      throw e;
+    } finally { closeSync(fd); }
     journalWorked = Date.now();
     return id;
   } catch (e) {

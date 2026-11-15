@@ -58,7 +58,7 @@ const leaks = text => KEYS.flatMap(k => Array.from({ length: k.length - 11 }, (_
 // A key's pieces of 12 characters: none may be in the journal, whole or cut.
 const piecesOf = key => Array.from({ length: key.length - 11 }, (_, i) => key.slice(i, i + 12));
 const SUBKEY = 'hf_Zq7Wm2Xr9Tb4Lk8Hs3Fd6Gp1Nc5Vy0Uj', EVKEY = 'hf_Pa4Ke8Rt2Wq6Yz0Bn3Mx7Lc1Vg5Hd9Js';
-let failedOp = null;
+let failedOp = null, refusedId = null;
 
 test('its folder is outside the state folder (0700, files 0600); a look writes one line; a key in an agent\'s arguments is [hidden] in the file', async () => {
   const before = records().length;
@@ -180,6 +180,20 @@ test('with the journal\'s disk full, a change written down first answers "couldn
   assert.ok(!(await ok('fleet_status', {}, keys.look.token)).needsOwner.some(l => /journal/.test(l)), 'the line goes once a write works');
 });
 
+// A failing disk can take the line and then fail its sync: the change is refused, its end goes in at once, and the
+// restart below doesn't report it as cut off.
+test('a start line written but not synced: the change is refused and its end is written at once', { timeout: 60000 * SLOW }, async () => {
+  writeFileSync(join(T.fleet.dir, 'fsync-fail'), '');
+  try {
+    const s = await call(keys.act.token, 'save_file', { spark: 'spark3', path: 'fsync-fail.md', text: 'not written\n' });
+    assert.match(s.text, /^\[failed\] Couldn[’']t write the record of this change.*so nothing was changed/);
+    assert.ok(!existsSync(join(T.fleet.root, 'spark3', '.local/share/spark-portal/workspaces/shared', 'fsync-fail.md')));
+  } finally { rmSync(join(T.fleet.dir, 'fsync-fail'), { force: true }); }
+  const start = records().find(r => r.start && r.args?.path === 'fsync-fail.md');
+  refusedId = start?.id;
+  assert.deepEqual(records().filter(r => r.id === refusedId).map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'refused']]);
+});
+
 // The console killed between the start line of save_file (its worker stalled) and its end; then started again on the
 // same state and journal, twice. B is the console after the first restart.
 let B = null, cutChat = null;
@@ -218,6 +232,7 @@ test('a console killed between a start line and its end: after the restart, one 
   const mine = records(B.journalDir).filter(r => r.id === start.id);
   assert.deepEqual(mine.map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'cut-off']]);
   assert.equal(records(B.journalDir).filter(r => r.start && r.act === 'save_file' && r.chat === cutChat).length, 1, 'never run again');
+  assert.deepEqual(records(B.journalDir).filter(r => r.id === refusedId).map(r => r.outcome || null), [null, 'refused'], 'a refused change is not cut off');
   const notice = await waitFor(() => records(B.journalDir).find(r => r.k === 'event' && (r.text || '').startsWith(`${CUT_PREFIX}mmmm`)), { what: 'the cut-off operation\'s notice' });
   assert.ok(notice.text.includes('[hidden]'), notice.text);
   assert.deepEqual(piecesOf(EVKEY).filter(f => everything(B.journalDir).includes(f)), [], 'no piece of the key in an event\'s text');
