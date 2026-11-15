@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..'), SRC = join(REPO, 'service', 'src');
 const PATH_PROGRAMS = /^const PATH_PROGRAMS = '([^']*)';$/m.exec(readFileSync(join(SRC, '01-setup.mjs'), 'utf8'))[1].split(' ');
-// 21-work.mjs and 21-copies.mjs, with the few names they take from other parts stubbed; run keeps each command it is
+// 21-work.mjs and 21-copies.mjs (with its pruning, 21-copies-prune.mjs), with the few names they take from other parts stubbed; run keeps each command it is
 // handed (and answers as the copies' program does).
 const dir = mkdtempSync(join(tmpdir(), 'sct-own-'));
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
@@ -25,6 +25,7 @@ writeFileSync(join(dir, 'own.mjs'), [
   'const sparkName = () => "Spark 3", maskSecrets = String, ran = [];',
   'const run = async (node, command) => { ran.push(command); return { code: 0, out: `\\nRESULT ${Buffer.from("{}").toString("base64")}\\n` }; };',
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
+  readFileSync(join(SRC, '21-copies-prune.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies.mjs'), 'utf8'),
   'export { helperScript, lookForm, LOOK_FORMS, KEY_SCRIPT, q, copiesOn, ran };',
 ].join('\n'));

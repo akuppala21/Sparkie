@@ -208,6 +208,7 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
+  ctx.touched?.add(w);
   if (/[\x00-\x1f\x7f]/.test(w.text)) unsure('It names a file with a line break, a tab or another control sign in its name.');
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
@@ -226,9 +227,18 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     ctx.changes.set(p, ctx.changes.get(p) || wide);
   }
 }
-const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
+const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
+  || (ctx.before.length > 0 && ([p, ...sortUp(p)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, p, ctx))));
 // A path written before this command (opts.written, a * kept): p is it or under it.
-const sortBefore = (b, p) => (b === '/' || (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`)));
+// (each pattern tested against p and each folder above it is a step of the work bound, so a full list can't make the
+// sorter slow)
+const sortBefore = (b, p, ctx) => {
+  if (b === '/') return true;
+  if (!/[*?[]/.test(b)) return p === b || p.startsWith(`${b}/`);
+  const up = [p, ...sortUp(p)];
+  if ((ctx.steps += up.length) > SORT_STEPS) unsure('It names more places than the sorter reads against what the task wrote before.');
+  return up.some(a => sortGlob(b).test(a));
+};
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {

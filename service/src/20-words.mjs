@@ -59,6 +59,8 @@ async function statusText() {
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
   setAgentSettings({ halted: true, autoPaused: false });
+  // (an open dangerous ask closes: 20-danger.mjs)
+  dangerPaused();
   putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
@@ -110,8 +112,11 @@ async function restartWord(via) {
 // /stop: Sparkie's answer in this chat ends, and so does its carrying on with that request (stopTurn, 14-chats.mjs), and
 // the chat's box goes (boxStop, 21-box.mjs). It never cancels an operation and never stops a model.
 function stopWord(conv) {
+  // (a dangerous ask this chat asked closes too: 20-danger.mjs; and the chat's box goes: 21-box.mjs)
+  const asked = dangerStopped(conv);
   const box = conv ? boxStop(conv) : null, gone = box ? ` This chat’s box on ${box} is being removed, with its folder.` : '';
   if (conv && stopTurn(conv)) return `Stopped. Sparkie’s answer in this chat ends here, and it won’t carry on with that request.${gone} Operations already started keep running and post their results here. No model was stopped. To stop an operation, ask Sparkie to cancel it.`;
+  if (asked) return `Stopped. The ask in this chat that waited for your answer is closed, and nothing was run.${gone}`;
   if (box) return `Sparkie isn’t answering in this chat and has nothing to carry on with.${gone} Operations and models are as they were.`;
   return 'Sparkie isn’t answering in this chat and has nothing to carry on with, so there was nothing to stop. Operations and models are as they were.';
 }

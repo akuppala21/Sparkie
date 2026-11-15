@@ -546,9 +546,10 @@ const handler = async (req, res) => {
         if (req.method !== 'POST') throw new HttpError(405, 'Use POST to press a button.');
         if (!owner) throw new HttpError(403, 'Only the owner’s conversations have buttons.');
         if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
-        const { choice } = await readBody(req, 2000);
+        // (pair: a dangerous ask's two digits, in the same request as its press, 20-danger.mjs)
+        const { choice, pair } = await readBody(req, 2000);
         if (typeof choice !== 'string' || !/^[a-f0-9]{10}$/.test(choice)) throw new HttpError(400, 'Which button?');
-        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner' });
+        const r = await runChoice(viewer, conv, choice, { via: 'page', actor: 'owner', ...(typeof pair === 'string' ? { pair: pair.slice(0, 8) } : {}) });
         return send(res, 200, { outcome: r.outcome, operation: r.operation || null, message: r.message, ...chatSummary(conv), messages: conv.messages });
       }
       if (chatMatch[2] && req.method === 'POST') {
@@ -557,6 +558,9 @@ const handler = async (req, res) => {
         if (context !== null && (typeof context !== 'string' || context.length > LIMITS.context)) throw new HttpError(400, 'Invalid snapshot.');
         // A key given in the owner's own chat is taken out first, before anything else reads the words (20-keys.mjs, R51).
         if (owner && !conv.agent && keysGiven(text)) return await answerKeys(res, conv, text, viewer);
+        // An open dangerous ask's two digits, typed here as a number of their own, go nowhere: they are typed in the ask's
+        // own field (20-danger.mjs; Telegram's next message is checked the same way, after its keys too).
+        if (owner && dangerPairInChat(text)) throw new HttpError(400, 'Type the two digits in the ask’s own field.');
         // The owner's words (/status, /pause, /restart sparkie, /stop, /undo update, /help) in their own chat: answered by
         // code, no model, also while an answer is coming in this chat (/stop ends it).
         const word = owner && !conv.agent ? ownerWord(text) : null;
@@ -566,7 +570,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: conv.messages });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);

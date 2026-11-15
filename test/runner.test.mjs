@@ -70,6 +70,21 @@ useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: Str
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
     put('fix.sh', "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\\n' >> .ssh/authorized_keys\necho added\n", 0o755);
+    // (scripts, so a change of the plain shape (R64) can still start a child in the background, and work out its call's
+    // id as an attacker's script would: the run unit's cgroup on a Spark, else the held command file a parent runs)
+    put('notes/bg.sh', 'sleep 30 & echo $! > notes/bg.pid; sleep 40\n');
+    put('notes/forge.sh', [
+      'id=',
+      'while IFS= read -r l; do case $l in */sw-run-*.service) l=${l##*/sw-run-}; id=${l%.service} ;; esac; done 2>/dev/null < /proc/self/cgroup',
+      'p=$PPID',
+      'while [ -z "$id" ] && [ "${p:-1}" -gt 1 ]; do',
+      "  c=$(tr '\\0' '\\n' 2>/dev/null < \"/proc/$p/cmdline\" | tail -n 1)",
+      '  case $c in */command) c=${c%/command}; id=${c##*/} ;; esac',
+      '  q=; while read -r k v; do [ "$k" = PPid: ] && q=$v; done 2>/dev/null < "/proc/$p/status"; p=$q',
+      'done',
+      "[ -n \"$id\" ] || { echo 'forge.sh: no call id' >&2; exit 9; }",
+      "printf '%s refused: x\\n' \"$id\"",
+      'echo printed > notes/printed.txt', ''].join('\n'));
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'target.txt'), 'outside\n');
     writeFileSync(join(out, 'f.txt'), 'outside f\n');
@@ -280,7 +295,7 @@ test('names with a space, a leading dash, a line break or two dots are copied an
 });
 
 test('the time limit ends the unit with everything it started; an exit code other than 0 is a result', { timeout: 120000 * SLOW }, async () => {
-  const t0 = Date.now(), r = await run('sleep 30 & echo $! > notes/bg.pid; sleep 40');
+  const t0 = Date.now(), r = await run('bash notes/bg.sh');
   assert.equal(r.status, 200, r.text);
   assert.ok(Date.now() - t0 < (SECONDS + 8) * 1000, 'ended at its limit');
   assert.deepEqual([r.json.ran, r.json.exit], [true, null], r.text);
@@ -289,7 +304,7 @@ test('the time limit ends the unit with everything it started; an exit code othe
   const pid = Number(text('notes/bg.pid'));
   assert.ok(pid > 1);
   await waitFor(() => !alive(pid), { timeout: 10000, what: 'what it started in the background to be gone' });
-  const [, end] = pair('sleep 30 & echo $! > notes/bg.pid; sleep 40');
+  const [, end] = pair('bash notes/bg.sh');
   assert.deepEqual([end.ok, end.outcome, end.exit], [true, 'ended', undefined]);
   const three = await run('touch notes/e.txt; exit 3');
   assert.equal(three.status, 200, three.text);
@@ -454,7 +469,7 @@ test('undo is not done beside a change that still runs: a cut-off change whose u
 
 test('a line the command prints as the helper would, then a dropped connection: the set is kept and nothing says it never ran', { timeout: 120000 * SLOW }, async () => {
   const drops = join(H3(), '.mock', 'sudo-drops'), chat = await newChat();
-  const command = `printf '%s refused: x\\n' "$(basename "$(dirname "$0")")"; echo printed > notes/printed.txt`;
+  const command = 'bash notes/forge.sh';
   writeFileSync(drops, 'first-line\n');
   let ran;
   try { ran = await inChat(chat, 'print refused on spark three', 'run', { on: 'spark3', command }); } finally { rmSync(drops, { force: true }); }

@@ -6,22 +6,25 @@
 // miss count as text (what the file holds never runs); `path-check.sh` is asked before anything changes, and a miss
 // refuses check and install naming each program, with nothing changed; `restore.sh` and the watchdog take their
 // programs from the fixed path (`path-check.sh`'s); a `.curlrc` and a user-site `.pth` in the home are never read by
-// install.sh, restore.sh or the watchdog, and every Python and curl call in the three scripts says `-I` and `-q`. On
+// install.sh, restore.sh or the watchdog, and every Python and curl call in the three scripts says `-I` and `-q`. The
+// stand-in switch is an argument only (--stand-in): set in their environment, it switches nothing. The watchdog writes
+// its three files whole, by rename, never through a link that is there. E10f: the console runs on a Node of Spark 2's own
+// (from the fixed path), never code-server's: with only that one, an install is refused before anything changes. On
 // macOS it runs under bash 3.2 with `tar` and `find` shims; a Linux run is the full proof.
 //
 // The installer's Spark 2 half (the install.sh inside deploy/host-on-portal.sh), its restore.sh and its watchdog, run on
 // this machine (F4, H1, S5). Nothing real is touched: each case gets its own short HOME, stand-ins come first on PATH
 // (systemctl starts and stops a small runner for the stand-in console, test/mock/standin-console.mjs; ssh, sudo,
 // tailscale and systemd-run fail closed and are never called), and DBUS_SESSION_BUS_ADDRESS is empty so a real
-// `systemctl --user` couldn't reach a user manager. SPARK_CONSOLE_ALL_LOCAL=1, as on the stand-in fleet, keeps that PATH
-// in restore.sh and the watchdog, and has install.sh read ~/.mock/off-path-<program> for its path look; a case that
-// runs them as on Spark 2 sets it empty. The Mac half (tailscale serve, sudo) is never run here.
+// `systemctl --user` couldn't reach a user manager. --stand-in, as the stand-in fleet's tests say it, keeps that PATH in
+// restore.sh, the watchdog and go-back.sh, and has install.sh read ~/.mock/off-path-<program> for its path look; a case
+// that runs them as on Spark 2 leaves it out. The Mac half (tailscale serve, sudo) is never run here.
 // Part B runs `install.sh verify` against the real service on the stand-in fleet, and checks which snapshot undo picks.
 // On macOS, bash 3.2 runs it with small tar and find shims (GNU options); a Linux run is the full proof.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, symlinkSync, unlinkSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, symlinkSync, unlinkSync, copyFileSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -152,9 +155,11 @@ function stage(home, mode, n) {
 const envFor = (home, extra = {}) => ({ HOME: home, USER: 'standin', PATH: `${join(home, 'bin')}:${NODE_DIR}:${process.env.PATH}`,
   SPARK_CONSOLE_INSTALL_WAIT_S: '6', SPARK_CONSOLE_INSTALL_SETTLE_S: '3', DBUS_SESSION_BUS_ADDRESS: '', XDG_RUNTIME_DIR: join(home, 'run'), LANG: 'C.UTF-8',
   SPARK_CONSOLE_ALL_LOCAL: '1', ...extra });
-function run(home, args, extra = {}) {
+// (--stand-in, as the stand-in fleet's tests say it; a case run as on Spark 2 sets SPARK_CONSOLE_ALL_LOCAL empty, or
+// passes standIn false)
+function run(home, args, extra = {}, standIn = extra.SPARK_CONSOLE_ALL_LOCAL !== '') {
   return new Promise(resolve => {
-    const p = spawn('bash', [join(home, 'in', 'install.sh'), ...args], { env: envFor(home, extra), stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn('bash', [join(home, 'in', 'install.sh'), ...args, ...(standIn ? ['--stand-in'] : [])], { env: envFor(home, extra), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { out += d; });
@@ -352,7 +357,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     const stamp = nextStamp();
     assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
     writeFileSync(join(home, 'fail-cp'), '/spark-console-service/');
-    const r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh')], { env: envFor(home), encoding: 'utf8', timeout: 60000 * SLOW });
+    const r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8', timeout: 60000 * SLOW });
     assert.notEqual(r.status, 0, r.stdout + r.stderr);
     assert.equal(apiVerbs(home).at(-1), 'start', systemctlLog(home).join('\n'));
     assert.ok(runnerAlive(home));
@@ -365,11 +370,11 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     const S = join(home, '.local', 'state', 'spark-console'), dog = join(home, '.local', 'share', 'spark-console', 'watchdog.sh');
     const misses = () => (existsSync(join(S, 'watchdog-misses')) ? readFileSync(join(S, 'watchdog-misses'), 'utf8').trim() : null);
     const restarts = () => apiVerbs(home).filter(v => v === 'restart').length, n = restarts();
-    spawnSync('bash', [dog], { env: envFor(home) });
+    spawnSync('bash', [dog, '--stand-in'], { env: envFor(home) });
     assert.equal(misses(), '1');
-    spawnSync('bash', [dog], { env: envFor(home) });
+    spawnSync('bash', [dog, '--stand-in'], { env: envFor(home) });
     assert.equal(misses(), '2');
-    spawnSync('bash', [dog], { env: envFor(home) });
+    spawnSync('bash', [dog, '--stand-in'], { env: envFor(home) });
     assert.equal(restarts(), n + 1, systemctlLog(home).join('\n'));
     assert.equal(readFileSync(join(S, 'watchdog-restarts'), 'utf8').split('\n').filter(Boolean).length, 1);
     unlinkSync(join(home, 'unit-state'));
@@ -379,7 +384,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     const home = makeHome(), old = await firstGood(home);
     const before = installed(home), b = stage(home, 'good', 2);
     const code = await new Promise(resolve => {
-      const p = spawn('bash', [join(home, 'in', 'install.sh'), 'install', nextStamp(), b, 'local'], { env: envFor(home), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn('bash', [join(home, 'in', 'install.sh'), 'install', nextStamp(), b, 'local', '--stand-in'], { env: envFor(home), stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';
       p.stdout.on('data', d => { out += d; if (out.includes('Installing the UI')) { p.stdout.destroy(); p.stderr.destroy(); } });
       p.on('exit', resolve);
@@ -399,7 +404,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.equal(await health(home), null, 'the console is dead');
     // A fix that misses its checks: the installer puts the dead build back.
     assert.notEqual((await install(home, nextStamp(), stage(home, 'not-owner', 3))).code, 0);
-    const g = spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'go-back.sh')], { env: envFor(home), encoding: 'utf8' });
+    const g = spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'go-back.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8' });
     await waitFor(async () => (await health(home))?.build === good, { timeout: 30000, what: `the last good build answering (go-back.sh: ${g.stdout}${g.stderr})` });
   });
 
@@ -413,7 +418,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     writeFileSync(join(home, 'spark-console-service', 'server.mjs'), `const MODE = 'dead'; // 2\n${STANDIN}`);
     spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', 'restart', 'spark-console-api'], { env: envFor(home) });
     await new Promise(r => setTimeout(r, 1500));
-    const dog = () => spawnSync('bash', [join(D, 'watchdog.sh')], { env: envFor(home) });
+    const dog = () => spawnSync('bash', [join(D, 'watchdog.sh'), '--stand-in'], { env: envFor(home) });
     const silentFor = minutes => writeFileSync(join(S, 'watchdog-silent-since'), `${Math.floor(Date.now() / 1000) - minutes * 60}\n`);
     silentFor(14); dog();
     assert.equal(await health(home), null, 'not after 14 minutes');
@@ -452,7 +457,7 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     writeFileSync(join(home, 'unit-state'), 'active');
     const S = join(home, '.local', 'state', 'spark-console');
     writeFileSync(join(S, 'watchdog-misses'), 'a[$(touch ran)]\n');
-    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh')], { env: envFor(home), cwd: home });
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh'), '--stand-in'], { env: envFor(home), cwd: home });
     assert.ok(!existsSync(join(home, 'ran')), 'what the file held ran');
     assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '1');
     unlinkSync(join(home, 'unit-state'));
@@ -530,9 +535,122 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     r = await install(home, nextStamp(), stage(home, 'not-owner', 2));
     assert.notEqual(r.code, 0, r.out);
     assert.equal((await health(home))?.build, good, r.out);
-    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh')], { env: envFor(home), cwd: home });
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh'), '--stand-in'], { env: envFor(home), cwd: home });
     assert.ok(!existsSync(pth), 'a python3 without -I ran');
     assert.ok(!existsSync(rc), `a curl without -q read ~/.curlrc: ${existsSync(rc) ? readFileSync(rc, 'utf8').slice(0, 300) : ''}`);
+  });
+
+  // (the fourth read of C4b, later list 1 and 2)
+  test('26. the stand-in switch is an argument only: in their environment it switches nothing, in restore.sh, the watchdog or install.sh\'s path look', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const stamp = nextStamp();
+    assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
+    // The switch set in the environment, no --stand-in: the stand-in systemctl first on the PATH never runs.
+    const n = systemctlLog(home).length, env = envFor(home, { SPARK_CONSOLE_ALL_LOCAL: '1' });
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh')], { env, cwd: home, timeout: 60000 * SLOW });
+    spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh')], { env, cwd: home, timeout: 60000 * SLOW });
+    assert.deepEqual(systemctlLog(home).slice(n), [], 'the systemctl in the home ran');
+    // install.sh's path look: with the switch only in its environment, it asks path-check.sh (here one that finds
+    // nothing missing), not ~/.mock, which marks nvidia-smi missing.
+    sh(join(home, 'in', 'path-check.sh'), '#!/bin/sh\nexit 0\n');
+    mkdirSync(join(home, '.mock'));
+    writeFileSync(join(home, '.mock', 'off-path-nvidia-smi'), '');
+    const c = await run(home, ['check'], { SPARK_CONSOLE_ALL_LOCAL: '1' }, false);
+    assert.equal(c.code, 0, c.out);
+    assert.match(c.out, /^busy /m);
+    // (and with --stand-in the same look reads ~/.mock, with path-check.sh's own list)
+    copyFileSync(join(REPO, 'deploy', 'path-check.sh'), join(home, 'in', 'path-check.sh'));
+    const m = await run(home, ['check'], {}, true);
+    assert.match(m.out, /Not on the fixed path: nvidia-smi\./);
+  });
+
+  test('27. the watchdog writes its three files whole, by rename: a link left in their place is replaced, and what it pointed at is untouched', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    stopRunner(home);
+    writeFileSync(join(home, 'unit-state'), 'active');
+    const S = join(home, '.local', 'state', 'spark-console'), dog = join(home, '.local', 'share', 'spark-console', 'watchdog.sh');
+    const outside = f => join(home, `outside-${f}`);
+    const plant = f => { writeFileSync(outside(f), 'kept\n'); rmSync(join(S, f), { force: true }); symlinkSync(outside(f), join(S, f)); };
+    plant('watchdog-misses'); plant('watchdog-silent-since');
+    spawnSync('bash', [dog, '--stand-in'], { env: envFor(home), cwd: home });
+    for (const f of ['watchdog-misses', 'watchdog-silent-since']) {
+      assert.equal(readFileSync(outside(f), 'utf8'), 'kept\n', `${f}: written through the link`);
+      assert.ok(!lstatSync(join(S, f)).isSymbolicLink(), `${f}: still a link`);
+    }
+    assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '1');
+    // The third miss restarts the console: the restarts file, a link here, is written whole too.
+    writeFileSync(join(S, 'watchdog-misses'), '2\n');
+    plant('watchdog-restarts');
+    spawnSync('bash', [dog, '--stand-in'], { env: envFor(home), cwd: home });
+    assert.equal(readFileSync(outside('watchdog-restarts'), 'utf8'), 'kept\n', 'watchdog-restarts: written through the link');
+    assert.ok(!lstatSync(join(S, 'watchdog-restarts')).isSymbolicLink());
+    assert.match(readFileSync(join(S, 'watchdog-restarts'), 'utf8'), /^\d+\n$/);
+    assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '0');
+    unlinkSync(join(home, 'unit-state'));
+  });
+
+  // (E10f: Spark 2's own Node, never code-server's)
+  // code-server's Node, as code-server installs it under the home (here it runs this machine's node).
+  const codeServerNode = home => {
+    const dir = join(home, '.local', 'opt', 'code-server-4.96.2', 'lib');
+    mkdirSync(dir, { recursive: true });
+    sh(join(dir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+    return dir;
+  };
+  const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+  // (what every Node refusal says to do, word for word, as a pattern)
+  const HOW = 'Install Node\\.js 22 from NodeSource: curl -q -fsSL https://deb\\.nodesource\\.com/setup_22\\.x \\| sudo -E bash - && sudo apt-get install -y nodejs\\. Then run this again\\. Nothing was changed\\.';
+  const fixedNode = spawnSync('sh', ['-c', 'command -v node'], { env: { PATH: FIXED }, encoding: 'utf8' }).stdout.trim();
+  test('28. the console runs on Spark 2\'s own Node, from the fixed path: with code-server\'s first on the PATH, install.sh takes the other', { ...CASE, skip: !fixedNode && 'no node on the fixed path here' }, async () => {
+    const home = makeHome(), cs = codeServerNode(home);
+    sh(join(home, 'in', 'path-check.sh'), '#!/bin/sh\nexit 0\n');
+    const r = await run(home, ['check'], { PATH: `${cs}:${envFor(home).PATH}` }, false);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, new RegExp(`Node\\.js v\\d+[^ ]* \\(${fixedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\): ok`));
+    assert.doesNotMatch(r.out, /code-server/);
+  });
+
+  test('29. with only code-server\'s Node on Spark 2, an install is refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), cs = codeServerNode(home), b = stage(home, 'good', 1);
+    // (no node on the PATH given: the stand-in fleet's tests take Node from it)
+    const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:/usr/bin:/bin` });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, new RegExp(`STOP: Spark 2 has no Node\\.js of its own, and Spark Console no longer runs on code-server's \\(${join(cs, 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)\\. ${HOW}`));
+    assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+  });
+
+  // (the sixth read of C4b: 22 or newer with the built-in WebSocket client; where the found node leads)
+  const nodeStub = (dir, version, ws) => { mkdirSync(dir, { recursive: true }); sh(join(dir, 'node'), `#!/bin/sh\ncase "$1" in --version) echo ${version} ;; -e) exit ${ws ? 0 : 1} ;; *) exec ${JSON.stringify(process.execPath)} "$@" ;; esac\n`); return dir; };
+  test('30. a Node older than 22, or one without the built-in WebSocket client, or one that leads into the home: refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), b = stage(home, 'good', 1), out = mkdtempSync(join(tmpdir(), 'scin-node-'));
+    homes.push(out);
+    const cases = [
+      [nodeStub(join(out, 'old'), 'v18.19.1', true), /STOP: Spark Console needs Node\.js 22 or newer, but the one it would run with \([^)]*\) is v18\.19\.1\./],
+      [nodeStub(join(out, 'nows'), 'v22.11.0', false), /STOP: The Node\.js it would run with \([^)]*, v22\.11\.0\) has no built-in WebSocket client, which the plug control needs\./],
+    ];
+    // (a node on the PATH given that is a link to one in the home)
+    const inHome = nodeStub(join(home, '.nvm', 'bin'), 'v22.11.0', true), link = join(out, 'link');
+    mkdirSync(link); symlinkSync(join(inHome, 'node'), join(link, 'node'));
+    cases.push([link, /STOP: The Node\.js found \([^)]*\) is in your home \([^)]*\.nvm\/bin\/node\); Spark Console runs only on Spark 2's own\./]);
+    for (const [dir, re] of cases) {
+      const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${dir}:/usr/bin:/bin` });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, re);
+      assert.match(r.out, new RegExp(HOW));
+      assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+    }
+    const ok = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${nodeStub(join(out, 'good'), 'v22.11.0', true)}:/usr/bin:/bin` });
+    assert.equal(ok.code, 0, ok.out);
+  });
+
+  test('31. restore.sh says so when the unit it puts back starts the service with a Node that is gone', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const stamp = nextStamp();
+    assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
+    const unit = join(snapDir(home, stamp), 'spark-console-api.service');
+    writeFileSync(unit, readFileSync(unit, 'utf8').replace(/^ExecStart=\S+ /m, `ExecStart=${join(home, 'gone', 'node')} `));
+    const r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8', timeout: 60000 * SLOW });
+    assert.match(r.stdout + r.stderr, new RegExp(`The build put back starts with the Node\\.js at ${join(home, 'gone', 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, which is no longer there, so it can't start\\.`));
   });
 });
 
