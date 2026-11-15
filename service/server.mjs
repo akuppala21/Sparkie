@@ -11044,7 +11044,7 @@ action({
   },
 });
 /* ───────── what the owner sees of a command Sparkie ran ───────── */
-// Area: features        Rules: R42        Tests: work.test.mjs
+// Area: features        Rules: R42        Tests: work.test.mjs, page.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries five more fields, which
@@ -11055,7 +11055,8 @@ action({
 // chat loop), never from the brain's prose, so nothing rides the event that the journal does not hold. Each text is
 // cleaned of escape codes and characters that do not show, masked with maskSecrets before it is cut, and cut by whole
 // characters, never inside one: the line to its first 200, the last line to its last 200. A tool that is not in
-// SHOWN_CALLS gets none of this: its event is as it was.
+// SHOWN_CALLS gets none of this: its event is as it was. The page (public/app.js, commandRow) shows one row a command:
+// the line on a button that opens the line and the tail.
 const SHOWN_SIZE = 200;
 // Each tool that runs a command, and how to read its arguments: the Spark, the command, and whether it runs as root
 // (a look never does: it runs as a throw-away account with root's read rights, R42).
