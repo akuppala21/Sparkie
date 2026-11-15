@@ -64,6 +64,8 @@ useFleet({ env: { SPARK_CONSOLE_RUNNER_DOOR: '1', SPARK_CONSOLE_RUN_SECONDS: Str
     put('p2/adigit.txt', 'a digit\n');
     put('p3/[x]keep.txt', 'keep\n');
     put('data/one.csv', 'csv\n');
+    put('p4/{a,b}.log', 'brace\n');
+    put('p4/a.log', 'a log\n');
     for (let i = 0; i < 3000; i++) put(`notes/many2/f${i}.txt`, `${i}\n`);
     put('.ssh/authorized_keys', KEYS_LINE, 0o600);
     chmodSync(join(h, '.ssh'), 0o700);
@@ -474,13 +476,15 @@ test('a change\'s time counts from the end of its copies: the manifest\'s time i
   assert.ok(at >= last, `the manifest's time ${at} is before the last copy ${last}`);
 });
 
-test('patterns as bash reads them ([^a], a class, a quoted [x]) are copied first, and undo puts every file back', { timeout: 240000 * SLOW }, async () => {
+test('patterns as bash reads them ([^a], a class, a quoted [x]) and a quoted brace are copied first, and undo puts every file back', { timeout: 240000 * SLOW }, async () => {
   const cases = [
     ['sed -i.bak s/was/is/ p1/[^a]*.txt', { 'p1/1.txt': 'it was 1\n', 'p1/b.txt': 'it was b\n' }],
     ['echo new > p2/[^a]digit.txt', { 'p2/1digit.txt': 'one\n' }],
     ['echo teed | tee p2/[^a]digit.txt', { 'p2/1digit.txt': 'one\n' }],
     ['cp data/one.csv p2/[[:digit:]]digit.txt', { 'p2/1digit.txt': 'one\n' }],
     ["mv p3/'[x]'* data/", { 'p3/[x]keep.txt': 'keep\n' }],
+    // (a quoted brace is the name as written: the sorter places it so, and that file is the one copied)
+    ["echo new > 'p4/{a,b}.log'", { 'p4/{a,b}.log': 'brace\n' }],
   ];
   for (const [i, [command, files]] of cases.entries()) {
     const chat = await newChat();
@@ -496,6 +500,7 @@ test('patterns as bash reads them ([^a], a class, a quoted [x]) are copied first
   }
   assert.equal(text('p1/a.txt'), 'it was a\n');
   assert.equal(text('p2/adigit.txt'), 'a digit\n');
+  assert.equal(text('p4/a.log'), 'a log\n');
 });
 
 test('a key in the command, or in what it printed, is masked in the result and the journal\'s lines', { timeout: 60000 * SLOW }, async () => {
