@@ -3,7 +3,9 @@
 # a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails and starts nothing. Every call is one JSON line in
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
 #   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
-#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first
+#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first. WALL_VIEW
+#                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
+#                               folder empty, a hidden file gone, what is put back there), for a command to look in
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
 #                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
@@ -78,8 +80,7 @@ if unit.startswith('sw-prove-'):
     if part == 'prep':
         # What proof.py's prep makes and the helper looks for: the proof's folders in the owner's home.
         home = open(os.path.join(held, 'owner')).read().split('\n')[2]
-        for d in (f'.cache/spark-console/proof-{uid}', f'.cache/spark-console/proof-{uid}-ro',
-                  f'.local/share/spark-console/proof-{uid}'):
+        for d in (f'.sparkie-proof-{uid}/held/ro', f'.local/share/spark-console/proof-{uid}'):
             os.makedirs(R + home + '/' + d, exist_ok=True)
         say('S ok')
     elif part == 'setup':
@@ -96,7 +97,7 @@ if unit.startswith('sw-prove-'):
                 word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
                 say('P', n, how, word, 'stand-in')
     elif part == 'post':
-        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run')):
+        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     elif part == 'after':
         say('V', 5, 'outside', 'works', 'stand-in')
@@ -105,10 +106,37 @@ if unit.startswith('sw-prove-'):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     sys.exit(0)
 
+def wall_view():
+    # What the settings show of /home, emulated: hidden folders emptied and hidden files removed first, then what is
+    # put back copied in. Only /home; no wall is built.
+    view = os.path.join(R, 'standin', 'view', unit)
+    if os.path.isdir(os.path.join(R, 'home')):
+        shutil.copytree(os.path.join(R, 'home'), os.path.join(view, 'home'), symlinks=True)
+    props = [args[k + 1] for k, a in enumerate(args) if a in ('-p', '--property') and k + 1 < len(args)]
+    for kind, path in (p.split('=', 1) for p in props if '=' in p):
+        path = path.removesuffix(':ro')
+        if not path.startswith('/home/') or not os.path.lexists(view + path):
+            continue
+        if kind == 'TemporaryFileSystem' and os.path.isdir(view + path) and not os.path.islink(view + path):
+            shutil.rmtree(view + path)
+            os.mkdir(view + path)
+        elif kind == 'InaccessiblePaths':
+            if os.path.isdir(view + path) and not os.path.islink(view + path):
+                shutil.rmtree(view + path)
+            else:
+                os.unlink(view + path)
+    for kind, path in (p.split('=', 1) for p in props if '=' in p):
+        if kind == 'BindReadOnlyPaths' and path.startswith('/home/') and os.path.isfile(R + path):
+            os.makedirs(os.path.dirname(view + path), exist_ok=True)
+            shutil.copyfile(R + path, view + path)
+    return view
+
+
 if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     uid = unit.split('-', 2)[2]
     held = os.path.join(R, 'run', 'spark-console', uid)
     shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
+    os.environ['WALL_VIEW'] = wall_view()
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
     os.execv(cmd[0], cmd)
 

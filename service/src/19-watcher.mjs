@@ -28,8 +28,11 @@ setTimeout(() => {
     fleetEvent({ type: 'operation', id: e.id, operation: e.operation, status: 'interrupted', model: e.model || null, spark: e.spark || null, ...(e.sparks ? { sparks: e.sparks } : {}) });
     // (the self-test's own: its clean-up after the restart says what it stopped, 21-selftest.mjs)
     if (selfTestCutOff(e)) continue;
+    // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
+    if (savedRunCutOff(e)) continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
+  savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
 }, 0);
 function fleetEvent(e) {
   const x = { at: new Date().toISOString(), ...e };

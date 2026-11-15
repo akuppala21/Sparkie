@@ -437,6 +437,15 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.equal((await health(home))?.build, b);
   });
 
+  // (E2d: the Mac half stages it with the other recovery files, RECOVERY_FILES; rebuild.test.mjs checks that list)
+  test('21. the rebuild steps (REBUILD.txt) land beside RECOVERY.txt at the fixed path, byte for byte', CASE, async () => {
+    const home = makeHome();
+    copyFileSync(join(REPO, 'deploy', 'REBUILD.txt'), join(home, 'in', 'REBUILD.txt'));
+    await firstGood(home);
+    assert.equal(read(home, '.local', 'share', 'spark-console', 'REBUILD.txt'), readFileSync(join(REPO, 'deploy', 'REBUILD.txt'), 'utf8'));
+    byHandFiles(home);
+  });
+
   test('22. the watchdog reads its miss count as text: a file holding a[$(touch ran)] runs nothing, and the count goes to 1', CASE, async () => {
     const home = makeHome(); await firstGood(home);
     stopRunner(home);

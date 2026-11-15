@@ -202,7 +202,8 @@ function changeIntent(text) {
   return { asked: [...asked], negated: [...negated], mixed, keepOnly: negated.has('stop') && !worded.has('stop') };
 }
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
-// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. The last four aren't even offered
+// phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
+// owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
 // to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
 // installs, joins this list.
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
@@ -214,9 +215,7 @@ const PAGE_ONLY = new Set([
   'forget_workflow',
 ]);
 const PAGE_ONLY_TOOLS = new Set([
-  'forget_memory',
   'forget_workflow',
-  'remember',
   'save_workflow',
 ]);
 const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
@@ -470,7 +469,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
   if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (Access → Agents).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
-  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed) {
+  if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
     const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
       [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });

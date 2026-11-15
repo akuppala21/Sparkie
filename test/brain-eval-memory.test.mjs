@@ -1,8 +1,9 @@
 // Covers: The brain eval's memory fields (design G 3.7, step 7, piece a), on the stand-in brain: `test/eval.mjs --set
-// memory` runs `test/eval/memory.json` (three examples) and the record names that file; a case's earlier chats (before)
-// leave what was remembered in the new chat's request; a seeded memory line is in memory before the turn, with its id;
-// seeded journal records come back only through recall; has and hasNot pass and fail on a request that does and does
-// not hold a seeded line, and the record lists what failed; a case file from elsewhere is named without its folder; a
+// memory-examples` runs `test/eval/memory-examples.json` (three examples) and the record names that file; a case's
+// earlier chats (before) leave what was remembered in the new chat's request; a seeded memory line is in memory
+// before the turn, with its id; seeded journal records come back only through recall; has and hasNot pass and fail
+// on a request that does and does not hold a seeded line, and the record lists what failed; a case file from elsewhere
+// is named without its folder; a
 // malformed case stops the run. A memory switch (--memory-off) reaches each case's console as
 // SPARK_CONSOLE_MEMORY_OFF and turns that feature off for the run: with memory past its block, the line the picker
 // chooses for a question about a Spark is in the request with every switch on and in none with `names` off; the record
@@ -40,11 +41,11 @@ const LINE = { id: '5eed0001', text: 'the owner calls spark 4 the attic', kind: 
 const seeded = (id, more) => ({ id, say: 'which spark is the quiet one?', expect: 'answer', seed: { memory: [LINE] }, ...more });
 
 describe('the eval’s memory fields', { concurrency: 1 }, () => {
-  test('--set memory runs test/eval/memory.json and the record names it: before, seed and recall reach the request; every switch on', { timeout: 360000 * SLOW }, async () => {
-    const r = await runEval(['--stand-in', '--set', 'memory', '--runs', '1', '--out', file('memory.json')]);
+  test('--set memory-examples runs test/eval/memory-examples.json and the record names it: before, seed and recall reach the request; every switch on', { timeout: 360000 * SLOW }, async () => {
+    const r = await runEval(['--stand-in', '--set', 'memory-examples', '--runs', '1', '--out', file('memory.json')]);
     assert.equal(r.code, 0, r.out);
-    const rec = read('memory.json'), bytes = readFileSync(join(REPO, 'test', 'eval', 'memory.json'));
-    assert.deepEqual([rec.setFile, rec.set, rec.setCases], ['test/eval/memory.json', createHash('sha256').update(bytes).digest('hex'), JSON.parse(bytes).length]);
+    const rec = read('memory.json'), bytes = readFileSync(join(REPO, 'test', 'eval', 'memory-examples.json'));
+    assert.deepEqual([rec.setFile, rec.set, rec.setCases], ['test/eval/memory-examples.json', createHash('sha256').update(bytes).digest('hex'), JSON.parse(bytes).length]);
     assert.deepEqual(rec.memorySwitches, { on: SWITCHES, off: [] });
     const runs = byId(rec);
     assert.deepEqual(Object.keys(runs), ['told-in-another-chat', 'seeded-line', 'seeded-record-recalled']);
@@ -55,7 +56,7 @@ describe('the eval’s memory fields', { concurrency: 1 }, () => {
     // A seeded record comes back through recall, in the turn's second request; the older one about another app doesn't.
     const recalled = runs['seeded-record-recalled'];
     assert.deepEqual([recalled.passed, recalled.called, recalled.rounds, recalled.missing, recalled.unwanted], [true, ['recall'], 2, [], []], r.out);
-    assert.match(r.out, /case set test\/eval\/memory\.json \([0-9a-f]{12}\)/);
+    assert.match(r.out, /case set test\/eval\/memory-examples\.json \([0-9a-f]{12}\)/);
   });
 
   test('has and hasNot pass and fail on a request that does and does not hold a seeded line; a case file from elsewhere is named without its folder', { timeout: 360000 * SLOW }, async () => {

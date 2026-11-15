@@ -91,6 +91,7 @@ function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
     'deploy/update-guard.sh': { text: read(REPO, 'deploy', 'update-guard.sh'), mode: '100755' },
     'deploy/go-back.sh': { text: read(REPO, 'deploy', 'go-back.sh'), mode: '100755' },
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },
+    'deploy/REBUILD.txt': { text: read(REPO, 'deploy', 'REBUILD.txt') },
     'deploy/path-check.sh': { text: read(REPO, 'deploy', 'path-check.sh'), mode: '100755' },
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
   };

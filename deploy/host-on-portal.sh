@@ -56,6 +56,7 @@ RECOVERY_FILES=(go-back.sh RECOVERY.txt)
 # pull.sh (the install from GitHub) and update-guard.sh (its way back) go there too, but only once the build they came
 # with is kept: they judge the next.
 RECOVERY_FILES+=(pull.sh update-guard.sh)
+RECOVERY_FILES+=(REBUILD.txt)   # bringing Spark 2 back after its disk is lost (also on GitHub)
 # server.mjs is built from service/src/*.mjs (tools/build-server.mjs): install only one that matches its parts.
 cat "$HERE"/service/src/[0-9][0-9]-*.mjs | cmp -s - "$HERE/service/server.mjs" || { echo "service/server.mjs doesn't match service/src: run node tools/build-server.mjs, then node test/lock.mjs." >&2; exit 1; }
 # Which workflow versions passed the whole test suite (test/lock.mjs writes it). Without it every workflow is off.
@@ -395,6 +396,7 @@ PHASE=changing
 # snapshot (files only) and RECOVERY.txt lists the by-hand steps. Both work with Spark Console down.
 mkdir -p "$HOME/.local/share/spark-console"
 cp "$IN/go-back.sh" "$IN/RECOVERY.txt" "$HOME/.local/share/spark-console/"
+[ ! -f "$IN/REBUILD.txt" ] || cp "$IN/REBUILD.txt" "$HOME/.local/share/spark-console/"
 chmod 700 "$HOME/.local/share/spark-console/go-back.sh"
 
 echo "Installing the UI in ~/spark-console …"
