@@ -6,7 +6,8 @@
 // stand-in brain was sent, Telegram's calls): only the secrets file holds it. A later turn and the owner's own later
 // message carry it hidden; a tool that prints it, as is or in base64, comes back hidden. GITHUB is kept only when the
 // stand-in GitHub takes it (`pull.sh setup`'s own fetch; a stand-in git refuses any other token); a heartbeat address
-// starts the beat at once. A member's, an agent's, a bad name's or a key-shaped name's `/key` keeps nothing. On
+// starts the beat at once. A member's, an agent's, a bad name's or a key-shaped name's `/key` keeps nothing; so does a
+// key typed where the name goes, with words after it, and a key with words or quotes round it. On
 // Telegram the message is deleted, and a delete that fails tells the owner to delete it. An error that quotes a kept key
 // hides it; after a restart the state copy holds none, and a tool result still comes back hidden.
 import { test, describe, after } from 'node:test';
@@ -24,6 +25,8 @@ import { startMock, MOCK } from './start-mock.mjs';
 const made = (p = 'kv') => `${p}${randomBytes(16).toString('hex')}`;
 const V = { page: made(), plain: made(), member: made(), agent: made(), bad: made(), tg: made(), tgKept: made(), err: made() };
 const GOOD = made('gt_'), BAD = made('gt_'), OLD = made('gt_');
+// Keys typed where the name goes (as typed, and in capitals), and one given with words round it.
+const K = { low: made(), up: made().toUpperCase(), tg: made() }, W = made();
 const BEAT_ID = randomUUID(), BEAT = `https://hc-ping.com/${BEAT_ID}`;
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, REPO_NAME = 'someone/spark-console';
 const temps = [];
@@ -108,7 +111,7 @@ describe('keys given once', { concurrency: 1 }, () => {
   test('the page: /key NAME value is kept by name and answered by code, the brain is not asked, and only the secrets file holds the value', async () => {
     pageChat = await newChat();
     const asked = requests().length;
-    const r = await say(pageChat, `/key hf_token ${V.page}`);
+    const r = await say(pageChat, `/key HF_TOKEN ${V.page}`);
     assert.match(r.text, /^Kept your key HF_TOKEN\. It stays in the secrets file on Spark 2 and is never shown/);
     assert.equal(secretsOf().keys.HF_TOKEN.value, V.page);
     assert.equal(secretsOf().github.token, OLD, 'the others are kept as they were');
@@ -222,6 +225,30 @@ describe('keys given once', { concurrency: 1 }, () => {
     } finally { await tgPost('/__mode', {}); }
     nowhere(V.tg);
     nowhere(V.tgKept);
+  });
+
+  test('a key typed where the name goes, with words after it, keeps nothing and is said back nowhere, on the page and on Telegram', async () => {
+    const chat = await newChat(), was = JSON.stringify(secretsOf().keys);
+    for (const words of [`/key ${K.low} WANDB_API_KEY`, `/key ${K.low} hf`, `/key ${K.low}\nWANDB`, `/key ${K.up} WANDB_API_KEY`]) {
+      const r = await say(chat, words);
+      assert.match(r.text, /^Nothing was kept/, words);
+    }
+    assert.deepEqual((await chatMessages(chat)).filter(m => m.role === 'user').map(m => m.content), Array(4).fill('/key [not kept]'));
+    const from = tgCalls().length;
+    await tgSay(`/key ${K.tg} WANDB_API_KEY`);
+    assert.match((await sentAfter(from)).body.text, /^Nothing was kept/);
+    assert.equal(JSON.stringify(secretsOf().keys), was);
+    for (const k of [K.low, K.up, K.tg]) { nowhereAtAll(k); nowhereAtAll(k.toUpperCase()); }
+  });
+
+  test('words or quotes round a key keep nothing, and the answer says so', async () => {
+    const chat = await newChat();
+    for (const words of [`/key WANDB ${W} thanks, use it`, `/key WANDB\n${W}\nthanks!`, `/key WANDB "${W}"`]) {
+      const r = await say(chat, words);
+      assert.match(r.text, /^WANDB wasn’t kept: write the key alone after its name, with no other words and no quotes\./, words);
+    }
+    assert.equal(secretsOf().keys.WANDB, undefined);
+    nowhereAtAll(W);
   });
 
   test('an error that quotes a kept key hides it: a tool\'s refusal, the audit and the journal', async () => {

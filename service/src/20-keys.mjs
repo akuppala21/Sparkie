@@ -4,7 +4,7 @@
 // Timers: none        Wakes: none
 // A key, token or address the owner gives in their own chat (the page, or the paired Telegram chat) is taken out of the
 // message here, before anything else reads it: the chat file, the journal, the audit, a title, the gate, the brain.
-// Two forms: "/key NAME value" (the value after the name, or on the next line), and the heartbeat's address, known by
+// Two forms: "/key NAME value" (the value alone, after the name or on the next line), and the heartbeat's address, known by
 // its shape anywhere in the words. It is kept by name in the secrets file (03-secrets.mjs, through secretsWrite), never
 // shown back, and its exact value is hidden wherever text is written or sent (keptHidden, which hideKeys runs first).
 // Two names have a home of their own, each saved through its own check: GITHUB, the pull install's token (tried with the
@@ -23,13 +23,16 @@ const BEAT_SHAPE = /\b(?:https?:\/\/)?hc-ping\.com\/[0-9a-f]{8}(?:-[0-9a-f]{4}){
 const GITHUB_TOKEN_RE = /^[A-Za-z0-9_]{20,255}$/, SECRETS_TAIL = '/.config/spark-console/secrets.json';
 const PULL_SETUP = 'bash ~/.local/share/spark-console/pull.sh setup <owner>/<repository>';
 
+// A name as typed, in capitals, that doesn't look like a key itself: no known key shape, and no piece between its
+// underscores of 8 or more characters that mixes letters and digits (a key typed where the name goes, review of A14a).
+const keyNameOk = typed => KEY_NAME_RE.test(typed) && hideKeys(typed) === typed && !typed.split('_').some(p => p.length >= 8 && /[A-Z]/.test(p) && /\d/.test(p));
 // What the words give: null when they hold no key; else the key ({ name, value }; name null when it isn't one a key may
 // have, or looks like a key itself), whether it came as /key, and the words. Reads only; keeps nothing.
 function keysGiven(text) {
   const t = String(text), form = KEY_FORM.exec(t);
   if (form) {
-    const rest = t.slice(form[0].length), n = /^[ \t]*(\S*)/.exec(rest), typed = n[1], name = typed.toUpperCase();
-    return { form: true, name: KEY_NAME_RE.test(name) && hideKeys(typed) === typed ? name : null, value: rest.slice(n[0].length).trim(), text: t };
+    const rest = t.slice(form[0].length), n = /^[ \t]*(\S*)/.exec(rest), typed = n[1];
+    return { form: true, name: keyNameOk(typed) ? typed : null, value: rest.slice(n[0].length).trim(), text: t };
   }
   const found = t.match(BEAT_SHAPE);
   return found ? { form: false, name: 'HEARTBEAT', value: found[0], text: t } : null;
@@ -43,6 +46,9 @@ async function keepKey({ name, value }, via) {
   if (!name) return { kept: false, line: 'Nothing was kept. Write /key, then the key’s name (capital letters, digits and _, like HF_TOKEN), then the key.' };
   // (the name isn't said back: with nothing after it, it may be the key itself)
   if (!value) return { kept: false, line: 'Nothing was kept: write /key, then the key’s name, then the key.' };
+  // (one run with no spaces and no quotes at its ends: kept with words or quotes round it, the mask could never find the
+  // key itself, review of A14a)
+  if (!/^\S+$/.test(value) || /^["'`]|["'`]$/.test(value)) return { kept: false, line: `${name} wasn’t kept: write the key alone after its name, with no other words and no quotes.` };
   if (value.length < KEY_MIN) return { kept: false, line: `${name} wasn’t kept: a key needs at least ${KEY_MIN} characters, so it can be hidden everywhere.` };
   if (Buffer.byteLength(value) > KEY_BYTES) return { kept: false, line: `${name} wasn’t kept: a key holds 4 KB at most.` };
   try {
