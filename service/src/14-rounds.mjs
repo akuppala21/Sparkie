@@ -44,13 +44,13 @@ function budgetContext(setup) {
   return fits(n) ? n : CONTEXT_TOKENS;
 }
 // Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
-// (continueTask: CONTINUE_MAX turns in CONTINUE_HOURS, not while agents are paused): only the owner's request that is a
+// (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are paused): only the owner's request that is a
 // task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
-function budgetCarries({ spent, agent, task, text, now, conv }) {
+function budgetCarries({ spent, agent, task, text, now, works, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
   if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
-  return t.continuations < CONTINUE_MAX && Date.now() - Date.parse(t.at) <= CONTINUE_HOURS * 3600000 && !(agentSettings().halted && !agentSettings().autoPaused);
+  return !taskOver({ ...t, steps: (Number(t.steps) || 0) + (works || 0) }) && !(agentSettings().halted && !agentSettings().autoPaused);
 }
 // What the turn's journal line keeps of its budgets (journalTurn): each one, and the one that ended it.
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);

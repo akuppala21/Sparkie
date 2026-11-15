@@ -224,7 +224,8 @@ const NEXT_STEP = /\b(then|after\s+that|afterwards|next|once\s+(?:it'?s|that'?s|
 const multiStep = text => NEXT_STEP.test(normQuotes(text)) || new Set(changeIntent(text).asked.map(k => (k === 'stop' && changeIntent(text).asked.includes('poweroff') ? 'poweroff' : k))).size > 1;
 const CONTINUE_DELAY_MS = Number(process.env.SPARK_CONSOLE_CONTINUE_MS || 2000), CONTINUE_MAX = 8, CONTINUE_HOURS = 2;
 // Something of this chat is still going: a reply, or an operation started from it.
-const chatBusy = id => replying.has(id) || [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
+const chatRunning = id => [...jobs.values()].some(j => j.status === 'running' && j.conv === id);
+const chatBusy = id => replying.has(id) || chatRunning(id);
 // An operation's result was posted after the last message from the owner's side (theirs, or a carry-on turn's).
 const resultSince = conv => conv.messages.slice(conv.messages.map(m => m.role).lastIndexOf('user') + 1).some(m => m.notice && m.operation);
 // The one place that decides whether Sparkie carries on with a chat's request now. Called when an operation's result is
@@ -246,9 +247,12 @@ async function continueTask(id) {
   const stop = () => (t?.channel === 'telegram' ? tellCarry(conv.id, null) : null);
   // (since wakeWork looked, the owner may have written or pressed a button: what that starts wakes it again)
   if (!t || chatBusy(id)) return;
+  // (its way in gone meanwhile, another Telegram pairing among them: it ends, and nothing of it is told there, 14-tasks.mjs)
+  if (taskGone(t)) { endTask(conv, false); saveChats(); return; }
   const carried = Boolean(t.carry);
   delete t.carry;
-  if (t.continuations >= CONTINUE_MAX || Date.now() - Date.parse(t.at) > CONTINUE_HOURS * 3600000) return stop();
+  // (its own limits: the hours and turns its words gave it, and its steps in all, 14-tasks.mjs)
+  if (taskOver(t)) return stop();
   if (agentSettings().halted && !agentSettings().autoPaused) return stop();
   t.continuations += 1;
   // A request made from a device signed in over the internet carries on as one: this marker keeps every viewer.session
@@ -290,6 +294,8 @@ function stopTurn(conv) {
   conv.task = null;
   // (link.cancel ends the model call whatever state its connection is in: one already closed can't be destroyed again)
   if (link) { link.gone = true; link.upstream?.destroy(new Error(TURN_STOPPED)); link.cancel?.(); }
+  // (written at once, also when no answer to /stop is saved: from Telegram, or in a full chat)
+  if (task) saveChats();
   // (results held on Telegram for the carry-on that now won't come go out)
   if (task?.channel === 'telegram') tellCarry(conv.id, null).catch(() => {});
   return Boolean(link || task);
@@ -414,7 +420,8 @@ function markAnswering({ conv, link, slot }) {
 // what the owner asked (`ctx`, which every tool call of the turn carries) and the questions that come back (`asked`).
 function turnRequest({ conv, text, agent, task, channel, open, said }) {
   // A new request from the owner ends the last one's carrying on. (A typed yes to its question, in sparkieTurn, isn't one.)
-  if (!task && !agent) conv.task = null;
+  // (written at once: a restart before this reply ends must not bring the last request back)
+  if (!task && !agent && conv.task) { conv.task = null; saveChats(); }
   if (open.length && REFUSE.test(said)) {
     for (const c of open) { c.state = 'gone'; pendingChoices.delete(c.id); }
   }
@@ -458,10 +465,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx }) {
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, works, asked, failed }) {
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
-  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
@@ -469,6 +476,13 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (and the guards of the turns that made it: "don't stop anything", and a reply that read outside text, so each of its
   // carry-on turns starts with them, turnRequest; review after the loop, fix 1)
   if (!agent && conv.task && (!task || conv.task === task)) { if (ctx?.noStops) conv.task.noStops = true; if (ctx?.readOutside) conv.task.readOutside = true; }
+  // (and its work steps in all, against its limit of 120: taskOver, 14-tasks.mjs)
+  if (!agent && conv.task && (!task || conv.task === task) && works) conv.task.steps = (Number(conv.task.steps) || 0) + works;
+  // A carry-on turn that ended owing nothing (no carry-on asked for, no question of it waiting, nothing started in it,
+  // nothing of its chat still running): the request is done, and its record goes, so neither a restart nor a later result
+  // takes it up again. A turn that failed is no such end.
+  if (!agent && task && conv.task === task && !failed && !task.carry && !(asked || []).some(q => (q.choices || []).some(c => c.choice))
+    && !used.some(u => u.change && u.outcome === 'started') && !chatRunning(conv.id) && !dangerParked(conv)) conv.task = null;
 }
 // A task ends (a pressed No, or the way in it came by gone: Telegram disconnected, its device signed out): no carry-on
 // turn comes for it, a turn of it under way doesn't keep it again (keepTask), and results held on Telegram for it go out.
@@ -516,6 +530,7 @@ function turnFailed(turn, e) {
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
   conv.messages.push(message);
+  turn.failed = true;
   if (!link.gone) keepTask(turn);
   emit({ type: 'error', error: why, message });
   return message;
