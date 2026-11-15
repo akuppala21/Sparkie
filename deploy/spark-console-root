@@ -1697,7 +1697,7 @@ plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's a
     --quiet "${as[@]}" -p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -- "$PY" -I -S "$HOLD/$ID/proof.py" "$@" < /dev/null
 }
 declare -A GOT=() DETAIL=()
-take() {   # $1 where the lines came from (outside, look, run, after); $2 the lines
+take() {   # $1 where the lines came from (outside, look, run, home, after); $2 the lines
   local from=$1 tag n how res rest
   while read -r tag n how res rest; do
     [[ $n =~ ^(1[0-24-9]|2[0-9]|[1-9])$ ]] || continue
@@ -1767,8 +1767,8 @@ do_prove() {
   printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
   printf '0' > "$H/target"
   seal
-  # The proof's own --protect folder for the run wall, two levels inside its folder at the top of the home (so the run
-  # wall pins the folder between them, which attempt 14 tries to move): the same path proof.py calls P.
+  # The proof's own --protect folder for the run wall, two levels inside its folder in ~/.cache (writable in a plain
+  # change, so the run wall pins the folder between them, which attempt 14 tries to move): the same path proof.py calls P.
   p="$OWNER_HOME/.cache/.sparkie-proof-$ID/held/ro"
   out_prep=$(plain_unit owner prep 60 prep)
   out_setup=$(plain_unit root setup 60 setup)
@@ -1921,7 +1921,7 @@ S = f'{HOME}/.cache/.sparkie-proof-{ID}'                # seen inside both walls
 H = f'{HOME}/.local/share/spark-console/proof-{ID}'     # on the hidden list (~/.local/share/spark-console)
 HELD = f'{S}/held'                                      # the folder above P: the run wall pins it (attempt 14)
 JOBS = f'{HOME}/.local/share/spark-portal/workspaces/shared/jobs'
-JOB = f'{JOBS}/sparkie-proof-{ID}'                      # a job's own output folder: the run wall pins it (attempt 19)
+JOB = f'{JOBS}/sparkie-proof-{ID}'                      # a job's own output folder: pinned with --home (attempt 19), read-only without
 P = f'{HELD}/ro'                                        # the run wall's --protect folder (the helper names it too)
 SHARE = f'{HOME}/.local/share/spark-console'
 KEY = b'SPARK-PROOF-KEY ' + ID.encode()
