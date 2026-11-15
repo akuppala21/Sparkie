@@ -120,8 +120,6 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     is(await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) }), 201, 'the owner sets up a passkey');
     is(await api('/heartbeat', { method: 'PUT', body, headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-    is(await api('/heartbeat', { method: 'PUT', body, headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
-    is(await api('/heartbeat', { headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member reading it');
     is(await api('/heartbeat', { method: 'PUT', body, headers: { 'x-spark-console': null } }), 403, 'cross-site');
     is(await api('/heartbeat', { method: 'PUT', body, headers: { 'x-forwarded-for': '100.64.0.3' } }), 403, 'from a Spark’s address');
     is(await api('/heartbeat', { method: 'PUT', body }), 428, 'without the passkey');
@@ -279,7 +277,6 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
 
   test('removing it needs no passkey, only the owner on the page; after that nothing more is sent', { timeout: 60000 * SLOW }, async () => {
     is(await api('/heartbeat', { method: 'DELETE', headers: { 'tailscale-funnel-request': '?1' } }), 401, 'from the internet, not signed in');
-    is(await api('/heartbeat', { method: 'DELETE', headers: { 'tailscale-user-login': MEMBER } }), 403, 'a member');
     is(await api('/heartbeat', { method: 'DELETE', headers: { 'x-spark-console': null } }), 403, 'cross-site');
     assert.equal(secrets().heartbeat.url, ADDRESS, 'still kept');
     const r = await api('/heartbeat', { method: 'DELETE' });

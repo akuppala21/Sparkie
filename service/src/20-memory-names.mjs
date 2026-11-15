@@ -65,7 +65,7 @@ function buildNameBook() {
     }
   });
   each('the agents', () => { for (const k of agentKeys()) add('agent', k.name); });
-  each('the people', () => { const a = accessList(); add('person', a.userName); for (const m of a.members) add('person', m.login, m.name); });
+  each('the owner', () => add('person', accessList().userName));
   return { forms, starts, at: Date.now() };
 }
 function memoryNameBook() {

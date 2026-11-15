@@ -2,8 +2,8 @@
 // owner's "remember that …", "remember …" and "from now on …" in their own page chat leave one line, said in the reply
 // ("I'll remember: …") and in the next chat's prompt, and on the record (audit); the paired Telegram chat too, marked as
 // said there. A question, a quoted, negated, supposed, reported or past-tense cue, one called off, "remember to …", a
-// cue in a pasted log or a code block, and text from a tool result keep nothing; nor do an agent's or a member's words,
-// or a message that held a key. When the brain did call remember there is one line, not two, and a fact said again
+// cue in a pasted log or a code block, and text from a tool result keep nothing; nor do an agent's words, or a
+// message that held a key. When the brain did call remember there is one line, not two, and a fact said again
 // takes its line's place. With the brain eval's switch `said` off (SPARK_CONSOLE_MEMORY_OFF), nothing is kept by code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -111,7 +111,7 @@ test('when the brain did call remember there is one line, not two; a fact said a
   } finally { script([]); fresh(); }
 });
 
-test('an agent\'s or a member\'s words are never kept this way, nor a message that held a key', { timeout: 180000 * SLOW }, async () => {
+test('an agent\'s words are never kept this way, nor a message that held a key', { timeout: 180000 * SLOW }, async () => {
   fresh();
   try {
     const ask = 'remember that the nightly eval runs at 2am on Spark 4';
@@ -120,10 +120,6 @@ test('an agent\'s or a member\'s words are never kept this way, nor a message th
     if (v?.status === 'thinking') v = await waitFor(async () => { const x = (await call(agent.token, ASK, { conversation: v.conversation })).value; return x?.status !== 'thinking' && x; }, { what: 'Sparkie’s answer' });
     assert.equal(v?.status, 'answered', JSON.stringify(v));
     assert.ok(!/I’ll remember/.test(v.reply), v.reply);
-    assert.deepEqual(await live(), []);
-    const asMember = { 'tailscale-user-login': MEMBER };
-    const mm = await quiet('remember that I like long answers', asMember);
-    assert.ok(!/I’ll remember/.test(mm.content), mm.content);
     assert.deepEqual(await live(), []);
     // A key: given once (kept at the door), then typed in plain words; and one the mask knows by its shape.
     const chat = await newChat();
