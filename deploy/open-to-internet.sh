@@ -5,7 +5,8 @@
 # Run it once from your Mac; sudo may ask for your Spark 2 password.
 #
 #   bash spark-console/deploy/open-to-internet.sh           open it to the internet
-#   bash spark-console/deploy/open-to-internet.sh --undo    back to tailnet only
+#   bash spark-console/deploy/open-to-internet.sh --undo    back to tailnet only (on purpose: Spark Console stops saying
+#                                                           Funnel is off, docs/rules/R47.md)
 #
 # Only port 8443's Funnel switch changes: its routes stay as they are, the public Funnel on port 443 isn't touched, and
 # it never runs `tailscale serve --https=8443 off`. Tailscale on your devices keeps working as before either way.
@@ -69,6 +70,8 @@ open=no; tailscale funnel status 2>/dev/null | grep -qE ':8443 \(Funnel on\)' &&
 if [ "$MODE" = undo ] && [ "$open" = yes ]; then echo "WARNING: port 8443 still shows Funnel on." >&2; exit 1; fi
 if [ "$MODE" = open ] && [ "$open" = no ]; then echo "WARNING: port 8443 doesn't show Funnel on. Is Funnel allowed for this device in the tailnet's access controls?" >&2; exit 1; fi
 if [ "$MODE" = open ]; then routes_ok || { echo "WARNING: port 8443's routes changed; close it again: bash spark-console/deploy/open-to-internet.sh --undo" >&2; exit 1; }; fi
+# Closed on purpose: Spark Console's record that Funnel was on goes, and with it its needs-you line about Funnel.
+if [ "$MODE" = undo ]; then rm -f "$HOME/.local/state/spark-console/funnel-seen.json"; fi
 EOF
 ssh -t "$HOST" "bash -c $(printf %q "$REMOTE") open-to-internet $MODE"
 echo
