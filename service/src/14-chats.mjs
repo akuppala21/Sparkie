@@ -433,6 +433,8 @@ function turnRequest({ conv, text, agent, task, channel, open, said }) {
     // (agentId: runAction reads that agent's key again before each change, so removing it stops this reply's changes)
     chat: conv.id, conv: conv.id, intent, canChange: agent ? agent.canChange : true, agent: Boolean(agent), ...(agent ? { agentId: agent.id } : {}),
     ...(channel ? { channel, from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}),
+    // What the request read from outside and what its changes wrote, kept with its task (A7c, 21-ladder.mjs workTask).
+    ...workTask(task),
     // "Don't stop anything" holds for this message and the next, unless this one asks to stop something.
     noStops: intent.negated.includes('stop') || (Boolean(prev) && prev.negated.includes('stop') && !(prev.keepOnly && keptApp) && !intent.asked.includes('stop')),
     onQuestion: q => { asked.push(q); } };
@@ -454,8 +456,10 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // Operations started for the owner's request: when they finish, Sparkie carries on (wakeWork). The task is kept the
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
-function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry }) {
+function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx }) {
   if (!agent && (carry || (used.some(u => u.change && u.outcome === 'started') && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...(channel ? { channel } : {}), ...(viewer.session ? { away: true } : {}) };
+  // (what it read and wrote goes on with it, A7c)
+  if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
   if (carry && conv.task) conv.task.carry = true;
   // (the request's tool groups go on with it into its carry-on turns; each turn looks at the state again)
