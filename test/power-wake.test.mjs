@@ -133,6 +133,10 @@ describe('a start wakes only the Spark it needs (D5)', { concurrency: 1 }, () =>
     assert.deepEqual(commandsSince(before), [{ node: 3, command: 'on' }], 'only Spark 4');
     assert.ok(offline().includes('spark3') && !offline().includes('spark4'));
     assert.ok((await look('running_models')).models.some(x => x.spark === 'spark4' && x.container === 'sc-unsloth--Qwen3.8-27B-NVFP4'), 'it runs on Spark 4');
+    // (the start placed after the wake names the Spark it really ran on, which the lessons read: setupTried)
+    const inner = (await api(`/jobs/${r.json.operation}`)).json.inner;
+    assert.match(String(inner), /^[0-9a-f]{12}$/, 'the start the power-on handed over to');
+    assert.equal((await api(`/jobs/${inner}`)).json.setupTried?.on, 'spark4');
     await sleepSpark('spark4');
   });
 
