@@ -217,6 +217,14 @@ test('never: a retired line to an agent\'s key, an agent\'s chat or Telegram; th
   assert.ok(!toPhone.includes(`"id":"${WIFI}"`) && !toPhone.includes(KESTREL_OLD) && !toPhone.includes('"retired"'), toPhone);
   assert.match(toPhone, /There’s no line a1f1a1f1 in memory \(the lines that were replaced or forgotten are shown to the owner only/);
   assert.ok(toPhone.includes(`"id":"${ETH}"`), toPhone);
+  // From the phone by words too: the live line, and none of the owner's words said on the page (here, last month's
+  // "Spark 4 is on Wi-Fi only, remember that"), nor a retired line.
+  const byWords = 'g3 asks about spark 4 by words from the phone';
+  script([{ match: '^g3 asks about spark 4 by words', calls: [{ name: 'recall', arguments: { about: 'Spark 4' } }] }]);
+  await tgSay(byWords);
+  const toPhoneByWords = await resultsFor(byWords);
+  assert.ok(!toPhoneByWords.includes(`"id":"${WIFI}"`) && !/Wi-Fi only|"retired"/.test(toPhoneByWords), toPhoneByWords);
+  assert.ok(toPhoneByWords.includes(`"id":"${ETH}"`), toPhoneByWords);
   // The owner, in Spark Console, sees them.
   const mine = await ok({ kind: 'line', limit: 20 });
   assert.ok(mine.records.some(x => x.id === WIFI && x.retired) && mine.records.some(x => x.id === KESTREL_OLD && x.retired.why === 'forgotten'), JSON.stringify(mine));
