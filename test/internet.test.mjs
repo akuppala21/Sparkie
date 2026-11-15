@@ -4,8 +4,8 @@
 // another site's origin, a used, changed or made-up challenge, a made-up or misplaced token, and after 30 tries from
 // one address (every spelling of one IPv6 /64 counting as one); a fake cookie of the same name doesn't hide the real
 // one; signing out, which also ends the device's live stream; no device let in before a passkey exists; a terminal's
-// code typed and let in with the passkey (no approve link; its token comes once, works only in its header, never for
-// hidden files), a code from the internet marked so, at most 3 waiting per address, a browser let in by
+// code typed and let in with the passkey (no approve link; its token comes once and works only in its
+// header), a code from the internet marked so, at most 3 waiting per address, a browser let in by
 // code, turned away, or expired after 10 minutes; the signed-in devices list and signing one out; an agent's own key at
 // the agent door from the internet, and a look-only key not starting a model at the model address; "Test the changes"
 // and going back a build without the passkey; and an agent that may change things running a validation run by taking
@@ -239,15 +239,12 @@ describe('a device without the passkey: its code, let in from a signed-in device
     is(await poll(s.deviceCode), 410, 'only once');
   });
 
-  test('the terminal\'s token works from the internet in its header, not as a cookie, and never for hidden files', async () => {
+  test('the terminal\'s token works from the internet in its header, not as a cookie', async () => {
     const st = await net('/status', { headers: bearer(token) });
     is(st, 200, 'status');
     is(await net('/status', { headers: withCookie(token) }), 401, 'as a cookie');
     const w = await net('/workflows', { headers: bearer(token) });
     is(w, 200, 'the workflows');
-    const hidden = await net('/nodes/spark3/files', { method: 'POST', body: { operation: 'write', area: 'own', path: '.vscode/tasks.json', content: '{}' }, headers: bearer(token) });
-    is(hidden, 403, 'no hidden files from a terminal');
-    assert.match(hidden.json.error, /terminal signed in from the internet/);
   });
 
   test('a code asked from the internet says so; one address can have at most 3 waiting', async () => {

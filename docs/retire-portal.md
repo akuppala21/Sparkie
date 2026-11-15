@@ -15,7 +15,7 @@ off, and the console moves from `:8443/console/` to `:8443/`.
 | Spark status (reachable, GPU, memory, disk, containers, uptime, temperature) | `/api/status` (the portal's `worker.py` over SSH) | The service collects it over the SSH it already uses; live metrics are already its own. |
 | Workloads, logs, diagnostics | `/api/nodes/:id/workloads`, `/logs/:service`, `/diagnostics` | Same commands from the service. |
 | Model start/stop, editor restart | `/api/nodes/:id/actions` | Nemotron controls go away once Aphex is Sparkie's model; editor restart moves to the service. |
-| Files (browse, upload, download; 256 KB limit) | `/api/nodes/:id/files` | Ported to the service, with the same owner/member areas and size limit. |
+| Files (browse, upload, download; 256 KB limit) | `/api/nodes/:id/files` | Ported to the service; since E10e only Sparkie’s files actions, in the shared folder, with the same size limit. |
 | VS Code in the browser | `/connect/:id/` (proxy plus WebSocket to code-server on each Spark; Spark 3 and 4 via tunnel services) | The hardest piece. Either the service proxies it, or `tailscale serve` exposes each Spark's code-server directly. |
 | Groups (request pool, Ray compute cluster, saved group) | `/api/clusters` | Dropped (step 4). Clusters now come from the direct cables the console tests itself. |
 | Old Nemotron chats | `/api/conversations` | Done (step 5): copied in as ordinary Sparkie chats. |

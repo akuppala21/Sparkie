@@ -52,7 +52,7 @@ function sortInterp(args, ctx, r, x, name) {
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
   if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, x); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
-  if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text)) raise(r, 'risky', `${sortQ(name)} x downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
+  if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
@@ -76,12 +76,23 @@ const sortDeclare = (a, ctx, r, x, name) => {
   if (odd) unsure(`The sorter doesn’t know ${sortQ(name)}’s option ${sortQ(odd.text || '$…')}.`);
   sortSets(a.filter(w => !/^[-+]/.test(w.text)), ctx, r, name);
 };
+// The zippers and un-zippers write the name they read with its suffix put on or taken off (-S says which, .tgz gives
+// .tar); -N takes the name stored in the file, so the folder it is in is reached; -r works on every file under a folder.
+const ZIP_SUFFIX = { gzip: '.gz -gz .z -z _z .Z .tgz .taz', bzip2: '.bz2 .bz .tbz2 .tbz', xz: '.xz .lzma .txz .tlz', zstd: '.zst .tzst', lz4: '.lz4' };
 const sortZip = (a, ctx, r, x, name) => {
-  const o = sortOpts(SORT_OPTS[name], a), out = o.all('o', 'output');
-  if (!out.length) return o.has('c', 'l', 't', 'stdout', 'to-stdout', 'list', 'test') && !o.has('rm') ? undefined : sortFile(name, 'over', a, ctx, r);
+  const o = sortOpts(SORT_OPTS[name], a), out = o.all('o', 'output'), kin = { gunzip: 'gzip', bunzip2: 'bzip2', unxz: 'xz', unzstd: 'zstd' }[name] ?? name;
+  if (!out.length && !o.has('rm') && (o.has('t', 'test', 'list', 'c', 'stdout', 'to-stdout') || (kin !== 'lz4' && o.has('l')))) return;
   raise(r, 'change', `${sortQ(name)} writes a file.`);
   r.deletes = true;
-  for (const w of [...out, ...(o.has('rm') ? o.plain : [])]) sortTouch(w, ctx, r);
+  if (out.length) { for (const w of [...out, ...(o.has('rm') ? o.plain : [])]) sortTouch(w, ctx, r); return; }
+  sortFile(name, 'over', a, ctx, r);
+  const down = kin !== name || o.has('d', 'decompress', 'uncompress'), suf = o.all('S', 'suffix').at(-1)?.text;
+  for (const w of o.plain) {
+    if (o.has('r', 'recursive') || (down && o.has('N', 'name'))) { sortTouch(o.has('r', 'recursive') ? w : { ...w, text: w.text.includes('/') ? w.text.replace(/\/[^/]*$/, '') || '/' : '.' }, ctx, r, true); continue; }
+    const hit = (suf ? [suf] : ZIP_SUFFIX[kin]?.split(' ') ?? []).find(e => w.text.endsWith(e) && w.text.length > e.length);
+    if (!down) sortTouch({ ...w, text: w.text + (suf ?? ZIP_SUFFIX[kin]?.split(' ')[0] ?? '') }, ctx, r);
+    else if (hit) sortTouch({ ...w, text: w.text.slice(0, -hit.length) + (/^\.t/.test(hit) ? '.tar' : '') }, ctx, r);
+  }
 };
 const sortBecome = (a, ctx, r, x, name) => {
   r.answer = 'set root';
@@ -96,7 +107,7 @@ const sortBecome = (a, ctx, r, x, name) => {
 const sortInto = (dir, ctx, r) => (dir ? sortTouch(dir, ctx, r, true) : [...ctx.cwds].forEach(d => sortTouch({ text: d ?? '', unknown: d == null, subs: [] }, ctx, r, true)));
 // tar's options (its old form, tar xzf a.tar, read as -x -z -f a.tar): T, X and g read names from a file, I and F and
 // the long ones that name a program run it.
-const TAR_SPEC = sortSpec('AcdrtuxvzjJaZkmopsSwWOhPlBiMGnRUb:f:C:H:K:L:N:V:T:X:g:F:I: --list --extract --get --create --append --update --diff --compare --delete --concatenate --catenate --file= --directory= --gzip --gunzip --xz --bzip2 --zstd --lzma --auto-compress --verbose --to-stdout --keep-old-files --skip-old-files --keep-newer-files --overwrite --overwrite-dir --no-overwrite-dir --no-same-owner --same-owner --no-same-permissions --preserve-permissions --same-permissions --numeric-owner --strip-components= --exclude= --exclude-vcs --exclude-caches --wildcards --no-wildcards --totals --one-file-system --owner= --group= --mode= --mtime= --sort= --transform= --xform= --warning= --newer= --after-date= --format= --blocking-factor= --label= --absolute-names --dereference --hard-dereference --ignore-zeros --recursion --no-recursion --remove-files --sparse --checkpoint --null --files-from= --exclude-from= --listed-incremental= --use-compress-program= --to-command= --checkpoint-action= --info-script= --new-volume-script= --rsh-command= --rmt-command= --index-file= --volno-file= --help --version');
+const TAR_SPEC = sortSpec('AcdrtuxvzjJaZkmopsSwWOhPlBiMGnRUb:f:C:H:K:L:N:V:T:X:g:F:I: --list --extract --get --create --append --update --diff --compare --delete --concatenate --catenate --file= --directory= --gzip --gunzip --xz --bzip2 --zstd --lzma --auto-compress --verbose --to-stdout --keep-old-files --skip-old-files --keep-newer-files --overwrite --overwrite-dir --no-overwrite-dir --no-same-owner --same-owner --no-same-permissions --preserve-permissions --same-permissions --numeric-owner --strip-components= --exclude= --exclude-vcs --exclude-caches --wildcards --no-wildcards --totals --one-file-system --owner= --group= --mode= --mtime= --sort= --warning= --newer= --after-date= --format= --blocking-factor= --label= --absolute-names --dereference --hard-dereference --ignore-zeros --recursion --no-recursion --remove-files --force-local --sparse --checkpoint --null --files-from= --exclude-from= --listed-incremental= --use-compress-program= --to-command= --checkpoint-action= --info-script= --new-volume-script= --rsh-command= --rmt-command= --index-file= --volno-file= --help --version');
 const READ_SPEC = sortSpec('ersa:d:i:n:N:p:t:u:');
 const FIND_ONE = new Set('name iname path ipath wholename iwholename regex iregex regextype type xtype size mtime mmin atime amin ctime cmin newer anewer cnewer perm user group uid gid links inum samefile maxdepth mindepth lname ilname fstype used context printf'.split(' '));
 const FIND_ZERO = new Set('print print0 ls prune quit true false not and or a o depth mount xdev follow noleaf daystart readable writable executable empty nouser nogroup help version warn nowarn ignore_readdir_race noignore_readdir_race'.split(' '));
@@ -131,7 +142,7 @@ const SORT_HANDLERS = {
   },
   sed(a, ctx, r) {
     const scripts = [], files = [];
-    let inPlace = false;
+    let inPlace = false, suffix = '';
     const LONG = ['expression=', 'file=', 'in-place', 'quiet', 'silent', 'regexp-extended', 'separate', 'unbuffered', 'null-data', 'zero-terminated', 'line-length=', 'posix', 'debug', 'sandbox', 'follow-symlinks', 'help', 'version'];
     for (let k = 0; k < a.length; k++) {
       const t = a[k].text;
@@ -140,14 +151,14 @@ const SORT_HANDLERS = {
         if (hits.length !== 1) unsure(`The sorter doesn't know sed’s option ${sortQ(t)}.`);
         if (hits[0] === 'expression=') scripts.push(v != null ? { text: v } : a[++k]);
         else if (hits[0] === 'file=') return sortRuns(v ?? a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
-        else if (hits[0] === 'in-place') inPlace = true;
+        else if (hits[0] === 'in-place') { inPlace = true; suffix = v ?? ''; }
         else if (hits[0] === 'line-length=' && v == null) k++;
         continue;
       }
       if (/^-./.test(t)) {
         for (let j = 1; j < t.length; j++) {
           const c = t[j];
-          if (c === 'i') { inPlace = true; break; }
+          if (c === 'i') { inPlace = true; suffix = t.slice(j + 1); break; }
           if (c === 'e') { scripts.push(j < t.length - 1 ? { text: t.slice(j + 1) } : a[++k]); break; }
           if (c === 'f') return sortRuns(j < t.length - 1 ? t.slice(j + 1) : a[k + 1]?.text ?? null, ctx, r, 'sed runs a script file, which the sorter does not read.');
           if (c === 'l') { if (j === t.length - 1) k++; break; }
@@ -158,7 +169,11 @@ const SORT_HANDLERS = {
       (scripts.length ? files : scripts).push(a[k]);
     }
     if (scripts.some(s => !s || s.unknown)) unsure('A sed script comes from a $ or a command, so the sorter can’t read it.');
-    if (inPlace) { raise(r, 'change', 'sed -i rewrites the files it names.'); for (const f of files) sortTouch(f, ctx, r); }
+    if (inPlace) {
+      raise(r, 'change', 'sed -i rewrites the files it names.');
+      // (and with a suffix keeps the old one beside it, or where a / in the suffix says)
+      for (const f of files) { sortTouch(f, ctx, r); if (suffix) sortTouch({ ...f, text: suffix.includes('*') ? (suffix.includes('/') ? '' : f.text.replace(/[^/]*$/, '')) + suffix.replace(/\*/g, f.text.split('/').pop()) : f.text + suffix }, ctx, r); }
+    }
     if (!scripts.every(s => sortSedSafe(s.text))) { sortScan(scripts.map(s => s.text).join('\n'), ctx, r, true, 'seen'); sortRuns(null, ctx, r, 'The sed script writes a file or runs a command (w, W or e).'); }
   },
   find(a, ctx, r) {
@@ -195,11 +210,13 @@ const SORT_HANDLERS = {
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
   set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
-  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]$|^--$/.test(w.text)); for (const p of !t ? ['~'] : t.unknown || t.glob || t.text === '-' ? [null] : sortPaths(t.text, ctx)) sortCd(p, ctx); },
-  pushd(a, ctx) { sortCd(null, ctx); },
+  cd(a, ctx) { const t = a.find(w => !/^-[LPe@]$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text === '-' ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
+  pushd(a, ctx) { sortCd(null, ctx); ctx.cdTo = [null]; },
+  // (crontab -l only lists; anything else is a job that runs by itself)
+  crontab: (a, ctx, r) => (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' ')) ? raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.') : raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.')),
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
-  'nvidia-smi': (a, ctx, r) => { for (const f of sortOpts(SORT_OPTS['nvidia-smi'], a).all('f', 'filename')) sortTouch(f, ctx, r); return (a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
+  'nvidia-smi': (a, ctx, r) => { for (const f of sortOpts(SORT_OPTS['nvidia-smi'], a).all('-f', '--filename')) sortTouch(f, ctx, r); return (!/^(?:dmon|pmon|topo|nvlink)$/.test(a.find(w => !w.text.startsWith('-'))?.text) && a.some(w => /^-(?:pm|pl|r|c|e|ac|rac|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|acp|am|caa)$|^--(?:persistence|power-limit|gpu-reset|compute-mode|ecc|applications-clocks|reset-|lock-|multi-instance|auto-boost)|^--?\w*(?:set|lock|reset|enable|disable|apply)/.test(w.text))
     ? raise(r, 'risky', 'nvidia-smi changes a GPU setting (the driver’s).') : raise(r, 'change', 'nvidia-smi here needs the GPU, which a look’s wall hides (nvidia-smi as the whole command is a look).')); },
   sysctl(a, ctx, r) {
     const t = a.map(w => w.text);
@@ -227,7 +244,9 @@ const SORT_HANDLERS = {
     let q = 0;
     for (const c of old?.text ?? '') { args.push({ ...old, text: `-${c}` }); if (TAR_SPEC.short.get(c)) args.push(rest[q++] ?? { text: '', subs: [] }); }
     const o = sortOpts(TAR_SPEC, [...args, ...rest.slice(q)]);
-    const runs = o.all('I', 'F', 'use-compress-program', 'to-command', 'checkpoint-action', 'info-script', 'new-volume-script', 'rsh-command', 'rmt-command');
+    const runs = o.all('I', 'F', 'use-compress-program', 'to-command', 'checkpoint-action', 'info-script', 'new-volume-script', 'rsh-command', 'rmt-command')
+      .filter((p, i, all) => !(o.all('I', 'use-compress-program').includes(p) && /^(?:gzip|pigz|unpigz|zstd|pzstd|unzstd|xz|pixz|bzip2|lbzip2|pbzip2|lz4|lzma|lzip|plzip|brotli)(?: -[\w-]+)*$/.test(p.text)));
+    if (o.all('f', 'file').some(w => /^[^/]*:/.test(w.text)) && !o.has('force-local')) raise(r, 'risky', 'tar is handed host:file, which it reaches on another machine through ssh: asked.');
     const lists = o.has('T', 'X', 'g', 'files-from', 'exclude-from', 'listed-incremental', 'index-file', 'volno-file');
     const list = o.has('t', 'd', 'list', 'diff', 'compare'), write = o.has('x', 'c', 'r', 'u', 'A', 'extract', 'get', 'create', 'append', 'update', 'delete', 'concatenate', 'catenate');
     const after = () => {
@@ -238,7 +257,8 @@ const SORT_HANDLERS = {
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
-    for (const w of [...o.plain, ...o.all('f', 'file')]) sortTouch(w, ctx, r, false);
+    for (const w of o.plain) sortTouch(w, ctx, r, false, false);
+    for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate'));
     if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }
     after();
   },
@@ -268,11 +288,12 @@ const SORT_HANDLERS = {
     for (const w of [...o.plain, ...o.all('i', 'input')]) sortTouch(w, ctx, r, false, false);
   },
   'ssh-keygen'(a, ctx, r) {
+    // (-f names the key it writes, and its .pub beside it)
     const t = a.map(w => w.text);
     if (t.some(s => /^-\w*A/.test(s))) return raise(r, 'lockout', 'ssh-keygen -A makes the Spark’s own SSH host keys.');
     if (t.some(s => /^-\w*[lLyFBQ]/.test(s)) && !t.some(s => /^-\w*R/.test(s))) return;
     raise(r, 'change', 'ssh-keygen writes a key or known_hosts.');
-    a.forEach((w, i) => { if (t[i - 1] === '-f') sortTouch(w, ctx, r); });
+    for (const f of sortOpts(SORT_OPTS['ssh-keygen'], a).all('f')) { sortTouch(f, ctx, r); sortTouch({ ...f, text: `${f.text}.pub` }, ctx, r); }
   },
   userdel(a, ctx, r) { if (a.some(w => /^-\w*r|^--remove/.test(w.text))) { ctx.kinds.add('delete'); r.lasting = 'A deleted user’s home can’t be put back.'; } raise(r, 'lockout', 'userdel removes a user, a way in.'); },
   sudo(a, ctx, r, x) {

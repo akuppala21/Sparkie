@@ -78,11 +78,6 @@ function describeChange(method, path, body = {}) {
   const stops = Array.isArray(body.stop) && body.stop.length ? `, stopping ${body.stop.map(x => clean(x, 160)).join(', ')}` : '';
   if (method === 'POST' && path === '/deploy') return `Deploy ${clean(body.model, 200)} on ${sparkName(nodeById(body.node) || { id: clean(body.node, 40) })}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
   if (method === 'POST' && path === '/deploy/cluster') return `Deploy ${clean(body.model, 200)} across ${(Array.isArray(body.nodes) ? body.nodes : []).map(id => sparkName(nodeById(id) || { id: clean(id, 40) })).join(' + ')}${how}${stops}${body.allowRemoteCode ? ', and let it run its own code' : ''}`;
-  const files = path.match(/^\/nodes\/([^/]+)\/files$/);
-  if (method === 'POST' && files) {
-    const where = `${clean(body.path, 1000)} (${body.area === 'shared' ? 'shared files' : 'your files'}) on ${sparkName(nodeById(files[1]) || { id: clean(files[1], 40) })}`;
-    return body.operation === 'rename' ? `Rename ${where} to ${clean(body.destination, 1000)}` : `${body.operation === 'delete' ? 'Delete' : 'Change'} ${where}`;
-  }
   return `${method} ${path}`;
 }
 function takeChallenge(id, viewer, purpose) {
@@ -97,7 +92,6 @@ const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
-  || /^\/nodes\/[^/]+\/files$/.test(path)
   || path === '/rollback'
   || path === '/stop'
   || /^\/telegram(\/(pair|needs))?$/.test(path)
@@ -108,7 +102,6 @@ const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
 const bodyLimit = path => (path.startsWith('/agents') ? 4000
   : path.startsWith('/telegram') || path === '/heartbeat' ? 2000
   : path.startsWith('/auth') ? 50000
-  : /\/files$/.test(path) ? 400000
   : 1e5);
 // A deploy's stop list names something Spark Console didn't start (known to the watcher as not ours, or not known).
 function stopsOutside(stop) {
@@ -126,8 +119,7 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/agents/settings') return !(body && Object.keys(body).length === 1 && body.halted === true);
   if (method === 'DELETE' && path.startsWith('/auth/passkeys/')) return true;
   if (method === 'POST' && path === '/auth/passkey/register') return haveKeys;
-  // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a file, a chat.
-  if (method === 'POST' && /^\/nodes\/[^/]+\/files$/.test(path)) return body?.operation === 'delete';
+  // Deleting anything is the owner's, with their passkey (docs/contract.md 8.2, 8.7): a chat.
   if (method === 'DELETE' && /^\/chats\/[^/]+$/.test(path)) return true;
   // Letting a new device in (4.10). Validation runs, "Test the changes" and going back to the last good build no longer
   // need it (v3.1, 6.3 and 8.7): the owner wants agents to do those by themselves.
@@ -143,15 +135,6 @@ function needsPasskey(method, path, body, haveKeys) {
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
   return false;
-}
-// A terminal signed in from the internet never writes hidden files or folders: .git/hooks, .vscode/tasks.json or .envrc
-// run code when a folder is opened on a Spark.
-async function refuseHiddenFiles(req, path) {
-  if (req.method !== 'POST' || !/^\/nodes\/[^/]+\/files$/.test(path)) return;
-  const body = await readBody(req, bodyLimit(path));
-  if (!['write', 'mkdir', 'rename'].includes(body?.operation)) return;
-  const hidden = p => String(p || '').split(/[\\/]+/).some(part => part.startsWith('.'));
-  if (hidden(body.path) || hidden(body.destination)) throw new HttpError(403, 'Hidden files and folders (names starting with a dot) aren’t changed from a terminal signed in from the internet: use the page, or Tailscale.');
 }
 // The owner confirms with a one-time challenge for exactly this change, signed by one of their passkeys. Until a
 // passkey is set up, these changes need none.
