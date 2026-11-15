@@ -264,7 +264,8 @@ const handler = async (req, res) => {
         if (internet !== undefined) key.internet = internet;
         writePrivate(AGENTS_FILE, { keys });
         // A right taken away counts as a removal (R23): a state put back from before takes it away again.
-        if ((could.act && act === false) || (could.internet && internet === false)) putBackRemoved('narrowed', key.id, key.name, { act: key.scopes.includes('fleet:act'), internet: key.internet !== false });
+        const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
+        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
         return send(res, 200, agentView(key));

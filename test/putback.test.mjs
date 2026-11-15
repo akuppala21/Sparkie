@@ -14,7 +14,8 @@
 // state's number away left out (as every snapshot made before this build has it), something removed since that is back
 // is a put-back all the same; with it, the start always holds, a key's narrowing comes back undone and is taken again,
 // and with nothing removed since nothing is removed and "Keep these" ends it; a saved workflow's run on record in the
-// snapshot never comes back, so the start stops nothing of that name (R57). go-back.sh and an update's way back put
+// snapshot never comes back, so the start stops nothing of that name (R57); a narrowing notes only the right it took, so a
+// put-back never takes one the owner never took. go-back.sh and an update's way back put
 // back program files only and never trip it.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -362,6 +363,28 @@ describe('restore.sh --with-state over the state as it is, then a start', { conc
       assert.equal(acted, false, eventLines(D).filter(e => e.type === 'notice').map(e => e.text).join('\n'));
       assert.equal(stateOf('spark4', RADIX), 'running');
     } finally { await D.stop(); }
+  });
+
+  test('a narrowing notes only the right it took: a put-back never takes one the owner never took', { timeout: 300000 * SLOW }, async () => {
+    const K5 = new Authenticator(TAILNET, ORIGIN);
+    let S = await startMock({}), E = null;
+    try {
+      is(await ask(S, '/auth/passkey/register', { method: 'POST', body: K5.register((await ask(S, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } })).json) }), 201, 'K5');
+      // A new key is look-only and tailnet-only. The owner lets it change things, takes that away, then gives it both.
+      const k = await confirmed(S, 'POST', '/agents', { name: 'Given-back agent' }, K5);
+      is(k, 201);
+      is(await confirmed(S, 'PUT', `/agents/${k.json.id}`, { act: true }, K5), 200, 'it may change things');
+      is(await confirmed(S, 'PUT', `/agents/${k.json.id}`, { act: false }, K5), 200, 'not any more');
+      assert.deepEqual((({ kind, act, internet }) => ({ kind, act, internet }))(secretsOf(S).auth.removed.at(-1)), { kind: 'narrowed', act: false, internet: undefined }, 'the right it took, only');
+      is(await confirmed(S, 'PUT', `/agents/${k.json.id}`, { act: true, internet: true }, K5), 200, 'both given');
+      const snap = copyState(S, 'given-back'), state = copyState(S, 'given-back-now'), s = readFileSync(S.secretsFile, 'utf8');
+      await S.stop(); S = null;
+      E = await startAfterRestore(state, s, snap, RESTORE);
+      assert.equal((await net(E, '/whoami')).json.held, LINE);
+      const key = keysIn(E).find(x => x.id === k.json.id);
+      assert.equal(key.internet, true, 'its use from the internet, which the owner never took, stays');
+      assert.deepEqual((await ask(E, '/auth/putback')).json.removedAgain, [{ kind: 'agent key’s right to change things', name: 'Given-back agent' }]);
+    } finally { await S?.stop(); await E?.stop(); }
   });
 });
 

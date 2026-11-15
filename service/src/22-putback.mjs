@@ -6,8 +6,8 @@
 // so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
 // that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
 // each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
-// tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; a key's rights after
-// it was narrowed). Nothing else writes either number; restore.sh --with-state removes the state's.
+// tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; for a narrowing, the
+// right it took). Nothing else writes either number; restore.sh --with-state removes the state's.
 // At start (putBackAtStart, before the sockets open), the state was put back (by restore.sh --with-state, or by hand from
 // a copy) when something the secrets file notes as removed is in the state again, whatever the numbers say; or when the
 // state's number is below the secrets file's (a state with no number is one when the secrets file has a number); or when
@@ -20,7 +20,9 @@
 // passkey, a recovery code, a device code) and no agent key works: each gets one plain line (PUTBACK_LINE). Agents'
 // changes are refused on the tailnet too, and an approval from Telegram waits. The tailnet door is the owner at once,
 // the owner's own chat and Telegram requests work, and go-back.sh and an update's way back (program files only) never
-// trip it.
+// trip it. A secrets file that can't be read keeps the last answer read while Spark Console runs, so a hold doesn't lift;
+// after a start with the file unreadable, nothing is held until it reads again. A right the owner gave back to a key
+// after taking it is taken again at a put-back (the owner gives it back again).
 const PUTBACK_FILE = `${STATE_DIR}/auth-serial.json`;
 const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
 const PUTBACK_AGENTS = 'Spark Console’s state was put back from a copy, so agents can’t change anything until the owner has looked at what came back, on the tailnet, and kept it.';
@@ -42,7 +44,8 @@ function putBackAuth() {
   try { mtime = statSync(SECRETS_FILE).mtimeMs; } catch {}
   if (mtime !== putBackSeen.mtime) {
     const s = secretsRead();
-    // (one that can't be read keeps the last answer: a hold doesn't lift while it lasts)
+    // (one that can't be read keeps the last answer while this process runs: a hold doesn't lift; there is none yet
+    // after a start, so then nothing is held until it reads again)
     if (s === null) return putBackSeen.auth;
     putBackSeen.auth = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {};
     putBackSeen.mtime = mtime;
@@ -54,8 +57,8 @@ const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r =
 
 // A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
 // between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
-// session, passkey, agent, narrowed (with the key's rights after it: extra { act, internet }), paused; resumed notes the
-// owner's resume and changes no number.
+// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused;
+// resumed notes the owner's resume and changes no number.
 function putBackRemoved(kind, id = null, name = null, extra = {}) {
   if (!SECRETS_FILE) return;
   try {
@@ -118,12 +121,11 @@ function putBackAtStart() {
       const keys = agentKeys(), drop = gone('agent'), kept = keys.filter(k => !drop.has(String(k.id)));
       let changed = kept.length < keys.length;
       again.push(...keys.filter(k => drop.has(String(k.id))).map(k => ({ kind: 'agent key', name: clean(k.name, 60) })));
-      // A right the owner took from a key since (as the last narrowing noted it): taken again, never given.
-      const narrowed = new Map(removed.filter(r => r.kind === 'narrowed').map(r => [String(r.id), r]));
+      // A right the owner took from a key (each narrowing notes the right it took): taken again, never given.
+      const took = (k, right) => removed.some(r => r.kind === 'narrowed' && String(r.id) === String(k.id) && r[right] === false);
       for (const k of kept) {
-        const r = narrowed.get(String(k.id));
-        if (r?.act === false && (k.scopes || []).includes('fleet:act')) { k.scopes = ['fleet:read']; changed = true; again.push({ kind: 'agent key’s right to change things', name: clean(k.name, 60) }); }
-        if (r?.internet === false && k.internet !== false) { k.internet = false; changed = true; again.push({ kind: 'agent key’s use from the internet', name: clean(k.name, 60) }); }
+        if (took(k, 'act') && (k.scopes || []).includes('fleet:act')) { k.scopes = ['fleet:read']; changed = true; again.push({ kind: 'agent key’s right to change things', name: clean(k.name, 60) }); }
+        if (took(k, 'internet') && k.internet !== false) { k.internet = false; changed = true; again.push({ kind: 'agent key’s use from the internet', name: clean(k.name, 60) }); }
       }
       if (changed) writePrivate(AGENTS_FILE, { keys: kept });
     } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }

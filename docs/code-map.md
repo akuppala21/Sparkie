@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 76 parts in `service/src/`, joined in name order into `service/server.mjs` (19311 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 76 parts in `service/src/`, joined in name order into `service/server.mjs` (19314 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -999,10 +999,10 @@ Tailscale, or a device the owner signed in, says the owner is asking, and for th
 
 ### `22-putback.mjs`: state put back from a copy lets no device or key in by itself
 
-Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json, so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only, tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; a key's rights after it was …
+Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json, so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only, tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; for a narrowing, the right it …
 
 - **Area:** ways in. **Rules:** R23, R33. **Tests:** putback.test.mjs
-- **Lines:** 183
+- **Lines:** 185
 - **Owns:** auth-serial.json (writers: putBackSerialWrite)
 - **Timers:** none
 - **Wakes:** none
@@ -1039,7 +1039,7 @@ From the internet (Tailscale Funnel) a request carries no Tailscale identity, so
 Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model, container, job, chat, person, hostname or address.
 
 - **Area:** ways in. **Rules:** R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40. **Tests:** fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs
-- **Lines:** 638
+- **Lines:** 639
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
