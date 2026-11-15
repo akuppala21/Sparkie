@@ -113,8 +113,8 @@ test('pressed: the timer is armed first (its time limit plus 600 s), the change 
   // The journal: a start line before, an end line after, with the guard's id.
   const rec = journalLines().filter(x => x.id === g.record);
   assert.deepEqual(rec.map(x => [Boolean(x.start), Boolean(x.end), x.class || null, x.outcome || null, x.net]), [[true, false, 'lockout', null, g.id], [false, true, null, 'kept', g.id]]);
-  // Told once in the chat: the press's own answer says it (no notice of its own there).
-  assert.equal((await chatMessages(chat)).filter(m => m.notice && !m.danger && /lock-out net/.test(m.content)).length, 0, 'not twice in the chat');
+  // Told once in the chat: the press's own answer says it, and no notice of the net's says it again.
+  assert.equal((await chatMessages(chat)).filter(m => !m.danger && /it is kept\.$/.test(m.content || '')).length, 1, 'once in the chat');
 });
 
 test('a way in that worked before stops working after it: put back at once, and said', { timeout: 180000 * SLOW }, async () => {
