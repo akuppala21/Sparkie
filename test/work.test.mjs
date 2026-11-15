@@ -1,6 +1,6 @@
-// run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root helper through
-// sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the one this
-// build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
+// Covers: run on a Spark, today a look (21-work.mjs; R42; design A 2.13, step 1b): the console's call to the root
+// helper through sudo (helperCall), the "run this one command first" answer, the check that a Spark's helper is the
+// one this build ships, the key-name check, the short table of exact forms, the helper's proof as a line of self_test, and the look
 // as outside text (masked, cut for the brain, kept whole in one journal record).
 // The stand-in fleet, with the real helper (deploy/spark-console-root) as a rehearsal under each set-up Spark's home
 // (~/.rehearsal: a made-up /etc, /proc and /usr/local/sbin), driven by the stand-ins step 1a added in test/mock/bin
@@ -228,6 +228,14 @@ test('what a look prints comes back masked, without escape codes, cut to the fir
   assert.ok(text.startsWith("$ printf 'HF_TOKEN="), text.slice(0, 80));
   assert.ok(text.endsWith('\n19999\n20000\n'));
   assert.ok(text.includes('\n10000\n') && !text.includes('hf_abcdefghijklmnop'));
+  // Words a NUL keeps apart (a program's /proc/<pid>/cmdline) stay apart, and a key after a colour code is whole again:
+  // the mask sees both, for the brain and in the record. (The command builds each key, so only the output holds it.)
+  const cleaned = await look({ on: 'spark3', command: 'k=abcdefghij; h=hf_; printf "vllm\\0serve\\0--api-key\\0sk-${k}klmnopqrstuvwxyz0123456789\\0\\n"; printf "Using \\033[32m${h}abcdefghijklmnopqrstuvwxyz0123456789\\033[0m\\n"' });
+  assert.equal(cleaned.status, 200, cleaned.text);
+  assert.ok(!cleaned.text.includes('sk-abcdefghijklmnop') && !cleaned.text.includes('hf_abcdefghijklmnop'), cleaned.text);
+  assert.match(cleaned.json.output, /^vllm serve --api-key \S*\[hidden\]/);
+  const kept = recordText(records().find(y => y.id === cleaned.json.record));
+  assert.ok(!kept.includes('sk-abcdefghijklmnop') && !kept.includes('hf_abcdefghijklmnop') && !kept.includes('\x1b'), kept);
   // Past the journal's size (here 300,000 bytes; 16 MB on the Sparks) the look is ended and says so.
   const big = await look({ on: 'spark3', command: "head -c 400000 /dev/zero | tr '\\0' a" });
   assert.equal(big.status, 200, big.text);
@@ -336,6 +344,16 @@ test('who may look: the owner; an agent only when its key may change things too;
   const act = await call(keys.act.token, 'run', { on: 'spark3', command: 'cat docs/plain.txt' });
   assert.equal(act.isError, false, act.text);
   assert.equal(act.value.output, 'hello from spark 3\n');
+  // recall reads a look back on the same rule: the key that may only look gets the record without its text.
+  const id = act.value.record;
+  const back = await call(keys.look.token, 'recall', { id });
+  assert.equal(back.isError, false, back.text);
+  assert.equal(back.value.text, null);
+  assert.match(back.value.note, /read back only by the owner, or by an agent the owner lets change things/);
+  const listed = (await call(keys.look.token, 'recall', { kind: 'cmd', limit: 20 })).value.records.find(x => x.id === id);
+  assert.ok(listed && !('kept' in listed), JSON.stringify(listed));
+  assert.match((await call(keys.act.token, 'recall', { id })).value.text, /^\$ cat docs\/plain\.txt\nhello from spark 3\n$/);
+  assert.match((await api('/actions/recall', { method: 'POST', body: { id } })).json.text, /hello from spark 3/);
   assert.equal((await look({ on: 'spark3', command: 'ls' }, { 'tailscale-user-login': MEMBER })).status, 403);
   // The one page's later inputs aren't there yet: refused as any action refuses an input it doesn't know.
   for (const extra of [{ root: true }, { dir: '/tmp' }, { minutes: 5 }, { seconds: 10 }]) {
@@ -419,21 +437,26 @@ test('a key in a look\'s command or in what it printed is masked in the event, i
   const inCommand = 'cmdsecretvalue0123456789', printed = 'hf_abcdefghijklmnopqrstuvwxyz0123456789';
   const r = await lookRows('mask the look rows', [
     { name: 'run', arguments: { on: 'spark3', command: `echo done # token=${inCommand}` } },
-    { name: 'run', arguments: { on: 'spark3', command: "printf 'first\\nHF_TOKEN=hf_%s\\n' abcdefghijklmnopqrstuvwxyz0123456789" } }]);
-  const [a, b] = r.message.tools;
+    { name: 'run', arguments: { on: 'spark3', command: "printf 'first\\nHF_TOKEN=hf_%s\\n' abcdefghijklmnopqrstuvwxyz0123456789" } },
+    // (each builds its key, so only what it printed holds it: after NULs, as in a /proc/<pid>/cmdline, and after a colour code)
+    { name: 'run', arguments: { on: 'spark2', command: 'k=abcdefghij; printf "vllm\\0serve\\0--api-key\\0sk-${k}klmnopqrstuvwxyz0123456789\\0\\n"' } },
+    { name: 'run', arguments: { on: 'spark2', command: 'h=hf_; printf "Using \\033[32m${h}abcdefghijklmnopqrstuvwxyz0123456789\\033[0m\\n"' } }]);
+  const [a, b, nul, colour] = r.message.tools;
   assert.equal(a.line, '$ echo done # token=[hidden]');
   assert.equal(a.tail, 'done\nexit 0');
   assert.equal(b.tail, 'HF_TOKEN=[hidden]\nexit 0');
+  // A key after NULs or a colour code is hidden in the tail too: it is built from the cleaned, masked output.
+  assert.deepEqual([nul.where, nul.tail, colour.tail], ['Spark 2', 'vllm serve --api-key [hidden]\nexit 0', 'Using [hidden]\nexit 0']);
   // (the command printed the key from two pieces: what the command says is not a key, what it printed is)
   assert.equal(b.line, "$ printf 'first\\nHF_TOKEN=hf_%s\\n' abcdefghijklmnopqrstuvwxyz0123456789");
-  const none = (where, text) => { for (const s of [inCommand, printed]) assert.ok(!text.includes(s), `${where} holds ${s}`); };
+  const none = (where, text) => { for (const s of [inCommand, printed, 'sk-abcdefghijklmnop']) assert.ok(!text.includes(s), `${where} holds ${s}`); };
   none('the events', JSON.stringify(r.tools));
   none('the reply', JSON.stringify(r.message));
   const file = await waitFor(() => { const t = readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8'); return t.includes(r.chat) && t.includes(JSON.stringify(b.tail).slice(1, -1)) && t; }, { what: 'the chat saved' });
   none('chats.json', file);
   const again = await api(`/chats/${r.chat}`);
   none('the chat read again', again.text);
-  assert.deepEqual(again.json.messages.at(-1).tools.map(t => [t.line, t.tail, t.kept]), [[a.line, a.tail, a.kept], [b.line, b.tail, b.kept]]);
+  assert.deepEqual(again.json.messages.at(-1).tools.map(t => [t.line, t.tail, t.kept]), [a, b, nul, colour].map(t => [t.line, t.tail, t.kept]));
 });
 
 test('a look\'s line and tail are cut to 200 characters, never inside one: the line keeps its start, the tail the end of the last line', { timeout: 120000 * SLOW }, async () => {

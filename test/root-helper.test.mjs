@@ -1,8 +1,14 @@
-// The root helper (R42; design A 2.13, step 1a): deploy/spark-console-root, the proof of its walls, and the owner's
-// one-time command, deploy/root-for-sparkie.sh. Nothing in the console calls the helper yet. Rehearsals only: the
-// helper runs as this user against a made-up Spark in a temporary folder (SPARK_CONSOLE_REHEARSAL), with the stand-ins
-// in test/mock/bin (systemd-run, systemctl, unshare, setpriv, visudo); the one-time command also gets stand-ins of its
-// own here for ssh, sudo and systemd-id128 (test/mock/bin/sudo belongs to the power work). No fleet starts.
+// Covers: The root helper (R42): deploy/spark-console-root, the proof of its walls, and the owner's one-time command,
+// deploy/root-for-sparkie.sh. The exact settings of the look and run walls for ordinary and hostile commands, with the
+// command's bytes held unchanged; every refusal; what a Spark must have and when the proof's mark is out of date; the
+// proof naming each attempt that gets through, and failing when it could not show an attempt working outside the walls;
+// the one-time command's order, its staging as root, a swapped copy caught, --check, --undo and the hub; and the real
+// proof run with no wall. Rehearsals with stand-ins only: they build no wall, so a Spark's own proof decides the rest.
+//
+// Rehearsals only: the helper runs as this user against a made-up Spark in a temporary folder
+// (SPARK_CONSOLE_REHEARSAL), with the stand-ins in test/mock/bin (systemd-run, systemctl, unshare, setpriv, visudo);
+// the one-time command also gets stand-ins of its own here for ssh, sudo and systemd-id128, ahead of the power work's
+// test/mock/bin/sudo on PATH. Nothing in the console calls the helper yet. No fleet starts.
 // What this cannot show: the stand-ins build no wall. These tests show the helper asks for exactly the right walls and
 // acts on the proof's answers; that a Spark grants them is decided by the proof itself, on each real Spark. The last
 // group runs the proof's own attempts with no wall at all, to show each one does get through when nothing stops it.
@@ -10,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -268,6 +274,17 @@ describe('the walls asked for', () => {
     assert.equal(started(s).length, before);
   });
 
+  test('a held folder left by a killed call is removed by a later one once no unit can still use it; a newer one stays', () => {
+    const old = join(s.R, 'run/spark-console', 'killed000old'), recent = join(s.R, 'run/spark-console', 'killed000new');
+    for (const d of [old, recent]) { mkdirSync(d); writeFileSync(join(d, 'command'), 'x'); }
+    const then = new Date(Date.now() - 131 * 60000);
+    utimesSync(old, then, then);
+    assert.equal(look(s, 'true').status, 0);
+    assert.ok(!existsSync(old), 'older than the longest unit (120 minutes and 10 more): removed');
+    assert.ok(existsSync(recent), 'a newer one may still be in use: kept');
+    assert.ok(existsSync(join(s.R, 'run/spark-console/prove.lock')), 'not a held folder: kept');
+  });
+
   test('root refuses, always: the put-back net is not built yet', () => {
     const before = calls(s).length;
     const r = run(s, ['root', '--id', newId(), '--sha256', sha('id'), '--seconds', '5', '--dir', s.work, '--', 'id']);
@@ -385,7 +402,10 @@ describe('the proof of the walls', () => {
     // wall, the check from outside afterwards (as the owner, then as root); then the program outside is stopped.
     const units = calls(s).filter(c => c[0] === 'systemd-run').map(c => c.find(a => a.startsWith('--unit=')).slice(7));
     assert.deepEqual(units, ['prep', 'setup', 'target', 'outside', 'look', 'run', 'post', 'after'].map(u => `sw-prove-${u}-${p.id}`));
-    assert.deepEqual(calls(s).filter(c => c[0] === 'systemctl' && c[1] !== 'show' && c[1] !== '--version'), [['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
+    assert.deepEqual(calls(s).filter(c => c[0] === 'systemctl' && c[1] !== 'show' && c[1] !== '--version'),
+      [['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
+    assert.ok(p.stdout.includes(`${p.id} proof outside 2 works: an open connection (the loopback, stand-in)\n`));
+    assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt was seen working outside the walls, or is not there\n`));
     const py = which(s, 'python3'), proof = `/run/spark-console/${p.id}/proof.py`;
     const hidden = ['/home/owner/.local/share/spark-console'];
     const lookUnit = lookCall(s, p.id, 'x', 120, hidden);
@@ -428,6 +448,72 @@ describe('the proof of the walls', () => {
     });
   }
 
+  // The controls: a "blocked" inside a wall shows something only when the same attempt worked outside it.
+  const FAILED = why => new RegExp(`proof failed: ${esc(why)}\\. No mark was written, so the look and run walls refuse on this Spark\\.\n$`);
+  const noMark = (s, p) => {
+    assert.equal(p.status, 1, p.stdout + p.stderr);
+    assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')), 'no mark');
+    refused(look(s, 'true'), 'the wall proof is none on this Spark: prove first');
+  };
+  for (const n of [1, 4, 5, 6, 7, 8, 10]) {
+    test(`attempt ${n} not seen working outside the walls (its own program, files or line): no mark, even with every wall holding`, () => {
+      const s = proven();
+      s.put('standin/outside', `${n} not-there stand-in\n`);
+      const p = prove(s);
+      noMark(s, p);
+      assert.ok(p.stdout.includes(`${p.id} proof look passed\n`) && p.stdout.includes(`${p.id} proof run passed\n`), 'every wall said blocked');
+      assert.match(p.stdout, FAILED(`attempt ${n} (${NAMES[n]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
+    });
+  }
+  test('attempt 2 that reaches other things outside but not its own program on the loopback: no mark', () => {
+    const s = proven();
+    s.put('standin/outside', '2 works the tailnet\n');
+    const p = prove(s);
+    noMark(s, p);
+    assert.match(p.stdout, FAILED("attempt 2 could not reach the proof's own program on the loopback outside the walls, so the run wall's loopback rule would be shown by nothing"));
+  });
+  test('the sockets, a user manager and the devices may be absent: the proof says why, and passes', () => {
+    const s = proven();
+    s.put('standin/outside', '3 not-there no socket here\n9 not-there no user manager here\n11 not-there no device here\n');
+    const p = prove(s);
+    assert.equal(p.status, 0, p.stdout);
+    assert.ok(p.stdout.includes(`${p.id} proof outside 3 not there: ${NAMES[3]} (no socket here)\n`), p.stdout);
+    assert.ok(p.stdout.includes(`${p.id} proof outside 9 not there: ${NAMES[9]} (no user manager here)\n`));
+    assert.ok(existsSync(join(s.R, 'var/lib/spark-console/proved')));
+  });
+  for (const [name, knob, why] of [
+    ['never started', 'no-pid', "the proof's own program outside the walls did not start"],
+    ['stopped before the end', 'target-dead', "the proof's own program outside the walls stopped before the end"],
+  ]) {
+    test(`the proof's own program outside the walls ${name}: no mark`, () => {
+      const s = proven();
+      s.put(`standin/${knob}`);
+      const p = prove(s);
+      noMark(s, p);
+      assert.match(p.stdout, FAILED(why));
+    });
+  }
+  test('the checks from outside afterwards did not see what the proof left there on purpose: no mark', () => {
+    for (const [n, play] of [[5, 'V 12 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n'],
+      [12, 'V 5 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n']]) {
+      const s = proven();
+      s.put('standin/play-after', play);
+      const p = prove(s);
+      noMark(s, p);
+      assert.match(p.stdout, FAILED(`the check from outside afterwards for attempt ${n} (${NAMES[n]}) did not see what the proof left there on purpose`));
+    }
+  });
+  test('no file handle for the key, or no folder on any disk: the proof cannot make its own files, and says what was missing', () => {
+    for (const [part, line] of [['prep', 'S failed: no file handle for the proof key'], ['setup', 'S failed: no folder could be made on any disk']]) {
+      const s = proven();
+      s.put(`standin/play-${part}`, `${line}\n`);
+      const p = prove(s);
+      noMark(s, p);
+      assert.ok(p.stdout.includes(`proof failed: the proof could not make its own files on this Spark (`) && p.stdout.includes(line), p.stdout);
+      assert.equal(unitCall(s, `sw-prove-look-${p.id}`), undefined, 'no wall was tried');
+    }
+  });
+
   test("a wall's unit that systemd will not start fails the proof, and says so", () => {
     const s = proven();
     s.put('standin/refuse', 'sw-prove-look-');
@@ -467,9 +553,11 @@ function fleet({ target = spark({ installed: false }) } = {}) {
     + 'if [ $n = 1 ] && [ ! -f "$R/etc/sudoers.d/spark-console-root" ]; then echo "sudo: a password is required" >&2; exit 1; fi\n'
     + 'rebase() { case "$1" in /usr/local/sbin/*|/etc/sudoers.d/*|/var/lib/spark-console/*) printf "%s" "$R$1" ;; *) printf "%s" "$1" ;; esac; }\n'
     + 'cmd=$1; shift; a=()\ncase "$cmd" in\n'
-    + '  install) while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; -m) a+=("$1" "$2"); shift 2 ;; *) a+=("$(rebase "$1")"); shift ;; esac; done; exec install "${a[@]}" ;;\n'
-    + '  cat|rm|sha256sum) for x in "$@"; do a+=("$(rebase "$x")"); done; exec "$cmd" "${a[@]}" ;;\n'
-    + '  visudo) exec visudo "$@" ;;\n'
+    + '  install) while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; -m) a+=("$1" "$2"); shift 2 ;; *) a+=("$(rebase "$1")"); shift ;; esac; done\n'
+    // $TEST_T/swap-copy: another program swaps the staged copy after it was checked, just before root copies it.
+    + '    for x in "${a[@]}"; do case "$x" in *.copy) [ -e "$TEST_T/swap-copy" ] && printf "#!/bin/bash\\necho swapped\\n" > "$x" ;; esac; done\n'
+    + '    exec install "${a[@]}" ;;\n'
+    + '  cat|rm|sha256sum|chmod|mv|tee|visudo) for x in "$@"; do a+=("$(rebase "$x")"); done; exec "$cmd" "${a[@]}" ;;\n'
     + '  /usr/local/sbin/spark-console-root) exec env SUDO_UID=1000 SUDO_USER=owner SUDO_GID=1000 "$R$cmd" "$@" ;;\n'
     + '  *) echo "sudo: these tests allow no $cmd" >&2; exit 1 ;;\nesac\n', { mode: 0o755 });
   const env = { PATH: `${bin}:${MOCKBIN}:/usr/bin:/bin`, HOME: join(T, 'spark2'), SPARK_CONSOLE_REHEARSAL: target.R, TEST_T: T };
@@ -489,33 +577,51 @@ function tree(dir) {
 }
 
 describe("the owner's one-time command", () => {
-  test('a compute Spark: its steps in order, the line checked before anything is put in place, then the proof', () => {
+  test('a compute Spark: its steps in order, everything staged and checked as root before it is put in place, then the proof', () => {
     const f = fleet();
     const r = f.cmd(['3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /^Spark 3 \(spark3\.test\):\n/);
+    assert.ok(r.stdout.includes(`the helper to install has SHA-256 ${sha(readFileSync(HELPER_SRC))}\n`), r.stdout);
     assert.match(r.stdout, /proof look passed\n[\s\S]*proof run passed\n[\s\S]*proof passed: the mark is written/);
     assert.match(r.stdout, /done: the helper is set up and its walls are proven on /);
+    // As root, in this order: the line written to a name sudo skips and checked there; the helper copied to a name
+    // nothing runs and hashed there; then both moved into place; then the proof. Nothing is installed or run from a
+    // file your account can write after the password.
+    const copy = join(f.T, 'spark3/.cache/spark-console/spark-console-root.copy');
+    const L = '/etc/sudoers.d/spark-console-root', Hl = '/usr/local/sbin/spark-console-root';
+    const order = ['-v', `cat ${L}`, `sha256sum ${Hl}`, `rm -f ${L}.new ${Hl}.new`, `tee ${L}.new`, `chmod 0440 ${L}.new`,
+      `visudo -cf ${L}.new`, `install -o root -g root -m 0755 ${copy} ${Hl}.new`, `sha256sum ${Hl}.new`, `mv -f ${Hl}.new ${Hl}`,
+      `mv -f ${L}.new ${L}`];
     const steps = sudoCalls(f);
-    const at = s => steps.findIndex(x => x.startsWith(s));
-    assert.ok(at('-v') === 0, steps.join('\n'));
-    assert.ok(at('visudo -cf ') > at('-v'));
-    assert.ok(at('install -o root -g root -m 0755 ') > at('visudo -cf '), 'the helper only after visudo passed');
-    assert.ok(at('install -o root -g root -m 0440 ') > at('install -o root -g root -m 0755 '), 'the line after the helper');
-    assert.ok(at('-n /usr/local/sbin/spark-console-root prove --id ') > at('install -o root -g root -m 0440 '), 'the proof last');
-    assert.match(steps[at('install -o root -g root -m 0755 ')], /\.cache\/spark-console\/spark-console-root\.copy \/usr\/local\/sbin\/spark-console-root$/);
-    assert.match(steps[at('install -o root -g root -m 0440 ')], / \/etc\/sudoers\.d\/spark-console-root$/);
+    assert.deepEqual(steps.slice(0, order.length), order, steps.join('\n'));
+    assert.match(steps[order.length], /^-n \/usr\/local\/sbin\/spark-console-root prove --id [0-9a-f]{16}$/);
     assert.equal(readFileSync(join(f.target.R, 'etc/sudoers.d/spark-console-root'), 'utf8'), LINE_TEXT());
     assert.deepEqual(calls(f.target).find(c => c[0] === 'visudo').slice(-1), [LINE_TEXT()], 'visudo checked exactly the one line');
     assert.ok(readFileSync(join(f.target.R, 'usr/local/sbin/spark-console-root')).equals(readFileSync(HELPER_SRC)), "the helper is Spark 2's build");
-    assert.ok(has(f, 'var/lib/spark-console/proved'));
-    assert.deepEqual(readdirSync(join(f.T, 'spark3/.cache/spark-console')).filter(n => !n.startsWith('proof-')), [], 'the copies are gone');
-    // Over ssh: the helper and the set-up script are copied, then the set-up script runs in a terminal.
+    assert.ok(has(f, 'var/lib/spark-console/proved') && !has(f, 'etc/sudoers.d/spark-console-root.new') && !has(f, 'usr/local/sbin/spark-console-root.new'));
+    assert.deepEqual(readdirSync(join(f.T, 'spark3/.cache/spark-console')), [], 'the copy is gone');
+    // Over ssh: the helper is copied; the set-up script is never written anywhere: it runs from the command line.
     const ssh = calls(f.target).filter(c => c[0] === 'ssh').map(c => c.slice(1));
-    assert.equal(ssh.length, 3);
+    assert.equal(ssh.length, 2);
     assert.deepEqual(ssh[0], ['-o', 'ConnectTimeout=8', 'owner@spark3.test', 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/spark-console-root.copy']);
-    assert.deepEqual(ssh[1], ['-o', 'ConnectTimeout=8', 'owner@spark3.test', 'mkdir -p ~/.cache/spark-console && cat > ~/.cache/spark-console/root-setup.sh']);
-    assert.deepEqual(ssh[2], ['-t', '-o', 'ConnectTimeout=8', 'owner@spark3.test', `bash ~/.cache/spark-console/root-setup.sh install ${sha(readFileSync(HELPER_SRC))} ${HUB_ID} 0`]);
+    assert.deepEqual(ssh[1].slice(0, 4), ['-t', '-o', 'ConnectTimeout=8', 'owner@spark3.test']);
+    assert.ok(ssh[1][4].startsWith("bash -c '# The set-up half of spark-console's deploy/root-for-sparkie.sh".replace("'s", "'\\''s")), ssh[1][4].slice(0, 120));
+    assert.ok(ssh[1][4].endsWith(`' root-setup install ${sha(readFileSync(HELPER_SRC))} ${HUB_ID} 0`));
+  });
+
+  test('a copy swapped after it was checked is caught where only root can change it: nothing is installed, and it says why', () => {
+    const f = fleet();
+    writeFileSync(join(f.T, 'swap-copy'), '');
+    const r = f.cmd(['3']);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /Stopped on .*: the helper's copy changed after it arrived \(its SHA-256 is no longer the one Spark 2 sent\), so nothing was installed\.\n/);
+    for (const p of ['usr/local/sbin/spark-console-root', 'usr/local/sbin/spark-console-root.new', 'etc/sudoers.d/spark-console-root',
+      'etc/sudoers.d/spark-console-root.new', 'var/lib/spark-console/proved']) assert.ok(!has(f, p), p);
+    const steps = sudoCalls(f);
+    assert.ok(steps.includes('sha256sum /usr/local/sbin/spark-console-root.new'), 'the swap was caught by the hash taken as root');
+    assert.ok(!steps.some(x => x.startsWith('mv ') || x.includes(' prove ')), steps.join('\n'));
+    assert.match(r.stdout, /the helper to install has SHA-256 [0-9a-f]{64}\n/, 'the first check, as you, still saw the right bytes');
   });
 
   test('a second run changes nothing', () => {
@@ -541,7 +647,7 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 2, r.stdout + r.stderr);
     assert.match(r.stderr, /Stopped on .*: visudo did not accept the sudo line, so nothing was changed\.\n/);
     assert.ok(!sudoCalls(f).some(x => x.startsWith('install ')), sudoCalls(f).join('\n'));
-    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root'));
+    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root.new'));
   });
 
   test('the proof fails: the line and the helper are removed again, and it says which attempt got through', () => {
@@ -561,7 +667,8 @@ describe("the owner's one-time command", () => {
     const n = sudoCalls(f).length;
     const r = f.cmd(['--undo', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /etc/sudoers.d/spark-console-root', 'rm -f /usr/local/sbin/spark-console-root', 'rm -f /var/lib/spark-console/proved']);
+    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /etc/sudoers.d/spark-console-root /etc/sudoers.d/spark-console-root.new',
+      'rm -f /usr/local/sbin/spark-console-root /usr/local/sbin/spark-console-root.new', 'rm -f /var/lib/spark-console/proved']);
     assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved'));
   });
 
@@ -596,6 +703,20 @@ describe("the owner's one-time command", () => {
     }
   });
 
+  test('a proof stopped half way (Ctrl-C): --check says plainly the helper is set up but unproven, and --undo removes it', () => {
+    const f = fleet();
+    assert.equal(f.cmd(['3']).status, 0);
+    rmSync(join(f.target.R, 'var/lib/spark-console/proved'));   // as after an interrupted proof: the line and the helper, no mark
+    const c = f.cmd(['--check', '3']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, / {2}set up, but its walls are not proven \(a proof was stopped, failed, or is out of date\): look and run refuse here\n {2}until a proof passes\. Run this command again without --check to prove them, or --undo to remove the line and the helper\.\n/);
+    assert.match(c.stdout, / {4}proof none\n {4}look refuses: the wall proof is none on this Spark\n/);
+    const u = f.cmd(['--undo', '3']);
+    assert.equal(u.status, 0, u.stdout + u.stderr);
+    for (const p of ['usr/local/sbin/spark-console-root', 'etc/sudoers.d/spark-console-root', 'var/lib/spark-console/proved']) assert.ok(!has(f, p), p);
+    assert.match(f.cmd(['--check', '3']).stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): not there\n/);
+  });
+
   test('Spark 2 only with --hub, and --hub only for Spark 2: by its number here, by its machine id there', () => {
     const f = fleet();
     for (const [args, why] of [[['2'], /Stopped: Spark 2 runs Spark Console: it is the hub, set up last, after a compute Spark, and only with --hub: bash ~\/spark-console-src\/deploy\/root-for-sparkie\.sh --hub 2\n/],
@@ -612,7 +733,7 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /Stopped on .*: this is Spark 2, the hub: it is set up last, and only with --hub\./);
     assert.deepEqual(sudoCalls(f), []);
-    assert.ok(!existsSync(join(f.T, 'spark3/.cache/spark-console/root-setup.sh')), 'the copies are gone');
+    assert.ok(!existsSync(join(f.T, 'spark3/.cache/spark-console/spark-console-root.copy')), 'the copy is gone');
     // With --hub it runs on Spark 2 itself, no ssh.
     const hub = fleet({ target: spark({ installed: false }) });
     const h = hub.cmd(['--hub', '2']);
@@ -635,55 +756,113 @@ describe("the owner's one-time command", () => {
 });
 
 // --- the proof's attempts, with no wall at all ----------------------------------------------------------------------
-// The real proof.py, as the helper writes it, run here as this user with nothing stopping it: each attempt must see
-// what it is after. (On a Spark, inside a wall, the same attempt must not: that is the proof.)
-describe("the proof's own attempts", () => {
-  test('with no wall, each attempt gets through: a write through a link, a connection, a socket, an environment, /proc, a signal, a key, a write that stays, something left behind', async () => {
-    const text = readFileSync(HELPER_SRC, 'utf8').split("cat <<'PROOF'\n")[1].split('\nPROOF\n')[0];
-    const T = realpathSync(mkdtempSync(join(tmpdir(), 'proof-')));
+// The real proof.py, as the helper writes it, run here as this user with nothing stopping it. With its own program and
+// files in place, each attempt must see what it is after, outside and "inside" alike (there is no wall here); with its
+// program missing, every attempt must fail rather than say "blocked". (On a Spark, inside a wall, a working attempt
+// must not get through: that is the proof.) Lines are matched by their start: on a machine with a network, a Docker
+// socket or Tailscale (GitHub's runner, say), more is reached and the lines are longer.
+const HANDLE_PROBE = `import ctypes, sys
+class H(ctypes.Structure): _fields_ = [('b', ctypes.c_uint), ('t', ctypes.c_int), ('f', ctypes.c_ubyte * 128)]
+h, m = H(), ctypes.c_int(); h.b = 128; open(sys.argv[1], 'w').close()
+sys.exit(0 if ctypes.CDLL(None).name_to_handle_at(-100, sys.argv[1].encode(), ctypes.byref(h), ctypes.byref(m), 0) == 0 else 1)`;
+// A folder where the kernel gives file handles (the proof needs one for its key): the temporary folder, or else a
+// hidden folder in test/ (a container's own disk may give none). Null when neither does.
+function handleFolder() {
+  for (const [base, prefix] of [[tmpdir(), 'proof-'], [join(REPO, 'test'), '.proof-scratch-']]) {
+    const T = realpathSync(mkdtempSync(join(base, prefix)));
     temps.push(T);
-    const id = 'proofrunhere1', held = join(T, id), home = join(T, 'home');
-    mkdirSync(held);
-    mkdirSync(join(home, '.local/state/spark-console'), { recursive: true });
-    writeFileSync(join(home, '.bashrc'), '');
-    writeFileSync(join(held, 'proof.py'), text);
-    writeFileSync(join(held, 'owner'), `${process.getuid()}\n${process.getgid()}\n${home}\n`);
-    writeFileSync(join(held, 'target'), '0');
-    writeFileSync(join(held, 'readonly'), `${home}/.bashrc\n`);
-    const stay = join(T, 'disk', `.spark-console-proof-${id}`);
-    mkdirSync(stay, { recursive: true, mode: 0o1777 });
-    writeFileSync(join(held, 'stay'), stay);
-    const env = { PATH: '/usr/bin:/bin' };
-    const py = (...a) => spawnSync('python3', ['-I', '-S', join(held, 'proof.py'), ...a], { env, encoding: 'utf8', timeout: 120000 });
-    const lines = r => r.stdout.split('\n').filter(Boolean);
-    assert.deepEqual(lines(py('prep')), ['S ok']);
-    const H = join(home, `.local/share/spark-console/proof-${id}`);
-    const target = spawn('python3', ['-I', '-S', join(held, 'proof.py'), 'target'], { env: { ...env, SPARK_PROOF_MARK: id }, cwd: H, stdio: 'ignore' });
+    if (spawnSync('python3', ['-I', '-S', '-c', HANDLE_PROBE, join(T, 'probe')]).status === 0) return T;
+  }
+  return null;
+}
+function realProof(id) {
+  const T = handleFolder();
+  if (!T) return null;
+  const text = readFileSync(HELPER_SRC, 'utf8').split("cat <<'PROOF'\n")[1].split('\nPROOF\n')[0];
+  const held = join(T, id), home = join(T, 'home');
+  mkdirSync(held);
+  mkdirSync(join(home, '.local/state/spark-console'), { recursive: true });
+  writeFileSync(join(home, '.bashrc'), '');
+  writeFileSync(join(held, 'proof.py'), text);
+  writeFileSync(join(held, 'owner'), `${process.getuid()}\n${process.getgid()}\n${home}\n`);
+  writeFileSync(join(held, 'target'), '0');
+  writeFileSync(join(held, 'readonly'), `${home}/.bashrc\n`);
+  const stay = join(T, 'disk', `.spark-console-proof-${id}`);
+  mkdirSync(stay, { recursive: true, mode: 0o1777 });
+  writeFileSync(join(held, 'stay'), stay);
+  const py = (...a) => spawnSync('python3', ['-I', '-S', join(held, 'proof.py'), ...a.map(String)], { env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 120000 });
+  return { held, home, stay, py, H: join(home, `.local/share/spark-console/proof-${id}`) };
+}
+const lines = r => r.stdout.split('\n').filter(Boolean);
+// Attempt 2 always tries the loopback first; attempt 3 lists the Docker and Tailscale sockets before api.sock, and the
+// door's socket after it.
+const MATCH = {
+  loopback: what => new RegExp(`^P 2 ${what} the loopback(, |$)`),
+  apiSock: /^P 3 direct through (.*, )?api\.sock by its path, api\.sock by a second path(, |$)/,
+};
+
+describe("the proof's own attempts", () => {
+  test('with no wall, each attempt is seen working outside and gets through inside: a link, a connection, a socket, an environment, /proc, a signal, a key, a write that stays, something left behind', async t => {
+    const P = realProof('proofrunhere1');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    const target = spawn('python3', ['-I', '-S', join(P.held, 'proof.py'), 'target'], { env: { PATH: '/usr/bin:/bin', SPARK_PROOF_MARK: 'proofrunhere1' }, cwd: P.H, stdio: 'ignore' });
     const server = net.createServer(c => c.end());
-    await new Promise(ok => server.listen(join(home, '.local/state/spark-console/api.sock'), ok));
+    await new Promise(ok => server.listen(join(P.home, '.local/state/spark-console/api.sock'), ok));
     try {
-      writeFileSync(join(held, 'target'), String(target.pid));
-      const outside = lines(py('outside', '1', '2', '3', '4', '5', '6', '7', '10'));
-      for (const n of [1, 2, 3, 4, 5, 6, 7, 10]) assert.ok(outside.some(l => l.startsWith(`P ${n} outside works `)), `outside ${n}: ${outside.join('\n')}`);
-      const inside = lines(py('look', '1', '2', '3', '4', '6', '10'));
+      writeFileSync(join(P.held, 'target'), String(target.pid));
+      // The controls: every attempt the helper requires works outside; the rest work, or are absent for a stated reason.
+      const outside = lines(P.py('outside', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
+      for (const n of [1, 3, 4, 5, 6, 7, 10]) assert.ok(outside.some(l => l.startsWith(`P ${n} outside works `)), `outside ${n}: ${outside.join('\n')}`);
+      assert.ok(outside.some(l => MATCH.loopback('outside works').test(l)), outside.join('\n'));
+      for (const n of [8, 9, 11]) assert.ok(outside.some(l => new RegExp(`^P ${n} outside (works|not-there) \\S`).test(l)), `outside ${n}: ${outside.join('\n')}`);
+      assert.equal(outside.length, 11);
+      const inside = lines(P.py('look', 1, 2, 3, 4, 6, 10));
       for (const n of [1, 2, 3, 4, 6, 10]) for (const how of ['direct', 'child']) {
         assert.ok(inside.some(l => l.startsWith(`P ${n} ${how} through `)), `look ${n} ${how}: ${inside.join('\n')}`);
       }
-      assert.ok(inside.includes('P 2 direct through the loopback') && inside.includes('P 3 direct through api.sock by its path, api.sock by a second path'), inside.join('\n'));
+      assert.ok(inside.some(l => MATCH.loopback('direct through').test(l)), inside.join('\n'));
+      assert.ok(inside.some(l => MATCH.apiSock.test(l)), inside.join('\n'));
       assert.ok(inside.some(l => /^P 10 direct through by its path, through a link, by \*/.test(l)), inside.join('\n'));
-      const five = lines(py('look', '5', '12'));
+      const five = lines(P.py('look', 5, 12));
       assert.ok(five.some(l => l.startsWith('P 5 direct left ')) && five.some(l => l.startsWith('P 12 child left ')), five.join('\n'));
-      assert.ok(lines(py('run', '5')).some(l => l.startsWith('P 5 direct through ')));
-      const after = lines(py('after'));
+      assert.ok(lines(P.py('run', 5)).some(l => l.startsWith('P 5 direct through ')));
+      const after = lines(P.py('after'));
+      assert.ok(after.some(l => l.startsWith('V 5 outside works ')) && after.some(l => l.startsWith('V 12 outside works ')), after.join('\n'));
       assert.ok(after.some(l => l.startsWith('V 5 look through ')), after.join('\n'));
       assert.ok(after.includes('V 12 look through 2 still running'), after.join('\n'));
-      assert.ok(lines(py('look', '7')).some(l => l.startsWith('P 7 direct through ')), 'a signal reached the program outside');
-      const post = lines(py('post'));
+      assert.ok(lines(P.py('look', 7)).some(l => l.startsWith('P 7 direct through ')), 'a signal reached the program outside');
+      const post = lines(P.py('post'));
       assert.ok(post.some(l => l.startsWith('V 1 look through ')) && post.some(l => l.startsWith('V 5 run through ')), post.join('\n'));
-      assert.ok(!existsSync(H) && !existsSync(join(home, `.cache/spark-console/proof-${id}`)), 'the proof cleans up after itself');
+      assert.ok(!existsSync(P.H) && !existsSync(join(P.home, '.cache/spark-console/proof-proofrunhere1')), 'the proof cleans up after itself');
     } finally {
       target.kill('SIGKILL');
       server.close();
     }
+  });
+
+  test("with its program outside the walls missing, no attempt says 'blocked', and the helper fails the proof on those lines", t => {
+    const P = realProof('brokenstart1');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    // No program outside: 'target' stays 0 and there is no port. The reviewer's case: run 2 4 6 7.
+    const run4 = lines(P.py('run', 2, 4, 6, 7));
+    assert.equal(run4.length, 8);
+    for (const l of run4) assert.match(l, /^P (2|4|6|7) (direct|child) failed /);
+    const outside = P.py('outside', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), look = P.py('look', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+    const run = P.py('run', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12);
+    for (const r of [look, run]) assert.ok(!/ blocked /.test(r.stdout), r.stdout);
+    assert.ok(lines(outside).every(l => / outside not-there /.test(l)), outside.stdout);
+    P.py('post');
+    // The helper, given exactly those lines for its outside, look and run units.
+    const s = spark();
+    s.put('standin/play-outside', outside.stdout);
+    s.put('standin/play-look', look.stdout);
+    s.put('standin/play-run', run.stdout);
+    const p = prove(s);
+    assert.equal(p.status, 1, p.stdout);
+    assert.match(p.stdout, /proof failed: attempt 1 \(a write through a link\) could not be shown working outside the walls, so stopping it inside would show nothing\. No mark was written/);
+    assert.ok(p.stdout.includes(`${p.id} proof look 1 was not reported: a write through a link\n`), p.stdout);
+    assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')));
   });
 });

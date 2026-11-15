@@ -8,7 +8,7 @@
 // (whether it ran as root) and kept (the journal record that holds the whole command and output, when it ran). Code
 // builds them from the call's arguments and from the result exactly as the brain and the journal got it (masked by the
 // chat loop), never from the brain's prose, so nothing rides the event that the journal does not hold. Each text is
-// cleaned of escape codes and characters that do not show, masked with maskSecrets before it is cut, and cut by whole
+// cleaned as a look's output is (lookClean), masked with maskSecrets before it is cut, and cut by whole
 // characters, never inside one: the line to its first 200, the last line to its last 200. A tool that is not in
 // SHOWN_CALLS gets none of this: its event is as it was. The page (public/app.js, commandRow) shows one row a command:
 // the line on a button that opens the line and the tail.
@@ -18,7 +18,7 @@ const SHOWN_SIZE = 200;
 const SHOWN_CALLS = {
   run: args => ({ spark: args.on, command: args.command, root: false }),
 };
-const shownText = s => maskSecrets(String(s).replace(LOOK_PLAIN, ''));
+const shownText = s => maskSecrets(lookClean(String(s)));
 const shownFirst = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('')}…` : s; };
 const shownLast = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `…${a.slice(1 - n).join('')}` : s; };
 

@@ -7,7 +7,6 @@
 // masking, also of env-style names ending in `_KEY` or `_PASS`, a passphrase and `PGPASS` in a container's log, never
 // of a path to a key file (F20); `search_huggingface` on the fixture (`test/mock/hf-fixture.json`, test/README.md).
 //
-// Agent door (MCP): handshake, every read tool with valid and invalid arguments, auth, key lifecycle, masking, rate limit.
 // What a key that can act sees and does (start_model, stop_model, restart_model) is in change.test.mjs.
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
 import { test, describe } from 'node:test';
@@ -372,35 +371,91 @@ describe(`${TOOLS.length} read tools, valid arguments`, () => {
 describe('invalid arguments are refused ([invalid] / [not_found], not a crash)', () => {
   const sp = () => ctx.spark;
   const validFor = t => ({
-    where_it_fits: { model: ctx.model }, spark_detail: { spark: sp() }, operation_log: { id: '0123456789ab' }, container_logs: { spark: sp(), container: ctx.container },
-    deploy_plan: { model: ctx.model, spark: sp() }, cluster_plan: { model: ctx.model, sparks: ctx.pair }, recipe_detail: { id: ctx.recipe },
-    search_huggingface: { query: 'qwen3 0.6b' }, spark_diagnostics: { spark: sp() }, service_logs: { spark: sp(), service: 'console' },
-    wait_operation: { id: '0123456789ab' }, files: { spark: sp() }, search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' },
-    recall: { about: 'gemma' }, run: { on: sp(), command: 'ls' },
+    cluster_plan: { model: ctx.model, sparks: ctx.pair },
+    container_logs: { spark: sp(), container: ctx.container },
+    deploy_plan: { model: ctx.model, spark: sp() },
+    files: { spark: sp() },
+    operation_log: { id: '0123456789ab' },
+    read_page: { url: 'https://docs.example.org/never-searched' },
+    recall: { about: 'gemma' },
+    recipe_detail: { id: ctx.recipe },
+    run: { on: sp(), command: 'ls' },
+    search_huggingface: { query: 'qwen3 0.6b' },
+    search_web: { query: 'vllm flags' },
+    service_logs: { spark: sp(), service: 'console' },
+    spark_detail: { spark: sp() },
+    spark_diagnostics: { spark: sp() },
+    wait_operation: { id: '0123456789ab' },
+    where_it_fits: { model: ctx.model },
   }[t] || {});
   const cases = []; // [tool, args(), expected message, code, label]
   for (const t of TOOLS) cases.push([t, () => ({ ...validFor(t), bogus: 1 }), /^\[invalid\] Unknown argument: bogus/, 'invalid', 'unknown arg bogus']);
   // missing required
-  const req = { where_it_fits: ['model'], spark_detail: ['spark'], operation_log: ['id'], container_logs: ['spark', 'container'], deploy_plan: ['model', 'spark'],
-    cluster_plan: ['model', 'sparks'], recipe_detail: ['id'], search_huggingface: ['query'], spark_diagnostics: ['spark'], service_logs: ['spark', 'service'], wait_operation: ['id'], files: ['spark'], search_web: ['query'], read_page: ['url'] };
+  const req = {
+    cluster_plan: ['model', 'sparks'],
+    container_logs: ['spark', 'container'],
+    deploy_plan: ['model', 'spark'],
+    files: ['spark'],
+    operation_log: ['id'],
+    read_page: ['url'],
+    recipe_detail: ['id'],
+    search_huggingface: ['query'],
+    search_web: ['query'],
+    service_logs: ['spark', 'service'],
+    spark_detail: ['spark'],
+    spark_diagnostics: ['spark'],
+    wait_operation: ['id'],
+    where_it_fits: ['model'],
+  };
   for (const [t, ks] of Object.entries(req)) for (const k of ks) cases.push([t, () => { const a = { ...validFor(t) }; delete a[k]; return a; }, new RegExp(`Missing argument: ${k}`), 'invalid', `missing ${k}`]);
   // wrong types: text arguments
-  const textProps = { find_recipes: ['query', 'category'], where_it_fits: ['model'], operation_log: ['id'], container_logs: ['container'], deploy_plan: ['model'],
-    cluster_plan: ['model'], recipe_detail: ['id', 'setup'], search_huggingface: ['query'], fleet_events: ['since'], wait_operation: ['id'], files: ['folder', 'file'], search_web: ['query'], read_page: ['url'],
-    recall: ['about', 'id', 'since', 'next'] };
+  const textProps = {
+    cluster_plan: ['model'],
+    container_logs: ['container'],
+    deploy_plan: ['model'],
+    files: ['folder', 'file'],
+    find_recipes: ['query', 'category'],
+    fleet_events: ['since'],
+    operation_log: ['id'],
+    read_page: ['url'],
+    recall: ['about', 'id', 'since', 'next'],
+    recipe_detail: ['id', 'setup'],
+    search_huggingface: ['query'],
+    search_web: ['query'],
+    wait_operation: ['id'],
+    where_it_fits: ['model'],
+  };
   for (const [t, ks] of Object.entries(textProps)) for (const k of ks) {
     cases.push([t, () => ({ ...validFor(t), [k]: 123 }), new RegExp(`${k} should be text`), 'invalid', `${k}=123`]);
     cases.push([t, () => ({ ...validFor(t), [k]: ['x'] }), new RegExp(`${k} should be text`), 'invalid', `${k}=[array]`]);
   }
   // wrong types: Spark arguments (a Spark name is looked up, so anything else is "no Spark called …")
-  const sparkProps = { spark_detail: 'spark', container_logs: 'spark', deploy_plan: 'spark', spark_diagnostics: 'spark', service_logs: 'spark', workloads: 'spark', fleet_events: 'spark', files: 'spark', recall: 'spark' };
+  const sparkProps = {
+    container_logs: 'spark',
+    deploy_plan: 'spark',
+    files: 'spark',
+    fleet_events: 'spark',
+    recall: 'spark',
+    service_logs: 'spark',
+    spark_detail: 'spark',
+    spark_diagnostics: 'spark',
+    workloads: 'spark',
+  };
   for (const [t, k] of Object.entries(sparkProps)) {
     for (const val of [123, true, { id: 'spark2' }, 'spark99', '../spark2', 'spark2;id', '$(id)', '', 'x'.repeat(41)]) {
       cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k}: no Spark called|${k} should be text`), 'invalid', `${k}=${JSON.stringify(val).slice(0, 20)}`]);
     }
   }
   // integers
-  for (const [t, k, max] of [['find_recipes', 'limit', 30], ['recent_operations', 'limit', 50], ['fleet_events', 'limit', 200], ['find_recipes', 'maxSparks', 4], ['find_recipes', 'maxMemoryGB', 2000], ['wait_operation', 'seconds', 45], ['recall', 'limit', 20]]) {
+  for (const [t, k, max] of [
+    ['find_recipes', 'limit', 30],
+    ['find_recipes', 'maxMemoryGB', 2000],
+    ['find_recipes', 'maxSparks', 4],
+    ['fleet_events', 'limit', 200],
+    ['recall', 'limit', 20],
+    ['recent_operations', 'limit', 50],
+    ['wait_operation', 'seconds', 45],
+  ]) {
     for (const n of ['5', true, null, 0, -1, max + 1, 1.5, 1e300]) {
       cases.push([t, () => ({ ...validFor(t), [k]: n }), new RegExp(`${k} should be a whole number from 1 to ${max}`), 'invalid', `${k}=${JSON.stringify(n)}`]);
     }
@@ -409,24 +464,30 @@ describe('invalid arguments are refused ([invalid] / [not_found], not a crash)',
     cases.push(['read_page', () => ({ ...validFor('read_page'), from: n }), /from should be a whole number from 0 to 2097152/, 'invalid', `from=${JSON.stringify(n)}`]);
   }
   // booleans
-  for (const [t, k] of [['linked_sparks', 'detail'], ['workloads', 'running'], ['workloads', 'detail'], ['recipe_detail', 'all'], ['memory', 'past']]) {
+  for (const [t, k] of [
+    ['linked_sparks', 'detail'],
+    ['memory', 'past'],
+    ['recipe_detail', 'all'],
+    ['workloads', 'detail'],
+    ['workloads', 'running'],
+  ]) {
     for (const b of ['true', 1, null]) cases.push([t, () => ({ ...validFor(t), [k]: b }), new RegExp(`${k} should be true or false`), 'invalid', `${k}=${JSON.stringify(b)}`]);
   }
   // patterns
   const badPatterns = {
-    where_it_fits: { model: ['../etc/passwd', '-rf', 'a b', '', '.x'] },
-    operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
-    wait_operation: { id: ['0123456789AB', '0123456789a', '../012345678', '0123456789abc'] },
+    cluster_plan: { model: ['$HOME'] },
     container_logs: { container: ['-v', '.hidden', 'a/b', 'a b', 'x'.repeat(129)] },
     deploy_plan: { model: ['../x', '$HOME'] },
-    cluster_plan: { model: ['$HOME'] },
-    recipe_detail: { id: ['Qwen3', '-x', '.x', 'a/b'], setup: ['abc', 'ABCD', 'x'.repeat(33)] },
-    search_huggingface: { query: ['a', ' a ', '   '] },
-    fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
     files: { folder: ['.git', '../x', '/etc', 'a//b'], file: ['.env', 'notes/.envrc', '../../etc/passwd', 'a\\b'] },
-    search_web: { query: ['a', ' a ', '   '] },
+    fleet_events: { since: ['yesterday', '2026-1-1', '2026-11-04T10:00:00+01:00'] },
+    operation_log: { id: ['0123456789AB', '0123456789a', 'zzzzzzzzzzzz', '0123456789abc'] },
     read_page: { url: ['ftp://example.org/x', 'file:///etc/passwd', 'javascript:alert(1)', 'example.org/x', 'http://', 'https://a b'] },
     recall: { about: ['a', ' a ', '   '], id: ['0123456789ab', 'j_0123456789AB', 'j_0123456789a', 'j_../etc/passw'], since: ['yesterday', '2026-1-1'], next: ['-1', '1.5', 'x', '1234567890'] },
+    recipe_detail: { id: ['Qwen3', '-x', '.x', 'a/b'], setup: ['abc', 'ABCD', 'x'.repeat(33)] },
+    search_huggingface: { query: ['a', ' a ', '   '] },
+    search_web: { query: ['a', ' a ', '   '] },
+    wait_operation: { id: ['0123456789AB', '0123456789a', '../012345678', '0123456789abc'] },
+    where_it_fits: { model: ['../etc/passwd', '-rf', 'a b', '', '.x'] },
   };
   for (const [t, props] of Object.entries(badPatterns)) for (const [k, vals] of Object.entries(props)) for (const val of vals) {
     cases.push([t, () => ({ ...validFor(t), [k]: val }), new RegExp(`${k} isn’t in the right form`), 'invalid', `bad pattern ${k}=${JSON.stringify(val).slice(0, 30)}`]);

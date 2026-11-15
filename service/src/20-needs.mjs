@@ -16,6 +16,7 @@ const tilde = p => String(p).replace(homedir(), '~');
 function openProblems() {
   const out = [], add = (key, text) => out.push({ key, text });
   const hereNode = NODES.find(n => n.host === 'local'), here = hereNode ? sparkName(hereNode) : 'the Spark that runs Spark Console';
+  // (In this order, which is the order they are said in: a new source goes at the end of its group, not of the list.)
   const sources = [
     // Lock-out: who may sign in, and the other ways in.
     () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy and who has access can’t be changed. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
@@ -47,6 +48,11 @@ function openProblems() {
     () => {
       for (const n of NODES) if (knowledge.sparks[n.id]?.dockerDownAt && !sparkOff(n.id)) add(`docker:${n.id}`, `Docker isn’t answering on ${sparkName(n)}, so Spark Console can’t see or change its containers. If it doesn’t come back by itself, run this on ${sparkName(n)}: sudo systemctl restart docker. It stops every container there: Sparkie’s model comes back by itself, and the rest need bringing back.`);
     },
+    // A Spark Spark Console shut down but couldn't power off cleanly (its plug still drew power, so it was never cut):
+    // the owner's to look at. A Spark it powered off as planned is off on purpose, never a line here (21-power.mjs).
+    () => {
+      for (const [id, r] of Object.entries(powerState().off)) if (r?.problem && nodeById(id)) add(`power:${id}`, `${sparkName(nodeById(id))}: ${r.problem}`);
+    },
     () => {
       for (const x of (heldLast || []).filter(y => !y.sparkOff && !y.dockerDown)) add(`held:${keyOf(x)}`, `Should be running but isn’t: ${String(x.container).slice(0, 80)} on ${sparkName(nodeById(x.spark) || { id: x.spark })}. Say “bring back” and its name to start it again; “what should be running?” says why.`);
     },
@@ -63,6 +69,8 @@ function openProblems() {
     () => journalNeeds(add, here),
     // The outside heartbeat (20-beat.mjs) has failed for an hour.
     () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
+    // The ways in, watched ahead (20-ways-in.mjs): a Tailscale key near expiry, linger off, Funnel off.
+    () => waysInNeeds(add, here),
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;

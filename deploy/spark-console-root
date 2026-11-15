@@ -311,11 +311,21 @@ run_prefix() {   # the run wall's command start: its own process tree, then down
   PRE+=(--inh-caps=-all --bounding-set=-all)
 }
 
-# The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call.
+# The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call. A call that is
+# killed outright (no trap runs) leaves its folder; the next call removes any older than the longest unit can run.
 H=''
+sweep_held() {
+  local d n
+  for d in "$R$HOLD"/*/; do
+    d=${d%/} n=${d##*/}
+    [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
+    if [ -n "$(find "$d" -maxdepth 0 -type d -mmin +$((RUN_MAX / 60 + 10)) 2>/dev/null)" ]; then rm -rf -- "$d"; fi
+  done
+}
 hold_folder() {
   H="$R$HOLD/$ID"
   mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
+  sweep_held
   mkdir -m 0750 -- "$H" 2>/dev/null || refuse "this id was used already"
   if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$H"; fi
 }
@@ -392,6 +402,9 @@ do_unit() {
   [ "$state" = current ] || refuse "the wall proof is $state on this Spark: prove first"
   lists
   hold_folder
+  # A hang-up or an interrupt (the caller's connection dropped) still removes the held folder; what the unit has
+  # already opened stays readable to it.
+  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
   printf '%s' "${CMD[0]}" > "$H/command"
   read -r got _ < <(sha256sum -- "$H/command")
   if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
@@ -429,6 +442,12 @@ RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12'
 OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
 AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12'
+# The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
+# use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
+# targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
+# read-only list (5), sudo with the helper's own line (8), its own key (10). Attempt 2 must reach its own program on the
+# loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be absent, for the reason the proof states.
+MUST_WORK='1 4 5 6 7 8 10'
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -446,12 +465,13 @@ take() {   # $1 where the lines came from (outside, look, run, after); $2 the li
       P:outside:works|P:outside:not-there) GOT[outside:$n]=$res; DETAIL[outside:$n]=${rest:0:200} ;;
       P:direct:blocked|P:direct:through|P:direct:left|P:child:blocked|P:child:through|P:child:left)
         GOT[$from:$n:$how]=$res; DETAIL[$from:$n:$how]=${rest:0:200} ;;
-      V:look:blocked|V:look:through|V:run:blocked|V:run:through) GOT[after:$how:$n]=$res; DETAIL[after:$how:$n]=${rest:0:200} ;;
+      V:look:blocked|V:look:through|V:run:blocked|V:run:through|V:outside:works|V:outside:not-there)
+        GOT[after:$how:$n]=$res; DETAIL[after:$how:$n]=${rest:0:200} ;;
     esac
   done <<<"$2"
 }
 do_prove() {
-  local p real out_prep out_setup out_look out_run pid wall n how r failed='' first='' line
+  local p real out_prep out_setup out_look out_run pid wall n how r failed='' first='' line control='' unitfail='' alive=no
   prereqs
   [ ${#PROBLEMS[@]} -eq 0 ] || refuse "${PROBLEMS[0]}"
   OPEN=0 PROTECT=()
@@ -460,6 +480,7 @@ do_prove() {
   exec 9> "$R$HOLD/prove.lock" || refuse "cannot open the proof's lock"
   flock -n 9 || refuse "another proof is running on this Spark"
   hold_folder
+  trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; rm -rf -- "$H"; exit 129' HUP INT TERM
   rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
   proof_py > "$H/proof.py"
   printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
@@ -497,18 +518,36 @@ do_prove() {
     take run "$out_run"
     PROTECT=()
   else
-    failed="the proof could not make its own files on this Spark"
+    out_prep=${out_prep//[![:print:]]/ } out_setup=${out_setup//[![:print:]]/ }
+    failed="the proof could not make its own files on this Spark (as you: ${out_prep:0:120}; as root: ${out_setup:0:120})"
   fi
   take after "$(plain_unit owner post 60 post)"
   take after "$(plain_unit root after 60 after)"
+  systemctl is-active --quiet "sw-prove-target-$ID.service" > /dev/null 2>&1 && alive=yes
   systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1 || true
   rm -rf -- "$H"
 
+  # The controls first: without them a "blocked" inside a wall would show nothing.
+  [ "$pid" != 0 ] || control="the proof's own program outside the walls did not start"
   for n in $OUTSIDE_ATTEMPTS; do
     r=${GOT[outside:$n]-}
     if [ "$r" = works ]; then say "proof outside $n works: ${NAMES[$n]} (${DETAIL[outside:$n]})"
-    else say "proof outside $n not there: ${NAMES[$n]}"; fi
+    else say "proof outside $n not there: ${NAMES[$n]} (${DETAIL[outside:$n]:-not reported})"; fi
+    if [[ " $MUST_WORK " == *" $n "* ]] && [ "$r" != works ] && [ -z "$control" ]; then
+      control="attempt $n (${NAMES[$n]}) could not be shown working outside the walls, so stopping it inside would show nothing"
+    fi
   done
+  if [ -z "$control" ] && { [ "${GOT[outside:2]-}" != works ] || [[ ${DETAIL[outside:2]-} != *"the loopback"* ]]; }; then
+    control="attempt 2 could not reach the proof's own program on the loopback outside the walls, so the run wall's loopback rule would be shown by nothing"
+  fi
+  for n in 5 12; do
+    if [ -z "$control" ] && [ "${GOT[after:outside:$n]-}" != works ]; then
+      control="the check from outside afterwards for attempt $n (${NAMES[$n]}) did not see what the proof left there on purpose"
+    fi
+  done
+  if [ -z "$control" ] && [ "$alive" != yes ]; then control="the proof's own program outside the walls stopped before the end"; fi
+  if [ -z "$control" ]; then say "proof controls work: each attempt was seen working outside the walls, or is not there"
+  else say "proof controls failed: $control"; fi
   local list bad any key verdict how_said
   for wall in look run; do
     list=$LOOK_ATTEMPTS bad='' any=''
@@ -540,14 +579,16 @@ do_prove() {
         [ -n "$first" ] || first="attempt $n in the $wall wall $verdict (${NAMES[$n]})"
       else say "proof $wall $n blocked: ${NAMES[$n]}"; fi
     done
-    if [ -z "$any" ] && [ -z "$failed" ]; then
-      failed="the $wall wall's unit did not run (systemd refused it, or something it needs is missing on this Spark)"
+    if [ -z "$any" ] && [ -z "$unitfail" ]; then
+      unitfail="the $wall wall's unit did not run (systemd refused it, or something it needs is missing on this Spark)"
     fi
     if [ -z "$bad" ]; then say "proof $wall passed"; else say "proof $wall failed"; fi
   done
   # 13: root with no net. The net (a put-back timer armed in the same call) is a later step, so root always refuses.
   say "proof root 13 refused: ${NAMES[13]}"
-  [ -n "$failed" ] || [ -z "$first" ] || failed="$first"
+  [ -n "$failed" ] || failed=$control
+  [ -n "$failed" ] || failed=$unitfail
+  [ -n "$failed" ] || failed=$first
   if [ -n "$failed" ]; then
     say "proof failed: $failed. No mark was written, so the look and run walls refuse on this Spark."
     exit 1
@@ -596,6 +637,11 @@ GPU = ['/dev/nvidia0', '/dev/nvidiactl', '/dev/nvidia-uvm', '/dev/nvidia-uvm-too
 DISKS = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'vfat', 'exfat', 'f2fs', 'ntfs3', 'zfs'}
 SHARED = ['/tmp', '/var/tmp', '/dev/shm']
 LEFT = {(5, 'look'), (12, 'look'), (12, 'run')}
+# Why an attempt outside the walls found nothing to try. Only these three may be absent; the helper fails the proof for
+# any other attempt that does not work outside.
+REASONS = {3: 'none of the Docker, Tailscale or Spark Console sockets answers on this Spark',
+           9: 'no user manager or system bus answers here for the owner',
+           11: 'this Spark shows no disk device or GPU node'}
 CLEAN = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}
 DEVNULL = subprocess.DEVNULL
 
@@ -722,19 +768,23 @@ class Ctx:
         self.mode, self.how = mode, how
         with open(f'{S}/fixtures.json') as f:
             self.fx = json.load(f)
+        try:
+            with open(os.path.join(HERE, 'target')) as f:
+                self.pid = int(f.read() or 0)
+        except (OSError, ValueError):
+            self.pid = 0
+        # Without its own program outside the walls, attempts 2, 4, 6 and 7 would try nothing: fail, never "blocked".
+        # Its port is waited for only outside (the first unit after it starts); inside a wall it must be there already.
         self.port = None
-        for _ in range(50):
+        for _ in range(50 if self.pid and mode == 'outside' else 1):
             try:
                 with open(f'{S}/port') as f:
                     self.port = int(f.read())
                 break
             except (OSError, ValueError):
                 time.sleep(0.1)
-        try:
-            with open(os.path.join(HERE, 'target')) as f:
-                self.pid = int(f.read() or 0)
-        except (OSError, ValueError):
-            self.pid = 0
+        if not self.pid or not self.port:
+            raise RuntimeError('the proof has no program outside the walls')
 
 
 def a1(c):   # a write through a link, to a hidden file and to a read-only one
@@ -757,10 +807,10 @@ def a1(c):   # a write through a link, to a hidden file and to a read-only one
     return got
 
 
-def a2(c):   # an open connection
+def a2(c):   # an open connection, only to what is the owner's own: no host outside is ever contacted
     tries = [('the loopback', '127.0.0.1', c.port)]
     if c.mode != 'run':
-        tries += [('an outside address', '1.1.1.1', 443), ('the tailnet', '100.100.100.100', 53)]
+        tries.append(('the tailnet', '100.100.100.100', 53))   # answered by this Spark's own Tailscale
         if c.fx.get('own'):
             tries.append(('its own address', c.fx['own'], 22))
     return [name for name, addr, port in tries if port and tcp(addr, port)]
@@ -792,7 +842,15 @@ def a4(c):   # another program's environment
 def a5(c):   # a write that stays
     stay = lines_of('stay')
     if c.mode == 'outside':
-        return [d for d in stay + SHARED if os.access(d, os.W_OK)][:3] + [p for p in lines_of('readonly') if os.access(p, os.W_OK)][:3]
+        # Also leaves one file in each of root's folders on the disks: the check afterwards must see it (a control).
+        left = []
+        for d in stay:
+            try:
+                os.close(os.open(f'{d}/.spark-console-proof-{ID}-outside', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+                left.append(d)
+            except OSError:
+                pass
+        return left[:3] + [p for p in lines_of('readonly') if os.access(p, os.W_OK)][:3]
     if c.mode == 'look':
         wrote = []
         for d in stay + SHARED:
@@ -897,8 +955,8 @@ def a12(c):  # something left behind: a program put in the background, looked fo
 ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12}
 
 
-def what(hits):
-    return ', '.join(hits)[:200] if hits else '-'
+def what(hits, n=0):
+    return ', '.join(hits)[:200] if hits else REASONS.get(n, '-')
 
 
 def attempts(mode, nums):
@@ -906,7 +964,7 @@ def attempts(mode, nums):
         if mode == 'outside':
             try:
                 hits = ATTEMPTS[n](Ctx(mode, 'outside'))
-                out('P', n, 'outside', 'works' if hits else 'not-there', what(hits))
+                out('P', n, 'outside', 'works' if hits else 'not-there', what(hits, n))
             except Exception as e:
                 out('P', n, 'outside', 'not-there', type(e).__name__)
             continue
@@ -943,16 +1001,18 @@ def prep():
     os.symlink(f'{H}/key', f'{S}/key-link')
     for i, (_, path) in enumerate(SOCKETS):
         os.symlink(path, f'{S}/sock-{i}')
-    own = None
+    own = None   # this Spark's own first address, as hostname -I lists them (no connection is made)
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:   # no packet is sent: this only picks a route
-            u.connect(('1.1.1.1', 53))
-            own = u.getsockname()[0]
-    except OSError:
+        listed = subprocess.run(['hostname', '-I'], stdin=DEVNULL, stdout=subprocess.PIPE, stderr=DEVNULL, env=CLEAN,
+                                timeout=10).stdout.decode().split()
+        own = next((a for a in listed if re.fullmatch(r'\d+\.\d+\.\d+\.\d+', a) and not a.startswith('127.')), None)
+    except (OSError, subprocess.SubprocessError):
         pass
+    handle = handle_of(f'{H}/key')
     with open(f'{S}/fixtures.json', 'w') as f:
-        json.dump({'made_share': made, 'handle': handle_of(f'{H}/key'), 'own': own}, f)
-    out('S ok')
+        json.dump({'made_share': made, 'handle': handle, 'own': own}, f)
+    # Without a handle the look wall's file-handle filter would be tried by nothing.
+    out('S ok' if handle else 'S failed: no file handle for the proof key')
 
 
 def setup():
@@ -979,7 +1039,8 @@ def setup():
     fd = os.open(os.path.join(HERE, 'stay'), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
     with os.fdopen(fd, 'wb') as f:
         f.write(b'\0'.join(os.fsencode(d) for d in stay))
-    out('S ok')
+    # Without a folder on a disk, the look wall's read-only disks would be tried by nothing.
+    out('S ok' if stay else 'S failed: no folder could be made on any disk')
 
 
 def target():
@@ -1025,16 +1086,19 @@ def post():
 
 
 def after():
-    stayed = []
+    stayed, seen = [], 0
     for d in lines_of('stay'):
         if not d.endswith(f'/.spark-console-proof-{ID}'):
             continue
         try:
-            if any(n.startswith(f'.spark-console-proof-{ID}-look') for n in os.listdir(d)):
+            names = os.listdir(d)
+            if any(n.startswith(f'.spark-console-proof-{ID}-look') for n in names):
                 stayed.append(os.path.dirname(d) or '/')
+            seen += f'.spark-console-proof-{ID}-outside' in names
         except OSError:
             pass
         remove_dir(d)
+    out('V', 5, 'outside', 'works' if seen else 'not-there', f'saw {seen} written outside' if seen else 'saw nothing written outside')
     for d in SHARED:
         for how in ('direct', 'child'):
             q = f'{d}/.spark-console-proof-{ID}-look-{how}'
@@ -1045,7 +1109,7 @@ def after():
                 except OSError:
                     pass
     out('V', 5, 'look', 'through' if stayed else 'blocked', what(sorted(set(stayed))))
-    left = {'look': 0, 'run': 0}
+    left, control = {'look': 0, 'run': 0}, 0
     for pid in os.listdir('/proc'):
         if not pid.isdigit():
             continue
@@ -1054,6 +1118,7 @@ def after():
                 env = f.read()
         except OSError:
             continue
+        control += b'SPARK_PROOF_MARK=' + ID.encode() in env   # the proof's own program: the scan must see it
         for w in left:
             if f'SPARK_PROOF_LEFT={ID}-{w}-'.encode() in env:
                 left[w] += 1
@@ -1061,6 +1126,7 @@ def after():
                     os.kill(int(pid), signal.SIGKILL)
                 except OSError:
                     pass
+    out('V', 12, 'outside', 'works' if control else 'not-there', 'saw the program outside the walls' if control else 'saw no program outside the walls')
     for w in ('look', 'run'):
         out('V', 12, w, 'through' if left[w] else 'blocked', f'{left[w]} still running' if left[w] else '-')
 

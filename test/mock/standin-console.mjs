@@ -27,7 +27,8 @@ if (MODE === 'dies') setTimeout(() => process.exit(1), 1500);
 const read = (f, d) => { try { return readFileSync(f, 'utf8'); } catch { return d; } };
 const chats = () => { try { return JSON.parse(read(CHATS, '[]')); } catch { return []; } };
 const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-const body = req => new Promise(resolve => { let d = ''; req.on('data', c => { d += c; }); req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); } }); });
+// (decoded as one stream: a character whose bytes arrive in two pieces stays whole)
+const body = req => new Promise(resolve => { let d = ''; req.setEncoding('utf8'); req.on('data', c => { d += c; }); req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); } }); });
 
 const server = http.createServer(async (req, res) => {
   const path = new URL(req.url, 'http://local').pathname;

@@ -1,3 +1,8 @@
+// Covers: A model's own card as a recipe source (A9): `dig.fromCard` reads only code-block commands for that very repo
+// (never the card's words, never another repo's), at most six, skipping huge ones; each still goes through
+// `dig.vetSetup` (a chat template file isn't one-click, eight GPUs isn't a Spark setup); llama.cpp's repo and file.
+// Pure: no fleet.
+//
 // A model's own card on Hugging Face as a recipe source (A9, R27): dig.fromCard reads only the commands in a card's code
 // blocks that serve that very repo, never its words, and each one still goes through dig.vetSetup like any other source.
 // Pure: no fleet, no web.

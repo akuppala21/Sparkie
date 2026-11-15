@@ -38,7 +38,12 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 
 ## Rules
 
-- R42: the helper, its walls, its proof and the one-time command; the console's call.
+- R42: the helper, its walls, its proof, the one-time command and this call. `run` today: every command is a look
+  in the look wall. Refused before the helper runs: `sudo`, a key file (by name, link, `*`, or under a folder a walker
+  reads whole), a third look at once on a Spark. `LOOK_FORMS` run code's own text outside the wall once `check` says
+  ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too); never a member or a saved
+  workflow's step. Not built yet: proving by itself before a look, a failed proof told beyond the self-test's report
+  or kept past a restart; the key check reads words, not what a script opens; Spark 2's call needs systemd 254.
 - R43: a look writes one `cmd` record when it ends; a change will write its start line before the call.
 - R25 and R26: what a command printed never causes a change.
 - R10: commands reach a Spark through `spawnOn`.

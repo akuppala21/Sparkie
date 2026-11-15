@@ -1,3 +1,24 @@
+// Covers: Operations on the record (`events.jsonl`) when they start and end, under one id; one cut off by a restart
+// reported as `interrupted` with a notice (a bad line skipped); SIGTERM: new operations get 503, a running one
+// finishes, then the service exits 0; a second copy on a used port exits 1 and the first keeps its socket; the daily
+// copy of the state (`state-YYYY-MM-DD.tgz` on Spark 3, no sockets; `/health` `lastBackup`); `/health` `agentsPaused`,
+// `sparksOnline`; unreadable `verified.json`, `added-models.json`, `main.json` set aside as `<file>.unreadable-<time>`
+// with a notice, one that can't be read at all → 503 and left alone; a Spark that freezes (`.mock/stall`): two
+// timed-out commands mark it offline for a minute, a slow read → `[still_running]`. The chat keeps answering when
+// `memory.json` can't be read (five turns, none 409 or 429, the prompt says memory is missing) and when the state
+// folder can't be written (a new chat and a turn answer, the next good save keeps them; skipped as root); a turn that
+// throws while it is set up (events with no time, a fleet of its own) frees its chat and its slot. The fleet group,
+// each on a fleet of its own: a `readKept` file that isn't JSON falls back to `<file>.prev` (the copy from before its
+// last save) with a notice that the last change may be missing, or starts empty and says so; a missing file never falls
+// back; sign-in files get no `.prev`; `writePrivate` syncs before the rename (S1). `access.json` cut short at start:
+// the last good copy (`access.json.good`) answers with one notice, access changes → 503 and the file is left alone, and
+// once mended the copy follows each change (S2). `desired.json` and `validations.json` that can't be read as a stop
+// finishes (a link to a folder in their place) are not saved over, Forget answers 503, and both entries of each are
+// there once they read again (F12). The daily copy's record survives a restart (`/health` `lastBackup.good`); with
+// every other Spark off it is retried, with one notice a day and a line in `needsOwner`; a copy cut short
+// (`.mock/gzip-bad`) never replaces the file there; with Spark 3 off it lands on Spark 4, is recorded, and no second
+// copy is made that day (F17).
+//
 // What Spark Console keeps, and how it stops and starts: every operation on the fleet's record (events.jsonl) when it
 // starts and when it ends, under one id; one cut off by a restart reported as interrupted when the service is back; on
 // SIGTERM no new operations while running ones finish; a second copy on a port in use leaves the first alone; a daily

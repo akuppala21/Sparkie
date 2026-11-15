@@ -1,3 +1,10 @@
+// Covers: The tested mark without the whole suite: the lock `test/lock.mjs` writes names the build, `tree`, `commit`,
+// `run` and `brainReads`, the same on a second write; a changed tool description, tool input or system prompt changes
+// `brainReads`; a character whose bytes reach the stand-in brain in two pieces is recorded whole, so the mark of one
+// tree is the same every time; the lock leaves itself out of `tree`, names `commit` only when HEAD holds exactly the
+// files, and doesn't touch git's own index; `run` only on GitHub; the service still counts every workflow of the build
+// as tested with the new lock.
+//
 // The tested mark, test/lock.mjs, without running the whole suite: the lock it writes for the stand-in fleet's build
 // names the files tested (tree, and commit when they are exactly a commit's), the GitHub run (only on GitHub) and what
 // the brain reads (brainReads: a sha256 of the system prompt and every tool's name, description and inputs, as the
@@ -8,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, useFleet, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, REPO, SLOW, postInTwo } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 import { lockFor, gitFields, runOf, brainSent, brainReadsOf } from './lock.mjs';
 
@@ -60,6 +67,31 @@ describe('the lock', () => {
     input.tools.at(-1).function.parameters.properties = { ...input.tools.at(-1).function.parameters.properties, extra: { type: 'string' } };
     assert.notEqual(brainReadsOf(input), reads);
     assert.notEqual(brainReadsOf({ ...sent, system: `${sent.system} ` }), reads);
+  });
+
+  // 2026-11-14: the stand-in brain decoded each piece of a request on its own, so a character whose bytes arrived in two
+  // pieces (“Spark’s” in a tool's text) was read as replacement marks and the mark of one tree changed between runs.
+  test('what the brain was sent is recorded as sent when a character’s bytes arrive in two pieces: the mark is the same every time', { timeout: 120000 * SLOW }, async () => {
+    const sent = await brainSent(T.fleet), reads = brainReadsOf(sent);
+    assert.ok(!JSON.stringify(sent).includes('\uFFFD'), 'what the brain reads has no broken character');
+    // The same request again, straight to the stand-in brain, asked the same way.
+    const p = sent.params;
+    const body = JSON.stringify({ model: 'qwen-aphex', stream: true, temperature: p.temperature, top_p: p.top_p, top_k: p.top_k, max_tokens: p.max_tokens,
+      chat_template_kwargs: { enable_thinking: p.thinking }, messages: [{ role: 'system', content: sent.system }, { role: 'user', content: 'Hello from the mark’s test.' }],
+      tools: sent.tools, tool_choice: 'auto' });
+    // Cut once in the system prompt and once in the tools' text, as two runs of one tree may be.
+    const marks = [], cuts = [];
+    for (const from of [0, Math.floor(Buffer.byteLength(body) / 2)]) {
+      const r = await postInTwo(`http://127.0.0.1:${T.fleet.modelPort}/v1/chat/completions`, body, { from });
+      assert.equal(r.status, 200);
+      const got = JSON.parse(readFileSync(join(T.fleet.dir, 'brain-sent.json'), 'utf8'));
+      assert.equal(got.system, sent.system);
+      assert.deepEqual(got.tools, sent.tools);
+      marks.push(brainReadsOf({ system: got.system, tools: got.tools, params: got.params, catalog: sent.catalog }));
+      cuts.push(r.cut);
+    }
+    assert.ok(cuts[0] < Buffer.byteLength(JSON.stringify(sent.system)) + 200 && cuts[1] > cuts[0], `cut at bytes ${cuts}`);
+    assert.deepEqual(marks, [reads, reads]);
   });
 
   test('the service reads the new lock as before: every workflow of this build counts as tested', { timeout: 120000 * SLOW }, async () => {

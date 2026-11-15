@@ -187,7 +187,7 @@ export async function land(branch, { here = process.cwd(), whole = false } = {})
 }
 
 // Generated files are never merged by hand: a conflict in one is settled by taking either side and making it again.
-export const MADE = ['service/server.mjs', 'docs/code-map.md', 'docs/rules.md', 'docs/registry.md', 'docs/status.md'];
+export const MADE = ['service/server.mjs', 'docs/code-map.md', 'docs/rules.md', 'docs/registry.md', 'docs/status.md', 'test/covers.md'];
 
 // Brings <branch> up to date with main in its own folder: merge main, make the generated files again, commit (not
 // signed, as builders commit). It stops, leaving the merge for the builder, only on a conflict in a file written by

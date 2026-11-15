@@ -1,3 +1,8 @@
+// Covers: Healing never works against the owner: a pair whose Spark now runs a model the owner started since is held
+// (`heal-skipped`, "never stops anything else"), and nothing is stopped or started for it; during the automatic pause
+// (`halted` with `autoPaused`) a crashed model is still restarted (the owner's own pause stops healing:
+// `heal.test.mjs`).
+//
 // Healing never works against the owner (the wrong-as-wired audit, 2026-11-11):
 // - bringing a model back never stops anything else: if the owner started another model where a two-Spark model used to
 //   run, that model keeps running and the older one is held, with the reason (before, a bring-back could stop it);

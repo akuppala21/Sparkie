@@ -1,3 +1,7 @@
+// Covers: The brain's agent setup (contract 3.8): `aphex-agent` in `config.json` has thinking on, native 262K context
+// (no YaRN), the model card's sampling, 32K outputs and 4 at once; with it chosen, every request carries those (with
+// tools too), and a message may take more than 6 tool rounds. The aphex setups are unchanged.
+//
 // The brain's agent setup (docs/contract.md 3.8): Sparkie's model asked the way it was benchmarked for agent work. With
 // the "aphex-agent" setup chosen, every request carries thinking on, the setup's own sampling (with tools too, not the
 // older 0.3), long outputs, and a message may take more tool rounds and changes than the default 6 and 4. The default

@@ -1,3 +1,8 @@
+// Covers: A look at the Sparks that began before an operation ended (gate, 2026-11-13): a stop of a model on the list
+// ends while a slowed look at Spark 3 is under way (`.mock/slow-stop`, `slow-inspect`, `slow-ps`); the list read then
+// shows it as changing, not held, and a fresh look shows the stop took it off. The list's checks and self-healing run
+// once an hour here, so the only look is the test's.
+//
 // A look at the Sparks that began before an operation ended says nothing about what that operation did (gate,
 // 2026-11-13). The list of what should be running was read while a stop of one of its models ran; the look at the
 // Sparks that went with it came back after the stop had ended. With no operation running any more, the model showed

@@ -12,26 +12,26 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 
 | Action | Kind | Part | Group | Answers to | Page only | Step | Text |
 |---|---|---|---|---|---|---|---|
-| `fleet_status` | read | `16-actions` | core | — | — | yes | inside |
-| `running_models` | read | `16-actions` | core | — | — | yes | inside |
-| `models_on_disk` | read | `16-actions` | find | — | — | yes | inside |
-| `find_recipes` | read | `16-actions` | find | — | — | yes | outside |
-| `recipe_detail` | read | `16-actions` | find | — | — | yes | outside |
-| `search_huggingface` | read | `16-actions` | find | — | — | yes | outside |
-| `where_it_fits` | read | `16-actions` | find | — | — | yes | inside |
-| `deploy_plan` | read | `16-actions` | sparks | — | — | yes | inside |
-| `cluster_plan` | read | `16-actions` | sparks | — | — | yes | inside |
-| `linked_sparks` | read | `16-actions` | sparks | — | — | yes | inside |
-| `spark_detail` | read | `16-actions` | sparks | — | — | yes | outside |
-| `recent_operations` | read | `16-actions` | dig | — | — | yes | outside |
-| `operation_log` | read | `16-actions` | dig | — | — | yes | outside |
-| `container_logs` | read | `16-actions` | dig | — | — | yes | outside |
-| `spark_diagnostics` | read | `16-actions` | dig | — | — | yes | outside |
-| `service_logs` | read | `16-actions` | dig | — | — | yes | outside |
-| `files` | read | `16-actions` | reading | — | — | yes | outside |
-| `sparkie_setup` | read | `16-actions` | core | — | — | yes | inside |
-| `workloads` | read | `16-actions` | core | — | — | yes | outside |
-| `fleet_events` | read | `16-actions` | past | — | — | yes | outside |
+| `fleet_status` | read | `16-reads` | core | — | — | yes | inside |
+| `running_models` | read | `16-reads` | core | — | — | yes | inside |
+| `models_on_disk` | read | `16-reads` | find | — | — | yes | inside |
+| `find_recipes` | read | `16-reads` | find | — | — | yes | outside |
+| `recipe_detail` | read | `16-reads` | find | — | — | yes | outside |
+| `search_huggingface` | read | `16-reads` | find | — | — | yes | outside |
+| `where_it_fits` | read | `16-reads` | find | — | — | yes | inside |
+| `deploy_plan` | read | `16-reads` | sparks | — | — | yes | inside |
+| `cluster_plan` | read | `16-reads` | sparks | — | — | yes | inside |
+| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | inside |
+| `spark_detail` | read | `16-reads` | sparks | — | — | yes | outside |
+| `recent_operations` | read | `16-reads` | dig | — | — | yes | outside |
+| `operation_log` | read | `16-reads` | dig | — | — | yes | outside |
+| `container_logs` | read | `16-reads` | dig | — | — | yes | outside |
+| `spark_diagnostics` | read | `16-reads` | dig | — | — | yes | outside |
+| `service_logs` | read | `16-reads` | dig | — | — | yes | outside |
+| `files` | read | `16-reads` | reading | — | — | yes | outside |
+| `sparkie_setup` | read | `16-reads` | core | — | — | yes | inside |
+| `workloads` | read | `16-reads` | core | — | — | yes | outside |
+| `fleet_events` | read | `16-reads` | past | — | — | yes | outside |
 | `start_model` | change | `17-changes` | core | start | — | yes | — |
 | `stop_model` | change | `17-changes` | core | stop | — | yes | — |
 | `restart_model` | change | `17-changes` | core | restart, start | — | yes | — |
@@ -53,6 +53,9 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
 | `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
 | `guide` | read | `21-guide` | core | — | — | yes | inside |
+| `power_off` | change | `21-power` | power | poweroff | — | yes | — |
+| `power_on` | change | `21-power` | power | poweron | — | yes | — |
+| `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
@@ -74,20 +77,25 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
 | `backup.json` | `25-backup-and-start` | `backupState`; `backupState` is called by `backupIfDue` | yes | yes |
-| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck` | yes | yes |
+| `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `storeBrainEval` | yes | yes |
+| `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
 | `found-setups.json` | `10-recipes` | `digModel` (11-setups); `digModel` is called by `addList`, `startDig` | yes | yes |
+| `funnel-seen.json` | `20-ways-in` | `noteFunnel`; deploy/open-to-internet.sh --undo removes it; `noteFunnel` is called by `checkRoute` | yes | no |
 | `heal-tries.json` | `18-workflows` | `saveHealTries`; `saveHealTries` is called by `maybeHeal`, `healMark` | yes | no |
 | `knowledge.json` | `19-watcher` | `saveKnowledge`; `saveKnowledge` is called by `watchSpark`, `noteSparkStates`, `watchFleet` | yes | no |
 | `last-crash.json` | `23-http` | `recordCrash` | yes | no |
+| `lessons.json` | `20-lessons` | `recordLesson`; `recordLesson` is called by `learnFrom` | yes | yes |
 | `links.json` | `06-links` | `fabric`; `fabric` is called by `test`, `clusterNet`, `linked_sparks`, `handler` | yes | no |
 | `main.json` | `13-main-model` | `writeMainFile`; `writeMainFile` is called by `saveMainChoice`, `markBrainLeftDown`, `saveRoutes` | yes | yes |
 | `memory-past.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
 | `memory.json` | `20-memory` | `saveMemory`; `saveMemory` is called by `remember`, `forget_memory`, `eraseLine` | yes | yes |
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `signinRoute`, `handler` | yes | no |
+| `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
+| `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
@@ -110,6 +118,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `metricsStream` | `04-metrics` | a ping every 15 s to each open page |
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
 | `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
+| `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
 | `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
@@ -117,16 +126,19 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
+| `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
 | `selfTestRecover` | `21-selftest` | 5 s after start, then each minute while the Spark doesn’t answer |
 | `tgLoop` | `21-telegram` | the long poll, one at a time, with a pause after a failure |
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |
 | `checkRoute` | `23-http` | every 60 s |
-| `refreshBlocked` | `23-http` | every 60 s, not on the stand-in fleet |
+| `refreshBlocked` | `23-http` | every 60 s |
 | `backupIfDue` | `25-backup-and-start` | 10 minutes after start, then hourly |
 | `needsMeTick` | `25-backup-and-start` | every 60 s |
 | `tick` | `25-backup-and-start` | every 0.5 s while a stop waits for running operations, 60 s at most |
 
-No part may wake a Spark: every header says `Wakes: none`.
+| Part | May wake |
+|---|---|
+| `21-power` | a compute Spark it powered off, or one shut down with a switchable plug, never Spark 2: power_on, a start or call that needs it (powerThen), power.wake |
 
 ## Events and operation types
 
@@ -142,11 +154,13 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `created` | `watchSpark` (19-watcher) |
 | `spark-offline` | `noteSparkStates` (19-watcher) |
 | `spark-online` | `noteSparkStates` (19-watcher) |
+| `spark-powered-off` | `waitAndCut` (21-power) |
+| `spark-powered-on` | `powerOnSparks` (21-power), `powerTick` (21-power) |
 | `learned` | `done` (19-watcher) |
 | `operation` | `newJob` (07-jobs), `runJob` (07-jobs), `top level` (19-watcher), `pauseWord` (20-words), `restartWord` (20-words), `handler` (24-handler) |
 | `healing` | `maybeHeal` (18-workflows), `bringBack` (20-heal), `keepBrain` (20-heal), `watchBrain` (20-heal), `healApp` (21-apps) |
-| `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps) |
-| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `jobEnded` (21-apps), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler), `backupState` (25-backup-and-start) |
+| `heal-skipped` | `skip` (18-workflows), `healSkip` (20-heal), `bringBack` (20-heal), `healApp` (21-apps), `bringBackParked` (21-power) |
+| `notice` | `readKept` (03-identity), `ownAccess` (03-identity), `tripBreaker` (16-actions), `recordWorkflowRun` (18-workflows), `noteUpdate` (18-workflows), `undoUpdate` (18-workflows), `top level` (19-watcher), `watchSpark` (19-watcher), `watchHeld` (20-desired), `keepBrain` (20-heal), `jobEnded` (21-apps), `sayIdleActive` (21-power), `unparkStranded` (21-power), `selfTestRecover` (21-selftest), `tgSetState` (21-telegram), `tgTryPair` (21-telegram), `counterNote` (22-passkey), `signinRoute` (22-sessions), `sessionRoute` (22-sessions), `handler` (24-handler), `backupState` (25-backup-and-start) |
 
 | Operation | Started by |
 |---|---|
@@ -158,6 +172,8 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `main-start` | `keepBrain` (20-heal), `restartWord` (20-words), `handler` (24-handler) |
 | `main-stop` | `handler` (24-handler) |
 | `main-switch` | `handler` (24-handler) |
+| `power-off` | `power_off` (21-power) |
+| `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
 | `self-test` | `self_test` (21-selftest) |
 | `spark-action` | `handler` (24-handler) |
