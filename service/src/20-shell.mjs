@@ -1,10 +1,10 @@
 /* ───────── how bash reads a command: words, pipelines, here-documents (for the sorter) ───────── */
-// Area: safety        Rules: R42        Tests: sort.test.mjs
+// Area: safety        Rules: R55        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). It reads as bash does, and anything it
-// can't read whole (a quote that never closes, a loop, arithmetic, a ${ … } form, a here-document that runs commands)
-// throws a SortDoubt, which the sorter answers as risky. No model call, no file read.
+// can't read whole (a quote that never closes, a loop, arithmetic, a ${ … } form, a here-document that runs commands, an
+// end word bash reads differently, a line that runs on with \) throws a SortDoubt, which the sorter answers as risky.
 class SortDoubt extends Error {}
 const unsure = why => { throw new SortDoubt(why); };
 const sortWs = s => new Set(s.split(' ')), SHELL_NEST = 16;
@@ -28,6 +28,8 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
   const named = (name, j) => { const x = opaque(); if (name === 'HOME' && !x.text) x.text = '~'; else x.unknown = true; return j; };
   const dollar = j => {
     const n = src[j + 1];
+    if (want) unsure('Its here-document’s end word holds a $, which bash reads as it is written and the sorter does not.');
+    if (n === '[') unsure('It holds an arithmetic $[ … ], which the sorter does not read.');
     if (src.startsWith('$((', j)) unsure('It holds an arithmetic $(( … )), which the sorter does not read.');
     if (n === '(') return sub(j + 2);
     if (n === "'" || n === '"') unsure(`It holds a $${n} … ${n} quote, which the sorter does not read.`);
@@ -37,9 +39,10 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
     if (n && '0123456789@*#?$!-'.includes(n)) { opaque().unknown = true; return j + 2; }
     word().text += '$'; return j + 1;
   };
-  const tick = j => {
+  const tick = (j, inQuotes = false) => {
+    if (want) unsure('Its here-document’s end word holds a command, which bash reads as it is written and the sorter does not.');
     let k = j + 1, body = '';
-    for (; k < src.length && src[k] !== '`'; k++) body += src[k] === '\\' && '`$\\'.includes(src[k + 1] ?? 'x') ? src[++k] : src[k];
+    for (; k < src.length && src[k] !== '`'; k++) body += src[k] === '\\' && (inQuotes ? '`$\\"' : '`$\\').includes(src[k + 1] ?? 'x') ? src[++k] : src[k];
     if (k >= src.length) unsure('It holds a ` that never closes.');
     const x = opaque(); x.subs.push(shellParse(shellLex(body, false, 0, nest + 1).toks)); x.unknown = true;
     return k + 1;
@@ -52,7 +55,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
       if (c === '"') return j + 1;
       if (c === '\\' && '$`"\\\n'.includes(src[j + 1] ?? 'x')) { if (src[j + 1] !== '\n') x.text += src[j + 1]; j += 2; }
       else if (c === '$') j = dollar(j);
-      else if (c === '`') j = tick(j);
+      else if (c === '`') j = tick(j, true);
       else { x.text += c; j++; }
     }
   };
@@ -63,6 +66,7 @@ function shellLex(src, inner = false, start = 0, nest = 0) {
         if (j >= src.length) unsure('It holds a here-document with no end.');
         const e = src.indexOf('\n', j) < 0 ? src.length : src.indexOf('\n', j), line = src.slice(j, e);
         j = e + 1;
+        if (!h.quoted && line.endsWith('\\')) unsure('Its here-document has a line that ends in \\, which bash joins to the next.');
         if ((h.strip ? line.replace(/^\t+/, '') : line) === h.delim) break;
         lines.push(line);
       }
@@ -142,6 +146,7 @@ function shellParse(toks) {
     const cmd = { assigns: [], words: [], redirs: [] };
     while (bare('!')) k++;
     if (bare('time')) { k++; if (bare('-p')) k++; }
+    if (is('(') && toks[k + 1]?.op === '(') unsure('It holds (( … )), arithmetic the sorter does not read.');
     if (is('(')) { k++; cmd.group = list(')'); k++; } else if (bare('{')) { k++; cmd.group = list('}'); k++; }
     else if (t()?.w && !t().w.quoted && SHELL_WORDS.has(t().w.text)) unsure(`It holds the shell word ${t().w.text}: a loop, a test or a function the sorter does not read.`);
     for (let x = t(); x && (x.w || x.redir); x = t()) {
