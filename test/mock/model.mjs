@@ -219,6 +219,8 @@ const serve = (port, isUp, served, reply) => http.createServer((req, res) => {
   if (req.url === '/v1/embeddings' && req.method === 'POST') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ object: 'list', model: served, data: [{ object: 'embedding', index: 0, embedding: [0.1, 0.2, 0.3] }] })); }
   if (req.url === '/v1/chat/completions' && req.method === 'POST') {
     let body = '';
+    // (decoded as one stream: a character whose bytes arrive in two pieces stays whole, so what is logged is what was sent)
+    req.setEncoding('utf8');
     req.on('data', d => { body += d; });
     req.on('end', async () => {
       let b;

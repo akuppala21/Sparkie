@@ -4,7 +4,8 @@
 // answers exactly as an unknown path of the same shape does, for the owner, a member and a visitor from the internet,
 // and a WebSocket to it is refused as one to an unknown path is (404). The owner's /bootstrap names no editor. The
 // page's files hold no browser editor link or button and no editor restart; what a Spark's page keeps (the owner's own
-// VS Code or Cursor over SSH, the SSH command and config) is still there. The editor's part and its stand-in are gone.
+// VS Code or Cursor over SSH, the SSH command and config) is still there. The editor's part is gone, and the stand-in
+// fleet starts no editor.
 // The editor's units on the Sparks are not touched here: stopping them is the owner's clearing (deploy/clear-spark2.sh).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,9 +85,8 @@ describe('the service has no editor route', () => {
   });
 });
 
-test('the editor\'s part and its stand-in are gone, and nothing in the service names its route', () => {
+test('the editor\'s part is gone, nothing in the service names its route, and the stand-in fleet starts no editor', () => {
   assert.ok(!existsSync(join(REPO, 'service', 'src', '21-editor.mjs')), 'service/src/21-editor.mjs');
-  assert.ok(!existsSync(join(REPO, 'test', 'mock', 'editor.mjs')), 'test/mock/editor.mjs');
   const server = read('service/server.mjs');
   for (const name of ['/connect/', 'editorUpgrade', 'editorTarget', 'editorHttp', 'EDITOR_PORTS', 'editorPasskeyFresh', 'editorUse', "'editor-restart'", "'spark-action'"]) {
     assert.ok(!server.includes(name), `service/server.mjs names ${name}`);

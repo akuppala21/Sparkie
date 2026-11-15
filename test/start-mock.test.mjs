@@ -3,14 +3,16 @@
 // ports. Its clean-up, stop(): a process that outlives the guard and still writes in the fleet's temporary folder
 // (stop() tries again until it is done), and a folder that can't be removed at all (one line on stderr, never an
 // error). A leftover temporary folder is not a product failure: it must never fail a test or hide the error a test's
-// own body threw from inside `try { … } finally { await fleet.stop(); }`.
+// own body threw from inside `try { … } finally { await fleet.stop(); }`. The stand-ins that read a request body read a
+// character whose bytes arrive in two pieces whole (the stand-in brain's is in lock.test.mjs).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, chmodSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import net from 'node:net';
-import { SLOW, waitFor } from './lib.mjs';
+import { SLOW, waitFor, postInTwo, REPO } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 const cheap = () => startMock({ watchMs: 600000, statusMs: 600000 });
@@ -101,5 +103,32 @@ describe('the stand-in fleet: its start and its clean-up', { concurrency: 1, tim
     assert.equal(lines.length, 1, err);
     assert.ok(lines[0].includes(fleet.dir), lines[0]);
     assert.match(lines[0], /\bE[A-Z]{3,}\b/, 'it names the error code');
+  });
+});
+
+// 2026-11-14: each piece of a body was decoded on its own, so a character cut between two pieces became replacement
+// marks: in what the Telegram stand-in recorded, and in what the editor stand-in counted.
+describe('the stand-ins that read a request body', { timeout: 60000 * SLOW }, () => {
+  test('a character whose bytes arrive in two pieces is read whole: Telegram records the message as sent, the editor counts it once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stand-ins-'));
+    const freePort = async () => { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const { port } = s.address(); await new Promise(r => s.close(r)); return port; };
+    const tg = await freePort(), ed = await freePort();
+    const kids = [spawn(process.execPath, [join(REPO, 'test', 'mock', 'telegram.mjs')], { env: { ...process.env, MOCK_TELEGRAM_PORT: String(tg), MOCK_DIR: dir }, stdio: 'ignore' }),
+      spawn(process.execPath, [join(REPO, 'test', 'mock', 'editor.mjs')], { env: { ...process.env, MOCK_EDITOR_PORT: String(ed) }, stdio: 'ignore' })];
+    try {
+      await waitFor(() => fetch(`http://127.0.0.1:${tg}/__mode`, { method: 'POST', body: '{}' }).then(r => r.ok).catch(() => false), { what: 'the Telegram stand-in' });
+      await waitFor(() => fetch(`http://127.0.0.1:${ed}/login`).then(r => r.ok).catch(() => false), { what: 'the editor stand-in' });
+      const text = 'Spark’s port 3000 ✓ — €5';
+      const sent = await postInTwo(`http://127.0.0.1:${tg}/bot1234567:${'a'.repeat(35)}/sendMessage`, JSON.stringify({ chat_id: 42, text }));
+      assert.equal(sent.status, 200, sent.text);
+      assert.equal(JSON.parse(sent.text).result.text, text);
+      const calls = readFileSync(join(dir, 'telegram-calls.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      assert.equal(calls.at(-1).body.text, text);
+      const echoed = await postInTwo(`http://127.0.0.1:${ed}/upload`, text, { from: 8 });
+      assert.equal(echoed.text, `got ${text.length} bytes`);
+    } finally {
+      for (const k of kids) k.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
