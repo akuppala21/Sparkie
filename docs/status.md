@@ -20,7 +20,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R4](rules/R04.md) | no test yet |  | test: each new route as nobody, a member, cross-site, through Funnel, from a Spark’s address |
 | [R5](rules/R05.md) | built | `test/internet.test.mjs` (“a Tailscale identity it brings counts for nothing”); `test/fleet.test.mjs` (“requests from the Sparks themselves”) |  |
 | [R6](rules/R06.md) | built | `test/passkey.test.mjs` (“a confirmation is for exactly one change”, “the change can be named with or without /console/api”) |  |
-| [R7](rules/R07.md) | partly | `test/door.test.mjs` (“secret masking”); `test/detail.test.mjs`; `test/faults.test.mjs`; `test/sparkie-more.test.mjs` (“a key in the model's error is hidden in the saved chat”, “a key in a line Sparkie offers to remember”, “a key in a failed operation's error is hidden”); `test/heal.test.mjs` (“a restart that fails with a key in its error”) | falls short today: its file says where |
+| [R7](rules/R07.md) | partly | `test/door.test.mjs` (“secret masking”); `test/detail.test.mjs`; `test/faults.test.mjs`; `test/sparkie-more.test.mjs` (“a key in the model's error is hidden in the saved chat”, “a key in a line Sparkie offers to remember”, “a key in a failed operation's error is hidden”); `test/heal.test.mjs` (“a restart that fails with a key in its error”); `test/app-keys.test.mjs` (“a kept key a tool prints, as is or in base64, comes back hidden”) | falls short today: its file says where |
 | [R8](rules/R08.md) | partly | `test/change.test.mjs` (“containers Spark Console didn't start, Sparkie's model, protected names”, “a console container labelled spark.protect=true is protected too”); `test/clear-spark2.test.mjs` (“the script holds no command that breaks it”) | falls short today: its file says where |
 | [R9](rules/R09.md) | built | `test/pause.test.mjs` (“after three of their operations fail in a row”, “after 3 changes in an hour”, “the owner's own failed work”); `test/ask.test.mjs` (“removed while Sparkie is answering it”, “made look-only while Sparkie is answering it”, “an operation it started keeps running”, “an undo it asked for keeps running”) |  |
 | [R10](rules/R10.md) | no test yet |  | grep: ssh is spawned only in `02-ssh.mjs`; falls short today: its file says where |
@@ -45,7 +45,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R29](rules/R29.md) | partly | `test/door.test.mjs` (“tools/list (a key that only looks)”); `test/lock.test.mjs`; `test/affected.test.mjs`; `test/land.test.mjs`; `test/pull.test.mjs` | falls short today: its file says where |
 | [R30](rules/R30.md) | partly | `test/fleet.test.mjs` (“/health”); `test/install.test.mjs`; `test/pull.test.mjs`; `test/door.test.mjs` (“search_huggingface on the stand-in fleet”) | falls short today: its file says where |
 | [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”) |  |
-| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs` | falls short today: its file says where |
+| [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs`; `test/app-keys.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”) |  |
 | [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
 | [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/change.test.mjs` |  |
@@ -60,6 +60,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R46](rules/R46.md) | partly | `test/tools.test.mjs` (“every round is sent at most the cap”, “a third group the words open gives way”, “everyday requests”, “a saved workflow named by any word of its name opens routines”, “hidden is not forbidden”, “offered both undos or neither”, “groups last through the request's carry-on turns”, “the agent door hides nothing”, “the tested mark covers every group”); `test/docs.test.mjs` (“an action with no group”, “a group over six”, “a core over twelve”) | falls short today: its file says where |
 | [R47](rules/R47.md) | partly | `test/brain-eval.test.mjs` | falls short today: its file says where |
 | [R48](rules/R48.md) | partly | `test/lessons.test.mjs` (“a start that fails a known way leaves one lesson”, “a start that works after a fix leaves no lesson”, “a crafted or key-shaped name is stored as null”, “an app that gives up leaves an app lesson”, “the file is the state folder's, written by one function, and still read after a restart”) | falls short today: its file says where |
+| [R50](rules/R50.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “a member's /key and an agent's”, “Telegram”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -173,7 +174,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 9.12 | no test yet |  | T46: no test holds it yet |
 | 9.13 | no test yet |  | T75, T101: no test holds them yet |
 | 9.14 | no test yet |  | T76, T102: no test holds them yet |
-| 9.15 | no test yet |  | T77, T96, T98, T132: no test holds them yet |
+| 9.15 | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name and answered by code, the brain is”, “Telegram: the message that held the key is deleted and the key kept”) | holds part of T132: “the key kept by name; its value in no chat, journal, error or tool result.”, “from Telegram, the message is deleted and the key kept by name.”; T77, T96, T98: no test holds them yet |
 | 9.16 | no test yet |  | no acceptance test lists it |
 | 9.17 | no test yet |  | no acceptance test lists it |
 | 9.18 | no test yet |  | T89: no test holds it yet |
