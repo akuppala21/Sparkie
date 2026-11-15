@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+# Stand-in setpriv for rehearsals of the root helper (deploy/spark-console-root; test/root-helper.test.mjs). Outside a
+# rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails. Every call is one JSON line in <rehearsal>/calls.log.
+# It changes no account: it checks that it knows each option, then runs the rest of the command as it is. --help shows
+# the options the helper looks for; with <rehearsal>/standin/setpriv-old it lacks --bounding-set, as an old one would.
+import json, os, re, sys
+
+R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
+if not R.startswith('/') or not os.path.isdir(R):
+    sys.stderr.write('setpriv: this stand-in only answers inside a rehearsal of the root helper\n')
+    sys.exit(1)
+args = sys.argv[1:]
+with open(os.path.join(R, 'calls.log'), 'a') as f:
+    f.write(json.dumps(['setpriv'] + args) + '\n')
+known = ['--reuid', '--regid', '--groups', '--inh-caps', '--bounding-set']
+if os.path.exists(os.path.join(R, 'standin', 'setpriv-old')):
+    known.remove('--bounding-set')
+if args == ['--help']:
+    print('Usage:\n setpriv [options] <program> [<argument>...]\n\nOptions:\n' + ''.join(f' {o} <value>\n' for o in known))
+    sys.exit(0)
+while args and args[0].startswith('-'):
+    m = re.match(r'^(--[a-z-]+)=(.+)$', args[0])
+    if not m or m.group(1) not in known:
+        sys.stderr.write(f'setpriv: unrecognized option {args[0]!r}\n')
+        sys.exit(1)
+    args = args[1:]
+if not args:
+    sys.exit(1)
+os.execv(args[0], args)
