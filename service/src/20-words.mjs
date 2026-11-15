@@ -135,6 +135,7 @@ function helpWord() {
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
     '/help: this list'];
+  lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
   lines.push('', 'By hand, in a terminal:');
   if (MAIN) lines.push(`  restart Sparkie’s model (on ${sparkName(mainNode() || { id: MAIN.node })}): ${brainRestartCommand()}`);
   lines.push(`  go back a build (${consoleSparkWords()}): bash ${BY_HAND_DIR}/go-back.sh (other by-hand steps: ${BY_HAND_DIR}/RECOVERY.txt)`);
