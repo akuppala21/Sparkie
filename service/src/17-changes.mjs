@@ -39,7 +39,8 @@ function setAgentSettings(change) {
 // Why nothing may stop: the owner said so, it is self-healing bringing something back (it never stops anything else), or
 // it is the self-test (21-selftest.mjs).
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
-  : ctx?.selfTest ? 'and the self-test never stops anything' : 'and the owner said not to stop anything');
+  : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
+    : 'and the owner said not to stop anything');
 const pausedCheck = ctx => {
   const s = agentSettings();
   if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
@@ -418,8 +419,10 @@ async function putBack(job, m, placed) {
   for (const x of stopped) {
     const [id, container] = x.split('/');
     consoleStopped.delete(x);
-    const r = await run(nodeById(id), `docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
-    note(job, r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
+    // (a job's two mounts checked in the same command as its start, as for a job run again, 21-apps.mjs: one swapped for
+    // a link while this start ran is refused by name, and the job isn't started)
+    const r = await run(nodeById(id), `if docker inspect ${q(container)} 2>/dev/null | grep -q '"spark\\.job": *"1"'; then ${jobMountsReal(container)}; fi; docker start ${q(container)} >/dev/null 2>&1`, { timeout: 90000 });
+    note(job, r.code === JOB_NOT_REAL ? jobNotReal(nodeById(id), container, r).message : r.code ? `Couldn’t start ${container} on ${id} again; start it from Spark Console.` : `Started ${container} on ${id} again`);
   }
   job.ranHere = []; job.stoppedHere = [];
 }
@@ -451,8 +454,9 @@ async function resolveModelName(name, inv) {
 
 // For a model not on disk yet: the version to download (best quantization that fits now), and where. Spark Console's own
 // Spark isn't chosen; a repo from outside Recipes only goes on one Spark.
-async function pickVersion(recipe, repo, viewer, outside, only = null) {
-  const status = await statusFor(viewer, false);
+async function pickVersion(recipe, repo, viewer, outside, only = null, live = null) {
+  // (after a wake, the live look at the Sparks that just came on, not the cached status from before them: R56)
+  const status = live ? wakeLiveStatus(live) : await statusFor(viewer, false);
   const online = status.nodes.filter(n => n.state === 'online' && (only ? only.includes(n.id) : computeSparks().includes(n.id)));
   const free = id => gbOfGiB(online.find(n => n.id === id)?.memoryFreeGiB) ?? 0, disk = id => gbOfGiB(online.find(n => n.id === id)?.diskFreeGiB) ?? 0;
   const pairs = (lastCheck?.pairs || []).filter(p => p.fastLink === 'full' && online.some(n => n.id === p.a) && online.some(n => n.id === p.b));
@@ -566,8 +570,10 @@ async function startModel(args, viewer, ctx) {
     // Making room by stopping Spark Console's own models is done and said (contract 8.4), unless the owner said not to.
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
+    // (what a wake goes by: its size, its own need, and whether it may run across two Sparks, R56)
+    const wakeSize = { sizeBytes: m.sizeBytes, needBytes: wakeNeedOf(m), pairs: wakeMayPair(m) };
     // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
-    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -579,12 +585,13 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ], 'question', { ownerOnly: true });
     }
-    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
-    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows;
+    // after one wake, once more only for a model no Spark that is on can hold alone: its partner, R56)
+    if (!placed.ok && !spark && !sparks && (!ctx.poweredOn || (ctx.poweredOn === 1 && wakeNeedsTwo(m, inv)))) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { ...wakeSize, why: notWoken }); if (first) return first; }
     if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
     // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
     // is placed again; a call still never stops a model to make room)
-    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), wakeSize); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -620,7 +627,7 @@ async function startModel(args, viewer, ctx) {
       { label: 'No', call: null },
     ]);
   }
-  const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
+  const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null, ctx.poweredOn ? inv : null);
   if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
   if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);

@@ -3,7 +3,9 @@
 # a rehearsal (SPARK_CONSOLE_REHEARSAL naming its folder) it fails and starts nothing. Every call is one JSON line in
 # <rehearsal>/calls.log. It builds no wall: it shows what the helper asks for, not what a Spark grants.
 #   sw-look-<id>, sw-run-<id>   the command runs here, unwalled: the held folder /run/spark-console/<id> is read under the
-#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first. WALL_VIEW
+#                               rehearsal, and a copy of it is kept in <rehearsal>/standin/ran/<unit>/ first; past its
+#                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit; while it
+#                               runs <rehearsal>/standin/live/<unit> is there (what systemctl is-active answers). WALL_VIEW
 #                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
 #                               folder empty, a hidden file gone, what is put back there), for a command to look in
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
@@ -11,6 +13,9 @@
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
 #                               attempt shows outside, one per line: "<attempt> works|not-there [what]".
 #                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
+#   sw-guard-<id>               the lock-out net's timer: armed, never fired here (a test runs restore.sh itself, as the
+#                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
+#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
 import json, os, shutil, sys
 
@@ -97,13 +102,24 @@ if unit.startswith('sw-prove-'):
                 word = 'through' if (n, mode, how) in through else ('left' if (n, mode) in LEFT else 'blocked')
                 say('P', n, how, word, 'stand-in')
     elif part == 'post':
-        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run')):
+        for n, wall in ((1, 'look'), (1, 'run'), (5, 'run'), (14, 'run'), (19, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
     elif part == 'after':
         say('V', 5, 'outside', 'works', 'stand-in')
         say('V', 12, 'outside', 'works', 'stand-in')
         for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+        for n in (15, 16, 17, 18):
+            for wall in ('look', 'run'):
+                say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
+    sys.exit(0)
+
+if unit.startswith('sw-guard-'):
+    if knob('guard-sleep') is not None:   # (systemd slow to take the timer: a test hangs up the call meanwhile)
+        import time
+        time.sleep(float(knob('guard-sleep')))
+    os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
+    open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
     sys.exit(0)
 
 def wall_view():
@@ -138,7 +154,39 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     shutil.copytree(held, os.path.join(R, 'standin', 'ran', unit))
     os.environ['WALL_VIEW'] = wall_view()
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
-    os.execv(cmd[0], cmd)
+    # Its RuntimeMaxSec, as systemd holds it: past it, the command and everything it started are ended (exit 1).
+    limit = next((float(a.split('=', 1)[1]) for a in args if a.startswith('RuntimeMaxSec=')), None)
+    import signal, subprocess
+    # While it runs, <rehearsal>/standin/live/<unit> is there (the stand-in systemctl's is-active reads it).
+    live = os.path.join(R, 'standin', 'live', unit)
+    os.makedirs(os.path.dirname(live), exist_ok=True)
+    open(live, 'w').close()
+    # (its own session, so it can be ended whole; a signal to this stand-in, a caller's timeout say, ends it whole too)
+    held = []
+    def end(sig, _):
+        for q in held:
+            try:
+                os.killpg(q.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        try:
+            os.unlink(live)
+        except OSError:
+            pass
+        os._exit(128 + sig)
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, end)
+    p = subprocess.Popen(cmd, start_new_session=True)
+    held.append(p)
+    try:
+        code = p.wait(timeout=limit)
+        code = code if code >= 0 else 128 - code
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        code = 1
+    os.unlink(live)
+    sys.exit(code)
 
 sys.stderr.write(f'systemd-run: the stand-in does not know this unit ({unit or "no --unit"})\n')
 sys.exit(1)

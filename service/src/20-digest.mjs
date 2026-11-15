@@ -3,10 +3,12 @@
 // Owns: none        Timers: none        Wakes: none
 // A tool result longer than DIGEST_AT (12,000 characters) no longer enters Sparkie's turn as its first 12,000 characters
 // (design G 3.4, A4, step 5). Code makes a digest of it, with no model call and no file read (runOne, digestOut): the
-// text is seen as lines in one pass, whatever it holds (textLines: a newline ends a line, and in JSON an escaped one too; a line past 300 characters goes
-// on in the next), and it keeps the lines that name a failure (an error word, an exit code, a known start failure: 20 at
-// most, each with the line before and after it), then the first 5 and the last 15, then each run of 10 or more lines
-// the same, folded to one; failures first when room is short, within a recall answer's size (memorySizes).
+// text is seen as lines in one pass, whatever it holds (textLines: a newline ends a line, and in JSON an escaped one
+// too; a line past 300 characters goes on in the next). It keeps the first line and the last three, then the lines that
+// name a failure (an error word, an exit code that isn't 0, out of memory, an …Error name, a known start failure; an
+// empty JSON field is none: 20 at most, each with the line before and after it), then the first 5 and the last 15
+// (newest first), then each run of 10 or more lines the same, folded to one; in that order while room is left, the
+// kept lines within a recall answer's size (memorySizes; the digest's own words add about 500 characters).
 // The digest is JSON built by code: its own words (digest, isData), the count of lines and the record are fields of
 // their own, and each kept line is [its number, its text], or [first, text, last] for a run, so no line of the result
 // can pass for Spark Console's words, a line number or the count. The result is masked before it is cut (runOne), so a
@@ -19,9 +21,15 @@
 // comes back.
 const DIGEST_AT = 12000, DIGEST_WIDE = 300, DIGEST_FIRST = 5, DIGEST_LAST = 15, DIGEST_FAILS = 20, DIGEST_RUN = 10;
 const DIGEST_READ_LINES = 200, DIGEST_READ_CHARS = 8000;
-// A line that says something failed: an error word, or an exit code that isn't 0.
-const DIGEST_FAIL = /\b(?:errors?|fail(?:ed|ure|ures|ing|s)?|fatal|exception|traceback|panic(?:ked)?|killed|oom|out of memory|denied|refused|cannot|can[’']t|could not|couldn[’']t|unable|timed? ?out|abort(?:ed|ing)?|segfault|segmentation fault)\b|\bexit(?:ed)?(?: with)?(?: code| status)?[ =:]*[1-9]\d*\b|\b(?:exit|return) (?:code|status)\b/i;
-const digestFails = line => DIGEST_FAIL.test(line) || START_FAILURES.some(f => f.sign.test(line));
+// A line that says something failed: an error word; an exit code that isn't 0 after exit, exited, exitCode or return
+// code, with up to four signs between ("Exited (137)", "exitCode":137, "exit status 2"; "exit code 0" is none); out of
+// memory or an OOM kill; or a name that ends in Error or Exception (ModuleNotFoundError:). A JSON field with nothing in
+// it ("error":null, "failed":false, "errors":[], "exitCode":0) is taken out of the line first: its name says nothing
+// failed. Each is tested on one line of 300 characters at most, so none of them costs more than that line.
+const DIGEST_FAIL = /\b(?:errors?|fail(?:ed|ure|ures|ing|s)?|fatal|exception|traceback|panic(?:ked)?|killed|oom|out ?of ?memory|oom[ -]?kill(?:ed)?|denied|refused|cannot|can[’']t|could not|couldn[’']t|unable|timed? ?out|abort(?:ed|ing)?|segfault|segmentation fault|no space left|command not found)\b|\b(?:exit(?:ed)?|return)(?:[ _]?(?:with|code|status))*\W{0,4}[1-9]\d*\b/i;
+const DIGEST_NAMED = /\b[A-Z][A-Za-z]{0,60}(?:Error|Exception)\b/;
+const DIGEST_EMPTY = /\\?"[A-Za-z_]{1,40}\\?"\s?:\s?(?:null|false|0|\\?"\\?"|\[\]|\{\})(?![\w.])/g;
+const digestFails = line => { const l = line.replace(DIGEST_EMPTY, ''); return DIGEST_FAIL.test(l) || DIGEST_NAMED.test(l) || START_FAILURES.some(f => f.sign.test(l)); };
 // A text's lines before they are folded: a newline ends one; in JSON (a text that starts with { or [, as a tool's result
 // does) an escaped one too, a backslash and an n after an even run of backslashes (\\n is a backslash, then an n). A
 // command's output or a log is plain text: a backslash and an n there are two letters. One pass, whatever the text holds
@@ -82,9 +90,13 @@ function digestText(text, size) {
     if (runOf[i]) runs.add(runOf[i][0]);
     fails.push(i);
   }
+  // (the first line and the last three come before the failures, and the tail is taken newest first: when room is
+  // short, what a log or a list ended with stays, whatever its early lines say)
+  take(0);
+  for (let i = n - 1; i >= Math.max(1, n - 3); i--) take(i);
   for (const i of fails) { take(i); take(i - 1); take(i + 1); }
   for (let i = 0; i < Math.min(n, DIGEST_FIRST); i++) take(i);
-  for (let i = Math.max(0, n - DIGEST_LAST); i < n; i++) take(i);
+  for (let i = n - 1; i >= Math.max(0, n - DIGEST_LAST); i--) take(i);
   for (let i = 0; i < n; i++) if (runOf[i]?.[0] === i) take(i);
   return { lines: n, kept: [...kept.values()].sort((a, b) => a[0] - b[0]) };
 }

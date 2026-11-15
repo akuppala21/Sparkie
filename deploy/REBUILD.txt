@@ -1,7 +1,7 @@
 Spark Console: bringing Spark 2 back after its disk is lost
 
-Read this on GitHub (deploy/REBUILD.txt) or in your copy of the repository on your Mac. You need the Mac, Spark 3 or
-Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.local/share/spark-console/ on Spark 2.
+Read this on GitHub (deploy/REBUILD.txt) or in the repository on your Mac. You need the Mac, Spark 3 or Spark 4, and
+a new disk in Spark 2. Every install also copies this file to ~/.local/share/spark-console/ on Spark 2.
 
 1. On Spark 2, by hand: DGX OS, the same user name as before, Docker working, Node.js 22 or newer from NodeSource
      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
@@ -28,8 +28,10 @@ Spark 4, and a new disk in Spark 2. Every install also copies this file to ~/.lo
      sudo tailscale serve --bg --https=8443 --set-path=/console ~/spark-console
      sudo tailscale serve --bg --https=8443 --set-path=/console/api unix:$HOME/.local/state/spark-console/api.sock
 
-5. Sign in. On the tailnet you are the owner at once. Every other device signs in again: no copy holds a sign-in.
-   Your passkey came back with the state. Make new recovery codes under Your passkey.
+5. Sign in. On the tailnet you are the owner at once. If your Tailscale login changed since that copy, put today's
+   login in access.json first (the line is in RECOVERY.txt, beside this file). Every other device signs in again: no
+   copy holds a sign-in. If Spark Console shows what came back, look at it and press "Keep these": until then
+   sign-in from the internet is refused. Your passkey came back. Make new recovery codes under Your passkey.
 
 6. Give back what no copy holds (it lived in ~/.config/spark-console/secrets.json, which is never copied):
    - each key: /key NAME and the key, in your own chat; the GitHub token: /key GITHUB and the token
