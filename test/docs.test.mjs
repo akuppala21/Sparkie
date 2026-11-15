@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
 import { checkDocs, rulesIndex, describe as say } from '../tools/check-docs.mjs';
+import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
 
 test('this tree: the documents match the code', () => {
   const problems = checkDocs(REPO);
@@ -151,5 +152,76 @@ describe('what is never checked', () => {
   test('REVIEW-GUIDE.md: only its paths', () => {
     assert.deepEqual(problemsWith({ 'REVIEW-GUIDE.md': '# Review\n\nThe service is 37 parts; `16-actions.mjs:286`.\n' }).map(say), []);
     fails({ 'REVIEW-GUIDE.md': '# Review\n\nRead `docs/reviews-2026-11-11.md`.\n' }, 'paths', /docs\/reviews-2026-11-11\.md/);
+  });
+});
+
+// The parts' headers (tools/parts.mjs, the same code tools/make.mjs runs): what a header declares by hand (its area,
+// rules, tests, the state files it owns and their writers, its timers) is checked against what the code does.
+test('this tree: every part has its header, and each header matches its code', () => {
+  assert.deepEqual(checkParts(REPO).map(say), []);
+});
+
+test('this tree: docs/registry.md is what the parts make', () => {
+  assert.equal(readFileSync(join(REPO, 'docs/registry.md'), 'utf8'), registry(REPO));
+});
+
+// R22 listed desired.json's six writers by hand; the scanner finds each of them in the code, and what it finds is
+// exactly what 20-desired's header declares (a new writer joins the header, not this test).
+test('this tree: desired.json’s six writers are found in the code', () => {
+  const tree = readParts(REPO), found = new Set(tree.writes.filter(w => w.file === 'desired.json').map(w => w.who));
+  for (const w of ['desiredAfter', 'watchHeld', 'markUndone', 'handler', 'keepApp', 'forgetApp']) assert.ok(found.has(w), `${w} isn’t found writing desired.json`);
+  const owns = tree.parts.find(p => p.file === '20-desired.mjs').header.fields.Owns;
+  assert.deepEqual([...found].sort(), owned(owns).find(o => o.file === 'desired.json').writers.sort());
+});
+
+// A small tree of parts with headers that pass; each test below adds one fault.
+const HEAD = (title, { area = 'core', rules = 'R1', tests = 'change.test.mjs', owns = 'none', timers = 'none' } = {}) =>
+  `/* ───────── ${title} ───────── */\n// Area: ${area}        Rules: ${rules}        Tests: ${tests}\n// Owns: ${owns}\n// Timers: ${timers}        Wakes: none\n`;
+const DESIRED = "const DESIRED_FILE = `${STATE_DIR}/desired.json`;\nfunction desiredAfter(job) {\n  try { writePrivate(DESIRED_FILE, { running: [] }); } catch {}\n  fleetEvent({ type: job.ok ? 'started' : 'notice' });\n}\nasync function watchHeld() {}\nsetInterval(watchHeld, 60000);\n";
+const PARTS = {
+  'service/src/07-jobs.mjs': `${HEAD('jobs', { area: 'ground' })}function runJob(job) { return newJob(job.two ? 'deploy-cluster' : 'deploy', {}); }\n`,
+  'service/src/16-actions.mjs': `${HEAD('actions')}${BASE['service/src/16-actions.mjs']}const EVENT_TYPES = ['started', 'notice'];\n`,
+  'service/src/17-changes.mjs': `${HEAD('changes')}${BASE['service/src/17-changes.mjs']}`,
+  'service/src/20-desired.mjs': `${HEAD('what should be running', { area: 'record', owns: 'desired.json (writers: desiredAfter)', timers: 'watchHeld (every 60 s)' })}${DESIRED}`,
+  'docs/rules/R13.md': RULE(13).replace('Every change goes through', 'Jobs `deploy` and `deploy-cluster` claim; every change goes through'),
+};
+const partsProblems = extra => { const root = makeTree({ ...PARTS, ...extra }); try { return checkParts(root); } finally { rmSync(root, { recursive: true, force: true }); } };
+function partsFail(extra, pattern) {
+  const problems = partsProblems(extra);
+  assert.ok(problems.length > 0, `no problem found for ${JSON.stringify(Object.keys(extra))}`);
+  for (const p of problems) {
+    assert.equal(p.check, 'parts', say(p));
+    assert.match(p.message, pattern, say(p));
+  }
+  return problems;
+}
+const part = (name, head, body) => ({ [`service/src/${name}`]: `${head}${body}` });
+
+describe('headers', () => {
+  test('the made-up parts pass as they are', () => assert.deepEqual(partsProblems({}).map(say), []));
+  test('a part with no header, and the message gives the header to add', () => {
+    const [p] = partsFail({ 'service/src/20-desired.mjs': DESIRED }, /has no header/);
+    assert.match(p.message, /\/\* ─+ .+ ─+ \*\/\n\/\/ Area: record or safety {2,}Rules: .+ {2,}Tests: .+\n\/\/ Owns: desired\.json \(writers: desiredAfter\)\n\/\/ Timers: watchHeld \(every …\) {2,}Wakes: none/);
+  });
+  test('a header without one of its keys', () => partsFail({ 'service/src/17-changes.mjs': PARTS['service/src/17-changes.mjs'].replace('        Wakes: none', '') }, /without Wakes/));
+  test('a rule no file defines', () => partsFail(part('17-changes.mjs', HEAD('changes', { rules: 'R1, R77' }), BASE['service/src/17-changes.mjs']), /R77/));
+  test('a test file that is not in test/', () => partsFail(part('17-changes.mjs', HEAD('changes', { tests: 'gone.test.mjs' }), BASE['service/src/17-changes.mjs']), /gone\.test\.mjs/));
+  test('a writer of a state file its owner doesn’t declare', () => partsFail(part('24-handler.mjs', HEAD('handler', { area: 'ways in' }), 'async function handler(req, res) {\n  const d = {};\n  writePrivate(DESIRED_FILE, d);\n}\n'), /doesn’t declare handler \(24-handler\.mjs, writePrivate\) as a writer of desired\.json/));
+  test('a declared writer that doesn’t write the file', () => partsFail(part('20-desired.mjs', HEAD('what should be running', { area: 'record', owns: 'desired.json (writers: desiredAfter, keepApp)', timers: 'watchHeld (every 60 s)' }), DESIRED), /declares keepApp as a writer of desired\.json/));
+  test('a state file its part doesn’t own', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}const MEMORY_FILE = \`\${STATE_DIR}/memory.json\`;\n` }, /keeps memory\.json but its Owns line doesn’t list it: add “memory\.json \(writers: none\)”/));
+  test('a function that writes a file it is given', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function saveJson(file, value) { writeFileSync(\`\${file}.tmp\`, JSON.stringify(value)); }\n` }, /saveJson writes a file it is given/));
+  test('a repeating timer nobody declared', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}setInterval(() => startModel({}), 5000);\n` }, /repeating timer nobody declared \(setInterval in top level, calling startModel\)/));
+  test('a timeout that calls its own function again repeats too', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function poll() { setTimeout(() => poll(), 1000); }\n` }, /calling poll/));
+  test('a declared timer the part doesn’t have', () => partsFail(part('20-desired.mjs', HEAD('what should be running', { area: 'record', owns: 'desired.json (writers: desiredAfter)', timers: 'watchHeld (every 60 s), gone (hourly)' }), DESIRED), /declares the timer gone/));
+  test('an event type EVENT_TYPES doesn’t list', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function boom() { fleetEvent({ type: 'exploded' }); }\n` }, /“exploded” \(boom in 17-changes\.mjs\).*EVENT_TYPES/));
+  test('an event type that can’t be read', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function boom(kind) { fleetEvent({ type: kind }); }\n` }, /type can’t be read/));
+  test('an operation type R13 doesn’t name', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function powerOff() { return newJob('power-off', {}); }\n` }, /“power-off” \(powerOff in 17-changes\.mjs\).*R13/));
+  test('a part outside its band', () => partsFail(part('07-jobs.mjs', HEAD('jobs', { area: 'core' }), PARTS['service/src/07-jobs.mjs'].split('\n').slice(4).join('\n')), /numbered 07, but its Area, core, is the band 16–19/));
+  test('an area that isn’t one', () => partsFail(part('17-changes.mjs', HEAD('changes', { area: 'workloads' }), BASE['service/src/17-changes.mjs']), /an area is one of/));
+  test('a ground part with an action', () => partsFail({ 'service/src/07-jobs.mjs': `${PARTS['service/src/07-jobs.mjs']}action({\n  name: 'jobs_list', title: 'Jobs', kind: 'read',\n});\n` }, /ground part .* defines jobs_list/));
+  test('a part whose brackets don’t match can’t be read', () => partsFail({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}function half() {\n` }, /can’t be read/));
+  test('comments, strings and regular expressions are not code', () => {
+    const quiet = "// writePrivate(DESIRED_FILE, x); setInterval(watchHeld, 1);\nconst NOTE = 'newJob(\"power-off\") fleetEvent({ type: \"boom\" })';\nconst RE = /setInterval\\(x\\)|[/(]/g;\nconst T = `writeFileSync(${'${'}NOTE}) ${'${'}RE.source}`;\n";
+    assert.deepEqual(partsProblems({ 'service/src/17-changes.mjs': `${PARTS['service/src/17-changes.mjs']}${quiet}` }).map(say), []);
   });
 });

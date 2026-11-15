@@ -1,4 +1,9 @@
 /* ───────── actions that change things: say it, and it's done (checked inside) ───────── */
+// Area: core
+// Rules: R1, R2, R3, R7, R8, R9, R12, R13, R15, R16, R17, R27, R35, R37, R38
+// Tests: change.test.mjs, hub.test.mjs, pause.test.mjs, files.test.mjs
+// Owns: agent-settings.json (writers: setAgentSettings)
+// Timers: none        Wakes: none
 // Sparkie, your agents (with "can change things" on their key) and the spark command all go through these, and each is
 // checked the same way before anything happens:
 //   1. inputs (checkInput)  2. a fresh plan, never the cached view  3. the rails below, in code  4. one change per Spark

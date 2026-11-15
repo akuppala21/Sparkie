@@ -1,4 +1,7 @@
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
+// Area: features        Rules: R46        Tests: tools.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Each round Sparkie's brain is offered the core (every action whose group is core) and the groups this request opened,
 // at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an
 // operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens

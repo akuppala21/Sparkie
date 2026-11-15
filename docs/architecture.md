@@ -1,7 +1,7 @@
 # How Spark Console is built
 
-Checked against the code on 2026-11-11 (the parts are listed in `docs/code-map.md`, which is generated; `/health` says
-which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
+Checked against the code on 2026-11-11 (the parts are in `docs/code-map.md`, timers and state writers in
+`docs/registry.md`, both generated; `/health` says which build runs). Pointers are names, never line numbers, and `node tools/make.mjs` checks them on every change: a part with its function names, or a test file with part of
 a test's name. When this map, a rule and `docs/contract.md` disagree, `AGENTS.md` says which wins.
 
 This map is the picture. The rest of what was here is in small files: the rules every change keeps, one per file, in
@@ -91,7 +91,7 @@ flowchart TD
   V1 -->|"model sparkie or the brain's served name: the agents route's model"| BRAIN
   V1 -->|"a running model's name: its own server, HTTP over the tailnet"| FLEET
   V1 -->|"a model that isn't running: startOnCall, via gateway, nothing may stop"| RUN
-  CHAT -->|"prompt, fleet notes, memory, the core tools and the request's groups (R46). Text and tool calls back"| BRAIN
+  CHAT -->|"prompt, fleet notes, memory, tool groups (R46). Text and tool calls back"| BRAIN
   CHAT -->|"each tool call, via sparkie, with the intent and the asker's words in ctx"| RUN
   RUN -->|"finds the action"| REG
   RUN -->|"untested: refused. Not validated: a validation run, or a question"| WF
@@ -114,7 +114,7 @@ flowchart TD
   HEAL -->|"docker restart of a silent brain, stop and start of a pair's leftover part"| SSH
   JOBS -->|"a start that answered; a repo downloaded by its full name joins Recipes"| KNOW
   JOBS -->|"desired list (never the self-test's own model), validation, chat notice, event; self-test.json while one runs"| STATE
-  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json"| STATE
+  SENSE -->|"knowledge, events, links, energy. watchHeld seeds desired.json (never the self-test's model)"| STATE
   KNOW -->|"verified, found setups, memory"| STATE
   KNOW -->|"research jobs (the four lists and the model's own card), the daily timer, search_huggingface, and a repo started or looked up by its full name being re-read on Hugging Face (addModel)"| WEB
   RUN -->|"search_web (keys and the fleet's own names and addresses hidden) and read_page: an address the owner wrote or a search returned, public only, checked as each hop connects (R39)"| WEB

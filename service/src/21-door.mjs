@@ -1,4 +1,7 @@
 /* ───────── the app door: the owner's kept apps from anywhere (R40) ───────── */
+// Area: features        Rules: R40        Tests: app-door.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // The owner opens an app kept running (keep_running, R38) on any Spark that isn't the brain's from anywhere, a phone
 // without Tailscale too, signed in as on the main address (the owner, 2026-11-12: "once you're signed in, you shouldn't
 // need a separate password"). It is Spark Console's own name on port 10000 (Funnel's one free port; 443 is the public

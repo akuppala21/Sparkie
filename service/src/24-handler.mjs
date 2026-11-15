@@ -1,4 +1,9 @@
 /* ───────── the public page ───────── */
+// Area: ways in
+// Rules: R1, R3, R4, R5, R8, R9, R11, R22, R27, R30, R33, R34, R38, R40
+// Tests: fleet.test.mjs, api.test.mjs, internet.test.mjs, passkey.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale
 // identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model,
 // container, job, chat, person, hostname or address.

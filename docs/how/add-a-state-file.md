@@ -12,7 +12,8 @@ new things go", row "A state file".
 - `docs/state.md`: a row for the new fact.
 - The daily copy's exclude list (`sendCopy`, `25-backup-and-start.mjs`) and the install snapshot (`on_exit` and its
   `save` in `deploy/host-on-portal.sh`), if it must be left out.
-- Its one writer (R22), named in the rule if it is one of the listed files.
+- Its part's header: `Owns: <file> (writers: …)`, naming every function that writes it, wherever it is (R22, R28).
+  `node tools/make.mjs` lists it in `docs/registry.md` and fails on a writer the header doesn't name.
 
 ## Never
 
@@ -25,7 +26,7 @@ new things go", row "A state file".
 ## Rules
 
 - R20: `writePrivate` to write, `readKept` to read-then-rewrite, no `await` between; one process.
-- R22: one writer each.
+- R22: one writer each, or the few the header declares.
 - R7: nothing in it holds a key.
 
 ## Tests

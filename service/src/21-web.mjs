@@ -1,4 +1,7 @@
 /* ───────── looking things up on the web ───────── */
+// Area: features        Rules: R39        Tests: web.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // When Sparkie doesn't know something (a new model, an error message, an engine flag, a how-to), search_web finds pages
 // and read_page reads one. Both are reads, open-world (an agent's 6 a minute at the door). What leaves the house is a
 // search query (keys and the fleet's own names and addresses hidden, 200 characters at most) and plain GETs: no cookies,

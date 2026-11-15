@@ -1,4 +1,9 @@
 /* ───────── jobs ───────── */
+// Area: ground
+// Rules: R7, R9, R13, R14, R15, R16, R21
+// Tests: change.test.mjs, state.test.mjs, pause.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 const jobs = new Map();
 // Set while the service is stopping: no new operations start (running ones get a moment to finish).
 let draining = false, agentFailuresInARow = [];

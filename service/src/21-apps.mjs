@@ -1,4 +1,7 @@
 /* ───────── apps kept running (R38) ───────── */
+// Area: features        Rules: R1, R2, R7, R23, R38, R40        Tests: apps.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
 // "Keep Open WebUI on Spark 3 running and give me its link" (A12). An app is any container that isn't a model: Open
 // WebUI, a database, a dashboard. keep_running puts one that's already on a Spark on the list of what should be running
 // (desired.json, an entry with app: true), restarts or stops one kept that way, or starts a new one from an image the

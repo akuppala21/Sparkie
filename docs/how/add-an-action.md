@@ -31,7 +31,7 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
 - The valid-argument tables: `door.test.mjs` (“read tools, valid arguments”) and `VALID` in `test/fuzz.test.mjs`
   (door tests want string, integer, boolean or array properties and the Spark enum on any "spark" property).
 - `NOT_A_STEP` (`18-workflows.mjs`) if it must not be a step of a saved workflow.
-- Run `node tools/make.mjs`: the code map lists the new action.
+- Run `node tools/make.mjs`: the code map and `docs/registry.md` list the new action.
 
 ## Never
 

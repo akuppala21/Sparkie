@@ -1,4 +1,7 @@
 /* ───────── multi-Spark readiness (read-only) ───────── */
+// Area: ground        Rules: R10, R17, R24        Tests: across.test.mjs, door.test.mjs
+// Owns: links.json (writers: fabric)
+// Timers: test (the cable test, fabric: 20 s after start, then every 10 minutes)        Wakes: none
 // Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the ConnectX links up with addresses
 // on a shared subnet, and full-MTU reachability between each pair. The console starts each Spark's part over its own
 // SSH from Spark 2, so Sparks don't need SSH to each other. Nothing here changes a Spark: it reads /sys and ip, and pings.

@@ -1,4 +1,7 @@
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
+// Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
+// Owns: sessions.json (writers: saveSessions)
+// Timers: none        Wakes: none
 // From the internet (Tailscale Funnel) a request carries no Tailscale identity, so on its own it's a public visitor.
 // The owner signs a browser in with their passkey, or lets a device in by its short code (a terminal, or a phone
 // without the passkey) from a device that's already signed in, confirming with the passkey. Each signed-in device holds

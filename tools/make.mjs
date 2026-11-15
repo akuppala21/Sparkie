@@ -1,8 +1,9 @@
 // The one command after any change: rebuilds what is generated, then checks the documents against the code.
 //
-//   node tools/make.mjs           writes service/server.mjs (the parts joined), docs/code-map.md and docs/rules.md
-//                                 when they differ, then runs tools/check-docs.mjs
-//   node tools/make.mjs --check   changes nothing: fails if any of the three is stale or the checker finds a problem
+//   node tools/make.mjs           writes service/server.mjs (the parts joined), docs/code-map.md, docs/registry.md and
+//                                 docs/rules.md when they differ, then runs tools/check-docs.mjs and the header check
+//                                 (checkParts in tools/parts.mjs)
+//   node tools/make.mjs --check   changes nothing: fails if any of the four is stale or a check finds a problem
 //
 // It exits 1 on any problem, with one line each.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -11,12 +12,14 @@ import { fileURLToPath } from 'node:url';
 import { buildServer } from './build-server.mjs';
 import { codeMap } from './code-map.mjs';
 import { checkDocs, rulesIndex, describe } from './check-docs.mjs';
+import { checkParts, registry } from './parts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');
 const MADE = [
   ['service/server.mjs', buildServer, 'node tools/build-server.mjs'],
-  ['docs/code-map.md', codeMap, 'node tools/code-map.mjs'],
+  ['docs/code-map.md', () => codeMap(), 'node tools/code-map.mjs'],
+  ['docs/registry.md', () => registry(), 'the parts and their headers (tools/parts.mjs)'],
   ['docs/rules.md', () => rulesIndex(ROOT), 'the rule files in docs/rules/'],
 ];
 
@@ -35,7 +38,7 @@ for (const [file, make, from] of MADE) {
   }
 }
 
-const problems = checkDocs(ROOT);
+const problems = [...checkDocs(ROOT), ...checkParts(ROOT)];
 for (const p of problems) console.error(describe(p));
 if (problems.length) {
   console.error(`The documents have drifted from the code (${problems.length} problem${problems.length === 1 ? '' : 's'}): fix the document, or the code if the document is right.`);

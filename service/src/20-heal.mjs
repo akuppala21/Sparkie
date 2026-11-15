@@ -1,4 +1,9 @@
 /* ───────── self-healing, more of it (v3.1, 2026-11-11) ───────── */
+// Area: safety
+// Rules: R7, R8, R11, R18, R19, R21, R34, R38
+// Tests: heal.test.mjs, heal-more.test.mjs, heal-newer.test.mjs, heal-displaced.test.mjs, heal-power.test.mjs
+// Owns: none
+// Timers: healPass (every 60 s)        Wakes: none
 // Fixing things by itself is what matters most to the owner (2026-11-11). On top of a crashed one-Spark model coming
 // back (maybeHeal), every minute, with the owner's switch (automatic restarts) on and agents not paused:
 // - a model across two Sparks that lost a part: what's left of it stops, and it starts again across the same Sparks
@@ -126,7 +131,7 @@ async function bringBack(x, why, parts, power = false) {
     }
     skippedOnce.set(key, 'failed');
     fleetEvent({ type: 'heal-skipped', spark: x.spark, container: x.container, why: `bringing it back failed: ${maskSecrets(String(e.message).split('\n')[0].slice(0, 500)).slice(0, 300)}` });
-    audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: String(e.message).slice(0, 300) });
+    audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: { spark: x.spark, container: x.container }, ok: false, error: maskSecrets(String(e.message).slice(0, 500)).slice(0, 300) });
   }
 }
 
