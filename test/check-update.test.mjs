@@ -3,8 +3,8 @@
 // makes them; a stand-in git first on the service's PATH refuses a fetch without the right token). A newer tagged build
 // is named, said to change what the brain reads or not, with the eval "not run", and its commits come as data; none
 // newer is said; a newer head without the tested mark isn't offered; a refused token is said, puts a line on the
-// needs-you list, and the line goes once a check gets through. The token is in no answer. A member may not call it;
-// any agent key may (it is a read).
+// needs-you list, and the line goes once a check gets through. The token is in no answer. Someone on the tailnet who
+// isn't the owner may not call it; any agent key may (it is a read).
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -137,9 +137,12 @@ describe('check_update', { concurrency: 1 }, () => {
     assert.ok(!(await needs()).some(l => /install’s token/.test(l)));
   });
 
-  test('a member may not call it; an agent’s key may (it is a read)', async () => {
-    const m = await api('/actions/check_update', { method: 'POST', body: {}, headers: { 'tailscale-user-login': MEMBER } });
-    assert.equal(m.status, 403, m.text);
+  test('someone on the tailnet who isn’t the owner may not call it; an agent’s key may (it is a read)', async () => {
+    // (members are gone, E10d: a stranger on the tailnet, and someone who used to be a member, are both nobody: 401)
+    for (const login of ['stranger@test', MEMBER]) {
+      const m = await api('/actions/check_update', { method: 'POST', body: {}, headers: { 'tailscale-user-login': login } });
+      assert.equal(m.status, 401, `${login}: ${m.text}`);
+    }
     const k = await createKey('upd');
     const r = await call(k.token, 'check_update', {});
     assert.ok(!r.isError, r.text);
