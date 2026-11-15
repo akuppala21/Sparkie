@@ -227,6 +227,10 @@ test('a change starts in the work folder, ~/work, which the console makes first 
   const h = await run('echo h > notes/home.txt', 'spark3', '~');
   assert.equal(h.status, 200, h.text);
   assert.equal(held(unitOf('echo h > notes/home.txt')), H3());
+  // An at-once change's time limit: 30 seconds on a Spark (this fleet shortens it), as the unit was given it.
+  assert.match(readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8'), /^const RUNNER_SECONDS = Number\(ALL_LOCAL && process\.env\.SPARK_CONSOLE_RUN_SECONDS\) \|\| 30;$/m);
+  const unit = lines(join(H3(), '.rehearsal', 'calls.log')).find(c => c[0] === 'systemd-run' && c.includes(`--unit=${unitOf('echo h > notes/home.txt')}`));
+  assert.ok(unit?.includes(`RuntimeMaxSec=${SECONDS}`), JSON.stringify(unit));
 });
 
 test('a change the sorter places in the model store is asked, and runs after the yes; until the helper takes ~/ for --protect none is passed', { timeout: 120000 * SLOW }, async () => {
