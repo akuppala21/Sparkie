@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`. What to read first is in `AGENTS.md`.
 
-The service is 38 parts in `service/src/`, joined in name order into `service/server.mjs` (11537 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
+The service is 39 parts in `service/src/`, joined in name order into `service/server.mjs` (11639 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts.
 
 ## Every action, and where it lives
 
@@ -210,6 +210,14 @@ Every minute the console looks at every container on every Spark (models, servic
 - **Runs on a timer:** `watchFleet`
 - **Functions:** `events`, `fleetEvent`, `describeEvent`, `reading`, `lastReading`, `readingWords`, `darkPeriods`, `watchScript`, `learnedFrom`, `watchSpark`, `learnRecipe`, `learnModels`, `noteSparkStates`, `saveKnowledge`, `watchFleet`, `sparkOff`, `fleetNotes`
 
+### `20-beat.mjs`: the outside heartbeat: an outside service notices when Spark 2 stops
+
+Once the owner has saved a check's ping address (Healthchecks.io: https://hc-ping.com/<uuid>) on the passkey page, Spark Console sends it one GET every 5 minutes, so that service raises the alarm (by email, or its own Telegram bot) when Spark 2 or the console goes quiet. Silence is the signal, so this is the one timer that ticks when nothing changed. The request carries nothing: no body, no query, no cookie, one fixed User-Agent. The host is fixed; what the owner saves only names the check, and a redirect is never followed. The address is a secret (whoever holds it can beat in Spark 2's …
+
+- **Lines:** 93
+- **Runs on a timer:** `beatOnce`
+- **Functions:** `beatEnv`, `beatAddress`, `beatOnce`, `beatStart`, `beatLate`, `beatView`, `heartbeatRoute`
+
 ### `20-desired.mjs`: what should be running (docs/contract.md 6.13, 8.8–8.10)
 
 The owner's list of what should be running on each Spark: every model a change started, in numbered revisions. A start adds to it and a stop takes away, when they finish. Self-healing keeps crashed ones running (6.12). One that isn't running and won't come back by itself (cut off by a power loss, crash-looping, stopped outside Spark Console, its Spark gone) is *held*: the owner brings it back with one click, or forgets it. Nothing here ever stops anything. "Cancel" stops an operation at its next step and puts back what it did; "undo" goes back to the revision before this chat's last change.
@@ -249,7 +257,7 @@ What the owner asks Sparkie to remember across chats: preferences ("Spark 3 is w
 
 One list of open problems, built by code each time it is asked for, from facts Spark Console already holds: no model call, no look at another Spark, and no text from a log, an error, a container's output or the web (so fleet_status stays a read of the console's own numbers). Lock-out first, then the owner's data, then the fleet. A line stands while its cause does and goes when the cause goes, never because it was shown. Each cause is tried by itself, so one that throws never breaks /status. At most 8 lines are said (needsLines: the 8th counts the rest): in /status (page and Telegram), at the …
 
-- **Lines:** 67
+- **Lines:** 69
 - **Functions:** `tilde`, `openProblems`, `needsLines`
 
 ### `20-tell.mjs`: telling the owner on Telegram
@@ -318,7 +326,7 @@ When Sparkie doesn't know something (a new model, an error message, an engine fl
 
 One portal for everyone: Tailscale says who you are (owner, member, or someone asking), and for the few changes to who has access (people, invites, agent keys and their rights, resuming paused agents) the owner also confirms with a passkey (Touch ID, Face ID, a phone or a security key). Each confirmation signs a one-time challenge bound to that exact request, so a program on the owner's device can't make those changes with Tailscale's identity alone. Until a passkey is set up, these changes need none (nothing can lock the owner out).
 
-- **Lines:** 182
+- **Lines:** 185
 - **State files it names:** `passkeys.json`
 - **Functions:** `passkeys`, `savePasskeys`, `passkeyOrigins`, `passkeyRpIds`, `counterNote`, `actionHash`, `newChallenge`, `describeChange`, `takeChallenge`, `passkeyNeeded`, `mayNeedPasskey`, `bodyLimit`, `stopsOutside`, `needsPasskey`, `refuseHiddenFiles`, `passkeyGate`
 
@@ -341,14 +349,14 @@ From the internet (Tailscale Funnel) a request carries no Tailscale identity, so
 
 Anyone may see the fleet's hardware and load, from the internet too. Internet (Funnel) traffic carries no Tailscale identity, so it never gets past the sign-in check: this is the only thing it can read. Nothing here names a model, container, job, chat, person, hostname or address.
 
-- **Lines:** 706
+- **Lines:** 708
 - **Functions:** `publicFleet`, `publicValue`, `clientAddress`, `requestGate`, `handler`
 
 ### `25-backup-and-start.mjs`: a daily copy of the console's state on another Spark
 
 People, passkeys, agent keys, chats, recipes that worked and the fleet's record are copied once a day to another Spark (Spark 3 unless config.json names one, then the next other Spark that takes it; never the brain's Spark or this one), keeping the last 14, so losing Spark 2's disk loses none of it (F17). Each copy arrives as <name>.part and is read back whole (gzip -t) there; only once tar here has ended well too does a second command move it into place and remove the oldest beyond 14, and otherwise that command removes the .part. So a copy cut short, or one tar couldn't finish (a file it …
 
-- **Lines:** 141
+- **Lines:** 143
 - **State files it names:** `backup.json`
 - **Runs on a timer:** `backupIfDue`, `needsMeTick`
 - **Functions:** `dayOf`, `backupLate`, `backupTargets`, `sendCopy`, `backupState`, `backupIfDue`, `refuseUpgrade`, `openSockets`

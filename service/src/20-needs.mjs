@@ -56,6 +56,8 @@ function openProblems() {
       if (crashAt > since) { n++; last = Math.max(last, crashAt); }
       if (n) add('restarts', `Spark Console stopped and was started again ${n} time${n === 1 ? '' : 's'} in the last day (last at ${new Date(last).toISOString().slice(11, 16)} UTC). If it keeps happening, ask Sparkie what went wrong.`);
     },
+    // The outside heartbeat (20-beat.mjs) has failed for an hour.
+    () => { if (beatLate()) add('heartbeat', `Spark Console hasn’t reached its outside check (hc-ping.com) for over an hour, so the check may say ${here} is down while it is up. Check that ${here} reaches the internet, and that the check still exists at Healthchecks.io.`); },
   ];
   for (const f of sources) { try { f(); } catch {} }
   return out;
