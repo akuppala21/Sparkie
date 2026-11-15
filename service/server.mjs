@@ -11882,6 +11882,7 @@ const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exe
 function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
+  ctx.touched?.add(w);
   if (/[\x00-\x1f\x7f]/.test(w.text)) unsure('It names a file with a line break, a tab or another control sign in its name.');
   // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
   // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
@@ -11900,9 +11901,18 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
     ctx.changes.set(p, ctx.changes.get(p) || wide);
   }
 }
-const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
+const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`))
+  || (ctx.before.length > 0 && ([p, ...sortUp(p)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, p, ctx))));
 // A path written before this command (opts.written, a * kept): p is it or under it.
-const sortBefore = (b, p) => (b === '/' || (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`)));
+// (each pattern tested against p and each folder above it is a step of the work bound, so a full list can't make the
+// sorter slow)
+const sortBefore = (b, p, ctx) => {
+  if (b === '/') return true;
+  if (!/[*?[]/.test(b)) return p === b || p.startsWith(`${b}/`);
+  const up = [p, ...sortUp(p)];
+  if ((ctx.steps += up.length) > SORT_STEPS) unsure('It names more places than the sorter reads against what the task wrote before.');
+  return up.some(a => sortGlob(b).test(a));
+};
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
@@ -12408,6 +12418,9 @@ async function recallAnswer({ about, id, kind, spark, when, since, until, limit 
 // one-word name, a name of the fleet or of a service that turns a name into the number in it (nip.io), or forces an
 // address (--resolve, --connect-to, a proxy, a socket) is asked; a name that DNS alone turns into the Spark is not seen.
 const sortHost = (ctx, h) => ctx.hosts[h] ?? ctx.hosts[String(h).toLowerCase()];
+// A host of the fleet or the home network: a one-word name, a fleet name, a private, link-local or tailnet address, or a
+// name under .local, .lan, .home.arpa, .internal or .ts.net.
+const sortNear = (h, ctx) => !!h && (!h.includes('.') || !!sortHost(ctx, h.split('.')[0]) || /^(?:10|127)\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^169\.254\.|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|^\[|(?:^|\.)(?:local|lan|home\.arpa|internal|ts\.net|localhost)\.?$/i.test(h));
 const sortDns = (h, ctx) => /^(?=[^/]*[a-z])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$/i.test(h) && !h.split('.').some(l => /^\d+$|^0x/i.test(l) || sortHost(ctx, l))
   && !/(?:^|\.)(?:localhost|local|localdomain|internal|lan|home\.arpa|ts\.net|nip\.io|sslip\.io|xip\.io|localtest\.me|lvh\.me|vcap\.me|traefik\.me|localhost\.direct)\.?$/i.test(h);
 // A far path, from the far home ('' and . are the home), placed as a path there (wide when it is where a copy lands).
@@ -12431,6 +12444,11 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'change', `${sortQ(name)} reaches the network, which a look’s wall has none of.`);
     ctx.piped = ctx.fetchSeen = ctx.fetched = true;
     if (t.some(s => /^--(?:abstract-)?unix-socket|(?:^|\/\/|@)(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\])(?=[:/]|$)/i.test(s))) sortOpen(ctx, r, `${sortQ(name)} reaches a local-only port or socket on its own Spark, which the run wall hides.`);
+    const near = urls.find(u => sortNear(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `${sortQ(name)} reaches ${sortQ(near)}, a Spark or the home network: inside the wall there is no route there, so it is asked.`);
+    // (an option that decides where it connects, or reads its addresses from a file, may point at the same: asked)
+    const via = o.opts.find(([n]) => (name === 'curl' ? /^(?:resolve|connect-to|x|proxy|preproxy|socks\w*|dns-servers|doh-url)$/ : /^(?:i|input-file|B|base|e|execute)$/).test(n));
+    if (via) raise(r, 'risky', `${sortQ(name)} ${sortQ(`${via[0].length > 1 ? '--' : '-'}${via[0]}`)} decides where it connects, maybe a Spark or the home network: asked.`);
     if (ctx.root) {
       const odd = urls.find(u => !sortDns(/^(?:[a-z][\w+.-]*:\/\/)?(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(u)?.[1] ?? '', ctx));
       const forced = o.opts.find(([n]) => /^(?:resolve|connect-to|unix-socket|abstract-unix-socket|x|proxy|noproxy|i|input-file|B|base)$/.test(n));
@@ -12506,6 +12524,8 @@ Object.assign(SORT_HANDLERS, {
       const place = sortHost(ctx, m[1]);
       if (!place) raise(r, 'risky', `It copies to or from ${sortQ(m[1])}, which isn’t one of the Sparks.`);
       else if (lastOne) raise(r, 'risky', `It writes files on ${sortQ(m[1])}, outside every wall and copy there: a copy onto another Spark is asked.`);
+      // (a copy from another Spark too: inside the wall it has no key and no route, so it is asked, not left to fail)
+      else raise(r, 'risky', `It copies from ${sortQ(m[1])}, another Spark: inside the wall there is no key and no route there, so it is asked.`);
       sortFar(m[2], ctx, r, rec && lastOne);
     });
     // (each source lands in the folder under its own name, a source ending in / as what it holds; rsync -b keeps what
@@ -12528,6 +12548,62 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });
+/* ───────── the sorter's plain shape: what a command run at once must look like (R64) ───────── */
+// Area: safety        Rules: R64        Tests: sort.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null.
+// The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as
+// a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain
+// redirections (> >> < &> to a path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set
+// before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a
+// cd as the last command; the /proc status files. 20-sort.mjs asks a change that is not of the shape (a doubt), and a
+// look only for a {…}: the tables' lock-out and risky answers stand. New spellings fall outside the shape and are
+// asked, so the tables no longer have to be complete.
+const SHAPE_PROC = /^\/proc\/(?:meminfo|cpuinfo|loadavg|uptime|version|stat|vmstat|swaps|mounts|partitions|diskstats|pressure\/(?:cpu|memory|io)|net\/dev|self\/status|driver\/nvidia\/version)$/;
+const SHAPE_REDIR = /^(?:>|>>|<|&>|&>>)$/;
+// (the names a command may set before it and keep the shape: the safe ones, and a few Hugging Face and logging switches)
+const SHAPE_SAFE = /^(?:HF_HUB_ENABLE_HF_TRANSFER|HF_HUB_OFFLINE|HF_HUB_DISABLE_\w+|TOKENIZERS_PARALLELISM|WANDB_MODE)$/;
+const sortShapeWord = (w, cmd, ctx) => {
+  if (w.brace || sortNested(w.bare ?? '')) return [`${sortQ(w.text)} holds a {…}`, true];
+  const echo = cmd.words[0]?.text === 'echo' && cmd.words[0] !== w && cmd.words.includes(w);
+  if (w.unknown && !echo && !(!w.vars && w.subs?.length && w.subs.every(sortNproc))) return [`${sortQ(w.text || '$…')} holds a $ or a command`];
+  if (w.glob && !ctx.touched.has(w)) return [`${sortQ(w.text)} holds a pattern in a word that is not a file it changes`];
+  for (const m of w.text.matchAll(/\/(?:dev|proc)(?:\/[^\s'"=:,;]*)?/g)) if (m[0] !== '/dev/null' && !SHAPE_PROC.test(m[0])) return [`${sortQ(w.text)} names ${sortQ(m[0])}`];
+  return null;
+};
+function sortShape(items, ctx) {
+  const cds = [];
+  let why = null, brace = false;
+  const no = (x, b = false) => { why ??= x; brace ||= b; };
+  const walk = (list, top) => list.forEach((pipe, n) => {
+    if (pipe.op === '&' && n < list.length - 1) no('it sends a command off with & before the end');
+    for (const cmd of pipe) {
+      if (cmd.group) { no('it holds a group or a subshell'); walk(cmd.group, false); }
+      if (/^(?:cd|pushd|popd)$/.test(cmd.words[0]?.text ?? '')) cds.push({ cmd, pipe, n, top, last: top && n === list.length - 1 });
+      const prog = cmd.words[0]?.text ?? '';
+      for (const d of cmd.redirs) {
+        if (/^<</.test(d.op)) { if (!/^(?:cat|tee)$/.test(prog)) no('it hands a program here-text'); continue; }
+        if (/^[<>]&$/.test(d.op) && /^[12]$/.test(d.w.text) && !d.w.unknown) continue;
+        // (its path is a word like the others below: quoted is a name, a pattern only where it is placed)
+        if (!SHAPE_REDIR.test(d.op) || (d.fd != null && !/^[012]$/.test(d.fd))) no(`it has the redirection ${sortQ(`${d.fd ?? ''}${d.op}${d.w.text}`)}`);
+      }
+      for (const w of [...cmd.assigns, ...cmd.words, ...cmd.redirs.map(d => d.w)]) {
+        const bad = sortShapeWord(w, cmd, ctx);
+        if (bad) no(bad[0], bad[1]);
+        for (const s of w.subs ?? []) walk(s, false);
+      }
+    }
+  });
+  walk(items, true);
+  // (every way a name is set goes through sortAssign: before a program, env, export and its kin, read, unset)
+  for (const n of ctx.sets ?? []) if (!SAFE_ENV.test(n) && !SHAPE_SAFE.test(n)) { no(`it sets ${sortQ(n)}`); break; }
+  // (one cd: the first word, cd <folder> &&; or, allowed, a plain cd as the last command)
+  const ok = c => c.top && sortIsCd(c.pipe) && c.cmd.words[0].text === 'cd' && c.cmd.words.length === 2 && c.cmd.words[1].plain && !/^-/.test(c.cmd.words[1].text) && !c.cmd.words[1].glob && !c.cmd.words[1].brace
+    && ((c.n === 0 && c.pipe.op === '&&') || c.last);
+  if (cds.length > 1 || cds.some(c => !ok(c))) no('it changes folder other than once, first, as cd <folder> &&');
+  return why ? { why: `It is not of the plain shape a command run at once has: ${why}.`, brace } : null;
+}
 /* ───────── how bash reads a command: words, pipelines, here-documents (for the sorter) ───────── */
 // Area: safety        Rules: R55        Tests: sort.test.mjs
 // Owns: none
@@ -12770,6 +12846,7 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
 function sortAssign(name, ctx, r, prefix) {
+  ctx.sets?.add(name);
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
@@ -12781,7 +12858,7 @@ function sortAssign(name, ctx, r, prefix) {
 // pipe's part changes no folder after it (the folders it may be in only grow).
 const sortIsCd = p => p.length === 1 && !p[0].group && /^(?:cd|pushd)$/.test(p[0].words[0]?.text ?? '') && !p[0].words[0].unknown;
 const sortOneCd = p => sortIsCd(p) && !p[0].neg && p[0].words[0].text === 'cd' && p[0].words.length === 2 && !p[0].assigns.length && !p[0].redirs.length
-  && !/^-/.test(p[0].words[1].text) && !p[0].words[1].unknown && !p[0].words[1].glob && !p[0].words[1].brace;
+  && p[0].words[1].plain && !/^-/.test(p[0].words[1].text) && !p[0].words[1].glob && !p[0].words[1].brace;
 function sortList(items, ctx, r, inPipe = false, top = false) {
   if (items.length > 1) r.simple = false;
   let start = new Set(ctx.cwds), reached = [], narrowed = false;
@@ -12857,7 +12934,8 @@ function sortCmd(cmd, ctx, r, inPipe) {
 // (make alone, a one-liner that imports from where it starts), when a word names a folder it wrote into (pip install
 // /tmp/p, node /tmp/p), or as root.
 const sortWroteIn = (d, ctx) => [...ctx.written].some(p => p.startsWith(d === '/' ? '/' : `${d}/`)) || [...ctx.under].some(u => d === u || d.startsWith(`${u}/`) || u.startsWith(`${d}/`))
-  || ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`) || sortBefore(b, d));
+  || (ctx.before.length > 0 && ((ctx.steps += Math.ceil(ctx.before.length / 64)) > SORT_STEPS ? unsure('It names more places than the sorter reads against what the task wrote before.')
+    : ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`)) || [d, ...sortUp(d)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, d, ctx))));
 function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
@@ -12983,6 +13061,8 @@ function sortFile(name, kind, args, ctx, r) {
     if (src) to(a, `${at}/${a.text.replace(/\/+$/, '').split('/').pop()}`);
     if (src && o.has('parents')) to(a, `${at}/${a.text.replace(/^\/+/, '')}`);
   }
+  // (install -d, and mkdir with a mode, set the mode of each folder they name: a folder above a way in reaches it)
+  if ((name === 'install' && o.has('d', 'directory')) || (/^(?:mkdir|mkfifo)$/.test(name) && o.has('m', 'mode'))) { for (const a of files) sortTouch(a, ctx, r, true, false); return; }
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
@@ -12993,7 +13073,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], cloned: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -13010,6 +13090,8 @@ function sortCommand(command, opts) {
       if (typeof b !== 'string' || !/^(?:~(?:\/|$)|\/)/.test(b) || /[\x00-\x1f\x7f]/.test(b) || b.length > SORT_PATH) unsure('A path written before is not one the sorter can place.');
       ctx.before.push(sortNorm(b, null, home));
     }
+    ctx.beforePlain = new Set(ctx.before.filter(b => !/[*?[]/.test(b)));
+    ctx.beforeGlob = ctx.before.filter(b => /[*?[]/.test(b));
     if (ctx.at !== 'compute' && ctx.at !== 'hub') { ctx.at = 'hub'; unsure('Where it runs is not one the sorter knows.'); }
     const dir = o.dir == null ? '~' : String(o.dir);
     if (/[$`\\\x00-\x1f\x7f]|^~[^/]|(?:^|\/)proc(?:\/|$)/.test(dir)) unsure('The folder it starts in is not one the sorter can place.');
@@ -13022,7 +13104,8 @@ function sortCommand(command, opts) {
       const odd = /[^\t\n\x20-\x7e]/u.exec(text);
       if (odd) unsure(`It holds the sign U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, which isn’t plain ASCII: such a sign can look like ; | > or a quote and not be one.`);
       form = lookForm(text);
-      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.'; else sortList(shellParse(shellLex(text).toks), ctx, r, false, true);
+      if (form) r.why = 'It is one of the exact forms a look runs as code’s own text.';
+      else { const items = shellParse(shellLex(text).toks); sortList(items, ctx, r, false, true); ctx.shape = sortShape(items, ctx); }
       if (r.class !== 'look') sortSee(ctx.words, ctx, r);
     }
   } catch (e) {
@@ -13039,6 +13122,8 @@ function sortCommand(command, opts) {
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
+      // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
+      if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
     }
     sortAt(r, ctx);
   } catch { raise(r, 'risky', 'The sorter could not read this command.'); }
@@ -13262,10 +13347,10 @@ function sortWrap(args, ctx, r, x, name) {
     if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true); continue; }
-    // (env -u takes a name away, as unset does; env -i or a lone - empties the environment, where the run wall keeps
-    // git's hooks off: asked)
+    // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
+    // wall keeps git's hooks off: asked)
     if (name === 'env' && (/^-[^-]*u/.test(t) || /^--unset(?:=|$)/.test(t))) sortAssign((/^--unset=(.*)$/.exec(t)?.[1] ?? /^-[^-]*?u(.+)$/.exec(t)?.[1] ?? args[k + 1]?.text ?? '').trim() || '?', ctx, r, false);
-    if (name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) raise(r, 'risky', 'env empties the environment, where the run wall keeps git’s hooks and settings off: asked.');
+    if ((name === 'env' && (t === '-' || /^-[^-]*i|^--ignore-environment$/.test(t))) || (name === 'exec' && /^-[^-]*c/.test(t))) raise(r, 'risky', `${sortQ(name)} empties the environment, where the run wall keeps git’s hooks and settings off: asked.`);
     if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;
@@ -13719,6 +13804,8 @@ Object.assign(SORT_HANDLERS, {
     for (const c of v === 'rebase' ? o.all('x', 'exec') : v === 'difftool' ? o.all('x', 'extcmd') : []) sortElsewhere([c], ctx, r, `git ${v} -x`);
     if (cut >= 0 && v === 'bisect') sortProgram(own.slice(cut + 1), ctx, r, x);
     if (cut >= 0 && v === 'submodule') { const s = own.slice(cut + 1), n = s.findIndex(w => !/^(?:--recursive|-q|--quiet)$/.test(w.text)); sortElsewhere(n < 0 ? [] : s.slice(n), ctx, r, 'git submodule foreach'); }
+    // (timers that run git by themselves, or settings written for every repository)
+    if ((v === 'maintenance' && /^(?:start|register|schedule)$/.test(p[0]?.text ?? '')) || (v === 'lfs' && /^(?:install|update)$/.test(p[0]?.text ?? ''))) raise(r, 'risky', `git ${sortQ(v)} ${sortQ(p[0].text)} sets timers or settings later git commands run by themselves.`);
     if (v === 'config') {
       if (o.has('global', 'system', 'file', 'f')) raise(r, 'risky', 'git config --global, --system or --file changes what every later git command runs (aliases, hooks, pagers).');
       if (p[0]?.text === 'edit') unsure('git config edit opens an editor.');
@@ -13729,6 +13816,9 @@ Object.assign(SORT_HANDLERS, {
     if (v === 'push' && p[0] && (p[0].unknown || /:\/\/|^[^/:]+:/.test(p[0].text))) raise(r, 'risky', `git push to ${sortQ(p[0].text)} writes on another machine, outside every wall and copy: asked (a push to a named remote is a change).`);
     else if (v === 'push' && /^[~/.]/.test(p[0]?.text ?? '')) sortTouch(p[0], ctx, r, true);
     if (/^(?:clone|pull|fetch|submodule)$/.test(v) || (v === 'lfs' && /^(?:pull|fetch)$/.test(p[0]?.text))) ctx.fetched = ctx.fetchSeen = true;
+    // (git with a Spark or the home network, over ssh or an address: inside the wall no key and no route, so asked)
+    const near = p.find(w => !w.unknown && sortNear((/^[a-z][\w+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)/i.exec(w.text) ?? /^(?:[^@/:]*@)?([^/:]+):(?!\/\/)/.exec(w.text))?.[1] ?? '', ctx));
+    if (near) raise(r, 'risky', `git ${sortQ(v)} reaches ${sortQ(near.text)}, a Spark or the home network: inside the wall there is no key and no route there, so it is asked.`);
     if (v === 'stash' && o.has('u', 'a', 'include-untracked', 'all')) raise(r, 'risky', 'git stash -u or -a takes files git doesn’t track (or ignores) out of the folder, which the copy first doesn’t cover.');
     if (/^(?:clean|restore)$/.test(v) || (v === 'reset' && o.has('hard')) || (v === 'checkout' && (o.has('f', 'force') || rest.some(s => /^(?:--|\.)$/.test(s)))) || (v === 'stash' && /^(?:drop|clear)$/.test(p[0]?.text))) sortGone(ctx, r, `git ${sortQ(v)} throws away files or changes it doesn’t copy first.`);
     // A sub-command that changes the work tree writes what the repository or a patch holds, not what its words say: it
@@ -13836,8 +13926,12 @@ Object.assign(SORT_HANDLERS, {
     if (/^(?:upload|upload-large-folder|repo|repo-files|tag|lfs-\S+|jobs)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes files or runs jobs on the Hugging Face hub, another machine.`);
     if (/^(?:login|logout|auth)$/.test(p[0])) raise(r, 'risky', `${sortQ(name)} ${sortQ(p[0])} changes the Hugging Face sign-in on that Spark.`);
     if (p[0] === 'delete-cache' || (p[0] === 'cache' && /^(?:rm|delete|prune)$/.test(p[1]))) sortGone(ctx, r, `${sortQ(name)} ${sortQ(p[0])} removes downloaded models.`);
-    const d = o.all('local-dir').at(-1);
+    // (a download goes where it says, or into the model store under the repository's own name: the whole store when the
+    // name, its kind or the store is not plain)
+    const d = o.all('local-dir').at(-1), id = o.plain[1], kind = o.all('repo-type').at(-1), cd = o.all('cache-dir').at(-1);
+    const store = cd ?? { text: '~/.cache/huggingface/hub', bare: '', tilde: true, plain: true, subs: [] }, sure = [id, kind, cd].every(w => !w || !(w.unknown || w.glob || w.brace));
     if (d) sortInto(d, ctx, r);
+    else if (p[0] === 'download' && id) sortInto(sure ? { ...store, text: `${store.text.replace(/\/+$/, '')}/${kind?.text ?? 'model'}s--${id.text.replace(/\//g, '--')}` } : store, ctx, r);
     for (const w of o.plain.slice(1)) sortTouch(w, ctx, r, false);
   },
   systemctl(a, ctx, r) {
