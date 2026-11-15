@@ -36,9 +36,9 @@ function brainProfiles() {
 }
 const brainProfileOf = m => brainProfiles()[brainKey(m)] || null;
 // The one writer of brain-profiles.json (R22). A new check of a setup keeps what the eval stored for it (evals), and
-// the newest 50 setups are kept.
-function saveBrainProfile(p) {
-  const kept = brainProfiles(), all = { ...kept, [p.key]: { ...p, evals: kept[p.key]?.evals || {} } };
+// the newest 50 setups are kept. evals: the eval's results, given only by storeBrainEval (21-brain-eval.mjs).
+function saveBrainProfile(p, evals = null) {
+  const kept = brainProfiles(), all = { ...kept, [p.key]: { ...p, evals: evals || kept[p.key]?.evals || {} } };
   const newest = Object.values(all).filter(x => x && typeof x === 'object').sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 50);
   writePrivate(BRAIN_PROFILES_FILE, { profiles: Object.fromEntries(newest.map(x => [x.key, x])) });
 }
@@ -184,7 +184,7 @@ function checkBrainSoon(why, { ifNone = false } = {}) {
 function brainCheckView() {
   try {
     if (!MAIN) return null;
-    const p = brainProfileOf(MAIN), now = { checkingNow: Boolean(brainChecking), readsNow: brainReadsNow() };
+    const p = brainProfileOf(MAIN), now = { checkingNow: Boolean(brainChecking), readsNow: brainReadsNow(), inUse: brainInUse(), eval: brainEvalView(p) };
     const lastTry = brainCheckLast && !brainCheckLast.kept && (!p || brainCheckLast.at > p.at) ? brainCheckLast : null;
     const ask = 'The owner can ask for a check: POST /console/api/main/check.';
     if (!p) return { outcome: 'not checked', because: ['No check has run on this setup yet (this model, engine, image and flags).'], ...now, ...(lastTry ? { lastTry } : {}), ask };
