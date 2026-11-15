@@ -43,6 +43,8 @@ function openProblems() {
       const g = lastBackup.good;
       add('copy', `Spark Console’s state ${g ? `hasn’t been copied to another Spark since ${String(g.at).slice(0, 10)}` : 'has never been copied to another Spark'}. It tries every hour and needs another Spark on. Until then, losing ${here}’s disk would lose what changed since.`);
     },
+    // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
+    () => memoryNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
