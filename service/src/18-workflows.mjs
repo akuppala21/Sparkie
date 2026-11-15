@@ -203,7 +203,7 @@ function fillIn(v, inputs) {
 }
 const placeholders = v => [...JSON.stringify(v || {}).matchAll(/\{(\w+)\}/g)].map(m => m[1]);
 const savedView = w => ({ name: w.id, title: w.title, when: w.when || null, inputs: w.inputs || {}, steps: w.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
-  savedAt: w.at, by: w.by, lastRun: w.lastRun || null });
+  savedAt: w.at, by: w.by, lastRun: w.lastRun || null, ...(w.approved ? { imagesApproved: w.approved.images } : {}) });
 const findSaved = name => { const id = workflowSlug(name); return savedWorkflows().find(w => w.id === id || w.title.toLowerCase() === String(name).toLowerCase()) || null; };
 function writeSaved(list) { writePrivate(SAVED_FILE, { workflows: list }); }
 // A step's arguments, with its Sparks as ids ("Spark 4" is spark4). Anything that isn't a step has none (F20).
@@ -214,11 +214,17 @@ function stepArgs(st) {
 }
 // The steps in plain words, built from their arguments (never from Sparkie's summary), for the button that saves them;
 // keys masked, as on every button (before the cut, so no piece of one shows).
-const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => {
+const stepWords = steps => (Array.isArray(steps) ? steps : []).slice(0, 12).map((st, i) => `${i + 1}. ${stepLine(st)}${st?.keep === true ? ', kept running' : ''}`).join('; ');
+// One step's words. A keep_running step that names an image is never cut: the owner's press is also the yes to that
+// image (D6c), so its button shows every argument whole, and a dev box's no-password line (the workloads review, A1).
+function stepLine(st) {
   const a = stepArgs(st), action = String(st?.action || '');
+  if (['start_model', 'stop_model', 'restart_model'].includes(action)) return maskSecrets(changeLabel(action, a)).slice(0, 140);
   const given = Object.entries(a).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-  return `${i + 1}. ${maskSecrets(['start_model', 'stop_model', 'restart_model'].includes(action) ? changeLabel(action, a) : `${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`).slice(0, 140)}${st?.keep === true ? ', kept running' : ''}`;
-}).join('; ');
+  const words = maskSecrets(`${ACTIONS.get(action)?.title || action || 'not a step'}${given ? ` (${given})` : ''}`);
+  if (action !== 'keep_running' || typeof a.image !== 'string') return words.slice(0, 140);
+  return `${words}${(a.command === undefined || Array.isArray(a.command)) && devBox(a) ? `. ${DEV_BOX_WORDS.replace(/\.$/, '')}` : ''}`;
+}
 // A saved step can't carry the answer to a question; that's given when it's asked.
 const APPROVAL_ARGS = ['choice', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops', '__validate'];
 
@@ -306,6 +312,8 @@ action({
     from: { type: 'string', enum: ['this request'], description: 'In place of steps, for “save that as …”: the changes the owner’s request just before this one made in this chat, with the arguments they were made with.' },
   }, required: ['title'], additionalProperties: false },
   run: async (input, viewer, ctx) => {
+    // (a call that carried `from` had a button that listed no steps, so pressing it is no yes to their images, D6c A1)
+    const carried = input.from !== undefined;
     input = fromRequest(input, viewer, ctx);
     const id = workflowSlug(input.title), declared = Object.keys(input.inputs || {});
     if (!id) throw new HttpError(400, 'Name it with letters or numbers.');
@@ -326,9 +334,14 @@ action({
     }
     const w = { id, title: input.title.trim(), when: input.when || null, inputs: input.inputs || {}, steps: input.steps.map(st => ({ action: st.action, args: st.args || {}, ...(st.keep ? { keep: true } : {}) })),
       by: viewer.login, at: new Date().toISOString() };
-    const before = findSaved(id);
+    // (the owner's yes to this save is the yes to the images its steps start from, D6c: 18-saved-yes.mjs)
+    // (and its answer, and the chat line after the press, say what that yes covers)
+    const images = savedImages(w.steps), yes = !carried && savedImagesYes(viewer, ctx, images), asked = savedStepsAsked(w.steps);
+    if (yes) w.approved = { images, steps: savedStepsHash(w.steps), by: viewer.login, at: w.at };
+    const before = findSaved(id), words = images.length || asked.length ? savedImagesWords(images, asked, yes) : null;
     writeSaved([...savedWorkflows().filter(x => x.id !== id), w]);
-    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
+    return { outcome: before ? 'replaced' : 'saved', workflow: savedView(w), ...(input.leftOut ? { leftOut: input.leftOut } : {}),
+      ...(words ? { images: words, note: `${before ? 'Replaced' : 'Saved'} the workflow “${w.title}”. ${words}` } : {}), next: `run_workflow {"name":"${id}"${declared.length ? `, "inputs": {${declared.map(k => `"${k}": …`).join(', ')}}` : ''}}` };
   },
 });
 action({
@@ -373,8 +386,10 @@ action({
           if (jobFromImage(st.action, args)) Object.assign(args, await jobModelEnv(j, i + 1, args) || {});
           let out;
           try {
+            const yes = stepImagesYes(w, st, viewer, ctx);
+            if (yes.length) note(j, `Step ${i + 1}: ${yes.join(', ')} was approved when “${w.title}” was saved`);
             // (a run started from Telegram keeps its channel, so PAGE_ONLY holds inside it too, R32)
-            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null,
+            out = await runAction(st.action, viewer, args, { via: 'workflow', actor: `${w.title} (saved workflow)`, request: `${w.title}, step ${i + 1}`, canChange: true, conv: ctx.conv || null, imagesApproved: yes,
               ...(ctx.channel ? { channel: ctx.channel, from: ctx.from } : {}), ...savedStepAgent(viewer, ctx) });
           } catch (e) { throw new Error(`Step ${i + 1} (${st.action}) failed: ${e.message}`); }
           if (out?.outcome === 'question') throw new Error(`Step ${i + 1} (${st.action}) needs an answer first: ${out.question || out.text || 'see the chat'}`);
