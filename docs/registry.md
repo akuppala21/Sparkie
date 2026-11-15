@@ -43,7 +43,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
-| `undo_update` | change | `18-workflows` | updates | undo | yes | yes | — |
+| `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
 | `should_be_running` | read | `20-desired` | core | — | — | yes | inside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
