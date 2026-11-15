@@ -17,10 +17,12 @@ const PAGE = f => readFileSync(join(REPO, 'public', f));
 // What only service/server.mjs holds: a refusal must never answer with it.
 const SECRET = readFileSync(join(REPO, 'service', 'server.mjs'), 'utf8').split('\n').find(l => l.length > 40).slice(0, 40);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Starts a process from a script given on the command line that runs the preview and keeps running until it is killed
-// itself, without stopping the preview: what a terminal tab or a test that ends does.
+// Starts a process from a script given on the command line that runs the preview and stays while it runs; killed itself,
+// it leaves the preview running without a parent: what a closed terminal tab or a test that ends does.
 const MIDDLE = `const c = require('node:child_process').spawn(process.execPath, process.argv.slice(1), { stdio: 'inherit' });
-console.error('preview pid ' + c.pid); setInterval(() => {}, 1 << 30);`;
+console.error('preview pid ' + c.pid); c.on('exit', code => process.exit(code ?? 1));`;
+// Every process started here, so none outlives a failed start.
+const started = new Set();
 
 // One request with its path sent exactly as given (no ../ tidied away). Resolves { status, headers, body (Buffer), text }.
 function raw(port, path, { method = 'GET', headers = {}, body } = {}) {
@@ -66,6 +68,7 @@ async function startPreview(args, { middle = false } = {}) {
   const argv = [TOOL, '--port', '0', ...args];
   const child = spawn(process.execPath, middle ? ['-e', MIDDLE, ...argv] : argv, { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const p = { child, tmp, out: '', err: '' };
+  started.add(p);
   child.stdout.on('data', d => { p.out += d; });
   child.stderr.on('data', d => { p.err += d; });
   const m = await new Promise((resolve, reject) => {
@@ -80,6 +83,19 @@ async function startPreview(args, { middle = false } = {}) {
   p.pids = Object.values(JSON.parse(readFileSync(join(p.dir, 'pids.json'), 'utf8')));
   p.tool = middle ? Number(/^preview pid (\d+)$/m.exec(p.err)?.[1]) : child.pid;
   return p;
+}
+// After the tests, or a start that failed: whatever is still running is stopped.
+async function stopAll() {
+  for (const p of started) {
+    const tool = p.tool || Number(/^preview pid (\d+)$/m.exec(p.err)?.[1]);
+    if (tool && alive(tool)) try { process.kill(tool, 'SIGINT'); } catch {}
+    if (p.child.exitCode === null && p.child.signalCode === null) p.child.kill('SIGINT');
+  }
+  await sleep(3000);
+  for (const p of started) {
+    if (p.child.exitCode === null && p.child.signalCode === null) p.child.kill('SIGKILL');
+    rmSync(p.tmp, { recursive: true, force: true });
+  }
 }
 async function cleanedUp(p) {
   await gone('the preview', () => !alive(p.tool));
@@ -100,12 +116,7 @@ describe('the page preview', { concurrency: 1 }, () => {
     [P.owner, P.public] = await Promise.all([startPreview([]), startPreview(['--as', 'public', '--public', linkCopy], { middle: true })]);
   }, { timeout: 330000 * SLOW });
   after(async () => {
-    for (const p of Object.values(P)) {
-      if (p.child.exitCode === null) p.child.kill('SIGKILL');
-      if (alive(p.tool)) try { process.kill(p.tool, 'SIGINT'); } catch {}
-    }
-    await sleep(3000);
-    for (const p of Object.values(P)) rmSync(p.tmp, { recursive: true, force: true });
+    await stopAll();
     if (linkCopy) rmSync(linkCopy, { recursive: true, force: true });
   });
 
