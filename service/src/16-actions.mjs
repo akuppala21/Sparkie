@@ -128,6 +128,8 @@ const CHANGE_WORDS = [
   ['compare', /\b(compare\w*|whatever\s+is\s+best|keep\s+the\s+(?:winner|best(?:\s+one)?)|(?:try|run)\b[^.?!;\n]{0,60}?\b(?:against|versus|vs\.?))(?=\W|$)/gi],
   ['forget', /\b(forget|delete|remove|drop)\b[^.?!;\n]{0,60}?\bworkflows?\b/gi],
   ['test', /\b(test|validate|check)\s+(?:the\s+|my\s+)?(?:changes|update|workflows|build)\b/gi],
+  // Installing Spark Console's newest tested build (21-updates.mjs): "install the new build", "update spark console".
+  ['install', /\b(?:install|upgrade\s+to|update\s+to)\b[^.?!;\n]{0,40}?\b(?:builds?|updates?|versions?|spark\s*console)\b|\b(?:update|upgrade)\s+(?:the\s+)?(?:spark\s*)?console\b/gi],
   // The self-test (21-selftest.mjs): "run the self-test", "test the Sparks", "test Spark 3", "test the fleet".
   ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
@@ -168,7 +170,7 @@ const GROUP_WORDS = [
   // (power: a Spark itself switched by name, never a model: "turn off Spark 3’s model" opens it but power_off refuses it)
   ['power', 'turning a Spark off or on, and the idle power-off', /\b(?:power(?:ed|ing|s)?[\s-]*(?:on|off|up|down)|power(?:ed|ing|s)?\s+(?:it|them|(?:the\s+)?sparks?\b[\s\d,+&]*(?:and\s+\d\s*)?)\s*(?:on|off|up|down)|wake|wakes|waking|woke|sleep\w*|asleep|plugs?|watts?|idle|shutdown|shut\s*down\s+(?:the\s+)?sparks?|shut(?:s|ting)?\s+(?:the\s+)?sparks?\b[^.?!\n]{0,20}?\bdown|turn(?:s|ed|ing)?\s+(?:on|off)\s+(?:the\s+)?sparks?|turn(?:s|ed|ing)?\s+(?:the\s+|all\s+)?sparks?\b[^.?!\n]{0,20}?\b(?:on|off)|boot(?:s|ed|ing)?\s+(?:up\s+)?(?:the\s+)?sparks?)\b/i],
   // (Spark Console's own updates: undo_update stays in control, beside the other undo)
-  ['updates', 'Spark Console’s own updates: is a newer tested build out, and what it changes', /\b(?:newer|newest|latest)\s+(?:tested\s+)?builds?\b|\btested\s+builds?\b|\b(?:check\s+for|any)\s+(?:new\s+)?updates?\b|\bupdates?\s+(?:for|to|of)\s+(?:spark\s*console|sparkie|you(?:rself)?|the\s+console)\b|\bspark\s*console\s+updates?\b|\bupgrade\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b/i],
+  ['updates', 'Spark Console’s own updates: is a newer tested build out, what it changes, and installing it', /\binstall\b[^.?!;\n]{0,40}?\b(?:builds?|updates?|versions?)\b|\bupdate\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b|\b(?:newer|newest|latest)\s+(?:tested\s+)?builds?\b|\btested\s+builds?\b|\b(?:check\s+for|any)\s+(?:new\s+)?updates?\b|\bupdates?\s+(?:for|to|of)\s+(?:spark\s*console|sparkie|you(?:rself)?|the\s+console)\b|\bspark\s*console\s+updates?\b|\bupgrade\s+(?:spark\s*console|sparkie|yourself|the\s+console)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
 // After "could you", these ask for information ("could you tell me whether to stop it"), not for a change.
@@ -229,6 +231,7 @@ const ACTION_KIND = {
   find_setups: ['find'],
   forget_memory: ['remember'],
   forget_workflow: ['forget'],
+  install_update: ['install'],
   keep_running: ['keep', 'start', 'restart', 'stop'],
   power_off: ['poweroff'],
   power_on: ['poweron'],
@@ -488,7 +491,9 @@ async function runAction(name, viewer, args, ctx = {}) {
   // Sparkie runs a change straight away when the owner's message asks for that kind of change (not a question about it,
   // not ruled out) and the target is what their words name (sparkieCheck). Anything less clear comes back as a question
   // with a button. "Don't stop …" rules stopping out for the whole request.
-  if (ctx.via === 'sparkie') {
+  // (an action that asks the owner itself, as a dangerous ask, gets no plain question first: its own ask is the stronger
+  // one, R54)
+  if (ctx.via === 'sparkie' && a.asks !== 'danger') {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;

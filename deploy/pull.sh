@@ -354,9 +354,9 @@ check() {
 # of 12 hex digits, a time, a hash of 64), never its text. Commit subjects and git's words ("why") are as written
 # on GitHub and by git: the reader treats them as outside text.
 check_json() {
-  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' bad='' newer=false subj='' problem='' why=''
+  local s ib it ic ir head='' ht='' nc='' nt='' nb='' nat='' nr='' bad='' newer=false subj='' dif='' problem='' why=''
   out() {  # out <problem> <why>
-    printf '%s' "$subj" | python3 -I -c 'import json, sys
+    printf '%s' "$subj" | python3 -I -c 'import json, re, sys
 a = sys.argv[1:]
 def opt(v): return None if v in ("", "-") else v
 newest = None
@@ -366,8 +366,10 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
   "installed": {"build": opt(a[3]), "tree": opt(a[4]), "commit": opt(a[5]), "brainReads": opt(a[15])},
   "main": {"commit": opt(a[6]), "tree": opt(a[7]), "tested": bool(opt(a[6])) and a[6] == a[8] and not opt(a[14])},
   "newest": newest, "badTag": {"commit": a[8], "tree": a[9], "why": a[14]} if opt(a[14]) else None,
-  "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10]}))' \
-      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}"
+  "newer": a[10] == "true", "subjects": [l for l in sys.stdin.read().split("\n") if l][:10],
+  "differs": [f for f in a[16].split("\n") if re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)][:200],
+  "differsOther": len([f for f in a[16].split("\n") if f and not re.fullmatch(r"[A-Za-z0-9._/+-]{1,160}", f)])}))' \
+      "$1" "$2" "${REPO_NAME:-}" "${ib:--}" "${it:--}" "${ic:--}" "$head" "$ht" "$nc" "$nt" "$newer" "$nb" "$nat" "$nr" "$bad" "${ir:-}" "$dif"
   }
   # (the stand-in fleet marks a program missing with ~/.mock/off-path-<program>, as the console's own look reads it)
   if ! command -v git >/dev/null 2>&1 || { [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [ -e "$HOME/.mock/off-path-git" ]; }; then
@@ -396,6 +398,9 @@ print(json.dumps({"ok": not a[0], "problem": opt(a[0]), "why": opt(a[1]), "repo"
     nb=$TAG_BUILD nat=$TAG_AT
     nr=$(g cat-file blob "$TAG_COMMIT:$LOCK_PATH" 2>/dev/null | head -c 65536 | reads_of /dev/stdin || true)
     if [ "$nt" != "$it" ] && ! { [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null && ! g merge-base --is-ancestor "$ic" "$nc"; }; then newer=true; fi
+    # (the files that differ from the installed build: names of a plain shape only, the rest counted; data from the
+    # repository, for the install's ask to list)
+    if [ "$ic" != - ] && g cat-file -e "$ic^{commit}" 2>/dev/null; then dif=$(g diff --no-renames --name-only "$ic" "$nc" 2>/dev/null | head -n 1000 || true); fi
     if [ "$ic" != - ] && g merge-base --is-ancestor "$ic" "$nc" 2>/dev/null; then subj=$(g log --topo-order -n 10 --format='%h %s' "$ic..$nc" | cut -c1-200)
     else subj=$(g log -1 --format='%h %s' "$nc" | cut -c1-200); fi
   fi
