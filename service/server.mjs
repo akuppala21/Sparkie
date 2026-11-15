@@ -13334,9 +13334,9 @@ const KEY_FOLDERS = ['*/.ssh', '*/.gnupg', '*/.aws', '*/.kube', '*/.ngc', '*/.co
 const KEY_PLACES = [...KEY_FILES, ...KEY_FOLDERS.map(f => `${f}/*`)];
 const GLOB_SPECIAL = /[.+?^${}()|[\]\\]/g;
 const globRe = list => new RegExp(`^(?:${list.map(g => g.replace(GLOB_SPECIAL, '\\$&').replace(/\*/g, '.*')).join('|')})$`);
-const KEY_NOT_RE = globRe(KEY_NOT), KEY_NAME_RE = globRe(KEY_NAMES), KEY_PLACE_RE = globRe(KEY_PLACES);
+const KEYFILE_NOT_RE = globRe(KEY_NOT), KEYFILE_NAME_RE = globRe(KEY_NAMES), KEYFILE_PLACE_RE = globRe(KEY_PLACES);
 // A word of the command that names key material whatever is on the Spark (~ stands for a home).
-const keyWord = w => { const p = w.replace(/^~(?=\/|$)/, '/~').replace(/\/+$/, ''); return !KEY_NOT_RE.test(p) && (KEY_NAME_RE.test(p.split('/').pop()) || KEY_PLACE_RE.test(p)); };
+const keyWord = w => { const p = w.replace(/^~(?=\/|$)/, '/~').replace(/\/+$/, ''); return !KEYFILE_NOT_RE.test(p) && (KEYFILE_NAME_RE.test(p.split('/').pop()) || KEYFILE_PLACE_RE.test(p)); };
 // The same check on the Spark, in the same script, before the helper is called: each word resolved as bash would (~,
 // a * expanded, links followed) and a folder a walker reads searched for a key. It prints "key <word>" or "walk
 // <folder>", or nothing. Its arguments: the home, the words, --, the folders.
