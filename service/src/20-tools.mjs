@@ -141,7 +141,9 @@ Object.assign(SORT_HANDLERS, {
     const t = a.map(w => w.text);
     if (t.some((s, i) => /:\/\//.test(s) && (/^-c$|^--channel$/.test(t[i - 1] ?? '') || /^--channel=|^-c./.test(s)))) raise(r, 'risky', `${sortQ(name)} installs from a channel at an address: always asked.`);
     if (/^(?:remove|uninstall)$/.test(v) || (v === 'env' && p[0] === 'remove')) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages or an environment, which are not put back.`);
-    for (const f of o.all('f', 'file')) sortRuns(f.text, ctx, r, `${sortQ(name)} installs what the file ${sortQ(f.text)} lists.`);
+    // (env export -f writes the list; elsewhere -f is a list it installs)
+    if (v === 'env' && p[0] === 'export' && ctx.root) raise(r, 'risky', `As root, ${sortQ(name)} env export is asked.`);
+    for (const f of o.all('f', 'file')) if (v === 'env' && p[0] === 'export') { r.deletes = true; sortTouch(f, ctx, r); } else sortRuns(f.text, ctx, r, `${sortQ(name)} installs what the file ${sortQ(f.text)} lists.`);
     for (const w of o.plain) if (/^(?:\.{0,2}\/|~|file:)|\.(?:conda|tar\.bz2)$/.test(w.text)) sortRuns(w.text.replace(/^file:\/*/, '/'), ctx, r, `${sortQ(name)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
     for (const d of o.all('p', 'prefix')) sortInto(d, ctx, r);
   },
@@ -156,7 +158,9 @@ Object.assign(SORT_HANDLERS, {
     if (!/^(?:install|i|in|isnt|add|ci|clean-install|it|cit|install-test|uninstall|remove|rm|r|un|unlink|update|up|upgrade|run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|link|ln|prune|dedupe|audit|fund|doctor|cache|whoami|ping|search|pkg|query|sbom|shrinkwrap|global|store|import|env|init|create|innit)$/.test(v)) unsure(`The sorter doesn’t know ${sortQ(name)} ${sortQ(v)}.`);
     if (t.some(s => /:\/\/|^git\+|^github:|^--registry/.test(s))) raise(r, 'risky', `${sortQ(name)} installs code from an address or another registry: always asked.`);
     if (/^(?:uninstall|remove|rm|r|un|unlink|prune)$/.test(v)) sortGone(ctx, r, `${sortQ(name)} ${sortQ(v)} removes packages, which are not put back.`);
-    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
+    // (an install runs the scripts of the project it stands in, as a run does: asked when this command wrote or
+    // fetched into that folder, or as root)
+    else if (/^(?:run|run-script|start|test|t|restart|stop|build|rebuild|pack|version|install-test|it|cit|install|i|in|isnt|add|ci|clean-install|update|up|upgrade|global)$/.test(v)) sortRuns(null, ctx, r, `${sortQ(name)} ${sortQ(v)} runs the project’s scripts.`, o.all('prefix').at(-1));
     // (a package from a folder or a file is code whose install scripts run)
     for (const w of o.plain.slice(1)) if (/^(?:\.{0,2}\/|~|file:)|\.(?:tgz|tar\.gz|tar)$/.test(w.text)) sortRuns(w.text.replace(/^file:/, ''), ctx, r, `${sortQ(name)} ${sortQ(v)} installs the local package ${sortQ(w.text)}, whose scripts run.`);
   },
@@ -191,7 +195,7 @@ Object.assign(SORT_HANDLERS, {
       // (systemctl matches a pattern itself, quoted or not; an instance, name@x, is its template's unit)
       const pat = u.glob || /[*?[]/.test(u.text), base = u.text.replace(/@.*$/, '').replace(/\.(?:service|socket)$/, '');
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);
-      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
+      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
       else if (['docker', 'containerd'].some(is)) raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`);
       else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);

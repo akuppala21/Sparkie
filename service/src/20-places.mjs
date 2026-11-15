@@ -25,7 +25,8 @@ function sortNorm(p, r = null, home = null) {
   for (const s of String(p).replace(/^~(?=\/|$)/, h).split('/').slice(1)) { if (s === '..') out.pop(); else if (s && s !== '.') out.push(s); }
   let n = `/${out.join('/')}`;
   for (let m; (m = /^\/proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/root(?=\/|$)/.exec(n));) n = n.slice(m[0].length) || '/';
-  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)/.test(n)) {
+  // (and /dev/fd/N or /dev/stdin as a folder, or a descriptor past the three a command starts with)
+  if (/^\/proc\/[^/]+\/(?:cwd|fd|fdinfo|root|map_files)(?:\/|$)|^\/dev\/(?:fd\/(?:\d+\/|(?:[3-9]|\d{2,})$)|std(?:in|out|err)\/)/.test(n)) {
     if (r && (LOCK_NAMES.has(n.slice(n.lastIndexOf('/') + 1)) || SIGNIN.test(n))) raise(r, 'lockout', `It names ${sortQ(n)}, one of the ways in.`);
     unsure(`It reaches a file through ${sortQ(n)}, which the sorter can't place.`);
   }
@@ -88,11 +89,15 @@ function sortBraces(s) {
   for (let round = 0; round < 8; round++) {
     let more = false;
     out = out.flatMap(t => {
-      const m = /\{([^{}]*(?:,|\.\.)[^{}]*)\}/.exec(t), n = m && /^(-?\d+|[a-z])\.\.(-?\d+|[a-z])$/i.exec(m[1]);
+      const m = /\{([^{}]*(?:,|\.\.)[^{}]*)\}/.exec(t), n = m && /^(?:(-?\d+)\.\.(-?\d+)|([a-z])\.\.([a-z]))$/i.exec(m[1]);
       if (!m) return [t];
       more = true;
-      if (n && /\d/.test(n[1]) && Math.abs(n[2] - n[1]) > 64) unsure('It holds a {a..b} range too long to read.');
-      const each = !n ? m[1].split(',') : /\d/.test(n[1]) ? Array.from({ length: Math.abs(n[2] - n[1]) + 1 }, (_, j) => String(Math.min(+n[1], +n[2]) + j)) : [n[1], n[2]];
+      // (a range is spelled out in full: 1..3, 01..10 padded, a..d; a step, or ends of two kinds, is a doubt)
+      if (!n && !m[1].includes(',')) unsure('It holds a {…} range the sorter does not spell out (a step, or ends of two kinds).');
+      const [lo, hi] = n ? (n[1] != null ? [+n[1], +n[2]] : [n[3].charCodeAt(0), n[4].charCodeAt(0)]) : [0, 0];
+      if (n && Math.abs(hi - lo) > 64) unsure('It holds a {a..b} range too long to read.');
+      const pad = n?.[1] != null && /^-?0\d/.test(n[1] + ' ' + n[2]) ? Math.max(n[1].length, n[2].length) : 0, run = Array.from({ length: Math.abs(hi - lo) + 1 }, (_, j) => Math.min(lo, hi) + j);
+      const each = !n ? m[1].split(',') : n[1] != null ? run.map(v => String(v).padStart(pad, '0')) : run.map(v => String.fromCharCode(v));
       return each.map(x => t.slice(0, m.index) + x + t.slice(m.index + m[0].length));
     });
     if (out.length > 64) unsure('It holds {…} that makes too many words to read.');
@@ -169,13 +174,15 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   sortNames(p, ctx, r, glob);
   const hits = sortReach(p, glob, wide), base = p.slice(p.lastIndexOf('/') + 1);
   if (HELPER_PATHS.some(sortReach(p, glob, wide, false))) { r.answer = 'owner command'; raise(r, 'notdone', `It reaches ${sortQ(p)}, the root helper or its sudo line, which only the owner’s one-time command changes.`); }
-  if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortGlob(base).test(`${u}.${x}`)))) || (glob ? (base.startsWith('.') || base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2) && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
+  if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && p.split('/').some(g => /[*?[]/.test(g) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortSeg(g, `${u}.${x}`) || sortSeg(g, `${u}.${x}.d`))))) || (glob ? (base.startsWith('.') || base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2) && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
-  if (LATER_PATHS.some(hits) || (touched === true && /^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$|(?:^|\/)\.git\/(?:hooks|config)(?:\/|$)/.test(p))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
+  if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
 }
+// A git hook or a repository's settings, written: under a .git (its modules' too) or a bare x.git, by glob too.
+const sortGitSet = p => { const g = p.split('/'), at = g.findIndex(x => sortSeg(x, '.git') || /\.git$/.test(x)); return at >= 0 && g.slice(at + 1).some((x, k, a) => sortSeg(x, 'hooks') || (k === a.length - 1 && sortSeg(x, 'config'))); };
 // A word as the paths it can name: itself, what follows = or @, what follows a one-letter option (-opath), file://.
 const sortTails = t => { const m = /^-([A-Za-z]{1,26})/.exec(t); return m ? Array.from({ length: m[1].length }, (_, k) => t.slice(k + 2)).filter(Boolean) : []; };
 const sortCands = t => [...new Set([/^-/.test(t) ? null : t, /^-[^=]*=(.+)$/.exec(t)?.[1], /^[A-Za-z_]\w*=(.+)$/.exec(t)?.[1], ...sortTails(t), /^[\w-]*=?@(.+)$/.exec(t)?.[1],
@@ -187,15 +194,23 @@ function sortTouch(w, ctx, r, wide = false, write = true) {
   if (!w) return;
   if (w.unknown) unsure(`It names a file through a $ or a command, so the sorter can't know what it changes: ${sortQ(w.text || '…')}.`);
   if (/[\x00-\x1f\x7f]/.test(w.text)) unsure('It names a file with a line break, a tab or another control sign in its name.');
-  for (const t of sortBraces(w.text)) for (const c of sortCands(t)) for (const p of sortPaths(c, ctx, r)) {
+  // (the class from every reading: each {…} spelled out, a quoted ~ as the home and as a folder named ~; the lists from
+  // what bash writes: the word as written, spelled out only when the brace is bash's, a quoted ~ as a folder too)
+  const all = sortBraces(w.text), lit = w.tilde === false && /^~(?:\/|$)/.test(w.text), at = (c, t) => (lit && c === t ? [c, `./${c}`] : [c]);
+  for (const t of all) for (const c of sortCands(t)) for (const p of new Set([...sortPaths(c, ctx, r), ...(lit && c === t ? sortPaths(`./${c}`, ctx, r) : [])])) {
     sortPlace(p, w.glob, ctx, r, wide, true);
     if (write) (wide ? ctx.under : ctx.written).add(p);
-    if (!ctx.changes) continue;
+  }
+  if (!ctx.changes) return;
+  for (const t of new Set([w.text, ...(w.brace ? all : [])])) for (const c of sortCands(t)) for (const p of new Set(at(c, t).flatMap(x => sortPaths(x, ctx, r)))) {
+    if (p.length > SORT_PATH) unsure(`It names a path longer than the ${SORT_PATH} signs the sorter places.`);
     if (!ctx.changes.has(p) && ctx.changes.size >= SORT_PLACED) unsure(`It changes more than ${SORT_PLACED} places, more than the sorter lists for the copy first.`);
     ctx.changes.set(p, ctx.changes.get(p) || wide);
   }
 }
-const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`));
+const sortWrote = (p, ctx) => ctx.written.has(p) || [...ctx.under].some(u => p === u || p.startsWith(`${u}/`)) || ctx.before.some(b => sortBefore(b, p));
+// A path written before this command (opts.written, a * kept): p is it or under it.
+const sortBefore = (b, p) => (/[*?[]/.test(b) ? [p, ...sortUp(p)].some(a => sortGlob(b).test(a)) : p === b || p.startsWith(`${b}/`));
 // Names in text the words alone don't show (inside a one-liner, a command over ssh, text the sorter couldn't read);
 // with progs, programs too.
 function sortScan(text, ctx, r, progs, touched = false) {
