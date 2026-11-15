@@ -10,7 +10,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -266,6 +266,17 @@ describe('the walls asked for', () => {
     mkdirSync(join(s.R, 'run/spark-console', id));   // a call with this id still under way
     refused(look(s, 'true', { id }), 'this id was used already');
     assert.equal(started(s).length, before);
+  });
+
+  test('a held folder left by a killed call is removed by a later one once no unit can still use it; a newer one stays', () => {
+    const old = join(s.R, 'run/spark-console', 'killed000old'), recent = join(s.R, 'run/spark-console', 'killed000new');
+    for (const d of [old, recent]) { mkdirSync(d); writeFileSync(join(d, 'command'), 'x'); }
+    const then = new Date(Date.now() - 131 * 60000);
+    utimesSync(old, then, then);
+    assert.equal(look(s, 'true').status, 0);
+    assert.ok(!existsSync(old), 'older than the longest unit (120 minutes and 10 more): removed');
+    assert.ok(existsSync(recent), 'a newer one may still be in use: kept');
+    assert.ok(existsSync(join(s.R, 'run/spark-console/prove.lock')), 'not a held folder: kept');
   });
 
   test('root refuses, always: the put-back net is not built yet', () => {

@@ -311,11 +311,21 @@ run_prefix() {   # the run wall's command start: its own process tree, then down
   PRE+=(--inh-caps=-all --bounding-set=-all)
 }
 
-# The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call.
+# The held folder: /run/spark-console/<id>/, root's, shown read-only inside the wall. One id, one call. A call that is
+# killed outright (no trap runs) leaves its folder; the next call removes any older than the longest unit can run.
 H=''
+sweep_held() {
+  local d n
+  for d in "$R$HOLD"/*/; do
+    d=${d%/} n=${d##*/}
+    [[ $n =~ ^[a-z0-9]{8,40}$ ]] && [ ! -L "$d" ] || continue
+    if [ -n "$(find "$d" -maxdepth 0 -type d -mmin +$((RUN_MAX / 60 + 10)) 2>/dev/null)" ]; then rm -rf -- "$d"; fi
+  done
+}
 hold_folder() {
   H="$R$HOLD/$ID"
   mkdir -p -m 0755 -- "$R$HOLD" || refuse "cannot make $HOLD"
+  sweep_held
   mkdir -m 0750 -- "$H" 2>/dev/null || refuse "this id was used already"
   if [ "$EUID" -eq 0 ]; then chown "0:$OWNER_GID" -- "$H"; fi
 }
@@ -392,6 +402,9 @@ do_unit() {
   [ "$state" = current ] || refuse "the wall proof is $state on this Spark: prove first"
   lists
   hold_folder
+  # A hang-up or an interrupt (the caller's connection dropped) still removes the held folder; what the unit has
+  # already opened stays readable to it.
+  trap 'rm -rf -- "$H"; exit 129' HUP INT TERM
   printf '%s' "${CMD[0]}" > "$H/command"
   read -r got _ < <(sha256sum -- "$H/command")
   if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
@@ -467,6 +480,7 @@ do_prove() {
   exec 9> "$R$HOLD/prove.lock" || refuse "cannot open the proof's lock"
   flock -n 9 || refuse "another proof is running on this Spark"
   hold_folder
+  trap 'systemctl stop "sw-prove-target-$ID.service" > /dev/null 2>&1; rm -rf -- "$H"; exit 129' HUP INT TERM
   rm -f -- "$R$MARK"   # a proof that does not pass leaves no mark, so every wall refuses until one does
   proof_py > "$H/proof.py"
   printf '%s\n%s\n%s\n' "$OWNER_UID" "$OWNER_GID" "$OWNER_HOME" > "$H/owner"
