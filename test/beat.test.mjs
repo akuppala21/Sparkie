@@ -1,10 +1,10 @@
-// The outside heartbeat (20-beat.mjs; R32; docs/design-2026-11-13/e-unattended.md 2.4 and build step 1). Once the owner
-// has saved a check's address (https://hc-ping.com/<uuid>) with the passkey, Spark Console sends one bodiless GET to it
-// each interval: none before, none from a second copy, none after it is removed (no passkey for that). The address is
-// in no chat, audit line, event, log, state file or answer; an address on another host is refused; the request carries
-// no body, no cookie and no header that names this fleet, and a redirect is never followed. A beat failing for the late
-// time is one needs-you line. The service beats a stand-in on 127.0.0.1 (SPARK_CONSOLE_BEAT_API, honoured only under
-// SPARK_CONSOLE_ALL_LOCAL=1); no real host is ever contacted.
+// Covers: The outside heartbeat (20-beat.mjs; R32; docs/design-2026-11-13/e-unattended.md 2.4 and build step 1). Once
+// the owner has saved a check's address (https://hc-ping.com/<uuid>) with the passkey, Spark Console sends one bodiless
+// GET to it each interval: none before, none from a second copy, none after it is removed (no passkey for that). The
+// address is in no chat, audit line, event, log, state file or answer; an address on another host is refused; the
+// request carries no body, no cookie and no header that names this fleet, and a redirect is never followed. A beat
+// failing for the late time is one needs-you line. The service beats a stand-in on 127.0.0.1 (SPARK_CONSOLE_BEAT_API,
+// honoured only under SPARK_CONSOLE_ALL_LOCAL=1); no real host is ever contacted.
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

@@ -1,3 +1,16 @@
+// Covers: The app door (R40), on a fifth stand-in Spark added to the list and on Spark 4, with tiny apps in the test
+// process: with the door on, `keep_running` and `should_be_running` give the door's link first and the tailnet one as
+// `tailnetLink`; the owner's session cookie opens a kept app (an HttpOnly, Secure, SameSite=Lax door ticket for `/`),
+// HTTP, a WebSocket and a 5 MB upload go through; no console or door cookie, Tailscale identity or client
+// `X-Forwarded-*` reaches the app, and its Set-Cookie with a console or door name and its CORS grant are dropped; one
+// app per browser; refused for HTTP and the WebSocket: not signed in, a member, an agent key, a terminal, a Spark's own
+// address; `/open` refuses a model, Spark 2, the model port, a hand-started model server, an unknown name or Spark, a
+// port or address in the path, an app's own page or another site; posts and WebSockets only from the door's origin; the
+// door's origin can't use the main API, a read too; signing a device out closes its app WebSocket and ticket; a
+// forgotten app no longer opens. `deploy/open-apps-to-internet.sh` against a stand-in `tailscale` and `ssh`: opens only
+// port 10000 with Funnel, a second run changes nothing, `--undo` puts it back as it was (twice too), and it refuses a
+// port 10000 that serves something else or a build without the door.
+//
 // The app door (R40): the owner opens an app kept running (keep_running) on any Spark that isn't the brain's from
 // anywhere, signed in as on the main address, at Spark Console's name on port 10000. Tailscale serve hands that port to
 // the door's own socket (door.sock); here the test talks to the socket the way Tailscale would, with

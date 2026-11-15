@@ -1,3 +1,7 @@
+// Covers: The hub guard (R1, D1), with the brain's setup on Spark 4 and Spark Console on Spark 2 (both the hub): a
+// model on disk with no Spark named is refused rather than placed on Spark 2, even when only it has room, and a
+// download with no Spark named goes to neither.
+//
 // The hub guard (R1; design D step 1): a start that names no Spark is placed only on the compute Sparks
 // (computeSparks()), never on the hub, which is both the brain's Spark and the console's own. Here the brain's setup is on
 // Spark 4, so the two differ: before computeSparks(), placement left out only the brain's Spark (MAIN.node), and Spark 2,

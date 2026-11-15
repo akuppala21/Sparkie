@@ -1,3 +1,18 @@
+// Covers: The owner's words (R34): with the stand-in brain stuck, `/status` is answered by code (no model call) and
+// saved as one notice; `/restart sparkie` restarts the stuck brain in place with healing's restart (audit line, event);
+// it changes nothing while the brain may still be loading (Docker says it started 2 minutes ago); a stopped brain, or
+// one gone from Docker, starts again from its saved setup in a fresh container with nothing else on Spark 2 stopped, or
+// is refused plainly when that setup can't start; `/pause` pauses without the passkey and says both ways to resume, and
+// no word resumes; near misses (`/pause now`, a two-line message), a member, ask_sparkie and the owner's word in an
+// agent's conversation all go to the model; `/help` prints the by-hand restart line, the same one healing runs. Also: a
+// slow restart holds Spark 2 (a second `/restart sparkie` says it's already restarting, a brain stop is refused, one
+// restart line), a restart is refused while the brain is being stopped, `/pause` over an automatic pause makes it the
+// owner's, and with the brain down a near miss (`/restart`) gets `/help` with no model call. `/undo update` on the
+// tailnet goes back a build by code (no model call, the audit's rollback line) and says so when there is no earlier
+// build; `/help` lists it and the by-hand go-back line; the page's word list has it. `/stop` ends a reply under way at
+// once (no further model call, the chat free, the next message answered; a second `/stop` has nothing to stop); the
+// page's word list is the service's.
+//
 // The owner's words (service/src/20-words.mjs; round two, item 1; contract 8.13): /status, /pause, /restart sparkie, /stop
 // and /help typed as the whole message in the owner's own page chat are answered by code, with no model call, so they
 // work with Sparkie's model stuck or stopped. Anything else (a near miss, a member, an agent's conversation, ask_sparkie)

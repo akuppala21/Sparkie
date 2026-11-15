@@ -9,7 +9,8 @@
 // - a model across two Sparks that lost a part: what's left of it stops, and it starts again across the same Sparks
 //   (start_model, so the cable and engine checks and the known fixes run);
 // - a Spark the owner powered back on: what should be running there (should_be_running) comes back, once its Sparks
-//   have been up 2 minutes (Docker and the GPU settle), once per power-on;
+//   have been up 2 minutes (Docker and the GPU settle), once per power-on (a Spark Spark Console powered off itself, and
+//   what it parked there, are 21-power.mjs's: never healed here);
 // - Sparkie's own model, running but not answering for 10 minutes (and started over 30 minutes ago): its container is
 //   restarted (Docker already brings it back after a crash or a reboot);
 // - Sparkie's own model, stopped or gone after Spark Console itself took it down (a brain start or switch that didn't
@@ -53,8 +54,14 @@ function healSkip(x, why) {
 // Which of the list's entries need bringing back now, and why; null when it's fine or not for self-healing now.
 function healReason(x, inv) {
   const sparks = x.sparks || [x.spark], sps = sparks.map(id => inv.sparks.find(s => s.id === id));
+  // (parked, or on a Spark Spark Console powered off: off on purpose, 21-power.mjs; it comes back with its Spark)
+  if (x.parked || sparks.some(consoleOff)) return null;
   // (a Spark whose Docker didn't answer the look is "couldn't read", not "its parts are gone": nothing is healed there, F6)
   if (sps.some(sp => !sp?.online || !sp.dockerOk)) return null;
+  // (the status check hasn't seen it back yet: until it records this power-on, what is known of power-ons is the one
+  // before, which would bring it back with no settle wait. A power-on Spark Console makes itself brings back what it
+  // parked in its own operation, 21-power.mjs, never through this)
+  if (sparks.some(sparkOff)) return null;
   // A pair's parts are found by container (sc-<model> and sc-<model>-part2), not by the model's text: a start that
   // downloaded first lists the model under its repo name, and healing never saw its parts (audit, 2026-11-11).
   const parts = sps.flatMap(sp => sp.deployments.filter(d => (x.sparks
@@ -232,6 +239,9 @@ async function healPass() {
     const busy = new Set([...jobs.values()].filter(j => j.status === 'running').flatMap(j => j.nodes || [j.node]).filter(Boolean));
     for (const x of list) {
       if ((x.sparks || [x.spark]).some(id => busy.has(id) || busySparks.has(id))) continue;
+      // Parked by the power rules, or on a Spark Spark Console powered off (21-power.mjs): nothing heals against an
+      // intentional power-off; it comes back when its Spark is turned on, or on its next call.
+      if (x.parked || (x.sparks || [x.spark]).some(consoleOff)) continue;
       // An app kept running (21-apps.mjs) has its own rules.
       if (x.app) { await healApp(x, inv).catch(e => console.error(`Self-healing ${x.container}: ${e.message}`)); continue; }
       const r = healReason(x, inv);

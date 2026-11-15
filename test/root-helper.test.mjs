@@ -1,8 +1,14 @@
-// The root helper (R42; design A 2.13, step 1a): deploy/spark-console-root, the proof of its walls, and the owner's
-// one-time command, deploy/root-for-sparkie.sh. Nothing in the console calls the helper yet. Rehearsals only: the
-// helper runs as this user against a made-up Spark in a temporary folder (SPARK_CONSOLE_REHEARSAL), with the stand-ins
-// in test/mock/bin (systemd-run, systemctl, unshare, setpriv, visudo); the one-time command also gets stand-ins of its
-// own here for ssh, sudo and systemd-id128 (test/mock/bin/sudo belongs to the power work). No fleet starts.
+// Covers: The root helper (R42): deploy/spark-console-root, the proof of its walls, and the owner's one-time command,
+// deploy/root-for-sparkie.sh. The exact settings of the look and run walls for ordinary and hostile commands, with the
+// command's bytes held unchanged; every refusal; what a Spark must have and when the proof's mark is out of date; the
+// proof naming each attempt that gets through, and failing when it could not show an attempt working outside the walls;
+// the one-time command's order, its staging as root, a swapped copy caught, --check, --undo and the hub; and the real
+// proof run with no wall. Rehearsals with stand-ins only: they build no wall, so a Spark's own proof decides the rest.
+//
+// Rehearsals only: the helper runs as this user against a made-up Spark in a temporary folder
+// (SPARK_CONSOLE_REHEARSAL), with the stand-ins in test/mock/bin (systemd-run, systemctl, unshare, setpriv, visudo);
+// the one-time command also gets stand-ins of its own here for ssh, sudo and systemd-id128, ahead of the power work's
+// test/mock/bin/sudo on PATH. Nothing in the console calls the helper yet. No fleet starts.
 // What this cannot show: the stand-ins build no wall. These tests show the helper asks for exactly the right walls and
 // acts on the proof's answers; that a Spark grants them is decided by the proof itself, on each real Spark. The last
 // group runs the proof's own attempts with no wall at all, to show each one does get through when nothing stops it.

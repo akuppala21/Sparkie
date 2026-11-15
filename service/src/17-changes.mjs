@@ -117,6 +117,11 @@ function changeLabel(name, input) {
     if (input.once) return `Run ${c}${where} once from the image ${maskSecrets(input.image)}${how}${port}${rest}; its files go to jobs/${c} in the shared folder${open}`;
     return `Start ${c}${where} from the image ${maskSecrets(input.image)}${how}${port}${rest}, and keep it running${open}`;
   }
+  // Turning Sparks off or on, and the idle time (21-power.mjs): the Sparks by name.
+  const sparksSaid = [input.spark, ...(input.sparks || [])].filter(Boolean).map(sp).join(' and ');
+  if (name === 'power_off') return `Power off ${sparksSaid || 'a Spark'} (its models are parked first)`;
+  if (name === 'power_on') return `Turn on ${sparksSaid || 'a Spark'}`;
+  if (name === 'power_settings') return input.idleMinutes ? `Power off idle Sparks after ${input.idleMinutes} minute${input.idleMinutes === 1 ? '' : 's'}` : 'Stop powering off idle Sparks';
   // (the self-test: what it runs is fixed by code; the button says where, and that it stops nothing)
   if (name === 'self_test') return `Run the self-test${where || ' on a compute Spark that is free'}: a small model with the healing drill, a web page and a job with the GPU, stopping nothing`;
   // (a button shows all it would do: never cut, keys masked)
@@ -333,6 +338,7 @@ const FIX_WINDOW_MS = Number(process.env.SPARK_CONSOLE_FIX_WINDOW_MS || 30 * 600
 async function startWithFixes(job, m, placed, how, attempt) {
   const began = Date.now(), tried = [];
   let fix = {};
+  job.setupTried = setupTried(m, how, placed);
   for (let n = 1; ; n++) {
     try {
       await attempt(how, fix);
@@ -437,7 +443,7 @@ async function pickVersion(recipe, repo, viewer, outside, only = null) {
 // A start of this model already under way: asking again (say, after a timeout) gets that operation, not a second copy.
 function startingNow(names, where = null) {
   const want = new Set(names.filter(Boolean).map(s => String(s).toLowerCase()));
-  return [...jobs.values()].find(j => j.status === 'running' && ['deploy', 'deploy-cluster', 'start-model'].includes(j.type) && want.has(String(j.model || '').toLowerCase())
+  return [...jobs.values()].find(j => j.status === 'running' && ['deploy', 'deploy-cluster', 'start-model', 'power-on'].includes(j.type) && !j.handedOver && want.has(String(j.model || '').toLowerCase())
     && (!where?.length || where.every(id => (j.nodes || [j.node]).includes(id))));
 }
 const alreadyStarting = (j, model) => ({ outcome: 'already-starting', operation: j.id, model, sparks: j.nodes || [j.node], step: j.step,
@@ -478,12 +484,38 @@ function runsWhereNamed(inv, name, spark, sparks) {
 // POST /actions call, or the label of a button they pressed. An agent's direct call carries no words, so it is asked.
 const namedInFull = (ctx, repo) => Boolean(repo) && String(ctx.said || ctx.request || '').toLowerCase().includes(String(repo).toLowerCase());
 async function startModel(args, viewer, ctx) {
+  if (args.spark && args.sparks) throw new HttpError(400, 'Give spark or sparks, not both.');
+  // A model parked when Spark Console powered its Spark off (21-power.mjs) starts where it ran, unless another place was
+  // named; a Spark Spark Console powered off is turned on first, in the same operation (contract 9.22).
+  const parkedAt = !args.spark && !args.sparks ? parkedFor(args.model) : null;
+  if (parkedAt) args = { ...args, model: parkedAt.model, ...(parkedAt.sparks ? { sparks: parkedAt.sparks } : { spark: parkedAt.spark }) };
   const { model, spark, sparks, setup, allowStop = [], confirmOutside = false } = args;
-  if (spark && sparks) throw new HttpError(400, 'Give spark or sparks, not both.');
+  // (why no Spark Spark Console powered off was turned on for a start that fits nowhere, for its answer: wakeOne, D5)
+  const notWoken = [];
   notBrainsSpark([spark, ...(sparks || [])]);
   for (const id of [spark, ...(sparks || [])].filter(Boolean)) mustUse(viewer, [id]);
+  if (!ctx.poweredOn) {
+    // (a Spark being turned on for this very model: that operation, not a second one)
+    const early = [...jobs.values()].find(j => j.status === 'running' && j.type === 'power-on' && !j.handedOver && String(j.model || '').toLowerCase() === String(model).toLowerCase());
+    if (early) return alreadyStarting(early, model);
+    const first = powerFirst(args, viewer, ctx);
+    if (first) return first;
+  }
   const inv = await inventory(null);
-  const found = await resolveModelName(model, inv);
+  let found;
+  try { found = await resolveModelName(model, inv); } catch (e) {
+    // (what's on a Spark Spark Console powered off isn't seen until it's on: said, so the owner knows where to look)
+    const off = Object.keys(powerState().off).filter(id => nodeById(id));
+    if (e.status === 404 && off.length) throw new HttpError(404, `${e.message} ${sparksWords(off)} ${off.length > 1 ? 'are' : 'is'} powered off by Spark Console, so what’s on ${off.length > 1 ? 'their disks' : 'its disk'} can’t be seen now: turn ${off.length > 1 ? 'them' : 'it'} on to look there.`);
+    throw e;
+  }
+  // Not on any Spark that is on, with a Spark Spark Console powered off whose record lists it (or has no list): its files
+  // are there, so that one Spark is turned on first, before anything is downloaded or stopped (wakeOne, D5). One whose
+  // record doesn't list it isn't woken here: the download goes to a Spark that is on, or, when none has room, below.
+  if (!found.lib && !found.choices && !ctx.poweredOn) {
+    const first = powerFirst(args, viewer, ctx, 'all', wakeNames(model, found));
+    if (first) return first;
+  }
   if (found.choices) {
     return question(viewer, ctx, `“${model}” could be several models. Which one?`, found.choices.map(c => ({ label: c.label, call: { action: 'start_model', args: { model: c.model, ...(spark ? { spark } : {}), ...(sparks ? { sparks } : {}) } } })));
   }
@@ -503,6 +535,8 @@ async function startModel(args, viewer, ctx) {
     // Making room by stopping Spark Console's own models is done and said (contract 8.4), unless the owner said not to.
     // Stopping something started outside Spark Console (by hand, a benchmark) or that answers Sparkie is always asked.
     const placed = await placeModel(m, inv, viewer, { spark, sparks, allowStop, noStops: Boolean(ctx.noStops) });
+    // (room only by stopping something Spark Console didn't start: a Spark it powered off is turned on first instead)
+    if (!placed.ok && placed.ask && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (!placed.ok && placed.ask) {
       if (ctx.noStops) throw new HttpError(409, `${placed.why}, ${noStopWords(ctx)}.`);
       // (its Yes repeats the same start: on that Spark, or across the same two, F11)
@@ -514,7 +548,12 @@ async function startModel(args, viewer, ctx) {
         { label: 'No, leave it running', call: null },
       ], 'question', { ownerOnly: true });
     }
-    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.`);
+    // (nothing fits on the Sparks that are on: one Spark Console powered off is turned on first, and the start follows)
+    if (!placed.ok && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes, why: notWoken }); if (first) return first; }
+    if (!placed.ok) throw new HttpError(409, `Can’t start ${m.repo || m.name} right now: ${placed.why}.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
+    // (it fits only by stopping one of Spark Console's own models: a Spark it powered off is turned on first, and the start
+    // is placed again; a call still never stops a model to make room)
+    if (placed.stop.length && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', [m.name, m.repo].filter(Boolean), { sizeBytes: m.sizeBytes }); if (first) return first; }
     if (ctx.noStops && placed.stop.length) throw new HttpError(409, `${m.repo || m.name} only fits if ${placed.stop.join(', ')} stops, ${noStopWords(ctx)}.`);
     const across = acrossGate(placed.two, args, ctx, m.repo || m.name);
     // A model in use (it answered calls at the one address in the last 30 minutes) stops only after asking (8.4).
@@ -534,7 +573,9 @@ async function startModel(args, viewer, ctx) {
     return { outcome: 'started', operation: job.id, ...(across || {}), model: m.repo || m.name, sparks: placed.nodes, stops: placed.stop, setup: how?.setupId || (how ? (how.fromBrain ? 'the brain’s proven setup, without its draft model' : 'a run that worked here before') : 'the engine’s defaults'),
       endpointWhenReady: placed.endpoint || null, next: `wait_operation {"id":"${job.id}"} to follow it; loading can take several minutes.` };
   }
-  // Not on disk yet: download the best version that fits now, then start it, in one operation.
+  // Not on disk yet: download the best version that fits now, then start it, in one operation. Never for a call at the
+  // model address: a call doesn't download models.
+  if (ctx.via === 'gateway') throw new HttpError(409, `${found.repo || model} isn’t on your Sparks: a call doesn’t download models. Ask Sparkie, or start it from Spark Console.`);
   const fetching = startingNow([found.repo, ...(found.recipe?.variants || []).map(x => x.repo)], spark ? [spark] : sparks);
   if (fetching) return alreadyStarting(fetching, fetching.model);
   if (sparks && found.outsideRecipes) throw new HttpError(409, `${found.repo} isn’t in Recipes, and only models from Recipes run across two Sparks.`);
@@ -545,7 +586,8 @@ async function startModel(args, viewer, ctx) {
     ]);
   }
   const pick = await pickVersion(found.recipe, found.repo, viewer, found.outsideRecipes, spark ? [spark] : sparks || null);
-  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.`);
+  if (!pick && !spark && !sparks && !ctx.poweredOn) { const first = powerFirst(args, viewer, ctx, 'any', wakeNames(model, found), { versions: found.recipe?.variants, why: notWoken }); if (first) return first; }
+  if (!pick) throw new HttpError(409, `${found.recipe.title}: no version fits ${spark ? `on ${spark}` : sparks ? `on ${sparks.join(' + ')}` : 'on the Sparks'} right now with room to spare (8 GB headroom and disk). Stop something or free disk, then ask again.${notWoken.length ? ` ${notWoken[0]}` : ''}`);
   const v = pick.version, target = nodeById(pick.nodes[0]);
   mustUse(viewer, pick.nodes);
   const acrossPick = acrossGate(pick.two, args, ctx, v.repo);

@@ -1,3 +1,7 @@
+// Covers: Hostile values, argument names and envelopes against every tool: no 5xx, no non-JSON, no broken JSON-RPC, no
+// leaked exceptions, every error coded, the service stays up. The change tools are fuzzed with agents paused (their
+// inputs are still checked; nothing may run).
+//
 // Fuzz pass: hostile argument values, argument names and envelopes against every tool. Looks for HTTP 500s, non-JSON
 // answers, broken JSON-RPC envelopes, results that aren't JSON, leaked internal exceptions, and the service going down.
 // The tools that change things are fuzzed with agents' changes paused, so nothing they're asked for runs (their inputs
@@ -44,6 +48,7 @@ const VALID = () => ({
   wait_operation: { id: '0123456789ab' },
   start_model: { model: ctx.model }, stop_model: { spark: ctx.spark, container: ctx.container }, restart_model: { spark: ctx.spark, container: ctx.container },
   files: { spark: ctx.spark }, save_file: { spark: ctx.spark, path: 'fuzz.md', text: 'x' }, keep_running: { spark: ctx.spark, container: ctx.container }, self_test: {},
+  power_off: { spark: ctx.spark }, power_on: { spark: ctx.spark }, power_settings: { idleMinutes: 30 },
   search_web: { query: 'vllm flags' }, read_page: { url: 'https://docs.example.org/never-searched' }, recall: { about: 'gemma' }, forget_memory: { id: '0123abcd' },
 });
 let schemas = {};

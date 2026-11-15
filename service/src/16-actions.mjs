@@ -104,6 +104,11 @@ const tokensOf = text => new Set(sparkNames(normQuotes(text)).split(/[^a-z0-9.]+
 const POLITE = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+(?:\w+[\s,]+)?)?(?:please\s+)?(?:can|could|would|will)\s+(?:you|u|ya)\s+(?:please\s+)?(?:go\s+(?:and\s+)?)?/i;
 // "Do not …" and "didn't …" are statements, not questions.
 const QUESTION_START = /^\s*(why|what|what's|whats|how|is|are|which|when|where|did(?!\s+not\b)|does(?!\s+not\b)|do(?!\s+not\b)|has|have|was|were|who|whose|can|could|would|will|should|shall|may|might|if|whether|unless|in case)\b/i;
+// Turning a Spark itself off or on: the phrase names the Spark(s) it switches, and powerSparksSaid reads them from it.
+// (a Spark followed by 's is whose, not what is switched: "turn off Spark 3's model" names no Spark to power off)
+const SPARKS_NAMED = String.raw`(?:the\s+|both\s+|all\s+)?(?:(?:idle|other)\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*`;
+const POWER_OFF_WORDS = new RegExp(String.raw`\b(?:shut|turn|power|switch)\s+(?:down|off)\s+${SPARKS_NAMED}|\b(?:shut|turn|power|switch)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*\s+(?:down|off)\b`, 'gi');
+const POWER_ON_WORDS = new RegExp(String.raw`\b(?:turn|power|switch|boot)\s+(?:on|up)\s+${SPARKS_NAMED}|\b(?:turn|power|switch|boot)\s+(?:the\s+|both\s+)?sparks?(?:\s*(?:\d+\b(?![’']s\b)|and\b|or\b|&|\+|,))*\s+(?:on|up)\b|\bwake\s+(?:up\s+)?${SPARKS_NAMED}`, 'gi');
 // What asks for a change (base forms: "start gemma", "bring it up") …
 // A file's name, by its ending: one list for the gate's file words and the reading group's (R46).
 const FILE_ENDINGS = 'md|txt|json|csv|tsv|ya?ml|toml|ini|log|py|sh|js|html|css';
@@ -126,6 +131,13 @@ const CHANGE_WORDS = [
   ['selftest', /\b(self[\s-]?tests?|test\s+(?:the\s+|my\s+|all\s+(?:the\s+|my\s+)?|every\s+)?(?:sparks?|fleet|hardware))\b/gi],
   // A file in a Spark's shared folder (save_file): "save this as notes.md", "write it to a file on spark 3".
   ['file', new RegExp(String.raw`\b(save|write)\b[^.?!;\n]{0,120}?\b(?:files?|[\w-]+\.(?:${FILE_ENDINGS}))\b`, 'gi')],
+  // Powering a Spark itself off or on (21-power.mjs): only with a Spark as what is switched, by name ("shut down Spark
+  // 4", "turn Sparks 3 and 4 off", "turn on Spark 3", "boot Spark 3 up"). "Stop gemma on Spark 4 and shut it down" is a
+  // stop, never a power-off: "it" or "them" could be the model.
+  ['poweroff', POWER_OFF_WORDS],
+  ['poweron', POWER_ON_WORDS],
+  // The idle power-off's time: "set the idle shutdown to 45 minutes", "change auto power off to an hour".
+  ['powerset', /\b(?:set|change|make|switch|lower|raise)\b[^.?!;\n]{0,60}?\b(?:idle|auto(?:matic)?(?:ally)?|shut\s*down|shutdown|power[\s-]*off)\b/gi],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
 ];
@@ -151,6 +163,8 @@ const GROUP_WORDS = [
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update', /\b(?:cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
   ['memory', 'what Sparkie remembers: show it, forget a line', /\b(?:(?:your|sparkie'?s)\s+memor(?:y|ies)|remember(?:ed|s)?\s+about|do\s+you\s+(?:still\s+)?remember|forget\w*|what\s+do\s+you\s+(?:know|remember))\b/i],
   ['checks', 'tests: the self-test of the Sparks, testing the changes', /\b(?:self[\s-]?tests?|tests?|testing|validat\w*)\b/i],
+  // (power: a Spark itself switched by name, never a model: "turn off Spark 3’s model" opens it but power_off refuses it)
+  ['power', 'turning a Spark off or on, and the idle power-off', /\b(?:power(?:ed|ing|s)?[\s-]*(?:on|off|up|down)|power(?:ed|ing|s)?\s+(?:it|them|(?:the\s+)?sparks?\b[\s\d,+&]*(?:and\s+\d\s*)?)\s*(?:on|off|up|down)|wake|wakes|waking|woke|sleep\w*|asleep|plugs?|watts?|idle|shutdown|shut\s*down\s+(?:the\s+)?sparks?|shut(?:s|ting)?\s+(?:the\s+)?sparks?\b[^.?!\n]{0,20}?\bdown|turn(?:s|ed|ing)?\s+(?:on|off)\s+(?:the\s+)?sparks?|turn(?:s|ed|ing)?\s+(?:the\s+|all\s+)?sparks?\b[^.?!\n]{0,20}?\b(?:on|off)|boot(?:s|ed|ing)?\s+(?:up\s+)?(?:the\s+)?sparks?)\b/i],
 ];
 const NEGATOR = /\b(don't|dont|do not|didn't|did not|doesn't|never|no need to|without|not|avoid|stop yourself from)\b[\s,]+(?:[\w']+[\s,]+){0,4}$/i;
 // After "could you", these ask for information ("could you tell me whether to stop it"), not for a change.
@@ -195,7 +209,7 @@ const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the wor
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 const ACTION_KIND = { start_model: ['start'], stop_model: ['stop'], restart_model: ['restart', 'start'], cancel_operation: ['cancel'], undo_last_change: ['undo'],
   find_setups: ['find'], save_workflow: ['save'], forget_workflow: ['forget'], run_workflow: ['start'], remember: ['remember'], forget_memory: ['remember'], test_changes: ['test'], undo_update: ['undo'],
-  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'] };
+  save_file: ['file'], keep_running: ['keep', 'start', 'restart', 'stop'], self_test: ['selftest'], power_off: ['poweroff'], power_on: ['poweron'], power_settings: ['poweroff', 'stop', 'powerset'] };
 // A typed answer to Sparkie's one offered change: a message that's only "yes" (or "ok", "go ahead", …) presses its
 // button; anything more ("ok no", "yes but on Spark 4") goes to Sparkie. "No" puts the buttons away.
 const AFFIRM = /^\s*(?:y|yes|yeah|yep|yup|ok|okay|sure|go ahead|do it|please do|go for it|sounds good|that one|yes please|yes do it|ok do it|okay do it)\s*[.!]*\s*(?:please|thanks|thank you)?\s*[.!]*\s*$/i;
@@ -231,7 +245,7 @@ function tracesToRequest(name, input, saidText, request = saidText) {
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
 // of the request ("said"), the live system ("live", a container or Spark that exists), or Spark Console's own choice
 // when the request left it open ("chosen", like the Spark with room). Shown as "how this was checked" (7.9).
-const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted']);
+const PLAN_SKIP = new Set(['choice', '__validate', 'allowStop', 'allowBusy', 'confirmOutside', 'confirmRouted', 'confirmStops']);
 function planOf(wf, st, rawInput, ctx) {
   const input = rawInput.choice ? pendingChoices.get(rawInput.choice)?.args || {} : rawInput;
   const saidText = String(ctx.said || ctx.request || ''), said = tokensOf(saidText), flat = squash(sparkNames(normQuotes(saidText)));
@@ -340,6 +354,16 @@ async function sparkieCheck(name, input, ctx) {
     const path = String(out.path || '').toLowerCase().replace(/\/$/, '');
     return { clear: asked && (now.length ? now.includes(out.spark) : said.has(out.spark)) && /\.[a-z0-9]+$/.test(path) && wordsOf(saidText).has(path), input: out };
   }
+  // Powering Sparks off or on (21-power.mjs): every Spark it would switch is one the owner's words name (never one
+  // Sparkie picked), and the words ask for that very switch ("turn on Spark 3" never powers anything off). The idle
+  // time: the words are about the idle power-off and give that time, or say to turn it off for 0.
+  if (name === 'power_off' || name === 'power_on') {
+    // (the Sparks named in the very phrase that switches them: "shut down Spark 3 and stop gemma on Spark 4" powers off
+    // Spark 3 only)
+    const ids = [out.spark, ...(out.sparks || [])].filter(Boolean), inPhrase = powerSparksSaid(name === 'power_off' ? POWER_OFF_WORDS : POWER_ON_WORDS, saidText);
+    return { clear: asked && ids.length > 0 && ids.every(id => inPhrase.has(id)), input: out };
+  }
+  if (name === 'power_settings') return { clear: asked && powerSettingsClear(out, saidText), input: out };
   // A workflow's steps are Sparkie's own writing. They are saved at once only when this turn read nothing from outside,
   // the name is new, and the owner's words name every step's model, container and Sparks; otherwise it's a button whose
   // label lists the steps (pageOnlyLabel, F20).
@@ -348,6 +372,12 @@ async function sparkieCheck(name, input, ctx) {
     return { clear: asked && !ctx.readOutside && !findSaved(String(out.title || '')) && steps.every(st => tracesToRequest(String(st?.action), stepArgs(st), saidText, ctx.request)), input: out };
   }
   return { clear: asked && tracesToRequest(name, out, saidText, ctx.request), input: out };
+}
+// The Spark ids named inside the phrases a power word matched.
+function powerSparksSaid(re, text) {
+  const ids = new Set();
+  for (const m of normQuotes(text).matchAll(new RegExp(re.source, 'gi'))) for (const t of tokensOf(m[0])) if (/^spark\d+$/.test(t)) ids.add(t);
+  return ids;
 }
 // ctx says who's asking (via: 'sparkie' | 'agent' | …, actor: a name, request: their words, canChange).
 // Agents (Sparkie, outside agents, auto-restart) pause themselves after many changes in an hour or three failed
@@ -556,21 +586,24 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
-  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. An offline Spark has its last reading before it went dark. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
+  description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose (idle, or asked) has state "off" and offOnPurpose (when, why, its parked models, how to turn it on): that is not a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
     const s = await statusFor(viewer, false);
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
-        ...darkNow(n.id) } : {
-        id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null,
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: n.poweredOff, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+        : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
+        ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
+        id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
         uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: n.runningContainers || [], issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
+      wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,
+      power: powerView(),
     };
   },
 });
@@ -649,7 +682,7 @@ async function runningDetail(name, inv, running) {
   // The recorded run with exactly these settings (same model, engine, image, number of Sparks, flags and environment),
   // the one that says the most first, then the newest.
   const v = !eng || !x.modelId ? null : verifiedList().filter(e => e.model === x.modelId && e.engine === engine && e.image === w.image && e.sparks === sparks.length
-    && (!e.file || flags.some(a => a.includes(e.file))) && envIn(e) && sameFlags(flags, [...eng.tail('x'), ...(e.args || [])]))
+    && (!e.file || flags.some(a => a.includes(e.file))) && envIn(e) && [[], metricsFlags(engine, e.args || [])].some(mf => sameFlags(flags, [...eng.tail('x'), ...mf, ...(e.args || [])])))
     .sort((a, b) => Object.keys(b.env || {}).length - Object.keys(a.env || {}).length || String(b.lastAt).localeCompare(String(a.lastAt)))[0] || null;
   return {
     ...x, startedBySparkConsole: Boolean(w.byConsole), sparks, image: w.image, engine, command: w.command,
@@ -706,7 +739,7 @@ function pasteCard(client, baseUrl) {
 
 action({
   name: 'models_on_disk', title: 'Models on disk', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length.',
+  description: 'Use for “which models are downloaded, and where?”. Every model on any Spark (~/models and the Hugging Face cache): its modelId (use it with where_it_fits and deploy_plan), repo, size in GB, which Sparks have a copy, architecture, quantization and context length. asleep: the Sparks Spark Console powered off, with what was on their disks then and since when (looking never wakes one).',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async () => {
     const inv = await recentInventory();
@@ -716,6 +749,7 @@ action({
         architecture: m.architecture || null, quantization: m.dtype || null, contextLength: m.contextLength || null, draftOnly: m.role === 'draft' })),
       stillDownloading: inv.incomplete.filter(x => x.reason === 'downloading').map(x => ({ repo: x.repo, spark: x.node })),
       offline: inv.sparks.filter(sp => !sp.online).map(sp => sp.id),
+      asleep: asleepView(),
     };
   },
 });
@@ -829,16 +863,16 @@ async function estimateFit(name, viewer, inv) {
 
 action({
   name: 'where_it_fits', title: 'Where a model fits', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'find',
-  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. Next: deploy_plan or cluster_plan for the exact dry run.',
+  description: 'Use for “where can I run X?”. For a downloaded model: every Spark and linked pair, whether it can run (canRun), whether it fits without stopping anything (fitsNow), what would stop, and blockers. For a model not downloaded yet (a recipe id or repo): an estimate. asleep: Sparks Spark Console powered off whose disk held it then (a start wakes one; looking never does). Next: deploy_plan or cluster_plan for the exact dry run.',
   input: { type: 'object', properties: { model: modelArg }, required: ['model'], additionalProperties: false },
   run: async ({ model }, viewer) => {
     const inv = await recentInventory(), m = libraryModel(inv, model);
-    if (!m) return estimateFit(model, viewer, inv);
+    if (!m) return { ...(await estimateFit(model, viewer, inv)), asleep: asleepView([String(model)]) };
     const r = await plansFor(m.name, viewer, inv, new Map());
     const sparks = r.sparks.map(fitView), pairs = r.pairs.map(pairView);
     const one = sparks.find(s => s.fitsNow) || sparks.find(s => s.canRun), two = pairs.find(p => p.canRun);
     return {
-      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs,
+      observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, recommended: r.recommended, sparks, pairs, asleep: asleepView([m.name, m.repo].filter(Boolean)),
       pairsNote: 'Only pairs whose cable passed the connection test are listed (linked_sparks).',
       next: one ? `deploy_plan {"model":"${m.name}","spark":"${one.spark}"}` : two ? `cluster_plan {"model":"${m.name}","sparks":${JSON.stringify(two.sparks)}}` : 'Nothing can run it right now; see blockers.',
     };
@@ -1132,10 +1166,10 @@ action({
   },
 });
 
-const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
+const EVENT_TYPES = ['started', 'stopped', 'crashed', 'removed', 'created', 'spark-offline', 'spark-online', 'spark-powered-off', 'spark-powered-on', 'learned', 'operation', 'healing', 'heal-skipped', 'notice'];
 action({
   name: 'fleet_events', title: 'What happened on the Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'past',
-  description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, model servers learned as recipes, and Spark Console’s own operations with their result.',
+  description: 'Use for “what changed / what happened while I was away?”. Newest first: containers started, stopped, crashed (exit code, out of memory) or removed — including ones started by hand — Sparks going offline or coming back, Sparks Spark Console powered off or on (on purpose: why, and what it parked), model servers learned as recipes, and Spark Console’s own operations with their result.',
   input: { type: 'object', properties: {
     since: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(T[0-9:.]+Z?)?$', description: 'An ISO time; only events after it.' },
     spark: sparkArg,
