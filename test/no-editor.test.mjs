@@ -97,13 +97,14 @@ test('the editor\'s part and its stand-in are gone, and nothing in the service n
 test('the page holds no browser editor link or button and no editor restart; a Spark\'s SSH ways in stay', () => {
   const APP = read('public/app.js');
   for (const [file, text] of [['public/app.js', APP], ['public/index.html', read('public/index.html')], ['public/styles.css', read('public/styles.css')]]) {
-    assert.doesNotMatch(text, /(^|[^a-z])connect\//im, `${file}: a link to the editor's address`);
+    // (ok, not doesNotMatch: a failure names the file, never prints all of it)
+    assert.ok(!/(^|[^a-z])connect\//im.test(text), `${file}: a link to the editor's address`);
     for (const words of ['editorPath', 'editorUrl', 'editor-restart', 'editorReady', 'VS Code in browser', 'VS Code + terminal', 'Restart VS Code',
       'Editor and terminal in your browser', 'VS Code not ready']) {
       assert.ok(!text.includes(words), `${file}: ${words}`);
     }
   }
-  assert.doesNotMatch(APP, /nodes\/\$\{[^}]+\}\/actions/, 'no Spark action is sent');
+  assert.ok(!/nodes\/\$\{[^}]+\}\/actions/.test(APP), 'no Spark action is sent');
   // What stays on a Spark's page: the owner's own editor over SSH (nothing goes through Spark Console), the SSH command
   // and the SSH config for every Spark.
   assert.match(APP, /\$\{scheme\}:\/\/vscode-remote\/ssh-remote\+/, 'a desktop editor link over SSH');
