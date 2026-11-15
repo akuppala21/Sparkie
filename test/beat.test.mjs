@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, cpSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, MEMBER, SERVICE_FILE, useFleet, api, sleep, waitFor, auditLines, eventLines, createKey, call, newChat, say, SLOW } from './lib.mjs';
+import { T, REPO, MEMBER, SERVICE_FILE, useFleet, api, sleep, waitFor, auditLines, eventLines, createKey, call, newChat, say, chatMessages, SLOW } from './lib.mjs';
 import { serviceConfig } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 
@@ -65,8 +65,12 @@ const BEAT_LINE = /^Spark Console hasn’t reached its outside check \(hc-ping\.
 const access = JSON.parse(readFileSync(join(REPO, 'test', 'mock', 'access.json'), 'utf8'));
 const FLEET_WORDS = [new URL(MAIN_ORIGIN).hostname, TAILNET, access.publicHost.split(':')[0], access.ownerLogin, access.userName, access.sshUser, 'owner', 'tailscale', 'ts.net',
   ...access.nodes.flatMap(n => [n.tailnetIp, n.sshHost, n.name].filter(Boolean)), ...serviceConfig().nodes.map(n => n.host).filter(h => h !== 'local')];
-// Every file in the fleet's folder (state, the service's log, what the stand-in model was sent, the stand-in Sparks),
-// but the secrets file, that holds this text.
+// What the stand-in brain was sent, one entry a request (test/mock/model.mjs).
+const BRAIN_RECORD = () => join(T.fleet.dir, 'model-requests.jsonl');
+const brainRecord = () => (existsSync(BRAIN_RECORD()) ? readFileSync(BRAIN_RECORD(), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
+const TYPED = 'my outside check is';
+// Every file in the fleet's folder (state, the service's log, the stand-in Sparks), but the secrets file, that holds
+// this text. The stand-in brain's record is read line by line instead: only the turn the owner typed it in may hold it.
 function filesHolding(text) {
   const found = [], walk = dir => {
     for (const f of readdirSync(dir)) {
@@ -74,6 +78,7 @@ function filesHolding(text) {
       let st;
       try { st = statSync(p); } catch { continue; }
       if (st.isDirectory()) walk(p);
+      else if (p === BRAIN_RECORD()) { if (brainRecord().some(e => JSON.stringify(e).includes(text) && !e.words.startsWith(TYPED))) found.push(f); }
       else if (st.isFile() && p !== T.fleet.secretsFile && readFileSync(p).includes(text)) found.push(p.slice(T.fleet.dir.length + 1));
     }
   };
@@ -223,6 +228,25 @@ describe('the outside heartbeat', { concurrency: 1 }, () => {
     HC.answer(200);
     await waitFor(async () => (await view()).state === 'ok', { timeout: EVERY * 6, every: 200, what: 'working again' });
     assert.ok(!(await needs()).some(l => BEAT_LINE.test(l)), 'the line is gone');
+  });
+
+  test('an address the owner types into a chat is kept nowhere: the saved chat, its answer and its title have [hidden] in its place', { timeout: 60000 * SLOW }, async () => {
+    const chat = await newChat(), from = brainRecord().length;
+    await say(chat, `${TYPED} ${ADDRESS}, keep it to yourself`);
+    await say(chat, 'thanks');
+    const msgs = await chatMessages(chat);
+    assert.equal(msgs[0].content, `${TYPED} [hidden], keep it to yourself`);
+    assert.ok(!JSON.stringify(msgs).includes(ID), JSON.stringify(msgs));
+    // (the stand-in brain answers with the words it was given, so its answer as saved is hidden too)
+    assert.ok(msgs.some(m => m.role === 'assistant' && m.content.includes(`${TYPED} [hidden]`)), JSON.stringify(msgs));
+    const title = (await api('/chats')).json.chats.find(c => c.id === chat)?.title;
+    assert.ok(title && !title.includes(ID), title);
+    assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(ID), 'chats.json, which the daily copy carries');
+    // What the brain was sent: the turn it was typed in, as typed (the gate and the brain read that turn's words whole,
+    // 14-chats.mjs); the next turn, whose history is the saved chat, holds none of it.
+    const sent = brainRecord().slice(from), typed = sent.filter(e => JSON.stringify(e).includes(ID)), next = sent.filter(e => e.words === 'thanks');
+    assert.ok(typed.length >= 1 && typed.every(e => e.words.startsWith(TYPED)), JSON.stringify(typed.map(e => e.words)));
+    assert.ok(next.length >= 1 && next.every(e => !JSON.stringify(e).includes(ID) && e.messages >= 4), JSON.stringify(next.map(e => [e.words, e.messages])));
   });
 
   test('the address is in no chat, audit line, event, log, state file, answer or tool result', { timeout: 60000 * SLOW }, async () => {
