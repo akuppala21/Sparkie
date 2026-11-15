@@ -443,7 +443,7 @@ const ROWS = [
   ['conda install -c /tmp/w x', 'risky', { written: W5 }], ['npm install file:/tmp/w', 'risky', { written: W5 }], ['bash /tmp/w/x.s?', 'risky', { written: ['/tmp/w/x.sh'] }],
   ['git -C /tmp/w status', 'look', { written: W5 }], ['cat /tmp/w/x.sh', 'look', { written: W5 }], ['cp /tmp/w/x.sh /tmp/y.sh', 'change', { written: W5 }],
   ['git -C /tmp/w commit -m x', 'change'],
-  // Sixth read: the plain shape (R63). A change, or a look with a {…}, that is not of the shape is asked; the four
+  // Sixth read: the plain shape (R64). A change, or a look with a {…}, that is not of the shape is asked; the four
   // allowances keep their answers (a $ in a word of echo, here-text into cat or tee, a last cd, the /proc status files).
   ['timeout {5,reboot}', 'risky'], ['ls {a,b}', 'risky'], ['echo $PATH', 'look'], ['echo $HF_HOME', 'look'], ['cat /proc/meminfo | head -5', 'look'],
   ['echo "$(date) done" >> ~/work/log.txt', 'change'], ['cat > ~/work/notes.txt <<EOF\nhi\nEOF', 'change'],

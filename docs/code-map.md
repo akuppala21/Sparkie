@@ -729,11 +729,11 @@ The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the ne
 - **Uses:** `20-options` (`sortOpts`, `SORT_OPTS`), `20-places` (`sortPlace`, `sortNorm`, `sortQ`, `sortTouch`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortOpen`, `sortFresh`, `sortInline`, `sortAt`, `sortMerge`, `sortGone`), `20-tables` (`sortShows`)
 - **Used by:** `20-tools`
 
-### `20-shape.mjs`: the sorter's plain shape: what a command run at once must look like (R63)
+### `20-shape.mjs`: the sorter's plain shape: what a command run at once must look like (R64)
 
 sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null. The shape: no {…} bash would expand; no $ but $(nproc) and its two kin; a pattern only in a word the sorter places as a file; no group, subshell, loop or function; at most one cd, the first word, cd <folder> &&; only plain redirections (> >> < &> to a path, 2>&1); nothing under /dev or /proc but /dev/null; only the safe names set before a command; no here-text; a & only last. Four allowances: a $ in a word of echo; here-text into cat or tee; a cd as the last command; the /proc …
 
-- **Area:** safety. **Rules:** R63. **Tests:** sort.test.mjs
+- **Area:** safety. **Rules:** R64. **Tests:** sort.test.mjs
 - **Lines:** 56
 - **Owns:** none
 - **Timers:** none

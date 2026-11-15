@@ -1,5 +1,5 @@
-/* ───────── the sorter's plain shape: what a command run at once must look like (R63) ───────── */
-// Area: safety        Rules: R63        Tests: sort.test.mjs
+/* ───────── the sorter's plain shape: what a command run at once must look like (R64) ───────── */
+// Area: safety        Rules: R64        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null.

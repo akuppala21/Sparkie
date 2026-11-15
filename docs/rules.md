@@ -63,4 +63,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R59](rules/R59.md): What `recall`, `memory` and the questions about a memory line hand to whom (the review of the memory steps, 2026-11-15; R43 says who reads the journal, R45 what memory keeps).
 - [R60](rules/R60.md): The lock-out net: confirm, or it goes back.
 - [R61](rules/R61.md): What the runner does with a change (R55 is the sorter, R42 the root helper and its walls).
-- [R63](rules/R63.md): What a command run at once must look like (R55 is the sorter).
+- [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).

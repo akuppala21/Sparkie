@@ -12522,8 +12522,8 @@ Object.assign(SORT_HANDLERS, {
     raise(r, 'lockout', `tailscale ${sortQ(v)} changes Tailscale, a way in.`);
   },
 });
-/* ───────── the sorter's plain shape: what a command run at once must look like (R63) ───────── */
-// Area: safety        Rules: R63        Tests: sort.test.mjs
+/* ───────── the sorter's plain shape: what a command run at once must look like (R64) ───────── */
+// Area: safety        Rules: R64        Tests: sort.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // sortShape(items, ctx) reads the tokenizer's words once and says why a command is not of the plain shape, or null.
@@ -13096,7 +13096,7 @@ function sortCommand(command, opts) {
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
-      // (the plain shape, R63: a change not of it is asked, a look only for a {…}; stronger answers stand)
+      // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
       if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
     }
     sortAt(r, ctx);

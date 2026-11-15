@@ -324,7 +324,7 @@ function sortCommand(command, opts) {
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
-      // (the plain shape, R63: a change not of it is asked, a look only for a {…}; stronger answers stand)
+      // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
       if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
     }
     sortAt(r, ctx);
