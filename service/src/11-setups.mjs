@@ -1,7 +1,7 @@
 /* ───────── finding setups ───────── */
-// Area: knowledge        Rules: R10, R22, R27        Tests: dig.test.mjs
+// Area: knowledge        Rules: R10, R22, R27        Tests: dig.test.mjs, setups-look.test.mjs
 // Owns: none
-// Timers: daily (the daily research: 3 minutes after start, then every 24 hours)        Wakes: none
+// Timers: none        Wakes: none
 // For one Recipes model, every published way of running its versions on DGX Spark: NVIDIA's recipes, recipes.vllm.ai,
 // Spark Arena's and eugr's recipe files, NVIDIA's developer forums and the model's own card (its code blocks only).
 // The commands are read out of those by the service itself (dig.mjs), never written by a model. Sparkie only reads
@@ -226,7 +226,7 @@ const startDig = (viewer, id, title) => {
 
 // Spark Console looks for a model's best setups by itself (2026-11-11, the owner: every time it should know the best
 // and be able to start it, researched ahead of time): after a download, before a start picks the setup for a model it
-// just downloaded, and every day for the models in Recipes (on disk first); each only when the last look is over a
+// just downloaded, and before recipe_detail answers (lookedUp); each only when the last look is over a
 // week old. A look reads NVIDIA's recipe files,
 // vLLM's recipes, Spark Arena, eugr's spark-vllm-docker and the model's own card, and keeps the setups with their
 // commands (found-setups.json).
@@ -244,21 +244,23 @@ async function refreshSetups(viewer, repo, { job = null, wait = false } = {}) {
   if (wait && d) await waitJob(d.id, 150000);
   return d;
 }
-// Once a day (first a few minutes after Spark Console starts): every model on disk whose last look is over a week old.
-if (AUTO_DIG && (!ALL_LOCAL || process.env.SPARK_CONSOLE_DIG_EVERY_MS)) {
-  // Models on disk first, then the rest of Recipes by rank; at most 20 looks a day, so every model is looked at about
-  // weekly and its setups are known before anyone asks for it.
-  const daily = async () => {
-    const inv = await recentInventory().catch(() => null);
-    const onDisk = new Set((inv?.library || []).map(m => recipeIdOf(m.repo || m.name)).filter(Boolean));
-    const order = recipeCatalog().models.filter(m => setupsStale(m.id)).sort((a, b) => onDisk.has(b.id) - onDisk.has(a.id) || (b.rank ?? 0) - (a.rank ?? 0));
-    for (const m of order.slice(0, 20)) {
-      const repo = m.variants[0]?.repo;
-      if (!repo) continue;
-      try { await refreshSetups(LOOKER, repo, { wait: true }); } catch (e) { console.error(`Looking for setups for ${m.title}: ${e.message}`); }
-    }
-  };
-  setTimeout(() => { daily(); setInterval(daily, Number(process.env.SPARK_CONSOLE_DIG_EVERY_MS || 24 * 3600000)); }, ALL_LOCAL ? 1000 : 180000);
+// Nothing looks by the clock (owner decision 5; contract 7.11 and 8.0; design C step 7, as cut on 2026-11-14): the daily
+// look is gone. The lookup that reads a model's setups (recipe_detail) looks first, as a start does, when the last look
+// is over a week old (SETUPS_FRESH_MS) or there was none; it waits up to 40 s (a call is cut at 50), then answers from
+// the list as it is. A look that couldn't read a source keeps what it had (digModel), and the answer says how old it is.
+async function lookedUp(m) {
+  if (!m) return m;
+  const repo = m.variants.map(v => v.repo).find(r => recipeIdOf(r) === m.id);
+  const look = repo ? await refreshSetups(LOOKER, repo).catch(() => null) : null;
+  if (look) await waitJob(look.id, 40000);
+  const now = recipeCatalog().models.find(x => x.id === m.id) || m, f = foundSetups()[m.id];
+  const days = f?.at ? Math.floor((Date.now() - Date.parse(f.at)) / 86400000) : null;
+  const failed = (f?.sources || []).filter(s => s.error).map(s => s.name);
+  const when = days === null ? 'never' : days < 1 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`;
+  const why = look?.status === 'running' ? `hasn’t finished (operation ${look.id})` : failed.length ? `couldn’t read ${failed.join(' or ')}` : 'didn’t work';
+  now.lookedUp = { at: f?.at || null, when, ...(failed.length ? { couldntRead: failed } : {}),
+    ...(look && setupsStale(m.id) ? { note: `Looking again just now ${why}, so ${days === null ? 'only Recipes’ own setups are listed' : `these setups are from ${when}`}.` } : {}) };
+  return now;
 }
 
 const catalogSetup = id => { for (const m of recipeCatalog().models) for (const st of m.setups || []) if (st.id === id) return { model: m, setup: st }; return null; };
@@ -427,7 +429,7 @@ fi` : inImage, { timeout: 6 * 3600000, signal: job.abort?.signal, onLine: line =
   done = true;
   await watch;
   cancelCheck(job);
-  if (r.out.includes('NO_HF_CLI')) throw new Error(`The Hugging Face CLI isn’t installed on ${host.id}, and no engine image there has its library either. Install it there with: pip install -U "huggingface_hub[cli]"`);
+  if (r.out.includes('NO_HF_CLI')) throw new Error(`${host.id} has nothing to download with: downloads go through the Hugging Face library inside an engine image (SGLang or vLLM), and there is none on ${host.id} yet. Pull one there (the image a recipe for that engine names), then try again.`);
   const used = /HF_IN_IMAGE (\S+)/.exec(r.out)?.[1];
   if (used && !r.code) note(job, `Downloaded with the Hugging Face library inside ${used} (${host.id} has no hf command)`);
   if (r.code) {

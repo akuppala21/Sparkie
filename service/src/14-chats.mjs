@@ -275,6 +275,8 @@ function stopTurn(conv) {
   return Boolean(link || task);
 }
 async function sparkieTurn({ viewer, conv, text, context = null, emit = () => {}, agent = null, link = { gone: false, upstream: null }, task = null, channel = null }) {
+  // First, a key in the words is hidden: a /key form, a heartbeat's address, a kept key's value (20-keys.mjs, R51).
+  text = keysHidden(text);
   // The turn’s state, in one object its pieces share: each piece below adds what it makes. They run in this order,
   // which is the order of the turn’s effects (what is saved, emitted and journalled, and when): keep it.
   const turn = { viewer, conv, text, context, emit, agent, link, task, channel };
@@ -342,7 +344,8 @@ function turnHistory(conv) {
   for (let i = conv.messages.length - 1, used = 0; i >= 0 && history.length < LIMITS.history; i--) {
     const m = conv.messages[i];
     if (m.error) continue;
-    const content = String(m.content).length > 8000 ? `${String(m.content).slice(0, 8000)} …(shortened)` : String(m.content);
+    // (a kept key typed in plain words before it was given goes to the brain hidden, R51; hidden before the cut)
+    const whole = keptHidden(m.content), content = whole.length > 8000 ? `${whole.slice(0, 8000)} …(shortened)` : whole;
     if (used + content.length > 40000) break;
     used += content.length;
     // Spark Console's own notices (operation results, buttons pressed) can quote programs' output: data, in its own words.
@@ -358,7 +361,7 @@ function keepWords({ conv, text, context, agent, task, channel }) {
   const lastAsk = conv.messages.map(m => m.role).lastIndexOf('user');
   const open = conv.messages.slice(lastAsk + 1).flatMap(m => m.choices || []).filter(c => c.state === 'open' && pendingChoices.has(c.id));
   // What is saved has keys hidden: chats.json is copied to another Spark every day (F20). This turn's gate and the model
-  // still get the words as typed.
+  // still get the words as typed, but for what keysHidden took out at the top of the turn (R51).
   const kept = maskSecrets(text);
   conv.messages.push({ role: 'user', content: kept, context: context || null, createdAt: now, ...(agent ? { from: agent.name } : {}), ...(task ? { auto: true } : {}) });
   if (!conv.title || conv.title === 'New chat') conv.title = `${agent ? `${agent.name}: ` : ''}${kept.replace(/\s+/g, ' ')}`.slice(0, 60);

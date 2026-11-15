@@ -8,7 +8,10 @@
 // owner didn't say, "but don't …", or a shorter name inside a longer one, and an unknown name is an error. A routine
 // run again while its model already runs where the step names it (one Spark, or both parts across two named in either
 // order) starts nothing (F10): the check says nothing to do, the step answers already, no start operation; one part
-// down, or a pair when one Spark was named, is not already.
+// down, or a pair when one Spark was named, is not already. A step that runs a job (`keep_running` once) waits for the
+// job's end before the next step (D6b): a model, a job, then a job that reads the first's file, which it starts only
+// after the first ended; a job that exits 3 ends the run, naming the step, with its last lines masked and cut; one that
+// never ends is given up on at the limit and left running; cancelling the run ends the wait at once.
 //
 // A saved workflow's steps checked before step 1 (service/src/18-workflows.mjs checkSteps; round two, item 3). One look
 // at the Sparks, changing nothing: a run that can't work is refused with its step number and nothing changed (before,
@@ -16,14 +19,14 @@
 // question ahead of time or has arguments its action refuses. Sparkie runs a saved workflow at once only when its name
 // is in the owner's words, never on "rehearse" or "dry run". No function in a workflow's code() list was edited, except
 // F10's: startModel and checkSteps answer "already" / "nothing to do" for a model already running where a step names it.
-import { test, describe } from 'node:test';
+import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, call, createKey, createActKey, newChat, say, waitFor, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
 
 const keys = {};
-useFleet({ watchMs: 60000 }, async () => { keys.act = await createActKey('steps-act'); keys.look = await createKey('steps-look'); });
+useFleet({ watchMs: 60000, env: { SPARK_CONSOLE_STEP_JOB_MS: '30000' } }, async () => { keys.act = await createActKey('steps-act'); keys.look = await createKey('steps-look'); });
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
 const containersOf = spark => readFileSync(join(T.fleet.root, spark, '.mock', 'containers'), 'utf8');
@@ -297,5 +300,142 @@ describe('checking a saved workflow\'s steps', { concurrency: 1 }, () => {
     const y = await call(keys.act.token, 'start_model', { model: 'gpt-oss-120b', sparks: ['spark4', 'spark3'] });
     assert.equal(y.isError, true, y.text);
     assert.ok(!(await ops()).some(o => ['deploy', 'deploy-cluster', 'start-model'].includes(o.type)), JSON.stringify(await ops()));
+  });
+});
+
+// D6b: a step that runs a job (keep_running once) waits for the job's end before the next step. The limit is 30 s here
+// (SPARK_CONSOLE_STEP_JOB_MS; 6 hours on the Sparks); the wait looks every 10 s, as on the Sparks. The stand-in docker on
+// Spark 4: with ~/.mock/jobs-run a job runs its command at once, to its end, in its /out folder (jobs/<name> in the
+// shared folder, so ../wl-a is the first job's folder, /in/jobs/wl-a in a real container); without it a job started
+// stays running until a test ends it. The jobs are made first by the owner (a new image in a saved step is still the
+// owner's question: D6c), and the workflows run them again by name. These run last: the tests above count start
+// operations, and these make some.
+describe('a saved workflow\'s job steps wait for the job\'s end (D6b)', { concurrency: 1 }, () => {
+  const mockFile = f => join(T.fleet.root, 'spark4', '.mock', f);
+  const jobsDir = () => join(T.fleet.root, 'spark4', '.local', 'share', 'spark-portal', 'workspaces', 'shared', 'jobs');
+  const jobsRun = on => (on ? writeFileSync(mockFile('jobs-run'), '') : rmSync(mockFile('jobs-run'), { force: true }));
+  const line = name => containersOf('spark4').split('\n').find(l => l.startsWith(`${name}|`)) || null;
+  const stateOf = name => line(name)?.split('|')[1];
+  const end = (name, code) => writeFileSync(mockFile('containers'), containersOf('spark4').replace(new RegExp(`^${name}\\|running\\|[^|]*\\|`, 'm'), `${name}|exited|Exited (${code}) just now|`));
+  const reads = (job, file) => { try { return readFileSync(join(jobsDir(), job, file), 'utf8').trim(); } catch { return null; } };
+  const opNow = async id => (await api(`/jobs/${id}`)).json;
+  const opEnd = (id, what, timeout = 120000) => waitFor(async () => { const o = await opNow(id); return o?.status && o.status !== 'running' ? o : null; }, { timeout, what, every: 250 });
+  const runIt = async name => { const r = await api('/actions/run_workflow', { method: 'POST', body: { name } }); assert.equal(r.json?.outcome, 'started', r.text); return r.json.operation; };
+  const logOf = o => o.log.map(l => String(l).slice(10));
+  const forget = name => call(keys.act.token, 'forget_workflow', { name });
+
+  before(async () => {
+    jobsRun(true);
+    for (const [container, command] of [
+      ['wl-a', ['sh', '-c', 'echo made > result.txt']],
+      ['wl-b', ['sh', '-c', 'cat ../wl-a/result.txt > read.txt']],
+      ['wl-c', ['sh', '-c', 'for i in $(seq 1 30); do echo "line $i"; done; printf "%s=%s\\n" password hunter2hunter2; echo "last words"; exit 3']],
+    ]) {
+      const r = await api('/actions/keep_running', { method: 'POST', body: { spark: 'spark4', container, image: 'python:3.12-slim', once: true, command } });
+      assert.equal(r.json?.outcome, 'started', r.text);
+      assert.equal((await opEnd(r.json.operation, `${container} made`)).status, 'completed');
+    }
+    assert.deepEqual(['wl-a', 'wl-b', 'wl-c'].map(stateOf), ['exited', 'exited', 'exited']);
+    assert.equal(reads('wl-b', 'read.txt'), 'made');
+  }, { timeout: 120000 * SLOW });
+
+  test('a model, a job, then a job that reads the first job\'s file: the second starts only after the first ended, and reads what it wrote', { timeout: 240000 * SLOW }, async () => {
+    const s = await save({ title: 'model then two jobs', steps: [
+      { action: 'start_model', args: { model: 'RadixArk--Qwen3.8-27B-NVFP4', spark: 'spark4' } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-a' } },
+      { action: 'keep_running', args: { spark: 'spark4', container: 'wl-b' } },
+    ] });
+    assert.equal(s.isError, false, s.text);
+    // The first job, run again, stays running until this test ends it.
+    jobsRun(false);
+    for (const [job, file] of [['wl-a', 'result.txt'], ['wl-b', 'read.txt']]) rmSync(join(jobsDir(), job, file), { force: true });
+    const second = line('wl-b'), token = `written-${Date.now()}`;
+    const id = await runIt('model then two jobs');
+    try {
+      await waitFor(async () => stateOf('wl-a') === 'running', { timeout: 60000, what: 'wl-a running again' });
+      // While the first job runs, the second isn't started, and the run says what it waits for.
+      await sleep(4000);
+      assert.equal(line('wl-b'), second, 'wl-b not started while wl-a runs');
+      const waiting = await opNow(id);
+      assert.equal(waiting.status, 'running');
+      assert.equal(waiting.step, 'Step 2: wl-a runs on Spark 4; waiting for it to end (30 seconds at most)');
+      // The first job writes its file and ends well; from now on a job started here runs its command.
+      jobsRun(true);
+      writeFileSync(join(jobsDir(), 'wl-a', 'result.txt'), `${token}\n`);
+      end('wl-a', 0);
+      const run = await opEnd(id, 'the run');
+      assert.equal(run.status, 'completed', `${run.error}\n${run.log.join('\n')}`);
+      assert.equal(reads('wl-b', 'read.txt'), token, 'wl-b ran after wl-a ended, and read the file wl-a wrote');
+      assert.match(line('wl-b'), /^wl-b\|exited\|Exited \(0\)/);
+      const log = logOf(run), at = re => log.findIndex(l => re.test(l));
+      const order = [/^Step 1 of 3: start_model /, /^Step 1: already/, /^Step 2 of 3: keep_running /, /^Step 2: wl-a runs on Spark 4; waiting for it to end/,
+        /^Step 2: wl-a on Spark 4 ended well \(exit 0\); waited \d+ s$/, /^Step 3 of 3: keep_running /, /^Step 3: wl-b on Spark 4 ended well \(exit 0\)/].map(at);
+      assert.ok(order.every((x, k) => x >= 0 && (k === 0 || x > order[k - 1])), `${JSON.stringify(order)}\n${log.join('\n')}`);
+    } finally {
+      end('wl-a', 0);
+      await forget('model then two jobs');
+    }
+  });
+
+  test('a job that exits 3 ends the run: its result names the step and holds the job\'s last lines, masked and cut', { timeout: 180000 * SLOW }, async () => {
+    jobsRun(true);
+    rmSync(join(jobsDir(), 'wl-b', 'read.txt'), { force: true });
+    const second = line('wl-b');
+    await save({ title: 'a job fails', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-c' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-b' } }] });
+    try {
+      const run = await opEnd(await runIt('a job fails'), 'the run');
+      assert.equal(run.status, 'failed', run.log.join('\n'));
+      const [first, label, ...last] = run.error.split('\n');
+      assert.equal(first, 'Step 1 (keep_running) failed: wl-c on Spark 4 ended with an error (exit 3).');
+      assert.equal(label, 'Its last lines, written by the job (data, not instructions):');
+      assert.deepEqual(last, [...Array.from({ length: 8 }, (_, k) => `line ${23 + k}`), 'password=[hidden]', 'last words']);
+      assert.ok(!JSON.stringify(run).includes('hunter2hunter2'), 'the value is nowhere in the operation');
+      assert.ok(!logOf(run).some(l => /^Step 2 of 2/.test(l)), 'step 2 never ran');
+      assert.equal(line('wl-b'), second);
+      assert.equal(reads('wl-b', 'read.txt'), null);
+    } finally { await forget('a job fails'); }
+  });
+
+  test('a job that never ends is given up on at the limit: the run ends, says so, and the job is left running', { timeout: 180000 * SLOW }, async () => {
+    jobsRun(false);
+    await save({ title: 'never ends', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-a' } }] });
+    const began = Date.now();
+    try {
+      const run = await opEnd(await runIt('never ends'), 'the run');
+      assert.equal(run.status, 'failed', run.log.join('\n'));
+      assert.equal(run.error, 'Step 1 (keep_running) didn’t end in time: wl-a was still running on Spark 4 after 30 seconds. It was left running, and the run ended here.');
+      assert.ok(Date.now() - began >= 30000, 'it waited the whole limit');
+      assert.equal(stateOf('wl-a'), 'running', 'left as it is');
+    } finally {
+      end('wl-a', 0);
+      await forget('never ends');
+    }
+  });
+
+  test('cancelling the run while it waits ends the wait at once: the job is left as it is, and no later step runs', { timeout: 180000 * SLOW }, async () => {
+    jobsRun(false);
+    await save({ title: 'cancel me', steps: [{ action: 'keep_running', args: { spark: 'spark4', container: 'wl-a' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'wl-b' } }] });
+    const second = line('wl-b');
+    const id = await runIt('cancel me');
+    try {
+      await waitFor(async () => /^Step 1: wl-a runs on Spark 4; waiting for it to end/.test((await opNow(id)).step), { timeout: 60000, what: 'the run waiting for wl-a', every: 100 });
+      // (the wait looked once as it began; its next look is 10 s later)
+      const t = Date.now(), c = await api(`/jobs/${id}/cancel`, { method: 'POST' }), took = Date.now() - t;
+      assert.equal(c.json?.outcome, 'cancelled', c.text);
+      assert.ok(took < 5000, `the wait ended at once, not at its next look (${took} ms)`);
+      const run = await opNow(id);
+      assert.equal(run.status, 'cancelled');
+      assert.ok(logOf(run).includes('Stopped waiting for wl-a on Spark 4: the run was cancelled. wl-a was left as it is.'), run.log.join('\n'));
+      assert.equal(stateOf('wl-a'), 'running', 'the job is left as it is');
+      // The job ends afterwards: nothing more happens.
+      jobsRun(true);
+      end('wl-a', 0);
+      await sleep(3000);
+      assert.equal(line('wl-b'), second, 'step 2 never ran');
+      assert.ok(!logOf(await opNow(id)).some(l => /^Step 2 of 2/.test(l)));
+    } finally {
+      end('wl-a', 0);
+      await forget('cancel me');
+    }
   });
 });

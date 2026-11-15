@@ -116,7 +116,6 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `startSampler` | `04-metrics` | again 15 s after a reader ends, while a page is open |
 | `metricsStream` | `04-metrics` | a ping every 15 s to each open page |
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
-| `daily` | `11-setups` | the daily research: 3 minutes after start, then every 24 hours |
 | `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
@@ -175,7 +174,6 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
 | `self-test` | `self_test` (21-selftest) |
-| `spark-action` | `handler` (24-handler) |
 | `start-model` | `startModel` (17-changes) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |
 | `undo` | `undo_last_change` (20-desired) |

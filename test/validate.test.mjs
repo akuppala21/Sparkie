@@ -2,6 +2,8 @@
 // what was running there runs again, Spark 2 untouched; "Auto-restart is OFF" until then; no earlier build to roll back
 // to on the stand-in fleet. A model whose only proven setup is the brain's starts with it made plain; a cached copy
 // whose files link outside its folder starts with each file mounted by itself.
+// Only a weight file that is a plain file may link out of a cached copy: any other (a chat template, a folder, a device,
+// an entry that is itself a link) stops the start with one line naming it, and nothing runs; the ordinary layout starts.
 //
 // One tap after an install (docs/contract.md 6.3): "Test the changes" runs each workflow that isn't validated
 // with a small model on Spark 3 or 4 (never Spark 2), and starts again whatever had to stop. Auto-restart works before
@@ -9,7 +11,7 @@
 // Nothing here counts as validated at first (SPARK_CONSOLE_ASSUME_VALIDATED=0).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createKey, createActKey, SLOW } from './lib.mjs';
 
@@ -133,6 +135,86 @@ test('a cached copy whose weight files link outside its folder still starts: eac
   assert.match(args, /^type=bind,src=.*\/bigdisk\/w1,dst=\/hf\/snapshots\/c1\/model\.safetensors,readonly$/m);
   assert.match(args, /^type=bind,src=.*\/blobs\/cfg1,dst=\/hf\/snapshots\/c1\/config\.json,readonly$/m);
   assert.match(args, /^\/hf\/snapshots\/c1$/m, 'served from the usual path');
+});
+
+// A link planted in a cached copy must not put any file of the Spark into the model's container (Docker mounts as root):
+// a link out of the copy's folder is followed only for a weight file that is a plain file. Any other stops the start
+// with one line naming the file, and no docker run happens. (The owner's own starts: refusals don't pause agents.)
+const hub4 = () => join(T.fleet.root, 'spark4', '.cache', 'huggingface', 'hub');
+function cachedCopy(name, links, at = hub4()) {
+  const entry = join(at, `models--testorg--${name}`), snap = join(entry, 'snapshots', 'c1');
+  mkdirSync(snap, { recursive: true }); mkdirSync(join(entry, 'blobs'), { recursive: true });
+  writeFileSync(join(entry, 'blobs', 'cfg1'), JSON.stringify({ architectures: ['Qwen3ForCausalLM'], model_type: 'qwen3', torch_dtype: 'bfloat16', max_position_embeddings: 40960 }));
+  writeFileSync(join(entry, 'blobs', 'w1'), Buffer.alloc(1000000));
+  symlinkSync('../../blobs/cfg1', join(snap, 'config.json'));
+  symlinkSync('../../blobs/w1', join(snap, 'model-00001-of-00002.safetensors'));
+  for (const [file, to] of Object.entries(links)) symlinkSync(to, join(snap, file));
+  return { model: `testorg--${name}`, entry, snap };
+}
+const lastRun4 = () => { try { return readFileSync(join(T.fleet.root, 'spark4', '.mock', 'last-run-args'), 'utf8'); } catch { return ''; } };
+async function ownerStartOn4(model) {
+  const r = await api('/actions/start_model', { method: 'POST', body: { model, spark: 'spark4' } });
+  assert.equal(r.json?.outcome, 'started', r.text);
+  let w;
+  for (const until = Date.now() + 240000 * SLOW; ;) {
+    w = (await call(keys.look.token, 'wait_operation', { id: r.json.operation, seconds: 30 })).value;
+    if (w.status !== 'running') break;
+    assert.ok(Date.now() < until, 'still starting');
+  }
+  return w;
+}
+async function refusedOn4(model, file) {
+  const before = lastRun4();
+  const w = await ownerStartOn4(model);
+  assert.equal(w.status, 'failed', JSON.stringify(w));
+  assert.match(w.error, new RegExp(`${file.replace(/\./g, '\\.')} in the Hugging Face cache copy of ${model} links outside the model’s folder`), w.error);
+  assert.equal(lastRun4(), before, 'no docker run');
+}
+
+test('a cached copy whose chat template links outside its folder isn\'t started: one line names the file, nothing runs; without the link it starts', { timeout: 600000 * SLOW }, async () => {
+  const secret = join(T.fleet.root, 'spark4', 'not-the-models.txt');
+  writeFileSync(secret, 'a private file of the Spark\n');
+  const c = cachedCopy('Templated-27B', { 'chat_template.jinja': secret });
+  await refusedOn4(c.model, 'chat_template.jinja');
+  // The ordinary layout (every file a link into blobs/ of the same folder) starts as before: the folder, read-only.
+  rmSync(join(c.snap, 'chat_template.jinja'));
+  const w = await ownerStartOn4(c.model);
+  assert.equal(w.status, 'completed', JSON.stringify(w));
+  const args = lastRun4();
+  assert.match(args, /^spark\.model=testorg--Templated-27B$/m);
+  assert.match(args, /\/models--testorg--Templated-27B:\/hf:ro$/m, 'the folder');
+  assert.doesNotMatch(args, /^type=bind,/m, 'no file by itself');
+});
+
+test('weight files linked straight out of a cached copy to plain files still start, each mounted by itself', { timeout: 300000 * SLOW }, async () => {
+  const disk = join(T.fleet.root, 'spark4', 'otherdisk');
+  mkdirSync(disk, { recursive: true });
+  const names = ['model-00002-of-00002.safetensors', 'pytorch_model.bin', 'extra.pt', 'extra.pth'];
+  for (const [i] of names.entries()) writeFileSync(join(disk, `s${i}`), Buffer.alloc(1000));
+  const c = cachedCopy('Shards-27B', Object.fromEntries(names.map((n, i) => [n, join(disk, `s${i}`)])));
+  const w = await ownerStartOn4(c.model);
+  assert.equal(w.status, 'completed', JSON.stringify(w));
+  const args = lastRun4();
+  assert.match(args, /^spark\.model=testorg--Shards-27B$/m);
+  assert.doesNotMatch(args, /:\/hf:ro$/m, 'not the folder');
+  for (const [i, n] of names.entries()) assert.match(args, new RegExp(`^type=bind,src=.*/otherdisk/s${i},dst=/hf/snapshots/c1/${n.replace(/\./g, '\\.')},readonly$`, 'm'), n);
+  assert.match(args, /^type=bind,src=.*\/blobs\/w1,dst=\/hf\/snapshots\/c1\/model-00001-of-00002\.safetensors,readonly$/m);
+  assert.match(args, /^type=bind,src=.*\/blobs\/cfg1,dst=\/hf\/snapshots\/c1\/config\.json,readonly$/m);
+});
+
+test('a weight file linked out to a folder or a device, or a cached copy that is itself a link, isn\'t started', { timeout: 600000 * SLOW }, async () => {
+  const away = join(T.fleet.root, 'spark4', 'a-folder');
+  mkdirSync(away, { recursive: true });
+  await refusedOn4(cachedCopy('Foldered-27B', { 'model-00002-of-00002.safetensors': away }).model, 'model-00002-of-00002.safetensors');
+  await refusedOn4(cachedCopy('Deviced-27B', { 'model-00002-of-00002.safetensors': '/dev/null' }).model, 'model-00002-of-00002.safetensors');
+  // The copy's own folder a link (it could point at the home): every file in it counts as outside. (A whole cache on
+  // another disk, the hub or a folder above it a link, is judged by where the copy's folder really is; not tried here,
+  // as it would move every model of this Spark.)
+  const elsewhere = join(T.fleet.root, 'spark4', 'elsewhere');
+  mkdirSync(elsewhere, { recursive: true });
+  const c = cachedCopy('Linkedentry-27B', {}, elsewhere);
+  symlinkSync(c.entry, join(hub4(), 'models--testorg--Linkedentry-27B'));
+  await refusedOn4(c.model, 'config.json');
 });
 
 test('going back to the last good build: none on the stand-in fleet, so it says so', async () => {

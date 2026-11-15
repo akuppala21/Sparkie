@@ -19,6 +19,9 @@ SSH, Tailscale, the firewall, users or any model.
 5. Install the newest tested build from GitHub (once pull.sh setup has run). check names it; install takes its tree.
      bash ~/.local/share/spark-console/pull.sh check
 
+6. An update from GitHub that was cut off puts the build from before back by itself within 30 minutes. To do it now:
+     bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand
+
 If the page loads but Sparkie doesn't answer, type one of these alone in your own chat on the page.
 Code answers them, not Sparkie's model:
      /status    /pause    /restart sparkie    /undo update    /help

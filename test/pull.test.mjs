@@ -12,6 +12,11 @@
 // only on another branch, a tree older than the installed one) changes nothing; a build that dies goes back; a tree
 // with the installed build's service code is "kept" only when its installer kept it; main moved the way tools/land.mjs
 // moves it (a merge, then a fast-forward) still names the newest tested build; nothing calls tailscale, sudo or ssh.
+// The way back (C4b, the second describe): armed from the installed build before the new one's installer runs, and
+// gone after either ending; refused with nothing changed when its timer can't start or the real address doesn't answer
+// for the build running now; the build from before back and answering when the new one never answers, when its own
+// installer keeps a dead build or its own put-back does nothing, when it calls tailscale despite SKIP_ROUTES, when the
+// real address stops answering or answers 502 after the install, and after a restart of Spark 2 in the middle.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -21,7 +26,7 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { REPO, MOCK } from './start-mock.mjs';
-import { SLOW } from './lib.mjs';
+import { SLOW, waitFor } from './lib.mjs';
 
 const PULL_TEXT = readFileSync(join(REPO, 'deploy', 'pull.sh'), 'utf8');
 const INSTALLER_TEXT = readFileSync(join(REPO, 'deploy', 'host-on-portal.sh'), 'utf8');
@@ -72,7 +77,7 @@ const HF = 'test/mock/root/spark2/.cache/huggingface/hub/models--x--y', OVERLAY 
 const buildOf = files => sha12(files['service/server.mjs'].text, files['service/dig.mjs'].text, files['service/passkey.mjs'].text);
 // A whole tree: the stand-in console as the service, this tree's installer and pull.sh (marked with n, so a copy can
 // be told apart), and the page's files.
-function treeFiles(n, mode = 'good') {
+function treeFiles(n, mode = 'good', { installer = INSTALLER_TEXT } = {}) {
   const server = `const MODE = '${mode}'; // ${n}\n${STANDIN}`;
   const f = {
     'service/src/00-standin.mjs': { text: server }, 'service/server.mjs': { text: server },
@@ -80,7 +85,8 @@ function treeFiles(n, mode = 'good') {
     // (a Spark to reach over ssh: the installer must not try it here)
     'service/config.json': { text: '{"nodes":[{"id":"spark2","host":"local"},{"id":"spark3","host":"spark3.test"}],"user":"standin"}\n' },
     'service/catalog.json': { text: '[]\n' }, 'service/worker.py': { text: '# stand-in worker\n' },
-    'deploy/host-on-portal.sh': { text: INSTALLER_TEXT, mode: '100755' },
+    'deploy/host-on-portal.sh': { text: installer, mode: '100755' },
+    'deploy/update-guard.sh': { text: read(REPO, 'deploy', 'update-guard.sh'), mode: '100755' },
     'deploy/go-back.sh': { text: read(REPO, 'deploy', 'go-back.sh'), mode: '100755' },
     'deploy/RECOVERY.txt': { text: read(REPO, 'deploy', 'RECOVERY.txt') },
     'deploy/pull.sh': { text: `${PULL_TEXT}# tree ${n}\n`, mode: '100755' },
@@ -121,6 +127,27 @@ const SYSTEMCTL = `#!/bin/bash
 echo "$*" >> "$HOME/systemctl.log"
 verb=''; unit=''
 for a in "$@"; do case "$a" in --user) ;; -*) ;; *) if [ -z "$verb" ]; then verb="$a"; else unit="$a"; fi ;; esac; done
+# The update guard's timer: started, it runs its service's ExecStart once OnActiveSec has passed (and is then done);
+# enabled, the test's reboot starts it again; $HOME/fail-guard makes it fail to start.
+if [ "$unit" = spark-console-update-guard.timer ]; then
+  tf="$HOME/.config/systemd/user/spark-console-update-guard.timer"; sf="$HOME/.config/systemd/user/spark-console-update-guard.service"
+  tp="$HOME/guard-timer.pid"
+  talive() { [ -f "$tp" ] && kill -0 "$(cat "$tp")" 2>/dev/null; }
+  tstop() { if talive; then kill -KILL "$(cat "$tp")" 2>/dev/null; fi; rm -f "$tp"; }
+  case "$verb" in
+    enable|start|restart)
+      [ ! -f "$HOME/fail-guard" ] || exit 1
+      [ "$verb" != enable ] || : > "$HOME/guard-enabled"
+      tstop
+      s=$(sed -n 's/^OnActiveSec=\\([0-9]*\\)s$/\\1/p' "$tf"); c=$(sed -n 's/^ExecStart=//p' "$sf" | sed "s#%h#$HOME#g")
+      nohup bash -c "sleep $s; rm -f '$tp'; echo fired >> '$HOME/guard-fired.log'; $c" </dev/null >>"$HOME/guard-timer.log" 2>&1 &
+      echo $! > "$tp" ;;
+    stop) tstop ;;
+    disable) tstop; rm -f "$HOME/guard-enabled" ;;
+    is-active) talive; exit $? ;;
+  esac
+  exit 0
+fi
 [ "$unit" = spark-console-api ] || [ "$unit" = spark-console-api.service ] || exit 0
 pidf="$HOME/runner.pid"
 alive() { [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; }
@@ -138,8 +165,35 @@ case "$verb" in
 esac
 exit 0
 `;
-function sparkTwo() {
+// The real address's stand-in, one a home, as Tailscale serve routes it: /console/api/… to the console's socket, the
+// rest to the page's folder. $HOME/door-down: no answer at all; $HOME/door-502: the API route answers 502;
+// $HOME/door-funnel: /health answers only {"ok":true}, as through Funnel; $HOME/door-stale-page: every version.json is
+// that file's text. Each path asked is written to $HOME/door.log.
+const doors = new Map();
+function startDoor(home) {
+  const server = http.createServer((req, res) => {
+    if (existsSync(join(home, 'door-down'))) { req.socket.destroy(); return; }
+    const path = new URL(req.url, 'http://door').pathname;
+    try { writeFileSync(join(home, 'door.log'), `${path}\n`, { flag: 'a' }); } catch {}
+    if (path === '/console/api/health' && existsSync(join(home, 'door-funnel'))) { res.writeHead(200); res.end('{"ok":true}'); return; }
+    if (path.endsWith('version.json') && existsSync(join(home, 'door-stale-page'))) { res.writeHead(200); res.end(readFileSync(join(home, 'door-stale-page'))); return; }
+    if (path.startsWith('/console/api/')) {
+      if (existsSync(join(home, 'door-502'))) { res.writeHead(502); res.end('Bad Gateway'); return; }
+      const up = http.request({ socketPath: join(home, '.local', 'state', 'spark-console', 'api.sock'), path: path.slice('/console/api'.length), method: req.method }, r => {
+        res.writeHead(r.statusCode, r.headers); r.pipe(res);
+      });
+      up.on('error', () => { res.writeHead(502); res.end(); });
+      req.pipe(up);
+      return;
+    }
+    const rel = path.replace(/^\/console\//, '/').replace(/\/$/, '/index.html');
+    try { const body = readFileSync(join(home, 'spark-console', rel)); res.writeHead(200); res.end(body); } catch { res.writeHead(404); res.end(); }
+  });
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => { doors.set(home, server); resolve(); }));
+}
+async function sparkTwo() {
   const home = shortHome('scp-'), bin = join(home, 'bin');
+  await startDoor(home);
   for (const d of ['bin', 'run', 'tmp']) mkdirSync(join(home, d));
   writeFileSync(join(bin, 'runner.mjs'), RUNNER);
   sh(join(bin, 'systemctl'), SYSTEMCTL);
@@ -170,20 +224,25 @@ if [ -n "$base" ]; then PATH="\${PATH#*:}" find "\${args[@]}" | sed 's#.*/##'; e
   writeFileSync(join(home, '.config', 'spark-console', 'secrets.json'), '{"telegram":{"token":"tg-standin"}}\n', { mode: 0o600 });
   // The build that holds this step, installed from the Mac, left pull.sh at the fixed path.
   mkdirSync(join(home, '.local', 'share', 'spark-console'), { recursive: true, mode: 0o700 });
-  copyFileSync(join(REPO, 'deploy', 'pull.sh'), join(home, '.local', 'share', 'spark-console', 'pull.sh'));
-  chmodSync(join(home, '.local', 'share', 'spark-console', 'pull.sh'), 0o700);
+  for (const f of ['pull.sh', 'update-guard.sh']) {
+    copyFileSync(join(REPO, 'deploy', f), join(home, '.local', 'share', 'spark-console', f));
+    chmodSync(join(home, '.local', 'share', 'spark-console', f), 0o700);
+  }
   return home;
 }
 const envFor = (home, extra = {}) => ({ HOME: home, USER: 'standin', PATH: `${join(home, 'bin')}:${NODE_DIR}:${process.env.PATH}`, TMPDIR: join(home, 'tmp'),
   SPARK_CONSOLE_INSTALL_WAIT_S: String(6 * SLOW), SPARK_CONSOLE_INSTALL_SETTLE_S: '3', DBUS_SESSION_BUS_ADDRESS: '', XDG_RUNTIME_DIR: join(home, 'run'),
-  LANG: 'C.UTF-8', SPARK_CONSOLE_ALL_LOCAL: '1', SPARK_CONSOLE_REPO_URL: GH, ...extra });
+  LANG: 'C.UTF-8', SPARK_CONSOLE_ALL_LOCAL: '1', SPARK_CONSOLE_REPO_URL: GH,
+  SPARK_CONSOLE_DOOR_URL: doors.has(home) ? `http://127.0.0.1:${doors.get(home).address().port}` : '',
+  SPARK_CONSOLE_UPDATE_GUARD_S: String(120 * SLOW), SPARK_CONSOLE_UPDATE_CONFIRM_S: String(20 * SLOW), ...extra });
 // The pull.sh at the fixed path, as the owner runs it.
-function pull(home, args, { input = '', extra } = {}) {
+// onOut(all output so far, the child) is called as output comes; detached runs it in a process group of its own.
+function pull(home, args, { input = '', extra, onOut = null, detached = false } = {}) {
   return new Promise(resolve => {
-    const p = spawn('bash', [join(home, '.local', 'share', 'spark-console', 'pull.sh'), ...args], { env: envFor(home, extra), stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn('bash', [join(home, '.local', 'share', 'spark-console', 'pull.sh'), ...args], { env: envFor(home, extra), stdio: ['pipe', 'pipe', 'pipe'], detached });
     let out = '';
-    p.stdout.on('data', d => { out += d; });
-    p.stderr.on('data', d => { out += d; });
+    p.stdout.on('data', d => { out += d; onOut?.(out, p); });
+    p.stderr.on('data', d => { out += d; onOut?.(out, p); });
     // A pull.sh that stops before it reads (a bad repository name) has closed its end; on a loaded machine the write
     // can come after that and before node has seen it exit. That is the script's answer, not the test's error.
     p.stdin.on('error', e => { if (e.code !== 'EPIPE') throw e; });
@@ -224,6 +283,8 @@ before(() => {
 after(() => {
   for (const home of homes) {
     spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', 'stop', 'spark-console-api'], { env: envFor(home) });
+    spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', 'stop', 'spark-console-update-guard.timer'], { env: envFor(home) });
+    doors.get(home)?.close();
     // Nothing that may never run here was called, in any case.
     assert.ok(!existsSync(join(home, 'never-called.log')), existsSync(join(home, 'never-called.log')) ? read(home, 'never-called.log') : '');
     rmSync(home, { recursive: true, force: true });
@@ -242,7 +303,7 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
   test('setup: the token is tried, then kept in the secrets file beside what was there; never on a command line or in git’s config', CASE, async () => {
     b1 = push(treeFiles(1), 'The first build');
     mark(b1);
-    home = sparkTwo();
+    home = await sparkTwo();
     const secrets = join(home, '.config', 'spark-console', 'secrets.json'), was = read(secrets);
     // Refused, with nothing saved: a name that isn't owner/repository; something that isn't a token; a secrets file
     // that can't be read (it is never written over).
@@ -447,5 +508,295 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
       assert.doesNotMatch(r.out, /To install it/);
       refused(home, await pull(home, ['install', h1.t12]), h1.t12, new RegExp(`isn't newer than the installed build \\(commit ${merged.commit.slice(0, 12)}\\)`), was);
     } finally { writeFileSync(lockFile, lock); }
+  });
+});
+
+// Installers of a tree's own that misbehave, made from this tree's.
+const variant = (text, from, to) => { assert.ok(text.includes(from), from); return text.replace(from, to); };
+const MISS = `miss() {
+  echo "  The new build ($API_BUILD) didn't pass: $1. Its last log lines:" >&2
+  journalctl --user -u spark-console-api -n 30 --no-pager 2>&1 | sed 's/^/    /' >&2 || true
+  exit 1
+}`;
+// (its checks taken out: it keeps whatever it installed)
+const NO_CHECKS = variant(INSTALLER_TEXT, MISS, 'miss() { echo "  (this installer\'s checks are taken out: $1)"; }');
+// (its own put-back does nothing, and says the previous version is back)
+const NO_PUT_BACK = variant(INSTALLER_TEXT, 'bash "$SNAP/restore.sh" > "$SNAP/restore.log" 2>&1; back=$?', ': > "$SNAP/restore.log"; back=0');
+// (it checks the routes whatever SKIP_ROUTES says)
+const ROUTES_ANYWAY = variant(INSTALLER_TEXT, 'if [ "${SKIP_ROUTES:-}" = 1 ]; then echo "The /console routes', 'if false; then echo "The /console routes');
+
+describe('the way back for an update from GitHub, armed by the build installed now', { concurrency: 1 }, () => {
+  let home, base;
+  const ran = new Set();
+  const needs = (...cases) => { for (const c of cases) assert.ok(ran.has(c), `The ${c} case didn't run to its end, so this one can't run: read that case's failure.`); };
+  const sysctl = (...a) => spawnSync('bash', [join(home, 'bin', 'systemctl'), '--user', ...a], { env: envFor(home), encoding: 'utf8' });
+  const share = (...p) => join(home, '.local', 'share', 'spark-console', ...p);
+  const mark0 = () => (existsSync(share('install-mark')) ? read(share('install-mark')) : null);
+  // Nothing armed: no copy, no timer unit, not enabled, not running.
+  function nothingArmed() {
+    assert.ok(!existsSync(share('update-guard')), 'the copy of the build from before is gone');
+    for (const u of ['spark-console-update-guard.timer', 'spark-console-update-guard.service']) {
+      assert.ok(!existsSync(join(home, '.config', 'systemd', 'user', u)), `${u} is gone`);
+    }
+    assert.ok(!existsSync(join(home, 'guard-enabled')), 'the timer is not enabled');
+    assert.notEqual(sysctl('is-active', '--quiet', 'spark-console-update-guard.timer').status, 0, 'the timer is not running');
+  }
+  // The build from before answers again, with its files, its pull.sh and its install mark.
+  async function fromBefore(r, mark) {
+    assert.equal((await health(home))?.build, buildOf(base.files), r.out);
+    assert.equal(read(home, 'spark-console-service', 'server.mjs'), base.files['service/server.mjs'].text);
+    assert.equal(fixedPull(home), base.files['deploy/pull.sh'].text);
+    assert.equal(mark0(), mark);
+    nothingArmed();
+  }
+
+  test('kept: armed before the new build\'s installer runs, confirmed through the real address, and nothing left armed', CASE, async () => {
+    const g0 = push(treeFiles(40), 'The first build here');
+    mark(g0);
+    home = await sparkTwo();
+    assert.equal((await pull(home, ['setup', OWNER_REPO], { input: `${TOKEN}\n` })).code, 0);
+    let r = await pull(home, ['install', g0.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /isn't answering now, so there is no working build to go back to/);
+    nothingArmed();
+    base = push(treeFiles(41), 'A second build');
+    mark(base);
+    const from = lines(home, 'systemctl.log').length;
+    r = await pull(home, ['install', base.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /The way back is armed/);
+    assert.match(r.out, /Through the real address: the new build answers, and its page is served\./);
+    const calls = lines(home, 'systemctl.log').slice(from), at = re => calls.findIndex(l => re.test(l));
+    const armed = at(/enable --now spark-console-update-guard\.timer/), restarted = at(/restart spark-console-api$/), disarmed = at(/disable --now spark-console-update-guard\.timer/);
+    assert.ok(armed >= 0 && armed < restarted && restarted < disarmed, calls.join('\n'));
+    assert.equal((await health(home))?.build, buildOf(base.files));
+    assert.deepEqual([resultOf(home).tree, resultOf(home).result], [base.t12, 'kept']);
+    assert.match(resultOf(home).why, /the real address answers with it/);
+    assert.ok(lines(home, 'door.log').filter(l => l === '/console/api/health').length >= 2, 'asked through the real address before and after');
+    nothingArmed();
+    ran.add('kept');
+  });
+
+  test('refused, nothing changed and nothing armed: the timer can\'t start; the real address doesn\'t answer for the build running now', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(42), 'Refused twice');
+    mark(g);
+    const was = { server: read(home, 'spark-console-service', 'server.mjs'), releases: releases(home), mark: mark0() };
+    writeFileSync(join(home, 'fail-guard'), '');
+    let r = await pull(home, ['install', g.t12]);
+    unlinkSync(join(home, 'fail-guard'));
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /couldn't be started in your systemd/);
+    assert.match(r.out, /The way back couldn't be armed \(see above\), so the new build wasn't installed\. Nothing was changed\./);
+    assert.deepEqual({ server: read(home, 'spark-console-service', 'server.mjs'), releases: releases(home), mark: mark0() }, was);
+    assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
+    nothingArmed();
+    writeFileSync(join(home, 'door-down'), '');
+    r = await pull(home, ['install', g.t12]);
+    unlinkSync(join(home, 'door-down'));
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /The real address \(http:\/\/127\.0\.0\.1:\d+\) doesn't answer with the build running now \([0-9a-f]{12}; it answered nothing\), so a new build couldn't be confirmed through it\. Nothing was changed\./);
+    assert.deepEqual({ server: read(home, 'spark-console-service', 'server.mjs'), releases: releases(home), mark: mark0() }, was);
+    assert.equal((await health(home))?.build, buildOf(base.files));
+    nothingArmed();
+    ran.add('refused');
+  });
+
+  test('not kept, the build from before back and answering: one that never answers; one its installer keeps with its checks taken out; one whose installer\'s put-back does nothing', CASE, async () => {
+    needs('kept');
+    for (const [n, installer, why] of [[43, INSTALLER_TEXT, /The update was not kept/], [44, NO_CHECKS, /its installer said it kept build [0-9a-f]{12}, but the build answering is none/],
+      [45, NO_PUT_BACK, /The update was not kept\. The previous version is running again/]]) {
+      const g = push(treeFiles(n, 'dead', { installer }), `Never answers, ${n}`);
+      mark(g);
+      const mk = mark0(), r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 1, r.out);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'not kept']);
+      assert.match(resultOf(home).why, why);
+      await fromBefore(r, mk);
+    }
+    ran.add('not kept');
+  });
+
+  test('SKIP_ROUTES enforced, not trusted: an installer that checks the routes anyway is refused tailscale, and its build doesn\'t stay', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(46, 'good', { installer: ROUTES_ANYWAY }), 'Routes anyway');
+    mark(g);
+    const mk = mark0(), r = await pull(home, ['install', g.t12]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /Not kept: its installer ran tailscale, which an install from pull\.sh never does \(refused\)/);
+    assert.match(resultOf(home).why, /its installer ran tailscale, which an install from pull\.sh never does \(refused\)/);
+    await fromBefore(r, mk);
+    assert.ok(!existsSync(join(home, 'never-called.log')), 'the stand-in tailscale was never reached');
+  });
+
+  test('the real address stops answering after the install (no proof against the build), or answers 502: not kept, the build from before back', CASE, async () => {
+    needs('kept');
+    for (const [n, flag, why] of [[47, 'door-down', /the real address \(http:\/\/127\.0\.0\.1:\d+\) didn't answer at all in the 4 seconds after the install\. That isn't proof the new build is bad/],
+      [49, 'door-502', /through the real address \(http:\/\/127\.0\.0\.1:\d+\) the new build didn't answer as itself in 4 seconds \(its service answered nothing\)/]]) {
+      const g = push(treeFiles(n), `The address goes, ${n}`);
+      mark(g);
+      const mk = mark0(), r = await pull(home, ['install', g.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' },
+        onOut: out => { if (out.includes('Installing tree') && !existsSync(join(home, flag))) writeFileSync(join(home, flag), ''); } });
+      unlinkSync(join(home, flag));
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /kept: build [0-9a-f]{12} passed its checks/, 'its own installer had kept it');
+      assert.match(resultOf(home).why, why);
+      await fromBefore(r, mk);
+    }
+  });
+
+  test('Spark 2 restarts in the middle: the new build runs unconfirmed until the timer, armed again at the start, puts the build from before back; nothing is left armed', { timeout: 300000 * SLOW }, async () => {
+    needs('kept');
+    const g = push(treeFiles(48), 'Cut by a restart');
+    mark(g);
+    const mk = mark0(), down = join(home, 'door-down');
+    let child = null, stage = 0;
+    const done = pull(home, ['install', g.t12], { detached: true, extra: { SPARK_CONSOLE_UPDATE_GUARD_S: String(30 * SLOW) }, onOut: (out, p) => {
+      child = p;
+      if (stage === 0 && out.includes('Installing tree')) { stage = 1; writeFileSync(down, ''); }
+      if (stage === 1 && out.includes('Checking the new build through the real address')) stage = 2;
+    } });
+    let ended = null;
+    done.then(r => { ended = r; });
+    await waitFor(() => stage === 2 || ended, { timeout: 120000 * SLOW, what: 'its installer done, and pull.sh waiting on the real address' });
+    assert.equal(ended, null, `pull.sh ended before the restart: ${ended?.out}`);
+    // The power goes: pull.sh and everything it started stop at once, the console and the timer's wait included.
+    process.kill(-child.pid, 'SIGKILL');
+    await done;
+    unlinkSync(down);
+    // The restart: the user's services start again, the console (the new build's files are in place) and the timer,
+    // which was enabled.
+    assert.ok(existsSync(join(home, 'guard-enabled')), 'the timer is enabled, so it starts with the user\'s services');
+    sysctl('start', 'spark-console-api');
+    sysctl('start', 'spark-console-update-guard.timer');
+    await waitFor(async () => (await health(home))?.build === buildOf(g.files), { timeout: 30000 * SLOW, what: 'the new build answering, unconfirmed' });
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files) && !existsSync(share('update-guard')),
+      { timeout: (30 * SLOW + 60) * 1000, what: 'the build from before, put back by the timer' });
+    const res = resultOf(home);
+    assert.deepEqual([res.tree, res.build, res.result], [g.t12, buildOf(g.files), 'not kept']);
+    assert.match(res.why, new RegExp(`^nothing confirmed the new build through the real address in time; the build from before \\(${buildOf(base.files)}\\) was put back and answers$`));
+    assert.deepEqual(lines(home, 'guard-fired.log'), ['fired']);
+    await fromBefore({ out: res.why }, mk);
+  });
+
+  // (the review of C4b: each case below failed before its fix)
+  const HAND = ['go-back.sh', 'RECOVERY.txt', 'pull.sh', 'update-guard.sh', 'watchdog.sh', 'install-mark'];
+  const hand = () => Object.fromEntries(HAND.map(f => [f, existsSync(share(f)) ? read(share(f)) : null]));
+  const bash = (...a) => spawnSync('bash', a, { env: envFor(home), encoding: 'utf8' });
+  // (a process group that is never this test's: inside a container the test's own can be 1)
+  const OTHER_PGID = '2147483646';
+
+  test('a copy that isn\'t whole is never put back from: by hand it says so and changes nothing; a half-made one is cleared by the next install', CASE, async () => {
+    needs('kept');
+    const was = { server: read(home, 'spark-console-service', 'server.mjs'), hand: hand() };
+    assert.ok(Object.values(was.hand).every(Boolean), JSON.stringify(Object.keys(was.hand).filter(f => !was.hand[f])));
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    // Cut off while it was being removed: its guard file, its by-hand files and its server.mjs already gone.
+    rmSync(share('update-guard', 'guard'));
+    rmSync(share('update-guard', 'share'), { recursive: true });
+    rmSync(share('update-guard', 'service', 'server.mjs'));
+    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand');
+    assert.notEqual(r.status, 0, r.stdout);
+    assert.match(r.stdout, /isn't whole .* so nothing is put back from it\. It is removed\./);
+    assert.deepEqual({ server: read(home, 'spark-console-service', 'server.mjs'), hand: hand() }, was);
+    assert.equal((await health(home))?.build, buildOf(base.files));
+    nothingArmed();
+    // Half-made (cut off while arm copied): only the page's copy. The next install clears it and arms its own.
+    mkdirSync(share('update-guard', 'ui'), { recursive: true });
+    const g = push(treeFiles(50), 'After a half-made copy');
+    mark(g);
+    r = await pull(home, ['install', g.t12]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /The way back is armed/);
+    nothingArmed();
+    base = g;
+  });
+
+  test('through Funnel /health is only {"ok":true}: kept when the page\'s version.json there names the new page, put back when it names the old one', CASE, async () => {
+    needs('kept');
+    writeFileSync(join(home, 'door-funnel'), '');
+    try {
+      const g = push(treeFiles(51), 'Through Funnel, kept');
+      mark(g);
+      let r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /Through the real address: the new build answers, and its page is served\./);
+      assert.equal((await health(home))?.build, buildOf(g.files));
+      nothingArmed();
+      base = g;
+      const g2 = push(treeFiles(52), 'Through Funnel, the old page');
+      mark(g2);
+      writeFileSync(join(home, 'door-stale-page'), read(home, 'spark-console', 'version.json'));
+      const mk = mark0();
+      r = await pull(home, ['install', g2.t12], { extra: { SPARK_CONSOLE_UPDATE_CONFIRM_S: '4' } });
+      assert.equal(r.code, 1, r.out);
+      assert.match(resultOf(home).why, /the new build didn't answer as itself in 4 seconds \(its service answered ok\)/);
+      await fromBefore(r, mk);
+    } finally { rmSync(join(home, 'door-funnel'), { force: true }); rmSync(join(home, 'door-stale-page'), { force: true }); }
+  });
+
+  test('a build installed but silent on its socket: no install starts unguarded; refused, nothing changed', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(53), 'Over a silent build');
+    mark(g);
+    sysctl('stop', 'spark-console-api');
+    try {
+      const was = read(home, 'spark-console-service', 'server.mjs'), r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /installed but doesn't answer on its socket, so the way back couldn't be armed .*Nothing was changed\./);
+      assert.equal(read(home, 'spark-console-service', 'server.mjs'), was);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
+      nothingArmed();
+    } finally { sysctl('start', 'spark-console-api'); }
+    await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build answering again' });
+  });
+
+  test('a put-back whose build from before stays silent: the result says so (not the last install\'s "kept")', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(54, 'dead'), 'Back to a silent build');
+    mark(g);
+    // The copy of the build from before turns out dead too.
+    const r = await pull(home, ['install', g.t12], { onOut: out => {
+      const copy = share('update-guard', 'service', 'server.mjs');
+      if (out.includes('Installing tree') && existsSync(copy) && !read(copy).startsWith("const MODE = 'dead'")) writeFileSync(copy, `const MODE = 'dead'; // copy\n${STANDIN}`);
+    } });
+    try {
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /put back, but it doesn't answer/);
+      const res = resultOf(home);
+      assert.deepEqual([res.tree, res.result], [g.t12, 'not kept']);
+      assert.match(res.why, new RegExp(`the build answering now is none, installed from tree ${base.t12}$`));
+      nothingArmed();
+    } finally {
+      writeFileSync(join(home, 'spark-console-service', 'server.mjs'), base.files['service/server.mjs'].text);
+      sysctl('restart', 'spark-console-api');
+      await waitFor(async () => (await health(home))?.build === buildOf(base.files), { timeout: 30000 * SLOW, what: 'the build from before answering again' });
+    }
+  });
+
+  test('an install made outside an armed update (from the Mac, or by hand) disarms that update\'s way back first, so its timer can\'t undo it', CASE, async () => {
+    needs('kept');
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const g = push(treeFiles(55), 'Installed by hand');
+    const dir = join(home, 'tmp', 'by-hand');
+    mkdirSync(dir);
+    const x = spawnSync('sh', ['-c', `'${REAL_GIT}' --git-dir '${GH}' archive ${g.commit} | tar -x -C '${dir}'`], { env: GIT_ENV, encoding: 'utf8' });
+    assert.equal(x.status, 0, x.stderr);
+    writeFileSync(join(dir, 'service', 'workflows.lock.json'), JSON.stringify({ build: buildOf(g.files), versions: {} }));
+    r = await new Promise(resolve => {
+      const p = spawn('bash', [join(dir, 'deploy', 'host-on-portal.sh'), 'local'], { env: envFor(home, { SKIP_ROUTES: '1', ASSUME_YES: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      p.stdout.on('data', d => { stdout += d; });
+      p.stderr.on('data', d => { stdout += d; });
+      p.on('close', status => resolve({ status, stdout, stderr: '' }));
+    });
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout, /An update from GitHub left its way back armed; this install takes over, so it is disarmed first\./);
+    assert.equal((await health(home))?.build, buildOf(g.files), r.stdout.slice(-1500));
+    nothingArmed();
+    rmSync(dir, { recursive: true, force: true });
+    base = g;
   });
 });

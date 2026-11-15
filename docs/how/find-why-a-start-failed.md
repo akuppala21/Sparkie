@@ -14,7 +14,8 @@ Look in this order, each a read through Sparkie, `POST /console/api/actions/<nam
 4. `fleet_events`: crashes, out of memory, a Spark going dark during the start.
 5. `spark_diagnostics` when the Spark itself looks wrong; `service_logs` (`console`) for the console's own errors.
 6. On Spark 2, `lessons.json` in the state folder (R48): whether this setup failed the same known way before, and
-   how often (`proven` from the second time).
+   how often (`proven` from the second time). A start's `passedOver` lines (and its log) name a setup it skipped for
+   that, or tried again anyway, and why (B3).
 
 Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFailure`, `causeLines` and `putBack`
 (`17-changes.mjs`); `deploy` (`07-jobs.mjs`); across two Sparks, `clusterDeploy` and `asideBack` (`08-cluster.mjs`).
@@ -34,6 +35,9 @@ Then the code: `startModel`, `startWithFixes`, `START_FAILURES`, `knownStartFail
 
 - R15: done means it answers a test prompt. R16: a failure puts back exactly what the start stopped; fixes retry 3
   times at most. R2: 8 GB stays free. R14: the job plans again and aborts on an unapproved stop.
+- R17: an error that says a file of a Hugging Face cache copy “links outside the model’s folder” was a start stopped
+  before anything ran: that file is a link out of the copy, and only a weight file leading to a plain file may be one.
+  Put the real file in place of the link (`hfMounts`, `01-setup.mjs`).
 
 ## Tests
 
