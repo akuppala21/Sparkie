@@ -134,7 +134,9 @@ async function runChoice(viewer, conv, id, by) {
     if (shown) { for (const m of conv.messages) for (const x of m.choices || []) if (x.group === shown.group && x.state === 'open') x.state = 'gone'; saveChats(); }
     throw new HttpError(409, 'That button has expired. Ask Sparkie again.');
   }
-  if (c.ownerOnly && by.via !== 'page') throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
+  // (or an ask this console sent to the paired Telegram chat, pressed there while approvals from it are on, A10a)
+  const fromTelegram = Boolean(c.ownerOnly && by.approved && by.via === 'telegram' && tgAskOpen(String(id), c));
+  if (c.ownerOnly && by.via !== 'page' && !fromTelegram) throw new HttpError(403, 'Only the owner can answer this one, from Spark Console.');
   for (const [k, x] of pendingChoices) if (x.group === c.group) pendingChoices.delete(k);
   for (const m of conv.messages) for (const x of m.choices || []) {
     if (x.id === id) x.state = 'picked';
@@ -144,10 +146,11 @@ async function runChoice(viewer, conv, id, by) {
   if (!c.action) {
     content = 'Okay, left as it is.';
   } else {
-    // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up).
-    // A press from Telegram carries its channel (R32): never the page, never ownerConfirmed.
+    // ownerConfirmed: an owner-only button, pressed by the owner on the page (with the passkey once one is set up), or
+    // its ask pressed in the paired Telegram chat (fromTelegram). A press from Telegram carries its channel (R32), never
+    // the page.
     const ctx = { via: by.via, actor: by.actor, request: `Pressed “${c.label}” in a Sparkie conversation`, chat: conv.id, conv: conv.id, canChange: by.canChange !== false,
-      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && by.via === 'page', onQuestion: q => { asked = q; },
+      ...(by.agentId ? { agentId: by.agentId } : {}), trusted: true, button: true, ownerConfirmed: Boolean(c.ownerOnly) && (by.via === 'page' || fromTelegram), onQuestion: q => { asked = q; },
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
@@ -157,6 +160,8 @@ async function runChoice(viewer, conv, id, by) {
       out = { outcome: 'error', error: e.message };
       content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
     }
+    // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
+    if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
   const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
@@ -448,6 +453,7 @@ function turnAnswer(turn) {
   const choices = asked.flatMap(sparkieMessageChoices);
   // Numbers in the answer (speeds, sizes, percentages) have to come from what the tools said or the record (7.7).
   const unverified = unsupportedNumbers(turn.answer, [...messages.filter(m => m.role === 'tool').map(m => m.content), notes || '', text, ...history.map(m => m.content)]);
+  keepSaid(turn); // (a line said outright that the brain didn't keep is kept by code, and said: 20-memory-said.mjs)
   const card = pastes.at(-1);
   const message = { role: 'assistant', content: `${maskSecrets(turn.answer.trim())}${card ? `\n\nPaste card, from Spark Console:\n\`\`\`\n${card}\n\`\`\`` : ''}`, createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), ...(turn.finishReason === 'length' ? { truncated: true } : {}),

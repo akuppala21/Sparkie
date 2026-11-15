@@ -40,6 +40,8 @@ function openProblems() {
     },
     // The state's copy: none newer than 7 days, with changes since (20-state-copy.mjs).
     () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
+    // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
+    () => memoryNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {

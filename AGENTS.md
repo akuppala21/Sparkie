@@ -33,7 +33,7 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 | `docs/architecture.md` | The picture: the diagram, one request from chat to a running model, known traps. |
 | `docs/rules/`, `docs/rules.md` | One rule per file, and their index (generated). |
 | `docs/how/` | One card per kind of work. |
-| `docs/state.md`, `docs/glossary.md` | Who holds each fact; this project's words. |
+| `docs/state.md`, `docs/state-outside.md`, `docs/glossary.md` | Who holds each fact (in the state folder; anywhere else); this project's words. |
 | `docs/code-map.md`, `docs/registry.md` | Generated: parts and who uses what; actions, state files, timers. |
 | `docs/contract.md` | What the product must do and why. |
 | `docs/history/` | Dated records: plans, reviews, analyses. Never edited. |
@@ -101,5 +101,6 @@ No card fits? Search `docs/rules.md`.
    change to what the installer reads keeps `test/install.test.mjs` passing.
 9. Before an install, `node test/lock.mjs` passed on that exact tree (again after a `worker.py` edit); after it,
     `/health` shows no workflow `untested`.
-10. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md`, the
-    rule's file in `docs/rules/` (its Today, Where and Checked by), a card in `docs/how/`.
+10. The documents change with the code: the diagram in `docs/architecture.md`, a row in `docs/state.md` (a file in
+    the state folder) or `docs/state-outside.md` (anything else), the rule's file in `docs/rules/` (its Today, Where and
+    Checked by), a card in `docs/how/`.
