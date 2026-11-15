@@ -144,7 +144,19 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     if limit is None:
         os.execv(cmd[0], cmd)
     import signal, subprocess
+    # (its own session, so it can be ended whole; a signal to this stand-in, a caller's timeout say, ends it whole too)
+    held = []
+    def end(sig, _):
+        for q in held:
+            try:
+                os.killpg(q.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        os._exit(128 + sig)
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, end)
     p = subprocess.Popen(cmd, start_new_session=True)
+    held.append(p)
     try:
         code = p.wait(timeout=limit)
         sys.exit(code if code >= 0 else 128 - code)

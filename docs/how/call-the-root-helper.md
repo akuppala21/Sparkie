@@ -25,7 +25,7 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 - A new verb or flag of the helper: its own test in `test/root-helper.test.mjs`, and R42.
 - A test of a call: `test/work.test.mjs` sets up a rehearsal of the real helper under a stand-in Spark's home
   (`rehearse`), with its own `sudo` and `systemd-run` stand-ins first on the PATH. The stand-in fleet's own `sudo`
-  belongs to the power work: when it lands, its rehearsal rule joins this file's.
+  runs one too: `test/rehearsal.mjs` (`run: true` holds the home for a change).
 
 ## Never
 
@@ -45,14 +45,14 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
   ready. Who: the owner; an agent whose key may change things (`mayRun`, `recall` too). Not built: proving by itself,
   a failed proof told beyond the self-test or kept past a restart; the key check reads words, not what a script
   opens; Spark 2's call needs systemd 254.
-- R43: a look writes one `cmd` record when it ends; a change will write its start line before the call.
+- R43: a look writes one `cmd` record when it ends; a change (`runChange`) its start line before the call. R55.
 - R25 and R26: what a command printed never causes a change.
 - R10: commands reach a Spark through `spawnOn`.
 
 ## Tests
 
 - `work.test.mjs` (the call, the answers, the key check, Spark 2, the proof in `self_test`).
-- `root-helper.test.mjs` (the helper itself).
+- `root-helper.test.mjs` (the helper itself); `runner.test.mjs` (a change: copies, run wall, undo).
 
 ## Copy from
 

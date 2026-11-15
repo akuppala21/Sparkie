@@ -401,7 +401,7 @@ test('the start line is on disk before the unit runs: a console stopped between 
   const cut = async f => (await (await fetch(`${f.base}/chats/${chat}`)).json()).messages.filter(x => x.notice && /cut off/.test(x.content));
   const notices = await waitFor(async () => { const m = await cut(B); return m.length && m; }, { what: 'the notice' });
   assert.equal(notices.length, 1);
-  assert.match(notices[0].content, /^A restart of Spark Console cut off “Run a command on a Spark: \$ touch notes\/cut-started && sleep 30 # HF_TOKEN=\[hidden\]” on Spark 3 before its end was written \(it began at \d\d:\d\d UTC\)\. It may or may not have happened, and it won’t be run again/);
+  assert.match(notices[0].content, /^A restart of Spark Console cut off “Run a command on a Spark: \$ touch notes\/cut-started && sleep 30 # HF_TOKEN=\[hidden\] ” on Spark 3 before its end was written \(it began at \d\d:\d\d UTC\)\. It may or may not have happened, and it won’t be run again/);
   assert.ok(!notices[0].content.includes(KEY2));
   assert.deepEqual(records(B.journalDir).filter(r => r.id === start.id).map(r => [r.start || false, r.end || false, r.outcome || null]), [[true, false, null], [false, true, 'cut-off']]);
   // Again: no second notice, and it never ran again.
