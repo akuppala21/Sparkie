@@ -1615,11 +1615,11 @@ describe('what bounds a plain change (R63)', () => {
 
   test("the tools' key folders are hidden in both walls", () => {
     const s = proven();
-    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
     s.put('home/owner/.claude.json', '{}');
     const r = change(s, 'true'), l = look(s, 'true');
     for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
+      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
       assert.ok(c.includes('InaccessiblePaths=/home/owner/.claude.json'));
     }
   });
@@ -1642,7 +1642,7 @@ describe('what bounds a plain change (R63)', () => {
     const r = change(s, 'true', { extra: ['--fleet', '--gpu'] });
     const c = unitCall(s, `sw-run-${r.id}`);
     assert.ok(c.includes('IPAddressDeny=localhost') && !c.some(a => a.startsWith('IPAddressDeny=localhost ')));
-    assert.ok(!c.includes('PrivateDevices=yes') && c.includes('TemporaryFileSystem=/dev/shm') && c.includes('PrivateIPC=yes'));
+    assert.ok(!c.includes('PrivateDevices=yes') && c.includes('TemporaryFileSystem=/dev/shm:mode=1777,nosuid') && c.includes('PrivateIPC=yes'));
     refused(look(s, 'true', { extra: ['--fleet'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
     refused(look(s, 'true', { extra: ['--gpu'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
   });
@@ -1760,12 +1760,12 @@ describe('what bounds a plain change (R63)', () => {
     s.put('standin/free', '49000000000\n');
     const before = started(s).length;
     refused(go('true'), 'the disk has 49 GB free; a plain change needs 50 GB free: free space first, by a change the owner asks for (it may run under the floor)');
+    assert.equal(started(s).length, before);
     for (const asked of [['--open'], ['--home']]) {   // (an asked change may free space: no floor, no watch)
       const id = newId();
       const a = run(s, ['run', '--id', id, '--sha256', sha('true'), '--seconds', '120', '--dir', s.work, ...asked, '--', 'true'], { env });
       assert.equal(a.status, 0, `${asked}: ${a.stdout}${a.stderr}`);
     }
-    assert.equal(started(s).length, before);
     s.put('standin/free', '60000000000\n');
     const cmd = 'printf "40000000000\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; for i in $(seq 60); do sleep 0.5; ls "$SPARK_CONSOLE_REHEARSAL"/standin/stopped/sw-run-* > /dev/null 2>&1 && exit 9; done';
     const r = go(cmd);

@@ -613,7 +613,7 @@ unit_runs() {   # $1 a unit: does systemd say it runs, or is starting or stoppin
   esac
 }
 do_state() {   # what became of a look's or change's call by its id: firm, from the helper's own marks
-  local m p at r l
+  local m='' p='' at='' r l
   only_id
   sweep_held
   read -r m p at < "$R$CALLS/$ID" 2> /dev/null || m=''
