@@ -16,6 +16,7 @@ the map's "Where new things go", row "A saved workflow".
   with a job that ends well, stops what its own steps started, except a step saved with `keep: true` (R35).
 - A `keep_running` step may leave out its Spark: `pickSpark` places it when the run reaches it, waking one if it must.
 - “Save that as X” is `save_workflow {title, from: "this request"}`: the request's changes, from the journal (R35).
+- The owner's yes to a save covers the images its steps start (`approved`); a changed step asks again (R35, D6c).
 
 ## Also update
 
