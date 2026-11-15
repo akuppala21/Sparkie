@@ -216,7 +216,7 @@ const PAGE_ONLY_TOOLS = new Set([
   'forget_workflow',
   'save_workflow',
 ]);
-const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}`
+const pageOnlyLabel = (name, input) => (name === 'save_workflow' ? `Save the workflow “${String(input.title || '').slice(0, 80)}”: ${input.from ? 'what your request before it changed in this chat' : stepWords(input.steps)}${findSaved(String(input.title || '')) ? ' (replaces the one saved now)' : ''}${input.from ? '' : savedImagesLabel(input.steps)}`
   : name === 'forget_workflow' ? `Forget the saved workflow “${String(input.name || '').slice(0, 80)}”` : changeLabel(name, input));
 // The kinds of request (CHANGE_WORDS) each change answers to (sparkieCheck): one a line, in name order.
 const ACTION_KIND = {
