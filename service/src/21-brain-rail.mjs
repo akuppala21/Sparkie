@@ -16,7 +16,8 @@
 // A record counts only as the rail recounts it from the record itself, every time: well-shaped, sealed by this console
 // (an HMAC over the record and its profile's key, with a key kept beside the secrets file, never in the state folder
 // or a copy of it), the main case set (test/eval/cases.json) with every memory addition on, the same case ids and expects
-// as the lock's, no cap, the brain's own key. The newest full one decides; a partial run neither gives nor takes.
+// as the lock's, no cap, the brain's own key. The newest full one decides (of two at one moment, one that missed the
+// bar: evalOrder); a partial run neither gives nor takes.
 const EVAL_MAIN_SET = 'test/eval/cases.json';
 const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'))}/eval-seal.json` : null) : `${homedir()}/.config/spark-console/eval-seal.json`;
 
@@ -109,7 +110,7 @@ async function brainRail() {
     if (!p || p.key !== key) return no('no brain check is on record for this exact setup (model, engine, image, flags, limits, what it runs)');
     if (p.outcome !== 'checked') return no('the brain check on record says not checked');
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
-    const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => evalOrder(a, b, evalScore));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
     if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
