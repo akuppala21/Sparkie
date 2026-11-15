@@ -223,7 +223,8 @@ describe('go-back.sh and an update’s way back never trip the hold', () => {
     for (const f of ['systemctl', 'curl']) chmodSync(join(bin, f), 0o755);
     return { h, snap, live, bin };
   }
-  const run = (x, ...args) => spawnSync('bash', [join(x.snap, 'restore.sh'), ...args], { env: { ...process.env, HOME: x.h, PATH: `${x.bin}:${process.env.PATH}` }, encoding: 'utf8', timeout: 60000 * SLOW });
+  // (SPARK_CONSOLE_ALL_LOCAL keeps the stand-ins first on the PATH, as on the stand-in fleet)
+  const run = (x, ...args) => spawnSync('bash', [join(x.snap, 'restore.sh'), ...args], { env: { ...process.env, HOME: x.h, PATH: `${x.bin}:${process.env.PATH}`, SPARK_CONSOLE_ALL_LOCAL: '1' }, encoding: 'utf8', timeout: 60000 * SLOW });
 
   test('restore.sh without --with-state (what go-back.sh runs) leaves the state, and its number, as they are', () => {
     const x = home();
