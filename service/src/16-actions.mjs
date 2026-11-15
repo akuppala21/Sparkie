@@ -473,6 +473,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (ctx.agentId) {
     const key = agentKeys().find(k => k.id === ctx.agentId);
     if (!key || !(key.scopes || []).includes('fleet:act')) throw new HttpError(403, 'This agent was removed (or may only look now), so nothing was changed.');
+    if (putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
