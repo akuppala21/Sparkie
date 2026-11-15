@@ -188,12 +188,14 @@ describe('the rail', { concurrency: 1 }, () => {
     await kept(await record({}, { passed: i => i >= 3 }));
     await aButton('missed the bar');
     const cases = LOCK().evalSet.cases, memory = readFileSync(join(REPO, 'test', 'eval', 'memory.json')), sha = b => createHash('sha256').update(b).digest('hex');
+    // (a case file is a list of cases, or {about, cases})
+    const memoryCases = (v => (Array.isArray(v) ? v : v.cases))(JSON.parse(memory));
     const never = [
       ['a partial run', await record({}, { cases: cases.slice(0, 5) })],
       ['its own score saying it met the bar over failing runs', await record({ full: true, score: { full: true, met: true, passOnce: 1, passAllRuns: 1, wrongChanges: 0, askedOnClear: 0 } }, { passed: i => i >= 3 })],
       ['another mark', await record({ reads: 'cd'.repeat(32) })],
       ['another case set', await record({ set: 'ef'.repeat(32) })],
-      ['a memory-set full pass', await record({ set: sha(memory), setFile: 'test/eval/memory.json', setCases: JSON.parse(memory).length }, { cases: JSON.parse(memory).map(c => [c.id, c.expect]) })],
+      ['a memory-set full pass', await record({ set: sha(memory), setFile: 'test/eval/memory.json', setCases: memoryCases.length }, { cases: memoryCases.map(c => [c.id, c.expect]) })],
       ['a memory addition off', await record({ memorySwitches: { on: SWITCHES.slice(1), off: ['names'] } })],
       ['no setFile or memorySwitches', await record({ setFile: undefined, memorySwitches: undefined })],
       ['a case id not the lock’s', await record({}, { cases: cases.map(([id, e], i) => [i ? id : `${id}-x`, e]) })],

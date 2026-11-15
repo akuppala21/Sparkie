@@ -149,7 +149,8 @@ const PORT_TAKEN = /Port \d+ is in use|EADDRINUSE: address already in use 127\.0
 // `set`), and each case's id and expect, so the installed build reads its own set even after going back a build (R51).
 export function evalSetOf(file = join(REPO, 'test', 'eval', 'cases.json')) {
   const bytes = readFileSync(file);
-  return { version: createHash('sha256').update(bytes).digest('hex'), file: 'test/eval/cases.json', cases: JSON.parse(bytes).map(c => [c.id, c.expect]) };
+  const list = (v => (Array.isArray(v) ? v : v.cases))(JSON.parse(bytes));
+  return { version: createHash('sha256').update(bytes).digest('hex'), file: 'test/eval/cases.json', cases: list.map(c => [c.id, c.expect]) };
 }
 
 // This tree's build id, as the service computes it (buildOf, 01-setup.mjs).
