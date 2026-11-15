@@ -564,8 +564,8 @@ describe('the proof of the walls', () => {
     'a hidden key file', 'a disk device or the GPU', 'something left behind', 'root with no net',
     'moving a folder above a held one, and making a new one in its place', "stopping or changing the net's timer",
     "writing the net's copies or restore.sh", "taking away the net's pending mark", 'making keep count',
-    "swapping a job's own output folder for a link"];
-  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 17, 18, 19];
+    "swapping a job's own output folder for a link", 'ending a unit through the helper'];
+  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20], RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 17, 18, 19, 20];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -601,7 +601,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -918,6 +918,27 @@ describe('the lock-out net (R60)', () => {
     // A look never takes the net; a change in it is held to 30 minutes.
     refused(look(t, 'true', { extra: ['--net'] }), 'a look changes nothing, so it never takes --net');
     refused(net(t, 'true', { secs: 1801 }), 'a change inside the net is held to 30 minutes');
+  });
+
+  test("stop ends the look or change this helper started for that id, waits until it is gone and says whether it was running; never the net's timer, nor any other unit; a walled command cannot call it", () => {
+    const s = netted();
+    const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    s.put(`standin/active/sw-run-${r.id}.service`, '');
+    const before = calls(s).length;
+    const st = run(s, ['stop', '--id', r.id]);
+    assert.equal(st.status, 0, st.stdout + st.stderr);
+    assert.equal(st.stdout, `${r.id} stopped sw-run-${r.id}: it was running, and it is gone\n`);
+    assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show'), [['systemctl', 'stop', `sw-run-${r.id}.service`]]);
+    assert.ok(timerWaits(s, r.id) && existsSync(join(G(s, r.id), 'pending')), "the net's timer is left as it was");
+    assert.equal(run(s, ['stop', '--id', r.id]).stdout, `${r.id} stop: neither sw-run-${r.id} nor sw-look-${r.id} was running\n`);
+    const id = newId();
+    s.put(`standin/active/sw-look-${id}.service`, '');
+    assert.equal(run(s, ['stop', '--id', id]).stdout, `${id} stopped sw-look-${id}: it was running, and it is gone\n`);
+    refused({ ...run(s, ['stop', '--id', id, '--seconds', '5']), id }, 'stop takes --id and nothing else');
+    const t = spark({ knobs: { 'let-through': '20 look\n' } });
+    const q = prove(t);
+    assert.equal(q.status, 1);
+    assert.ok(q.stdout.includes(`${q.id} proof look 20 got through: ending a unit through the helper (stand-in, directly)\n`), q.stdout);
   });
 
   test('a restart inside the window: the restart unit puts back once, stops nothing and reloads nothing (they have not started yet); the timer after it does nothing', () => {

@@ -10,6 +10,9 @@
 #   sudo -n /usr/local/sbin/spark-console-root look --id <id> --sha256 <hash> --seconds <n> --dir <folder> -- '<command>'
 #   sudo -n /usr/local/sbin/spark-console-root run --id <id> --sha256 <hash> --seconds <n> --dir <folder>
 #        [--open] [--protect <folder>]... [--stdin] -- '<command>'
+#   sudo -n /usr/local/sbin/spark-console-root run --net ...  a change with the lock-out net armed first (R60)
+#   sudo -n /usr/local/sbin/spark-console-root keep --id <id>     keeps what a change inside the net did
+#   sudo -n /usr/local/sbin/spark-console-root stop --id <id>     ends the look or change this helper started for that id
 #   sudo -n /usr/local/sbin/spark-console-root root ...      always refused: the put-back net is a later step
 #
 # What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
@@ -696,6 +699,33 @@ net_after() {   # after the command: nothing differs, and the guard is disarmed 
   fi
   exec 8>&-
 }
+# Ends one unit this helper started, early (design A 2.10: killable by name): the change's or the look's for that id,
+# never the net's timer or any other unit. It waits until the unit is gone and says whether it was running.
+do_stop() {
+  local u state was='' n
+  only_id
+  for u in "sw-run-$ID.service" "sw-look-$ID.service"; do
+    state=$(systemctl show --property=ActiveState --value "$u" 2>/dev/null) || state=''
+    case "$state" in active|activating|deactivating|reloading|refreshing) ;; *) continue ;; esac
+    was=${u%.service}
+    systemctl stop "$u" > /dev/null 2>&1 || true
+    for n in 1 2; do
+      for _ in $(seq 30); do
+        case "$(systemctl show --property=ActiveState --value "$u" 2>/dev/null)" in
+          active|activating|deactivating|reloading|refreshing) sleep 1 ;;
+          *) break 2 ;;
+        esac
+      done
+      [ "$n" = 1 ] && systemctl kill --signal=SIGKILL "$u" > /dev/null 2>&1
+    done
+    case "$(systemctl show --property=ActiveState --value "$u" 2>/dev/null)" in
+      active|activating|deactivating|reloading|refreshing) say "stop: $was is still running"; exit 1 ;;
+    esac
+  done
+  if [ -n "$was" ]; then say "stopped $was: it was running, and it is gone"
+  else say "stop: neither sw-run-$ID nor sw-look-$ID was running"; fi
+  exit 0
+}
 do_keep() {   # the owner's yes, through the console: counts only while the timer waits and once it is stopped
   local state
   only_id
@@ -1086,20 +1116,20 @@ NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale
        'starting something outside the wall' 'a hidden key file' 'a disk device or the GPU' 'something left behind'
        'root with no net' 'moving a folder above a held one, and making a new one in its place'
        "stopping or changing the net's timer" "writing the net's copies or restore.sh" "taking away the net's pending mark"
-       'making keep count' "swapping a job's own output folder for a link")
-LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18'
-RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19'
-OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19'
+       'making keep count' "swapping a job's own output folder for a link" 'ending a unit through the helper')
+LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18 20'
+RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 12 14 15 16 17 18 19 20'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
 AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14 run:19 look:15 run:15 look:16 run:16 look:17 run:17 look:18 run:18'
 # The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
 # use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
 # targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
 # read-only list (5), sudo with the helper's own line (8), its own key (10), its own folders' right to be renamed (14),
-# and its own job folder's (19).
+# its own job folder's (19), and the helper's stop, which only the owner's sudo line reaches (20).
 # Attempt 2 must reach its own program on the loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be
 # absent, for the reason the proof states.
-MUST_WORK='1 4 5 6 7 8 10 14 19'
+MUST_WORK='1 4 5 6 7 8 10 14 19 20'
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -1111,7 +1141,7 @@ declare -A GOT=() DETAIL=()
 take() {   # $1 where the lines came from (outside, look, run, after); $2 the lines
   local from=$1 tag n how res rest
   while read -r tag n how res rest; do
-    [[ $n =~ ^(1[0-24-9]|[1-9])$ ]] || continue
+    [[ $n =~ ^(1[0-24-9]|20|[1-9])$ ]] || continue
     rest=${rest//[![:print:]]/}
     case "$tag:$how:$res" in
       P:outside:works|P:outside:not-there) GOT[outside:$n]=$res; DETAIL[outside:$n]=${rest:0:200} ;;
@@ -1661,6 +1691,15 @@ def a19(c):  # swapping a job's own output folder for a link (the console mounts
     return [f'renamed it ({c.how})']
 
 
+def a20(c):  # ending a unit through the helper's stop: the owner's sudo line reaches it outside the walls, nothing inside
+    got = []
+    if quiet(['sudo', '-n', HELPER, 'stop', '--id', ID]):
+        got.append('sudo -n the helper stop')
+    if c.mode != 'outside' and quiet([HELPER, 'stop', '--id', ID]):
+        got.append('the helper stop')
+    return got
+
+
 def a12(c):  # something left behind: a program put in the background, looked for from outside afterwards
     mark = f'{ID}-{c.mode}-{c.how}'
     subprocess.Popen(['sleep', '300'], env=dict(CLEAN, SPARK_PROOF_LEFT=mark), stdin=DEVNULL, stdout=DEVNULL,
@@ -1716,7 +1755,7 @@ def a18(c):  # making keep count: through the helper, or by writing its mark
 
 
 ATTEMPTS = {1: a1, 2: a2, 3: a3, 4: a4, 5: a5, 6: a6, 7: a7, 8: a8, 9: a9, 10: a10, 11: a11, 12: a12, 14: a14,
-            15: a15, 16: a16, 17: a17, 18: a18, 19: a19}
+            15: a15, 16: a16, 17: a17, 18: a18, 19: a19, 20: a20}
 
 
 def what(hits, n=0):
@@ -1959,9 +1998,9 @@ main() {
   init
   parse "$@"
   case "$VERB" in
-    check|prove|look|run|keep) ;;
+    check|prove|look|run|keep|stop) ;;
     root) refuse "root needs the put-back net, which is not built yet: root is refused on every Spark" ;;
-    *) refuse "no such verb: check, prove, look, run, keep or root" ;;
+    *) refuse "no such verb: check, prove, look, run, keep, stop or root" ;;
   esac
   caller
   case "$VERB" in
@@ -1969,6 +2008,7 @@ main() {
     prove) only_id; do_prove ;;
     look|run) do_unit ;;
     keep) do_keep ;;
+    stop) do_stop ;;
   esac
 }
 
