@@ -780,7 +780,7 @@ do_keep() {   # the owner's yes, through the console: counts only while the time
   if [ -e "$G/result" ]; then guard_done "$G"; say "already put back at $(sed -n '1s/^put back at //p' -- "$G/result")"; exit 0; fi
   if [ -e "$G/kept" ]; then guard_done "$G"; say "kept already: $(head -n 1 -- "$G/kept")"; exit 0; fi
   state=$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null) || state=''
-  [ "$state" = active ] || refuse "its timer is not waiting (${state:-gone}), so keeping does not count: what was not kept goes back"
+  [ "$state" = active ] || refuse "its timer is not waiting (${state:-gone}), so keeping does not count: what was not kept goes back, by a put-back already started or at the Spark's next restart"
   # (written before the stop, under the lock: a put-back the timer starts now waits for the lock, then sees it)
   printf 'kept %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$G/kept"
   if ! systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1; then
@@ -873,6 +873,10 @@ RELOADS = [('/etc/systemd/system', [['systemctl', 'daemon-reload']]), ('/etc/ssh
            ('/etc/default/tailscaled', [['systemctl', 'restart', 'tailscaled.service']]),
            (f'{HOME}/.config/systemd/user', CONSOLE), (STATE, CONSOLE)]
 ABOVE_SYSTEM = ('/var/lib/tailscale', '/var/lib/systemd/linger')
+# The folders above that hold nothing but ways in: only these are swapped back for a real folder when a link (or
+# anything else) stands in their place. The home and the folders between it and a way in (.config, .local, ...) are
+# left as they stand: a new, nearly empty one in a moved home's place would hide all the rest.
+SWAP = {f'{HOME}/.ssh', STATE, '/var/lib/tailscale', '/var/lib/systemd/linger'}
 
 
 def listed():
@@ -1057,25 +1061,35 @@ def done_():   # kept or put back already: what may be left of the guard goes
             pass
 
 
-def folder(root, path, was, make):   # the folder at path, opened one part at a time, never through a link
-    fd, cur = os.dup(root), ''
+def stands(fd, name):   # what stands at a name that is not a folder
+    try:
+        os.readlink(name, dir_fd=fd)
+        return 'a link'
+    except OSError:
+        return 'not a folder'
+
+
+def folder(root, path, was, make, aboves):   # the folder at path, opened one part at a time, never through a link:
+    fd, cur = os.dup(root), ''               # (its handle, None), or (None, why not)
     for part in [x for x in path.split('/') if x]:
         cur += '/' + part
         e = was.get(cur)
+        mine = make and e and e['kind'] == 'dir'   # (a folder the copy had)
         try:
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         except FileNotFoundError:
-            if not (make and e and e['kind'] == 'dir'):
+            if not mine:
                 os.close(fd)
-                return None
+                return None, f'{cur} is not there'
             os.mkdir(part, 0o700, dir_fd=fd)
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.fchown(nfd, e['uid'], e['gid'])
             os.fchmod(nfd, e['mode'])
-        except OSError:   # a link, or a file, where a folder is: only a folder the copy had is put back in its place
-            if not (make and e and e['kind'] == 'dir'):
+        except OSError:   # a link, or a file, where a folder is: swapped back only for a copied folder of ways in
+            if not (mine and (cur in SWAP or cur not in aboves)):
+                why = f'{cur} is {stands(fd, part)} now'
                 os.close(fd)
-                return None
+                return None, why
             os.unlink(part, dir_fd=fd)
             os.mkdir(part, 0o700, dir_fd=fd)
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -1083,7 +1097,7 @@ def folder(root, path, was, make):   # the folder at path, opened one part at a 
             os.fchmod(nfd, e['mode'])
         os.close(fd)
         fd = nfd
-    return fd
+    return fd, None
 
 
 def put(fd, name, p, e):
@@ -1126,14 +1140,22 @@ def put(fd, name, p, e):
 
 
 def restore(why):
-    was, found, diff, unsaid, _ = compare()
+    was, found, diff, unsaid, aboves = compare()
+    aboves = set(aboves)
     root = os.open(R or '/', os.O_RDONLY | os.O_DIRECTORY)
-    done, notes = [], []
+    done, notes, empty = [], [], []
     depth = lambda p: p.count('/')
     # First what is there now and should not be, deepest first: a link always; anything of another kind than the copy.
+    # (Of the folders above: one the copy did not see goes only if it is empty once the rest went; the home and the
+    # folders between are never taken away.)
     for p in sorted((p for p in diff if found.get(p, ABSENT)['kind'] in ('file', 'link', 'dir', 'other')
                      and (found[p]['kind'] == 'link' or was.get(p, ABSENT)['kind'] != found[p]['kind'])), key=depth, reverse=True):
-        fd = folder(root, os.path.dirname(p), was, False)
+        if p in aboves and was.get(p, ABSENT)['kind'] == 'absent' and found[p]['kind'] == 'dir':
+            empty.append(p)
+            continue
+        if p in aboves and p not in SWAP:
+            continue
+        fd, _ = folder(root, os.path.dirname(p), was, False, aboves)
         if fd is None:
             continue
         try:
@@ -1147,11 +1169,25 @@ def restore(why):
             notes.append(f'not put back {p}: {x.strerror}')
         finally:
             os.close(fd)
+    for p in sorted(empty, key=depth, reverse=True):
+        fd, _ = folder(root, os.path.dirname(p), was, False, aboves)
+        if fd is None:
+            continue
+        try:
+            os.rmdir(os.path.basename(p), dir_fd=fd)
+            done.append(p)
+        except OSError:
+            notes.append(f'not put back {p}: it was not there, and it holds what the copy never saw')
+        finally:
+            os.close(fd)
     # Then what should be there, shallowest first: exact bytes, mode and owner.
     for p in sorted((p for p in diff if was.get(p, ABSENT)['kind'] in ('file', 'link', 'dir')), key=depth):
-        fd = folder(root, os.path.dirname(p), was, True)
+        if p in aboves and p not in SWAP and found.get(p, ABSENT)['kind'] in ('link', 'file', 'other'):
+            notes.append(f"not put back {p}: it is {'a link' if found[p]['kind'] == 'link' else 'not a folder'} now")
+            continue
+        fd, whynot = folder(root, os.path.dirname(p), was, True, aboves)
         if fd is None:
-            notes.append(f'not put back {p}: a folder above it is a link, or not there')
+            notes.append(f'not put back {p}: {whynot}')
             continue
         try:
             put(fd, os.path.basename(p), p, was[p])

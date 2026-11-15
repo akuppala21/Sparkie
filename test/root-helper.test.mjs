@@ -893,7 +893,7 @@ describe('the lock-out net (R60)', () => {
     assert.ok(!existsSync(join(G(s, r.id), 'kept')) && existsSync(join(G(s, r.id), 'pending')));
     rmSync(join(s.R, 'standin/timer-stop-fails'));
     rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));   // (it fired: the put-back has not run yet)
-    refused(keep(s, r.id), 'its timer is not waiting (inactive), so keeping does not count: what was not kept goes back');
+    refused(keep(s, r.id), "its timer is not waiting (inactive), so keeping does not count: what was not kept goes back, by a put-back already started or at the Spark's next restart");
     assert.equal(fire(s, r.id).status, 0);
     assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
     refused(keep(s, 'nosuchguard1'), 'there is no guard nosuchguard1 on this Spark');
@@ -1036,6 +1036,56 @@ describe('the lock-out net (R60)', () => {
       assert.match(readFileSync(join(G(s, r.id), 'result'), 'utf8'), new RegExp(`^put back at \\S+: ${back} went back, 0 did not\\n`), what);
       assert.ok(!existsSync(join(ssh, 'authorized_keys2')), what);
     }
+  });
+
+  // The second read: a link at the home, or at a folder between it and a way in, is left as it stands.
+  test('a link at the home is left: what it points at is untouched, what is under it is named not put back, ways in elsewhere still go back, and no console restart is fired', () => {
+    const s = netted();
+    const r = net(s, ['R="$SPARK_CONSOLE_REHEARSAL"', 'printf "Port 2222\\n" > "$R/etc/ssh/sshd_config"', 'mv "$R/home/owner" "$R/home/owner-moved"',
+      'ln -s "$R/home/owner-moved" "$R/home/owner"'].join('; '));
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id).status, 0);
+    assert.ok(lstatSync(join(s.R, 'home/owner')).isSymbolicLink(), 'the link stays');
+    assert.equal(readFileSync(join(s.R, 'home/owner-moved/.ssh/authorized_keys'), 'utf8'), 'keys', 'what it points at is untouched');
+    assert.ok(existsSync(join(s.R, 'home/owner-moved/models')) && existsSync(join(s.R, 'home/owner-moved/.ssh/id_ed25519')));
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n', 'a way in outside the home still goes back');
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    for (const l of ['not put back /home/owner: it is a link now', 'not put back /home/owner/.ssh/authorized_keys: /home/owner is a link now',
+      'not put back /home/owner/.local/state/spark-console/sessions.json: /home/owner is a link now']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
+    assert.ok(!calls(s).slice(before).some(c => c[0] === 'systemctl' && c.some(a => a.startsWith('--machine='))), 'no console restart');
+  });
+
+  test("a link at ~/.config is left: the folder it points at is untouched, the console's units under it are named not put back, and no console restart is fired", () => {
+    const s = netted();
+    s.put('home/owner/.config/systemd/user/spark-console-api.service', '[Unit]\n');
+    const r = net(s, 'H="$SPARK_CONSOLE_REHEARSAL/home/owner"; mv "$H/.config" "$H/.config-moved"; ln -s "$H/.config-moved" "$H/.config"');
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id).status, 0);
+    assert.ok(lstatSync(join(s.R, 'home/owner/.config')).isSymbolicLink(), 'the link stays');
+    assert.equal(readFileSync(join(s.R, 'home/owner/.config-moved/spark-console/secrets.json'), 'utf8'), '{}');
+    assert.equal(readFileSync(join(s.R, 'home/owner/.config-moved/systemd/user/spark-console-api.service'), 'utf8'), '[Unit]\n');
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    for (const l of ['not put back /home/owner/.config: it is a link now',
+      'not put back /home/owner/.config/systemd/user/spark-console-api.service: /home/owner/.config is a link now']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
+    assert.match(result[0], /: 0 went back, \d+ did not$/);
+    assert.ok(!calls(s).slice(before).some(c => c[0] === 'systemctl' && c.some(a => a.startsWith('--machine='))), 'no console restart');
+  });
+
+  test('a folder above that was not there when copied (the linger folder) loses only what the guard puts back as not there, and goes itself only when it is then empty', () => {
+    const s = netted();
+    const r = net(s, 'L="$SPARK_CONSOLE_REHEARSAL/var/lib/systemd/linger"; mkdir -p "$L"; : > "$L/owner"; : > "$L/other"');
+    assert.equal(fire(s, r.id).status, 0);
+    const linger = join(s.R, 'var/lib/systemd/linger');
+    assert.ok(!existsSync(join(linger, 'owner')), "the owner's file the copy did not see goes");
+    assert.ok(existsSync(join(linger, 'other')), 'what else is in it stays');
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.includes('not put back /var/lib/systemd/linger: it was not there, and it holds what the copy never saw'), result.join('\n'));
+    assert.match(result[0], /: 1 went back, 1 did not$/);
+    const t = netted();
+    const q = net(t, 'L="$SPARK_CONSOLE_REHEARSAL/var/lib/systemd/linger"; mkdir -p "$L"; : > "$L/owner"');
+    assert.equal(fire(t, q.id).status, 0);
+    assert.ok(!existsSync(join(t.R, 'var/lib/systemd/linger')), 'empty once the rest went: it goes');
+    assert.match(readFileSync(join(G(t, q.id), 'result'), 'utf8').split('\n')[0], /: 2 went back, 0 did not$/);
   });
 
   // Fix 3: guards that are done never block; arming cut off leaves nothing; the proof's own are marked and swept.
