@@ -1,6 +1,7 @@
 // Covers: The documents match the code (`tools/check-docs.mjs`): on this tree, and on a made-up tree with one fault at
 // a time (an id, a path, a name, an action, a line pointer, a typed count, a size, a heading, the task table, a stale
-// rules index); dated records are never checked, nor the lock's path. `node tools/make.mjs --check` passes and changes
+// rules index); dated records are never checked, nor the lock's path. `--sizes`: every document's bytes, limit and
+// free bytes, the fullest first. `node tools/make.mjs --check` passes and changes
 // nothing. The parts' headers (`tools/parts.mjs`): every part has one and it matches its code, `docs/registry.md` is
 // current, and `desired.json`'s six writers are found; on made-up parts, one fault each (no header, a missing key, a
 // header cut short, with the registry and code map still made, a rule or test that isn't there, an undeclared or a
@@ -23,7 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { REPO } from './start-mock.mjs';
-import { checkDocs, rulesIndex, coversOf, coversTable, describe as say } from '../tools/check-docs.mjs';
+import { checkDocs, rulesIndex, coversOf, coversTable, sizesReport, sizesText, describe as say } from '../tools/check-docs.mjs';
 import { checkParts, readParts, registry, owned } from '../tools/parts.mjs';
 import { codeMap } from '../tools/code-map.mjs';
 import { checkStatus, statusTable } from '../tools/status.mjs';
@@ -132,6 +133,48 @@ describe('sizes', () => {
   test('the contract over 120 KB: made flat, it has no higher ceiling', () => fails({ 'docs/contract.md': `${BASE['docs/contract.md']}${'Short line.\n'.repeat(10500)}` }, 'sizes', /over its limit of 122880/));
   test('a card over 4 KB', () => fails({ 'docs/how/add-an-action.md': CARD.replace('- A second route.', `${'- A second route.\n'.repeat(250)}`) }, 'sizes', /over its limit of 4096/));
   test('a line over 400 characters', () => fails(doc('word '.repeat(90)), 'sizes', /line of 45\d characters/));
+  test('docs/state-outside.md over 16 KB', () => fails({ 'docs/state-outside.md': `# Outside\n\n${'Short line.\n'.repeat(1400)}` }, 'sizes', /over its limit of 16384/));
+});
+
+// What is filling up: every document's bytes, limit and free bytes, the fullest first (node tools/check-docs.mjs --sizes).
+describe('the sizes report', () => {
+  test('each document with its bytes, its limit (its ceiling where it has one) and what is free, the fullest first', () => {
+    const files = {
+      'docs/how/add-an-action.md': CARD.replace('- A second route.', `- A second route.${' x'.repeat((4000 - Buffer.byteLength(CARD)) / 2)}`),
+      'docs/agent-door.md': `# The agent door\n\n${'Short line.\n'.repeat(1300)}`,
+      'docs/notes.md': `# Notes\n\n${'Short line.\n'.repeat(1300)}`,
+      'REVIEW-GUIDE.md': '# Review\n\nOnly its paths are checked.\n',
+    };
+    const root = makeTree(files);
+    try {
+      const rows = sizesReport(root);
+      const want = { 'docs/how/add-an-action.md': 4096, 'docs/agent-door.md': 17408, 'docs/notes.md': 16384, 'AGENTS.md': 8192, 'docs/contract.md': 122880,
+        'docs/rules/R01.md': 8192, 'docs/architecture.md': 24576 };
+      assert.deepEqual(rows.map(r => r.file).sort(), Object.keys(want).sort(), 'every document the size check reads, and no other');
+      for (const r of rows) {
+        assert.equal(r.bytes, Buffer.byteLength(readFileSync(join(root, r.file))), r.file);
+        assert.equal(r.limit, want[r.file], r.file);
+        assert.equal(r.free, r.limit - r.bytes, r.file);
+      }
+      assert.deepEqual(rows.map(r => r.free), rows.map(r => r.free).sort((a, b) => a - b), 'the fullest first');
+      assert.deepEqual(rows.slice(0, 2).map(r => [r.file, r.free]), [['docs/how/add-an-action.md', 96], ['docs/notes.md', 775]]);
+      // over its limit: the free bytes go below zero, and it comes first
+      writeFileSync(join(root, 'docs/notes.md'), `# Notes\n\n${'Short line.\n'.repeat(1400)}`);
+      assert.deepEqual([sizesReport(root)[0].file, sizesReport(root)[0].free], ['docs/notes.md', 16384 - Buffer.byteLength(readFileSync(join(root, 'docs/notes.md')))]);
+      assert.ok(sizesReport(root)[0].free < 0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('the command prints that report for this tree, a line a document under its header, and exits 0', () => {
+    const r = spawnSync(process.execPath, [join(REPO, 'tools', 'check-docs.mjs'), '--sizes'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${sizesText(sizesReport(REPO))}\n`);
+    const lines = r.stdout.trim().split('\n');
+    assert.match(lines[0], /^Document\s+Bytes\s+Limit\s+Free$/);
+    const rows = lines.slice(1).map(l => l.trim().split(/\s+/));
+    assert.ok(rows.every(c => c.length === 4 && Number(c[2]) - Number(c[1]) === Number(c[3])), 'bytes, limit and free add up on every line');
+    assert.deepEqual(rows.map(c => Number(c[3])), rows.map(c => Number(c[3])).sort((a, b) => a - b), 'the fullest first');
+    for (const [f, limit] of [['docs/state.md', '24576'], ['docs/state-outside.md', '16384']]) assert.equal(rows.find(c => c[0] === f)?.[2], limit, f);
+  });
 });
 
 describe('shape', () => {
