@@ -178,7 +178,7 @@ function pasteCard(client, baseUrl) {
   // (a block only for Sparkie's own model; for another model chosen for agents, the plain values)
   const card = { app, fits: true, values: { baseUrl, model: SPARKIE_ID, key: 'any text works (your Tailscale login is what counts)', contextTokens: give }, ...(brain ? { block } : {}),
     notes: [
-      `Here, ${SPARKIE_ID} is ${brain ? 'Sparkie’s model alone' : `${String(t?.model || 'the model chosen for agents').slice(0, 200)} (the model chosen for agents)`}: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (Access → Agents).`,
+      `Here, ${SPARKIE_ID} is ${brain ? 'Sparkie’s model alone' : `${String(t?.model || 'the model chosen for agents').slice(0, 200)} (the model chosen for agents)`}: no fleet tools and no memory. For the fleet itself, an agent uses the agent door (your account menu → Agents and Telegram).`,
       slots ? `Sparkie’s model answers ${slots} request${slots === 1 ? '' : 's'} at once, shared with your own chats; apps get at most ${Math.max(1, slots - 1)}${slots === 1 ? ', so an app’s request makes your chat wait' : ''}.` : 'How many requests it answers at once isn’t known here.',
       `Context: ${!context ? 'not known here' : context > CARD_CONTEXT ? `give apps at most ${CARD_CONTEXT.toLocaleString('en-US')} tokens (its server allows ${context.toLocaleString('en-US')})` : `${context.toLocaleString('en-US')} tokens (its server’s setting)`}.`,
       ...(brain ? [] : ['Tool calls through it are not known here. An app on your tailnet calling a stopped model’s name can start it again.']),
@@ -339,7 +339,7 @@ action({
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, spark, engine: p.model.engine, canRun: v.canRun, fitsNow: v.fitsNow, wouldStop: v.wouldStop,
       steps: planSteps(p.steps, spark), warnings: p.warnings, ...(v.blockers ? { blockers: v.blockers } : {}),
       memory: { neededGB: gbOf(p.memory.need), freeGB: gbOf(p.memory.available), totalGB: gbOf(p.memory.total) }, sparkieRunsHere: p.sparkieHere, endpoint: p.endpoint,
-      next: ctx.canChange ? `start_model {"model":"${m.name}","spark":"${spark}"} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it in Spark Console (Models → Deploy), or allows this agent to change things.',
+      next: ctx.canChange ? `start_model {"model":"${m.name}","spark":"${spark}"} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it (asking Sparkie, or with POST /deploy), or allows this agent to change things.',
     };
   },
 });
@@ -353,13 +353,13 @@ action({
     const { inv, m } = await mustLibraryModel(model);
     const link = (lastCheck?.pairs || []).find(p => sparks.includes(p.a) && sparks.includes(p.b))?.fastLink || 'not tested';
     const cp = await clusterPlan(m.name, sparks, viewer, inv);
-    const blockers = [...(link === 'full' ? [] : [`the ${sparks.join('–')} cable is “${link}”; it must pass the connection test (Clusters → Test connections)`]),
+    const blockers = [...(link === 'full' ? [] : [`the ${sparks.join('–')} cable is “${link}”; it must pass the cable check first (Check cables, on a Spark’s Checks tab)`]),
       ...cp.members.filter(x => !x.fits).map(x => `not enough memory on ${x.node}, even stopping what can stop`)];
     return {
       observedAt: inv.observedAt, modelId: m.name, repo: m.repo || null, sparks: cp.nodes, answers: cp.head, link, linkTestedAt: lastCheck?.checkedAt || null,
       canRun: cp.fits && link === 'full', fitsNow: cp.fits && link === 'full' && cp.members.every(x => !x.stop.length), memoryEachGB: gbOf(cp.each), endpoint: cp.endpoint, blockers,
       each: cp.members.map(x => ({ spark: x.node, fits: x.fits, wouldStop: x.stop.map(c => ({ spark: x.node, container: c })), copyFirst: x.copy, steps: planSteps(x.steps, x.node), warnings: x.warnings, memoryFreeGB: gbOf(x.memory.available) })),
-      next: ctx.canChange ? `start_model {"model":"${m.name}","sparks":${JSON.stringify(sparks)}} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it in Spark Console (Clusters → Deploy), or allows this agent to change things.',
+      next: ctx.canChange ? `start_model {"model":"${m.name}","sparks":${JSON.stringify(sparks)}} starts it (the owner has to have asked for it).` : 'This agent can only look: the owner starts it (asking Sparkie, or with POST /deploy/cluster), or allows this agent to change things.',
     };
   },
 });

@@ -50,7 +50,7 @@ function tgSetState(state) {
   if (tg.state === state) return;
   tg.state = state;
   tg.since = new Date().toISOString();
-  if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under Access → Agents.' });
+  if (state === 'token-refused') fleetEvent({ type: 'notice', text: 'Telegram: the bot’s token stopped working. Paste a new one under your account menu → Agents and Telegram.' });
 }
 const TG_WORDS = {
   'forget-failed': 'Telegram is off, but the secrets file couldn’t be changed. Remove ~/.config/spark-console/secrets.json on Spark 2 by hand before Spark Console restarts.',
@@ -362,7 +362,7 @@ async function telegramRoute(req, res, path, viewer) {
     audit({ via: 'page', actor: 'owner', action: 'telegram-needs-me', args: { on }, ok: true });
     return send(res, 200, telegramView());
   }
-  if (!passkeys().length) throw new HttpError(409, 'Set up your passkey first (Access → People): connecting Telegram needs it.');
+  if (!passkeys().length) throw new HttpError(409, 'Set up your passkey first (your account menu → Your passkey): connecting Telegram needs it.');
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets, so Telegram can’t be connected here.');
   if (!TG_API) throw new HttpError(409, 'Telegram is off on this copy of Spark Console.');
   if (req.method === 'PUT' && path === '/telegram') {

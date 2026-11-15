@@ -731,11 +731,6 @@ dialog.modal[open] { animation: pop 0.14s ease-out; }
 .avatar.sm { width: 26px; height: 26px; font-size: 11px; flex: none; }
 .config-block { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.6; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; max-height: 260px; }
 
-.preview-ribbon {
-  position: sticky; top: 56px; z-index: 15; display: flex; align-items: center; justify-content: center; gap: 12px;
-  padding: 8px 16px; background: var(--info-soft); color: var(--info); font-size: 13px; font-weight: 550; border-bottom: 1px solid var(--border);
-}
-
 /* ───────── responsive ───────── */
 @media (max-width: 1180px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -891,7 +886,7 @@ fieldset.field > legend { padding: 0; margin-bottom: 6px; }
 /* on a chat, toasts sit above the message box instead of over it (the page measures the box into --composer-h) */
 .app:has(.chat) .toasts { bottom: calc(var(--composer-h, 96px) + 8px); }
 
-/* the public page: Request access and Sign in stay at the right, phones included */
+/* the public page: Sign in stays at the right, phones included */
 .outside-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
 @media (max-width: 420px) { .outside-actions .btn .icon { display: none; } }
 /* Sign in: the two steps, a note, and what the page sees right now */

@@ -32,7 +32,7 @@ flowchart TD
   LISTEN["One handler, two listeners: api.sock behind Tailscale :8443 (the one address), local TCP; every WebSocket upgrade refused"]
   GATE["requestGate, public routes (no sign-in), then identity: Tailscale login, session, or an agent key off the tailnet"]
   MCP["mcpDoor: the owner's login plus a key of that login, rate limits"]
-  PGATE["Page checks: cross-site, member limits, passkeyGate"]
+  PGATE["Page checks: cross-site, passkeyGate"]
   V1["/v1 gateway (sparkieApi)"]
   APPDOOR["App door (21-door, R40): door.sock behind Tailscale :10000 on the same name, its own handler; the owner only, one kept app per browser"]
   CHAT["Sparkie turn (sparkieTurn, 14-chats, 14-rounds)"]
@@ -67,8 +67,8 @@ flowchart TD
   APPDOOR -->|"each request and WebSocket: the Tailscale login, or the ticket's session as it is now; the app still on desired.json"| STATE
   APPDOOR -->|"HTTP and WebSockets to a kept app's port at its Spark's tailnet address (never the brain's Spark or a model's port); no console cookie or identity goes on, no console cookie comes back"| FLEET
   GATE -->|"/mcp"| MCP
-  GATE -->|"viewer: owner or member"| PGATE
-  GATE -->|"access asks, sessions, passkey counts: written before or at sign-in"| STATE
+  GATE -->|"the owner; anyone else 401"| PGATE
+  GATE -->|"sessions, passkey counts: written before or at sign-in"| STATE
   PGATE -->|"/v1, after JSON, same-origin and chat-permission checks"| V1
   PGATE -->|"chat message"| CHAT
   PGATE -->|"POST /actions/name (via api), Bring back, Cancel, chat buttons, the /undo update word"| RUN
@@ -137,13 +137,13 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 1. **In.** The page posts `/console/api/chats/<id>/messages` (`sendConsole` in `public/app.js`). Tailscale serve hands
    it to `api.sock`, then `handler` (`24-handler.mjs`).
 2. **Gates.** `requestGate` (`24-handler.mjs`) judges transport and sender; `viewerFor` (`03-identity.mjs`) names the
-   owner; the cross-site check and the chat permission pass (`handler` in `24-handler.mjs`).
+   owner (anyone else gets 401); the cross-site check passes (`handler` in `24-handler.mjs`).
 3. **Turn.** `chatReply` calls `sparkieTurn` (`14-chats.mjs`): it saves the message, reads the intent from the owner’s
    own words (`changeIntent` in `16-actions.mjs`), adds fleet notes and memory, and streams the chat route’s model
    (`chatTarget` in `13-main-model.mjs`: the brain on 127.0.0.1 by default). A plain "yes" to exactly one open button
-   runs `runChoice` (`14-chats.mjs`) instead and never calls the brain. A member’s turn gets no tools and no fleet
-   notes. Once the chat is marked as answering, everything runs inside one `try` whose `finally` calls `finish()`
-   (once), so a throw while the turn is set up frees the chat and the owner's slot. A `memory.json` that can't be read
+   runs `runChoice` (`14-chats.mjs`) instead and never calls the brain. Once the chat is marked as answering,
+   everything runs inside one `try` whose `finally` calls `finish()` (once), so a throw while the turn is set up frees
+   the chat and the owner's slot. A `memory.json` that can't be read
    gives a turn without memory lines and one line in the prompt saying so.
 4. **Tool call.** The brain asks for `start_model`; `runOne` passes it straight to `runAction` as via `sparkie`, with
    the intent and the words in ctx (`runOne` in `14-rounds.mjs`).
@@ -195,8 +195,7 @@ list (`docs/state.md`); the owner's words (R34); the brain's third caller, `sear
 - **Not every change is a workflow.** Only five are. The other change actions, and the brain start, stop and switch,
   have no tested-and-validated gate.
 - **Many page buttons skip `runAction`** (branches of `handler` in `24-handler.mjs`): Deploy, Stop, brain start, stop
-  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line, and members
-  with run permission can use Deploy, Stop and download.
+  and switch, downloads, research, Test the changes. No `railsFor`, pause or audit line.
 - **Gates differ by door.** The passkey gate covers the owner’s page routes only; the intent gate only via `sparkie`.
   `POST /actions`, `/mcp` and `/v1` rely on `runAction` and each action’s rails.
 - **Trust is a header on a socket.** Anything running as the owner’s user on Spark 2 can open `api.sock`, send the

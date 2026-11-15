@@ -19,7 +19,7 @@ function openProblems() {
   // (In this order, which is the order they are said in: a new source goes at the end of its group, not of the list.)
   const sources = [
     // Lock-out: who may sign in, and the other ways in.
-    () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy and who has access can’t be changed. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
+    () => { ownAccess(); if (accessBad) add('access', `access.json can’t be read, so Spark Console is using its last good copy. Mend it, or copy access.json.good over it, in ${tilde(STATE_DIR)} on ${here}.`); },
     () => { if (SECRETS_FILE && secretsRead() === null) add('secrets', `The secrets file on ${here} can’t be read, so Telegram and recovery codes are off. Fix or remove ${tilde(SECRETS_FILE)} there; Spark Console never writes over it.`); },
     // The owner's data: chats kept only in memory (saveChats, 14-chats.mjs), then any other save that failed.
     () => { if (chatsUnsaved) add('chats', `Chats aren’t being saved: ${here}’s state folder can’t be written (full disk?). What you say now is lost at the next restart.`); },

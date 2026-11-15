@@ -36,7 +36,7 @@ function publicValue() {
   return value;
 }
 
-const PUBLIC_ROUTES = ['/public/fleet', '/public/ask', '/whoami', ...SIGNIN_ROUTES];
+const PUBLIC_ROUTES = ['/public/fleet', '/whoami', ...SIGNIN_ROUTES];
 const clientAddress = req => String(req.headers['x-forwarded-for'] || '').split(',').pop().trim().replace(/^\[|\]$/g, '');
 function requestGate(req, path) {
   const viaSocket = !req.socket.remoteAddress;
@@ -66,11 +66,10 @@ const handler = async (req, res) => {
     requestGate(req, path);
     if (req.method === 'GET' && path === '/public/fleet') return send(res, 200, publicFleet(req));
     let viewer = await viewerFor(req);
-    // Who's here: someone on the list, someone on the tailnet who isn't (they can ask), or a visitor from the internet.
+    // Who's here: the owner, someone on the tailnet who isn't the owner, or a visitor from the internet.
     const funnel = Boolean(req.headers['tailscale-funnel-request']);
     const tailnetLogin = !funnel && LOGIN_RE.test(String(req.headers['tailscale-user-login'] || '')) ? String(req.headers['tailscale-user-login']).slice(0, 200) : null;
     if (req.method === 'GET' && path === '/whoami') {
-      const asked = !viewer && tailnetLogin ? (ownAccess()?.requests || []).some(r => r.login === tailnetLogin) : false;
       // signin: this address can sign the owner in with a passkey (4.10). session: how this device is signed in.
       const signin = !viewer && !tailnetLogin && Boolean(accessList().owner) && (() => { try { return passkeys().length > 0; } catch { return false; } })();
       // recovery: a recovery code would sign this visitor in right now (R33), passkey on file or not: at least one unused
@@ -78,7 +77,7 @@ const handler = async (req, res) => {
       const recovery = !viewer && !tailnetLogin && Boolean(accessList().owner) && recoveryView().left > 0;
       // via: how this request arrived. A browser on a device with Tailscale on can still arrive from the internet (its own
       // name lookup: iCloud Private Relay, secure DNS), and the page says so instead of waiting for Tailscale.
-      return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', asked, signin, recovery, session: viewer?.session?.kind || null,
+      return send(res, 200, { login: viewer?.login || tailnetLogin, access: viewer ? viewer.role : 'none', signin, recovery, session: viewer?.session?.kind || null,
         via: funnel ? 'internet' : 'tailnet' });
     }
     // Signing a device in (a passkey, or a code the owner lets in), and signing out.
@@ -86,28 +85,12 @@ const handler = async (req, res) => {
     // An agent with its own key, from anywhere (4.10): the agent door and the model address only, and only when the
     // request has no Tailscale identity (someone else's identity with the owner's key is still refused).
     if (!viewer && !tailnetLogin && (path === '/mcp' || path.startsWith('/v1/'))) viewer = keyViewer(req);
-    if (req.method === 'POST' && path === '/access/ask') {
-      if (viewer) throw new HttpError(409, 'You already have access.');
-      if (!tailnetLogin) throw new HttpError(401, 'Connect Tailscale on this device, signed in as yourself, then ask.');
-      if (req.headers['x-spark-console'] !== '1' || !sameOrigin(req)) throw new HttpError(403, 'Cross-site request blocked.');
-      const body = await readBody(req, 4000);
-      askAccess(tailnetLogin, clean(req.headers['tailscale-user-name'], 80).replace(/@/g, ' '), clean(body?.note, 200), true, tailnetLogin);
-      return send(res, 202, { ok: true });
-    }
-    // From the public page: no identity, so they say which email they'll use with Tailscale.
-    if (req.method === 'POST' && path === '/public/ask') {
-      if (viewer || tailnetLogin) throw new HttpError(409, 'You’re signed in to Tailscale already: reload the page to ask from there.');
-      if (req.headers['x-spark-console'] !== '1' || !sameOrigin(req)) throw new HttpError(403, 'Cross-site request blocked.');
-      const body = await readBody(req, 4000), email = clean(body?.email, 200).toLowerCase();
-      if (!LOGIN_RE.test(email)) throw new HttpError(400, 'Enter the email you sign in to Tailscale with.');
-      askAccess(email, clean(body?.name, 80).replace(/@/g, ' '), clean(body?.note, 200), false, clientAddress(req) || '-');
-      return send(res, 202, { ok: true });
-    }
-    if (!viewer) throw new HttpError(401, funnel ? `Sign in to Spark Console first. (${authProblem || 'not signed in'})`
-      : `Open Spark Console from your tailnet, signed in as someone the owner added. (${authProblem || 'unknown'})`);
+    // Spark Console has one user, the owner (contract 2.1): anyone else gets the answer nobody gets, on every route below.
+    if (viewer?.role !== 'owner') throw new HttpError(401, funnel ? `Sign in to Spark Console first. (${authProblem || 'not signed in'})`
+      : `Spark Console is its owner’s only: open it from your tailnet signed in as the owner. (${authProblem || 'unknown'})`);
     // Your own agents, through the agent door (MCP): they bring their own key, not the page's header.
     if (path === '/mcp') return await mcpDoor(req, res, viewer);
-    const owner = viewer.role === 'owner', chatRoute = /^\/chats(\/|$)/.test(path), filesRoute = /^\/nodes\/[^/]+\/files$/.test(path);
+    const owner = viewer.role === 'owner';
     const agentRoute = path.startsWith('/v1/');
     if (req.method !== 'GET') {
       if (agentRoute) {
@@ -116,27 +99,21 @@ const handler = async (req, res) => {
         if (!String(req.headers['content-type'] || '').startsWith('application/json') || !sameOrigin(req)) throw new HttpError(403, 'Send JSON from an agent or tool, not from a web page on another site.');
       // The page's changes come from a browser, which always names its Origin on these requests.
       } else if (req.headers['x-spark-console'] !== '1' || !req.headers.origin || !sameOrigin(req)) throw new HttpError(403, 'Cross-site request blocked.');
-      // Members with the go-ahead may run and stop models on their own Sparks; each route checks which Sparks.
-      const runRoute = ['/deploy', '/deploy/cluster', '/stop', '/recipes/download'].includes(path);
-      if (!owner && runRoute && !canManage(viewer)) throw new HttpError(403, 'Running and stopping models isn’t enabled for your account. Ask the owner.');
-      if (!owner && !chatRoute && !filesRoute && !agentRoute && !runRoute) throw new HttpError(403, 'Only the owner can change that.');
     }
-    if ((chatRoute || agentRoute) && !viewer.chat) throw new HttpError(403, 'Chat isn’t enabled for your account.');
     if (agentRoute) return await sparkieApi(req, res, path, viewer);
     const ownerOnly = () => { if (!owner) throw new HttpError(403, 'Only the owner can do that.'); };
     // Changes to who has access need the owner's passkey (see "the owner's passkey").
     if (owner) await passkeyGate(req, path, viewer);
-    // Hidden files: never by members (they'd run code when a folder is opened). A terminal signed in from the internet
-    // doesn't write them either (4.10): only a browser or the tailnet.
-    if (!owner || viewer.session?.kind === 'terminal') await refuseHiddenFiles(req, path, viewer.session?.kind === 'terminal');
-    const managers = () => { if (!canManage(viewer)) throw new HttpError(403, 'Running and stopping models isn’t enabled for your account. Ask the owner.'); };
+    // Hidden files (they'd run code when a folder is opened): a terminal signed in from the internet doesn't write them
+    // (4.10): only a browser or the tailnet.
+    if (viewer.session?.kind === 'terminal') await refuseHiddenFiles(req, path);
     if (owner) await refreshNodes(req);
 
     if (req.method === 'GET' && path === '/bootstrap') {
       const a = accessList();
       return send(res, 200, {
         source: 'console', viewer: { login: viewer.login, role: viewer.role, permissions: viewer.permissions || ownerPermissions() },
-        userName: owner ? a.userName : viewer.login,
+        userName: a.userName,
         nodes: NODES.map(n => ({ id: n.id, name: sparkName(n), configured: true })),
         main: consoleOrigin() || null,
         // How this device is signed in when it isn't through Tailscale (4.10).
@@ -222,7 +199,7 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    // The action list, as agents see it (Access → Agents shows it), each with its group; and what Sparkie's brain is
+    // The action list, as agents see it (Agents and Telegram shows it), each with its group; and what Sparkie's brain is
     // offered from it (brainCatalog, 21-guide.mjs: the cap, the groups and their words, the lines that follow tools).
     if (req.method === 'GET' && path === '/actions') {
       ownerOnly();
@@ -299,62 +276,6 @@ const handler = async (req, res) => {
       }
       throw new HttpError(404, 'Not found.');
     }
-    if (path === '/access' || path.startsWith('/access/')) {
-      ownerOnly();
-      const a = accessList(), memberId = path.slice('/access/'.length);
-      if (req.method === 'GET' && path === '/access') {
-        const own = ownAccess() || {};
-        return send(res, 200, { owner: a.owner, members: a.members.filter(u => MEMBER_ID.test(u.id || '')), sparks: NODES.map(n => ({ id: n.id, name: sparkName(n) })),
-          requests: Array.isArray(own.requests) ? own.requests : [], invite: own.invite || null });
-      }
-      // Someone who asked: let them in with a starting point, or turn them away.
-      if (req.method === 'POST' && path === '/access/requests') {
-        const body = await readBody(req), login = String(body.login || '');
-        if (!(ownAccess()?.requests || []).some(r => r.login === login)) throw new HttpError(404, 'That request is gone.');
-        if (body.decision === 'approve') {
-          if (!ACCESS_PRESETS[body.preset]) throw new HttpError(400, 'Pick what they can do.');
-          if (login === a.owner || a.members.some(u => u.login === login)) throw new HttpError(409, `${login} already has access.`);
-          const permissions = memberPermissions({ nodeIds: NODES.map(n => n.id), concurrentChats: 1, ...ACCESS_PRESETS[body.preset] });
-          const user = { id: randomBytes(8).toString('hex'), login, permissions, addedAt: new Date().toISOString() };
-          changeMembers(list => { if (list.length >= 20) throw new HttpError(409, 'Remove someone before adding another (20 at most).'); return [...list, user]; });
-        } else if (body.decision !== 'decline') throw new HttpError(400, 'Approve or decline.');
-        changeAccess(own => ({ ...own, requests: (own.requests || []).filter(r => r.login !== login) }));
-        audit({ via: 'page', actor: 'owner', action: body.decision === 'approve' ? 'access-approved' : 'access-declined', args: { login, ...(body.preset ? { preset: body.preset } : {}) }, ok: true });
-        return send(res, 200, { ok: true });
-      }
-      // The Tailscale share link for Spark Console's device, kept here so Copy invite can include it. Owner-only.
-      if (req.method === 'PUT' && path === '/access/invite') {
-        const link = String((await readBody(req)).url || '').trim();
-        if (link && (!/^https:\/\/login\.tailscale\.com\/[A-Za-z0-9/_?=&.%-]{4,300}$/.test(link))) throw new HttpError(400, 'Paste the share link Tailscale gave you (it starts with https://login.tailscale.com/).');
-        changeAccess(own => ({ ...own, invite: link ? { url: link, at: new Date().toISOString() } : null }));
-        audit({ via: 'page', actor: 'owner', action: link ? 'invite-link-saved' : 'invite-link-removed', args: {}, ok: true });
-        return send(res, 200, { ok: true });
-      }
-      if (req.method === 'POST' && path === '/access') {
-        const body = await readBody(req), login = String(body.login || '').trim();
-        if (!LOGIN_RE.test(login) || login.length > 200) throw new HttpError(400, 'Enter their exact Tailscale login (an email address).');
-        if (login === a.owner || a.members.some(u => u.login === login)) throw new HttpError(409, `${login} already has access.`);
-        const user = { id: randomBytes(8).toString('hex'), login, permissions: memberPermissions(body.permissions), addedAt: new Date().toISOString() };
-        changeMembers(list => { if (list.length >= 20) throw new HttpError(409, 'Remove someone before adding another (20 at most).'); return [...list, user]; });
-        audit({ via: 'page', actor: 'owner', action: 'access-added', args: { login, permissions: user.permissions }, ok: true });
-        return send(res, 201, user);
-      }
-      if (MEMBER_ID.test(memberId) && (req.method === 'PUT' || req.method === 'DELETE')) {
-        const permissions = req.method === 'PUT' ? memberPermissions((await readBody(req)).permissions) : null;
-        let login = null;
-        changeMembers(list => {
-          const user = list.find(u => u.id === memberId);
-          if (!user) throw new HttpError(404, 'That person no longer has access.');
-          login = user.login;
-          if (permissions) { user.permissions = permissions; return list; }
-          return list.filter(u => u !== user);
-        });
-        disconnectViewer(login);
-        audit({ via: 'page', actor: 'owner', action: permissions ? 'access-changed' : 'access-removed', args: { login, ...(permissions ? { permissions } : {}) }, ok: true });
-        return send(res, 200, { ok: true });
-      }
-      throw new HttpError(404, 'Not found.');
-    }
     const nodeMatch = path.match(/^\/nodes\/([a-z0-9-]+)\/(workloads|diagnostics|logs\/([a-z]+|container-[a-f0-9]{64})|files)$/);
     if (nodeMatch) {
       const node = sparkFor(viewer, nodeMatch[1]), what = nodeMatch[2];
@@ -376,15 +297,15 @@ const handler = async (req, res) => {
     if (req.method === 'GET' && path === '/verified') return send(res, 200, { deployments: verifiedList().map(verifiedView) });
     if (req.method === 'GET' && path === '/recipes') return send(res, 200, await recipes(viewer));
     if (req.method === 'GET' && path === '/deploy/plan') {
-      managers();
+      ownerOnly();
       return send(res, 200, await plan(url.searchParams.get('model'), url.searchParams.get('node'), viewer));
     }
     if (req.method === 'GET' && path === '/deploy/options') {
-      managers();
+      ownerOnly();
       return send(res, 200, await deployOptions(viewer));
     }
     if (req.method === 'GET' && path === '/deploy/plans') {
-      managers();
+      ownerOnly();
       const model = url.searchParams.get('model');
       if (!NAME_RE.test(model || '')) throw new HttpError(400, 'Unknown model.');
       return send(res, 200, await plansFor(model, viewer));
@@ -406,20 +327,18 @@ const handler = async (req, res) => {
       if (url.searchParams.get('check') === '1') ownerOnly();
       return send(res, 200, await fabric(viewer, url.searchParams.get('check') === '1'));
     }
-    // The owner sees every operation; a member sees the ones they started.
-    const ownJob = j => owner || j.by === viewer.login;
     if (req.method === 'GET' && path === '/jobs') {
       const notices = owner ? events.filter(e => e.type === 'notice' && Date.now() - Date.parse(e.at) < 7 * 86400000).slice(-5).reverse().map(e => ({ at: e.at, text: e.text })) : [];
       // Until restarting is validated, crashed models aren't restarted by themselves: said first (docs/contract.md 6.3).
       if (owner && agentSettings().selfHeal && workflowStatus('restart_model').state === 'untested') {
         notices.unshift({ at: new Date().toISOString(), text: 'Auto-restart is off: this build’s restart hasn’t passed Spark Console’s tests.', workflows: true });
       }
-      return send(res, 200, { jobs: [...jobs.values()].filter(ownJob).reverse().map(publicJob), notices });
+      return send(res, 200, { jobs: [...jobs.values()].reverse().map(publicJob), notices });
     }
     const jobMatch = path.match(/^\/jobs\/([0-9a-f]{12})$/);
     if (req.method === 'GET' && jobMatch) {
       const job = jobs.get(jobMatch[1]);
-      if (!job || !ownJob(job)) throw new HttpError(404, 'That operation has expired.');
+      if (!job) throw new HttpError(404, 'That operation has expired.');
       return send(res, 200, publicJob(job));
     }
     if (req.method === 'POST' && path === '/deploy') {
@@ -443,7 +362,7 @@ const handler = async (req, res) => {
       } catch (e) { release(); throw e; }
     }
     if (req.method === 'GET' && path === '/deploy/cluster-plan') {
-      managers();
+      ownerOnly();
       const model = url.searchParams.get('model'), nodes = String(url.searchParams.get('nodes') || '').split(',').filter(Boolean);
       if (!NAME_RE.test(model || '')) throw new HttpError(400, 'Unknown model.');
       const cp = await clusterPlan(model, nodes, viewer);
@@ -473,10 +392,10 @@ const handler = async (req, res) => {
     if (req.method === 'POST' && path === '/stop') {
       const { node, container } = await readBody(req);
       if (!nodeById(node) || !NAME_RE.test(container || '')) throw new HttpError(400, 'Choose a Spark and a container.');
-      // Only Spark Console's own deploys stop here, and never Sparkie's model (that's on Models, for the owner).
+      // Only Spark Console's own deploys stop here, and never Sparkie's model (that's /main/start and /main/stop, for the owner).
       const dep = (await inventory(null)).sparks.find(sp => sp.id === node)?.deployments.find(d => d.container === container);
       if (!dep) throw new HttpError(404, `${container} isn’t one of Spark Console’s deploys on ${node}.`);
-      if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s model is started and stopped on Models, by the owner.');
+      if (dep.role === 'main') throw new HttpError(403, 'Sparkie’s model isn’t stopped here: the owner starts and stops it with /main/start and /main/stop.');
       mustUse(viewer, dep.cluster ? dep.cluster.split('+') : [node]);
       const wf = pageWorkflow(req, 'stop_model', owner);
       if (owner) await cancelRunningOn(dep.cluster ? dep.cluster.split('+') : [node], 'the owner');
@@ -652,7 +571,7 @@ const handler = async (req, res) => {
       }
     }
     if (req.method === 'GET' && path === '/recipes/search') {
-      managers();
+      ownerOnly();
       const query = String(url.searchParams.get('q') || '').trim();
       if (query.length < 2 || query.length > 300) throw new HttpError(400, 'Type what you’re looking for.');
       return send(res, 200, await searchModels(query));

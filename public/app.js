@@ -240,7 +240,6 @@ const state = {
   following: new Map(),
   machine: new Map(),
   chat: { conv: null, spark: null, model: null, sending: false, waiting: false, search: '', pendingPrompt: null, draft: '' },
-  memberPreview: false,
   live: new Map(),
   liveHist: new Map(),
   liveOn: false,
@@ -252,18 +251,10 @@ const state = {
   svcJobs: new Map(),
 };
 
+// Spark Console has one user, the owner (contract 2.1): whoever gets past sign-in is the owner.
 const realOwner = () => state.boot?.viewer?.role === 'owner';
-const owner = () => realOwner() && !state.memberPreview;
-function perms() {
-  // Preview: a member who uses one Spark (the first online one) and may run models there.
-  if (state.memberPreview) {
-    const up = id => (state.status?.nodes || []).some(s => s.id === id && s.reachable && s.state === 'online');
-    const first = (state.boot?.nodes || []).find(n => up(n.id)) || state.boot?.nodes?.[0];
-    return { chat: true, deploy: true, files: 'write', sharedFiles: 'write', nodeIds: first ? [first.id] : [] };
-  }
-  return state.boot?.viewer?.permissions || {};
-}
-const canChat = () => owner() || Boolean(perms().chat);
+const owner = realOwner;
+const canChat = () => owner();
 // Every Spark, for everyone.
 function nodes() {
   return (state.boot?.nodes || [])
@@ -423,7 +414,7 @@ function activityJobs() {
 }
 // A library model by its Hugging Face name.
 const libFor = repo => (state.lib.data?.library || []).find(m => repoKey(m.repo || m.name.replace('--', '/')) === repoKey(repo));
-// Who started a job: you (on this page), Sparkie, one of your agents, Auto-restart, or (for the owner) a member.
+// Who started a job: you (on this page), Sparkie, one of your agents, or Auto-restart.
 function whoKey(j) {
   if (j.via === 'watcher') return 'auto';
   if (j.via === 'sparkie') return 'sparkie';
@@ -946,9 +937,6 @@ function shell() {
   const accountBtn = h('button', { class: 'account-btn', type: 'button', 'aria-haspopup': 'menu', onclick: e => openMenu(e.currentTarget, accountMenu()) }, avatar);
   const activityBadge = h('span', { class: 'badge', hidden: true, 'aria-hidden': 'true' });
   const activityBtn = h('button', { class: 'btn ghost sm', type: 'button', onclick: () => openActivity(), title: 'What’s been started and stopped', 'aria-label': 'Activity' }, icon('activity'), h('span', { class: 'hide-sm' }, 'Activity'), activityBadge);
-  const ribbon = h('div', { class: 'preview-ribbon', hidden: true },
-    icon('eye'), h('span', {}, 'Previewing as a member: owner controls are hidden.'),
-    h('button', { class: 'btn sm', type: 'button', onclick: () => setMemberPreview(false) }, 'Exit preview'));
 
   set(app, 
     h('aside', { class: 'sidebar', 'aria-label': 'Navigation' },
@@ -973,7 +961,6 @@ function shell() {
           onclick: e => busy(e.currentTarget, () => loadStatus(true)),
         }, icon('refresh')),
         accountBtn),
-      ribbon,
       h('main', { id: 'view', class: 'view', tabindex: '-1' })),
     h('div', { class: 'toasts', id: 'toasts', 'aria-live': 'polite' }),
     h('div', { class: 'sr-only', id: 'announce', 'aria-live': 'polite' }));
@@ -1023,7 +1010,6 @@ function shell() {
     avatar.textContent = initials(name);
     accountBtn.setAttribute('aria-label', `${name}: account, devices and theme`);
     accountBtn.title = name;
-    ribbon.hidden = !state.memberPreview;
     const running = [...state.svcJobs.values()].filter(underWay).length;
     activityBadge.hidden = !running;
     activityBadge.textContent = running;
@@ -1060,11 +1046,6 @@ function tickLive() {
   text.textContent = state.lastOk ? `Updated ${fmt.ago(state.lastOk)}` : 'Connecting…';
 }
 
-function setMemberPreview(on) {
-  state.memberPreview = on;
-  render();
-}
-
 /* ───────── your account: passkey, devices, theme ───────── */
 const myName = () => state.boot?.userName || state.boot?.viewer?.login || 'You';
 // Spark Console's address to share or open elsewhere: this page's own.
@@ -1073,7 +1054,7 @@ const consoleAddress = () => location.origin + location.pathname;
 function accountMenu() {
   const theme = currentTheme();
   return [
-    { heading: `${myName()} · ${state.memberPreview ? 'previewing as a member' : realOwner() ? 'owner' : 'member'}` },
+    { heading: `${myName()} · owner` },
     owner() && typeof state.boot?.passkeys === 'number' ? { label: 'Your passkey', icon: 'key', onSelect: openPasskeys } : null,
     { label: 'Your devices', icon: 'monitor', hint: owner() ? 'phone, SSH' : 'phone', onSelect: openDevices },
     owner() ? { label: 'Let a device in', icon: 'plus', onSelect: () => letDeviceIn() } : null,
@@ -1081,8 +1062,6 @@ function accountMenu() {
     'sep',
     { heading: 'Theme' },
     ...THEMES.map(([key, label]) => ({ label, icon: theme === key ? 'check' : THEME_ICON[key], onSelect: () => setTheme(key) })),
-    realOwner() ? 'sep' : null,
-    realOwner() ? { label: state.memberPreview ? 'Exit member preview' : 'Preview as a member', icon: 'eye', onSelect: () => setMemberPreview(!state.memberPreview) } : null,
     // Signed in without Tailscale (4.10): signing this device out.
     state.boot?.session?.kind === 'browser' ? 'sep' : null,
     state.boot?.session?.kind === 'browser' ? { label: 'Sign out on this device', icon: 'arrowRight', onSelect: signOutHere } : null,
@@ -1158,7 +1137,7 @@ async function makeRecovery() {
 
 // Your other devices: the phone gets a code to scan; the owner's laptops get the SSH config for every Spark.
 function openDevices() {
-  // The owner's phone opens the main address, which works from the internet (4.10); members' need Tailscale.
+  // The owner's phone opens the main address, which works from the internet (4.10).
   const url = owner() && state.boot?.main ? `${String(state.boot.main).replace(/\/$/, '')}/` : consoleAddress();
   const ssh = h('div', { class: 'drawer-section' }), signedIn = h('section', { class: 'drawer-section' });
   let unbind = () => {};
@@ -1255,7 +1234,7 @@ function jobRow(j, { onOpen, open = false } = {}) {
         done ? icon(j.type === 'chat' ? 'chat' : String(j.type).startsWith('cluster') ? 'network' : 'zap') : h('span', { class: 'spinner sm' })),
       h('div', { class: 'row-text' },
         h('div', { class: 'row-title' }, jobLabel(j)),
-        // Who started it, when it wasn't you: Sparkie, one of your agents, Auto-restart or a member.
+        // Who started it, when it wasn't you: Sparkie, one of your agents or Auto-restart.
         (sub => sub ? h('div', { class: 'row-sub' }, sub) : null)([whoKey(j) === 'you' ? null : whoName(whoKey(j)), where, first || (done ? (num(j.result?.found) ? `${plural(j.result.found, 'setup')} found` : null) : j.step || j.message)].filter(Boolean).join(' · ')))];
   const side = h('div', { class: 'row-side' },
       h('span', { class: 'muted num hide-sm' }, fmt.when(j.createdAt)),
@@ -1314,7 +1293,7 @@ function workflowsFold() {
       lastTest?.status === 'failed' ? h('button', { class: 'btn sm', type: 'button', onclick: e => busy(e.currentTarget, async () => {
         const r = await capi('rollback');
         if (!r?.available) { toast(`There’s no earlier version on ${nodeName(portalHostId())} to go back to.`); return; }
-        if (!(await dialog({ title: 'Undo the last update?', confirm: 'Undo update', danger: true, description: `Spark Console goes back to how it was before the update on ${updateTime(r.stamp)} and restarts (about a minute). People, chats and settings stay as they are.` }))) return;
+        if (!(await dialog({ title: 'Undo the last update?', confirm: 'Undo update', danger: true, description: `Spark Console goes back to how it was before the update on ${updateTime(r.stamp)} and restarts (about a minute). Chats, keys and settings stay as they are.` }))) return;
         await capi('rollback', 'POST', {});
         toast('Undoing the update: Spark Console restarts in a moment');
       }) }, icon('refresh'), 'Undo the last update') : null) : null);
@@ -1344,7 +1323,7 @@ async function openActivity(focusId) {
   const list = h('div', { class: 'rows' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
   const opened = new Set(typeof focusId === 'string' && focusId !== 'workflows' ? [focusId] : []);
   let timer, who = 'all', whoList = '';
-  // Whose work to show: everyone, or just you, Sparkie, one agent, Auto-restart or one member (those with work here).
+  // Whose work to show: everyone, or just you, Sparkie, one agent or Auto-restart (those with work here).
   const whoPick = h('select', { class: 'select sm', 'aria-label': 'Started by', onchange: () => { who = whoPick.value; draw(); } });
   const fillWho = jobs => {
     const order = k => (k === 'you' ? 0 : k === 'sparkie' ? 1 : k.startsWith('agent:') ? 2 : k === 'auto' ? 3 : 4);
@@ -1942,7 +1921,7 @@ function sessionsSection() {
 }
 
 /* ───────── the owner's passkey ───────── */
-// Tailscale says who you are. For the few changes to who has access (people, invites, agent keys and their rights), the
+// Tailscale says who you are. For the few changes to who may act (agent keys and their rights, new devices, passkeys), the
 // owner also confirms with a passkey: Touch ID, Face ID, a phone or a security key. The service binds each confirmation
 // to that exact request.
 const calmError = (message, link = null) => Object.assign(new Error(message), { calm: true, link });
@@ -2396,7 +2375,7 @@ function fleetSnapshot() {
 }
 
 PAGES.sparkie = function sparkiePage(view, r) {
-  if (!canChat()) { put(view, empty('lock', `${ASSISTANT} isn’t enabled for you`, 'Ask the owner for access.')); return; }
+  if (!canChat()) { put(view, empty('lock', `${ASSISTANT} isn’t enabled for you`, 'Only the owner chats with Sparkie.')); return; }
   view.className = 'view flush';
   const c = state.chat;
   const id = r.a && r.a !== 'new' ? r.a : null;
@@ -2518,15 +2497,15 @@ PAGES.sparkie = function sparkiePage(view, r) {
       h('div', { class: 'banner-text' }, h('strong', {}, `${ASSISTANT} can’t answer right now`), h('p', {}, why, owner() ? ' Type /help for what still works.' : ''))) : null);
     syncSend();
     sendBtn.toggleAttribute('aria-busy', c.sending);
-    // Sparkie's tools are the owner's: in other people's chats it still only answers.
+    // Sparkie's tools are the owner's (the only one who chats here).
     note.textContent = down || !c.conv ? '' : n && !isUp(n) ? `${n.name} is offline, so live answers about it aren’t available right now.`
       : owner() ? `${ASSISTANT} looks things up on your Sparks as it answers, and can start, stop or restart models when you ask.`
         : !n ? `Each question includes a live snapshot of all your Sparks, so ${ASSISTANT} can answer about health, capacity and setup.`
           : `Each question includes ${n.name}’s live state. ${ASSISTANT} answers with ${model.name} and can’t change anything itself.`;
   }
 
-  // Ideas to start with. In the owner's chats Sparkie can act, so most of them do something; in members' chats it
-  // only answers, so theirs are questions. A pick fills the box, ready to send or change.
+  // Ideas to start with. In the owner's chats Sparkie can act, so most of them do something. A pick fills the box,
+  // ready to send or change.
   function welcome() {
     const n = subjectNode();
     const pick = prompt => () => { ta.value = c.draft = prompt; grow(); ta.focus(); };
@@ -2994,7 +2973,7 @@ function passkeyNudge(bind) {
     h('div', { class: 'banner-text' }, h('p', {}, 'Add a passkey on this device, so next time you sign in with Face ID or Touch ID. You can for 15 minutes after signing in here.')),
     // (adding one reloads the account, which ends this offer)
     h('button', { class: 'btn sm', type: 'button', onclick: addPasskey }, 'Add a passkey'))
-    : state.boot?.passkeys === 0 && !state.memberPreview ? h('div', { class: 'banner info' }, icon('key'),
+    : state.boot?.passkeys === 0 ? h('div', { class: 'banner info' }, icon('key'),
     h('div', { class: 'banner-text' }, h('p', {}, 'Set up a passkey so changes to who has access need your fingerprint or face, not just Tailscale.')),
     // Straight to setting it up (the drawer would only say the same thing again), unless this browser can't.
     h('button', { class: 'btn sm', type: 'button', onclick: passkeysWork() ? addPasskey : openPasskeys }, 'Set up a passkey')) : null));
@@ -3008,7 +2987,7 @@ function agentsTab(view, bind) {
   put(view, agentsBox, telegramBox, backup);
   bind(() => redraw(telegramBox, telegramPanel()));
   loadTelegram();
-  // Spark Console copies its own state (people, keys, chats) to another Spark once a day.
+  // Spark Console copies its own state (keys, chats, settings) to another Spark once a day.
   capi('health').then(x => {
     const b = x?.lastBackup;
     if (!b || !backup.isConnected) return;
@@ -3279,7 +3258,6 @@ function paletteCommands() {
   add('Preferences', 'Refresh status now', 'refresh', () => loadStatus(true), { keywords: 'reload update' });
   if (owner() && typeof state.boot?.passkeys === 'number') add('Preferences', 'Your passkey', 'key', openPasskeys, { keywords: 'security fingerprint face touch id' });
   add('Preferences', 'Your devices', 'monitor', openDevices, { keywords: 'phone qr ssh config laptop' });
-  if (realOwner()) add('Preferences', state.memberPreview ? 'Exit member preview' : 'Preview as a member', 'eye', () => setMemberPreview(!state.memberPreview), { keywords: 'share guest' });
   return cmds;
 }
 
@@ -3375,16 +3353,15 @@ function openPalette() {
   input.focus();
 }
 
-/* ───────── outside: the public page, and asking to be let in ───────── */
+/* ───────── outside: the public page ───────── */
 // What anyone can see without signing in, from the internet too: the fleet's hardware and live load. Nothing about
-// what runs on it or who uses it. Anyone can ask to be let in; the owner answers through the service (/access/requests).
+// what runs on it or who uses it. Only the owner signs in (contract 2.1): there is no asking to be let in.
 function outsidePage(who) {
   const app = $('#app');
   app.className = 'outside';
   document.title = 'Spark Console';
   const stats = h('div', { class: 'card stats' }), cards = h('div', { class: 'fleet' }), clusters = h('div');
   const status = h('p', { class: 'muted outside-status' }, 'Checking the Sparks…');
-  const askBtn = h('button', { class: 'btn sm', type: 'button', onclick: () => openAsk() }, icon('key'), 'Request access');
   set(app,
     h('header', { class: 'topbar outside-bar' },
       h('span', { class: 'brand' },
@@ -3392,16 +3369,16 @@ function outsidePage(who) {
         h('img', { class: 'logo-on-light', src: 'nvidia-logo-black.svg', alt: 'NVIDIA', width: '98', height: '18' }),
         h('span', { class: 'brand-name' }, 'Spark Console')),
       h('div', { class: 'topbar-spacer' }),
-      h('div', { class: 'outside-actions' }, askBtn,
+      h('div', { class: 'outside-actions' },
         h('button', { class: 'btn primary sm', type: 'button', onclick: () => openSignIn() }, 'Sign in'))),
     h('main', { class: 'view', id: 'view', tabindex: '-1' },
       // What this is, in one line. The page has no owner's name to show, so it stays general.
       h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'DGX Spark fleet'),
-        h('div', { class: 'page-sub' }, 'A private fleet of NVIDIA DGX Sparks. Members sign in with Tailscale.'), status)),
+        h('div', { class: 'page-sub' }, 'A private fleet of NVIDIA DGX Sparks.'), status)),
       h('div', { class: 'stack' },
-        // Someone already on Tailscale who isn't on the list yet came for the console: say so, once, at the top.
-        who.login && !who.asked ? h('div', { class: 'banner info', style: { margin: '0' } }, icon('key'),
-          h('div', { class: 'banner-text' }, h('p', {}, `You’re signed in to Tailscale as ${who.login}, but you’re not on Spark Console’s list yet. Use Request access at the top.`))) : null,
+        // Someone on Tailscale who isn't the owner came for the console: say so, once, at the top.
+        who.login ? h('div', { class: 'banner info', style: { margin: '0' } }, icon('key'),
+          h('div', { class: 'banner-text' }, h('p', {}, `You’re signed in to Tailscale as ${who.login}. Spark Console is its owner’s only.`))) : null,
         stats, cards, clusters)),
     h('div', { class: 'toasts', id: 'toasts', 'aria-live': 'polite' }));
 
@@ -3443,33 +3420,6 @@ function outsidePage(who) {
   load();
   setInterval(() => { if (!document.hidden) load(); }, 10000);
 
-  // Asking to be let in, from the button at the top. On the tailnet, Tailscale already says who they are; from the
-  // internet, they give the email they sign in to Tailscale with (the owner sees it as not checked yet).
-  const sent = () => { set(askBtn, icon('check'), 'Request sent'); askBtn.disabled = true; };
-  async function openAsk() {
-    const email = who.login ? null : h('input', { class: 'input', type: 'email', autocomplete: 'email', placeholder: 'you@example.com', maxlength: '200' });
-    const name = who.login ? null : h('input', { class: 'input', type: 'text', autocomplete: 'name', maxlength: '80' });
-    const note = h('input', { class: 'input', type: 'text', maxlength: '200', placeholder: 'Who you are, or what you’d like to do' });
-    const ok = await dialog({
-      title: 'Request access', confirm: 'Send request',
-      description: who.login ? `You’re signed in to Tailscale as ${who.login}. The owner sees your request and lets you in.`
-        : 'Spark Console signs people in with Tailscale, so there are no passwords. Ask the owner to let you in.',
-      body: h('div', { style: { display: 'grid', gap: '14px' } },
-        email ? h('label', { class: 'field' }, 'The email you use with Tailscale (or will)', email) : null,
-        name ? h('label', { class: 'field' }, 'Your name', name) : null,
-        h('label', { class: 'field' }, 'Note for the owner (optional)', note)),
-      onConfirm: async () => {
-        await capi(who.login ? 'access/ask' : 'public/ask', 'POST', who.login ? { note: note.value } : { email: email.value, name: name.value, note: note.value });
-        return true;
-      },
-    });
-    if (!ok) return;
-    if (who.login) who.asked = true;
-    sent();
-    toast('Request sent', { sub: who.login ? 'Once the owner approves it, reload this page.' : 'If the owner approves it, they’ll send you a Tailscale invite.', timeout: 9000 });
-  }
-  if (who.asked) sent();
-
   // The owner, from the internet (4.10): their passkey, or a code they let in from a signed-in device. Tailscale still works.
   // With no passkey on file the Tailscale steps show, with the recovery code beside them when whoami says one would work
   // (who.recovery, F18).
@@ -3479,7 +3429,7 @@ function outsidePage(who) {
     const pick = what => { if (dlg?.querySelector('[aria-busy]')) return; other = what; dlg?.close(); };
     const ok = await dialog({
       title: 'Sign in', confirm: 'Use passkey',
-      description: 'Owner: use your passkey (Face ID, Touch ID or screen lock), and this device stays signed in. Members sign in with Tailscale.',
+      description: 'Owner: use your passkey (Face ID, Touch ID or screen lock), and this device stays signed in.',
       body: h('div', { class: 'signin-other' },
         h('button', { class: 'btn sm', type: 'button', onclick: () => pick('code') }, 'No passkey here? Get a code'),
         h('button', { class: 'btn sm', type: 'button', onclick: () => pick('recovery') }, 'Use a recovery code'),
@@ -3493,7 +3443,7 @@ function outsidePage(who) {
     if (other === 'tailscale') openTailscaleSignIn();
   }
   // Signing in with Tailscale. While this is open the page checks every few seconds, and opens the portal as soon as
-  // this device is on the tailnet as someone the owner approved.
+  // this device is on the tailnet as the owner.
   async function openTailscaleSignIn() {
     let dlg = null, useRecovery = false;
     const note = h('div', { 'aria-live': 'polite' });
@@ -3503,17 +3453,14 @@ function outsidePage(who) {
         h('button', { class: 'btn sm', type: 'button', onclick: () => { dlg?.close(); openSignIn(); } }, 'Passkey or code'))
       : who.login && who.access === 'none'
       ? h('div', { class: 'banner info signin-note' }, icon('key'),
-        h('div', { class: 'banner-text' }, h('p', {}, who.asked
-          ? `You’re on Tailscale as ${who.login}. Your request is waiting for the owner; this page opens Spark Console once they approve it.`
-          : `You’re on Tailscale as ${who.login}, but the owner hasn’t approved this account yet.`)),
-        who.asked ? null : h('button', { class: 'btn sm', type: 'button', onclick: () => { dlg?.close(); openAsk(); } }, 'Request access'))
+        h('div', { class: 'banner-text' }, h('p', {}, `You’re on Tailscale as ${who.login}, which isn’t the owner’s account.`)))
       : h('p', { class: 'signin-wait' }, h('span', { class: 'spinner sm' }), 'Waiting for Tailscale on this device…'));
     const check = async () => {
       try {
         const res = await fetch(`${CONSOLE_API}whoami`, { cache: 'no-store', headers: { Accept: 'application/json' } });
         const w = res.ok ? await res.json() : null;
         if (!w) return;
-        if (w.access === 'owner' || w.access === 'member') { location.reload(); return; }
+        if (w.access === 'owner') { location.reload(); return; }
         Object.assign(who, w);
         show();
       } catch {}
@@ -3525,7 +3472,7 @@ function outsidePage(who) {
       description: 'Spark Console signs you in with Tailscale, so there’s no password.',
       body: h('div', { class: 'signin' },
         h('ol', { class: 'signin-steps' },
-          h('li', {}, 'Install Tailscale on this device and sign in with the account the owner approved. ',
+          h('li', {}, 'Install Tailscale on this device and sign in with the owner’s account. ',
             h('a', { class: 'link', href: 'https://tailscale.com/download', target: '_blank', rel: 'noopener noreferrer' }, 'Get Tailscale')),
           h('li', {}, 'Come back here: this page opens Spark Console by itself.')),
         h('p', { class: 'muted signin-fine' }, 'Tailscale addresses don’t open on NVIDIA’s network; use another network.'),

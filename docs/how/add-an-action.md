@@ -11,7 +11,7 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
   the core and 6 a group (`node tools/make.mjs` says which). A group decides what Sparkie is offered, never what it may
   do.
 - Only kind `read` is special: every other kind is a change (`confirm` is not implemented). Scope is `fleet:read` or
-  `fleet:act` (keys hold nothing else). `who: member` is unreachable (tools go to the owner only).
+  `fleet:act` (keys hold nothing else). `who: member` means anyone signed in, which is only ever the owner (Spark Console has one user).
 - A plain-words `title`: `sparkie_setup {about: "abilities"}` tells the owner what Sparkie can do by listing every
   action's title straight from the registry (nothing to edit there), and an action added to `PAGE_ONLY` shows in its
   Telegram line by itself.

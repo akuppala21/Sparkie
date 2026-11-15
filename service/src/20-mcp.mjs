@@ -4,7 +4,7 @@
 //   audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
 // Your own agents (Claude Code, Claude Desktop, Cursor, …) use the actions above through one MCP address,
-// <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Access → Agents), so
+// <console>/console/api/mcp, instead of opening the page. Each agent has its own key (Agents and Telegram), so
 // you can see what each one did and remove one without touching the others. A key only works together with its
 // owner's Tailscale identity, and never from the Sparks themselves (requestGate). Only the key's hash is kept.
 // Read-only for now; the key's scopes decide which actions it's offered once more kinds exist.
@@ -154,7 +154,7 @@ async function mcpDoor(req, res, viewer) {
   if (!String(req.headers['content-type'] || '').startsWith('application/json') || !sameOrigin(req)) return fail(403, null, -32600, 'Send JSON from an agent or tool, not from a web page on another site.');
   if (viewer.role !== 'owner') return fail(403, null, -32600, 'Agent access is only for the owner for now.');
   // 403 rather than 401: MCP clients take a 401 as "sign in with OAuth", which would hide this message.
-  const noKey = () => fail(403, null, -32600, 'This agent needs its own key: Spark Console → Access → Agents → Connect an agent. Send it as "Authorization: Bearer <key>". A removed agent’s key stops working.');
+  const noKey = () => fail(403, null, -32600, 'This agent needs its own key: Spark Console, your account menu → Agents and Telegram → Connect an agent. Send it as "Authorization: Bearer <key>". A removed agent’s key stops working.');
   let agent = agentFor(req, viewer);
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');

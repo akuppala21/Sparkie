@@ -3,7 +3,7 @@
 // it changes nothing while the brain may still be loading (Docker says it started 2 minutes ago); a stopped brain, or
 // one gone from Docker, starts again from its saved setup in a fresh container with nothing else on Spark 2 stopped, or
 // is refused plainly when that setup can't start; `/pause` pauses without the passkey and says both ways to resume, and
-// no word resumes; near misses (`/pause now`, a two-line message), a member, ask_sparkie and the owner's word in an
+// no word resumes; near misses (`/pause now`, a two-line message), ask_sparkie and the owner's word in an
 // agent's conversation all go to the model; `/help` prints the by-hand restart line, the same one healing runs. Also: a
 // slow restart holds Spark 2 (a second `/restart sparkie` says it's already restarting, a brain stop is refused, one
 // restart line), a restart is refused while the brain is being stopped, `/pause` over an automatic pause makes it the
@@ -15,7 +15,7 @@
 //
 // The owner's words (service/src/20-words.mjs; round two, item 1; contract 8.13): /status, /pause, /restart sparkie, /stop
 // and /help typed as the whole message in the owner's own page chat are answered by code, with no model call, so they
-// work with Sparkie's model stuck or stopped. Anything else (a near miss, a member, an agent's conversation, ask_sparkie)
+// work with Sparkie's model stuck or stopped. Anything else (a near miss, an agent's conversation, ask_sparkie)
 // goes to the model as before. The stand-in brain is sparkie-main on spark2: ~/.mock/brain-hung makes it stop
 // answering (the stand-in `docker restart` clears it, and starts a stopped one), ~/.mock/started-sparkie-main sets when
 // Docker says it started.
@@ -161,7 +161,7 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
     const chat = await newChat();
     try {
       const r = await say(chat, '/pause');
-      assert.match(r.text, /^\/pause\nPaused\. Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed\. Models already running stay up\. Self-healing is off while paused\.\nTo resume: Access → Agents, with your passkey\. Or by hand on Spark 2: set "halted": false in .*agent-settings\.json\.$/);
+      assert.match(r.text, /^\/pause\nPaused\. Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed\. Models already running stay up\. Self-healing is off while paused\.\nTo resume: your account menu → Agents and Telegram, with your passkey\. Or by hand on Spark 2: set "halted": false in .*agent-settings\.json\.$/);
       const s = (await api('/agents')).json.settings;
       assert.equal(s.halted, true);
       assert.notEqual(s.autoPaused, true);
@@ -174,7 +174,7 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
     }
   });
 
-  test('near misses, a member, an agent\'s conversation and ask_sparkie go to the model and pause nothing', { timeout: 120000 * SLOW }, async () => {
+  test('near misses, an agent\'s conversation and ask_sparkie go to the model and pause nothing', { timeout: 120000 * SLOW }, async () => {
     const chat = await newChat();
     for (const words of ['/pause now', 'please /pause', '/pause\nnow', 'the log said /pause']) {
       const from = requests().length;
@@ -182,9 +182,6 @@ describe('the owner\'s words', { concurrency: 1 }, () => {
       assert.ok(!r.text.startsWith('/pause\n'), words);
       assert.ok(requests().length > from, `${JSON.stringify(words)} reached the model`);
     }
-    const headers = { 'tailscale-user-login': MEMBER }, theirs = await newChat(headers), from = requests().length;
-    await say(theirs, '/pause', headers);
-    assert.ok(requests().length > from, 'a member\'s /pause reached the model');
     let v = (await call(keys.look.token, 'ask_sparkie', { message: '/pause' })).value;
     for (const until = Date.now() + 60000 * SLOW; v?.status !== 'answered' && Date.now() < until;) v = (await call(keys.look.token, 'ask_sparkie', { conversation: v.conversation })).value;
     assert.equal(v?.status, 'answered');

@@ -164,7 +164,7 @@ describe('who may change things', () => {
   test('PUT /agents/<id> checks the page headers, the owner, the id and the value', async () => {
     const id = keys.look.id;
     for (const [body, headers, status] of [[{ act: 'yes' }, {}, 400], [{}, {}, 400], [{ act: 1 }, {}, 400], [{ act: true }, { 'x-spark-console': null }, 403],
-      [{ act: true }, { origin: 'https://evil.example' }, 403], [{ act: true }, { 'tailscale-user-login': MEMBER }, 403]]) {
+      [{ act: true }, { origin: 'https://evil.example' }, 403]]) {
       const r = await api(`/agents/${id}`, { method: 'PUT', body, headers });
       assert.equal(r.status, status, `${JSON.stringify(body)} ${JSON.stringify(headers)}: ${r.text}`);
     }
@@ -173,8 +173,7 @@ describe('who may change things', () => {
   });
   test('the owner\'s switches: GET /agents shows them; PUT /agents/settings checks its input', async () => {
     assert.deepEqual((await api('/agents')).json.settings, { halted: false, selfHeal: true });
-    for (const [body, headers, status] of [[{ halted: 'true' }, {}, 400], [{ selfHeal: 1 }, {}, 400], [{ halted: true }, { 'x-spark-console': null }, 403],
-      [{ halted: true }, { 'tailscale-user-login': MEMBER }, 403]]) {
+    for (const [body, headers, status] of [[{ halted: 'true' }, {}, 400], [{ selfHeal: 1 }, {}, 400], [{ halted: true }, { 'x-spark-console': null }, 403]]) {
       const r = await api('/agents/settings', { method: 'PUT', body, headers });
       assert.equal(r.status, status, `${JSON.stringify(body)}: ${r.text}`);
     }

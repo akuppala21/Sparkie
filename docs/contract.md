@@ -218,11 +218,11 @@ ships.
   Spark Console keeps running (Open WebUI, Jupyter, code-server, ComfyUI…) on every Spark but the brain’s open from
   anywhere through the app door, port 10000 of the same name (opened with `deploy/open-apps-to-internet.sh`, closed
   with `--undo`), for the owner only, signed in as above. Wherever an app’s link is given, the door’s comes first and
-  the tailnet one second. One browser shows one app at a time. Members still use Tailscale.
+  the tailnet one second. One browser shows one app at a time.
 
   Every signed-in device is listed under the owner's account, with Sign out. On the tailnet, Tailscale still signs
-  people in as before, so nothing here can lock the owner out (8.3). Members still sign in with Tailscale. NVIDIA's
-  network blocks `ts.net` addresses; Spark Console doesn't route around that.
+  the owner in as before, so nothing here can lock the owner out (8.3). NVIDIA's network blocks `ts.net` addresses;
+  Spark Console doesn't route around that.
 
   **Telegram.** The owner can also talk to Sparkie from Telegram on any phone or laptop, with no
   Tailscale there and with the main address tailnet-only. Spark 2 asks Telegram for messages; nothing is opened for
@@ -231,7 +231,7 @@ ships.
   remembered or forgotten as on the page (5.5), and a key given there is kept (9.15). Going back a build and changes
   to saved workflows wait as a button in Spark Console, with the passkey; who may approve is changed only with a
   confirm on the page (8.7). The chat shows in Spark Console like any other. Disconnecting needs no passkey, and
-  Telegram is never needed to sign in (8.3). Members don't get it. Telegram can read bot chats; whether to use it on
+  Telegram is never needed to sign in (8.3). Telegram can read bot chats; whether to use it on
   a work device is the owner's call.
 
 ## 5. It always knows what the owner means
@@ -1123,7 +1123,7 @@ Not wanted:
 - usage reports.
 - separate backups: the code on GitHub and the state copied to a compute Spark are the backup (6.16).
 
-Not now: members and sharing, the public page and "one page for all" (built but not installed), and a cloud brain.
+Not now: members and sharing (taken out, 2.1), the public page and "one page for all" (built but not installed), and a cloud brain.
 The owner retired the short address (Spark Console's own Tailscale device, `deploy/short-address.sh`)
 and the Cloudflare copy of the public page (`deploy/web-page.sh`, on workers.dev) for one address: Spark Console is
 reached only at its main address (4.10), on the tailnet or through Funnel with passkey sign-in ("the only single url,

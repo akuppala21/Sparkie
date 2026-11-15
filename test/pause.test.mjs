@@ -64,7 +64,7 @@ describe('agents pause themselves', () => {
     assert.deepEqual([line?.via, line?.actor, line?.ok, line?.args?.why], ['console', 'Safety pause', true, 'three of their operations failed in a row']);
     const r = await call(keys.act.token, 'stop_model', { spark: 'spark4', container: RADIX });
     assert.equal(r.isError, true);
-    assert.match(r.text, /^\[not_allowed\] Agents’ changes are paused \(Access → Agents\)/);
+    assert.match(r.text, /^\[not_allowed\] Agents’ changes are paused \(your account menu → Agents and Telegram\)/);
     assert.equal(stateOf('spark4', RADIX), 'running');
     // Reads keep working.
     await ok('fleet_status', {}, keys.look.token);
@@ -112,7 +112,7 @@ describe('agents pause themselves', () => {
     assert.deepEqual([line?.actor, line?.args?.why], ['Safety pause', '3 changes in the last hour']);
     // Sparkie is paused too; the owner on the page isn't: a button they press runs.
     const s = await say(chat, `stop ${RADIX} on spark 4`);
-    assert.match(s.text, /stop_model said: \[error\] Agents’ changes are paused \(Access → Agents\)/);
+    assert.match(s.text, /stop_model said: \[error\] Agents’ changes are paused \(your account menu → Agents and Telegram\)/);
     assert.equal(stateOf('spark4', RADIX), 'running');
     const p = await choose(chat, q.message.choices[0].id);
     assert.equal(p.status, 200, p.text);

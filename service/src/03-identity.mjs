@@ -1,14 +1,14 @@
 /* ───────── who's asking ───────── */
-// Area: ground        Rules: R5, R10, R20        Tests: state.test.mjs, internet.test.mjs, passkey.test.mjs
-// Owns: access.json (writers: changeMembers, changeAccess), access.json.good (writers: ownAccess; a copy of the last
-//   good access.json)
+// Area: ground        Rules: R4, R5, R10, R20        Tests: state.test.mjs, internet.test.mjs, passkey.test.mjs, owner-only.test.mjs
+// Owns: access.json (writers: none), access.json.good (writers: ownAccess; a copy of the last good access.json)
 // Timers: none        Wakes: none
-// The owner, the members and the Spark list live in the console's own owner-only file on this Spark, managed in
-// Spark Console (Access). Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
+// The owner and the Spark list live in the console's own owner-only file on this Spark (access.json); the service never
+// writes it. Spark Console has one user, the owner (contract 2.1): members, their requests and the share link an older
+// build kept there are left as they are, never read and never removed (E10d), so going back a build still finds them.
+// Tailscale serve sets Tailscale-User-Login, and this service only listens on 127.0.0.1.
 const ACCESS_FILE = `${STATE_DIR}/access.json`;
 const ACCESS_GOOD = `${ACCESS_FILE}.good`;
 const LOGIN_RE = /^[A-Za-z0-9.!#$%&'+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
-const MEMBER_ID = /^[a-f0-9]{16}$/;
 const readJson = file => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } };
 // For files the console rewrites from what it read (recipes that worked, Sparkie's setups, added models): one that
 // exists but can't be read is moved aside with a note, so the next save doesn't quietly replace it with an empty one.
@@ -69,11 +69,10 @@ function writePrivate(file, value) {
   }
 }
 // access.json is the one file between the owner and every door, so a last good copy is kept beside it
-// (access.json.good, S2). The copy is rewritten each time access.json reads fine and differs from it: after every change
-// made here (changeAccess and changeMembers read it back) and after an edit by hand. When access.json is there but
-// can’t be read, isn’t JSON or names no owner, the copy answers instead, one notice says so, and nothing here changes
-// who has access until the file reads fine again: the bad file is never written over and never moved. A missing
-// access.json still means “no owner yet”, copy or no copy. Never throws.
+// (access.json.good, S2). The copy is rewritten each time access.json reads fine and differs from it (after an edit by
+// hand: the service itself never writes access.json). When access.json is there but can’t be read, isn’t JSON or names
+// no owner, the copy answers instead and one notice says so: the bad file is never written over and never moved. A
+// missing access.json still means “no owner yet”, copy or no copy. Never throws.
 let accessBad = null, accessGoodText = null;
 function ownAccess() {
   let text = null, own = null, why = null;
@@ -93,17 +92,10 @@ function ownAccess() {
   if (!accessBad) {
     console.error(`${ACCESS_FILE} can’t be read (${why}); using ${ACCESS_GOOD}.`);
     // At start-up the fleet's record isn't open yet: the note waits for it (as in readKept).
-    setTimeout(() => { try { fleetEvent({ type: 'notice', text: `access.json can’t be read (${why}). Spark Console is using its last good copy, access.json.good, so sign-in and the Spark list still work. Who has access can’t be changed until access.json reads fine again: mend it, or copy access.json.good over it (both are in Spark Console’s state folder).` }); } catch {} }, 0);
+    setTimeout(() => { try { fleetEvent({ type: 'notice', text: `access.json can’t be read (${why}). Spark Console is using its last good copy, access.json.good, so sign-in and the Spark list still work. Mend it, or copy access.json.good over it (both are in Spark Console’s state folder).` }); } catch {} }, 0);
   }
   accessBad = why;
   return good;
-}
-// What a change starts from: access.json itself, read fresh. Never the copy, so a change is never built on a guess.
-function accessToChange() {
-  const own = ownAccess();
-  if (accessBad) throw new HttpError(503, 'Who has access can’t be changed just now, because Spark Console’s access file can’t be read. Nothing was changed. The notice in Activity says how to mend it.');
-  if (!own) throw new HttpError(409, 'No owner is set up on this Spark yet.');
-  return own;
 }
 let accessCache = null;
 function accessList() {
@@ -113,7 +105,6 @@ function accessList() {
     at: Date.now(),
     owner: CONFIG.ownerLogin || own.ownerLogin || null,
     userName: CONFIG.userName || own.userName || 'Owner',
-    members: [...(CONFIG.members || []), ...(Array.isArray(own.members) ? own.members : [])].filter(u => u?.login && u.permissions),
     nodes: Array.isArray(own.nodes) && own.nodes.length ? own.nodes : null,
     sshUser: own.sshUser || CONFIG.user,
     publicHost: own.publicHost || (CONFIG.origin ? new URL(CONFIG.origin).host : null),
@@ -121,37 +112,6 @@ function accessList() {
   return accessCache;
 }
 
-// Members, managed by the owner: which Sparks they see, chat, and their file access (as in the portal).
-function memberPermissions(p) {
-  const known = new Set(NODES.map(n => n.id));
-  const { nodeIds, chat, files, sharedFiles, concurrentChats = 1, deploy = false } = p && typeof p === 'object' ? p : {};
-  if (!Array.isArray(nodeIds) || !nodeIds.length || nodeIds.some(id => !known.has(id))) throw new HttpError(400, 'Pick at least one Spark.');
-  if (typeof chat !== 'boolean' || typeof deploy !== 'boolean' || ![files, sharedFiles].every(x => ['none', 'read', 'write'].includes(x))) throw new HttpError(400, 'Choose chat, model and file access.');
-  if (!Number.isInteger(concurrentChats) || concurrentChats < 1 || concurrentChats > 4) throw new HttpError(400, 'Parallel chats must be 1 to 4.');
-  return { nodeIds: [...new Set(nodeIds)], chat, files, sharedFiles, concurrentChats, deploy };
-}
-function changeMembers(change) {
-  const own = accessToChange();
-  const members = change(structuredClone(Array.isArray(own.members) ? own.members : []));
-  writePrivate(ACCESS_FILE, { ...own, members });
-  accessCache = null;
-  ownAccess(); // read it back: a write that reads fine becomes the last good copy
-  return members;
-}
-function changeAccess(change) {
-  const own = accessToChange();
-  const next = change(structuredClone(own));
-  writePrivate(ACCESS_FILE, next);
-  accessCache = null;
-  ownAccess(); // read it back: a write that reads fine becomes the last good copy
-  return next;
-}
-// Approving someone who asked: one of three starting points (the owner can fine-tune it after, as for anyone).
-const ACCESS_PRESETS = {
-  look: { chat: false, files: 'none', sharedFiles: 'read', deploy: false },
-  chat: { chat: true, files: 'write', sharedFiles: 'read', deploy: false },
-  run: { chat: true, files: 'write', sharedFiles: 'write', deploy: true },
-};
 const clean = (v, max) => String(v || '').replace(/[\u0000-\u001f\u007f\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 // Counting requests per address in a window (an IPv6 /64 counts as one address); the oldest addresses are forgotten first.
 // IPv6 is expanded first, so every way of writing one /64 is the same key; an IPv4 address inside IPv6 counts as itself.
@@ -173,42 +133,6 @@ function overLimit(map, from, windowMs, limit) {
   while (map.size > 2000) map.delete(map.keys().next().value);
   return false;
 }
-// Someone on the tailnet who isn't on the list asks to be let in; the owner sees it on Access → People.
-// From the public page (no Tailscale identity yet) it's the email they'll sign in with, so it's marked unverified:
-// Tailscale checks that email when they sign in, and only then does the access apply.
-// Public asks: at most 10 waiting, each kept a week, and they never push out or overwrite someone who asked from the
-// tailnet. Whatever the list holds, a public ask gets the same answer, so it can't be used to learn who has access.
-const askHits = new Map();
-function askAccess(login, name, note, verified, from) {
-  if (!LOGIN_RE.test(login) || login.length > 200) throw new HttpError(400, 'Enter the email you sign in to Tailscale with.');
-  if (!verified && (overLimit(askHits, from, 3600000, 3) || overLimit(askHits, '*', 3600000, 20))) throw new HttpError(429, 'Too many requests right now. Try again later.');
-  const a = accessList(), lc = login.toLowerCase();
-  if (lc === String(a.owner || '').toLowerCase() || a.members.some(u => u.login.toLowerCase() === lc)) {
-    if (verified) throw new HttpError(409, 'You already have access. Reload the page.');
-    return;
-  }
-  changeAccess(own => {
-    const week = Date.now() - 7 * 86400000;
-    let list = (Array.isArray(own.requests) ? own.requests : []).filter(r => r.verified || Date.parse(r.at) > week);
-    const before = list.find(r => r.login.toLowerCase() === lc);
-    if (before && (before.verified || !verified)) {
-      if (verified && Date.now() - Date.parse(before.at) < 10 * 60000) throw new HttpError(429, 'You’ve asked already. The owner will see it on Access → People.');
-      if (!verified) return own;
-    }
-    list = list.filter(r => r !== before);
-    const unverified = list.filter(r => !r.verified);
-    if (!verified && unverified.length >= 10) return own;
-    if (verified && list.length >= 30) {
-      if (!unverified.length) throw new HttpError(429, 'Too many people are waiting. Ask the owner directly.');
-      list = list.filter(r => r !== unverified[0]);
-    }
-    return { ...own, requests: [...list, { login, name, note, verified, at: new Date().toISOString() }] };
-  });
-}
-// Someone whose access changed reconnects their live view, so it's re-checked straight away.
-function disconnectViewer(login) {
-  for (const client of clients) if (client.viewer.login === login) client.res.end();
-}
 const ownerPermissions = () => ({ nodeIds: NODES.map(n => n.id), chat: true, files: 'write', sharedFiles: 'write', concurrentChats: 4 });
 
 async function viewerFor(req) {
@@ -223,27 +147,24 @@ async function viewerFor(req) {
   }
   return viewerForLogin(login);
 }
-// Someone on the access list, by their login: the owner or a member.
+// The owner, by their login; anyone else (a former member included: their row in access.json is never read) is nobody.
 function viewerForLogin(login) {
-  const a = accessList(), same = (x, y) => String(x || '').toLowerCase() === String(y || '').toLowerCase();
+  const a = accessList();
   if (a.owner) {
-    const member = same(login, a.owner) ? null : a.members.find(u => same(u.login, login));
-    if (!same(login, a.owner) && !member) { authProblem = `${login} doesn’t have access`; return null; }
+    if (String(login || '').toLowerCase() !== String(a.owner).toLowerCase()) { authProblem = `${login} doesn’t have access`; return null; }
     authProblem = null;
-    const permissions = member ? member.permissions : ownerPermissions();
-    return { login, role: member ? 'member' : 'owner', nodeIds: member ? permissions.nodeIds || [] : null, chat: !member || permissions.chat === true, permissions };
+    return { login, role: 'owner', nodeIds: null, chat: true, permissions: ownerPermissions() };
   }
   authProblem = `No owner is set up in ${ACCESS_FILE}`;
   return null;
 }
-// Everyone sees the whole fleet (read-only). Acting on a Spark needs it to be theirs: the owner's are all of them, a
-// member's are the ones shared with them. Running or stopping models also needs the owner's go-ahead (permissions.deploy).
-const canUse = (viewer, nodeId) => !viewer.nodeIds || viewer.nodeIds.includes(nodeId);
-const canManage = viewer => viewer.role === 'owner' || viewer.permissions?.deploy === true;
-function mustUse(viewer, ids) {
-  if (!canManage(viewer)) throw new HttpError(403, 'Running and stopping models isn’t enabled for your account. Ask the owner.');
-  const other = ids.find(id => !canUse(viewer, id));
-  if (other) throw new HttpError(403, `${sparkName(nodeById(other) || { id: other })} isn’t shared with you.`);
+// Acting on a Spark, or running and stopping models, is the owner's: every viewer is the owner (the page, the agents'
+// keys, Telegram, the self-test and healing all act as the owner), and anything else is refused, never let through.
+// (The start and stop workflows call these, so their names stay.)
+const canUse = viewer => viewer?.role === 'owner';
+const canManage = viewer => viewer?.role === 'owner';
+function mustUse(viewer) {
+  if (!canManage(viewer)) throw new HttpError(403, 'Only the owner can do that.');
 }
 
 // This machine's own addresses, so the portal host's entry runs commands locally instead of over SSH.
