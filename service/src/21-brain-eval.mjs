@@ -13,9 +13,9 @@
 // which of the two is missing. Today's case set is the one this build's lock names (evalSet, test/lock.mjs), else
 // test/eval/cases.json beside this build: on Spark 2 the copy of the source every install keeps (~/spark-console-src).
 // The rail (21-brain-rail.mjs, R52) acts on it. A record that could let Sparkie change things without asking (a full
-// run of the main set that met the bar) needs the owner's passkey once one is set up, says how it was kept, and is
-// sealed; a slot keeps five of those and five of the rest (partial runs, other sets, memory additions off), so neither
-// kind pushes out the other, and the slot this build counts on is kept first.
+// run of the main set that met the bar), posted once a passkey is set up, waits for the owner's yes on the page instead
+// of being kept; every kept record says how it was kept and is sealed. A slot keeps five of those and five of the rest
+// (partial runs, other sets, memory additions off), so neither pushes out the other; this build's slot is kept first.
 const EVAL_KEEP = 5;    // limit: results kept for one brain, one version of what it reads and one case set
 const EVAL_SLOTS = 6;   // limit: versions of what the brain reads and case sets kept for one brain
 const EVAL_CASES_FILE = ALL_LOCAL ? fileURLToPath(new URL('../test/eval/cases.json', import.meta.url)) : `${homedir()}/spark-console-src/test/eval/cases.json`;
@@ -81,8 +81,9 @@ const evalLine = (rec, of) => {
 };
 
 // POST /main/eval: keeps one record in the profile of the brain serving now. Throws the refusal; nothing is written then.
-// passkey: the owner confirmed this request with a passkey (passkeyGate). The caller looks at what runs first.
-function storeBrainEval(r, { passkey = false } = {}) {
+// viewer: the owner who posted it. The caller looks at what runs first. A result that could let Sparkie change things
+// without asking, posted while a passkey is set up, isn't kept here: it waits for the owner's yes (evalWait, R52).
+function storeBrainEval(r, viewer = null) {
   if (!MAIN) throw new HttpError(404, 'No main model is configured.');
   if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Keep the result once that’s done.');
   const problem = evalRecordProblem(r);
@@ -96,19 +97,25 @@ function storeBrainEval(r, { passkey = false } = {}) {
   }
   const p = brainProfileOf(MAIN);
   if (!p) throw new HttpError(409, 'No brain check is on record for the brain serving now, and its result is kept in that profile. Ask for a check first (POST /console/api/main/check), then keep the result.');
-  // (one that could let Sparkie change things without asking takes the passkey once one is set up: R52)
   let keys = 1;
   try { keys = passkeys().length; } catch {}
-  const unlocks = evalCouldUnlock(r);
-  if (unlocks && keys && !passkey) throw passkeyNeeded('confirm', 'Confirm it’s you with your passkey: with this result kept, Sparkie makes the changes your words clearly ask for without asking.');
-  const set = evalSetToday();
+  const unlocks = evalCouldUnlock(r), set = evalSetToday();
   if (set && r.set === set.version && r.setCases !== set.cases) throw new HttpError(400, `That result says its case set has ${r.setCases} cases; today’s, with the same version, has ${set.cases}.`);
   const keep = ({ kind, at, build, reads, set: v, setFile, memorySwitches, setCases, cap, brain, runs, cases }) => ({ kind, at, build, reads, set: v,
     ...(setFile !== undefined ? { setFile } : {}), ...(memorySwitches !== undefined ? { memorySwitches: { on: memorySwitches.on, off: memorySwitches.off } } : {}), setCases, cap, runs,
     brain: { standIn: brain.standIn, key: brain.key, setup: brain.setup ?? null, model: brain.model ?? null, engine: brain.engine ?? null, image: brain.image ?? null, flags: brain.flags },
     cases: cases.map(c => ({ id: c.id, expect: c.expect, runs: c.runs.map(x => ({ passed: x.passed, rounds: x.rounds, seconds: x.seconds, called: x.called, changed: x.changed, asked: x.asked, wrong: x.wrong, unverified: x.unverified })) })) });
-  // How it was kept, and the seal over it and its profile (21-brain-rail.mjs): the rail counts only a sealed record.
-  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString(), keptWith: unlocks ? (passkey ? 'passkey' : 'no passkey set up') : 'owner' }, slot = `${r.reads}:${r.set}`;
+  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString() };
+  // (once a passkey is set up, one that could unlock waits for the owner's yes on the page: 21-brain-rail.mjs)
+  if (unlocks && keys) return evalWait(rec, p, now, viewer);
+  const why = unlocks ? '' : ` It doesn’t let Sparkie change things without asking: ${!rec.score.full ? 'a partial run' : !evalMainSet(r) ? 'not a run of the main case set with every memory addition on' : 'the bar wasn’t met'}.`;
+  const out = keepEvalRecord(p, { ...rec, keptWith: unlocks ? 'no passkey set up' : 'owner' }, now.setup);
+  return { ...out, says: `${out.says}${out.stored ? why : ''}` };
+}
+// Keeps one record in the profile p, sealed (21-brain-rail.mjs: the rail counts only a sealed record): the store above,
+// and the owner's yes to a waiting result.
+function keepEvalRecord(p, rec, setupId) {
+  const slot = `${rec.reads}:${rec.set}`, set = evalSetToday();
   const sealKey = evalSealKey(true);
   if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
   const kept = Object.fromEntries(Object.entries(p.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v)));
@@ -121,9 +128,9 @@ function storeBrainEval(r, { passkey = false } = {}) {
   const evals = Object.fromEntries(Object.entries(kept).sort(([ka, a], [kb, b]) => (kb === ours) - (ka === ours) || String(b[0]?.at).localeCompare(String(a[0]?.at))).slice(0, EVAL_SLOTS));
   const stored = Boolean(evals[slot]?.includes(rec));
   if (stored) saveBrainProfile(p, evals);
-  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: r.reads, set: r.set, build: r.build, setup: now.setup, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
-  return { stored, slot, kept: evals[slot]?.length || 0, setup: now.setup,
-    says: stored ? `Kept with the profile of ${now.setup}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
+  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
+  return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
+    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
 
 // What sparkie_setup shows for the brain in use (p: its profile, or null): the newest result on record for what this

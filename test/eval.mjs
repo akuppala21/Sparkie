@@ -109,7 +109,7 @@ if (STORE) {
   try { json = JSON.parse(text); } catch {}
   if (!r.ok) { console.error(`Not kept (${r.status}): ${json?.error || text.slice(0, 300)}`); process.exit(1); }
   console.log(json?.says || 'Kept.');
-  process.exit(json?.stored === false ? 1 : 0);
+  process.exit(json?.stored === false && !json?.waiting ? 1 : 0);
 }
 
 // --brain-url https://akspark2.tailab9aa9.ts.net:8443/console/api: no tunnel needed. The relay below passes the stand-in

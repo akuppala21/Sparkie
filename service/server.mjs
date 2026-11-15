@@ -4723,6 +4723,7 @@ function changeIntent(text) {
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
 const PAGE_ONLY = new Set([
   'undo_update',
+  'keep_eval_result',
   'remember',
   'forget_memory',
   'save_workflow',
@@ -4963,6 +4964,8 @@ async function firmModel(name, input) {
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
+  // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
+  if (name === EVAL_YES) return evalYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
@@ -10741,6 +10744,8 @@ function openProblems() {
     () => { if (copyLateNow()) add('copy', copyLateWords(here)); },
     // The owner's wishes in memory outgrow what rides every message (20-memory-names.mjs).
     () => memoryNeeds(add),
+    // A brain eval result waiting for the owner's yes (21-brain-rail.mjs, R52).
+    () => evalWaitingNeeds(add),
     // The fleet: Docker not answering on a Spark that is on, then what should be running and isn't (not on a Spark that
     // is off, which the owner powers down on purpose, nor where Docker isn't answering, which is said once above).
     () => {
@@ -12549,9 +12554,9 @@ function brainCheckView() {
 // which of the two is missing. Today's case set is the one this build's lock names (evalSet, test/lock.mjs), else
 // test/eval/cases.json beside this build: on Spark 2 the copy of the source every install keeps (~/spark-console-src).
 // The rail (21-brain-rail.mjs, R52) acts on it. A record that could let Sparkie change things without asking (a full
-// run of the main set that met the bar) needs the owner's passkey once one is set up, says how it was kept, and is
-// sealed; a slot keeps five of those and five of the rest (partial runs, other sets, memory additions off), so neither
-// kind pushes out the other, and the slot this build counts on is kept first.
+// run of the main set that met the bar), posted once a passkey is set up, waits for the owner's yes on the page instead
+// of being kept; every kept record says how it was kept and is sealed. A slot keeps five of those and five of the rest
+// (partial runs, other sets, memory additions off), so neither pushes out the other; this build's slot is kept first.
 const EVAL_KEEP = 5;    // limit: results kept for one brain, one version of what it reads and one case set
 const EVAL_SLOTS = 6;   // limit: versions of what the brain reads and case sets kept for one brain
 const EVAL_CASES_FILE = ALL_LOCAL ? fileURLToPath(new URL('../test/eval/cases.json', import.meta.url)) : `${homedir()}/spark-console-src/test/eval/cases.json`;
@@ -12617,8 +12622,9 @@ const evalLine = (rec, of) => {
 };
 
 // POST /main/eval: keeps one record in the profile of the brain serving now. Throws the refusal; nothing is written then.
-// passkey: the owner confirmed this request with a passkey (passkeyGate). The caller looks at what runs first.
-function storeBrainEval(r, { passkey = false } = {}) {
+// viewer: the owner who posted it. The caller looks at what runs first. A result that could let Sparkie change things
+// without asking, posted while a passkey is set up, isn't kept here: it waits for the owner's yes (evalWait, R52).
+function storeBrainEval(r, viewer = null) {
   if (!MAIN) throw new HttpError(404, 'No main model is configured.');
   if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is changing. Keep the result once that’s done.');
   const problem = evalRecordProblem(r);
@@ -12632,19 +12638,25 @@ function storeBrainEval(r, { passkey = false } = {}) {
   }
   const p = brainProfileOf(MAIN);
   if (!p) throw new HttpError(409, 'No brain check is on record for the brain serving now, and its result is kept in that profile. Ask for a check first (POST /console/api/main/check), then keep the result.');
-  // (one that could let Sparkie change things without asking takes the passkey once one is set up: R52)
   let keys = 1;
   try { keys = passkeys().length; } catch {}
-  const unlocks = evalCouldUnlock(r);
-  if (unlocks && keys && !passkey) throw passkeyNeeded('confirm', 'Confirm it’s you with your passkey: with this result kept, Sparkie makes the changes your words clearly ask for without asking.');
-  const set = evalSetToday();
+  const unlocks = evalCouldUnlock(r), set = evalSetToday();
   if (set && r.set === set.version && r.setCases !== set.cases) throw new HttpError(400, `That result says its case set has ${r.setCases} cases; today’s, with the same version, has ${set.cases}.`);
   const keep = ({ kind, at, build, reads, set: v, setFile, memorySwitches, setCases, cap, brain, runs, cases }) => ({ kind, at, build, reads, set: v,
     ...(setFile !== undefined ? { setFile } : {}), ...(memorySwitches !== undefined ? { memorySwitches: { on: memorySwitches.on, off: memorySwitches.off } } : {}), setCases, cap, runs,
     brain: { standIn: brain.standIn, key: brain.key, setup: brain.setup ?? null, model: brain.model ?? null, engine: brain.engine ?? null, image: brain.image ?? null, flags: brain.flags },
     cases: cases.map(c => ({ id: c.id, expect: c.expect, runs: c.runs.map(x => ({ passed: x.passed, rounds: x.rounds, seconds: x.seconds, called: x.called, changed: x.changed, asked: x.asked, wrong: x.wrong, unverified: x.unverified })) })) });
-  // How it was kept, and the seal over it and its profile (21-brain-rail.mjs): the rail counts only a sealed record.
-  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString(), keptWith: unlocks ? (passkey ? 'passkey' : 'no passkey set up') : 'owner' }, slot = `${r.reads}:${r.set}`;
+  const rec = { ...maskDeep(keep(r)), score: evalScore(r), keptAt: new Date().toISOString() };
+  // (once a passkey is set up, one that could unlock waits for the owner's yes on the page: 21-brain-rail.mjs)
+  if (unlocks && keys) return evalWait(rec, p, now, viewer);
+  const why = unlocks ? '' : ` It doesn’t let Sparkie change things without asking: ${!rec.score.full ? 'a partial run' : !evalMainSet(r) ? 'not a run of the main case set with every memory addition on' : 'the bar wasn’t met'}.`;
+  const out = keepEvalRecord(p, { ...rec, keptWith: unlocks ? 'no passkey set up' : 'owner' }, now.setup);
+  return { ...out, says: `${out.says}${out.stored ? why : ''}` };
+}
+// Keeps one record in the profile p, sealed (21-brain-rail.mjs: the rail counts only a sealed record): the store above,
+// and the owner's yes to a waiting result.
+function keepEvalRecord(p, rec, setupId) {
+  const slot = `${rec.reads}:${rec.set}`, set = evalSetToday();
   const sealKey = evalSealKey(true);
   if (sealKey) rec.seal = evalSealOf(sealKey, p.key, rec);
   const kept = Object.fromEntries(Object.entries(p.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v)));
@@ -12657,9 +12669,9 @@ function storeBrainEval(r, { passkey = false } = {}) {
   const evals = Object.fromEntries(Object.entries(kept).sort(([ka, a], [kb, b]) => (kb === ours) - (ka === ours) || String(b[0]?.at).localeCompare(String(a[0]?.at))).slice(0, EVAL_SLOTS));
   const stored = Boolean(evals[slot]?.includes(rec));
   if (stored) saveBrainProfile(p, evals);
-  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: r.reads, set: r.set, build: r.build, setup: now.setup, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
-  return { stored, slot, kept: evals[slot]?.length || 0, setup: now.setup,
-    says: stored ? `Kept with the profile of ${now.setup}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
+  audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
+  return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
+    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
 
 // What sparkie_setup shows for the brain in use (p: its profile, or null): the newest result on record for what this
@@ -12771,11 +12783,11 @@ const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memory
 // the bar (counted here from the runs). Storing one needs the owner's passkey (needsPasskey, 22-passkey.mjs).
 const evalCouldUnlock = r => !evalRecordProblem(r) && r.cap === null && evalMainSet(r) && evalScore(r).met === true;
 // Whether a stored record counts for the brain with this profile key, this build's mark and case set.
-function evalCounts(x, key, reads, set) {
+function evalCounts(x, key, reads, set, sealed = true) {
   if (!x || typeof x !== 'object' || evalRecordProblem(x) || x.cap !== null || !evalMainSet(x)) return false;
   if (x.brain.standIn !== ALL_LOCAL || x.brain.key !== key || x.reads !== reads || x.set !== set.version || x.setCases !== set.cases.length) return false;
   const want = new Map(set.cases);
-  return x.cases.every(c => want.get(c.id) === c.expect) && evalSealed(key, x);
+  return x.cases.every(c => want.get(c.id) === c.expect) && (!sealed || evalSealed(key, x));
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
@@ -12806,7 +12818,82 @@ async function brainRail() {
 // sparkie_setup's one line about changes.
 async function railWords() {
   const r = await brainRail();
-  return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.` : `Sparkie asks before every change, one button each: ${r.why}.`;
+  return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
+    : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
+}
+
+// The owner's yes (R52). A result that could unlock (evalCouldUnlock), posted while a passkey is set up, waits here, in
+// memory only, never as the eval on record: a restart forgets it (so a restart can't slip one in), and nothing changes
+// for the rail. It waits only when it is for this build's mark, the lock's case set and the brain serving now; anything
+// else that could unlock is refused, so it can't sit ready for a later build. One at a time: a newer run replaces it
+// and voids the old button. The owner gets one owner-only button in their chat "The brain eval’s result", built here
+// from the record; pressed on the page (with the passkey) it is kept, sealed. Its call, EVAL_YES, is no action: runAction
+// hands it to evalYes, which takes only that button's press. In PAGE_ONLY, so Telegram never asks about it. The route is
+// the owner's alone (24-handler.mjs), so an agent's key can't post one, and the button is in the owner's own chat.
+const EVAL_YES = 'keep_eval_result', EVAL_CHAT = 'The brain eval’s result';
+let evalWaiting = null;
+const evalBar = r => {
+  const runs = r.cases.flatMap(c => c.runs), clear = r.cases.filter(c => ['act', 'answer'].includes(c.expect)).flatMap(c => c.runs);
+  return { passed: runs.filter(x => x.passed).length, runs: runs.length, needRuns: Math.ceil(runs.length * 0.95), whole: r.cases.filter(c => c.runs.every(x => x.passed)).length,
+    cases: r.cases.length, needCases: Math.ceil(r.cases.length * 0.9), asked: clear.filter(x => x.asked).length, clear: clear.length, maxAsked: Math.floor(clear.length * 0.05) };
+};
+function evalWait(rec, p, now, viewer) {
+  const reads = brainReadsNow(), set = evalSetLocked();
+  const no = why => { throw new HttpError(409, `Kept nothing: ${why}. Only a full result for this build’s brain, what it reads and its case set can wait for your yes.`); };
+  if (!reads || rec.reads !== reads) no('that result is for another version of what the brain reads than this build’s');
+  if (!set || rec.set !== set.version || !evalCounts(rec, p.key, reads, set, false)) no('that result is for another case set than this build’s');
+  if (evalWaiting && String(rec.at) < String(evalWaiting.rec.at)) no('a newer result is already waiting for your yes');
+  evalWaitingGone();
+  const owner = accessList().owner, at = new Date().toISOString(), b = evalBar(rec), token = randomBytes(16).toString('hex');
+  let conv = chatData().conversations.find(c => c.login === owner && !c.agent && c.title === EVAL_CHAT && c.messages.length < LIMITS.messages);
+  if (!conv) { conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: owner, title: EVAL_CHAT, spark: null, createdAt: at, updatedAt: at, messages: [] }; chatData().conversations.push(conv); }
+  const text = [`A brain eval result is waiting for your yes. It is for build ${rec.build}, ${rec.brain.model} with ${rec.brain.engine}, image ${rec.brain.image}, on the case set ${rec.setFile} (${rec.setCases} cases, ${rec.runs} runs each), run on ${checkWhen(rec.at)}.`,
+    `${b.passed} of ${b.runs} runs passed (the bar is ${b.needRuns}); ${b.whole} of ${b.cases} cases passed every run (the bar is ${b.needCases}); no wrong change; it asked on ${b.asked} of ${b.clear} clear requests (the bar is at most ${b.maxAsked}).`,
+    'Keeping it means Sparkie makes the changes your words clearly ask for at once again, as before this install. Until then it asks before every change.'].join('\n\n');
+  let asked = null;
+  question({ ...viewer, login: owner, role: 'owner' }, { via: 'page', conv: conv.id, chat: conv.id, onQuestion: q => { asked = q; } }, text,
+    [{ label: 'Keep it: Sparkie makes the changes you ask for at once again', call: { action: EVAL_YES, args: { token, keep: true } } }, { label: 'No, drop it', call: { action: EVAL_YES, args: { token, keep: false } } }],
+    'question', { ownerOnly: true });
+  // (it stays until it is answered, replaced or forgotten at a restart: not the 15 minutes of a chat's buttons)
+  for (const c of asked.choices) if (pendingChoices.has(c.choice)) pendingChoices.get(c.choice).at = Date.now() + 30 * 86400000;
+  conv.messages.push({ role: 'assistant', content: text, createdAt: at, notice: true, choices: sparkieMessageChoices(asked) });
+  conv.updatedAt = at;
+  saveChats();
+  evalWaiting = { token, rec, profileKey: p.key, conv: conv.id, group: asked.group, setup: now.setup };
+  audit({ via: 'page', actor: 'owner', action: 'brain-eval-waiting', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: now.setup, passOnce: rec.score.passOnce }, ok: true });
+  return { stored: false, waiting: true, setup: now.setup, chat: conv.id,
+    says: `Waiting for the owner’s yes: a button in the chat “${EVAL_CHAT}” in Spark Console, pressed with the passkey. Until then Sparkie asks before every change.` };
+}
+// The waiting result's button goes (a newer one came, or it was answered).
+function evalWaitingGone() {
+  if (!evalWaiting) return;
+  for (const [k, c] of pendingChoices) if (c.group === evalWaiting.group) pendingChoices.delete(k);
+  const conv = chatData().conversations.find(c => c.id === evalWaiting.conv);
+  for (const m of conv?.messages || []) for (const x of m.choices || []) if (x.group === evalWaiting.group && x.state === 'open') x.state = 'gone';
+  evalWaiting = null;
+  saveChats();
+}
+// The press (runAction hands EVAL_YES here): only its own owner-only button, pressed by the owner on the page.
+async function evalYes(args, viewer, ctx) {
+  if (!(ctx.button && ctx.trusted && ctx.ownerConfirmed && ctx.via === 'page' && viewer?.role === 'owner')) throw new HttpError(404, `No action called ${EVAL_YES}.`);
+  const w = evalWaiting, token = String(args?.token || '');
+  if (!w || token.length !== w.token.length || !timingSafeEqual(Buffer.from(token), Buffer.from(w.token))) throw new HttpError(409, 'That result isn’t waiting any more: a newer one came, it was answered, or Spark Console restarted.');
+  evalWaiting = null;
+  if (args.keep !== true) {
+    audit({ via: 'page', actor: 'owner', action: 'brain-eval-dropped', args: { reads: w.rec.reads, build: w.rec.build }, ok: true });
+    return { outcome: 'dropped', note: 'Dropped: that eval result wasn’t kept, and Sparkie still asks before every change.' };
+  }
+  await brainRanLook();
+  const p = MAIN && !mainBusy() ? brainProfileOf(MAIN) : null, set = evalSetLocked();
+  if (!p || p.key !== w.profileKey || brainReadsNow() !== w.rec.reads || set?.version !== w.rec.set) throw new HttpError(409, 'Kept nothing: Sparkie’s model or this build changed since that result was posted. Run the eval again.');
+  let keys = 1;
+  try { keys = passkeys().length; } catch {}
+  const out = keepEvalRecord(p, { ...w.rec, keptWith: keys ? 'passkey' : 'the owner’s press' }, w.setup);
+  return { outcome: 'kept', note: out.stored ? 'Kept: Sparkie makes the changes your words clearly ask for at once again.' : out.says };
+}
+// One needs-you line while a result waits (20-needs.mjs).
+function evalWaitingNeeds(add) {
+  if (evalWaiting) add('eval', `A brain eval result for this build is waiting for your yes: press its button in the chat “${EVAL_CHAT}” in Spark Console. Until then Sparkie asks before every change.`);
 }
 /* ───────── the app door: the owner's kept apps from anywhere (R40) ───────── */
 // Area: features        Rules: R40        Tests: app-door.test.mjs
@@ -15829,7 +15916,6 @@ function describeChange(method, path, body = {}) {
   if (method === 'PUT' && path === '/telegram/needs') return body?.on === true ? 'Let Spark Console send you one Telegram line when something new needs you (at most 3 a day)' : 'Stop the “needs you” lines on Telegram';
   if (method === 'PUT' && path === '/telegram/approve') return body?.on === true ? 'Let your yes come from your paired Telegram chat: a press there on a change Spark Console asks about (at most 3 an hour and 10 a day; /lock there turns it off)' : 'Stop approving changes from Telegram';
   if (method === 'PUT' && path === '/heartbeat') return 'Save your outside check’s address, so Spark Console sends it an empty request at hc-ping.com every 5 minutes';
-  if (method === 'POST' && path === '/main/eval') return `Keep the brain eval’s result of ${clean(body?.at, 40)} (build ${clean(body?.build, 12)}, ${clean(body?.brain?.setup, 60) || 'its setup'}): with it, Sparkie makes the changes your words clearly ask for without asking`;
   const chatGone = path.match(/^\/chats\/([^/]+)$/);
   if (method === 'DELETE' && chatGone) return `Delete the chat “${clean(chatData().conversations.find(c => c.id === chatGone[1])?.title || chatGone[1], 80)}”`;
   if (method === 'POST' && /^\/chats\/[^/]+\/choose$/.test(path)) {
@@ -15859,7 +15945,6 @@ const mayNeedPasskey = path => /^\/(agents|auth)(\/|$)/.test(path)
   || /^\/chats\/[^/]+(\/choose)?$/.test(path)
   || /^\/deploy(\/cluster)?$/.test(path)
   || path === '/heartbeat'
-  || path === '/main/eval'
   || /^\/nodes\/[^/]+\/files$/.test(path)
   || path === '/rollback'
   || path === '/stop'
@@ -15905,8 +15990,6 @@ function needsPasskey(method, path, body, haveKeys) {
   if (method === 'PUT' && path === '/telegram/approve') return body?.on === true;
   // Saving the outside heartbeat's address (20-beat.mjs, R32); removing it never needs it.
   if (method === 'PUT' && path === '/heartbeat') return true;
-  // A brain eval result that would let Sparkie change things without asking (21-brain-rail.mjs, R52); others never.
-  if (method === 'POST' && path === '/main/eval') return evalCouldUnlock(body);
   return false;
 }
 // A terminal signed in from the internet never writes hidden files or folders: .git/hooks, .vscode/tasks.json or .envrc
@@ -15952,7 +16035,6 @@ async function passkeyGate(req, path, viewer) {
   if (ok.counterWentBack) counterNote(k);
   audit({ via: 'page', actor: 'owner', action: 'passkey-confirmed', args: { method: req.method, path, passkey: k.name }, ok: true });
   if (viewer.session?.id) markPasskey(viewer.session.id);
-  req.passkeyConfirmed = true;
 }
 
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
@@ -16964,7 +17046,7 @@ const handler = async (req, res) => {
       return send(res, 202, { checking: checkBrainSoon('asked'), setup: { id: MAIN.id, title: MAIN.title || repoOf(MAIN.model) }, says: 'The check runs now, one request at a time; sparkie_setup shows what it found.' });
     }
     // The brain eval's result (test/eval.mjs --store), kept in the profile of the brain serving now (21-brain-eval.mjs).
-    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, { passkey: Boolean(req.passkeyConfirmed) }); return send(res, kept.stored ? 201 : 200, kept); }
+    if (req.method === 'POST' && path === '/main/eval') { ownerOnly(); const body = await readBody(req); await brainRanLook(); const kept = storeBrainEval(body, viewer); return send(res, kept.stored ? 201 : kept.waiting ? 202 : 200, kept); }
     if (req.method === 'POST' && (path === '/main/start' || path === '/main/stop')) {
       if (!MAIN) throw new HttpError(404, 'No main model is configured.');
       if (mainBusy()) throw new HttpError(409, 'Sparkie’s model is already starting or stopping.');

@@ -207,6 +207,7 @@ function changeIntent(text) {
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
 const PAGE_ONLY = new Set([
   'undo_update',
+  'keep_eval_result',
   'remember',
   'forget_memory',
   'save_workflow',
@@ -447,6 +448,8 @@ async function firmModel(name, input) {
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
+  // (a brain eval result waiting for the owner's yes: only its own button's press, 21-brain-rail.mjs)
+  if (name === EVAL_YES) return evalYes(args, viewer, ctx);
   const a = ACTIONS.get(name);
   if (!a) throw new HttpError(404, `No action called ${String(name).slice(0, 60)}.`);
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');

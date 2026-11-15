@@ -16,7 +16,8 @@ that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`spark
    same options. Its record names its build; a build from before the mark has `reads: null`.
 4. Once the build is installed, on the tailnet as the owner, with the results file: `node test/eval.mjs --store
    <file>`. `sparkie_setup`'s `brainCheck.eval` then says it is on record. A full run that met the bar lets Sparkie
-   change things without asking (R52), so once a passkey is set up it takes the passkey: the console answers 428.
+   change things without asking (R52), so once a passkey is set up it waits for your yes: the console answers 202 and
+   puts one button in the chat “The brain eval’s result”; press it on the page, with your passkey.
 
 Without the brain (to try the runner): `--stand-in --only <case> --runs 1 --out <file>`.
 

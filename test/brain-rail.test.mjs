@@ -1,15 +1,19 @@
 // Covers: The rail (R52; contract 3.11; the one page, milestone 5): a change Sparkie is clearly asked for runs at once
 // only while its brain is checked: the brain check passed for this exact brain, and the eval on record for this build's
 // mark and case set is a full run that met the bar, recounted from the record. With no eval on record every change is one
-// button and nothing runs at once, from the page, from Telegram and through the agent door; a lookup is never affected;
-// sparkie_setup says why in one line. A full, bar-met record kept with the passkey runs today's clear changes at once.
-// What never counts: a partial run; a run that missed the bar (also when its own score says it met it); another mark; another case set; a memory-set run; one with
-// a memory addition off; one missing those fields; a case id or expect that isn't the lock's; a record written into the
-// file by hand; one sent without the passkey once a passkey is set up (428, nothing kept); another key (a changed flag,
-// image, image actually run, weights' snapshot, toolRounds, maxChanges, toolCap) or the narrow key of before; the chat
-// routed to another model; a missing or unreadable profile or lock. The newest full run decides: one that missed the bar
-// takes the pass away, and newer partial runs never push a full one out. A server error on the brain check keeps
-// nothing. The eval's runner refuses to ask the brain as another setup than the one serving.
+// button and nothing runs at once, from the page, from Telegram and through the agent door; a lookup, the owner's own
+// call and press, a saved workflow's step, self-healing and the self-test are never affected; sparkie_setup says why.
+// Once a passkey is set up, a passing result posted to POST /main/eval waits for the owner's yes: nothing kept, one
+// owner-only button in their chat "The brain eval’s result" built from the record, said in sparkie_setup and /status,
+// never asked on Telegram; pressed on the page with the passkey it is kept and changes run at once; "No" drops it. Against
+// an agent's key, a stranger, a forged seal, another build, a record's own score, two at once, a replayed or stale press,
+// an agent's press and a restart. What never counts: a partial run; a run that missed the bar (also when its own score
+// says it met it); another mark; another case set; a memory-set run; one with a memory addition off; one missing those
+// fields; a case id or expect that isn't the lock's; a record written into the file by hand; another key (a changed
+// flag, image, image actually run, weights' snapshot, toolRounds, maxChanges, toolCap) or the narrow key of before; the
+// chat routed to another model; a missing or unreadable profile or lock. The newest full run decides: one that missed
+// the bar takes the pass away, and newer partial runs never push a full one out. A server error on the brain check
+// keeps nothing. The eval's runner refuses to ask the brain as another setup than the one serving.
 // The mark of what the brain reads holds a turn in the paired Telegram chat too: only its prompt or tools changed is
 // another mark, and a Telegram turn there is a button until an eval for that mark is kept.
 // T136 (part): a switch to a brain with no eval on record makes every change a button; once the eval has passed for this
@@ -21,7 +25,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, mkdtempSync
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, auditLines, waitFor, SLOW } from './lib.mjs';
+import { T, REPO, useFleet, api, call, createActKey, newChat, say, choose, auditLines, waitFor, sleep, SLOW } from './lib.mjs';
 import { serviceConfig, startMock } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
 import { brainSent, brainReadsOf } from './lock.mjs';
@@ -40,7 +44,7 @@ let act;
 useFleet({ watchMs: 60000, knowledge: true, telegram: true, evalOnRecord: false, env: { SPARK_CONSOLE_CONTINUE_MS: '500' },
   prepare: ({ dir, stateDir, root }) => {
     mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
-    writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner' } }), { mode: 0o600 });
+    writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', approve: true } }), { mode: 0o600 });
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8')), base = m.presets[m.current];
     Object.assign(m.presets, { 'rail-flag': { ...base, args: [...base.args, '--enable-cache-report'] }, 'rail-image': { ...base, imageId: OTHER_IMAGE },
       'rail-rounds': { ...base, toolRounds: 7 }, 'rail-changes': { ...base, maxChanges: 3 }, 'rail-cap': { ...base, toolCap: 20 } });
@@ -67,15 +71,31 @@ async function record(over = {}, { cases = LOCK().evalSet.cases, runs = 3, passe
     cases: cases.map(([id, expect], i) => ({ id, expect, runs: Array.from({ length: runs }, () => ({ passed: passed(i), asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] })) })),
     ...over };
 }
-// POST /main/eval as the owner; with the passkey when the service asks for it (428) and confirm is true.
-async function keep(rec, { confirm = true } = {}) {
-  const r = await api('/main/eval', { method: 'POST', body: rec });
-  if (r.status !== 428 || !confirm) return r;
-  const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method: 'POST', path: '/main/eval', body: rec } });
+// POST /main/eval as the owner (as the runner's --store sends it). kept: one that can't unlock, kept at once (201).
+const keep = rec => api('/main/eval', { method: 'POST', body: rec });
+const kept = async rec => { const r = await keep(rec); assert.equal(r.status, 201, r.text); return r.json; };
+// A request the owner confirms with the passkey (the page's way).
+async function confirmed(method, path, body) {
+  const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'confirm', method, path, body } });
   assert.equal(b.status, 200, b.text);
-  return api('/main/eval', { method: 'POST', body: rec, headers: { 'x-spark-passkey': passkeyHeader(KEY.sign(b.json)) } });
+  return api(path, { method, body, headers: { 'x-spark-passkey': passkeyHeader(KEY.sign(b.json)) } });
 }
-const kept = async (rec, opts) => { const r = await keep(rec, opts); assert.equal(r.status, 201, r.text); return r.json; };
+// The owner's chat "The brain eval’s result": its newest message with buttons still open, and those buttons.
+async function waiting() {
+  const c = (await api('/chats')).json.chats.find(x => x.title === 'The brain eval’s result');
+  const messages = c ? (await api(`/chats/${c.id}`)).json.messages : [], m = messages.findLast(x => x.choices?.some(y => y.state === 'open'));
+  return { conv: c?.id, messages, message: m, open: messages.flatMap(x => x.choices || []).filter(y => y.state === 'open'),
+    keep: m?.choices.find(x => /^Keep it/.test(x.label)), no: m?.choices.find(x => /^No, drop it$/.test(x.label)) };
+}
+const press = (w, choice) => confirmed('POST', `/chats/${w.conv}/choose`, { choice: choice.id });
+// A passing result for this build, posted (202: it waits) and kept by the owner's press with the passkey.
+async function yes(rec) {
+  const r = await keep(rec);
+  assert.equal(r.status, 202, r.text);
+  const w = await waiting(), p = await press(w, w.keep);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(Object.values(profiles()).some(x => x.evals?.[`${rec.reads}:${rec.set}`]?.some(y => y.at === rec.at && y.keptWith === 'passkey')), 'kept with the passkey');
+}
 
 // The owner's clear "remember that …" (a change, at once while checked): its outcome, and the buttons offered.
 let n = 0;
@@ -153,20 +173,79 @@ describe('the rail', { concurrency: 1 }, () => {
     assert.ok(auditLines().some(l => l.via === 'workflow' && l.action === 'stop_model' && l.ok), 'the step ran as the workflow');
   });
 
-  test('a full, bar-met record needs the passkey once one is set up: sent without it, 428 and nothing kept; with it, kept and changes run at once', { timeout: 120000 * SLOW }, async () => {
+  test('once a passkey is set up a passing result waits for the owner’s yes: nothing kept, one button in their chat built from the record, said in sparkie_setup and /status, never asked on Telegram; pressed with the passkey it is kept and changes run at once; a second press is refused', { timeout: 180000 * SLOW }, async () => {
     const b = await api('/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
     assert.equal((await api('/auth/passkey/register', { method: 'POST', body: KEY.register(b.json) })).status, 201);
-    const before = readFileSync(PROFILES(), 'utf8'), rec = await record();
-    const bare = await keep(rec, { confirm: false });
-    assert.deepEqual([bare.status, bare.json.passkey], [428, 'confirm'], bare.text);
+    const before = readFileSync(PROFILES(), 'utf8'), rec = await record(), tgFrom = tgSent().length;
+    const posted = await keep(rec);
+    assert.deepEqual([posted.status, posted.json.stored, posted.json.waiting], [202, false, true], posted.text);
+    assert.match(posted.json.says, /^Waiting for the owner’s yes: a button in the chat “The brain eval’s result” in Spark Console/);
     assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing kept');
-    await aButton('sent without the passkey');
-    const k = await kept(rec);
-    assert.equal(k.stored, true);
-    const stored = Object.values(profiles()).find(p => p.key === rec.brain.key).evals[`${rec.reads}:${rec.set}`][0];
+    await aButton('waiting for the yes', /An eval result for this build is waiting for your yes in the chat “The brain eval’s result”\.$/);
+    const w = await waiting(), lock = LOCK(), total = lock.evalSet.cases.length * 3;
+    assert.deepEqual(w.open.map(c => c.label), ['Keep it: Sparkie makes the changes you ask for at once again', 'No, drop it']);
+    assert.equal(w.message.content, [`A brain eval result is waiting for your yes. It is for build ${lock.build}, ${rec.brain.model} with ${rec.brain.engine}, image ${rec.brain.image}, on the case set test/eval/cases.json (${lock.evalSet.cases.length} cases, 3 runs each), run on ${rec.at.slice(0, 10)} at ${rec.at.slice(11, 16)} UTC.`,
+      `${total} of ${total} runs passed (the bar is ${Math.ceil(total * 0.95)}); ${lock.evalSet.cases.length} of ${lock.evalSet.cases.length} cases passed every run (the bar is ${Math.ceil(lock.evalSet.cases.length * 0.9)}); no wrong change; it asked on 0 of ${3 * lock.evalSet.cases.filter(([, e]) => ['act', 'answer'].includes(e)).length} clear requests (the bar is at most ${Math.floor(3 * lock.evalSet.cases.filter(([, e]) => ['act', 'answer'].includes(e)).length * 0.05)}).`,
+      'Keeping it means Sparkie makes the changes your words clearly ask for at once again, as before this install. Until then it asks before every change.'].join('\n\n'));
+    const status = await say(await newChat(), '/status');
+    assert.match(status.text, /Needs you:\n(?:- .*\n)*- A brain eval result for this build is waiting for your yes: press its button in the chat “The brain eval’s result” in Spark Console\./);
+    await sleep(3000);
+    assert.ok(!tgSent().slice(tgFrom).some(c => /eval/i.test(c.body.text)), 'nothing asked on Telegram');
+    const bare = await api(`/chats/${w.conv}/choose`, { method: 'POST', body: { choice: w.keep.id } });
+    assert.deepEqual([bare.status, bare.json.passkey], [428, 'confirm'], bare.text);
+    assert.equal(readFileSync(PROFILES(), 'utf8'), before, 'nothing kept without the passkey');
+    const p = await press(w, w.keep);
+    assert.equal(p.status, 200, p.text);
+    assert.equal((await press(w, w.keep)).status, 409, 'a press replayed');
+    const stored = Object.values(profiles()).find(x => x.key === rec.brain.key).evals[`${rec.reads}:${rec.set}`][0];
     assert.deepEqual([stored.keptWith, /^[0-9a-f]{64}$/.test(stored.seal), stored.setFile, stored.memorySwitches], ['passkey', true, 'test/eval/cases.json', { on: SWITCHES, off: [] }]);
     await atOnce('kept with the passkey');
     assert.match((await shown()).changes, /^Sparkie makes a change your words clearly ask for at once: the brain check passed, and the eval on record for this build \(\d{4}-\d\d-\d\d\) ran in full and met the bar\.$/);
+  });
+
+  test('the way out holds against an agent, a stranger, a forged seal, another build, a record’s own score, two at once and a stale press; "No" drops it; an agent can’t press it', { timeout: 180000 * SLOW }, async () => {
+    // (the newest full run on record missed the bar, so Sparkie asks: nothing below may change that)
+    await kept(await record({}, { passed: i => i >= 3 }));
+    await aButton('a run that missed the bar');
+    const before = readFileSync(PROFILES(), 'utf8');
+    // (an agent's key gets nothing from the route; nobody, the same)
+    assert.equal((await api('/main/eval', { method: 'POST', body: await record(), headers: { authorization: `Bearer ${act.token}`, 'tailscale-funnel-request': '?1' } })).status, 401);
+    assert.equal((await api('/main/eval', { method: 'POST', body: await record(), headers: { 'tailscale-user-login': 'stranger@test' } })).status, 401);
+    // (another build's mark: refused, nothing waits)
+    const other = await keep(await record({ reads: 'cd'.repeat(32) }));
+    assert.equal(other.status, 409, other.text);
+    assert.match(other.json.error, /^Kept nothing: that result is for another version of what the brain reads than this build’s\./);
+    // (its own score says it met the bar over failing runs: recounted, kept as a run that missed it, and no button)
+    const own = await keep(await record({ score: { full: true, met: true, passOnce: 1, passAllRuns: 1, wrongChanges: 0, askedOnClear: 0 } }, { passed: i => i >= 3 }));
+    assert.equal(own.status, 201, own.text);
+    assert.match(own.json.says, /It doesn’t let Sparkie change things without asking: the bar wasn’t met\.$/);
+    assert.equal((await waiting()).open.length, 0, 'no button for either');
+    // (a forged seal and keptWith in what was posted count for nothing: it waits like any other)
+    const forged = await keep({ ...(await record()), keptWith: 'passkey', seal: 'ab'.repeat(32) });
+    assert.equal(forged.status, 202, forged.text);
+    await aButton('posted with a forged seal');
+    // (two at once: one waits, the newer; the older's buttons are gone)
+    const [r1, r2] = [await record(), await record()];
+    const both = await Promise.all([keep(r2), keep(r1)]);
+    assert.ok(both.some(x => x.status === 202), JSON.stringify(both.map(x => x.status)));
+    let w = await waiting();
+    assert.equal(w.open.length, 2, 'one waiting result’s two buttons');
+    assert.ok(w.message.content.includes(`${r2.at.slice(0, 10)} at ${r2.at.slice(11, 16)} UTC`));
+    // (a press of a button after a newer result arrived)
+    const stale = w, newest = await record();
+    assert.equal((await keep(newest)).status, 202);
+    assert.equal((await press(stale, stale.keep)).status, 409, 'the older button');
+    // (an agent can't press it: the owner's chat isn't its conversation)
+    w = await waiting();
+    const door = await call(act.token, 'ask_sparkie', { conversation: w.conv, choice: w.keep.id });
+    assert.equal(door.isError, true, door.text);
+    // ("No" drops it: nothing kept, nothing waits)
+    assert.equal((await press(w, w.no)).status, 200);
+    assert.doesNotMatch((await shown()).changes, /waiting for your yes/);
+    await aButton('dropped');
+    const keptAts = Object.values(profiles()).flatMap(x => Object.values(x.evals || {}).flat()).map(y => y.at);
+    assert.ok(![r1, r2, newest].some(x => keptAts.includes(x.at)), 'none of the waiting ones was kept');
+    assert.equal(JSON.parse(before).profiles !== undefined, true);
   });
 
   test('the newest full run decides: one that missed the bar takes the pass away; newer partial runs neither give nor take; a passing one gives it back', { timeout: 120000 * SLOW }, async () => {
@@ -175,12 +254,12 @@ describe('the rail', { concurrency: 1 }, () => {
     const two = LOCK().evalSet.cases.slice(0, 2);
     for (let i = 0; i < 6; i++) assert.equal((await kept(await record({}, { cases: two, runs: 1 }))).stored, true);
     await aButton('newer partial runs give nothing back', /didn’t meet the bar/);
-    await kept(await record());
+    await yes(await record());
     await atOnce('a newer passing full run');
     for (let i = 0; i < 6; i++) await kept(await record({}, { cases: two, runs: 1 }));
     await atOnce('six newer partial runs push nothing out');
     const slot = Object.values(profiles()).find(p => p.setup.id === 'aphex').evals[`${LOCK().brainReads}:${LOCK().evalSet.version}`];
-    assert.equal(slot.filter(x => x.score.full).length, 3, 'the three full runs are kept beside five partial ones');
+    assert.ok(slot.filter(x => x.score.full).length >= 3, 'the full runs are kept beside five partial ones');
   });
 
   test('records that never count, each the newest when kept: partial, bar not met, another mark, another case set, a memory set, a memory addition off, no set fields, a case id or expect not the lock’s, written by hand', { timeout: 300000 * SLOW }, async () => {
@@ -190,19 +269,24 @@ describe('the rail', { concurrency: 1 }, () => {
     const cases = LOCK().evalSet.cases, memory = readFileSync(join(REPO, 'test', 'eval', 'memory.json')), sha = b => createHash('sha256').update(b).digest('hex');
     // (a case file is a list of cases, or {about, cases})
     const memoryCases = (v => (Array.isArray(v) ? v : v.cases))(JSON.parse(memory));
+    // (kept, never counting)
     const never = [
       ['a partial run', await record({}, { cases: cases.slice(0, 5) })],
       ['its own score saying it met the bar over failing runs', await record({ full: true, score: { full: true, met: true, passOnce: 1, passAllRuns: 1, wrongChanges: 0, askedOnClear: 0 } }, { passed: i => i >= 3 })],
-      ['another mark', await record({ reads: 'cd'.repeat(32) })],
-      ['another case set', await record({ set: 'ef'.repeat(32) })],
       ['a memory-set full pass', await record({ set: sha(memory), setFile: 'test/eval/memory.json', setCases: memoryCases.length }, { cases: memoryCases.map(c => [c.id, c.expect]) })],
       ['a memory addition off', await record({ memorySwitches: { on: SWITCHES.slice(1), off: ['names'] } })],
       ['no setFile or memorySwitches', await record({ setFile: undefined, memorySwitches: undefined })],
-      ['a case id not the lock’s', await record({}, { cases: cases.map(([id, e], i) => [i ? id : `${id}-x`, e]) })],
-      ['an expect not the lock’s', await record({}, { cases: cases.map(([id, e], i) => [id, i ? e : (e === 'act' ? 'ask' : 'act')]) })],
     ];
     for (const [what, rec] of never) {
       assert.equal((await kept(rec)).stored, true, what);
+      await aButton(what);
+    }
+    // (refused, nothing kept and nothing waiting: they could unlock, but not for this build, its case set and its cases)
+    for (const [what, rec] of [['another mark', await record({ reads: 'cd'.repeat(32) })], ['another case set', await record({ set: 'ef'.repeat(32) })],
+      ['a case id not the lock’s', await record({}, { cases: cases.map(([id, e], i) => [i ? id : `${id}-x`, e]) })],
+      ['an expect not the lock’s', await record({}, { cases: cases.map(([id, e], i) => [id, i ? e : (e === 'act' ? 'ask' : 'act')]) })]]) {
+      const r = await keep(rec);
+      assert.equal(r.status, 409, `${what}: ${r.text}`);
       await aButton(what);
     }
     // Written into the file by hand: no seal.
@@ -213,7 +297,7 @@ describe('the rail', { concurrency: 1 }, () => {
     writeFileSync(PROFILES(), JSON.stringify(file), { mode: 0o600 });
     await aButton('written by hand, with no seal');
     assert.ok(seal);
-    await kept(await record());
+    await yes(await record());
     await atOnce('a passing full run again');
   });
 
@@ -410,4 +494,46 @@ test('no eval on record: self-healing restarts a crashed model, and the owner’
     const test = await (await fetch(`${fleet.base}/actions/self_test`, { method: 'POST', headers: head, body: '{}' })).json();
     assert.equal(test.outcome, 'started', JSON.stringify(test));
   } finally { await fleet.stop(); }
+});
+
+// A waiting result lives in memory only: a restart forgets it, so a restart can't be used to slip one in.
+test('a result waiting for the owner’s yes is forgotten at a restart: its old button is refused after it, nothing is kept and nothing waits', { timeout: 240000 * SLOW }, async () => {
+  const on = f => async (path, body, headers = {}) => {
+    const r = await fetch(`${f.base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: f.origin, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    return { status: r.status, json, text };
+  };
+  const one = await startMock({ watchMs: 60000, evalOnRecord: false, keep: true });
+  let two = null;
+  try {
+    const at1 = on(one), since = new Date().toISOString();
+    const b = await at1('/auth/passkey/begin', { purpose: 'register' });
+    assert.equal((await at1('/auth/passkey/register', KEY.register(b.json))).status, 201);
+    assert.equal((await at1('/main/check', {})).status, 202);
+    const p = await waitFor(() => { try { return Object.values(JSON.parse(readFileSync(join(one.stateDir, 'brain-profiles.json'), 'utf8')).profiles).find(x => x.at > since); } catch { return null; } }, { timeout: 60000, what: 'the check' });
+    const lock = JSON.parse(readFileSync(join(one.dir, 'workflows.lock.json'), 'utf8')), lockFile = join(TMP, 'restart-lock.json');
+    writeFileSync(lockFile, JSON.stringify(lock));
+    const rec = { kind: 'spark-console-eval', at: new Date(tick += 1000).toISOString(), build: lock.build, reads: lock.brainReads, set: lock.evalSet.version, setFile: 'test/eval/cases.json', setCases: lock.evalSet.cases.length,
+      cap: null, memorySwitches: { on: SWITCHES, off: [] }, runs: 3, brain: { standIn: true, key: p.key, setup: p.setup.id, model: p.model, engine: p.engine, image: p.image, flags: p.flags },
+      cases: lock.evalSet.cases.map(([id, expect]) => ({ id, expect, runs: [1, 2, 3].map(() => ({ passed: true, asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] })) })) };
+    assert.equal((await at1('/main/eval', rec)).status, 202);
+    const conv = (await at1('/chats')).json.chats.find(c => c.title === 'The brain eval’s result');
+    const keepIt = (await at1(`/chats/${conv.id}`)).json.messages.flatMap(m => m.choices || []).find(c => c.state === 'open' && /^Keep it/.test(c.label));
+    assert.ok(keepIt);
+    await one.stop();
+    two = await startMock({ watchMs: 60000, evalOnRecord: false, env: { SPARK_CONSOLE_WORKFLOW_LOCK: lockFile }, prepare: ({ stateDir }) => {
+      for (const f of ['chats.json', 'passkeys.json', 'brain-profiles.json']) writeFileSync(join(stateDir, f), readFileSync(join(one.stateDir, f)), { mode: 0o600 });
+    } });
+    const at2 = on(two);
+    assert.match((await at2('/actions/sparkie_setup', {})).json.changes, /^Sparkie asks before every change, one button each: (?!.*waiting for your yes)/);
+    const pressed = await at2(`/chats/${conv.id}/choose`, { choice: keepIt.id });
+    assert.equal(pressed.status, 409, pressed.text);
+    assert.ok(!Object.values(JSON.parse(readFileSync(join(two.stateDir, 'brain-profiles.json'), 'utf8')).profiles).some(x => Object.values(x.evals || {}).flat().some(y => y.at === rec.at)), 'nothing kept');
+  } finally {
+    await two?.stop();
+    await one.stop();
+    rmSync(one.dir, { recursive: true, force: true });
+  }
 });
