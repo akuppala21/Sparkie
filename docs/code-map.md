@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 96 parts in `service/src/`, joined in name order into `service/server.mjs` (24592 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 96 parts in `service/src/`, joined in name order into `service/server.mjs` (24593 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -906,12 +906,12 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
 - **Area:** features. **Rules:** R62, R52, R43. **Tests:** box-fill.test.mjs
-- **Lines:** 308
+- **Lines:** 306
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `fillShow`, `fillRefuse`, `fillPathWrong`, `fillBlobId`, `tarRead`, `fillStream`, `fillHub`, `fillTreeList`, `fillGate`, `fillBoxNode`, `fillRecord`, `boxFill`, `boxFillOf`, `boxReadBack`, `boxFillDoor`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`)
+- **Uses:** `01-setup` (`HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`)
 - **Used by:** `21-selfchange`, `21-work`
 
 ### `21-box.mjs`: the box: a throw-away container on a compute Spark (A2; commands in it come with A4)
@@ -1238,13 +1238,13 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the runner's run wall with the copy first (root, Spark 2 and the net are later …
 
 - **Area:** features. **Rules:** R42, R43, R61. **Tests:** work.test.mjs, ladder.test.mjs
-- **Lines:** 404
+- **Lines:** 407
 - **Actions:** `run`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `globRe`, `keyWord`, `shellWords`, `lookWords`, `lookForm`, `helperScript`, `helperCall`, `helperAnswer`, `ownerCommand`, `mayRun`, `needsOwner`, `whoMayLook`, `lookClean`, `forBrain`, `runCommand`, `selfTestWalls`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `HttpError`, `CONFIG`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`), `20-sort` (`sortCommand`), `21-box-fill` (`BOX_FILL_DOOR`, `boxFillDoor`), `21-box` (`boxRun`), `21-ladder` (`workChange`), `21-long` (`longStart`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `q`, `HttpError`, `CONFIG`, `NODES`), `02-ssh` (`knownOffline`, `spawnOn`, `noteReach`, `run`), `12-status` (`sparkName`), `16-actions` (`sparkOf`, `sizeWords`, `action`, `sparkArg`), `20-journal` (`J_MAX`, `journalId`, `journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`, `consoleOrigin`, `agentKeys`), `20-sort` (`sortCommand`), `21-box-fill` (`boxFillDoor`), `21-box` (`boxRun`), `21-ladder` (`workChange`), `21-long` (`longStart`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`)
 - **Used by:** `16-reads`, `20-recall`, `20-sort`, `21-box-fill`, `21-box`, `21-guard`, `21-hub`, `21-ladder`, `21-long`, `21-net`, `21-runner`, `21-selftest`, `21-work-shown`
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
