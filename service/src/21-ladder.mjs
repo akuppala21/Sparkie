@@ -207,6 +207,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
+  if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }

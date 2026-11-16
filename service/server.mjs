@@ -17269,6 +17269,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
+  if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
@@ -17299,9 +17301,10 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
 // one cut-off notice says so. It is never run again.
 
 // The most minutes each may have (design A 2.10): a look 1 (the helper gives a look 60 s at most), a change after the
-// owner's yes 120. A change that runs at once is held to 10: the wall's analysis keeps an at-once change's time limit
-// short (it is what bounds what a wrongly sorted change could do with the processors, the disk's traffic and a port),
-// and 10 is the design's own smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
+// owner's yes 120. A change that runs at once has 10 at most, and one asked for more is asked first (the ladder), so
+// the owner's press gives it the time: the wall's analysis keeps an at-once change's time limit short (it is what bounds
+// what a wrongly sorted change could do with the processors, the disk's traffic and a port), and 10 is the design's own
+// smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
 // the lock-out class (10) come with their own steps: the ladder runs none of them yet.
 const LONG_MOST = { look: 1, atOnce: 10, asked: 120 };
 const LONG_WHY = { look: 'a look runs for one minute at most', atOnce: 'a change that runs without your yes is kept short (asked first, it may have up to 120)', asked: 'a command runs for 120 minutes at most' };
@@ -20800,7 +20803,7 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
-    minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute, a change that runs without the owner’s yes to 10.' },
+    minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });

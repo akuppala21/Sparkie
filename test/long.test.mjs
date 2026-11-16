@@ -2,7 +2,7 @@
 // 21-runner.mjs; R23, R13; design A 2.10 and step 6, A6), end to end on the stand-in fleet: the call answers at once
 // with the operation; an exit code other than 0 is a result and the operation completes; its end is posted in the
 // chat that asked, built by code (how long, the exit code, its record) with none of the output, and the request's
-// carry-on turn runs; a look is held to 1 minute and a change that runs at once to 10, each said; an asked change keeps
+// carry-on turn runs; a look is held to 1 minute, said; a change given more than 10 is asked; an asked change keeps
 // what was asked (its button, and the dangerous ask's facts, say how long); the limit stops it with everything it
 // started; one long command a Spark at a time; cancel_operation stops its unit by id; a console killed while it runs
 // stops it by id after the restart, says so once, and never runs it again.
@@ -61,7 +61,7 @@ const sentBack = words => {
   return (x?.results || []).map(r => (String(r.content).startsWith('[error] ') ? { error: String(r.content).slice(8) } : JSON.parse(r.content)));
 };
 
-test('with minutes a change is an operation: the call answers at once, exit code 3 completes it as a result, and its record keeps the output; at once it is held to 10 minutes, and says so', { timeout: 120000 * SLOW }, async () => {
+test('with minutes a change is an operation: the call answers at once, exit code 3 completes it as a result, and its record keeps the output; more than 10 minutes is asked first', { timeout: 120000 * SLOW }, async () => {
   const command = "printf 'LONG-OUTPUT-WORD\\n'; sleep 2; echo done > notes/a.txt; exit 3";
   const t0 = Date.now(), r = await run({ command, minutes: 5 });
   assert.equal(r.status, 200, r.text);
@@ -80,14 +80,10 @@ test('with minutes a change is an operation: the call answers at once, exit code
   assert.deepEqual([end.ok, end.outcome, end.exit], [true, 'ran', 3]);
   assert.equal(j.cleanUp.match(/record (j_[0-9a-f]{12})/)[1], start.id);
   assert.ok(unitProps(start.unit).includes(`RuntimeMaxSec=${5 * MINUTE}`), JSON.stringify(unitProps(start.unit)));
-  // More than 10 minutes at once is held to 10, and the answer says so.
-  const held = await run({ command: 'echo held > notes/c.txt', minutes: 30 });
-  assert.equal(held.status, 200, held.text);
-  assert.deepEqual([held.json.minutes, held.json.held], [10, 'Held to 10 minutes: a change that runs without your yes is kept short (asked first, it may have up to 120).'], held.text);
-  const hj = await ended(held.json.operation);
-  assert.equal(hj.status, 'completed', JSON.stringify(hj));
-  assert.match(hj.cleanUp, / Held to 10 minutes: a change that runs without your yes is kept short \(asked first, it may have up to 120\)\.$/);
-  assert.ok(unitProps(startOf('echo held > notes/c.txt').unit).includes(`RuntimeMaxSec=${10 * MINUTE}`));
+  // More than 10 minutes is asked first (from the API, with no button to show, not run: chat test below).
+  const more = await run({ command: 'echo more > notes/c.txt', minutes: 30 });
+  assert.equal(more.status, 409, more.text);
+  assert.equal(more.json.error, 'Not run at once: it may run for 30 minutes. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.');
   // Not on Spark 2 yet, a look or a change.
   for (const command of ['cat notes/a.txt', 'echo hub > notes/hub.txt']) {
     const hub = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command, dir: '~', minutes: 5 } });
@@ -100,7 +96,7 @@ test('with minutes a change is an operation: the call answers at once, exit code
     assert.equal(bad.status, 400, `${minutes}: ${bad.text}`);
     assert.equal(bad.json.error, 'minutes should be a whole number from 1 to 120.');
   }
-  assert.equal(readFileSync(at3('notes/c.txt'), 'utf8'), 'held\n', 'nothing ran');
+  assert.equal(readFileSync(at3('notes/c.txt'), 'utf8'), 'c before\n', 'nothing ran');
 });
 
 test('a look with minutes is held to 1 and says so; it has a start and an end line, its unit the look wall\'s', { timeout: 120000 * SLOW }, async () => {
@@ -191,6 +187,22 @@ test('in the chat that asked: its end is posted, built by code with none of the 
   const start = startOf(cmd2);
   assert.deepEqual([start.minutes, start.gate], [30, 'asked']);
   assert.ok(unitProps(start.unit).includes(`RuntimeMaxSec=${30 * MINUTE}`), 'asked, it keeps 30 minutes: held only at once');
+});
+
+test('a plain change the owner\'s words ask for, given more than 10 minutes, is asked for its time, and the press gives it all of it', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), words = 'build the forty notes on spark 3', command = 'echo forty > notes/forty.txt';
+  script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command, dir: '~', minutes: 40 } }] }]);
+  let r;
+  try { r = await say(chat, words); } finally { noScript(); }
+  const [q] = sentBack(words);
+  assert.equal(q?.outcome, 'needs-ok', JSON.stringify(q));
+  assert.match(q.question, /^Run this on Spark 3\?\n\$ echo forty > notes\/forty\.txt\nAsked because it may run for 40 minutes\.\nIt runs as an operation for up to 40 minutes; its result is posted here when it ends\.\n/, q.question);
+  assert.ok(!existsSync(at3('notes/forty.txt')), 'nothing ran before the press');
+  const p = await choose(chat, r.message.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  await waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.operation), { timeout: 60000, what: 'its result' });
+  assert.equal(readFileSync(at3('notes/forty.txt'), 'utf8'), 'forty\n');
+  assert.ok(unitProps(startOf(command).unit).includes(`RuntimeMaxSec=${40 * MINUTE}`), 'all 40 minutes, from the press');
 });
 
 test('the dangerous ask says how long it may run: one line among its own facts, the lines the paired Telegram chat is sent too', { timeout: 120000 * SLOW }, async () => {

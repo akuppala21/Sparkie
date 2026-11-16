@@ -15,9 +15,10 @@
 // one cut-off notice says so. It is never run again.
 
 // The most minutes each may have (design A 2.10): a look 1 (the helper gives a look 60 s at most), a change after the
-// owner's yes 120. A change that runs at once is held to 10: the wall's analysis keeps an at-once change's time limit
-// short (it is what bounds what a wrongly sorted change could do with the processors, the disk's traffic and a port),
-// and 10 is the design's own smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
+// owner's yes 120. A change that runs at once has 10 at most, and one asked for more is asked first (the ladder), so
+// the owner's press gives it the time: the wall's analysis keeps an at-once change's time limit short (it is what bounds
+// what a wrongly sorted change could do with the processors, the disk's traffic and a port), and 10 is the design's own
+// smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
 // the lock-out class (10) come with their own steps: the ladder runs none of them yet.
 const LONG_MOST = { look: 1, atOnce: 10, asked: 120 };
 const LONG_WHY = { look: 'a look runs for one minute at most', atOnce: 'a change that runs without your yes is kept short (asked first, it may have up to 120)', asked: 'a command runs for 120 minutes at most' };
