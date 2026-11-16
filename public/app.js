@@ -2240,7 +2240,9 @@ function toolLines(tools, asked = false) {
     if (t.line) return commandRow(t);
     const title = t.title || t.name;
     const waits = t.outcome ? ['question', 'needs-ok'].includes(t.outcome) : asked;
-    return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? 'Started' : 'Couldn’t'}: ${title}`)
+    // (said from the change's own outcome: "Started" only for one that started, C-10)
+    const did = !t.outcome || t.outcome === 'started' ? 'Started' : { already: 'Nothing to do', 'already-starting': 'Already starting', waiting: 'Waiting', cancelling: 'Cancelling' }[t.outcome] || 'Done';
+    return h('li', {}, t.change ? (t.ok && waits ? `${title}: asked ${t.outcome === 'needs-ok' ? 'for your OK' : 'you to choose'}` : `${t.ok ? did : 'Couldn’t'}: ${title}`)
       : t.ok ? `${t.outcome === 'look' ? `${title} as a look (nothing changed or sent)` : `Checked ${title}`}${times(t.times)}${t.ms ? ` · ${took(t.ms)}` : ''}` : `Couldn’t check ${title}${times(t.times)}`);
   }));
 }
