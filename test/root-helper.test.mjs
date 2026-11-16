@@ -1094,13 +1094,14 @@ describe('the lock-out net (R60)', () => {
 
   // The final read's TC-4: the net's own "nothing ran" promises no test reached.
   test('arming that fails on the copy (over 64 MB) or on a timer systemd took but does not keep leaves nothing and runs nothing', () => {
-    for (const [why, set] of [['the copy of the ways in failed (more than 64 MB to copy', s => { s.put('etc/ssh/big'); truncateSync(join(s.R, 'etc/ssh/big'), 65 * 2 ** 20); }],
+    // (the whole sentence: the last round's item 2 took out the space the copy's own line break left before ")")
+    for (const [why, set] of [['the copy of the ways in failed (more than 64 MB to copy), so nothing ran', s => { s.put('etc/ssh/big'); truncateSync(join(s.R, 'etc/ssh/big'), 65 * 2 ** 20); }],
       ['its timer is not waiting, so nothing ran', s => s.put('standin/timer-lost')]]) {
       const s = netted();
       set(s);
       const r = net(s, 'touch "$SPARK_CONSOLE_REHEARSAL/it-ran"');
       refused(r, `the net could not be armed: ${why}`);
-      assert.match(r.stdout, /, so nothing ran\n$/);
+      assert.equal(r.stdout, `${r.id} refused: the net could not be armed: ${why}\n`);
       assert.ok(!existsSync(G(s, r.id)) && !existsSync(join(s.R, 'it-ran')) && !existsSync(join(s.R, 'run/spark-console', r.id)), why);
       for (const f of BOOT(s, r.id)) assert.ok(!lstatExists(f), f);
       assert.ok(!started(s).some(c => c.includes(`--unit=sw-run-${r.id}`)), why);
@@ -1715,6 +1716,8 @@ describe('the lock-out net (R60)', () => {
     assert.ok(Date.now() - t0 >= 40000, `two waits of 20 s between the three tries (${Date.now() - t0} ms)`);
     assert.equal(f.status, 1);
     assert.equal(readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n').length, 3);
+    // (each line whole, with no space left by the error's own line break: the last round's item 2)
+    for (const l of readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n')) assert.match(l, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ attempt [123]: \S(.*\S)?$/, l);
     assert.ok(existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'result')));
   });
 

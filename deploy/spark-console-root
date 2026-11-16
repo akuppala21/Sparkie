@@ -1178,7 +1178,7 @@ net_arm() {
   [ ${#NAMED_UNITS[@]} -eq 0 ] || printf '%s\n' "${NAMED_UNITS[@]}" > "$G/units"
   printf '%s' "$(( $(date +%s) + 10#$SECS + NET_AFTER ))" > "$G/at"
   if ! "$PY" -I -S "$G/guard.py" copy > "$G/copy.out" 2>&1; then
-    n=$(head -c 200 -- "$G/copy.out" | tr -c '[:print:]' ' ')
+    n=$(head -c 200 -- "$G/copy.out" | tr -c '[:print:]' ' ' | sed 's/ *$//')   # (its last line break is no space)
     net_refuse "the net could not be armed: the copy of the ways in failed (${n:-no reason}), so nothing ran"
   fi
   : > "$G/pending"
@@ -1227,7 +1227,7 @@ net_after() {   # after the command: what differs, and when it goes back. It dis
     bad=$(sshd -t < /dev/null 2>&1) && bad='' || bad=${bad:-it says nothing}
   fi
   if [ -n "$bad" ] || [ "$state" != active ]; then
-    if [ -n "$bad" ]; then say "net: sshd -t refuses the changed /etc/ssh ($(printf '%s' "$bad" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-160)), so what differs goes back now"
+    if [ -n "$bad" ]; then say "net: sshd -t refuses the changed /etc/ssh ($(printf '%s' "$bad" | head -n 1 | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-160)), so what differs goes back now"
     else say "net: its timer is not waiting (${state:-gone}), so what differs goes back now"; fi
     "$BASH_BIN" "$G/restore.sh" asked > /dev/null 2>&1
     # (put back: its timer has nothing left to do)
@@ -1334,7 +1334,7 @@ else
 fi
 for n in 1 2 3; do
   python3 -I -S "$here/guard.py" restore "$why" 2> "$here/last-error" && exit 0
-  printf '%s attempt %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$n" "$(tail -n 1 -- "$here/last-error" | tr -c '[:print:]' ' ' | cut -c1-200)" >> "$here/failures"
+  printf '%s attempt %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$n" "$(tail -n 1 -- "$here/last-error" | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-200)" >> "$here/failures"
   [ "$n" = 3 ] || sleep 20
 done
 exit 1
@@ -2171,7 +2171,7 @@ do_prove() {
   # shellcheck disable=SC2053
   if [ "$r13" = 125 ] && [[ $o13 == $want13 ]] && [[ $o13 != *$'\n'* ]]; then say "proof root 13 refused: ${NAMES[13]}"
   else
-    say "proof root 13 got through: ${NAMES[13]} (it answered: $(printf '%s' "$o13" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-120))"
+    say "proof root 13 got through: ${NAMES[13]} (it answered: $(printf '%s' "$o13" | head -n 1 | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-120))"
     [ -n "$first" ] || first="attempt 13 got through (${NAMES[13]})"
   fi
   if ! root_on; then
