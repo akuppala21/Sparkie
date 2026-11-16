@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, choose, REPO, SLOW } from './lib.mjs';
 import { startGitHub } from './mock/github.mjs';
 import { ALWAYS, ALWAYS_PARTS } from '../tools/affected.mjs';
+import { taskSet } from '../agentbar/trial-lib.mjs';
 
 const TOKEN = `gt_${randomBytes(16).toString('hex')}`, REPO_NAME = 'someone/spark-console';
 const temps = [];
@@ -63,7 +64,7 @@ useFleet({ env: ENV, prepare: ({ dir, stateDir }) => {
 
 // The stand-in fleet's switches (21-selfchange.mjs): on, the trial's pass, the box.
 const control = v => (v ? writeFileSync(join(STATE, '.test-selfchange.json'), JSON.stringify(v)) : rmSync(join(STATE, '.test-selfchange.json'), { force: true }));
-const ON = { on: true, trial: 'pass' };
+const ON = { on: true };
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const TITLE = 'A calmer page', WHY = 'The page says less while a model starts, as you asked this morning.';
 // ("change your own code" asks for that kind of change, so it runs at once on the owner's own words; "open a proposal"
@@ -94,6 +95,21 @@ const atMain = path => readFileSync(join(SRC, path), 'utf8');
 // (the open proposal's id, from the copy's refs: the press answers with its note only)
 const openId = () => /^refs\/sparkie\/([0-9a-f]{8}) /m.exec(refs())?.[1] || null;
 const box = files => control({ ...ON, box: { files } });
+// A pass of the coding trial on record for the stand-in brain serving now, kept as agentbar/trial.mjs's record is (R67:
+// POST /main/trial, the stand-in fleet's record, every task 3 of 3).
+const SET = taskSet(join(REPO, 'agentbar', 'trial', 'tasks'));
+async function keepTrialPass() {
+  const setup = await api('/actions/sparkie_setup', { method: 'POST', body: {} }), inUse = setup.json.brainCheck.inUse;
+  const lock = JSON.parse(readFileSync(join(T.fleet.dir, 'workflows.lock.json'), 'utf8')), at = Date.now() - 60000;
+  const rec = { kind: 'spark-console-trial', at: new Date(at).toISOString(), startedAt: new Date(at - 500).toISOString(), build: lock.build, reads: lock.brainReads,
+    tasks: { version: SET.version, ids: SET.ids }, runs: 3, brain: { standIn: true, key: inUse.key, setup: inUse.setup, model: inUse.model, engine: inUse.engine, image: inUse.image, flags: inUse.flags },
+    box: { kind: 'docker', image: 'node:26-bookworm', network: 'none' },
+    results: SET.ids.map(id => ({ id, runs: [0, 1, 2].map(() => ({ passed: true, rounds: 9, seconds: 300.5, ended: 'answered', checks: [{ name: 'its own test', pass: true }] })) })) };
+  const r = await api('/main/trial', { method: 'POST', body: rec });
+  assert.equal(r.status, 201, r.text);
+  const t = await api('/main/trial');
+  assert.equal(t.json.passed, true, t.text);
+}
 // Hostile files write here if anything ever runs them.
 const MARK = temp('sct-self-mark-');
 const marks = () => readdirSync(MARK);
@@ -112,23 +128,34 @@ function holders(text, dirs) {
 }
 
 describe('propose_update', { concurrency: 1 }, () => {
-  test('dark: refused for everyone while it is off, the owner’s own chat too; nothing is started or pushed', async () => {
-    control(null);
-    const r = await say(await newChat(), 'please change your own code');
-    assert.match(r.text, /Proposing changes to Spark Console’s own code isn’t turned on yet, so nothing was done\./);
+  test('no pass of the coding trial on record: refused for everyone with the trial’s own sentence, the stand-in file absent or on; nothing is started or pushed', async () => {
+    const SAYS = /Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record for the brain in use\. No coding trial result is on record for this brain\. Run node agentbar\/trial\.mjs on the real brain, then keep it with --store\. Nothing was done\./;
     const k = await createActKey('selfd');
-    const a = await call(k.token, 'propose_update', { do: 'start' });
-    assert.ok(a.isError, a.text);
-    assert.match(a.text, /isn’t turned on yet/);
-    assert.equal((await api('/actions/propose_update', { method: 'POST', body: { do: 'start' } })).status, 403);
+    for (const v of [null, { on: true }]) {
+      control(v);
+      const r = await say(await newChat(), 'please change your own code');
+      assert.match(r.text, /propose_update said: \[error\] Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record/);
+      const a = await call(k.token, 'propose_update', { do: 'start' });
+      assert.ok(a.isError, a.text);
+      assert.match(a.text, SAYS);
+      const p = await api('/actions/propose_update', { method: 'POST', body: { do: 'start' } });
+      assert.equal(p.status, 403, p.text);
+      assert.match(p.json.error, SAYS);
+    }
     assert.equal(refs(), '');
     assert.deepEqual(ghBranches(), []);
   });
 
-  test('turned on, but the coding trial has no pass on record: refused', async () => {
-    control({ on: true });
+  test('dark: with a pass on record but the piece not turned on, refused for everyone, the owner’s own chat too', async () => {
+    await keepTrialPass();
+    control(null);
     const r = await say(await newChat(), 'please change your own code');
-    assert.match(r.text, /the coding trial has no pass on record for the brain in use\. No coding trial result is on record for this brain\. Nothing was done\./);
+    assert.match(r.text, /Proposing changes to Spark Console’s own code isn’t turned on yet, so nothing was done\./);
+    const k = await createActKey('selfo');
+    const a = await call(k.token, 'propose_update', { do: 'start' });
+    assert.ok(a.isError, a.text);
+    assert.match(a.text, /isn’t turned on yet/);
+    assert.equal((await api('/actions/propose_update', { method: 'POST', body: { do: 'start' } })).status, 403);
     assert.equal(refs(), '');
   });
 

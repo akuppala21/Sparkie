@@ -18403,26 +18403,18 @@ const selfRepo = () => { const h = selfHome(); return h ? `${h}/.local/share/spa
 const selfSource = () => (ALL_LOCAL ? fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '') : `${homedir()}/spark-console-src`);
 
 // The stand-in fleet's switches for its tests (STATE_DIR/.test-selfchange.json, ALL_LOCAL only): on (the piece turned
-// on), trial ("pass": a pass on record, only while this build has no trial of its own) and box (a stand-in box while
-// this build has none: files, its paths and texts, null for one removed; busy, other work in it).
+// on) and box (a stand-in box while this build has none: files, its paths and texts, null for one removed; busy, other
+// work in it). A trial's pass is never stood in for: the tests keep a stand-in record through POST /main/trial.
 function selfTestFile() {
   if (!ALL_LOCAL) return null;
   try { const v = JSON.parse(readFileSync(`${STATE_DIR}/.test-selfchange.json`, 'utf8')); return v && typeof v === 'object' ? v : null; } catch { return null; }
 }
-// The coding trial's verdict for the brain in use (C8a's trialPassed: { passed, says }, never throws), its own sentence
-// quoted as it is. Until it is in this build: no pass on record (the stand-in fleet's tests may stand in for one).
-const SELF_NO_TRIAL = 'No coding trial result is on record for this brain.';
-function selfTrial() {
-  if (typeof trialPassed === 'function') {
-    try { const r = trialPassed(); return { passed: r?.passed === true, says: clean(r?.says, 400) || SELF_NO_TRIAL }; } catch { return { passed: false, says: SELF_NO_TRIAL }; }
-  }
-  return selfTestFile()?.trial === 'pass' ? { passed: true, says: '' } : { passed: false, says: SELF_NO_TRIAL };
-}
-// The gate (runAction): dark until turned on and the trial has a pass; then only the owner's own chat.
+// The gate (runAction): the coding trial's pass for the brain in use first (C8a's trialPassed: { passed, says }, never
+// throws; its sentence quoted as it is), then the piece turned on; then only the owner's own chat.
 function selfGate(viewer, ctx) {
+  const trial = trialPassed();
+  if (trial?.passed !== true) throw new HttpError(403, `Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record for the brain in use. ${clean(trial?.says, 400)} Nothing was done.`);
   if (!(SELF_CHANGE_ON || selfTestFile()?.on === true)) throw new HttpError(403, 'Proposing changes to Spark Console’s own code isn’t turned on yet, so nothing was done.');
-  const trial = selfTrial();
-  if (!trial.passed) throw new HttpError(403, `Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record for the brain in use. ${trial.says} Nothing was done.`);
   const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
   const own = viewer?.role === 'owner' && !ctx.agent && !ctx.agentId && conv && !conv.agent
     && (ctx.via === 'sparkie' || (ctx.via === 'page' && ctx.button));
