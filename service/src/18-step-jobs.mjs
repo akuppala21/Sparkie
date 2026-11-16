@@ -129,6 +129,34 @@ async function startedStill(spark, container, seen) {
     || ('since' in seen && (entry?.since || null) !== seen.since);
   return other ? `${container} on ${at} was started again since, not by this run` : null;
 }
+// The receipts of the saved workflow runs under way (each run's `ran`, by its operation's id; run_workflow keeps it), so
+// that what self-healing or Spark Console's own power cycle brings back on a run's behalf stays the run's: a model across
+// two Sparks comes back in new containers (a new id), and a bring-back after a power-on moves its entry's since.
+const runsRan = new Map();
+// Before such a bring-back of `keys` ("spark/container"): each receipt for them that is still its run's.
+async function receiptsHeld(keys) {
+  const held = [];
+  for (const [id, ran] of runsRan) {
+    for (const x of ran) {
+      if (x.kind === 'job' || !x.seen || x.wish || !keys.includes(`${x.spark}/${x.container}`)) continue;
+      if (await startedStill(x.spark, x.container, x.seen).catch(() => 'unknown') === null) held.push({ id, x });
+    }
+  }
+  return held;
+}
+// After it came back (`op`, its operation when it had one, ended well): those receipts follow it (its Docker id now, and
+// its entry's since), and the run's record on disk with them; one the owner asked for while it came back is theirs
+// (wish, read after the since in the same tick, as startedReceipts does).
+async function receiptsBroughtBack(held, op = null) {
+  for (const { id, x } of held) {
+    const now = await receiptOf(x.spark, x.container);
+    const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    if (op && jobs.get(op.id)?.ownersWish) x.wish = true;
+    else if (now?.id) x.seen = { id: now.id, since: entry?.since || null };
+    const j = jobs.get(id);
+    if (j?.status === 'running' && runsRan.has(id)) savedRunKeep(j, { started: runsRan.get(id) });
+  }
+}
 // What a step started that was on the list of what should be running before that step (`listed`: its entry then):
 // the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
 function startedListed(items, before) {

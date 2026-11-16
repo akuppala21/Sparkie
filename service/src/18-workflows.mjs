@@ -57,6 +57,14 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   ownersAsk,
   desiredWish,
   alreadyStarting,
+  receiptsHeld,
+  receiptsBroughtBack,
+  startedStill,
+  receiptOf,
+  RECEIPT_LOOK,
+  fields,
+  desired,
+  savedRunKeep,
   stopChecked,
   stopLook,
   STOPPED_STATES,
@@ -413,6 +421,8 @@ action({
       if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (and known while it runs, so what self-healing or a power cycle brings back for it stays its own: runsRan)
+      runsRan.set(j.id, ran);
       // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
       savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
@@ -453,7 +463,7 @@ action({
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { runsRan.delete(j.id); letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },

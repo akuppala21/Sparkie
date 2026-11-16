@@ -617,6 +617,8 @@ async function bringBackParked(j, ids, skip = null) {
     const wf = x.app ? null : x.sparks ? 'start_model_across' : 'restart_model', st = wf ? workflowStatus(wf) : null;
     const ctx = { actor: 'Spark Console', via: 'watcher', request: `bring back ${x.container}: ${where} is on again`, canChange: true, trusted: true, noStops: true };
     const extra = st?.state === 'needs-validation' ? { __validate: wf } : {};
+    // (a saved workflow's run that started it keeps it as its own once it is back: A-22)
+    const held = await receiptsHeld([keyOf(x)]).catch(() => []);
     try {
       if (st?.state === 'untested') throw new Error('the workflow that brings it back hasn’t passed Spark Console’s tests');
       const out = x.app ? await runAction('keep_running', healOwner(), { spark: x.spark, container: x.container }, ctx)
@@ -626,6 +628,7 @@ async function bringBackParked(j, ids, skip = null) {
         const done = await waitJob(out.operation, 45 * 60000);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'it didn’t start').split('\n')[0]);
       } else if (!['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
+      if (held.length) await receiptsBroughtBack(held, out?.operation ? jobs.get(out.operation) : null).catch(() => {});
       note(j, `${x.container} is back on ${where}`);
       results.push(x.container);
     } catch (e) {

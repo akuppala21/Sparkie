@@ -8114,6 +8114,34 @@ async function startedStill(spark, container, seen) {
     || ('since' in seen && (entry?.since || null) !== seen.since);
   return other ? `${container} on ${at} was started again since, not by this run` : null;
 }
+// The receipts of the saved workflow runs under way (each run's `ran`, by its operation's id; run_workflow keeps it), so
+// that what self-healing or Spark Console's own power cycle brings back on a run's behalf stays the run's: a model across
+// two Sparks comes back in new containers (a new id), and a bring-back after a power-on moves its entry's since.
+const runsRan = new Map();
+// Before such a bring-back of `keys` ("spark/container"): each receipt for them that is still its run's.
+async function receiptsHeld(keys) {
+  const held = [];
+  for (const [id, ran] of runsRan) {
+    for (const x of ran) {
+      if (x.kind === 'job' || !x.seen || x.wish || !keys.includes(`${x.spark}/${x.container}`)) continue;
+      if (await startedStill(x.spark, x.container, x.seen).catch(() => 'unknown') === null) held.push({ id, x });
+    }
+  }
+  return held;
+}
+// After it came back (`op`, its operation when it had one, ended well): those receipts follow it (its Docker id now, and
+// its entry's since), and the run's record on disk with them; one the owner asked for while it came back is theirs
+// (wish, read after the since in the same tick, as startedReceipts does).
+async function receiptsBroughtBack(held, op = null) {
+  for (const { id, x } of held) {
+    const now = await receiptOf(x.spark, x.container);
+    const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    if (op && jobs.get(op.id)?.ownersWish) x.wish = true;
+    else if (now?.id) x.seen = { id: now.id, since: entry?.since || null };
+    const j = jobs.get(id);
+    if (j?.status === 'running' && runsRan.has(id)) savedRunKeep(j, { started: runsRan.get(id) });
+  }
+}
 // What a step started that was on the list of what should be running before that step (`listed`: its entry then):
 // the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
 function startedListed(items, before) {
@@ -8334,6 +8362,14 @@ const START_CODE = () => [startModel, notBrainsSpark, brainSparks, computeSparks
   ownersAsk,
   desiredWish,
   alreadyStarting,
+  receiptsHeld,
+  receiptsBroughtBack,
+  startedStill,
+  receiptOf,
+  RECEIPT_LOOK,
+  fields,
+  desired,
+  savedRunKeep,
   stopChecked,
   stopLook,
   STOPPED_STATES,
@@ -8690,6 +8726,8 @@ action({
       if (j.usedBest) note(j, `No model was given: ${j.usedBest}, the one a compare kept for it, is used`);
       // (what this run's steps started, for the stop at a bad end: 18-step-jobs.mjs)
       const ran = [];
+      // (and known while it runs, so what self-healing or a power cycle brings back for it stays its own: runsRan)
+      runsRan.set(j.id, ran);
       // (kept on disk as it goes, so a restart in the middle stops what it started: 18-run-record.mjs)
       savedRunKeep(j, { title: w.title, chat: ctx.conv || null, steps: w.steps.length, step: 0, started: [], pending: [] });
       try {
@@ -8730,7 +8768,7 @@ action({
         }
         record(true);
         await runEndWell(j, ran, viewer, ctx, w.title);
-      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { letSleep(j); savedRunDone(j); }
+      } catch (e) { record(false); throw await runCleanUp(j, ran, e, viewer, ctx, w.title); } finally { runsRan.delete(j.id); letSleep(j); savedRunDone(j); }
     });
     return { outcome: 'started', operation: job.id, workflow: w.title, steps: w.steps.length, ...(job.usedBest ? { model: `${job.usedBest}: no model was given, so the one a compare kept for it` } : {}), ...(check ? { checked: check } : { checkSkipped: skipped }), next: `wait_operation {"id":"${job.id}"}` };
   },
@@ -10572,6 +10610,8 @@ async function bringBack(x, why, parts, power = false) {
   // with the reason (audit, 2026-11-11: a bring-back of GLM could stop the model the owner had just started).
   const ctx = { actor: 'Self-healing', via: 'watcher', request: `bring back ${x.container}: ${why}`, canChange: true, trusted: true, noStops: true };
   const stopped = [];
+  // (a saved workflow's run that started it keeps it as its own once it is back, in its new containers too: A-22)
+  const held = await receiptsHeld([key, ...parts.map(d => `${d.spark}/${d.container}`)]).catch(() => []);
   try {
     // A two-Spark model starts as a pair: what's left of it (stuck waiting for the part that's gone) stops first, and
     // starts again as it was if the start is refused.
@@ -10583,6 +10623,7 @@ async function bringBack(x, why, parts, power = false) {
     const out = x.sparks ? await runAction('start_model', healOwner(), { model: x.model, sparks: x.sparks, ...validating }, ctx)
       : await runAction('restart_model', healOwner(), { spark: x.spark, container: x.container, ...validating }, ctx);
     if (!out?.operation) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
+    if (held.length) waitJob(out.operation, 45 * 60000).then(done => (done?.status === 'completed' ? receiptsBroughtBack(held, done) : null)).catch(() => {});
     audit({ via: 'watcher', actor: 'Self-healing', action: x.sparks ? 'start_model' : 'restart_model', args: x.sparks ? { model: x.model, sparks: x.sparks } : { spark: x.spark, container: x.container }, ok: true, outcome: 'started', operation: out.operation, request: ctx.request });
   } catch (e) {
     for (const d of stopped) {
@@ -22033,6 +22074,8 @@ async function bringBackParked(j, ids, skip = null) {
     const wf = x.app ? null : x.sparks ? 'start_model_across' : 'restart_model', st = wf ? workflowStatus(wf) : null;
     const ctx = { actor: 'Spark Console', via: 'watcher', request: `bring back ${x.container}: ${where} is on again`, canChange: true, trusted: true, noStops: true };
     const extra = st?.state === 'needs-validation' ? { __validate: wf } : {};
+    // (a saved workflow's run that started it keeps it as its own once it is back: A-22)
+    const held = await receiptsHeld([keyOf(x)]).catch(() => []);
     try {
       if (st?.state === 'untested') throw new Error('the workflow that brings it back hasn’t passed Spark Console’s tests');
       const out = x.app ? await runAction('keep_running', healOwner(), { spark: x.spark, container: x.container }, ctx)
@@ -22042,6 +22085,7 @@ async function bringBackParked(j, ids, skip = null) {
         const done = await waitJob(out.operation, 45 * 60000);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'it didn’t start').split('\n')[0]);
       } else if (!['already', 'kept'].includes(out?.outcome)) throw new Error(out?.note || out?.question || out?.outcome || 'it didn’t start');
+      if (held.length) await receiptsBroughtBack(held, out?.operation ? jobs.get(out.operation) : null).catch(() => {});
       note(j, `${x.container} is back on ${where}`);
       results.push(x.container);
     } catch (e) {
