@@ -24899,11 +24899,12 @@ function ownerCommand(node, withRoot = false) {
 }
 const mayRun = (viewer, ctx) => { try { whoMayLook(viewer, ctx); return true; } catch { return false; } };
 // Nothing ran: the owner's command, once per Spark and reason while the console runs (then one short line). Spark 2's is
-// the same with --hub while its switch is on (HUB_ON, 21-hub.mjs); off (a stand-in fleet's off side), none is given.
+// the same with --hub while its switch is on (HUB_ON, 21-hub.mjs); off (only a stand-in fleet's off side), none is
+// given, and the answer says changes on Spark 2 are switched off in this console.
 const ownerTold = new Set();
 function needsOwner(node, kind, why) {
   const at = sparkName(node), others = 'use the other tools there (spark_detail, container_logs, spark_diagnostics, files)';
-  if (node.host === 'local' && !HUB_ON) return { spark: node.id, ran: false, why: `Commands on ${at}, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.`, next: `Until then ${others}.`, observedAt: new Date().toISOString() };
+  if (node.host === 'local' && !HUB_ON) return { spark: node.id, ran: false, why: `${why}; changes on ${at} are switched off in this console, so its one-time command isn’t given, and nothing ran there.`, next: `${others[0].toUpperCase()}${others.slice(1)}.`, observedAt: new Date().toISOString() };
   const told = ownerTold.has(`${node.id} ${kind}`);
   ownerTold.add(`${node.id} ${kind}`);
   return { spark: node.id, ran: false, ...(told ? {} : { ownerCommand: ownerCommand(node, kind === 'root off') }), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
