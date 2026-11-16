@@ -207,6 +207,8 @@ case "$cmd" in
   rm)
     for name in "$@"; do
       case "$name" in -*) continue ;; esac
+      # (by its name, or the start of its id, as docker rm takes either)
+      r=$(resolve "$name") && name=$r
       grep -v "^$name|" "$M/containers" > "$M/c.tmp" || true; mv "$M/c.tmp" "$M/containers"; rm -f "$M/up-$name" "$M/stuck-$name" "$M/run-$name" "$M/id-$name" "$M/box-until-$name" "$M/args-$name"
     done ;;
   run)
