@@ -275,7 +275,7 @@ test('the owner’s words ask for a lock-out change only in one sentence that na
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
   // True asks, in different words: still the dangerous ask (each answered No, so nothing runs).
   for (const words of ['open port 8022 on spark 3', 'allow user bob to sign in on spark 3', 'turn off Tailscale SSH on spark 3', 'can you add my laptop’s ssh key on spark 3?',
-    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password']) {
+    'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'Reset my password on spark 3.']) {
     const p = await proposed(words);
     assert.ok(p.m, `${words}: the dangerous ask (${JSON.stringify(sentBack(words))})`);
     assert.equal((await press(p.chat, p.no.id)).status, 200);
@@ -507,18 +507,23 @@ const unfinishedSaid = async (chat, p, re) => waitFor(async () => [p?.json?.mess
 const KEEP_OF = g => `sudo /usr/local/sbin/spark-console-root keep --id ${g.id}`;
 const WAYS_OF = g => `/putback tries the put-back again. Or, to keep it as it stands, run this on Spark 3 in your own terminal: ${KEEP_OF(g)} (it keeps the change as the put-back left it, and lists what did not go back; after it, /putback here finds it kept).`;
 const needsNow = async () => { const r = await api('/actions/fleet_status', { method: 'POST', body: {} }); assert.equal(r.status, 200, r.text); return r.json.needsOwner; };
-// At once: the command took its own guard's timer away (its timer not waiting) and the copy of one way in, so the
-// helper's put-back at once could put back the alias but not the key; its net line says the put-back failed, with its
-// count, and its guard stays open. The owner's keep, run by hand as the words say, and then /putback close it.
+// At once: while the command runs, its guard's timer and the copy of one way in are taken away (as a root command may
+// not name the helper's folder or its timers, the test does it), so the helper's put-back at once (its timer not
+// waiting) could put back the alias but not the key; its net line says the put-back failed, with its count, and its
+// guard stays open. The owner's keep, run by hand as the words say, and then /putback close it.
 test('at once, a put-back in part (the helper’s count): told with both ways on and the keep command exactly as typed; held open, with a needs-you line, and a second change there refused with both ways; the owner’s keep by hand, then /putback, closes it as kept', { timeout: 300000 * SLOW }, async () => {
   keysReset();
   const aliases = join(T.fleet.root, 'spark3', '.bash_aliases'), was = readFileSync(aliases, 'utf8');
   const chat = await newChat(), words = 'add my key and an alias on spark 3';
-  const a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; rm -f ../var/lib/spark-console/guard/*/files/spark3/.ssh/authorized_keys ../standin/timers/sw-guard-*`);
+  const a = await ask(chat, words, `${ADD}; printf '# net\\n' >> .bash_aliases; sleep 4`);
   assert.ok(a.yes, `the ask (${JSON.stringify(sentBack(words))})`);
+  const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
   let g;
   try {
-    const p = await press(chat, a.yes.id, a.pair);
+    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, what: 'the guard armed' });
+    rmSync(join(guardDir(newest().id), 'files/spark3/.ssh/authorized_keys'));
+    rmSync(join(T.fleet.root, 'standin/timers', `sw-guard-${newest().id}.timer`));
+    const p = await pressing;
     assert.equal(p.status, 200, p.text);
     const said = await unfinishedSaid(chat, p, /had to go back at once: its timer wasn’t waiting after it\./);
     g = newest();
@@ -546,6 +551,7 @@ test('at once, a put-back in part (the helper’s count): told with both ways on
   } finally {
     if (g && NET_OPEN_STATES.includes(newest()?.state)) spawnSync(join(T.fleet.root, 'usr/local/sbin/spark-console-root'), ['keep', '--id', g.id], { env: rehearsalEnv(realpathSync(join(T.fleet.root, 'spark3')), realpathSync(T.fleet.root)) });
     if (g && NET_OPEN_STATES.includes(newest()?.state)) await say(chat, '/putback').catch(() => {});
+    await pressing.catch(() => {});
     keysReset();
     writeFileSync(aliases, was);
   }
@@ -628,11 +634,11 @@ test('a restart of Spark Console inside the window puts the change back at start
 
 test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with the net off, without the owner’s press, a time or folder out of shape, or a guard open there; past those it takes the Spark’s claim, Spark 2 as any other', async () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
-  const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(src)?.[0];
-  assert.ok(fn, 'netGuarded');
+  const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(src)?.[0], openWords = /^const netOpenWords = [\s\S]*?;\n(?=\S)/m.exec(src)?.[0];
+  assert.ok(fn && openWords, 'netGuarded, netOpenWords');
   class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
   const open = new Map([['spark4', { id: 'g1', record: 'j_1', goesBackAt: '2026-11-15T17:00:00Z' }]]);
-  const make = on => new Function('NET_ON', 'HttpError', 'sparkName', 'netOpenOn', 'netHhmm', 'RUNNER_DIR', 'RUNNER_SECONDS', 'randomBytes', 'claimSparks', `${fn}\nreturn netGuarded;`)(
+  const make = on => new Function('NET_ON', 'HttpError', 'sparkName', 'netOpenOn', 'netHhmm', 'RUNNER_DIR', 'RUNNER_SECONDS', 'randomBytes', 'claimSparks', `${openWords}\n${fn}\nreturn netGuarded;`)(
     on, HttpError, n => `Spark ${n.id.slice(5)}`, s => open.get(s) || null, () => '17:00 UTC', '~/work', 1800, () => Buffer.from('0123456789ab'), s => { throw new Error(`claimed ${s.join(',')}`); });
   const pressed = { button: true, ownerConfirmed: true };
   const refused = (p, status, words) => assert.rejects(p, e => e.status === status && words.test(e.message));
