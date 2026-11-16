@@ -513,10 +513,11 @@ test('after a restart, a guard its Spark didn’t answer for keeps that Spark cl
   const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), fn = /^async function netRecover\([\s\S]*?\n\}$/m.exec(src)?.[0];
   assert.ok(fn, 'netRecover');
   const at = new Date(Date.now() + 600000).toISOString(), claims = [], holds = [], told = [];
-  const netRecover = new Function('netNow', 'NET_OPEN', 'nodeById', 'sparkName', 'guardAnswer', 'guardCall', 'netMark', 'netStillLost', 'netTell', 'netStillWords', 'NET_SLACK_MS', 'netGoneWords', 'netHhmm', 'netAfterTime', 'claimSparks', 'netHold', `${fn}\nreturn netRecover;`)(
+  const netRecover = new Function('netNow', 'NET_OPEN', 'nodeById', 'sparkName', 'guardAnswer', 'guardCall', 'netMark', 'netStillLost', 'netTell', 'netStillWords', 'NET_SLACK_MS', 'netGoneWords', 'netHhmm', 'netAfterTime', 'claimSparks', 'netHold', 'NET_PUTBACK_FAILED', 'netFailedNow', `${fn}\nreturn netRecover;`)(
     () => ({ guards: [{ id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: at }] }), ['arming', 'open', 'timer'], id => ({ id }), n => `Spark ${n.id.slice(5)}`,
     () => ({}), () => Promise.resolve({ out: '' }), () => {}, () => Promise.resolve([]), (g, text) => told.push(text), () => '', 60000, () => 'gone', () => '22:10 UTC',
-    () => Promise.resolve(), (ids, why) => { claims.push([ids, why]); return () => {}; }, (spark, until, release, then) => holds.push([spark, until, typeof release, typeof then]));
+    () => Promise.resolve(), (ids, why) => { claims.push([ids, why]); return () => {}; }, (spark, until, release, then) => holds.push([spark, until, typeof release, typeof then]),
+    /^the put-back failed: ?(.*)$/, () => '');
   await netRecover();
   assert.deepEqual(claims, [[['spark3'], 'a change inside the lock-out net']]);
   assert.deepEqual(holds, [['spark3', Date.parse(at), 'function', 'function']]);
