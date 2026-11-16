@@ -83,6 +83,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R68](rules/R68.md) | partly | `test/write.test.mjs` | falls short today: its file says where |
 | [R69](rules/R69.md) | partly | `test/selfchange.test.mjs`; `test/check-update.test.mjs`; `test/tools.test.mjs` (“everyday requests”) | falls short today: its file says where |
 | [R70](rules/R70.md) | partly | `test/root-helper.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
+| [R72](rules/R72.md) | partly | `test/ladder.test.mjs`; `test/runner.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
