@@ -255,23 +255,23 @@ test('names with a space, a leading dash, a line break or two dots are copied an
   for (const p of ['~/notes/dots.txt', '~/notes/tree', '~/notes/tree/sub', ...Object.keys(tree).map(n => `~/notes/tree/${n}`)]) assert.ok(undo.value.restored.includes(p), p);
   assert.equal(text('notes/dots.txt'), 'dots before\n');
   // What the row was (A13b's wall): a write at the top of the home would fail inside the plain wall, so it is asked, the
-  // button saying so; nothing runs before the press; after it, outside that wall (run --open), it writes ~/dots.txt, and
-  // undo puts it back.
+  // button saying so; nothing runs before the press; after it, with the top of the home writable (run --home), it writes
+  // ~/dots.txt, and undo puts it back.
   const top = 'echo z > notes/../dots.txt', words = 'put the dots at the top on spark 3';
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command: top, dir: '~' } }] }]);
   let shown;
   try { shown = await say(chat, words); } finally { noScript(); }
   const asked = JSON.parse(lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(x => x.words === words && x.lastRole === 'tool').at(-1).results[0].content);
   assert.equal(asked.outcome, 'needs-ok', JSON.stringify(asked));
-  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs outside that wall after your yes\.\nRuns outside the plain wall: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\.\n/);
+  assert.match(asked.question, /\nAsked because it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nRuns with the top of your home writable: it writes ~\/dots\.txt at the top of the home, which the plain wall keeps read-only\. Keys stay hidden and it cannot reach Docker\.\n/);
   assert.equal(text('dots.txt'), 'top dots before\n', 'nothing ran before the press');
   assert.equal(pair(top)[0], undefined, 'no start line before the press');
   const pressed = await choose(chat, shown.message.choices.find(c => c.label === 'Run it').id);
   assert.equal(pressed.status, 200, pressed.text);
   assert.equal(text('dots.txt'), 'z\n');
   const [topStart] = pair(top), topUnit = units().find(c => c.includes(`--unit=${topStart.unit}`));
-  assert.ok(topUnit && !topUnit.includes(`ReadOnlyPaths=/spark3`) && !topUnit.some(a => a.startsWith('IPAddressDeny=')), `outside the plain wall: ${JSON.stringify(topUnit)}`);
-  assert.deepEqual(topStart.outside, ['it writes ~/dots.txt at the top of the home, which the plain wall keeps read-only']);
+  assert.ok(topUnit && !topUnit.includes(`ReadOnlyPaths=/spark3`) && topUnit.some(a => a.startsWith('IPAddressDeny=localhost 10.0.0.0/8')), `the top of the home writable, the rest of the plain wall kept: ${JSON.stringify(topUnit)}`);
+  assert.deepEqual([topStart.outside, topStart.wall], [['it writes ~/dots.txt at the top of the home, which the plain wall keeps read-only'], 'home']);
   const topBack = await inChat(chat, 'undo the top dots', 'undo_last_change');
   assert.equal(topBack.value?.outcome, 'restored', topBack.error || JSON.stringify(topBack.value));
   assert.equal(text('dots.txt'), 'top dots before\n');

@@ -723,6 +723,30 @@ test('reach: another Spark of the fleet, the home network or the internet, named
   }
 });
 
+// A7d's read, fix 3: the word after a redirection is never an option (write_file hands the sorter cat > <path>), nor a
+// word after --: a dash first is a name, placed as the Spark writes it, and the rules for where it lands hold.
+const WORK = { dir: '~/work' };
+const DASH = [
+  ['cat > -rf', 'change', ['~/work/-rf']], ["cat > '-rf'", 'change', ['~/work/-rf']], ['cat > -', 'change', ['~/work/-']], ['cat > --help', 'change', ['~/work/--help']],
+  ["cat > '-n x.txt'", 'change', ['~/work/-n x.txt']], ['cat > -x.sh', 'change', ['~/work/-x.sh']], ['echo x 2> -e.log', 'change', ['~/work/-e.log']],
+  ['echo x &> -o', 'change', ['~/work/-o']], ['echo x >> -z', 'change', ['~/work/-z']], ['echo x >| -y', 'risky', ['~/work/-y']], ['cat > -/x.txt', 'change', ['~/work/-/x.txt']],
+  ['cat > -/../proj/.git/hooks/pre-commit', 'risky', ['~/work/proj/.git/hooks/pre-commit']], ['echo x > -/../../.bashrc', 'lockout', ['~/.bashrc']],
+  ['cat > -x.sh && bash ./-x.sh', 'risky', ['~/work/-x.sh']], ['rm -- -rf', 'change', ['~/work/-rf']], ['touch -- -x', 'change', ['~/work/-x']],
+  ['cp a.txt -- -b.txt', 'change', ['~/work/-b.txt']], ['cp -- a.txt -b.txt', 'change', ['~/work/-b.txt']],
+];
+test('the word after a redirection, or after --, is a name whatever its first sign: placed as the Spark writes it', () => {
+  for (const [c, want, places] of DASH) {
+    const r = sort(c, WORK), named = [...r.placed, ...r.wide];
+    assert.equal(r.class, want, `${c}: ${r.class} (${r.why})`);
+    for (const p of places) assert.ok(named.includes(p), `${c}: ${JSON.stringify(named)} lacks ${p}`);
+  }
+  // (what write_file wrote is in written, so running it next is asked)
+  assert.equal(sort('bash ./-x.sh', { ...WORK, written: sort('cat > -x.sh', WORK).placed }).class, 'risky');
+  // (~// is the home and then the path, as the shell writes it; a quoted one is a folder named ~ there)
+  assert.deepEqual(sort('cat > ~//tmp/y', WORK).placed, ['~/tmp/y']);
+  assert.ok(sort("cat > '~//tmp/y'", WORK).placed.includes('~/work/~/tmp/y'));
+});
+
 // Review S7: long input is refused at once, and the worst at the limit is well under a second (A7b may sort a script's
 // text). Before the fix: 16.5 s for 80,000 signs, 68 s for 160,000, 0.8 s and 0.7 s at the limit.
 test('long input has a deadline: refused at once past the limit, and quick at it', () => {
