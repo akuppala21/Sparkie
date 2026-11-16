@@ -16,8 +16,11 @@
 #                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
 #   sw-guard-<id>               the lock-out net's timer: armed, never fired here (a test runs restore.sh itself, as the
 #                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
-#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
+#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would;
+#                               <rehearsal>/standin/timer-lost: it answers yes and leaves no timer waiting)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
+# <rehearsal>/standin/start-fails: "<unit name prefix> <code>": the unit is made but fails before its command runs, with
+# that code (226: a path one of its settings names is gone by its start, as systemd answers), and nothing of it runs.
 # <rehearsal>/standin/past-limit: a run or look unit is not ended at its RuntimeMaxSec (a systemd that failed to end it).
 import json, os, shutil, sys
 
@@ -57,6 +60,9 @@ refuse = knob('refuse')
 if refuse is not None and unit.startswith(refuse.strip()):
     sys.stderr.write('Failed to start transient service unit: Invalid argument\n')
     sys.exit(1)
+fails = (knob('start-fails') or '').split()
+if len(fails) == 2 and unit.startswith(fails[0]):
+    sys.exit(int(fails[1]))
 
 LEFT = {(5, 'look'), (12, 'look'), (12, 'run'), (23, 'run'), (24, 'run')}
 through = set()
@@ -122,8 +128,9 @@ if unit.startswith('sw-guard-'):
     if knob('guard-sleep') is not None:   # (systemd slow to take the timer: a test hangs up the call meanwhile)
         import time
         time.sleep(float(knob('guard-sleep')))
-    os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
-    open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
+    if knob('timer-lost') is None:
+        os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
+        open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
     sys.exit(0)
 
 def wall_view():
@@ -134,7 +141,7 @@ def wall_view():
         shutil.copytree(os.path.join(R, 'home'), os.path.join(view, 'home'), symlinks=True)
     props = [args[k + 1] for k, a in enumerate(args) if a in ('-p', '--property') and k + 1 < len(args)]
     for kind, path in (p.split('=', 1) for p in props if '=' in p):
-        path = path.removesuffix(':ro')
+        path = path.removesuffix(':ro').removeprefix('-')
         if not path.startswith('/home/') or not os.path.lexists(view + path):
             continue
         if kind == 'TemporaryFileSystem' and os.path.isdir(view + path) and not os.path.islink(view + path):
@@ -146,6 +153,7 @@ def wall_view():
             else:
                 os.unlink(view + path)
     for kind, path in (p.split('=', 1) for p in props if '=' in p):
+        path = path.removeprefix('-')   # ("-": left out when it is not there)
         if kind == 'BindReadOnlyPaths' and path.startswith('/home/') and os.path.isfile(R + path):
             os.makedirs(os.path.dirname(view + path), exist_ok=True)
             shutil.copyfile(R + path, view + path)

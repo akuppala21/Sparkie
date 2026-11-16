@@ -4,10 +4,12 @@
 #
 #   bash spark-console/deploy/root-for-sparkie.sh --check 3   what is there for each wall; changes nothing, asks no password
 #   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once.
-#                                                             Root stays off there: look, run and the net only
+#                                                             Root's switch is left as it is, and said: off there unless
+#                                                             --with-root turned it on for this same helper
 #   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md)
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
+#                                                             (not while the lock-out net holds a change there)
 #   bash spark-console/deploy/root-for-sparkie.sh --hub 2     Spark 2 itself, the hub: last, and only with --hub
 #
 # From the Mac it does one thing: it runs Spark 2's installed copy of itself over ssh
@@ -25,7 +27,8 @@
 #   6. the line is moved to /etc/sudoers.d/spark-console-root (root, 0440); it names that one file and no other command:
 #        <you> ALL=(root) NOPASSWD: /usr/local/sbin/spark-console-root
 #   7. the helper proves its walls and prints each wall's result; if the proof fails, the line and the helper are
-#      removed again, so nothing half set up is left
+#      removed again, so nothing half set up is left; and then the line must let the helper answer with the password
+#      sudo cached left out (sudo -n -k), else the line, the helper and the mark are removed again, saying why
 #   8. only with --with-root, and only after a proof passed: root's switch, written by root to
 #      /var/lib/spark-console/root-on (root, 0600: the day and this helper's SHA-256). A later build of the helper finds
 #      it is not its own, so root is off again until this is run with --with-root again
@@ -106,7 +109,7 @@ LISTED='.bash_login .zshenv .zprofile .zshrc .zlogin .zlogout .config/fish .loca
   .cache/huggingface/token .cache/huggingface/stored_tokens .huggingface/token .netrc
   .git-credentials .npmrc .pypirc .pgpass .config/pip/pip.conf .pip/pip.conf .bash_history .zsh_history .sh_history
   .python_history .node_repl_history .psql_history .mysql_history .local/share/fish/fish_history
-  .local/state/spark-console'
+  .local/state/spark-console .config/git/credentials .Xauthority'
 # Where an enabled unit of yours may take its program from without a change being able to rewrite it.
 SAFE_RUN=".local/opt .local/share/code-server spark-console spark-console-service spark-console-src .cache/spark-console
   .config/systemd .local/share/systemd"
@@ -168,7 +171,7 @@ home_lines() {   # what the run wall needs of your home, and what reaches round 
     *) note "your login shell: ${v:-not known}: the run wall refuses changes here until it is bash, sh or dash" ;;
   esac
   files=$(grep -ls 'user_readenv=1' /etc/pam.d/* 2>/dev/null | tr '\n' ' ' || true)
-  if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); the run wall holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
+  if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); a plain change hides it, and --open holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
   bad=''
   while read -r u _; do
     [ -n "$u" ] || continue
@@ -261,8 +264,14 @@ folders_ok() {
   done
 }
 
+ROOT_NOW=''   # what the helper's check said of root here, for the end of a plain run
+works() {   # $1 an id: does the sudo line itself let the helper answer, the password sudo cached left out (-k ignores it
+  # for this one call and keeps it for what follows)? Its check's lines on success
+  local out
+  out=$(sudo -n -k "$HELPER" check --id "$1" 2>/dev/null) && printf '%s\n' "$out"
+}
 install() {
-  local sha=$1 me got have_line have_sha want_line state
+  local sha=$1 me got have_line have_sha want_line state id out
   folders_ok || stop "/usr, /usr/local or /usr/local/sbin can be written by an account other than root, so the helper would not be safe there. Nothing was changed."
   [ -f "$COPY" ] || stop "the copy of the helper did not arrive. Nothing was changed."
   read -r got _ < <(sha256sum "$COPY")
@@ -276,8 +285,13 @@ install() {
   have_line=$(sudo cat "$LINE" 2>/dev/null || true)
   read -r have_sha _ < <(sudo sha256sum "$HELPER" 2>/dev/null || echo '-')
   if [ "$have_sha" = "$sha" ] && [ "$have_line" = "$want_line" ]; then
-    state=$(sudo "$HELPER" check --id "$(new_id)" 2>/dev/null | awk '$2 == "proof" { print $3 }' || true)
-    if [ "$state" = current ]; then note "already set up: this build's helper, its line and a current proof. Nothing was changed."; return 0; fi
+    id=$(new_id)
+    out=$(works "$id" || true)
+    state=$(sed -n "s/^$id proof //p" <<<"$out")
+    if [ "$state" = current ]; then
+      ROOT_NOW=$(sed -n "s/^$id root //p" <<<"$out")
+      note "already set up: this build's helper, its line and a current proof. Nothing was changed."; return 0
+    fi
   fi
   # From here everything is staged as root, under names nothing uses, and checked where only root can change it.
   sudo rm -f "$LINE.new" "$HELPER.new"
@@ -298,8 +312,19 @@ install() {
   else sudo rm -f "$LINE.new"; fi
   note "proving the walls (a few seconds):"
   if sudo -n "$HELPER" prove --id "$(new_id)" | show; then
-    note "done: the helper is set up and its walls are proven on $(hostname)."
-    return 0
+    # (the proof ran under the password sudo -v cached: the line itself must let the helper run, or every call of the
+    # console's gets "a password is required", as when a later sudoers rule wins over it)
+    id=$(new_id)
+    if out=$(works "$id") && grep -qx "$id proof current" <<<"$out"; then
+      ROOT_NOW=$(sed -n "s/^$id root //p" <<<"$out")
+      note "done: the helper is set up and its walls are proven on $(hostname)."
+      return 0
+    fi
+    sudo rm -f "$LINE" "$HELPER" "$MARK"
+    note "the sudo line does not let the helper run without your password on $(hostname) (another rule in /etc/sudoers or"
+    note "/etc/sudoers.d wins over it; sudo -l lists them), so the line, the helper and its mark were removed again. Nothing"
+    note "half set up is left."
+    return 1
   fi
   sudo rm -f "$LINE"
   sudo rm -f "$HELPER"
@@ -321,13 +346,28 @@ root_switch() {   # $1 on or off: root's switch on this Spark (on only after a p
 }
 
 undo() {
+  local id out g at
   note "sudo asks for your password on $(hostname), once"
   sudo -v || stop "sudo did not accept the password. Nothing was changed."
+  # (while the lock-out net holds a change here, its put-back would write the sudo line back, and a guard left with no
+  # timer would keep its restart unit with no helper to keep it or put it back: it is kept or put back first)
+  id=$(new_id)
+  if ! out=$(sudo "$HELPER" check --id "$id" 2>/dev/null); then
+    [ ! -e "$HELPER" ] || stop "the helper did not answer, so whether the lock-out net still holds a change here is not known. Nothing was changed."
+  else
+    g=$(sed -n "s/^$id net open: guard \([a-z0-9]*\) goes back at .*/\1/p" <<<"$out" | head -n 1)
+    at=$(sed -n "s/^$id net open: guard [a-z0-9]* goes back at \(.*\) unless it is kept;.*/\1/p" <<<"$out" | head -n 1)
+    if [ -n "$g" ] && grep -q "^$id net left: " <<<"$out"; then
+      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), then run --undo again. Nothing was changed."
+    elif [ -n "$g" ]; then
+      stop "the lock-out net still holds a change here (guard $g, which goes back at ${at:-its time} unless it is kept). Keep it (sudo $HELPER keep --id $g) or put it back (sudo $HELPER putback --id $g) first, then run --undo again. Nothing was changed."
+    fi
+  fi
   root_switch off
   sudo rm -f "$LINE" "$LINE.new"; note "the sudo line is gone: $LINE"
   sudo rm -f "$HELPER" "$HELPER.new"; note "the helper is gone: $HELPER"
   sudo rm -f "$MARK"; note "the proof's mark is gone: $MARK"
-  note "(copies under /var/lib/spark-console stay, and a put-back timer already armed still fires)"
+  note "(the copies of earlier changes under /var/lib/spark-console stay)"
 }
 
 main() {
@@ -341,7 +381,7 @@ main() {
   if [ "$mid" != "$hub_id" ] && [ "$hub" = 1 ]; then stop "--hub is only for Spark 2 itself, and this is another Spark."; fi
   case "$mode" in
     check) check "$sha" ;;
-    install) install "$sha" ;;
+    install) install "$sha" && note "root here: ${ROOT_NOW:-not known}" ;;
     with-root) install "$sha" && root_switch on "$sha" ;;
     without-root)
       note "sudo asks for your password on $(hostname), once"
