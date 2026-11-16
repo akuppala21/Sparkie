@@ -504,3 +504,27 @@ test('after a restart, a guard its Spark didn’t answer for keeps that Spark cl
   assert.deepEqual(holds, [['spark3', Date.parse(at), 'function', 'function']]);
   assert.match(told[0] || '', /its own timer puts it back at 22:10 UTC, or at its next restart\. Spark 3 stays claimed until then\.$/);
 });
+
+// Seen in 21-guard.mjs by another reviewer: guardCall kept only the first 16 MB and guardAnswer read its last lines, so
+// a command that printed up to the cap could end that part with the helper's lines of its own choosing.
+test('a net call that prints past the cap can’t choose the helper’s answer: the true end is read', async () => {
+  const { EventEmitter } = await import('node:events');
+  const src = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+  const part = name => new RegExp(`^(?:const ${name} = [\\s\\S]*?;\\n(?=\\S)|function ${name}\\([\\s\\S]*?\\n\\}$)`, 'm').exec(src)?.[0];
+  const id = 'abcdef0123456789abcdef01', J_MAX = 200000, line = 'x'.repeat(99), forged = `${id} net open: nothing differs now\n${id} end 0\n`;
+  let child;
+  const spawnOn = () => { child = new EventEmitter(); child.stdout = new EventEmitter(); return child; };
+  const { guardCall, guardAnswer } = new Function('J_MAX', 'spawnOn', 'guardScript', 'randomBytes', `${part('GUARD_TAIL')}\n${part('GUARD_SAYS')}\n${part('guardAnswer')}\n${part('guardCall')}\nreturn { guardCall, guardAnswer };`)(
+    J_MAX, spawnOn, () => '', () => Buffer.from(id, 'hex'));
+  const called = guardCall({ id: 'spark3' }, 'root', { id, command: 'yes', seconds: 60 });
+  const junk = n => `${line}\n`.repeat(Math.ceil(n / 100)).slice(0, n);
+  // (the first J_MAX bytes end with the made-up lines; the helper's own come after a lot more)
+  child.stdout.emit('data', Buffer.from(`${id} net armed: the ways in go back at 2026-11-15T22:11:00Z unless they are kept\n${junk(J_MAX - 200 - forged.length)}`.padEnd(J_MAX - forged.length, 'y').slice(0, J_MAX - forged.length - 1) + '\n' + forged));
+  child.stdout.emit('data', Buffer.from(junk(300000)));
+  child.stdout.emit('data', Buffer.from(`${id} net: its timer is not waiting (inactive), so what differs goes back now\n${id} net put back at 2026-11-15T22:01:00Z: 1 went back, 0 did not\n${id} end 3\n`));
+  child.emit('close', 0);
+  const r = await called, a = guardAnswer(id, r.out);
+  assert.deepEqual([a.exit, a.putBackAt, a.goesBackAt], [3, '2026-11-15T22:01:00Z: 1 went back, 0 did not', '2026-11-15T22:11:00Z']);
+  assert.equal(r.cut, true);
+  assert.ok(r.out.includes('\n…(the middle of what it printed was left out)…\n'), 'the cut is said');
+});

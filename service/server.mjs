@@ -18405,17 +18405,32 @@ function guardAnswer(id, out) {
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
-// One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
+// One call of the net on a Spark (never rejects): { id, code, out, cut }. run: the command in the run wall, the net armed
 // first, starting in dir (~ or a folder under it); root: the same as root (R70, 21-root.mjs); keep: id is the guard's
-// own.
+// own. What it printed is kept as its first part and its last GUARD_TAIL bytes, never only the first part: the helper's
+// own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
+// (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
+const GUARD_TAIL = 65536;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
     const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: Number(seconds) + 180 });
-    const chunks = [];
-    let bytes = 0;
-    child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
+    const head = [], headMost = Math.max(GUARD_TAIL, J_MAX - GUARD_TAIL);
+    let headBytes = 0, tail = Buffer.alloc(0), past = 0;
+    child.stdout.on('data', c => {
+      if (headBytes < headMost) { const take = c.subarray(0, headMost - headBytes); head.push(take); headBytes += take.length; c = c.subarray(take.length); }
+      if (!c.length) return;
+      const both = Buffer.concat([tail, c]);
+      past += Math.max(0, both.length - GUARD_TAIL);
+      tail = both.subarray(-GUARD_TAIL);
+    });
     child.on('error', () => {});
-    child.on('close', code => resolve({ id, code, out: Buffer.concat(chunks).toString('utf8').slice(0, J_MAX) }));
+    child.on('close', code => {
+      const first = Buffer.concat(head).toString('utf8');
+      if (!past) return resolve({ id, code, out: Buffer.concat([...head, tail]).toString('utf8'), cut: false });
+      // (cut in the middle: each side ends where a line does, so no half line is read as the helper's)
+      const last = tail.toString('utf8');
+      resolve({ id, code, out: `${first.slice(0, first.lastIndexOf('\n') + 1)}…(the middle of what it printed was left out)…\n${last.slice(last.indexOf('\n') + 1)}`, cut: true });
+    });
   });
 }
 /* ───────── the guide: the brain's tool groups, and the lookup that finds the rest ───────── */
