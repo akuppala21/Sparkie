@@ -315,6 +315,60 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(refs(), '');
   });
 
+  // (the C8c read's four fixes)
+  test('refused with nothing pushed: a .gitattributes in the box (any case), and names that differ from the tree’s only in case', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    const id = openId(), part = atMain('service/src/21-web.mjs');
+    for (const [path, why] of [
+      ['.gitattributes', /A proposal never holds a \.gitattributes file \(\.gitattributes\)/], ['docs/.GitAttributes', /A proposal never holds a \.gitattributes file \(docs\/\.GitAttributes\)/],
+      ['.GitHub/workflows/x.yml', /A proposal never changes \.github\/ \(\.GitHub\/workflows\/x\.yml\)/],
+      ['Tools/affected.mjs', /differ only in case \(or Unicode form\) from one already in the tree, which on a Mac is the same file: Tools\/affected\.mjs \(tools is there\)/],
+      ['Deploy/pull.sh', /Deploy\/pull\.sh \(deploy is there\)/], ['test/Lib.mjs', /test\/Lib\.mjs \(test\/lib\.mjs is there\)/],
+      ['AGENTS.MD', /AGENTS\.MD \(AGENTS\.md is there\)/], ['service/src/16-Actions.mjs', /service\/src\/16-Actions\.mjs \(service\/src\/16-actions\.mjs is there\)/],
+    ]) {
+      box({ 'service/src/21-web.mjs': `${part}// x\n`, [path]: 'x\n' });
+      const r = await pressed(chat, 'send your code proposal');
+      assert.match(r.says, why, path);
+      assert.match(r.says, /Nothing was sent\./);
+    }
+    assert.deepEqual(ghBranches(), [], 'nothing pushed');
+    await pressed(chat, 'drop your code proposal');
+    assert.equal(refs(), '');
+    void id;
+  });
+
+  test('a removed and a renamed file are sent; a zero byte in a test hides none of its removed lines; the owner’s ~/.config/git/attributes changes nothing', LONG, async () => {
+    const attrs = join(HOME, '.config', 'git', 'attributes');
+    mkdirSync(join(HOME, '.config', 'git'), { recursive: true });
+    writeFileSync(attrs, 'test/*.mjs -diff\nservice/src/21-web.mjs export-ignore\n');
+    try {
+      const chat = await newChat();
+      box({});
+      assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+      const part = atMain('service/src/21-web.mjs'), how = atMain('docs/how/add-a-test-file.md'), t = atMain('test/abilities.test.mjs').split('\n');
+      box({
+        'service/src/21-web.mjs': `${part}// still there for the generator\n`,
+        'docs/how/add-a-brain-setup.md': null,
+        'docs/how/add-a-test-file.md': null, 'docs/how/add-a-test-file-renamed.md': how,
+        // (the test cut to its first three lines, with one zero byte in a comment)
+        'test/abilities.test.mjs': [...t.slice(0, 3), '// a zero byte: \u0000', ''].join('\n'),
+      });
+      const s = await pressed(chat, 'send your code proposal');
+      assert.equal(s.p.json.outcome, 'sent', s.says);
+      const id = openId(), head = git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]);
+      const names = git(GH, ['ls-tree', '-r', '--name-only', head]).split('\n');
+      assert.ok(!names.includes('docs/how/add-a-brain-setup.md'), 'the removed file is gone');
+      assert.ok(!names.includes('docs/how/add-a-test-file.md') && names.includes('docs/how/add-a-test-file-renamed.md'), 'renamed');
+      assert.match(git(GH, ['show', `${head}:service/server.mjs`]), /\/\/ still there for the generator/, 'the part was in what the generator read');
+      assert.match(s.says, /Removed or edited lines in existing tests: test\/abilities\.test\.mjs:4 /);
+      assert.doesNotMatch(s.says, /No line of an existing test removed or edited/);
+      await pressed(chat, 'drop your code proposal');
+      assert.equal(refs(), '');
+    } finally { rmSync(attrs, { force: true }); }
+  });
+
   test('the protected paths are tools/affected.mjs’s that always run everything (all of tools/), and the three documents', () => {
     const src = readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8');
     const listed = src.slice(src.indexOf('const SELF_PROTECTED = ['), src.indexOf('const SELF_ID'));

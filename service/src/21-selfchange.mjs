@@ -18,13 +18,14 @@
 // ask_sparkie, an API call or a saved workflow's step (NOT_A_STEP).
 const SELF_CHANGE_ON = false;
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
-const SELF_REFUSED = /^\.github\//;
+// (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
+const SELF_REFUSED = /^\.github\//i;
 // What Sparkie may never change on its own word (design C 2.5): the paths that always run the whole suite
 // (tools/affected.mjs: ALWAYS and ALWAYS_PARTS; all of tools/, whose installed copy is what runs on a proposal), and the
 // three documents. selfchange.test.mjs checks this list against tools/affected.mjs.
-const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^service\/config\.json$/, /^deploy\//,
-  /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//,
-  /^AGENTS\.md$/, /^docs\/architecture\.md$/, /^docs\/contract\.md$/];
+const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/i, /^service\/worker\.py$/i, /^service\/config\.json$/i, /^deploy\//i,
+  /^test\/lib\.mjs$/i, /^test\/start-mock\.mjs$/i, /^test\/mock\//i, /^test\/lock\.mjs$/i, /^tools\//i,
+  /^AGENTS\.md$/i, /^docs\/architecture\.md$/i, /^docs\/contract\.md$/i];
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
   '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `service/src/${p}.mjs`);
 // (where a send unpacks the proposal for the generator: an empty folder of its own for each, 0700)
@@ -70,6 +71,8 @@ function selfGate(viewer, ctx) {
 const SELF_CONFIG_KEYS = /^(?:repositoryformatversion|filemode|bare|ignorecase|precomposeunicode|logallrefupdates|symlinks)$/i;
 function selfConfigBad(repo) {
   let text;
+  // (no attributes file of its own either: git archive and git diff would obey it)
+  if (existsSync(`${repo}/info/attributes`)) return 'info/attributes';
   try { text = readFileSync(`${repo}/config`, 'utf8'); } catch { return 'its settings can’t be read'; }
   let section = null;
   for (const raw of text.split('\n')) {
@@ -91,8 +94,8 @@ function selfGit(args, { input = null, config = [], indexFile = null, raw = fals
   if (!repo || !existsSync(repo)) return Promise.reject(new HttpError(409, `Spark 2 has no copy of the repository to work from (${UPD_SETUP}).`));
   const bad = selfConfigBad(repo);
   if (bad) return Promise.reject(new HttpError(409, `Spark 2’s copy of the repository has settings Spark Console didn’t put there (${bad}), so nothing was done with it.`));
-  const cfg = [['core.hooksPath', '/dev/null'], ['core.fsmonitor', 'false'], ['credential.helper', ''], ['core.quotePath', 'false'], ...config];
-  const env = { HOME: selfHome(), PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  const cfg = [['core.hooksPath', '/dev/null'], ['core.fsmonitor', 'false'], ['credential.helper', ''], ['core.quotePath', 'false'], ['core.attributesFile', '/dev/null'], ...config];
+  const env = { HOME: selfHome(), PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false', SSH_ASKPASS: '', GIT_ALLOW_PROTOCOL: ALL_LOCAL ? 'https:file' : 'https',
     GIT_AUTHOR_NAME: 'Sparkie', GIT_AUTHOR_EMAIL: 'sparkie@spark-console.invalid', GIT_COMMITTER_NAME: 'Sparkie', GIT_COMMITTER_EMAIL: 'sparkie@spark-console.invalid',
     GIT_CONFIG_COUNT: String(cfg.length), ...Object.fromEntries(cfg.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])),
@@ -220,7 +223,24 @@ async function selfBoxRead(viewer, ctx, tree) {
 
 // The words of the brain: one line for a title, a few for why; masked and bounded.
 const selfWords = (v, max, lines = false) => maskSecrets(String(v || '').replace(lines ? /[\u0000-\u0008\u000b-\u001f\u007f\p{Cf}]/gu : /[\u0000-\u001f\u007f\p{Cf}]/gu, ' ')).replace(lines ? /[ \t]+/g : /\s+/g, ' ').trim().slice(0, max);
-const selfProtected = p => SELF_PROTECTED.some(r => r.test(p)) || SELF_PROTECTED_PARTS.includes(p);
+const selfProtected = p => SELF_PROTECTED.some(r => r.test(p)) || SELF_PROTECTED_PARTS.includes(p.toLowerCase());
+// A name and each folder above it, folded as a case-blind, form-blind file system sees them.
+const selfFold = p => p.normalize('NFC').toLowerCase();
+function selfSpellings(paths, entries) {
+  const seen = new Map();
+  const add = p => { const parts = p.split('/'); for (let i = 1; i <= parts.length; i++) { const q = parts.slice(0, i).join('/'); if (!seen.has(selfFold(q))) seen.set(selfFold(q), q); } };
+  paths.forEach(add);
+  const odd = [];
+  for (const e of entries) {
+    const parts = e.path.split('/');
+    for (let i = 1; i <= parts.length; i++) {
+      const q = parts.slice(0, i).join('/'), was = seen.get(selfFold(q));
+      if (was !== undefined && was !== q) { odd.push(`${e.path} (${was} is there)`); break; }
+    }
+    add(e.path);
+  }
+  return odd;
+}
 
 async function selfStart(viewer, ctx) {
   if (!SELF_CHAT.test(String(ctx.conv || ''))) throw new HttpError(409, 'A change is proposed from a chat with Sparkie: ask there.');
@@ -250,12 +270,14 @@ async function selfTree(base, entries) {
   try {
     const index = `${dir}/index`;
     await selfGit(['read-tree', base], { indexFile: index });
-    const boxed = new Map();
-    for (const e of entries) {
-      if (e.blob === null) await selfGit(['update-index', '--force-remove', '--', e.path], { indexFile: index });
-      else await selfGit(['update-index', '--add', '--cacheinfo', `${e.mode},${e.blob},${e.path}`], { indexFile: index });
-      boxed.set(e.path, e.blob);
+    const boxed = new Map(), zero = '0'.repeat(base.length);
+    // (one --index-info, records ending in NUL: a removal is a line of mode 0, which works in a bare copy, where
+    // --force-remove wants a work tree)
+    if (entries.length) {
+      await selfGit(['update-index', '-z', '--index-info'], { indexFile: index,
+        input: Buffer.from(entries.map(e => (e.blob === null ? `0 ${zero}\t${e.path}\0` : `${e.mode} ${e.blob}\t${e.path}\0`)).join('')) });
     }
+    for (const e of entries) boxed.set(e.path, e.blob);
     const first = await selfGit(['write-tree'], { indexFile: index });
     // (the proposal's sources as files, with the installed build's own tools in place of the proposal's: its tools are
     // data here, never run; nothing of the tree is run, the generator only reads it)
@@ -312,7 +334,8 @@ async function selfTree(base, entries) {
 }
 // Every removed or edited line of a test file (test/**/*.test.mjs) the noted commit holds: [{ file, line, was }].
 async function selfTestLines(base, tree) {
-  const diff = await selfGit(['diff-tree', '-r', '--no-renames', '-U0', '-p', base, tree, '--', 'test']);
+  // (--text: a zero byte in a test's new text must not hide its removed lines as "Binary files differ")
+  const diff = await selfGit(['diff-tree', '-r', '--no-renames', '--text', '--no-ext-diff', '--no-textconv', '-U0', '-p', base, tree, '--', 'test']);
   const out = [];
   let file = null, line = 0;
   for (const l of diff.split('\n')) {
@@ -339,6 +362,10 @@ async function selfSend(viewer, ctx, input) {
   if (bad.length) throw new HttpError(409, `The box read back entries that can’t be proposed (${bad.slice(0, 3).map(e => clean(e?.path, 80)).join(', ')}), so nothing was sent.`);
   const github = entries.filter(e => SELF_REFUSED.test(e.path)).map(e => e.path);
   if (github.length) throw new HttpError(409, `A proposal never changes .github/ (${github.slice(0, 5).join(', ')}): take that out of the box. Nothing was sent.`);
+  const attrs = entries.filter(e => /(?:^|\/)\.gitattributes$/i.test(e.path)).map(e => e.path);
+  if (attrs.length) throw new HttpError(409, `A proposal never holds a .gitattributes file (${attrs.slice(0, 5).join(', ')}): git archive and git diff would obey it. Take it out of the box. Nothing was sent.`);
+  const spellings = selfSpellings((await selfGit(['ls-tree', '-r', '-z', '--name-only', baseTree], { raw: true })).toString('utf8').split('\0').filter(Boolean), entries);
+  if (spellings.length) throw new HttpError(409, `These names differ only in case (or Unicode form) from one already in the tree, which on a Mac is the same file: ${spellings.slice(0, 5).join(', ')}. Use the name as it is. Nothing was sent.`);
   const t = await selfTree(open.base, entries.map(e => ({ path: e.path, blob: e.blob, mode: e.mode || '100644' })));
   if (t.refused.length) throw new HttpError(409, `These generated files in the box aren’t what the installed build’s own generator makes from the proposal’s sources: ${t.refused.join(', ')}. Leave them to the generator (rebuild them, or take them out of the box). Nothing was sent.`);
   if (t.tree === baseTree) throw new HttpError(409, 'The box holds no change to main’s tree, so nothing was sent.');
