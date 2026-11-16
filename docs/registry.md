@@ -57,6 +57,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
+| `propose_update` | change | `21-selfchange` | updates | code, cancel | yes | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `install_update` | change | `21-updates` | updates | install | — | no | — |
 | `check_update` | read | `21-updates` | updates | — | — | yes | outside |
@@ -107,6 +108,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
+| `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |
 | `update-asked.json` | `21-updates` | `updInstallStart`, `updResultLook`; `updInstallStart` is called by `updInstallRun`; `updResultLook` is called by `updAfterRestart` | yes | no |
 | `update-note.json` | `18-workflows` | none; the installer writes it, noteUpdate reads it | yes | no |
 | `update-result.json` | `21-updates` | none; pull.sh writes it | yes | no |

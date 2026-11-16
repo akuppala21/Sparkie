@@ -217,7 +217,7 @@ async function tgUpdate(u) {
   const word = ownerWord(text);
   if (word === '/pause') return tell('system', pauseWord('telegram'));
   if (word === '/restart sparkie') return tell('system', await restartWord('telegram'));
-  if (word === '/stop') return tell('system', stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram')));
+  if (word === '/stop') return tell('system', await stopWord(chatData().conversations.find(c => c.id === st.conv && c.channel === 'telegram')));
   // (/undo: this chat's last change put back, also while changes are paused, 20-words.mjs)
   if (word === '/undo') return tell('system', (await undoChangeWord(tgOwner(), tgConv(), 'telegram')).reply);
   const cmd = /^\/(new|status|unpair|start|help|lock)(?:@\w+)?(?:\s|$)/i.exec(text)?.[1]?.toLowerCase();
@@ -251,6 +251,8 @@ function tgTryPair(m) {
   tg.code = null;
   tgNewPairing();
   tgSave();
+  // (a task from the chat paired before this one ends: its carry-on turns would go on, and be told, here)
+  try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Pairing Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
   audit({ via: 'telegram', actor: 'owner on Telegram', action: 'telegram-paired', args: { name }, ok: true });
   tgSetState('ok');
   tellOwnerAt = Date.now();
@@ -407,6 +409,8 @@ async function telegramRoute(req, res, path, viewer) {
     tgStop();
     secretsWrite(s => ({ ...s, telegram: { token, bot } }));
     tgForgotten = false;
+    // (a new bot drops the pairing: a task from it ends, as at Disconnect)
+    try { endTasksFrom({ channel: 'telegram' }); } catch (e) { console.error(`Connecting Telegram: the last pairing's tasks weren’t ended (${e.message}).`); }
     const st = tgSaved();
     st.offset = 0; delete st.conv; delete st.answering;
     tgSave();
