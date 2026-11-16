@@ -1205,10 +1205,11 @@ function runJob(job, fn) {
     job.error = e.message;
     note(job, `Failed: ${e.message}`);
     // Three failed operations in a row pause agents (R9). The owner's own never count: the page, self-healing, a saved
-    // workflow's steps, a /v1 start, POST /actions (api), and what Sparkie started in the owner's own chat (runAction
-    // marks that job ownersOwn). Anything else, and any new via, counts as an agent.
+    // workflow's steps, a /v1 start, POST /actions (api), a press, a typed yes or /undo in the paired Telegram chat
+    // (telegram: only the paired owner reaches it; agents come as agent), and what Sparkie started in the owner's own
+    // chat (runAction marks that job ownersOwn). Anything else, and any new via, counts as an agent.
     // (a start that a power-on operation runs for its asker, 21-power.mjs, fails that operation too: counted there, once)
-    if (job.via && !job.ownersOwn && !job.partOf && !['page', 'watcher', 'workflow', 'gateway', 'api'].includes(job.via)) {
+    if (job.via && !job.ownersOwn && !job.partOf && !['page', 'watcher', 'workflow', 'gateway', 'api', 'telegram'].includes(job.via)) {
       agentFailuresInARow = [...agentFailuresInARow.filter(t => Date.now() - t < 3600000), Date.now()];
       if (agentFailuresInARow.length >= 3) tripBreaker('three of their operations failed in a row');
     }
