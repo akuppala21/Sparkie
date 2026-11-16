@@ -12,8 +12,9 @@
 // 21-copies-prune.mjs), after (the fingerprints once the
 // command has run), restore (the set's files put back) and drop (a set whose command never ran). It never follows a
 // link: a path with a link in the folders above it is neither copied nor written; a file is read and written with
-// O_NOFOLLOW, and a restore writes a new file beside the old one and renames it into place, so a link that is there now
-// is replaced, never written through. A restore writes only the paths the set's manifest names, the manifest only when
+// O_NOFOLLOW, and a restore writes a new file beside the old one and exchanges it into place (links it, where nothing
+// is), so a link that is there now is replaced, never written through, and an edit made since its look is kept.
+// A restore writes only the paths the set's manifest names, the manifest only when
 // its SHA-256 is the one the journal's start line kept, and a copy only when its bytes have the SHA-256 the manifest
 // kept. Only the console's own text is run: the paths travel as data.
 const COPIES_FILE_MAX = 16 * 2 ** 20, COPIES_SET_MAX = 128 * 2 ** 20;
@@ -186,6 +187,29 @@ def put(path, data):
     finally:
         os.close(fd)
 
+def swap(a, b):
+    # one step that exchanges two names (renameat2, RENAME_EXCHANGE): False where this libc or filesystem has none
+    import ctypes, errno
+    try:
+        f = ctypes.CDLL(None, use_errno=True).renameat2
+    except (OSError, AttributeError):
+        return False
+    if f(-100, os.fsencode(a), -100, os.fsencode(b), 2) == 0:
+        return True
+    n = ctypes.get_errno()
+    if n in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+        return False
+    raise OSError(n, os.strerror(n))
+
+def hold():
+    # (tests only, never sent by code: wait in A['hold'] between the look and the put-back, as a second writer needs)
+    if A.get('hold'):
+        open(os.path.join(A['hold'], 'at'), 'a').close()
+        for _ in range(300):
+            if os.path.exists(os.path.join(A['hold'], 'go')):
+                break
+            time.sleep(0.1)
+
 ` + COPIES_PRUNE_PY + String.raw`
 def manifest(sd):
     try:
@@ -341,6 +365,9 @@ if A['mode'] == 'restore':
                 if not os.path.isdir(d) or linked(p):
                     missed.append({'path': p, 'why': 'its folder is gone'})
                     continue
+                if now.startswith('dir:'):
+                    missed.append({'path': p, 'why': 'a folder is there now'})
+                    continue
                 tmp = os.path.join(d, '.spark-console-put-back-' + secrets.token_hex(6))
                 if e['kind'] == 'link':
                     os.symlink(e['target'], tmp)
@@ -360,12 +387,35 @@ if A['mode'] == 'restore':
                         os.fsync(fd)
                     finally:
                         os.close(fd)
+                # The put-back can't lose another program's edit made since the look above (A-19, beside): nothing at
+                # the name, by a link, which fails when anything is there by then; else the two names are exchanged in
+                # one step and what that displaced is checked: not what was looked at, it goes back and is left as it
+                # is. Where this libc or filesystem has no exchange, a second look just before one replace.
+                hold()
+                drop = True
                 try:
-                    os.replace(tmp, p)
-                except OSError:
-                    os.unlink(tmp)
-                    missed.append({'path': p, 'why': 'a folder is there now'})
-                    continue
+                    if now == 'absent':
+                        try:
+                            os.link(tmp, p, follow_symlinks=False)
+                        except FileExistsError:
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                    elif swap(tmp, p):
+                        if fp(tmp) != now:
+                            if not swap(tmp, p):
+                                drop = False
+                                missed.append({'path': p, 'why': 'changed again since the change, and could not be put back as it was: its newer state is kept as ' + show(tmp)})
+                                continue
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                    else:
+                        if fp(p) != now:
+                            missed.append({'path': p, 'why': 'changed again since the change: left as it is'})
+                            continue
+                        os.replace(tmp, p)
+                finally:
+                    if drop and os.path.lexists(tmp):
+                        os.unlink(tmp)
                 restored.append(p)
         except OSError as x:
             missed.append({'path': p, 'why': 'it could not be written (%s)' % (x.strerror or 'error')})
