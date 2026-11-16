@@ -287,9 +287,11 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
     m.presets['box-s3'] = { ...m.presets[m.current], node: 'spark3', title: 'Aphex on Spark 3' };
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
-    // (Sparkie's model is on Spark 3 too, so the switch there can start it)
-    const hub = '.cache/huggingface/hub/models--RadixArk--Qwen3.8-27B-NVFP4';
-    cpSync(join(root, 'spark2', hub), join(root, 'spark3', hub), { recursive: true, verbatimSymlinks: true });
+    // (Sparkie's model and its draft are on Spark 3 too, so the switch there can start it)
+    for (const m of ['RadixArk--Qwen3.8-27B-NVFP4', 'z-lab--Qwen3.8-27B-DFlash2']) {
+      const hub = `.cache/huggingface/hub/models--${m}`;
+      cpSync(join(root, 'spark2', hub), join(root, 'spark3', hub), { recursive: true, verbatimSymlinks: true });
+    }
     for (const spark of ['spark3', 'spark4']) appendFileSync(join(root, spark, '.mock', 'images'), `\n${IMAGE}\n`);
   } });
   later.push(F);
