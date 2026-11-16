@@ -8620,7 +8620,7 @@ async function validateChanged(viewer, job) {
     }
   }
   void started;
-  if (want.includes('start_model_across')) note(job, '“Start one model across two Sparks” still needs its first run: start one across Spark 3 and Spark 4 from Deploy when both are free.');
+  if (want.includes('start_model_across')) note(job, '“Start one model across two Sparks” still needs its first run: when Spark 3 and Spark 4 are both free, ask Sparkie to start one model across them.');
 }
 // The last good build (the installer's snapshot before this one), to roll back to with one click.
 const RELEASES = (ALL_LOCAL && process.env.SPARK_CONSOLE_RELEASES) || `${homedir()}/.local/share/spark-console/releases`;
