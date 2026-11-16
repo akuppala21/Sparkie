@@ -199,6 +199,9 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
     const began = Date.now(), child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
+    // (one decoder each for what it prints: a character whose bytes come in two pieces reads whole)
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -469,7 +472,7 @@ function secretsRead() {
   secretsProblem = 'unreadable';
   return null;
 }
-// change(current) returns the whole new content. Written as a temporary file, then renamed.
+// change(current) returns the whole new content. Written as a temporary file, synced, then renamed.
 function secretsWrite(change) {
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets.');
   const now = secretsRead();
@@ -479,7 +482,10 @@ function secretsWrite(change) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
   const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+  // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
+  // the new one, never a short one that can't be read, R23)
+  const fd = openSync(tmp, 'w', 0o600);
+  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(tmp, SECRETS_FILE);
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });
@@ -4414,6 +4420,8 @@ function modelStep(turn, sent) {
     const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
     link.cancel = () => settle(reject, new Error(TURN_STOPPED));
     const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+      // (one decoder for the whole answer: a character whose bytes come in two pieces reads whole, error body too)
+      r.setEncoding('utf8');
       // (after a whole answer its end comes first, and close changes nothing)
       r.on('error', e => settle(reject, e));
       r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
@@ -12693,11 +12701,19 @@ const LOCK_PATHS = ['/etc/ssh', '/etc/ssh/sshd_config', '~/.ssh', '~/.ssh/author
   '/etc/systemd/system/sockets.target.wants/ssh.socket', '/etc/systemd/system/sshd.service',
   ...'access.json sessions.json passkeys.json agents.json telegram.json api.sock'.split(' ').map(f => `~/.local/state/spark-console/${f}`)];
 LOCK_PATHS.push(...LOCK_PATHS.filter(p => p.startsWith('~/')).map(p => `/root${p.slice(1)}`));
+// The ways in's own programs, by each place the system keeps them (merged /usr or not): moved, removed, rewritten or made
+// not runnable, SSH, Tailscale, the firewall, the logins or the owner's shell stop at the next start (A-16's "beside").
+LOCK_PATHS.push(...['sbin/sshd', 'sbin/ufw', 'sbin/nft', 'sbin/iptables', 'sbin/ip6tables', 'sbin/xtables-nft-multi', 'sbin/xtables-legacy-multi', 'sbin/ip', 'sbin/NetworkManager',
+  'sbin/wpa_supplicant', 'sbin/tailscaled', 'sbin/netplan', 'sbin/sudo', 'bin/sudo', 'bin/su', 'bin/login', 'bin/passwd', 'bin/tailscale', 'bin/nmcli', 'bin/netplan', 'bin/bash', 'bin/sh',
+  'bin/dash', 'bin/zsh', 'lib/openssh', 'lib/systemd/systemd', 'lib/systemd/systemd-logind', 'lib/systemd/systemd-networkd', 'lib/systemd/systemd-resolved',
+  'lib/aarch64-linux-gnu/security', 'lib/x86_64-linux-gnu/security'].flatMap(p => [`/${p}`, `/usr/${p}`]));
 const LOCK_NAMES = new Set('authorized_keys authorized_keys2 sshd_config sudoers .ssh .bashrc .bash_aliases .bash_profile .bash_login .bash_logout .profile .zshrc .zprofile .zshenv .zlogin .pam_environment .cshrc .tcshrc .login .kshrc .mkshrc'.split(' '));
 const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking', 'ufw', 'nftables',
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
 const WAYS_FILE = new RegExp(`(?:^|/)(?:${WAYS_UNITS.join('|')})\\.(?:service|socket|timer)(?:\\.d)?(?:/|$)`);
 const SIGNIN = /spark-console\/(?:access\.json|sessions\.json|passkeys\.json|agents\.json|telegram\.json|agent-settings\.json)|(?:^|\/)api\.sock$|spark-console-(?:api|watchdog)/;
+// Where systemd reads units (the system's, the owner's, the packages'): a file written there is work started later.
+const SORT_UNIT_DIRS = /^(?:\/etc|\/run|\/usr\/lib|\/lib|\/usr\/local\/lib|~\/\.config|~\/\.local\/share|\/root\/\.config)\/systemd\/(?:system|user)(?:\.control|\.conf\.d)?(?:\/|$)/;
 // The root helper and its sudo line: changed only by the owner's one-time command.
 const HELPER_PATHS = ['/usr/local/sbin/spark-console-root', '/etc/sudoers.d/spark-console-root'];
 // Risky to name in a change: [the test, what it is, whether what goes can't be put back, the places a glob may match].
@@ -12743,7 +12759,8 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
-  if (touched === true && (RISKY_PATHS[2][0].test(p) || /(?:^|\/)systemd\/|^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket)$/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
+  // (a folder of units, a unit's own file or drop-in, by a pattern too: not systemd's settings, journald.conf)
+  if (touched === true && (RISKY_PATHS[2][0].test(p) || SORT_UNIT_DIRS.test(p) || /^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket|target|mount)(?:\.d(?:\/|$)|$)/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -12892,15 +12909,16 @@ function sortInterp(args, ctx, r, x, name) {
   const pre = o.all(...({ node: ['r', 'require', 'import'], ruby: ['r'], perl: ['M', 'm'], lua: ['l'] }[key] ?? []));
   if (pre.length) sortUnshown(r, `the code ${name} loads by name (${pre[0].text || 'a $'})`);
   for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else { sortUnshown(r, `the code a $ or a command hands ${name}`); if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); } }
-  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
+  // (a one-liner shows its words, but not what it loads: a module from the folder it starts in, a file it reads as code)
+  if (codes.length) { sortUnshown(r, `the code a ${name} one-liner runs and loads (a module from the folder it starts in, a file it reads as code), which the sorter does not read`); sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
-  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
+  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`); sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); } else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { sortUnshown(r, `the code ${name} runs`); if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { sortUnshown(r, `the ${name} code a $ or a command names`); if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (x.opaque) { sortUnshown(r, `the ${name} code it reads from its input`); unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`); }
-  if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
+  if (typeof x.stdin === 'string') { sortUnshown(r, `the ${name} code its here-text holds and what it loads, which the sorter does not read`); sortScan(x.stdin, ctx, r, true, 'seen'); }
   else {
     sortUnshown(r, `the ${name} code it reads from its input`);
     // (fed a file through <: its text is in no word of the command, so no button shows it)
@@ -12910,6 +12928,9 @@ function sortInterp(args, ctx, r, x, name) {
   sortRuns(null, ctx, r, `${sortQ(name)} runs the code it reads from its input, which the sorter does not read.`);
   fin();
 }
+// An awk program that starts or writes something: system, a pipe (not ||), a library loaded, or a print or printf sent
+// to a file; a comparison ($3 > 100) and plain getline from its input run nothing else.
+const sortAwkRuns = t => /\bsystem\b|@(?:load|include)\b|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(String(t));
 const sortDoubts = name => () => unsure(`It uses the shell’s ${sortQ(name)}, which can change what later words run.`);
 // Built-ins that set a name (declare, read, printf -v, getopts, unset): each name is an assignment; a name with [ (an
 // index bash works out as arithmetic, running what is in it) or a value worked out as arithmetic (-i) is a doubt.
@@ -12988,8 +13009,8 @@ const SORT_HANDLERS = {
     // (gawk -i inplace rewrites each file it reads)
     if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
-      if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
-      if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
+      if (!p || p.unknown) { sortUnshown(r, `the ${name} program a $ or a command makes`); unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`); }
+      if (sortAwkRuns(p.text)) { sortUnshown(r, `what the ${name} program starts or writes (system, a pipe, an output file), which the sorter does not read`); sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
     return files.length || inline.length ? o.end : o.end + 1;
   },
@@ -13028,7 +13049,7 @@ const SORT_HANDLERS = {
       // (and with a suffix keeps the old one beside it, or where a / in the suffix says)
       for (const f of files) { sortTouch(f, ctx, r); if (suffix) sortTouch({ ...f, text: suffix.includes('*') ? (suffix.includes('/') ? '' : f.text.replace(/[^/]*$/, '')) + suffix.replace(/\*/g, f.text.split('/').pop()) : f.text + suffix }, ctx, r); }
     }
-    if (!scripts.every(s => sortSedSafe(s.text))) { sortScan(scripts.map(s => s.text).join('\n'), ctx, r, true, 'seen'); sortRuns(null, ctx, r, 'The sed script writes a file or runs a command (w, W or e).'); }
+    if (!scripts.every(s => sortSedSafe(s.text))) { sortUnshown(r, 'what the sed script runs or writes (e, w or W), which the sorter does not read'); sortScan(scripts.map(s => s.text).join('\n'), ctx, r, true, 'seen'); sortRuns(null, ctx, r, 'The sed script writes a file or runs a command (w, W or e).'); }
   },
   find(a, ctx, r) {
     let k = 0;
@@ -13866,7 +13887,10 @@ function sortSedSafe(s) {
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
-// (files it runs, to hash for the ask); unshown (code it runs that it does not show, in the sorter's words); overwrites (with
+// (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
+// refuses on it); unpinnable (each piece of it that is no file named as a word, so no script's hash pins it, all of them);
+// later (work it starts later, outside the button and the net: root refuses on it); unknownProgram (a
+// program it doesn't know, by name); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
@@ -13874,18 +13898,20 @@ function sortSedSafe(s) {
 // name count too). scripts, placed and wide hold no control sign or line break: a name with one is refused (risky).
 const SORT_ORDER = ['look', 'change', 'risky', 'lockout', 'notdone'], SORT_MAX = 16384, SORT_DEPTH = 4, SORT_WRAPS = 32, SORT_SEEN = 8 * SORT_MAX;
 const raise = (r, cls, why) => { if (SORT_ORDER.indexOf(cls) > SORT_ORDER.indexOf(r.class)) Object.assign(r, { class: cls, why }); };
-const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null });
+const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null, unpinnable: [], later: null });
 function sortMerge(r, c) {
   raise(r, c.class, c.why);
-  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown });
+  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown, later: r.later ?? c.later });
   r.scripts.push(...c.scripts);
+  for (const u of c.unpinnable) if (r.unpinnable.length < 16 && !r.unpinnable.includes(u)) r.unpinnable.push(u);
 }
 // Code it runs that the command does not show (unshown, in the sorter's own words): a file of code named as a word (in
 // scripts too, to hash), a shell or an interpreter fed its code from input, a module or a package's scripts run by name,
 // a build, a start file a setting names, a file words from input name. Root refuses on it; for a change as the owner only
 // code fed from input or a start-file setting is asked: a script, a build, a module or a project's scripts runs inside
 // the run wall, which is what bounds it, as a plain change does.
-const sortUnshown = (r, what) => { r.unshown ??= String(what).slice(0, 200); r.simple = false; };
+// (unpinnable: every such code that is not a file named as a word, whose hash can't pin it: all of them, not the first)
+const sortUnshown = (r, what, file = false) => { const w = String(what).slice(0, 200); r.unshown ??= w; if (!file && !r.unpinnable.includes(w) && r.unpinnable.length < 16) r.unpinnable.push(w); r.simple = false; };
 // Signs that don't show (controls but tab and new line, format and private ones, lone halves, selectors, blank fillers):
 // refused, since what is shown would not be what runs (design A 2.5).
 const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-️ﾠ\u{e0100}-\u{e01ef}]/u;
@@ -13993,7 +14019,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
   ctx.unread = true;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
-  if (file) { r.scripts.push(file); sortUnshown(r, `the file ${file}`); }
+  if (file) { r.scripts.push(file); sortUnshown(r, `the file ${file}`, true); }
   raise(r, 'change', why);
   // (a file to run named by a pattern or a {…}, or a shell's input by one: what it names can't be matched to what was written)
   if ((file && /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(file)) || (ctx.inputs ?? []).some(w => w.glob || w.brace)) unsure(`${why} It names the file it runs by a pattern or a {…}.`);
@@ -14010,8 +14036,10 @@ function sortRuns(file, ctx, r, why, dir = null) {
 }
 // What a timer or a schedule runs later (systemd-run, at, crontab, a schedule or a unit written), sorted into c: when it
 // is the lock-out class it is lasting too, since it runs after the net has kept or put back (the final read `net`, 13).
+// later: what it starts runs outside the button and the net, whatever it is (root refuses it, A-16).
 function sortLater(c, ctx, r, via) {
   sortMerge(r, c);
+  r.later ??= `${via} starts work later, by itself, outside this command and the net`;
   raise(r, 'risky', `${sortQ(via)}: a job or a unit that runs by itself, outside the wall.`);
   if (/^(?:lockout|notdone)$/.test(c.class)) { raise(r, 'lockout', `${sortQ(via)} starts a change to a way in later, by itself: ${c.why}`); r.lasting ??= `${via} starts a change to a way in later, by itself, after the net has kept or put it back: the net can’t put that back.`; }
 }
@@ -14050,7 +14078,7 @@ const SORT_ROOT_OPTS = {
 };
 function sortProgram(words, ctx, r, x) {
   const [w0, ...args] = words;
-  if (w0.unknown || w0.glob || w0.brace) unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
+  if (w0.unknown || w0.glob || w0.brace) sortUnshown(r, 'a program a $, a pattern or a {…} names'), unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
   if (++ctx.wraps > SORT_WRAPS || ++ctx.steps > SORT_STEPS) unsure('It wraps commands in commands more than the sorter reads.');
   const gitTouch = ctx.gitTouch;
   ctx.gitTouch = false;
@@ -14074,7 +14102,9 @@ function sortProgram(words, ctx, r, x) {
     ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     sortInstall(name, args, ctx, via);
-    if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
+    // (a program it doesn't know: said by name, so an ask can say what the sorter doesn't check; what it is handed by find
+    // -exec or xargs as its own name, {}, is code from the file system)
+    if (!sortKnown(name)) { ctx.unknownProgram ??= name.replace(/[^\w.+@-]/g, '').slice(0, 60) || null; if (x.unknownArgs && /^\{\}$/.test(name)) sortUnshown(r, 'a program find or xargs names from what it finds'); unsure(`The sorter doesn't know the program ${sortQ(name)}.`); }
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
     if (x.unknownArgs && reads !== '') { if (file === 'del') ctx.kinds.add('delete'); raise(r, 'risky', `${sortQ(name)} gets words it reads from its input, which the sorter can't see.`); }
@@ -14155,6 +14185,20 @@ function sortFile(name, kind, args, ctx, r) {
   if (dir) { sortTouch(dir, ctx, r, dir === into, true); if (bk != null) sortTouch({ ...dir, text: dir.text.replace(/\/+$/, '') + bk }, ctx, r, false); }
 }
 
+// A key carried out (the second checker, cmd-refused): a command that names a key and writes a place that isn't itself a
+// key's (a copy, a move, an archive, a link, a redirection, dd, tee), or sends one to another machine (a word of the key
+// beside an address: not ssh's -i or IdentityFile, which use it), puts the key where a look shows it back. The place, or
+// null. A move or copy to another key's name (.env.example to .env, id_x to ~/.ssh/id_x.old) and chmod stay asked.
+function sortKeyOut(text, ctx) {
+  // (a key's own place, by its name or its folder: ~/.ssh's other files too)
+  const keyPlace = p => { const x = p.replace(/^~(?=\/|$)/, '/~').replace(/\/+$/, ''); return KEYFILE_NAME_RE.test(x.split('/').pop()) || KEYFILE_PLACE_RE.test(x) || KEYFILE_NOT_RE.test(x); };
+  const out = [...ctx.wrote].find(p => ctx.changes?.has(p) && !keyPlace(p) && !/^\/dev\/(?:null|stdout|stderr)$/.test(p));
+  if (out) return out;
+  if (!ctx.reach?.size) return null;
+  const used = new Set([...text.matchAll(/(?:^|\s)-i\s*(\S+)|IdentityFile[=\s]+(\S+)/gi)].map(m => (m[1] ?? m[2]).replace(/^['"]|['"]$/g, '')));
+  const sent = [...lookWords(text).words, ...ctx.seen].filter(w => keyWord(w) && !used.has(w));
+  return sent.length ? 'another machine' : null;
+}
 // After the parts: on Spark 2 a change is risky; as root, more than one plain program is risky (design A 2.7, 2.8).
 function sortAt(r, ctx) {
   if (ctx.at === 'hub' && r.class === 'change') raise(r, 'risky', 'It changes Spark 2, which runs the console and the brain: anything that changes Spark 2 is asked first.');
@@ -14213,6 +14257,7 @@ function sortCommand(command, opts) {
       for (const w of new Set([...lw.words, ...ctx.seen])) { if ((budget -= w.length) < 0) { raise(r, 'risky', 'It names more than the sorter reads for a key.'); break; } if (keyWord(w)) { key = w; break; } }
       if (r.class === 'look' && lw.sudo) raise(r, 'change', 'It runs sudo, which a look refuses: a command becomes root only by setting root.');
       if (key && r.class === 'look') raise(r, 'notdone', `It would show ${sortQ(key)}, which is a key or holds one: a key is never shown back.`);
+      else if (key && sortKeyOut(text, ctx)) raise(r, 'notdone', `It would put ${sortQ(key)}, which is a key or holds one, where it can be shown back (${sortQ(sortKeyOut(text, ctx))}): a key is never shown back.`);
       else if (key) sortOpen(ctx, r, `It names ${sortQ(key)}, key material the run wall hides, so it would run outside the wall.`);
       // (the plain shape, R64: a change not of it is asked, a look only for a {…}; stronger answers stand)
       if (ctx.shape && (r.class === 'change' || (r.class === 'look' && ctx.shape.brace))) raise(r, 'risky', ctx.shape.why);
@@ -14226,7 +14271,12 @@ function sortCommand(command, opts) {
   let uses = { reads: [], installs: [], reach: [] };
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
-    unshown: r.class === 'look' || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    unshown: (r.class === 'look' && !ctx.root) || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    // (each piece of unseen code that no script's hash can pin: a module, a build, a pipe into a shell, a one-liner…)
+    unpinnable: (r.class === 'look' && !ctx.root) ? [] : [...new Set(r.unpinnable)].slice(0, 16).map(u => u.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ')),
+    // (work it starts later, outside the button and the net; a program the sorter doesn't know, by name)
+    later: r.class === 'look' || r.later == null ? null : r.later.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    unknownProgram: r.class === 'look' || typeof ctx.unknownProgram !== 'string' ? null : ctx.unknownProgram,
     placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses,
     // (with deletes: the places whose old content it removes or writes over, placed less what it only reads, and wide)
     overwrites: r.deletes ? changes.filter(([p, w]) => w || !uses.reads.includes(p)).map(([p]) => p) : [] };
@@ -14461,7 +14511,7 @@ function sortWrap(args, ctx, r, x, name) {
   let k = 0;
   for (; k < args.length; k++) {
     const a = args[k], t = a.text;
-    if (a.unknown || a.glob) unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`);
+    if (a.unknown || a.glob) { sortUnshown(r, `what ${name} runs, named by a $ or a *`); unsure(`${sortQ(name)}’s words hold a $ or a *, so the sorter can't know what it runs.`); }
     if (t === '--') { k++; break; }
     if (name === 'env' && /^[A-Za-z_]\w*=/.test(t)) { sortAssign(t.split('=')[0], ctx, r, true, args[k].unknown ? null : t.slice(t.indexOf('=') + 1)); continue; }
     // (env -u takes a name away, as unset does; env -i or a lone -, and exec -c, empty the environment, where the run
@@ -14471,10 +14521,11 @@ function sortWrap(args, ctx, r, x, name) {
     if (name === 'env' && t === '-') continue;
     if (!t.startsWith('-') || t === '-') break;
     if (name === 'nice' && /^-\d+$/.test(t)) continue;
-    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); continue; }
+    // (an option it doesn't read, env -S among them, may make it run words that aren't on the button)
+    if (t.startsWith('--')) { if (!longs.split(' ').includes(t.includes('=') ? `${t.slice(2).split('=')[0]}=` : t.slice(2))) { sortUnshown(r, `what ${name} runs with its option ${t.split('=')[0]}`); unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(t)}.`); } continue; }
     for (let j = 1; j < t.length; j++) {
       if (takes.includes(t[j])) { if (j === t.length - 1) k++; break; }
-      if (!flags.includes(t[j])) unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`);
+      if (!flags.includes(t[j])) { sortUnshown(r, `what ${name} runs with its option -${t[j]}`); unsure(`The sorter doesn't know ${sortQ(name)}’s option ${sortQ(`-${t[j]}`)}.`); }
     }
   }
   const rest = args.slice(k + pos);
@@ -14979,9 +15030,12 @@ Object.assign(SORT_HANDLERS, {
     let k = 0, dir = null;
     for (; k < a.length && a[k].text.startsWith('-'); k++) {
       if (a[k].text === '-C') dir = a[++k];
-      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) r.simple = false, unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
+      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) r.simple = false, sortUnshown(r, `a program git ${a[k].text.split('=')[0]} may name (a pager, an alias, a helper, a hook)`), unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
     }
     if (a.some(w => /(?:^|[^\w])(?:ext|fd)::/.test(w.text))) unsure('git is handed an ext:: or fd:: address, which runs a command.');
+    // (as root, git runs what the repository's own settings name, a look too: an external diff, a filter, fsmonitor, a
+    // pager, a hook; those settings are in a folder the owner can write, and on no button; a clone makes a new one)
+    if (ctx.root && !/^(?:clone|init|ls-remote|version|help)$/.test(a.find((w, i) => i >= 0 && !w.text.startsWith('-') && a[i - 1]?.text !== '-C')?.text ?? '')) sortUnshown(r, 'the programs the repository’s own settings may name (an external diff, a filter, fsmonitor, a pager, a hook)');
     if (a[k]?.unknown) unsure('git’s sub-command comes from a $ or a command.');
     const v = a[k]?.text ?? '', own = a.slice(k + 1), rest = own.map(w => w.text), only = re => rest.every(s => re.test(s));
     if (GIT_LOOK.has(v) && rest.some(s => /^--(?:ext|textconv|open)|^-O/.test(s))) unsure(`git ${sortQ(v)} is told to run a program (--ext-diff, --textconv, -O or --open-files-in-pager).`);
@@ -15197,7 +15251,7 @@ Object.assign(SORT_HANDLERS, {
       if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager|systemd-user-sessions$|user-runtime-dir|wg-quick|rfkill|systemd-timesyncd$|chrony|ntp)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
       else if (['docker', 'containerd'].some(is)) { raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`); if (/^(?:stop|restart|kill|try-restart|reload-or-restart|disable|mask|freeze|isolate)$/.test(v)) ctx.kinds.add('brain'); }
-      else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);
+      else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) { raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`); r.later ??= `the timer ${u.text} starts work later, by itself, outside this command and the net`; }
       if (at && (pat || !/^[A-Za-z0-9_-]+(?:\.service)?$/.test(u.text))) raise(r, 'risky', `As root, systemctl changes at once only a service named plainly, not ${sortQ(u.text)} (a pattern, a target, a slice, an instance, a path or another kind of unit).`);
     }
     if (/^(?:daemon-\S+|set-default|\S+-environment|preset-all)$/.test(v)) raise(r, 'risky', `systemctl ${sortQ(v)} changes how systemd runs every service.`);
@@ -15439,15 +15493,15 @@ async function statusText() {
 
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
-  setAgentSettings({ halted: true, autoPaused: false });
+  // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said below)
+  const unnoted = putBackRemoval({ kind: 'paused' }, () => setAgentSettings({ halted: true, autoPaused: false }));
   // (an open dangerous ask closes: 20-danger.mjs)
   dangerPaused();
-  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
+${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}${unnoted ? `\n${unnoted}` : ''}`;
 }
 
 async function restartWord(via) {
@@ -15742,12 +15796,11 @@ function allowedWord(word, via) {
   if (off) {
     const gone = off === 'all' ? list : list[Number(off) - 1] ? [list[Number(off) - 1]] : [];
     if (!gone.length) return list.length ? `There is no ${off} in the list (${list.length} kept). /allowed lists them.` : 'Nothing is always allowed.';
-    setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) });
     // (a removal that raises the put-back number, as a passkey's or a key's does: a copy from before it put back by
-    // hand holds, and the entry is taken away again, 22-putback.mjs)
-    for (const e of gone) putBackRemoved('allowed', e.id, allowedWords(e));
+    // hand holds, and the entry is taken away again; its note first, then the save, 22-putback.mjs)
+    const unnoted = putBackRemoval(gone.map(e => ({ kind: 'allowed', id: e.id, name: allowedWords(e) })), () => setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) }));
     audit({ via, actor: via === 'telegram' ? 'owner on Telegram' : 'owner', action: 'always-removed', args: { ids: gone.map(e => e.id) }, ok: true });
-    return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.`;
+    return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.${unnoted ? `\n${unnoted}` : ''}`;
   }
   if (!list.length) return 'Nothing is always allowed. A change’s button offers “Always allow …” on the page, with your passkey.';
   return [`Always allowed in your chats (${list.length}):`, ...list.map((e, i) => `${i + 1}. ${allowedWords(e)}`),
@@ -17213,6 +17266,7 @@ function brainAsk(m, messages, tools = null) {
     let first = null, buf = '', content = '', settled = false;
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(limit); fn(v); } };
     const req = http.request({ hostname: '127.0.0.1', port: m.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      res.setEncoding('utf8');   // (one decoder for the whole answer: a character cut between two pieces reads whole)
       res.on('error', e => settle(reject, e));
       res.on('close', () => settle(reject, new Error('its answer was cut off')));
       if (res.statusCode !== 200) {
@@ -22588,6 +22642,8 @@ async function runnerUndo(viewer, ctx, since = '') {
 // use (C8a) and the piece is turned on (SELF_CHANGE_ON). Only the owner's own chat, never an agent's key,
 // ask_sparkie, an API call or a saved workflow's step (NOT_A_STEP).
 const SELF_CHANGE_ON = false;
+// (the repository's full run, .github/workflows/full-run.yml: its job's check run, by name)
+const SELF_FULL_RUN = 'suite';
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 // (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
 const SELF_REFUSED = /^\.github\//i;
@@ -23018,11 +23074,12 @@ async function selfInstallFacts(viewer, ctx) {
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
   const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
-  // (passed: every check finished, at least one with success, none failed, cancelled or timed out; a skipped job, such as
-  // the mark job on a pull request, or a neutral one, is no failure)
-  const ok = new Set(['success', 'skipped', 'neutral']);
-  if (!runs.some(r => r.conclusion === 'success') || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
-    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked. check_update says how it is doing.`);
+  // (passed: the full run itself, by its name, passed, and every other check finished with none failed, cancelled or timed
+  // out; a skipped job, such as the mark job on a pull request, or a neutral one, is no failure. Any other check passing
+  // is not the full run.)
+  const ok = new Set(['success', 'skipped', 'neutral']), full = runs.find(r => r.name === SELF_FULL_RUN);
+  if (full?.status !== 'completed' || full?.conclusion !== 'success' || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
+    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked.${full ? '' : ` Its full run, “${SELF_FULL_RUN}”, isn’t among its checks.`} check_update says how it is doing.`);
   }
   const reviews = ((await selfApi('GET', `/repos/${repo}/pulls/${Number(pr.number)}/reviews`)) || []).filter(r => String(r.commit_id || '') === open.head).slice(-5)
     .map(r => `${clean(r.user?.login, 60)} ${clean(r.state, 30)}${r.body ? `: “${clean(r.body, 200)}” (their words)` : ''}`);
@@ -23037,9 +23094,11 @@ async function selfInstallFacts(viewer, ctx) {
     testedAt: done ? new Date(done).toISOString() : null };
 }
 // C8d: the owner's yes. Exactly the tree on the button: the proposal and its pull request still at the head shown, and
-// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and that is
-// all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
-// install_update with its own ask, once that tree is marked. main moved: nothing is merged.
+// GitHub's main still the commit the proposal was made on; then main is moved forward to that very head, fast-forward
+// only (no merge commit, so no other tree can come of it; GitHub refuses the move if main moved meanwhile, and takes
+// the pull request as merged), and main is read back: it is the commit shown, or nothing landed and the owner is told.
+// That is all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
+// install_update with its own ask, once that tree is marked.
 async function selfInstall(viewer, ctx, input) {
   if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
     throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
@@ -23051,8 +23110,13 @@ async function selfInstall(viewer, ctx, input) {
   if (!pr?.number || pr.head?.sha !== input.head) throw new HttpError(409, `${open.branch}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed. Ask again.`);
   const main = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
   if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged. Drop it and propose it again on the new main.`);
-  await selfApi('PUT', `/repos/${repo}/pulls/${Number(pr.number)}/merge`, { sha: input.head, merge_method: 'merge' });
-  // (merged: the proposal is no longer open here)
+  let refused = null;
+  await selfApi('PATCH', `/repos/${repo}/git/refs/heads/main`, { sha: input.head, force: false }).catch(e => { refused = e; });
+  const now = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
+  if (now !== input.head) {
+    throw new HttpError(409, `${now && now !== open.base ? `main moved on GitHub after you were asked (it is ${clean(now, 12)} now)` : `GitHub didn’t move main to the proposal${refused ? ` (${clean(refused.message, 200)})` : ''}`}, so main isn’t the commit you were shown and nothing landed. Look at main, then ask again (or drop the proposal and propose it on the new main).`);
+  }
+  // (landed: main is the commit shown; the proposal is no longer open here)
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-merge', args: { id: open.id, head: input.head.slice(0, 12), pr: pr.number }, ok: true });
   return { ok: true, outcome: 'merged', tree: input.tree.slice(0, 12), pullRequest: pr.number,
@@ -25520,14 +25584,15 @@ async function passkeyGate(req, path, viewer) {
 
 /* ───────── state put back from a copy lets no device or key in by itself ───────── */
 // Area: ways in        Rules: R23, R33        Tests: putback.test.mjs
-// Owns: auth-serial.json (writers: putBackSerialWrite)
-// Timers: none        Wakes: none
+// Owns: auth-serial.json (writers: putBackSerialWrite), auth-unnoted.json (writers: putBackUnnotedSave)
+// Timers: putBackRetry (every 60 s: a removal's note that couldn't be written yet)        Wakes: none
 // Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json,
 // so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
 // that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
 // each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
 // tailnet-only), agents' changes paused, an "always allowed" kind taken away (/allowed off, 21-ahead.mjs). The secrets
-// file also notes what was removed (kind and id; for a narrowing, the right it took). Nothing else writes either number;
+// file also notes what was removed (kind and id; for a narrowing, the right it took), first, before the removal is saved
+// (putBackRemoval); a note that can't be written is kept, said and tried again. Nothing else writes either number;
 // restore.sh --with-state removes the state's. (Grants that never travel with a state copy need none: the go-ahead and
 // open asks live in memory; the Telegram pairing, its approvals switch and recovery codes in the secrets file; root's
 // switch on its Spark, read there at each command. Not covered: a saved workflow's yes to its images, R23's Today.)
@@ -25544,7 +25609,9 @@ async function passkeyGate(req, path, viewer) {
 // changes are refused on the tailnet too, and an approval from Telegram waits. The tailnet door is the owner at once,
 // the owner's own chat and Telegram requests work, and go-back.sh and an update's way back (program files only) never
 // trip it. A secrets file that can't be read keeps the last answer read while Spark Console runs, so a hold doesn't lift;
-// after a start with the file unreadable, nothing is held until it reads again. A right the owner gave back to a key
+// after a start with the file unreadable, nothing is held until it reads again; a hold whose own write fails is held in
+// memory until the next start, and said. The check runs only at a start: an older copy untarred under a running Spark
+// Console is live until then (R23's Today). A right the owner gave back to a key
 // after taking it is taken again at a put-back (the owner gives it back again).
 const PUTBACK_FILE = `${STATE_DIR}/auth-serial.json`;
 const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
@@ -25575,31 +25642,95 @@ function putBackAuth() {
   }
   return putBackSeen.auth;
 }
-const putBackHeld = () => Boolean(putBackAuth().hold);
+// A hold that couldn't be written to the secrets file at a start is held in memory until the next start (said).
+let putBackMemHold = null;
+const putBackHold = () => putBackAuth().hold || putBackMemHold;
+const putBackHeld = () => Boolean(putBackHold());
 const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r => r && typeof r === 'object') : []);
 
-// A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
-// between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
-// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused,
-// allowed (an "always allowed" kind, by its id); resumed notes the owner's resume and changes no number.
-function putBackRemoved(kind, id = null, name = null, extra = {}) {
-  if (!SECRETS_FILE) return;
+// A removal by the owner (P-3, round two): the note goes first, then the removal's own save, then the state's number.
+// The note is the secrets file's number (one above the higher of the two) and what went; if the save then throws, the
+// note is taken out again and the error is the route's, as before. A stop between the note and the save leaves the
+// secrets file ahead with the removal noted: the next start holds and removes it again (the safe side). A note that
+// can't be written (the secrets file can't be written or read just then) never stops the removal: it is done at once,
+// the state's number still goes up, and the note is kept in the state folder (auth-unnoted.json, which an older copy
+// untarred over the folder doesn't hold, so it stays), said in the removal's answer and on the needs-you list, and
+// written at the next removal, each minute (putBackRetry), and at the next start before anything is judged. items: one
+// or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took: extra
+// { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed notes
+// the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
+const PUTBACK_UNNOTED_FILE = `${STATE_DIR}/auth-unnoted.json`;
+const PUTBACK_RETRY_MS = Number(process.env.SPARK_CONSOLE_PUTBACK_RETRY_MS || 60000);
+const PUTBACK_UNNOTED_SAID = 'Done. Its note outside the state (in the secrets file) couldn’t be written just now, so an older copy of the state put back by hand could bring it back: Spark Console tries again every minute and says so on the needs-you list until it is written.';
+const putBackUnnoted = { why: null };
+function putBackUnnotedRead() {
+  const v = readJson(PUTBACK_UNNOTED_FILE);
+  return Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [];
+}
+function putBackUnnotedSave(notes) {
+  if (notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: notes.slice(-PUTBACK_KEPT_MAX) });
+  else if (existsSync(PUTBACK_UNNOTED_FILE)) unlinkSync(PUTBACK_UNNOTED_FILE);
+}
+// Writes notes into the secrets file: its number at least `serial`, what went added, the pause as the last pause or resume
+// left it. Throws when the file can't be read or written.
+function putBackNoteWrite(notes, serial) {
+  const s = secretsRead();
+  if (s === null) throw new Error('the secrets file can’t be read');
+  secretsWrite(x => {
+    const a = { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}) };
+    a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
+    for (const r of notes) {
+      // (a resume is noted only over a pause that was: nothing else to put right later)
+      if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
+      a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+    }
+    return { ...x, auth: a };
+  });
+  putBackSeen.at = 0;
+}
+function putBackRemoval(items, save) {
+  const now = new Date().toISOString(), notes = [].concat(items).map(r => ({ ...r, at: now }));
+  if (!SECRETS_FILE) { save(); return null; }
+  const pending = putBackUnnotedRead(), raises = notes.some(r => r.kind !== 'resumed');
+  let n = null, had, noted = false;
   try {
     const s = secretsRead();
     if (s === null) throw new Error('the secrets file can’t be read');
-    // (a resume is noted only over a pause that was: nothing else to put right later)
-    if (kind === 'resumed' && s.auth?.halted !== true) return;
-    const n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (kind === 'resumed' ? 0 : 1);
-    if (kind !== 'resumed') putBackSerialWrite(n);
-    secretsWrite(x => {
-      const a = { ...(x.auth && typeof x.auth === 'object' ? x.auth : {}), serial: n };
-      if (kind === 'paused' || kind === 'resumed') a.halted = kind === 'paused';
-      else a.removed = [...putBackRemovedList(a), { kind, id: String(id), ...(name ? { name: clean(name, 60) } : {}), ...extra, at: new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
-      return { ...x, auth: a };
-    });
-    putBackSeen.at = 0;
-  } catch (e) { console.error(`What was removed couldn’t be noted for a state put back later: ${e.message}`); }
+    had = s.auth;
+    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (raises ? 1 : 0);
+    putBackNoteWrite([...pending, ...notes], n);
+    noted = true;
+  } catch (e) { putBackUnnoted.why = e.message; console.error(`What was removed couldn’t be noted outside the state just now (it is tried again): ${e.message}`); }
+  try { save(); } catch (e) {
+    // (the removal itself failed: its note is taken out again, and the error is the route's)
+    if (noted) try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
+    throw e;
+  }
+  if (noted) {
+    try { if (raises) putBackSerialWrite(n); } catch (e) { console.error(`The state’s number couldn’t be raised (the secrets file is ahead, so the next start holds): ${e.message}`); }
+    try { if (pending.length) putBackUnnotedSave([]); putBackUnnoted.why = null; } catch (e) { console.error(`The note of earlier removals stays on disk: ${e.message}`); }
+    return null;
+  }
+  // (not noted: the removal stands; the state's number still goes up, and the note waits on disk)
+  try { if (raises) putBackSerialWrite(Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0) + 1); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
+  try { putBackUnnotedSave([...pending, ...notes]); } catch (e) { console.error(`The removal couldn’t be kept to note later either: ${e.message}`); }
+  return PUTBACK_UNNOTED_SAID;
 }
+// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check).
+function putBackRetry() {
+  if (!SECRETS_FILE) return true;
+  let pending;
+  try { pending = putBackUnnotedRead(); } catch { return false; }
+  if (!pending.length) { putBackUnnoted.why = null; return true; }
+  try {
+    putBackNoteWrite(pending, putBackSerial());
+    putBackUnnotedSave([]);
+    putBackUnnoted.why = null;
+    console.error(`What was removed is noted outside the state now (${pending.length} removal${pending.length === 1 ? '' : 's'}).`);
+    return true;
+  } catch (e) { putBackUnnoted.why = e.message; return false; }
+}
+setInterval(() => { try { putBackRetry(); } catch {} }, PUTBACK_RETRY_MS).unref?.();
 
 // A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
 // (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. Either number
@@ -25628,6 +25759,9 @@ function putBackSeed() {
 function putBackAtStart() {
   if (!SECRETS_FILE) return;
   try {
+    // (removals the last run couldn't note outside the state are noted now, before anything is judged: a number levelled
+    // since never forgets what went, and what an older copy brought back is removed again)
+    if (!putBackRetry()) console.error(`Removals still not noted outside the state: ${putBackUnnoted.why}`);
     const s = secretsRead();
     if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
     const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
@@ -25687,18 +25821,20 @@ function putBackAtStart() {
     } catch (e) { console.error(`The tasks after a put-back: ${e.message}`); }
     if (!first) return;
     try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
-    const since = new Date().toISOString();
-    secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
+    const since = new Date().toISOString(), hold = { since, state: t, again: again.slice(0, 50), signedOut, parked };
+    // (a hold that can't be written is held in memory all the same, until the next start, and said)
+    let kept = true;
+    try { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold } })); } catch (e) { kept = false; putBackMemHold = { ...hold, unsaved: e.message }; console.error(`The hold couldn’t be saved, so it holds only until Spark Console next starts: ${e.message}`); }
     putBackSeen.at = 0;
     audit({ via: 'start', actor: 'Spark Console', action: 'state-put-back', args: { state: t, secrets: n || null, removedAgain: again.length, signedOut, parked }, ok: true });
     // (names typed by whoever set each one up: masked, as every notice that names what someone typed)
-    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.`) });
+    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.${kept ? '' : ' The hold couldn’t be saved in the secrets file, so it lasts only until Spark Console next starts.'}`) });
   } catch (e) { console.error(`Looking for a state put back from a copy: ${e.message}`); }
 }
 
 // The list on the sign-in page, and "Keep these" (the owner on the tailnet: the handler's /auth/ routes are the owner's).
 function putBackList() {
-  const a = putBackAuth(), h = a.hold && typeof a.hold === 'object' ? a.hold : null;
+  const h0 = putBackHold(), h = h0 && typeof h0 === 'object' ? h0 : null;
   return {
     held: Boolean(h), ...(h ? { since: h.since || null, removedAgain: Array.isArray(h.again) ? h.again : [], signedOut: h.signedOut || 0, parked: h.parked || 0 } : {}),
     passkeys: passkeys().map(k => ({ id: k.id, name: k.name, addedAt: k.createdAt || null, lastUsedAt: k.lastUsedAt || null })),
@@ -25718,6 +25854,7 @@ async function putBackRoute(req, res, path, viewer) {
   const n = Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0);
   putBackSerialWrite(n);
   secretsWrite(x => { const b = { ...(x.auth || {}), serial: n }; delete b.hold; return { ...x, auth: b }; });
+  putBackMemHold = null;
   putBackSeen.at = 0;
   audit({ via: 'page', actor: 'owner', action: 'state-put-back-kept', args: { serial: n }, ok: true });
   fleetEvent({ type: 'notice', text: 'You looked at what came back with the copy and kept it. Sign-in from the internet and agents work again.' });
@@ -25725,8 +25862,12 @@ async function putBackRoute(req, res, path, viewer) {
 }
 // The needs-you line while it holds (20-needs.mjs).
 function putBackNeeds(add) {
-  const h = putBackAuth().hold;
-  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.`);
+  const h = putBackHold();
+  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
+  // (removals not yet noted outside the state: said until the retry writes them)
+  let waiting = [];
+  try { waiting = putBackUnnotedRead(); } catch {}
+  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.`);
 }
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
 // Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
@@ -25974,9 +26115,9 @@ async function signinRoute(req, res, path, viewer) {
   if (path === '/auth/signout') {
     const s = sessionFor(req);
     if (s) {
-      saveSessions(sessionList().filter(x => x.id !== s.id));
+      // (its note outside the state first, then the save: 22-putback.mjs)
+      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
-      putBackRemoved('session', s.id, s.name);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
@@ -26081,12 +26222,11 @@ async function sessionRoute(req, res, path, viewer) {
   if (req.method === 'DELETE' && one) {
     const list = sessionList(), s = list.find(x => x.id === one[1]);
     if (!s) throw new HttpError(404, 'That device was already signed out.');
-    saveSessions(list.filter(x => x !== s));
+    const unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(list.filter(x => x !== s)));
     if (s.id === viewer.session?.id) clearSessionCookie(res);
     endSession(s.id);
-    putBackRemoved('session', s.id, s.name);
     audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   return false;
 }
@@ -26434,11 +26574,11 @@ const handler = async (req, res) => {
       if (req.method === 'DELETE' && gone) {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
-        savePasskeys(keys.filter(x => x !== k));
-        putBackRemoved('passkey', k.id, k.name);
+        // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+        const unnoted = putBackRemoval({ kind: 'passkey', id: k.id, name: k.name }, () => savePasskeys(keys.filter(x => x !== k)));
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }
@@ -26468,13 +26608,13 @@ const handler = async (req, res) => {
         for (const k of ['halted', 'selfHeal']) if (body[k] !== undefined) { if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} should be true or false.`); change[k] = body[k]; }
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
-        const next = setAgentSettings(change);
-        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
+        let next;
+        const unnoted = change.halted !== undefined ? putBackRemoval({ kind: change.halted ? 'paused' : 'resumed' }, () => { next = setAgentSettings(change); }) : ((next = setAgentSettings(change)), null);
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
         if (change.halted !== undefined) fleetEvent({ type: 'operation', operation: change.halted ? 'agents paused' : 'agents resumed', status: 'completed', by: 'owner' });
-        return send(res, 200, { settings: next });
+        return send(res, 200, { settings: next, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       if (req.method === 'POST' && path === '/agents') {
         const name = clean((await readBody(req, 4000)).name, 60);
@@ -26502,13 +26642,13 @@ const handler = async (req, res) => {
         const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
-        writePrivate(AGENTS_FILE, { keys });
         // A right taken away counts as a removal (R23): a state put back from before takes it away again.
         const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
-        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
+        const unnoted = Object.keys(took).length ? putBackRemoval({ kind: 'narrowed', id: key.id, name: key.name, extra: took }, () => writePrivate(AGENTS_FILE, { keys }))
+          : (writePrivate(AGENTS_FILE, { keys }), null);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
-        return send(res, 200, agentView(key));
+        return send(res, 200, { ...agentView(key), ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
       // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
@@ -26518,11 +26658,10 @@ const handler = async (req, res) => {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
-        writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
-        putBackRemoved('agent', gone.id, gone.name);
+        const unnoted = putBackRemoval({ kind: 'agent', id: gone.id, name: gone.name }, () => writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) }));
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }

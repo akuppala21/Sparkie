@@ -59,15 +59,16 @@ function sortInterp(args, ctx, r, x, name) {
   const pre = o.all(...({ node: ['r', 'require', 'import'], ruby: ['r'], perl: ['M', 'm'], lua: ['l'] }[key] ?? []));
   if (pre.length) sortUnshown(r, `the code ${name} loads by name (${pre[0].text || 'a $'})`);
   for (const c of codes) { if (!c.unknown) sortScan(c.text, ctx, r, true, 'seen'); else { sortUnshown(r, `the code a $ or a command hands ${name}`); if (c.fetches) ctx.fetched = true; else unsure(`The code handed to ${sortQ(name)} comes from a $ or a command, so the sorter can't read it.`); } }
-  if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
+  // (a one-liner shows its words, but not what it loads: a module from the folder it starts in, a file it reads as code)
+  if (codes.length) { sortUnshown(r, `the code a ${name} one-liner runs and loads (a module from the folder it starts in, a file it reads as code), which the sorter does not read`); sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { r.deletes = true; sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
-  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
+  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) { sortUnshown(r, `the module ${mod.text}, which ${name} looks for in the folder it starts in first`); sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); } else { sortUnshown(r, `the ${name} module ${mod.text || 'a $ names'}`); sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); } return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { sortUnshown(r, `the code ${name} runs`); if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { sortUnshown(r, `the ${name} code a $ or a command names`); if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
   if (x.opaque) { sortUnshown(r, `the ${name} code it reads from its input`); unsure(`${sortQ(name)} reads code with a $ or a \` from <<< or a here-document, which the sorter can’t read as written.`); }
-  if (typeof x.stdin === 'string') sortScan(x.stdin, ctx, r, true, 'seen');
+  if (typeof x.stdin === 'string') { sortUnshown(r, `the ${name} code its here-text holds and what it loads, which the sorter does not read`); sortScan(x.stdin, ctx, r, true, 'seen'); }
   else {
     sortUnshown(r, `the ${name} code it reads from its input`);
     // (fed a file through <: its text is in no word of the command, so no button shows it)
@@ -77,6 +78,9 @@ function sortInterp(args, ctx, r, x, name) {
   sortRuns(null, ctx, r, `${sortQ(name)} runs the code it reads from its input, which the sorter does not read.`);
   fin();
 }
+// An awk program that starts or writes something: system, a pipe (not ||), a library loaded, or a print or printf sent
+// to a file; a comparison ($3 > 100) and plain getline from its input run nothing else.
+const sortAwkRuns = t => /\bsystem\b|@(?:load|include)\b|(?:^|[^|])\|(?!\|)|\bprintf?\b[^;{}\n]*>/.test(String(t));
 const sortDoubts = name => () => unsure(`It uses the shell’s ${sortQ(name)}, which can change what later words run.`);
 // Built-ins that set a name (declare, read, printf -v, getopts, unset): each name is an assignment; a name with [ (an
 // index bash works out as arithmetic, running what is in it) or a value worked out as arithmetic (-i) is a doubt.
@@ -155,8 +159,8 @@ const SORT_HANDLERS = {
     // (gawk -i inplace rewrites each file it reads)
     if (libs.some(l => /(?:^|\/)inplace(?:\.awk)?$/.test(l.text))) { raise(r, 'change', `${sortQ(name)} -i inplace rewrites the files it reads.`); r.deletes = true; for (const w of a.slice(o.end + (files.length || inline.length ? 0 : 1))) if (!/^[A-Za-z_]\w*=/.test(w.text)) sortTouch(w, ctx, r); }
     for (const p of progs) {
-      if (!p || p.unknown) unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`);
-      if (/\bsystem\b|getline|[|>]|@(?:load|include)/.test(p.text)) { sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
+      if (!p || p.unknown) { sortUnshown(r, `the ${name} program a $ or a command makes`); unsure(`${sortQ(name)}’s program comes from a $ or a command, so the sorter can't read it.`); }
+      if (sortAwkRuns(p.text)) { sortUnshown(r, `what the ${name} program starts or writes (system, a pipe, an output file), which the sorter does not read`); sortScan(p.text, ctx, r, true, 'seen'); sortRuns(null, ctx, r, `The ${sortQ(name)} program writes, pipes or starts something.`); }
     }
     return files.length || inline.length ? o.end : o.end + 1;
   },
@@ -195,7 +199,7 @@ const SORT_HANDLERS = {
       // (and with a suffix keeps the old one beside it, or where a / in the suffix says)
       for (const f of files) { sortTouch(f, ctx, r); if (suffix) sortTouch({ ...f, text: suffix.includes('*') ? (suffix.includes('/') ? '' : f.text.replace(/[^/]*$/, '')) + suffix.replace(/\*/g, f.text.split('/').pop()) : f.text + suffix }, ctx, r); }
     }
-    if (!scripts.every(s => sortSedSafe(s.text))) { sortScan(scripts.map(s => s.text).join('\n'), ctx, r, true, 'seen'); sortRuns(null, ctx, r, 'The sed script writes a file or runs a command (w, W or e).'); }
+    if (!scripts.every(s => sortSedSafe(s.text))) { sortUnshown(r, 'what the sed script runs or writes (e, w or W), which the sorter does not read'); sortScan(scripts.map(s => s.text).join('\n'), ctx, r, true, 'seen'); sortRuns(null, ctx, r, 'The sed script writes a file or runs a command (w, W or e).'); }
   },
   find(a, ctx, r) {
     let k = 0;
