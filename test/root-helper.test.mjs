@@ -865,8 +865,11 @@ function fleet({ target = spark({ installed: false }) } = {}) {
     + `  *@spark2.test) home=$TEST_T/spark2; id=${HUB_ID} ;;\n  *) echo "ssh: no such Spark here: $dest" >&2; exit 255 ;;\nesac\n`
     + 'cd "$home" && exec env HOME="$home" STANDIN_MACHINE="$id" bash -c "$*"\n', { mode: 0o755 });
   writeFileSync(join(bin, 'systemd-id128'), `#!/bin/bash\n[ "$1" = machine-id ] && echo "\${STANDIN_MACHINE:-${HUB_ID}}"\n`, { mode: 0o755 });
-  writeFileSync(join(bin, 'sudo'), `#!/bin/bash\n${LOG}\nR=$SPARK_CONSOLE_REHEARSAL; n=0\n[ "$1" = -n ] && { n=1; shift; }\n[ "$1" = -v ] && exit 0\n`
+  writeFileSync(join(bin, 'sudo'), `#!/bin/bash\n${LOG}\nR=$SPARK_CONSOLE_REHEARSAL; n=0; k=0\n[ "$1" = -n ] && { n=1; shift; }\n[ "$1" = -k ] && { k=1; shift; }\n[ "$1" = -v ] && exit 0\n`
     + 'if [ $n = 1 ] && [ ! -f "$R/etc/sudoers.d/spark-console-root" ]; then echo "sudo: a password is required" >&2; exit 1; fi\n'
+    // ($TEST_T/line-overridden: a later sudoers rule wins over the line, so the helper runs only on the password sudo
+    // cached; -k leaves that out)
+    + 'if [ $k = 1 ] && [ -e "$TEST_T/line-overridden" ]; then echo "sudo: a password is required" >&2; exit 1; fi\n'
     + 'rebase() { case "$1" in /usr/local/sbin/*|/etc/sudoers.d/*|/var/lib/spark-console/*) printf "%s" "$R$1" ;; *) printf "%s" "$1" ;; esac; }\n'
     + 'cmd=$1; shift; a=()\ncase "$cmd" in\n'
     + '  install) while [ $# -gt 0 ]; do case "$1" in -o|-g) shift 2 ;; -m) a+=("$1" "$2"); shift 2 ;; *) a+=("$(rebase "$1")"); shift ;; esac; done\n'
@@ -2126,13 +2129,51 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /already set up: this build's helper, its line and a current proof\. Nothing was changed\.\n/);
     const later = calls(f.target).slice(n).filter(c => c[0] !== 'ssh');
+    // (its check of the proof leaves out the password sudo -v cached, the final read's sudo-cached: the fourth call was
+    // "sudo /usr/local/sbin/spark-console-root check", and is "sudo -n -k /usr/local/sbin/spark-console-root check")
     assert.deepEqual(later.map(c => c[0] === 'sudo' ? c.slice(0, 3).join(' ') : c[0]),
       ['sudo -v', 'sudo cat /etc/sudoers.d/spark-console-root', 'sudo sha256sum /usr/local/sbin/spark-console-root',
-        'sudo /usr/local/sbin/spark-console-root check', 'systemctl', 'unshare', 'setpriv'],
+        'sudo -n -k', 'systemctl', 'unshare', 'setpriv'],
       JSON.stringify(later));
+    assert.deepEqual(later[3].slice(3, 5), ['/usr/local/sbin/spark-console-root', 'check']);
     const { [join(f.target.R, 'calls.log')]: _, ...after } = tree(f.target.R);
     const { [join(f.target.R, 'calls.log')]: __, ...was } = before;
     assert.deepEqual(after, was);
+  });
+
+  // The final read's "sudo-cached": after sudo -v the proof runs on the cached password, so a later sudoers rule that
+  // wins over the line was set up as "done", and every call of the console's then got "a password is required".
+  test('the line must let the helper run without the password sudo cached: if not, the line, the helper and the mark go again, and it says why', () => {
+    const f = fleet();
+    writeFileSync(join(f.T, 'line-overridden'), '');
+    const r = f.cmd(['--with-root', '3']);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /proof passed: the mark is written/);
+    assert.match(r.stdout, / {2}the sudo line does not let the helper run without your password on .* \(another rule in \/etc\/sudoers or\n {2}\/etc\/sudoers\.d wins over it; sudo -l lists them\), so the line, the helper and its mark were removed again\. Nothing\n {2}half set up is left\.\n$/);
+    assert.ok(!r.stdout.includes('done: '), r.stdout);
+    const steps = sudoCalls(f), proved = steps.findIndex(x => / prove --id /.test(x));
+    assert.match(steps[proved + 1], /^-n -k \/usr\/local\/sbin\/spark-console-root check --id [0-9a-f]{16}$/);
+    assert.deepEqual(steps.slice(proved + 2), ['rm -f /etc/sudoers.d/spark-console-root /usr/local/sbin/spark-console-root /var/lib/spark-console/proved']);
+    for (const p of ['usr/local/sbin/spark-console-root', 'etc/sudoers.d/spark-console-root', 'var/lib/spark-console/proved', 'var/lib/spark-console/root-on']) assert.ok(!has(f, p), p);
+    // with the rule mended, it sets up, and a plain run says where root stands; once set up, a second run checks the
+    // same way, and with the rule back it is not "already set up"
+    rmSync(join(f.T, 'line-overridden'));
+    const ok = f.cmd(['3']);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.match(ok.stdout, /done: the helper is set up and its walls are proven on .*\n {2}root here: off: the owner turns it on with the one command \(--with-root\)\n$/);
+    writeFileSync(join(f.T, 'line-overridden'), '');
+    const again = f.cmd(['3']);
+    assert.equal(again.status, 1, again.stdout + again.stderr);
+    assert.ok(!again.stdout.includes('already set up'), again.stdout);
+    assert.ok(!has(f, 'etc/sudoers.d/spark-console-root'));
+  });
+
+  test('a plain run says where root stands there: off, or ready when --with-root turned it on for this helper (it is left as it is)', () => {
+    const f = fleet();
+    assert.equal(f.cmd(['--with-root', '3']).status, 0);
+    const r = f.cmd(['3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /already set up: .*\n {2}root here: ready: only inside the net \(--net\), 30 minutes at most, 10 in the lock-out class\n$/);
   });
 
   test('visudo refuses the line: nothing is put in place', () => {

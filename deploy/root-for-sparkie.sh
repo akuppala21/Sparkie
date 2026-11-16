@@ -4,7 +4,8 @@
 #
 #   bash spark-console/deploy/root-for-sparkie.sh --check 3   what is there for each wall; changes nothing, asks no password
 #   bash spark-console/deploy/root-for-sparkie.sh 3           set it up on Spark 3; sudo asks that Spark's password once.
-#                                                             Root stays off there: look, run and the net only
+#                                                             Root's switch is left as it is, and said: off there unless
+#                                                             --with-root turned it on for this same helper
 #   bash spark-console/deploy/root-for-sparkie.sh --with-root 3     the same, and turns root on there (docs/rules/R70.md)
 #   bash spark-console/deploy/root-for-sparkie.sh --without-root 3  turns root off there again; nothing else changes
 #   bash spark-console/deploy/root-for-sparkie.sh --undo 3    remove it again: root's switch, the line, the helper, the mark
@@ -26,7 +27,8 @@
 #   6. the line is moved to /etc/sudoers.d/spark-console-root (root, 0440); it names that one file and no other command:
 #        <you> ALL=(root) NOPASSWD: /usr/local/sbin/spark-console-root
 #   7. the helper proves its walls and prints each wall's result; if the proof fails, the line and the helper are
-#      removed again, so nothing half set up is left
+#      removed again, so nothing half set up is left; and then the line must let the helper answer with the password
+#      sudo cached left out (sudo -n -k), else the line, the helper and the mark are removed again, saying why
 #   8. only with --with-root, and only after a proof passed: root's switch, written by root to
 #      /var/lib/spark-console/root-on (root, 0600: the day and this helper's SHA-256). A later build of the helper finds
 #      it is not its own, so root is off again until this is run with --with-root again
@@ -262,8 +264,14 @@ folders_ok() {
   done
 }
 
+ROOT_NOW=''   # what the helper's check said of root here, for the end of a plain run
+works() {   # $1 an id: does the sudo line itself let the helper answer, the password sudo cached left out (-k ignores it
+  # for this one call and keeps it for what follows)? Its check's lines on success
+  local out
+  out=$(sudo -n -k "$HELPER" check --id "$1" 2>/dev/null) && printf '%s\n' "$out"
+}
 install() {
-  local sha=$1 me got have_line have_sha want_line state
+  local sha=$1 me got have_line have_sha want_line state id out
   folders_ok || stop "/usr, /usr/local or /usr/local/sbin can be written by an account other than root, so the helper would not be safe there. Nothing was changed."
   [ -f "$COPY" ] || stop "the copy of the helper did not arrive. Nothing was changed."
   read -r got _ < <(sha256sum "$COPY")
@@ -277,8 +285,13 @@ install() {
   have_line=$(sudo cat "$LINE" 2>/dev/null || true)
   read -r have_sha _ < <(sudo sha256sum "$HELPER" 2>/dev/null || echo '-')
   if [ "$have_sha" = "$sha" ] && [ "$have_line" = "$want_line" ]; then
-    state=$(sudo "$HELPER" check --id "$(new_id)" 2>/dev/null | awk '$2 == "proof" { print $3 }' || true)
-    if [ "$state" = current ]; then note "already set up: this build's helper, its line and a current proof. Nothing was changed."; return 0; fi
+    id=$(new_id)
+    out=$(works "$id" || true)
+    state=$(sed -n "s/^$id proof //p" <<<"$out")
+    if [ "$state" = current ]; then
+      ROOT_NOW=$(sed -n "s/^$id root //p" <<<"$out")
+      note "already set up: this build's helper, its line and a current proof. Nothing was changed."; return 0
+    fi
   fi
   # From here everything is staged as root, under names nothing uses, and checked where only root can change it.
   sudo rm -f "$LINE.new" "$HELPER.new"
@@ -299,8 +312,19 @@ install() {
   else sudo rm -f "$LINE.new"; fi
   note "proving the walls (a few seconds):"
   if sudo -n "$HELPER" prove --id "$(new_id)" | show; then
-    note "done: the helper is set up and its walls are proven on $(hostname)."
-    return 0
+    # (the proof ran under the password sudo -v cached: the line itself must let the helper run, or every call of the
+    # console's gets "a password is required", as when a later sudoers rule wins over it)
+    id=$(new_id)
+    if out=$(works "$id") && grep -qx "$id proof current" <<<"$out"; then
+      ROOT_NOW=$(sed -n "s/^$id root //p" <<<"$out")
+      note "done: the helper is set up and its walls are proven on $(hostname)."
+      return 0
+    fi
+    sudo rm -f "$LINE" "$HELPER" "$MARK"
+    note "the sudo line does not let the helper run without your password on $(hostname) (another rule in /etc/sudoers or"
+    note "/etc/sudoers.d wins over it; sudo -l lists them), so the line, the helper and its mark were removed again. Nothing"
+    note "half set up is left."
+    return 1
   fi
   sudo rm -f "$LINE"
   sudo rm -f "$HELPER"
@@ -357,7 +381,7 @@ main() {
   if [ "$mid" != "$hub_id" ] && [ "$hub" = 1 ]; then stop "--hub is only for Spark 2 itself, and this is another Spark."; fi
   case "$mode" in
     check) check "$sha" ;;
-    install) install "$sha" ;;
+    install) install "$sha" && note "root here: ${ROOT_NOW:-not known}" ;;
     with-root) install "$sha" && root_switch on "$sha" ;;
     without-root)
       note "sudo asks for your password on $(hostname), once"
