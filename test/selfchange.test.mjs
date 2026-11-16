@@ -13,7 +13,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync, readdirSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +38,8 @@ const git = (dir, args, input) => {
 const GH = temp('sct-self-gh-'), SRC = temp('sct-self-src-');
 spawnSync(REAL_GIT, ['init', '-q', '--bare', GH], { env: GIT_ENV });
 for (const d of ['AGENTS.md', 'agentbar', 'deploy', 'docs', 'public', 'service', 'test', 'tools']) {
-  if (existsSync(join(REPO, d))) cpSync(join(REPO, d), join(SRC, d), { recursive: true, filter: p => !/(?:^|\/)(?:node_modules|\.DS_Store|\.git)(?:\/|$)/.test(p) });
+  // (never a lock: git holds none, the tested/ tag adds it)
+  if (existsSync(join(REPO, d))) cpSync(join(REPO, d), join(SRC, d), { recursive: true, filter: p => !/(?:^|\/)(?:node_modules|\.DS_Store|\.git)(?:\/|$)|\/service\/workflows\.lock\.json$/.test(p) });
 }
 git(SRC, ['init', '-q']);
 git(SRC, ['add', '-A']);
@@ -49,7 +50,8 @@ const GHAPI = await startGitHub({ token: TOKEN });
 after(async () => { await GHAPI.close(); for (const d of temps) rmSync(d, { recursive: true, force: true }); });
 
 let HOME, STATE, COPY;
-const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_GITHUB_API: GHAPI.url };
+// (a third dangerous ask inside ten minutes is sent a minute late: not here, as in install-update.test.mjs)
+const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_GITHUB_API: GHAPI.url, SPARK_CONSOLE_DANGER_LATE_MS: '1' };
 useFleet({ env: ENV, prepare: ({ dir, stateDir }) => {
   HOME = join(dir, 'home');
   STATE = stateDir;
@@ -60,6 +62,17 @@ useFleet({ env: ENV, prepare: ({ dir, stateDir }) => {
   // (Spark 2's copy of the repository, as pull.sh setup leaves it: main fetched)
   spawnSync(REAL_GIT, ['init', '-q', '--bare', COPY], { env: GIT_ENV });
   git(COPY, ['fetch', '-q', GH, '+refs/heads/main:refs/heads/main']);
+  // (pull.sh where every install leaves it; its install is a stand-in that writes the result as pull.sh would, C8d)
+  const share = join(HOME, '.local', 'share', 'spark-console');
+  cpSync(join(REPO, 'deploy', 'pull.sh'), join(share, 'pull-real.sh'));
+  writeFileSync(join(share, 'pull.sh'), `#!/bin/bash
+if [ "$1" = install ]; then
+  printf '%s ASSUME_YES=%s\\n' "$*" "\${ASSUME_YES:-}" >> "$HOME/install.log"
+  printf '{"tree":"%s","build":null,"result":"kept","why":"the stand-in install said kept","at":"%s"}\\n' "$2" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > '${join(stateDir, 'update-result.json')}'
+  exit 0
+fi
+exec bash "$(dirname "$0")/pull-real.sh" "$@"
+`, { mode: 0o700 });
 } }, () => script(SCRIPT));
 
 // The stand-in fleet's switches (21-selfchange.mjs): on, the trial's pass, the box.
@@ -74,6 +87,7 @@ const SCRIPT = ([
   { match: '^please open a proposal', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
   { match: '^send your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
   { match: '^drop your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'drop' } }] },
+  { match: '^install my code proposal', calls: [{ name: 'propose_update', arguments: { do: 'install' } }] },
   // (the owner's own words ask for a change to the code: at once, unless the request read outside text first)
   { match: '^please change your own code: send it after a look at the events', rounds: [[{ name: 'fleet_events', arguments: {} }], [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }]] },
   { match: '^please change your own code: send it now', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
@@ -457,6 +471,68 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal((await api(`/chats/${chat}`, { method: 'DELETE' })).status, 200);
     const d = await pressed(await newChat(), 'drop your code proposal');
     assert.match(d.says, new RegExp(`Dropped sparkie/${id}`));
+    assert.equal(refs(), '');
+  });
+
+  // (C8d: the owner's ask for the proposal, and the install of exactly its tree)
+  test('C8d: the ask for the proposal, by code (its files, the run, protected paths, tests, “nobody else reviewed this”); its yes merges at that head and installs exactly that tree; refused once main moved', LONG, async () => {
+    const ghRev = r => spawnSync(REAL_GIT, ['-C', GH, 'rev-parse', '-q', '--verify', r], { encoding: 'utf8', env: GIT_ENV }).stdout.trim() || null;
+    // (the mark job's tested/ tag: that commit plus a lock naming its tree and the build its three code files are)
+    const markTested = c => {
+      const tree = git(GH, ['rev-parse', `${c}^{tree}`]), code = ['server.mjs', 'dig.mjs', 'passkey.mjs'].map(f => spawnSync(REAL_GIT, ['-C', GH, 'cat-file', 'blob', `${c}:service/${f}`], { env: GIT_ENV, maxBuffer: 256 * 1024 * 1024 }).stdout);
+      const build = createHash('sha256').update(Buffer.concat(code)).digest('hex').slice(0, 12), idx = join(temp('sct-self-idx-'), 'index');
+      const lock = JSON.stringify({ build, tree, commit: c, testedAt: new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z'), brainReads: 'a'.repeat(64), versions: {} });
+      const run = (args, input) => { const r = spawnSync(REAL_GIT, ['-C', GH, ...args], { encoding: 'utf8', env: { ...GIT_ENV, GIT_INDEX_FILE: idx }, input }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+      run(['read-tree', c]);
+      run(['update-index', '--add', '--cacheinfo', `100644,${run(['hash-object', '-w', '--stdin'], lock)},service/workflows.lock.json`]);
+      run(['update-ref', `refs/tags/tested/${tree.slice(0, 12)}`, run(['commit-tree', run(['write-tree']), '-p', c, '-m', `Tested: tree ${tree.slice(0, 12)}`])]);
+    };
+    Object.assign(GHAPI.state, { headOf: ref => ghRev(`refs/heads/${ref}`), mainOf: () => ghRev('refs/heads/main'),
+      merge: (pr, sha) => { const main = ghRev('refs/heads/main'), c = git(GH, ['commit-tree', `${sha}^{tree}`, '-p', main, '-p', sha, '-m', `Merge ${pr.head.ref}`]); git(GH, ['update-ref', 'refs/heads/main', c, main]); markTested(c); return c; } });
+    const installLog = () => (existsSync(join(HOME, 'install.log')) ? readFileSync(join(HOME, 'install.log'), 'utf8') : '');
+    async function theAsk(chat) {
+      await say(chat, 'install my code proposal');
+      const ask = (await chatMessages(chat)).findLast(m => m.danger), shown = (await api(`/chats/${chat}`)).json.messages.find(m => m.danger?.ask === ask?.danger.ask);
+      return { ask, yes: ask?.choices.find(c => c.pair), pair: shown?.pair };
+    }
+    const sent = async (chat, line) => {
+      git(COPY, ['fetch', '-q', GH, '+refs/heads/main:refs/heads/main']);
+      box({});
+      assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+      box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// ${line}\n` });
+      const s = await pressed(chat, 'send your code proposal');
+      assert.equal(s.p.json.outcome, 'sent', s.says);
+      const id = openId(), head = ghRev(`refs/heads/sparkie/${id}`);
+      return { id, head, tree: git(GH, ['rev-parse', `${head}^{tree}`]) };
+    };
+    const chat = await newChat(), p = await sent(chat, 'installed from the proposal');
+    const early = await say(chat, 'install my code proposal');
+    assert.match(early.text, new RegExp(`GitHub’s run on sparkie/${p.id} hasn’t passed \\(none yet\\)`));
+    GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    const a = await theAsk(chat);
+    assert.ok(a.ask, 'the ask');
+    assert.match(a.ask.content, /^INSTALLS SPARK CONSOLE/);
+    assert.match(a.ask.content, new RegExp(`The tree ${p.tree.slice(0, 12)} \\(pull request #\\d+\\), tested `));
+    assert.match(a.ask.content, new RegExp(`Sparkie’s proposal sparkie/${p.id}, “A calmer page” \\(its words\\)\\. GitHub’s run on it: 1 check passed\\. Protected paths: none\\. Test files it changes: none\\. Nobody else reviewed this\\.`));
+    assert.match(a.ask.content, /service\/src\/21-web\.mjs/);
+    const r = await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: a.yes.id, pair: a.pair } });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.outcome, 'started', r.text);
+    assert.equal(git(GH, ['rev-parse', 'refs/heads/main^{tree}']), p.tree, 'merged at that head: main holds exactly that tree');
+    assert.ok(installLog().includes(`install ${p.tree.slice(0, 12)} ASSUME_YES=1`), installLog());
+    assert.equal(refs(), '', 'the proposal is no longer open');
+    // (a second proposal; GitHub's main moves before the yes: nothing merged or installed)
+    const chat2 = await newChat(), q = await sent(chat2, 'a second proposal');
+    GHAPI.state.checkRuns[q.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    const b = await theAsk(chat2);
+    const main = ghRev('refs/heads/main'), moved = git(GH, ['commit-tree', `${main}^{tree}`, '-p', main, '-m', 'Someone else’s change']);
+    git(GH, ['update-ref', 'refs/heads/main', moved, main]);
+    const before = installLog(), r2 = await api(`/chats/${chat2}/choose`, { method: 'POST', body: { choice: b.yes.id, pair: b.pair } });
+    assert.equal(r2.status, 200, r2.text);
+    assert.match(r2.json.message.content, /main moved on GitHub since the proposal was made .*so nothing was merged or installed\./);
+    assert.equal(GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state, 'open');
+    assert.equal(installLog(), before);
+    await pressed(chat2, 'drop your code proposal');
     assert.equal(refs(), '');
   });
 

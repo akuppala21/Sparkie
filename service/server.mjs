@@ -5090,7 +5090,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   // with a button. "Don't stop …" rules stopping out for the whole request.
   // (an action that asks the owner itself, as a dangerous ask, gets no plain question first: its own ask is the stronger
   // one, R54)
-  if (ctx.via === 'sparkie' && a.asks !== 'danger') {
+  // (and a proposal's install, which asks as install_update does: 21-selfchange.mjs, C8d)
+  if (ctx.via === 'sparkie' && a.asks !== 'danger' && !(name === 'propose_update' && input.do === 'install')) {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;
@@ -8662,6 +8663,8 @@ function dangerMore(f) {
       !d ? 'What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository.'
         : d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
+    // (a proposal of Sparkie's own code: GitHub's run, the protected paths and tests it changes, the review, C8d)
+    if (f.install.proposal) out.push(dangerPlain(f.install.proposal, 700));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
   return out;
@@ -18795,6 +18798,53 @@ async function selfDrop(viewer, ctx) {
   return { ok: true, outcome: 'dropped', proposal: open.id, branch: open.branch, note: `Dropped ${open.branch}${said.length ? `: ${said.join('; ')}` : ''}. The box stays until this chat’s box is removed.` };
 }
 
+// C8d: what code finds about the open proposal for the owner's ask: sent, its pull request open at the head the copy
+// holds, GitHub's run on that head finished and passed; its files, protected paths, test files and reviews (of that
+// head). Refused, saying why, otherwise.
+async function selfInstallFacts(viewer, ctx) {
+  const open = await selfOpen();
+  if (!open || open.head === open.base) throw new HttpError(409, 'No sent proposal is open, so there is nothing to install.');
+  const gone = !open.conv || !chatData().conversations.some(c => c.id === open.conv);
+  if (!selfMine(open, ctx) && !gone) throw new HttpError(409, `The open proposal (${open.branch}) is another chat’s: ask there. Nothing was asked.`);
+  const { repo } = selfGithub(), owner = repo.split('/')[0];
+  const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
+  if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
+  const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
+  if (!runs.length || runs.some(r => r.status !== 'completed' || r.conclusion !== 'success')) {
+    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked. check_update says how it is doing.`);
+  }
+  const reviews = ((await selfApi('GET', `/repos/${repo}/pulls/${Number(pr.number)}/reviews`)) || []).filter(r => String(r.commit_id || '') === open.head).slice(-5)
+    .map(r => `${clean(r.user?.login, 60)} ${clean(r.state, 30)}${r.body ? `: “${clean(r.body, 200)}” (their words)` : ''}`);
+  const baseTree = await selfGit(['rev-parse', `${open.base}^{tree}`]), tree = await selfGit(['rev-parse', `${open.head}^{tree}`]);
+  const files = (await selfGit(['diff-tree', '-r', '--no-renames', '--name-only', baseTree, tree])).split('\n').filter(Boolean);
+  const lines = await selfTestLines(baseTree, tree);
+  const title = selfWords((await selfGit(['log', '-1', '--format=%s', open.head])), 80);
+  const done = runs.map(r => Date.parse(r.completed_at || '')).filter(n => !Number.isNaN(n)).sort().at(-1);
+  return { branch: open.branch, head: open.head, tree, title, pullRequest: pr.number, files: files.slice(0, 200), protected: files.filter(selfProtected),
+    tests: [...new Set([...lines.map(l => l.file), ...lines.files.map(f => f.file)])], reviews,
+    run: `${runs.length} check${runs.length === 1 ? '' : 's'} passed`, testedAt: done ? new Date(done).toISOString() : null };
+}
+// C8d: the owner's yes. Exactly the tree on the button: the proposal and its pull request still at the head shown, and
+// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and the tree
+// is installed through install_update's own path (updInstallRun). main moved: nothing is merged or installed.
+async function selfInstall(viewer, ctx, input) {
+  if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
+    throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
+  }
+  const open = await selfOpen();
+  if (!open || open.head !== input.head || (await selfGit(['rev-parse', `${open.head}^{tree}`])) !== input.tree) throw new HttpError(409, 'The proposal changed since you were asked, so nothing was merged or installed. Ask again.');
+  const { repo } = selfGithub(), owner = repo.split('/')[0];
+  const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
+  if (!pr?.number || pr.head?.sha !== input.head) throw new HttpError(409, `${open.branch}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed. Ask again.`);
+  const main = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
+  if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged or installed. Drop it and propose it again on the new main.`);
+  await selfApi('PUT', `/repos/${repo}/pulls/${Number(pr.number)}/merge`, { sha: input.head, merge_method: 'merge' });
+  // (merged: the proposal is no longer open here)
+  for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
+  audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-merge', args: { id: open.id, head: input.head.slice(0, 12), pr: pr.number }, ok: true });
+  return updInstallRun(viewer, ctx, input.tree.slice(0, 12));
+}
+
 // check_update's answer for the open proposal: its pull request, the run on its head, the names of the failed tests and
 // the reviews, from GitHub; all outside text. null when none is open.
 async function selfProposalFacts() {
@@ -18820,9 +18870,11 @@ async function selfProposalFacts() {
 action({
   name: 'propose_update', title: 'Propose a change to Spark Console’s own code', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'updates',
   description: 'Use only when the owner asks you to change Spark Console’s own code. do: "start" puts main’s code in this chat’s box; work there; then "send" with a title (3 to 80 characters) and why (10 to 600): Spark Console builds the diff, rebuilds the generated files, refuses .github/ and opens a pull request; GitHub runs the tests (check_update says how it is doing). "drop" closes it. One open at a time; only in the owner’s own chat.',
-  input: { type: 'object', properties: { do: { type: 'string', enum: ['start', 'send', 'drop'] }, title: { type: 'string', minLength: 3, maxLength: 80 }, why: { type: 'string', minLength: 10, maxLength: 600 } },
+  input: { type: 'object', properties: { do: { type: 'string', enum: ['start', 'send', 'drop', 'install'] }, title: { type: 'string', minLength: 3, maxLength: 80 }, why: { type: 'string', minLength: 10, maxLength: 600 } },
     required: ['do'], additionalProperties: false },
-  run: async (input, viewer, ctx) => selfOne(() => (input.do === 'start' ? selfStart(viewer, ctx) : input.do === 'send' ? selfSend(viewer, ctx, input) : selfDrop(viewer, ctx))),
+  // (install: the owner's ask for the open proposal, C8d; its yes carries the tree and head, as the ask kept them)
+  run: async (input, viewer, ctx) => selfOne(() => (input.do === 'start' ? selfStart(viewer, ctx) : input.do === 'send' ? selfSend(viewer, ctx, input)
+    : input.do === 'install' ? (input.tree ? selfInstall(viewer, ctx, input) : updProposalAsk(viewer, ctx)) : selfDrop(viewer, ctx))),
 });
 /* ───────── the self-test: the fleet proved on its real hardware (design D 2.9) ───────── */
 // Area: features
@@ -19839,6 +19891,24 @@ async function updInstallAsk(viewer, ctx) {
   return dangerAsk(viewer, ctx, { kinds: ['install'], where: hub,
     facts: { asked, install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
     call: { action: 'install_update', args: { tree: x.newest.tree } } });
+}
+// The owner's ask for Sparkie's open proposal (C8d, 21-selfchange.mjs): install exactly its tree, as a dangerous ask
+// like install_update's, with what code found about it; its yes is propose_update {do: "install"} with that tree and
+// head, which merges the pull request only at that head and while main is the noted commit, then installs through
+// updInstallRun.
+async function updProposalAsk(viewer, ctx) {
+  const p = await selfInstallFacts(viewer, ctx);
+  const hub = NODES.find(n => n.host === 'local')?.id || brainSparks()[0] || null;
+  const list = (xs, none) => (xs.length ? `${xs.slice(0, 8).join(', ')}${xs.length > 8 ? ` and ${xs.length - 8} more` : ''}` : none);
+  const proposal = [`Sparkie’s proposal ${p.branch}, “${p.title}” (its words). GitHub’s run on it: ${p.run}.`,
+    `Protected paths: ${list(p.protected, 'none')}. Test files it changes: ${list(p.tests, 'none')}.`,
+    p.reviews.length ? `Review: ${p.reviews.join('; ')}.` : 'Nobody else reviewed this.'].join(' ');
+  // (asked: the owner's own words in this request ask to install, or to change the code, as install_update's)
+  const i = ctx.intent || {}, has = (l, k) => (l || []).includes(k);
+  const asked = !ctx.agent && ['sparkie', 'page'].includes(ctx.via) && ['install', 'code'].some(k => has(i.asked, k) && !has(i.negated, k) && !has(i.mixed, k));
+  return dangerAsk(viewer, ctx, { kinds: ['install'], where: hub,
+    facts: { asked, install: { tree: `${p.tree.slice(0, 12)} (pull request #${p.pullRequest})`, testedAt: p.testedAt, differs: p.files, proposal } },
+    call: { action: 'propose_update', args: { do: 'install', tree: p.tree, head: p.head } } });
 }
 // What the chat that asked is told: a notice there, the event, and Telegram when it was asked from there.
 function updTell(asked, line) {

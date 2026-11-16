@@ -514,7 +514,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   // with a button. "Don't stop …" rules stopping out for the whole request.
   // (an action that asks the owner itself, as a dangerous ask, gets no plain question first: its own ask is the stronger
   // one, R54)
-  if (ctx.via === 'sparkie' && a.asks !== 'danger') {
+  // (and a proposal's install, which asks as install_update does: 21-selfchange.mjs, C8d)
+  if (ctx.via === 'sparkie' && a.asks !== 'danger' && !(name === 'propose_update' && input.do === 'install')) {
     if (input.choice) throw new HttpError(403, 'Choices are buttons for whoever asked; don’t pass choice ids.');
     const check = await sparkieCheck(name, input, ctx);
     input = check.input;

@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22338 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22408 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -314,7 +314,7 @@ Running models this service can point Sparkie or agents at: its own main model, 
 Every workflow is a named action with typed inputs, so a model can pick up whichever it needs the same way each time, without opening the page. The agent door (MCP, below) offers them to your own agents; Sparkie's tools and the page's buttons move onto the same list, with the same checks. Each action says: kind 'read' runs straight away. 'change' (next) runs after the checks: dry-run plan, rails, re-check, verify, put back on failure. 'confirm' (deleting data, credentials) waits for the owner. Lock-out risks are never actions. scope which agent keys may use it: 'fleet:read' today; …
 
 - **Area:** core. **Rules:** R7, R9, R11, R12, R18, R21, R23, R25, R32, R35, R36, R37, R38, R46. **Tests:** change.test.mjs, door.test.mjs, api.test.mjs, abilities.test.mjs, intent.test.mjs
-- **Lines:** 672
+- **Lines:** 673
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -473,7 +473,7 @@ Line 4 of a dangerous ask (20-danger.mjs), with no model call: the things its by
 Before root, a lock-out change, an install of Spark Console, a delete that cannot be put back and the brain (design A 2.14; contract 8.18), a raiser calls dangerAsk in place of question(). The ask is a message of its own that holds no word of the brain's: facts built by code (what and where, whether the owner asked, whether it goes back, what came from outside), the exact bytes the press runs in a fixed-width block, then the two digits to type with its own yes. One is open at a time in the whole console. The digits live only with the open ask in memory and in its own text (the Telegram …
 
 - **Area:** safety. **Rules:** R54. **Tests:** danger.test.mjs
-- **Lines:** 322
+- **Lines:** 324
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1065,13 +1065,13 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
-- **Lines:** 467
+- **Lines:** 516
 - **Actions:** `propose_update`
 - **Owns:** tmp (writers: selfTree; a folder: each send's work, removed on every exit)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `selfHome`, `selfRepo`, `selfSource`, `selfTestFile`, `selfGate`, `selfConfigBad`, `selfGit`, `selfGithub`, `selfRemote`, `selfPush`, `selfApiBase`, `selfApi`, `selfOpen`, `selfMine`, `selfOne`, `selfBoxFill`, `selfBoxRead`, `selfWords`, `selfProtected`, `selfFold`, `selfSpellings`, `selfStart`, `selfTree`, `selfTestLines`, `selfSend`, `selfDrop`, `selfProposalFacts`
-- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `HttpError`, `q`), `02-ssh` (`run`), `03-identity` (`clean`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `14-chats` (`chatData`), `16-actions` (`action`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskSecrets`, `audit`, `maskDeep`), `21-brain-trial` (`trialPassed`), `21-updates` (`UPD_SETUP`)
+- **Functions:** `selfHome`, `selfRepo`, `selfSource`, `selfTestFile`, `selfGate`, `selfConfigBad`, `selfGit`, `selfGithub`, `selfRemote`, `selfPush`, `selfApiBase`, `selfApi`, `selfOpen`, `selfMine`, `selfOne`, `selfBoxFill`, `selfBoxRead`, `selfWords`, `selfProtected`, `selfFold`, `selfSpellings`, `selfStart`, `selfTree`, `selfTestLines`, `selfSend`, `selfDrop`, `selfInstallFacts`, `selfInstall`, `selfProposalFacts`
+- **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `HttpError`, `q`), `02-ssh` (`run`), `03-identity` (`clean`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `14-chats` (`chatData`), `16-actions` (`action`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskSecrets`, `audit`, `maskDeep`), `21-brain-trial` (`trialPassed`), `21-updates` (`UPD_SETUP`, `updInstallRun`, `updProposalAsk`)
 - **Used by:** `16-actions`, `21-updates`
 
 ### `21-selftest.mjs`: the self-test: the fleet proved on its real hardware (design D 2.9)
@@ -1106,13 +1106,13 @@ Spark 2 asks Telegram for new messages over one outbound HTTPS connection (long 
 check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and whether it is newer; whether it changes what the brain reads (the two locks' brainReads) and the eval's result for that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's request: check_update is not in INSIDE_READS). It installs and changes nothing; the token never leaves pull.sh. When GitHub refuses the …
 
 - **Area:** features. **Rules:** R58. **Tests:** check-update.test.mjs, install-update.test.mjs, tools.test.mjs
-- **Lines:** 285
+- **Lines:** 303
 - **Actions:** `install_update`, `check_update`
 - **Owns:** update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
 - **Timers:** updResultLook (every 10 s while an install asked from chat waits for its result)
 - **Wakes:** none
-- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`, `dangerDay`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfProposalFacts`)
+- **Functions:** `updPullFacts`, `updEvalFor`, `updShort`, `updSetOf`, `updBrainWords`, `updLockPath`, `updDay`, `updCheck`, `updNeeds`, `updBrainLine`, `updInstallAsk`, `updProposalAsk`, `updTell`, `updInstallRun`, `updInstallStart`, `updResultLook`, `updSelfTest`, `updAfterRestart`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `BUILD`, `STATE_DIR`, `NODES`, `HttpError`, `sleep`, `FIXED_PATH`), `02-ssh` (`run`), `03-identity` (`readJson`, `writePrivate`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`, `jobs`), `13-main-model` (`MAIN`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `runAction`), `17-changes` (`brainSparks`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`, `dangerDay`), `20-heal` (`healOwner`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskDeep`, `maskSecrets`, `audit`), `20-tell` (`tell`), `21-brain-check` (`brainProfileOf`, `brainReadsNow`), `21-brain-eval` (`evalSetNow`, `EVAL_SLOT`, `evalLine`), `21-brain-rail` (`evalSetToday`), `21-selfchange` (`selfInstallFacts`, `selfProposalFacts`)
 - **Used by:** `20-needs`, `21-selfchange`, `25-backup-and-start`
 
 ### `21-web.mjs`: looking things up on the web
