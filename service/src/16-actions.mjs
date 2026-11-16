@@ -187,19 +187,71 @@ const HYPOTHETICAL = /\b(whether|if|should|would|could|can|might|may)\b[^,]*$/i;
 const KEEP = /\b(keep|leave)\b[^.;!?\n]{0,60}?\b(running|alone|up|on|going|as\s+(?:it\s+)?is)\b/i;
 // "Stop gemma, actually don't": the change in that sentence is called off.
 const CALLED_OFF = /(?:^|[\s,;–—-])(?:actually\s+)?(?:don't|do\s+not|no\s+wait|never\s*mind|nevermind|scratch\s+that|not\s+yet|hold\s+(?:on|off))[\s.!]*$/i;
+// The owner's own sentences of a message (C-1): what they pasted or quoted is not their asking. Taken out, each as a line
+// break (in a line, a space): a fenced code block (``` or ~~~), an indented line (4 spaces or a tab), a quoted line
+// ("> …"), text in quotes or backticks of more than three words (a short name or path stays: rename "old.txt" to
+// "new.txt"), a line that reads as a log, a diff or a program's output (OWN_PASTED: a time or level word first, a stack
+// frame, a prompt, JSON, a diff's header) and the plain lines between two of those, and the lines after one ending in
+// ":" up to a blank line (a pasted log, as taskBudget and saidToKeep read it). Linear: no lookbehind, no nested repeat.
+// For every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call it first).
+const OWN_QUOTE_WORDS = 3;
+const OWN_PASTED = /^\s*(?:\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d|\[?\d\d:\d\d:\d\d|[A-Z][a-z]{2} +\d{1,2} \d\d:\d\d|\[?(?:ERROR|ERR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|CRITICAL|PANIC|NOTICE)\b|Traceback \(|File "[^"\n]*", line \d|at [\w.$<>]+ \(|[\w.]*(?:Error|Exception):|\$ \S|[{}]|\[[\s{"\d[]|\]\s*,?\s*$|@@ |diff --git |\+\+\+ |--- a\/|index [0-9a-f]{6,}\.\.)/;
+function ownSentences(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g, '\n').split('\n');
+  const pasted = lines.map(l => OWN_PASTED.test(l)), ahead = lines.map(() => false);
+  // (ahead: a line that reads as output comes later in the same block, with no blank line between)
+  for (let i = lines.length - 2; i >= 0; i--) ahead[i] = Boolean(lines[i + 1].trim()) && (pasted[i + 1] || ahead[i + 1]);
+  let after = false, inLog = false, inDiff = false;
+  const kept = lines.map((line, i) => {
+    if (after) { if (!line.trim()) after = false; return ''; }
+    if (/:\s*$/.test(line)) after = true;
+    if (!line.trim()) { inLog = false; inDiff = false; return line; }
+    if (pasted[i]) { inLog = true; inDiff ||= /^(?:@@ |diff --git |\+\+\+ |--- a\/)/.test(line); return ''; }
+    // (a plain line between two that read as output is output too, and a diff's lines to its end)
+    if ((inLog && ahead[i]) || (inDiff && /^[-+ ]/.test(line))) return '';
+    return /^\s*>/.test(line) || /^(?: {4}|\t)/.test(line) ? '' : line;
+  });
+  return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
+}
+// A work word (fix, install, change, build, update …) asks for work only as an order (S-3), never as a noun: not after
+// "the", "a", "any", "last", "my", "Spark 3's", "since" and the like ("summarize the build log", "the last update broke
+// it", "any change since yesterday?"), nor with "is", "failed", "log" … after it ("build failed on Spark 3").
+const WORK_NOT_AFTER = /\b(?:the|a|an|any|some|no|this|that|these|those|my|your|its|our|their|his|her|last|latest|recent|previous|next|new|old|same|each|every|another|whose|which|what|of|for|from|since|after|before|during|about|by|into|in|at|\w+'s)\s+$/i;
+const WORK_NOUN = /^\s+(?:is|are|was|were|has|have|had|seems?|looks?|keeps?|broke|failed|did|didn't|does|doesn't|isn't|wasn't|log|logs|folder|script|scripts|output|step|time)\b/i;
+const workOrder = (sentence, m) => !WORK_NOT_AFTER.test(sentence.slice(Math.max(0, m.index - 40), m.index))
+  && !WORK_NOUN.test(sentence.slice(m.index + m[0].length, m.index + m[0].length + 30));
+// A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
+// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
+// it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
+const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|scratch\s+that|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
+const OFF_FILL = String.raw`(?:oh|ok|okay|no|nope|sorry|hmm+|um+|uh+|actually|please)`;
+const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
+// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one after a comma or a dash.
+function calledOff(sentence) {
+  let rest = sentence.slice(-160), word = false, sep = '';
+  // ("stop it now - don't wait" asks for it at once)
+  if (/\b(?:don't|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
+  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
+  if (!word) return null;
+  if (!rest.trim()) return sentence.length <= 160 ? 'only' : null;
+  return /[,;:–—-]/.test(sep) ? 'tail' : null;
+}
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
+    const callOff = calledOff(sentence);
+    if (asked.size && callOff === 'only') { for (const k of asked) { negated.add(k); worded.add(k); } continue; }
     if (KEEP.test(sentence)) negated.add('stop');
-    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence);
+    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
     const here = new Set();
     for (const [kind, re] of CHANGE_FORMS) for (const m of sentence.matchAll(re)) if (NEGATOR.test(sentence.slice(Math.max(0, m.index - 50), m.index))) { negated.add(kind); worded.add(kind); }
     for (const [kind, re] of CHANGE_WORDS) {
       for (const m of sentence.matchAll(re)) {
         const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
+        if (kind === 'work' && !NEGATOR.test(pre) && !workOrder(sentence, m)) continue;
         if (NEGATOR.test(pre) || off) { negated.add(kind); worded.add(kind); }
         else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre)) here.add(kind);
       }
@@ -476,6 +528,20 @@ async function firmModel(name, input) {
   const exact = found.lib?.name || found.recipe?.id || found.repo || null;
   return exact ? { ...input, model: exact } : input;
 }
+// Whose changes count toward the hour's 12 (R9): not the owner's own clicks, POST /actions, a saved workflow's steps,
+// self-healing, nor the owner's own /undo from Telegram (R1-01).
+const hourCounts = ctx => Boolean(ctx.via) && !ctx.ownerWord && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+// A change that ran through run or write_file (reads to runAction: the ladder decides) counts as runAction's own do,
+// for whoever caused it (S-11): one that ran, or a long one started as an operation. A look, a button, the box and a
+// refusal don't. The twelfth in the hour pauses agents' changes, and the runner refuses the next while paused.
+function hourCounted(ctx, out) {
+  if (!(out?.change === true && (out.ran === true || out.outcome === 'started')) || !hourCounts(ctx)) return out;
+  const hourAgo = Date.now() - 3600000;
+  while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
+  agentChanges.push(Date.now());
+  if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`);
+  return out;
+}
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
@@ -491,8 +557,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
   // A button's arguments were kept here when it was offered (and checked then, or built here): they run as kept.
   let input = ctx.trusted ? args : checkInput(a.input, args, name);
-  if (a.kind === 'read' && journalLooks(ctx)) return journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx));
-  if (a.kind === 'read') return a.run(input, viewer, ctx);
+  if (a.kind === 'read' && journalLooks(ctx)) return hourCounted(ctx, await journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx)));
+  if (a.kind === 'read') return hourCounted(ctx, await a.run(input, viewer, ctx));
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in your account menu → Agents and Telegram.' : 'This agent can look but not change things. The owner can allow it in your account menu → Agents and Telegram.');
   }
@@ -569,11 +635,11 @@ async function runAction(name, viewer, args, ctx = {}) {
   // Many changes in an hour (ones that started an operation) pause agents, so a confused loop can't keep starting and
   // stopping models.
   // (the owner's own saved workflows and self-healing aren't an agent looping)
-  const byAgent = ctx.via && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+  const byAgent = hourCounts(ctx);
   if (byAgent) {
     const hourAgo = Date.now() - 3600000;
     while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
-    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in Access → Agents.'); }
+    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in the account menu → Agents and Telegram.'); }
   }
   // Sparkie working on the owner's own words (their page chat or Telegram, a carry-on turn too; never an agent's
   // ask_sparkie): a failed operation of the owner's isn't a looping agent (runJob, R9).

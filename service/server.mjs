@@ -5360,19 +5360,71 @@ const HYPOTHETICAL = /\b(whether|if|should|would|could|can|might|may)\b[^,]*$/i;
 const KEEP = /\b(keep|leave)\b[^.;!?\n]{0,60}?\b(running|alone|up|on|going|as\s+(?:it\s+)?is)\b/i;
 // "Stop gemma, actually don't": the change in that sentence is called off.
 const CALLED_OFF = /(?:^|[\s,;–—-])(?:actually\s+)?(?:don't|do\s+not|no\s+wait|never\s*mind|nevermind|scratch\s+that|not\s+yet|hold\s+(?:on|off))[\s.!]*$/i;
+// The owner's own sentences of a message (C-1): what they pasted or quoted is not their asking. Taken out, each as a line
+// break (in a line, a space): a fenced code block (``` or ~~~), an indented line (4 spaces or a tab), a quoted line
+// ("> …"), text in quotes or backticks of more than three words (a short name or path stays: rename "old.txt" to
+// "new.txt"), a line that reads as a log, a diff or a program's output (OWN_PASTED: a time or level word first, a stack
+// frame, a prompt, JSON, a diff's header) and the plain lines between two of those, and the lines after one ending in
+// ":" up to a blank line (a pasted log, as taskBudget and saidToKeep read it). Linear: no lookbehind, no nested repeat.
+// For every reader of the owner's words as an ask (changeIntent; netAsks, 21-net.mjs, can call it first).
+const OWN_QUOTE_WORDS = 3;
+const OWN_PASTED = /^\s*(?:\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d|\[?\d\d:\d\d:\d\d|[A-Z][a-z]{2} +\d{1,2} \d\d:\d\d|\[?(?:ERROR|ERR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|CRITICAL|PANIC|NOTICE)\b|Traceback \(|File "[^"\n]*", line \d|at [\w.$<>]+ \(|[\w.]*(?:Error|Exception):|\$ \S|[{}]|\[[\s{"\d[]|\]\s*,?\s*$|@@ |diff --git |\+\+\+ |--- a\/|index [0-9a-f]{6,}\.\.)/;
+function ownSentences(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g, '\n').split('\n');
+  const pasted = lines.map(l => OWN_PASTED.test(l)), ahead = lines.map(() => false);
+  // (ahead: a line that reads as output comes later in the same block, with no blank line between)
+  for (let i = lines.length - 2; i >= 0; i--) ahead[i] = Boolean(lines[i + 1].trim()) && (pasted[i + 1] || ahead[i + 1]);
+  let after = false, inLog = false, inDiff = false;
+  const kept = lines.map((line, i) => {
+    if (after) { if (!line.trim()) after = false; return ''; }
+    if (/:\s*$/.test(line)) after = true;
+    if (!line.trim()) { inLog = false; inDiff = false; return line; }
+    if (pasted[i]) { inLog = true; inDiff ||= /^(?:@@ |diff --git |\+\+\+ |--- a\/)/.test(line); return ''; }
+    // (a plain line between two that read as output is output too, and a diff's lines to its end)
+    if ((inLog && ahead[i]) || (inDiff && /^[-+ ]/.test(line))) return '';
+    return /^\s*>/.test(line) || /^(?: {4}|\t)/.test(line) ? '' : line;
+  });
+  return kept.join('\n').replace(/"([^"\n]*)"|“([^”\n]*)”|`([^`\n]*)`/g, (m, a, b, c) => ((a ?? b ?? c).trim().split(/\s+/).length > OWN_QUOTE_WORDS ? ' ' : m));
+}
+// A work word (fix, install, change, build, update …) asks for work only as an order (S-3), never as a noun: not after
+// "the", "a", "any", "last", "my", "Spark 3's", "since" and the like ("summarize the build log", "the last update broke
+// it", "any change since yesterday?"), nor with "is", "failed", "log" … after it ("build failed on Spark 3").
+const WORK_NOT_AFTER = /\b(?:the|a|an|any|some|no|this|that|these|those|my|your|its|our|their|his|her|last|latest|recent|previous|next|new|old|same|each|every|another|whose|which|what|of|for|from|since|after|before|during|about|by|into|in|at|\w+'s)\s+$/i;
+const WORK_NOUN = /^\s+(?:is|are|was|were|has|have|had|seems?|looks?|keeps?|broke|failed|did|didn't|does|doesn't|isn't|wasn't|log|logs|folder|script|scripts|output|step|time)\b/i;
+const workOrder = (sentence, m) => !WORK_NOT_AFTER.test(sentence.slice(Math.max(0, m.index - 40), m.index))
+  && !WORK_NOUN.test(sentence.slice(m.index + m[0].length, m.index + m[0].length + 30));
+// A sentence that ends in a call-off ("stop gemma - no wait, leave it") calls off what it asks; one that is only a
+// call-off ("Actually don't.", "Never mind.", "Wait.", "Cancel that.", "Not yet.") calls off every kind asked before
+// it in the message (C-6). Read piece by piece from the end of the sentence's last 160 characters, so it stays short.
+const OFF_WORD = String.raw`(?:no\s+wait|wait|actually\s*,?\s*no|don't(?:\s+do\s+(?:it|that|anything))?|do\s+not(?:\s+do\s+(?:it|that|anything))?|never\s*mind|nevermind|scratch\s+that|not\s+(?:yet|now)|hold\s+(?:on|off)|cancel\s+(?:that|it)|forget\s+(?:it|that|about\s+it)|leave\s+(?:it|that|them)(?:\s+(?:alone|be|as\s+(?:it|they)\s+(?:is|are)))?|keep\s+(?:it|that|them)\s+as\s+(?:it|they)\s+(?:is|are)|on\s+second\s+thoughts?)`;
+const OFF_FILL = String.raw`(?:oh|ok|okay|no|nope|sorry|hmm+|um+|uh+|actually|please)`;
+const OFF_PIECE = new RegExp(String.raw`(^|[\s,;:!–—-]+)(${OFF_WORD}|${OFF_FILL})[\s.!,;:–—-]*$`, 'i'), OFF_WORD_ALONE = new RegExp(`^${OFF_WORD}$`, 'i');
+// 'only' for a sentence that is a call-off and nothing more, 'tail' for one that ends in one after a comma or a dash.
+function calledOff(sentence) {
+  let rest = sentence.slice(-160), word = false, sep = '';
+  // ("stop it now - don't wait" asks for it at once)
+  if (/\b(?:don't|do\s+not|no\s+need\s+to)\s+wait\b/i.test(rest)) return null;
+  for (let m; rest && (m = OFF_PIECE.exec(rest));) { word ||= OFF_WORD_ALONE.test(m[2]); sep = m[1]; rest = rest.slice(0, m.index); }
+  if (!word) return null;
+  if (!rest.trim()) return sentence.length <= 160 ? 'only' : null;
+  return /[,;:–—-]/.test(sep) ? 'tail' : null;
+}
 function changeIntent(text) {
   // (worded: ruled out in so many words, "don't stop" or "without stopping"; not only by "keep X running")
   const asked = new Set(), negated = new Set(), worded = new Set();
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const polite = POLITE.test(raw), sentence = raw.replace(POLITE, '').replace(/[?!;\n]+\s*$/, '');
     if (!sentence.trim()) continue;
+    const callOff = calledOff(sentence);
+    if (asked.size && callOff === 'only') { for (const k of asked) { negated.add(k); worded.add(k); } continue; }
     if (KEEP.test(sentence)) negated.add('stop');
-    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence);
+    const question = (!polite && QUESTION_START.test(sentence)) || INFO_START.test(sentence), off = CALLED_OFF.test(sentence) || callOff === 'tail';
     const here = new Set();
     for (const [kind, re] of CHANGE_FORMS) for (const m of sentence.matchAll(re)) if (NEGATOR.test(sentence.slice(Math.max(0, m.index - 50), m.index))) { negated.add(kind); worded.add(kind); }
     for (const [kind, re] of CHANGE_WORDS) {
       for (const m of sentence.matchAll(re)) {
         const pre = sentence.slice(Math.max(0, m.index - 50), m.index);
+        if (kind === 'work' && !NEGATOR.test(pre) && !workOrder(sentence, m)) continue;
         if (NEGATOR.test(pre) || off) { negated.add(kind); worded.add(kind); }
         else if ((!question || kind === 'find') && !HYPOTHETICAL.test(pre)) here.add(kind);
       }
@@ -5649,6 +5701,20 @@ async function firmModel(name, input) {
   const exact = found.lib?.name || found.recipe?.id || found.repo || null;
   return exact ? { ...input, model: exact } : input;
 }
+// Whose changes count toward the hour's 12 (R9): not the owner's own clicks, POST /actions, a saved workflow's steps,
+// self-healing, nor the owner's own /undo from Telegram (R1-01).
+const hourCounts = ctx => Boolean(ctx.via) && !ctx.ownerWord && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+// A change that ran through run or write_file (reads to runAction: the ladder decides) counts as runAction's own do,
+// for whoever caused it (S-11): one that ran, or a long one started as an operation. A look, a button, the box and a
+// refusal don't. The twelfth in the hour pauses agents' changes, and the runner refuses the next while paused.
+function hourCounted(ctx, out) {
+  if (!(out?.change === true && (out.ran === true || out.outcome === 'started')) || !hourCounts(ctx)) return out;
+  const hourAgo = Date.now() - 3600000;
+  while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
+  agentChanges.push(Date.now());
+  if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`);
+  return out;
+}
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
@@ -5664,8 +5730,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
   // A button's arguments were kept here when it was offered (and checked then, or built here): they run as kept.
   let input = ctx.trusted ? args : checkInput(a.input, args, name);
-  if (a.kind === 'read' && journalLooks(ctx)) return journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx));
-  if (a.kind === 'read') return a.run(input, viewer, ctx);
+  if (a.kind === 'read' && journalLooks(ctx)) return hourCounted(ctx, await journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx)));
+  if (a.kind === 'read') return hourCounted(ctx, await a.run(input, viewer, ctx));
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in your account menu → Agents and Telegram.' : 'This agent can look but not change things. The owner can allow it in your account menu → Agents and Telegram.');
   }
@@ -5742,11 +5808,11 @@ async function runAction(name, viewer, args, ctx = {}) {
   // Many changes in an hour (ones that started an operation) pause agents, so a confused loop can't keep starting and
   // stopping models.
   // (the owner's own saved workflows and self-healing aren't an agent looping)
-  const byAgent = ctx.via && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+  const byAgent = hourCounts(ctx);
   if (byAgent) {
     const hourAgo = Date.now() - 3600000;
     while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
-    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in Access → Agents.'); }
+    if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) { tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`); throw new HttpError(403, 'Agents’ changes are paused: too many in the last hour. The owner can resume them in the account menu → Agents and Telegram.'); }
   }
   // Sparkie working on the owner's own words (their page chat or Telegram, a carry-on turn too; never an agent's
   // ask_sparkie): a failed operation of the owner's isn't a looping agent (runJob, R9).
@@ -6519,9 +6585,11 @@ function setAgentSettings(change) {
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
   : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
     : 'and the owner said not to stop anything');
+// (the owner's own /undo, typed on the page or in the paired Telegram chat, runs its steps while paused, as runAction
+// lets it through: R34, R1-01)
 const pausedCheck = ctx => {
   const s = agentSettings();
-  if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
+  if (ctx?.via && ctx.via !== 'page' && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
 };
 
 // Questions and their choices. Each choice's arguments stay here; the caller only gets an id to answer with.
@@ -6585,8 +6653,9 @@ function changeLabel(name, input) {
   // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
-  // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
-  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
+  // workflow's value, is hidden before the cut, A-5, 2026-11-14.) The line it would keep is shown whole: remember's text
+  // is 300 characters at most, and the press keeps all of it as the owner's (C-11).
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
     const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
@@ -7137,7 +7206,7 @@ async function startModel(args, viewer, ctx) {
     job.progress = null;
     pausedCheck(ctx);
     const fresh = await inventory(null), m = libraryModel(fresh, v.repo);
-    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Start it from Models in a minute.`);
+    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Ask Sparkie to start it again in a minute.`);
     // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
     // doesn't answer, it starts as before.
     if (found.outsideRecipes) {
@@ -9785,20 +9854,60 @@ action({
 // When a chat's last model change not undone was made: undo puts back a command's files only when they are newer
 // (runnerUndo), and pruning keeps a set that undo would put back (runnerKeep, 21-runner.mjs).
 const undoSince = (conv, revisions = desired().revisions) => [...revisions].reverse().find(r => r.chat === conv && !r.undo && !r.undone)?.at || '';
+// The chat's newest change undo can't put back (C-16), from the journal's two newest months: a command inside the
+// lock-out net (a lock-out change on a compute Spark, root, every change on Spark 2: its start line carries `net` and no
+// set of copies) unless it never ran, or a change other than a model's or an app's (those are the list's revisions,
+// below) that did something: power, a file saved, memory, a saved workflow, an update, a cancel. Undo's own lines and
+// what changes nothing on the Sparks (find_setups, test_changes, the self-test) are none.
+const UNDO_OWN_KINDS = new Set(['start_model', 'stop_model', 'restart_model', 'keep_running', 'undo_last_change', 'find_setups', 'test_changes', 'self_test']);
+const UNDO_NOTHING_DONE = new Set(['question', 'needs-ok', 'already', 'already-starting', 'refused', 'waiting', 'declined', 'noroom', 'failed', 'error', 'look', 'box', 'asked', 'pending']);
+function undoNotMine(conv) {
+  const tag = `"chat":${JSON.stringify(conv)}`, starts = new Map(), ends = new Map(), found = [];
+  for (const f of journalFiles().slice(0, 2)) {
+    for (const line of jLinesOf(f)) {
+      if (!line.includes(tag)) continue;
+      const r = jParse(line);
+      if (!r || r.chat !== conv || !((r.k === 'cmd' && r.act === 'run' && r.net) || (r.k === 'call' && ACTIONS.get(r.act)?.kind === 'change' && !UNDO_OWN_KINDS.has(r.act)))) continue;
+      if (r.end) ends.set(r.id, r); else if (r.start) starts.set(r.id, r); else if (r.ok && !UNDO_NOTHING_DONE.has(r.outcome)) found.push(r);
+    }
+  }
+  for (const [id, r] of starts) {
+    const e = ends.get(id);
+    if (!e || (r.k === 'cmd' ? e.ran !== false && e.outcome !== 'refused' : e.ok && !UNDO_NOTHING_DONE.has(e.outcome))) found.push(r);
+  }
+  return found.sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] || null;
+}
+const undoWhere = id => (id ? ` on ${sparkName(nodeById(id) || { id })}` : '');
+const undoRevWords = rev => [...rev.added.map(k => `started ${k.split('/')[1]}${undoWhere(k.split('/')[0])}`), ...rev.removed.map(k => `stopped ${k.split('/')[1]}${undoWhere(k.split('/')[0])}`)].join(' and ') || `changed the list (revision ${rev.revision})`;
+// What undo says when the chat's last change is one it can't put back: that one, and the older one it leaves as it is.
+function undoCantWords(r, older) {
+  const spark = r.args?.spark || (r.sub || []).find(x => nodeById(x)) || null;
+  const what = r.net ? `a command${r.root ? ' as root' : ''}${undoWhere(spark)} that ran inside the lock-out net (record ${r.id})` : `“${ACTIONS.get(r.act)?.title || r.act}”${undoWhere(spark)} (record ${r.id})`;
+  return `Nothing was undone: this chat’s last change was ${what}, and undo has no way to put that back.${r.net ? ' While its guard is still open, /putback puts back what it changed.' : ''}${older ? ` The change before it is left as it is too (${older}): undo goes back only on a chat’s last change. To change that one, say exactly what to stop, start or put back.` : ''}`;
+}
 action({
   name: 'undo_last_change', title: 'Undo the last change', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'control',
   description: 'Use when the owner says "undo" (or "put it back") in a chat: reverses that chat’s last change. What it started is stopped, and what it stopped is started again. Only that chat’s own last change. It runs as an operation: it returns straight away, and posts to the chat when it’s done.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (input, viewer, ctx) => {
     if (!ctx.conv) throw new HttpError(409, 'Say "undo" in the chat where the change was made: undo goes back on that chat’s last change.');
-    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
-    const files = await runnerUndo(viewer, ctx, undoSince(ctx.conv));
-    if (files) return files;
     const undoing = [...jobs.values()].find(j => j.status === 'running' && j.type === 'undo' && j.conv === ctx.conv);
     if (undoing) return { outcome: 'already', operation: undoing.id, note: 'An undo is already running in this chat; it posts here when it’s done.' };
-    // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).
+    // The chat's last change of any kind, newest first (C-16): a command's files (21-runner.mjs), a change still running,
+    // a model change on the list, or one undo can't put back. Never an older one in its place.
+    const since = undoSince(ctx.conv), set = runnerLatest(ctx.conv), other = undoNotMine(ctx.conv);
     const running = [...jobs.values()].find(j => j.status === 'running' && j.conv === ctx.conv && !j.undo);
-    if (running) { cancelJob(running, ctx.actor || viewer.login); return { outcome: 'cancelling', operation: running.id, note: 'It was still running, so it’s being cancelled: what it did is put back, and this chat hears when it has been.' }; }
+    const last = [[other?.at, 'other'], [set?.at, 'files'], [running?.createdAt, 'running'], [since, 'model']].filter(([at]) => at).sort((a, b) => String(b[0]).localeCompare(String(a[0])))[0]?.[1];
+    if (last === 'other') {
+      const rev = since ? [...desired().revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone) : null;
+      const older = [[set?.at, set && `a command’s files${undoWhere(set.spark)}, record ${set.id}`], [running?.createdAt, running && `operation ${running.id}, still running`], [since, rev && `it ${undoRevWords(rev)}`]]
+        .filter(([at, w]) => at && w).sort((a, b) => String(b[0]).localeCompare(String(a[0])))[0]?.[1] || null;
+      throw new HttpError(409, undoCantWords(other, older));
+    }
+    // A command's change on a Spark that came after this chat's last model change: its files are put back (21-runner.mjs).
+    if (last === 'files') { const files = await runnerUndo(viewer, ctx, since); if (files) return files; }
+    // This chat's change still running: undo is cancelling it (it puts back what it did, and posts here when it has).
+    if (last === 'running') { cancelJob(running, ctx.actor || viewer.login); return { outcome: 'cancelling', operation: running.id, note: 'It was still running, so it’s being cancelled: what it did is put back, and this chat hears when it has been.' }; }
     const d = desired(), rev = [...d.revisions].reverse().find(r => r.chat === ctx.conv && !r.undo && !r.undone && Date.now() - Date.parse(r.at) < 24 * 3600000);
     if (!rev) return { outcome: 'already', note: 'This chat hasn’t changed anything in the last day that can be undone.' };
     if (rev.app) throw new HttpError(409, 'This chat’s last change was to an app, and undo only reverses model changes. Say "stop <app> on Spark N" or "keep <app> running" instead.');
@@ -9806,20 +9915,23 @@ action({
     const sparks = new Set([...rev.added, ...rev.removed].map(k => k.split('/')[0]));
     const later = d.revisions.filter(r => r.revision > rev.revision && !r.undo && !r.app && r.chat !== ctx.conv && [...r.added, ...r.removed].some(k => sparks.has(k.split('/')[0])));
     if (later.length) throw new HttpError(409, `Since then, ${later[later.length - 1].by || 'someone'} changed ${[...sparks].join(', ')} too, so undoing would reverse that as well. Say exactly what to stop or start instead.`);
-    // Marked now, so a second "undo" while this one runs doesn't pick the same change.
-    const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
+    // Marked now, so a second "undo" while this one runs doesn't pick the same change; the mark goes again when the undo
+    // didn't put it all back (R1-01), so the next "undo" is this change again, never the one before it.
+    const markUndone = (on = true) => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { if (on) r.undone = true; else delete r.undone; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
     // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
     const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
-    runJob(job, async j => {
+    runJob(job, async j => { try { await undoSteps(j); } catch (e) { markUndone(false); throw e; } });
+    async function undoSteps(j) {
       const problems = [];
+      let worked = 0;
       const follow = async (what, out) => {
-        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); return; }
+        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); else worked += 1; return; }
         note(j, `${what}: operation ${out.operation}`);
         const done = await waitJob(out.operation, 45 * 60000);
-        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`);
+        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`); else worked += 1;
       };
       // What it started stops first (that frees the room), then what it stopped starts again.
       for (const k of rev.added) {
@@ -9839,10 +9951,10 @@ action({
               : await runAction('restart_model', viewer, { spark, container }, by));
         } catch (e) { problems.push(`starting ${container} again: ${e.message}`); }
       }
-      if (problems.length) throw new Error(`Part of the undo didn’t work: ${problems.join('; ')}`);
-    });
+      if (problems.length) throw new Error(`${worked ? 'Part of the undo didn’t work' : 'Nothing was put back'}: ${problems.join('; ')}. That change is still this chat’s last one, so “undo” tries it again.`);
+    }
     return { outcome: 'started', operation: job.id, undoing: { stops: rev.added, startsAgain: rev.removed },
-      note: 'Putting things back as they were before that change: what it started stops, then what it stopped starts again. This chat hears when it’s done.' };
+      note: `Putting back this chat’s last change (it ${undoRevWords(rev)}): what it started stops, then what it stopped starts again. This chat hears when it’s done.` };
   },
 });
 /* ───────── the digest: a long tool result cut by code into its numbered lines that matter (G5) ───────── */
@@ -11121,6 +11233,9 @@ const ASK_SPARKIE = {
     choice: { type: 'string', pattern: '^[a-f0-9]{10}$', description: 'Take one of the choices Sparkie offered, by its id.' },
   }, additionalProperties: false },
 };
+// An agent's conversation that may be dropped to make room for its next (C-18).
+const agentConvSpare = c => !c.task && !(c.messages || []).some(m => (m.role === 'user' && !m.from && !m.auto)
+  || (m.choices || []).some(x => x.state === 'open' && pendingChoices.has(x.id)));
 async function askSparkie(agent, viewer, args) {
   const input = checkInput(ASK_SPARKIE.input, args ?? {}, ASK_SPARKIE.name);
   if (!input.message && !input.conversation) throw new HttpError(400, 'Send a message (and a conversation id to continue one).');
@@ -11132,9 +11247,13 @@ async function askSparkie(agent, viewer, args) {
     conv = chatData().conversations.find(c => c.id === input.conversation && c.agent?.id === agent.id && c.login === viewer.login);
     if (!conv) throw new HttpError(404, 'This agent has no conversation with that id.');
   } else {
-    // Each agent keeps its 50 most recent conversations.
+    // Each agent keeps its 50 most recent conversations. One that holds a button still open (an ask waiting for the
+    // owner), a task, or a message of the owner's is never dropped (C-18): the oldest without any of those goes, and when
+    // none can, the new one is refused.
     const mine = chatData().conversations.filter(c => c.agent?.id === agent.id && !replying.has(c.id)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-    const drop = new Set(mine.slice(0, Math.max(0, mine.length - 49)));
+    const over = Math.max(0, mine.length - 49), spare = mine.filter(agentConvSpare).slice(0, over);
+    if (spare.length < over) throw new HttpError(409, `This agent already has ${mine.length} conversations with Sparkie, and none of the older ones can be cleared to make room: each holds a question waiting for the owner, a task, or the owner’s own words. Continue one of them (pass its "conversation" id), or ask the owner to delete some in Spark Console.`);
+    const drop = new Set(spare);
     if (drop.size) chatData().conversations = chatData().conversations.filter(c => !drop.has(c));
     const now = new Date().toISOString();
     conv = { id: `sc_${randomBytes(8).toString('hex')}`, login: viewer.login, title: 'New chat', spark: null, agent: { id: agent.id, name: agent.name }, createdAt: now, updatedAt: now, messages: [] };

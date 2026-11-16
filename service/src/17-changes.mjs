@@ -41,9 +41,11 @@ function setAgentSettings(change) {
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
   : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
     : 'and the owner said not to stop anything');
+// (the owner's own /undo, typed on the page or in the paired Telegram chat, runs its steps while paused, as runAction
+// lets it through: R34, R1-01)
 const pausedCheck = ctx => {
   const s = agentSettings();
-  if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
+  if (ctx?.via && ctx.via !== 'page' && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
 };
 
 // Questions and their choices. Each choice's arguments stay here; the caller only gets an id to answer with.
@@ -107,8 +109,9 @@ function changeLabel(name, input) {
   // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
-  // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
-  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
+  // workflow's value, is hidden before the cut, A-5, 2026-11-14.) The line it would keep is shown whole: remember's text
+  // is 300 characters at most, and the press keeps all of it as the owner's (C-11).
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
     const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
@@ -659,7 +662,7 @@ async function startModel(args, viewer, ctx) {
     job.progress = null;
     pausedCheck(ctx);
     const fresh = await inventory(null), m = libraryModel(fresh, v.repo);
-    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Start it from Models in a minute.`);
+    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Ask Sparkie to start it again in a minute.`);
     // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
     // doesn't answer, it starts as before.
     if (found.outsideRecipes) {
