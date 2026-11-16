@@ -6,13 +6,15 @@
 // than an open's 20-second wait for the lock), the next call is told it is being fetched at once, not that another box
 // is opening. While the state put back from a copy is held (R23), an agent's call opens, fills, reads back, runs and
 // writes in no box, with the hold's own words; the owner's own call still runs, and once the hold ends the agent's
-// opens. Starts a stand-in fleet: run it on a Spark.
+// opens. A command in the box is written down first, carrying its request: a task's report counts it as a change made
+// at once, and one that never started there (the disk under its floor) ends ran: false. Starts a stand-in fleet: run it
+// on a Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, call, createActKey, sleep, waitFor, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, sleep, waitFor, REPO, SLOW } from './lib.mjs';
 
 const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
 const K = {};
@@ -119,4 +121,35 @@ test('while the state put back from a copy is held, an agent opens, fills, reads
   await sleep(1500);
   const c = await asAgent(K.c, 'true');
   assert.deepEqual([c.ok, c.box], [true, 'opened'], c.said);
+});
+
+test('a command in the box is written down first, carrying its request: a task’s report counts it as a change made at once; one that never started ends ran: false', { timeout: 180000 * SLOW }, async () => {
+  const journal = () => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).flatMap(f => text(join(T.fleet.journalDir, f)).split('\n').filter(Boolean).map(l => JSON.parse(l)));
+  const GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', words = 'touch a note in the box, then stop the model on spark 3';
+  // (Sparkie runs the box command at once, and the stop it doesn't name the model for comes back as a button: a task,
+  // parked at that button)
+  const scriptFile = join(T.fleet.dir, 'model-script.json');
+  writeFileSync(scriptFile, JSON.stringify([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'box', command: 'touch note.txt' } }, { name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }] }]));
+  let chat, r;
+  try { chat = await newChat(); r = await say(chat, words); } finally { rmSync(scriptFile, { force: true }); }
+  assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['run', 'box'], ['stop_model', 'needs-ok']], r.text);
+  const said = journal().find(x => x.k === 'said' && x.chat === chat), start = journal().find(x => x.k === 'cmd' && x.start && x.where === 'box' && x.chat === chat);
+  assert.deepEqual([start?.task, start?.act, start?.class, start?.gate, start?.args?.command], [said.id, 'run', 'change', 'box', 'touch note.txt'], JSON.stringify(start));
+  const end = journal().find(x => x.k === 'cmd' && x.end && x.id === start.id);
+  assert.deepEqual([end?.ok, end?.outcome, end?.ran], [true, 'ran', undefined], JSON.stringify(end));
+  const stop = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: '/stop' } });
+  assert.equal(stop.status, 200, stop.text);
+  const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report) || null, { timeout: 60000, every: 500, what: 'the task’s report' });
+  assert.equal(report.content.split('\n')[2], 'Changes: 1 made at once, 0 after your yes; 1 question asked of you. Undone: 0.', report.content);
+  // (one that never started in the box: the disk under its floor)
+  const free = join(mock('spark3'), 'disk-free');
+  writeFileSync(free, '49000000000\n');
+  try {
+    const n = await asOwner('touch never.txt');
+    assert.equal(n.r.status, 409, n.r.text);
+  } finally { writeFileSync(free, ''); }
+  const never = journal().filter(x => x.k === 'cmd' && x.start && x.where === 'box' && x.args?.command === 'touch never.txt');
+  assert.equal(never.length, 1, JSON.stringify(never));
+  const neverEnd = journal().find(x => x.k === 'cmd' && x.end && x.id === never[0].id);
+  assert.deepEqual([neverEnd?.ok, neverEnd?.outcome, neverEnd?.ran], [false, 'disk', false], JSON.stringify(neverEnd));
 });

@@ -176,6 +176,19 @@ function boxRecord(ctx, fields, text = null) {
   journal('cmd', { chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box', class: 'change', gate: 'box', exit: null,
     ...fields, err: fields.err === undefined ? null : jErr(fields.err), sub: jSub(fields.args?.spark) }, text);
 }
+// A command (or a write) in the box is a change written down first, as the runner's is (21-runner.mjs): a start line
+// that carries the request's task, so a task's report counts it (after the owner's yes when it was pressed), then its
+// end line, by the same id, with what it printed. One that never started in the box (Docker not answering, the box
+// gone, the disk under its floor) ends ran: false, and counts as no change. A start line that can't be written refuses
+// the command (nothing ran).
+const BOX_NEVER = new Set(['nodocker', 'gone', 'disk', 'nodisk']);
+function boxStart(ctx, b, args) {
+  const rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box',
+    class: 'change', gate: ctx.button ? 'button' : 'box', unit: b.name, args: { spark: b.spark, ...args }, sub: jSub(b.spark) });
+  if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
+  return rid;
+}
+const boxEnd1 = (ctx, rid, x, fields, text = null) => boxRecord(ctx, { id: rid, end: true, ...fields, ...(BOX_NEVER.has(x.kind) ? { ran: false } : {}) }, text);
 
 async function boxOpen(key, ctx, command) {
   const t0 = Date.now(), rid = journalId(), rec = { outcome: 'refused', spark: null, name: boxName(key), text: '' };
@@ -345,9 +358,9 @@ async function boxRun(input, viewer, ctx = {}) {
   if (b.pulling) return boxPulling(b, observedAt);
   const room = b.opened ? null : await boxRoom(nodeById(b.spark), key), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
   if (why) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: why }); throw new HttpError(room === 'off' ? 503 : 409, why); }
-  const rid = journalId(), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
+  const rid = boxStart(ctx, b, { command: command.slice(0, 600) }), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
   const done = ['ran', 'time', 'cutoff'].includes(x.kind);
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
     exit: x.exit ?? null, ms: Date.now() - t0, bytes: Buffer.byteLength(x.output || '') }, `$ ${command}\n${text}`);
   if (!done) throw boxSaid(x, at, 'the command didn’t run');
   const shown = forBrain(text), until = new Date(b.until).toISOString();
@@ -406,14 +419,14 @@ async function boxWrite(input, viewer, ctx = {}) {
   } catch (e) { boxRecord(ctx, { unit: boxName(key), args: { command: `write_file ${shownPath}` }, ok: false, outcome: 'refused', err: e }); throw e; }
   b = await boxReady(key, ctx, `write_file ${shownPath}`);
   if (b.pulling) return boxPulling(b, observedAt);
-  const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId(), room = b.opened ? null : await boxRoom(nodeById(b.spark), key);
+  const at = sparkName(nodeById(b.spark) || { id: b.spark }), room = b.opened ? null : await boxRoom(nodeById(b.spark), key);
   if (room === 'off') throw new HttpError(503, `${at} isn’t answering, so nothing was written.`);
   if (room) throw new HttpError(409, room.replace('Nothing ran.', 'Nothing was written.'));
   // (in the box: the path may not leave /work by a link on the way, and code's own program writes it, one move)
   const program = `p=${q(rel)}; r=$(realpath -m -- "$p"); case "$r" in "$PWD"/*) ;; *) echo 'write_file: that path leads out of the box’s folder, so nothing was written.' >&2; exit 3 ;; esac\nmkdir -p -- "$(dirname -- "$p")" || exit 1\n${writeProgram(rel, old.kind === 'file' ? old : { kind: 'none' })}`;
-  const x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
+  const rid = boxStart(ctx, b, { command: `write_file ${shownPath}: ${bytes.length} bytes`, tool: 'write_file', path: shownPath }), x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
   const wrote = x.kind === 'ran' && x.exit === 0;
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
   if (!['ran', 'time', 'cutoff'].includes(x.kind)) throw boxSaid(x, at, 'nothing was written');
   if (!wrote) return { box: 'open', spark: b.spark, name: b.name, observedAt, notWritten: { path: shownPath, why: maskSecrets(lookClean(x.output || '').trim()).slice(0, 300) || `it ended with code ${x.exit ?? 'none'}` }, record: rid };
   return { box: b.opened ? 'opened' : 'open', spark: b.spark, name: b.name, observedAt, wrote: { path: shownPath, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) }, ...(x.low ? { ended: boxLow(at, x.low) } : {}), record: rid };
