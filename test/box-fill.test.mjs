@@ -29,18 +29,20 @@ const T_ = {};   // the trees made in prepare, by name
 
 // git on the bare copy, with nothing from the machine's git config.
 function gitIn(dir, args, input) {
-  const r = spawnSync('git', ['--git-dir', dir, ...args], { input, maxBuffer: 2 ** 28, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+  const r = spawnSync('git', ['--git-dir', dir, ...args], { input, maxBuffer: 2 ** 28, env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' } });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout;
 }
 // A tree from { name: Buffer | string | { data, mode } | { link } | { commit } | { tree: {...} } }.
 function makeTree(dir, spec) {
   const lines = Object.entries(spec).map(([name, v]) => {
-    if (v && v.tree) return `040000 tree ${makeTree(dir, v.tree)}\t${name}\0`;
-    if (v && v.link) return `120000 blob ${gitIn(dir, ['hash-object', '-w', '--stdin'], v.link).toString().trim()}\t${name}\0`;
-    if (v && v.commit) return `160000 commit ${'1'.repeat(40)}\t${name}\0`;
-    const data = Buffer.isBuffer(v) || typeof v === 'string' ? v : v.data;
-    return `${v && v.mode ? v.mode : '100644'} blob ${gitIn(dir, ['hash-object', '-w', '--stdin'], data).toString().trim()}\t${name}\0`;
+    // (plain contents first: a string's own .link is String.prototype.link)
+    if (Buffer.isBuffer(v) || typeof v === 'string') return `100644 blob ${gitIn(dir, ['hash-object', '-w', '--stdin'], v).toString().trim()}\t${name}\0`;
+    if (v.tree) return `040000 tree ${makeTree(dir, v.tree)}\t${name}\0`;
+    if (v.link) return `120000 blob ${gitIn(dir, ['hash-object', '-w', '--stdin'], v.link).toString().trim()}\t${name}\0`;
+    if (v.commit) return `160000 commit ${'1'.repeat(40)}\t${name}\0`;
+    return `${v.mode || '100644'} blob ${gitIn(dir, ['hash-object', '-w', '--stdin'], v.data).toString().trim()}\t${name}\0`;
   });
   return gitIn(dir, ['mktree', '-z', '--missing'], Buffer.from(lines.join(''))).toString().trim();
 }
