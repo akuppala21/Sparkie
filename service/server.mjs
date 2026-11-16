@@ -15141,12 +15141,13 @@ function fillRecord(ctx, act, fields, t0) {
 
 // The box's own script for a fill (bash, inside the box, in /work; its arguments: the call's id, the folder): it
 // changes nothing when /work holds anything, else unpacks the stream on stdin there, and on a failure removes what it
-// unpacked. Its last line is the code's: "<id> fill busy <n>", "<id> fill done <files>" or "<id> fill failed".
+// unpacked. Its last line is the code's: "<id> fill busy <n>", "<id> fill done <files>" or "<id> fill failed <tar's
+// last words>".
 const FILL_SCRIPT = String.raw`id=$1; f=$2
 n=$(ls -A . 2>/dev/null | wc -l | tr -d ' ')
 if [ "$n" != 0 ]; then printf '%s fill busy %s\n' "$id" "$n"; exit 0; fi
-if tar --extract --file=- --no-same-owner --no-same-permissions --keep-old-files --no-overwrite-dir 2>/dev/null; then printf '%s fill done %s\n' "$id" "$(find "$f" -type f | wc -l | tr -d ' ')"
-else rm -rf -- "$f"; printf '%s fill failed\n' "$id"; fi`;
+if e=$(tar --extract --file=- --no-same-owner --no-same-permissions --keep-old-files 2>&1 >/dev/null); then printf '%s fill done %s\n' "$id" "$(find "$f" -type f | wc -l | tr -d ' ')"
+else rm -rf -- "$f"; printf '%s fill failed %s\n' "$id" "$(printf '%s' "$e" | tail -n 1 | head -c 200)"; fi`;
 
 // Fills the caller's box (opened first when it isn't) with an exact tree from the console's bare copy, as files under
 // FILL_FOLDER. { filled: true, box, spark, tree, folder, files, bytes, observedAt }, or { filled: false, box: 'not
@@ -15180,7 +15181,10 @@ async function boxFill(viewer, ctx, tree) {
     if (last[0] === 'busy') { rec.outcome = 'busy'; throw new HttpError(409, `This chat’s box on ${at} holds other work (${Number(last[1]) || 'some'} thing${Number(last[1]) === 1 ? '' : 's'} in its folder), so nothing was put in it.`); }
     if (last[0] !== 'done' || Number(last[1]) !== got.files.length) {
       rec.outcome = 'failed';
-      throw new HttpError(502, `The tree couldn’t be put in the box on ${at}${r.code === 255 ? ` (${at} didn’t answer)` : ''}; what was unpacked was taken out again. Nothing else was changed.`);
+      const said = last[0] === 'failed' ? last.slice(1).join(' ') : last[0] === 'done' ? `${last[1]} files unpacked, not ${got.files.length}` : r.err.split('\n').filter(Boolean).pop() || `exit ${r.code}`;
+      // (unpacked, but not the count it should be: the folder goes, as the script takes it out on a failure)
+      if (last[0] === 'done') await fillStream(node, `docker exec ${q(b.name)} rm -rf -- ${FILL_FOLDER}`, { max: 4096, timeout: 30000 });
+      throw new HttpError(502, `The tree couldn’t be put in the box on ${at}${r.code === 255 ? ` (${at} didn’t answer)` : ''} (${fillShow(said)}); what was unpacked was taken out again. Nothing else was changed.`);
     }
     boxFills.set(key, { tree, box: b.name, spark: b.spark, at: new Date().toISOString() });
     rec.outcome = 'filled';
