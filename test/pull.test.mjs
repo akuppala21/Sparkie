@@ -1317,7 +1317,8 @@ describe('the way back for an update from GitHub, armed by the build installed n
       rmSync(join(home, 'unpacked-list'), { force: true });
       const r = await pull(home, ['install', g.t12]);
       assert.equal(r.code, 0, r.out);
-      const want = Object.entries(g.files).filter(([, v]) => v && v.mode !== '160000').map(([p]) => p).filter(p => p !== 'test/eval/memory-held-out.json').sort();
+      // (the tested tree: the commit's files and the lock its tag adds, but the held-out set)
+      const want = [...Object.entries(g.files).filter(([, v]) => v && v.mode !== '160000').map(([p]) => p), LOCK].filter(p => p !== 'test/eval/memory-held-out.json').sort();
       assert.deepEqual(lines(home, 'unpacked-list'), want);
       base = g;
     } finally { rmSync(attrs, { force: true }); }
