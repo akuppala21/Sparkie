@@ -145,7 +145,7 @@ test('read back: nothing differs right after a fill; changed, added, mode-change
     { path: 'service/a.mjs', blob: null, mode: null },
   ]);
   for (const c of r.json.changes.filter(x => x.blob)) assert.equal(gitIn(T_.dir, ['cat-file', 'blob', c.blob]).toString(), c.path === 'run.sh' ? '#!/bin/sh\necho hi\n' : c.path === 'README.md' ? 'changed\n' : 'new file\n');
-  const recs = journal().filter(j => j.where === 'box' && /^(fill|read back)/.test(j.args?.command || '')).map(j => [j.args.command.split(' ')[0], j.outcome, j.ok]).filter(x => x[1] !== 'opened');
+  const recs = journal().filter(j => j.where === 'box' && /^(fill|read back)/.test(j.args?.command || '')).map(j => [j.args.command.split(' ')[0], j.outcome, j.ok]).filter(x => !['open', 'opened'].includes(x[1]));   // (the box's own open and reuse records)
   assert.deepEqual(recs.filter(x => x[2]), [['fill', 'filled', true], ['read', 'read', true], ['read', 'read', true]]);
   assert.ok(recs.some(x => x[1] === 'busy' && !x[2]), JSON.stringify(recs));
 });
