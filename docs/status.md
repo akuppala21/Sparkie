@@ -64,7 +64,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R49](rules/R49.md) | partly | `test/ways-in.test.mjs` | falls short today: its file says where |
 | [R50](rules/R50.md) | partly | `test/brain.test.mjs` (“another brain's habits, said by its setup”); `test/turn-budgets.test.mjs` | falls short today: its file says where |
 | [R51](rules/R51.md) | partly | `test/app-keys.test.mjs` (“the page: /key NAME value is kept by name”, “a later turn”, “a kept key a tool prints”, “a heartbeat address pasted”, “GITHUB”, “a bad name”, “an agent's /key keeps nothing”, “Telegram”, “a key typed where the name goes”, “words or quotes round a key”, “a value typed in plain words, then given with /key”, “a kept key that reached the secrets file another way”, “an error that quotes a kept key”, “after a restart”) | falls short today: its file says where |
-| [R52](rules/R52.md) | partly | `test/brain-rail.test.mjs` | falls short today: its file says where |
+| [R52](rules/R52.md) | partly | `test/brain-rail.test.mjs`; `test/box.test.mjs` (“opening a box is a change”) | falls short today: its file says where |
 | [R53](rules/R53.md) | partly | `test/fixed-path.test.mjs` (“has not run (the worker is python3 -I)”, “says -q first”, “an hf only in ~/.local/bin never runs”, “holds a line break or a tab is not listed”, “the setups scan counts no model”, “a 400-character spark.json title”, “one needs-you line naming it”, “spawnOn puts the fixed PATH first”, “a planted ssh, bash or timeout”, “the same look by hand”, “runs Python with -I”, “shows none of it in deploy_plan”, “cuts the flag it quotes”); `test/install.test.mjs` (“reads its miss count as text”, “asks path-check.sh first”, “take their programs from the fixed path”, “Python as -I and curl as -q”, “the stand-in switch is an argument only”, “writes its three files whole”, “runs on Spark 2's own Node”, “only code-server's Node”); `test/pull.test.mjs` (“Python as -I and curl as -q”); `test/go-back.test.mjs` (“goes on to restore.sh as an argument”); `test/own-programs.test.mjs` (“every program the call to the root helper and the copies run is on PATH_PROGRAMS”) | falls short today: its file says where |
 | [R54](rules/R54.md) | partly | `test/danger.test.mjs` | falls short today: its file says where |
 | [R55](rules/R55.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
@@ -73,11 +73,13 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R58](rules/R58.md) | partly | `test/check-update.test.mjs`; `test/install-update.test.mjs`; `test/tools.test.mjs` (“everyday requests”) | falls short today: its file says where |
 | [R59](rules/R59.md) | partly | `test/memory-reads.test.mjs` (“Telegram: recall there gives back no words”, “Telegram: forget_memory with the id of a line no longer live”, “an agent that may change things”, “a chat an agent started”, “a kept key in a memory line”, “a value given as a key after a lesson card was made”); `test/recall.test.mjs` (“never: a retired line to an agent's key, an agent's chat or Telegram”); `test/telegram.test.mjs` (“a forgotten memory line never reaches Telegram”); `test/digest.test.mjs`; `test/work.test.mjs` (“recall {id, find} on a look's record”) | falls short today: its file says where |
 | [R60](rules/R60.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
-| [R61](rules/R61.md) | partly | `test/runner.test.mjs`; `test/prune.test.mjs` | falls short today: its file says where |
+| [R61](rules/R61.md) | partly | `test/runner.test.mjs`; `test/ladder.test.mjs`; `test/prune.test.mjs` | falls short today: its file says where |
+| [R62](rules/R62.md) | partly | `test/box.test.mjs`; `test/box-fill.test.mjs` | falls short today: its file says where |
 | [R63](rules/R63.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 | [R64](rules/R64.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
 | [R66](rules/R66.md) | partly | `test/tasks.test.mjs`; `test/tasks-telegram.test.mjs`; `test/tasks-more.test.mjs`; `test/tasks-wake.test.mjs`; `test/carry-keeps.test.mjs` | falls short today: its file says where |
 | [R67](rules/R67.md) | partly | `test/trial.test.mjs`; `test/owner-only.test.mjs` | falls short today: its file says where |
+| [R69](rules/R69.md) | partly | `test/selfchange.test.mjs`; `test/check-update.test.mjs`; `test/tools.test.mjs` (“everyday requests”) | falls short today: its file says where |
 | [R70](rules/R70.md) | partly | `test/root-helper.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)

@@ -14,9 +14,9 @@
 // ASCII, words a program reads from its input, code fetched or written by this same command, a command or a copy on
 // another machine (no wall there). A look keeps run's own checks (21-work.mjs:
 // lookForm's exact forms, no sudo or key word by lookWords and keyWord), and every program in it only reads, with no
-// flag that writes, no redirection but to /dev/null, no here-document. Once step A7c wires it into run (dark until then:
-// run sends every command to the look wall): a look runs in the look wall, so a wrong "look" still can't write or send;
-// anything else goes to the run wall with the copy first, to an ask, or nowhere. The mistake that matters is a
+// flag that writes, no redirection but to /dev/null, no here-document. run sorts each command with it (A7c): a look runs
+// in the look wall, so a wrong "look" still can't write or send; anything else goes to the ladder (21-ladder.mjs): the
+// run wall with the copy first, an ask, or nowhere. The mistake that matters is a
 // "change", run at once, that should have been asked: a change that names a way in anywhere (even to read it) is lockout.
 // at: 'compute' or 'hub' (Spark 2: any change there is risky). root: the typed root (a look stays a look; a script, a
 // one-liner, more than one program, or a write outside the root folders is risky). dir: where it starts (~). hosts: the

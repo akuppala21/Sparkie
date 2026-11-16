@@ -197,6 +197,10 @@ def manifest(sd):
     return json.loads(raw)
 
 if A['mode'] == 'copy':
+    # (the folder a change starts in: a real folder of this account, never a link; ~/work is made here, as the owner,
+    # before the unit, any other must be there)
+    if A.get('workdir') and folder(whole(A['workdir']), bool(A.get('workmake'))) is None:
+        stop(A['workdir'] + ' is not there, and a change starts only in a folder that is (~/work alone is made when missing)')
     sd = setdir(True)
     man = {'set': A['set'], 'seconds': A.get('seconds', 0), 'allow': [], 'entries': [], 'notKept': []}
     total, seen = 0, set()

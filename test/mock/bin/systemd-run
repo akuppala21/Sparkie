@@ -18,6 +18,7 @@
 #                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
 #                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
+# <rehearsal>/standin/past-limit: a run or look unit is not ended at its RuntimeMaxSec (a systemd that failed to end it).
 import json, os, shutil, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -159,6 +160,8 @@ if unit.startswith(('sw-look-', 'sw-run-', 'sw-root-')) and cmd:
     cmd = [R + a if a.startswith('/run/spark-console/') else a for a in cmd]
     # Its RuntimeMaxSec, as systemd holds it: past it, the command and everything it started are ended (exit 1).
     limit = next((float(a.split('=', 1)[1]) for a in args if a.startswith('RuntimeMaxSec=')), None)
+    if knob('past-limit') is not None:
+        limit = None
     import signal, subprocess
     # While it runs, <rehearsal>/standin/live/<unit> is there (the stand-in systemctl's is-active reads it).
     live = os.path.join(R, 'standin', 'live', unit)
