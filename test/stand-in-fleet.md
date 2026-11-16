@@ -99,7 +99,8 @@ covers, is in `test/README.md`.
     moves its `Date.now()` ahead by the milliseconds in `$MOCK_DIR/clock-offset`. `fault.mjs` — loaded the same way;
     a request with `x-mock-fault` throws inside its route once, `$MOCK_DIR/fault-reject` rejects a promise nobody
     listens to, `$MOCK_DIR/fault-throw` throws from a timer. `disk-full.mjs` — loaded the same way; while
-    `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC).
+    `$MOCK_DIR/disk-full` is there, every write to the journal's folder fails as a full disk does (ENOSPC);
+    `secrets-full` and `secrets-fsync-fail` do the same to the secrets file's folder (a write, a sync).
   - `standin-console.mjs` — a stand-in Spark Console for `install.test.mjs` and `pull.test.mjs`: only the routes the
     installers ask (`/health`, `/whoami`, `/auth/signin/begin`, `/mcp`, `/v1/models`, `/main`, `/chats` and a chat
     turn's stream) on `$HOME/.local/state/spark-console/api.sock`; the test puts `const MODE = '…'` in front of it

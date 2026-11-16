@@ -4,7 +4,8 @@
 // note is gone. Cut off while it waits on a job; cut off while step 2's own start runs (an app not yet on the list);
 // a workload with keep: true (that step's model stays); a restart with no run under way changes nothing; cut off inside
 // a start step, the start's own line is given and the run's notice never says nothing was still running (the workloads
-// review, C5).
+// review, C5). A job the owner ran again by hand after the run's job step is left by the clean-up after a restart (its
+// receipt, A-22), and what is still the run's is stopped.
 //
 // The stand-in fleet as in workloads.test.mjs: Spark 3's model of Spark Console's is stopped first, so a restart_model
 // step there starts sc-gpt-oss-20b; on Spark 4 the owner has made a web app (wl-web, stopped again) and a job (wl-long)
@@ -145,5 +146,33 @@ describe('a restart in the middle of a saved workflow\'s run (D6f)', { concurren
     const told = noticesSince(since).map(e => e.text);
     assert.ok(told.some(x => /^A restart of Spark Console cut off (deploy|start-model|deploy-cluster) .*Check it’s running/.test(x)), JSON.stringify(told));
     assert.ok(!told.some(x => /Nothing it had started was still running/.test(x)), JSON.stringify(told));
+  });
+  // A-22: the record keeps each item's receipt (a job's id and start time), so the clean-up after a restart leaves a job
+  // the owner ran again by hand after the run's job step, and still stops what is the run's.
+  test('a job the owner ran again by hand after the run\'s job step: after a restart the record\'s receipt leaves it running, and what is still the run\'s is stopped', { timeout: 300000 * SLOW }, async () => {
+    const setAs = (name, state, status) => writeFileSync(mockFile('spark4', 'containers'), containers('spark4').replace(new RegExp(`^${name}\\|[^|]*\\|[^|]*\\|`, 'm'), `${name}|${state}|${status}|`));
+    writeFileSync(mockFile('spark4', 'stamp-starts'), '');
+    for (const name of ['rr-first', 'rr-second']) {
+      const r = await act('keep_running', { spark: 'spark4', container: name, image: 'python:3.12-slim', once: true, command: ['python3', `/in/${name}.py`] });
+      assert.equal((await opEnd(r.json.operation, `${name} made`)).status, 'completed');
+      setAs(name, 'exited', 'Exited (0) just now');
+    }
+    await save('rr jobs', [{ action: 'keep_running', args: { spark: 'spark4', container: 'rr-first' } }, { action: 'keep_running', args: { spark: 'spark4', container: 'rr-second' } }]);
+    const id = await runIt('rr jobs');
+    await waitFor(async () => /^Step 1: rr-first runs on Spark 4; waiting/.test((await opNow(id)).step), { timeout: 120000, what: 'step 1 waiting', every: 250 });
+    setAs('rr-first', 'exited', 'Exited (0) just now');
+    await waitFor(async () => /^Step 2: rr-second runs on Spark 4; waiting/.test((await opNow(id)).step), { timeout: 120000, what: 'step 2 waiting', every: 250 });
+    // (the owner runs the first job again by hand while the second one runs)
+    const again = await act('keep_running', { spark: 'spark4', container: 'rr-first' });
+    assert.equal((await opEnd(again.json.operation, 'rr-first run again')).status, 'completed');
+    assert.deepEqual([stateOf('spark4', 'rr-first'), stateOf('spark4', 'rr-second')], ['running', 'running']);
+    assert.ok(note()?.runs?.[id]?.started?.every(x => x.seen?.id && x.seen?.startedAt), JSON.stringify(note()?.runs?.[id]));
+    const since = new Date().toISOString();
+    await restart();
+    const cut = await waitFor(() => noticesSince(since).find(e => /cut off the saved workflow “rr jobs”/.test(e.text)) || null, { timeout: 120000, what: 'the run’s notice' });
+    assert.match(cut.text, /Stopped what this run had started: rr-second on Spark 4\./, cut.text);
+    assert.match(cut.text, /Left running: rr-first on Spark 4 was started again since, not by this run\./, cut.text);
+    assert.deepEqual([stateOf('spark4', 'rr-first'), stateOf('spark4', 'rr-second')], ['running', 'exited']);
+    setAs('rr-first', 'exited', 'Exited (0) just now');
   });
 });

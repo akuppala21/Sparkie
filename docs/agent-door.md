@@ -114,14 +114,14 @@ Errors start with a code (`[not_found]`, `[invalid]`, `[unreachable, retry later
 **Who can:** Sparkie, in your chats and in conversations with agents you allowed. Your agents, once you turn on **Can
 change things** for that agent (Agents and Telegram); new agents can only look. A start already under way for the same
 model returns that operation (`already-starting`) instead of starting a second copy; a change that takes over 50
-seconds answers `[still_running]` (don't call it again; check `recent_operations`).
+seconds answers `[still_running]`: the same call again, while it or its operation runs, gets its answer and runs nothing twice (R73).
 
 **Checked inside, every time:** a fresh plan; only Spark Console's own containers stop (anything else is a question for
 you), never a model running across two Sparks as a side effect, never Sparkie's model or protected containers
 (`qwen-recipe-*`); 8 GB of memory always stays free, measured after the stops, so a Spark can't freeze; Spark 2 (where
 Sparkie and the console run) is only used when you name it; two Sparks need a cable that passed the connection test;
-models that run their own code, or whose `spark.json` sets unsafe flags, environment or an unpinned image, are refused
-(you can start those on the page); only models from your recipes run across two Sparks (those parts run with more
+models that run their own code, or whose `spark.json` sets unsafe flags, environment or an unpinned image, are refused;
+only models from your recipes run across two Sparks (those parts run with more
 privileges); a Hugging Face repo outside your recipes is a question first; a memory share written into a setup or a
 past run never exceeds the measured safe one; one change per Spark
 at a time; the plan is made again just before it runs and must match; pausing agents stops work already under way at

@@ -81,12 +81,13 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `agents.json` | `20-mcp` | `top level`, `putBackAtStart` (22-putback), `handler` (24-handler); the top-level one is the last-use timer | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |
-| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoved`, `putBackSeed`, `putBackRoute` | yes | no |
+| `auth-serial.json` | `22-putback` | `putBackSerialWrite`; `putBackSerialWrite` is called by `putBackRemoval`, `putBackSeed`, `putBackRoute` | yes | no |
+| `auth-unnoted.json` | `22-putback` | `putBackUnnotedSave`; `putBackUnnotedSave` is called by `putBackRemoval`, `putBackRetry` | yes | no |
 | `backup.json` | `25-backup-and-start` | `copyLate` (20-state-copy), `backupState`; `copyLate` is called by `backupState`, `backupIfDue`; `backupState` is called by `copyOnWake`, `copyBeforeOff`, `backupIfDue` | yes | yes |
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
@@ -144,6 +145,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `tgLoop` | `21-telegram` | the long poll, one at a time, with a pause after a failure |
 | `tgTyping` | `21-telegram` | “typing…” every 4.5 s while Sparkie answers, 5 minutes at most |
 | `updResultLook` | `21-updates` | every 10 s while an install asked from chat waits for its result |
+| `putBackRetry` | `22-putback` | every 60 s: a removal's note that couldn't be written yet |
 | `checkRoute` | `23-http` | every 60 s |
 | `refreshBlocked` | `23-http` | every 60 s |
 | `backupIfDue` | `25-backup-and-start` | 10 minutes after start, then hourly; it sends only while a Spark is on and the state changed |
