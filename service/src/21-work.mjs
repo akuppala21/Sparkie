@@ -298,6 +298,7 @@ function forBrain(t) {
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
 // command word, a key's name), with the look's own words.
 async function runCommand(input, viewer, ctx = {}) {
+  if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: opened and checked; A4 runs the command)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
   if (Number.isInteger(input.minutes) && !ctx.long) ctx = { ...ctx, long: { minutes: input.minutes } };
