@@ -1,7 +1,11 @@
 // Covers: The coding trial (R67; design C 2.5; contract 10.4, T100). agentbar/trial.mjs --dry, with no brain, fails
 // every untouched task, and the agent bar's own --dry still fails every one of its tasks. With a scripted brain and no
 // box (a try), a run that fixes the slip with `write_file` passes every check, and runs that edit the task's test, touch
-// the contract or skip the build each fail at that check; a call for a Spark, as root or out of the copy is refused; the
+// the contract or skip the build each fail at that check; runs that fix nothing but add an exit, a skip or an early
+// return to the planted test, change it in any other way, or hide its removed lines behind a zero byte each fail. With
+// a stand-in docker, the box never starts without 16 GB free beyond the 8 GB kept; started, it is --rm and sleeps only
+// for its task's time and the grade's, and a runner stopped by SIGTERM, SIGINT or SIGHUP removes it. A
+// call for a Spark, as root or out of the copy is refused; the
 // record holds the build, the mark, the task set's version, the brain and each run, and its sha256 is the one printed;
 // Spark Console keeps no try. `POST /main/trial` and `GET /main/trial` are the owner's alone: refused, keeping nothing,
 // as nobody, for an agent's key, cross-site, through Funnel without sign-in and from a Spark's address; a malformed
@@ -23,7 +27,7 @@ import http from 'node:http';
 import { T, REPO, useFleet, api, call, createActKey, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
 import { serviceConfig } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
-import { taskSet, recordHash } from '../agentbar/trial-lib.mjs';
+import { taskSet, recordHash, trialBoxSeconds } from '../agentbar/trial-lib.mjs';
 
 const SET = taskSet(join(REPO, 'agentbar', 'trial', 'tasks'));
 const MAIN_ORIGIN = serviceConfig().origin, TAILNET = new URL(MAIN_ORIGIN).hostname.split('.').slice(1).join('.');
@@ -52,6 +56,46 @@ function runNode(file, args, limitMs) {
   });
 }
 const read = f => JSON.parse(readFileSync(f, 'utf8'));
+// The same, started in the background with more in its environment: { child, done, out() }; killed at its limit.
+function startNode(file, args, extra, limitMs) {
+  const env = { ...process.env, ...extra };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawn(process.execPath, [join(REPO, file), ...args], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.stderr.on('data', d => { out += d; });
+  const limit = setTimeout(() => child.kill('SIGKILL'), limitMs);
+  const done = new Promise(resolve => child.on('close', (code, signal) => { clearTimeout(limit); resolve({ code, signal, out }); }));
+  return { child, done, out: () => out };
+}
+// A stand-in docker for the runner (no real container ever starts here): it logs each call to calls beside it, runs a
+// box's commands in the box's folder (each in a session of its own, which rm -f ends), and never runs the settle's
+// kill -9 -1, which here would end every program of this user.
+const DOCKER = String.raw`#!/bin/bash
+D=$(dirname "$0"); printf '%s
+' "$*" >> "$D/calls"
+cmd=$1; shift
+case $cmd in
+  version) echo 27.5.1 ;;
+  image) exit 0 ;;
+  run) name=; work=; prev=
+    for a in "$@"; do [ "$prev" = --name ] && name=$a; [ "$prev" = -v ] && work=$(printf '%s' "$a" | sed 's|:/work$||'); prev=$a; done
+    printf '%s
+' "$work" > "$D/work-$name"; echo c0ffee ;;
+  exec) dir=/work; fg=
+    while :; do case $1 in -w) dir=$2; shift 2 ;; -i) fg=1; shift ;; -*) shift ;; *) break ;; esac; done
+    name=$1; shift; work=$(cat "$D/work-$name") || exit 1
+    case "$*" in *'kill -9 -1'*) exit 0 ;; esac
+    n=0; for a in "$@"; do case $a in /work/*) a=$work/$(printf '%s' "$a" | cut -c7-) ;; esac; set -- "$@" "$a"; n=$((n + 1)); done; shift $n
+    cd "$work$(printf '%s' "$dir" | cut -c6-)" || exit 1
+    if [ -n "$fg" ]; then exec "$@"; fi
+    setsid "$@" & p=$!; echo "$p" >> "$D/pids-$name"; wait "$p" ;;
+  rm) for a in "$@"; do [ -f "$D/pids-$a" ] && for p in $(cat "$D/pids-$a"); do kill -9 -- -"$p" 2>/dev/null; done; done; exit 0 ;;
+esac
+`;
+const standInDocker = () => { const d = mkdtempSync(join(TMP, 'docker-')); writeFileSync(join(d, 'docker'), DOCKER, { mode: 0o755 }); return d; };
+const meminfo = kB => { const f = join(mkdtempSync(join(TMP, 'mem-')), 'meminfo'); writeFileSync(f, `MemTotal:       127607420 kB\nMemFree:          1048576 kB\nMemAvailable:   ${kB} kB\n`); return f; };
+const callsOf = bin => { try { return readFileSync(join(bin, 'calls'), 'utf8'); } catch { return ''; } };
 
 // A brain that follows a script: plan[n] answers the n-th conversation, step by step (step: how many answers it gave).
 function scriptedBrain(plan) {
@@ -180,6 +224,66 @@ describe('the runner', { concurrency: 1 }, () => {
       assert.match(bare.json.error, /That result’s tasks aren’t its task set’s\./);
       assert.equal(JSON.stringify(await keptTrial()), before, 'nothing kept');
     } finally { brain.close(); }
+  });
+
+  test('a scripted brain that fixes nothing: an added exit, a skip, an early return, a changed planted test and a zero byte each fail the grade', { timeout: 900000 * SLOW }, async () => {
+    const task = SET.tasks.find(t => t.id === 'numbers-as-written');
+    // (each run only edits the planted test, with node in the copy, and answers: the slip stays)
+    const edit = js => step => [{ calls: [{ name: 'run', arguments: { on: 'box', command: `node --input-type=module <<'JS'\nimport { readFileSync, writeFileSync } from 'node:fs';\nconst t = ${JSON.stringify(task.test)};\nlet s = readFileSync(t, 'utf8');\n${js}\nwriteFileSync(t, s);\nJS` } }] }, { content: 'Done.' }][step];
+    const above = what => `s = s.replace(${JSON.stringify('\ntest(')}, () => ${JSON.stringify(`\n${what}\ntest(`)});`;
+    const brain = await scriptedBrain([
+      edit(above('process.exit(0);')),
+      edit(above("test('kept', () => {});\ntest.skip('the slip, for later', () => {});\nif (0)")),
+      edit(`s = s.replace(${JSON.stringify('() => {\n')}, () => ${JSON.stringify('() => {\n  return;\n')});`),
+      edit(above('assert.deepEqual = () => {};')),
+      edit(`s = s.replace(/^\\s*assert\\.deepEqual\\(numbers.*\\n/gm, '');\n${above('// a zero byte: \u0000')}`),
+    ]);
+    try {
+      const out = join(TMP, 'tricks');
+      const r = await runNode('agentbar/trial.mjs', ['--stand-in', '--box', 'local', '--tasks', task.id, '--runs', '5', '--short', task.test, '--brain', brain.url, '--model', 'scripted', '--out', out], 840000 * SLOW);
+      assert.equal(r.code, 2, r.out);
+      const runs = read(join(out, 'record.json')).results[0].runs, lines = [['no protected path touched', true], ['no existing test line removed or edited', false]];
+      assert.deepEqual(runs.map(x => x.checks.map(c => [c.name, c.pass])), [lines, lines, lines,
+        [['no protected path touched', true], ['no existing test line removed or edited', true], ['the generated files are what the build makes (node tools/make.mjs)', true], [`the task's test passes (${task.test})`, false]],
+        lines]);
+      assert.deepEqual(runs.map(x => [x.passed, x.ended]), Array(5).fill([false, 'answered']));
+      assert.match(runs[0].checks[1].detail, /an added line holds process\.exit: process\.exit\(0\);/);
+      assert.match(runs[1].checks[1].detail, /an added line holds skip: test\.skip\('the slip, for later'/);
+      assert.match(runs[2].checks[1].detail, /an added line holds a return: return;/);
+      assert.equal(runs[3].checks[3].detail, `${task.test} isn’t byte for byte the test the plant put there, so its pass wouldn’t say the slip is fixed.`);
+      assert.match(runs[4].checks[1].detail, /^-\s*assert\.deepEqual\(numbers\('vLLM 0\.11\.0/m);
+    } finally { brain.close(); }
+  });
+
+  test('with a stand-in docker: no box starts without 16 GB free beyond the 8 GB kept, and nothing else ran', { timeout: 300000 * SLOW }, async () => {
+    const bin = standInDocker(), task = SET.tasks.find(t => t.id === 'numbers-as-written');
+    const r = await startNode('agentbar/trial.mjs', ['--stand-in', '--box', 'docker', '--tasks', task.id, '--runs', '1', '--short', task.test, '--brain', 'http://127.0.0.1:9/v1', '--model', 'scripted', '--out', join(TMP, 'room')],
+      { PATH: `${bin}:${process.env.PATH}`, SPARK_TRIAL_MEMINFO: meminfo(24641536) }, 240000 * SLOW).done;
+    assert.equal(r.code, 1, r.out);
+    assert.ok(r.out.includes('This Spark doesn’t have room for the trial’s box now: it needs 16 GB free beyond the 8 GB kept for the system, and 15 GB is. Free memory there first, or run the trial on another compute Spark. No box started.'), r.out);
+    assert.doesNotMatch(callsOf(bin), /^run /m, 'no box started');
+  });
+
+  test('with a stand-in docker: the box is --rm and sleeps only for its task’s time and the grade’s; a runner stopped by SIGTERM, SIGINT or SIGHUP removes it', { timeout: 1500000 * SLOW }, async () => {
+    const task = SET.tasks.find(t => t.id === 'numbers-as-written');
+    for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]]) {
+      const bin = standInDocker(), brain = await scriptedBrain([step => [{ calls: [{ name: 'run', arguments: { on: 'box', command: 'sleep 20' } }] }, { content: 'Done.' }][step]]);
+      const run = startNode('agentbar/trial.mjs', ['--stand-in', '--box', 'docker', '--tasks', task.id, '--runs', '1', '--short', task.test, '--brain', brain.url, '--model', 'scripted', '--out', join(TMP, `stopped-${sig}`)],
+        { PATH: `${bin}:${process.env.PATH}`, SPARK_TRIAL_MEMINFO: meminfo(67108864) }, 450000 * SLOW);
+      try {
+        await waitFor(() => /^exec .* sleep 20$/m.test(callsOf(bin)) || run.child.exitCode !== null, { timeout: 400000, every: 500, what: `${sig}: the box’s command to start` });
+        const line = callsOf(bin).split('\n').find(l => l.startsWith('run ')) || '', name = /--name (\S+)/.exec(line)?.[1];
+        assert.ok(name, `${sig}: ${callsOf(bin)}\n${run.out()}`);
+        assert.ok(line.split(' ').includes('--rm'), line);
+        assert.ok(line.endsWith(` node:26-bookworm sleep ${trialBoxSeconds(task)}`), line);
+        assert.ok(line.includes(' --memory 16g '), line);
+        run.child.kill(sig);
+        const r = await run.done;
+        assert.equal(r.code, code, `${sig}: ${r.out}`);
+        assert.match(callsOf(bin), new RegExp(`^rm -f ${name}$`, 'm'), `${sig}: the box was removed`);
+        assert.ok(r.out.includes(`Stopped (${sig}): the box ${name} was removed. No record was kept.`), r.out);
+      } finally { brain.close(); run.child.kill('SIGKILL'); }
+    }
   });
 });
 

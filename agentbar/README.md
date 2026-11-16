@@ -68,9 +68,11 @@ can't propose a change to its own code (`trialPassed()`, contract 10.4, T100). E
 fresh copy of the repository, with a failing test that shows it (`trial/tasks/<task>/`). The brain works alone with the
 loop and the two tools Sparkie will have in its box, `run` and `write_file` with `on: "box"`. The box isn't built yet
 (A4), so `trial.mjs` has its own loop and two stand-in tools of the same shapes. Each run's box is a container with no
-network; only the runner talks to the brain. Code grades each run: no protected path touched, no line of an existing
-test changed, the generated files are the build's, the task's test passes, and the short check passes. The bar is every
-task passing at least 2 of 3 runs.
+network; only the runner talks to the brain. It starts only with 16 GB free beyond the 8 GB kept for the system, ends
+by itself after its task's time and the grade's, and goes when the runner is stopped. Code grades each run: no
+protected path touched, no line of an existing test changed and none added that skips, exits or returns early, the
+generated files are the build's, the task's test (byte for byte as planted) passes, and the short check passes. The bar
+is every task passing at least 2 of 3 runs.
 
 Run it on a compute Spark with Docker, from a copy of this repository at the build Spark Console runs, with Sparkie's
 model up:
