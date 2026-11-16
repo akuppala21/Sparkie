@@ -190,34 +190,70 @@ async function runChoice(viewer, conv, id, by) {
       // (a dangerous ask's yes, its two digits checked: the lock-out net runs only from one, 21-net.mjs)
       ...(c.danger ? { danger: c.danger } : {}),
       ...(by.via === 'telegram' ? { channel: 'telegram', from: `telegram:${tgPaired()?.userId ?? '?'}` } : {}) };
-    try {
-      out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
-        sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
-      content = outcomeText(c.label, out, Boolean(conv.agent));
-      if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
-      // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
-      const ran = !['question', 'needs-ok'].includes(out?.outcome);
-      const given = ran && c.ahead ? aheadGive(conv, c.ahead, by) : ran && c.always ? aheadKeep(c.always, by) : null;
-      if (given) content = `${content}\n${given}`;
-    } catch (e) {
-      out = { outcome: 'error', error: e.message };
-      content = `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}`;
+    // (what it ran answers within the press's time, or the press says it is still running and its end is posted here
+    // when it comes, and told on Telegram for a press made there: pressLate. A root command may run 30 minutes.)
+    const settled = runAction(c.action, viewer, c.args, ctx).then(v => ({ v }), e => ({ e }));
+    const first = await Promise.race([settled, sleep(CHAT_PRESS_MS).then(() => null)]);
+    if (first) ({ out, content } = pressSaid(first, c, conv, ctx, by));
+    else {
+      out = { outcome: 'running' };
+      content = `${c.label}: it is still running. Its result will be posted in this chat when it ends.`;
+      settled.then(x => pressLate(x, c, conv, ctx, by, () => asked));
     }
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
-  // (an ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page
-  // gets them whole, from memory, chatWholeShown)
+  const message = pressPost(conv, content, asked);
+  // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
+  // agent's press, nor one of another request's button. One still running wakes it when it ends: pressLate)
+  if (c.action && !asked && !by.agentId && out?.outcome !== 'running') taskAnswered(conv, c.group);
+  return { ...(out || { outcome: 'declined' }), message };
+}
+// The press's time: what it runs answers within it, or the press says it is still running (the stand-in fleet may
+// shorten it).
+const CHAT_PRESS_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_PRESS_MS) || 50000;
+// What a pressed action's end says ({v}: its result, {e}: its error), and what it leaves (the task's written list, the
+// go-ahead given).
+function pressSaid(x, c, conv, ctx, by) {
+  try {
+    if (x.e) throw x.e;
+    const out = x.v;
+    let content = outcomeText(c.label, out, Boolean(conv.agent));
+    if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
+    // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
+    const ran = !['question', 'needs-ok'].includes(out?.outcome);
+    const given = ran && c.ahead ? aheadGive(conv, c.ahead, by) : ran && c.always ? aheadKeep(c.always, by) : null;
+    if (given) content = `${content}\n${given}`;
+    return { out, content };
+  } catch (e) {
+    return { out: { outcome: 'error', error: e.message }, content: `Couldn’t do “${c.label}”: ${maskSecrets(e.message)}` };
+  }
+}
+// A press's notice in its chat. (An ask with lines its button shows whole, write_file's: the chat file keeps them
+// masked, R7, and the owner's page gets them whole, from memory, chatWholeShown.) The message as the page gets it.
+function pressPost(conv, content, asked) {
   const whole = asked?.whole?.length ? content : null;
   const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
   if (whole) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
-  // agent's press, nor one of another request's button)
-  if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
-  return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
+  return whole ? { ...message, content: whole } : message;
+}
+// A press still running at the press's time, ended: its result posted in its chat from its own fields (pressRan), and
+// told in the paired chat for a press made there (tgRanLine); the parked task it answered woken. (The net says its own
+// outcome in the chat already when it runs long, netTell: not said twice.) Never throws.
+function pressLate(x, c, conv, ctx, by, askedNow) {
+  try {
+    const { out, content } = pressSaid(x, c, conv, ctx, by), asked = askedNow();
+    if (!(out?.net && out.note && conv.messages.slice(-8).some(m => m.notice && m.content === maskSecrets(out.note)))) pressPost(conv, content, asked);
+    if (by.via === 'telegram') {
+      const line = out.outcome === 'error' ? (/paused/i.test(out.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.')
+        : ['question', 'needs-ok'].includes(out?.outcome) ? 'It needs your answer to a question in Spark Console.' : tgRanLine(out);
+      tell('result', `Result of your earlier press: ${line}`, { last: true }).catch(() => {});
+    }
+    if (!asked && !by.agentId) taskAnswered(conv, c.group);
+  } catch (e) { console.error(`A press’s result: ${e.message}`); }
 }
 // A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
 // the chat file's masked copy), for the owner's page (24-handler.mjs). A reply's asks too (chatAsks).

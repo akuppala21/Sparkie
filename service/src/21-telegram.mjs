@@ -356,6 +356,8 @@ async function tgRun(conv, choice, ask) {
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
+    // (still running at the press's time: its end is told here when it comes, pressLate in 14-chats.mjs)
+    if (r.outcome === 'running') return await tell('system', 'It is still running. I’ll tell you here when it ends.');
     return await tell('system', tgRanLine(r));
   } catch (e) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)

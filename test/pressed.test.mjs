@@ -7,7 +7,9 @@
 // reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
 // them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
 // only for a task begun there, without the failure lines (C-8, R32). In the paired chat a /key message past the
-// minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one.
+// minute's limit is still kept and deleted (K6, R51: tgKeys first), in a fleet of its own with a limit of one. A press
+// whose command outlasts the press's time (50 seconds; 3 in a fleet of its own) says it is still running, never that it
+// failed, and its end is posted in the chat, and told on Telegram for a press made there (press-50s).
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
 // on Spark 4, the stand-in brain told by a script which tools to call, and the paired Telegram chat (test/mock/
 // telegram.mjs) with approvals from there on. Linux only: run it on a Spark with tools/test-on-spark.sh.
@@ -235,6 +237,42 @@ test('the words from each kind of result: the page’s pressRan and Telegram’s
     'Done: it ran inside the lock-out net and is kept.', `It ran inside the lock-out net and is kept, but the command itself ended with exit code 3. ${MORE}`,
     `It ran inside the lock-out net and is kept, but the command itself was ended before it finished. ${MORE}`, `It ran inside the lock-out net and was put back. ${MORE}`,
     `It wasn’t kept: if it ran, Spark 3’s own timer puts it back. ${MORE}`]);
+});
+
+// press-50s (the net's final read, 11): a command that outlasts the press's time, pressed on the page and in the paired
+// chat. The fleet's own: the press's time 3 seconds, a change's limit 8.
+test('a press whose command outlasts the press’s time says it is still running; its end is posted in the chat, and told in the paired chat for a press made there', { timeout: 240000 * SLOW }, async () => {
+  const G = await startMock({ telegram: true, watchMs: 600000,
+    env: { SPARK_CONSOLE_PRESS_MS: '3000', SPARK_CONSOLE_RUN_SECONDS: '8', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' },
+    prepare: ({ root, dir }) => {
+      rehearse(root, 'spark3', { run: true });
+      mkdirSync(join(root, 'spark3', 'notes'), { recursive: true });
+      writeFileSync(join(root, 'spark3', 'notes', 'slow.sh'), 'sleep 40\n');
+      mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString(), approve: true } }), { mode: 0o600 });
+    } });
+  const was = { fleet: T.fleet, base: T.base, origin: T.origin, mcp: T.mcp };
+  Object.assign(T, { fleet: G, base: G.base, origin: G.origin, mcp: G.mcp });
+  try {
+    await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' });
+    const RUNNING = 'Run it: it is still running. Its result will be posted in this chat when it ends.', ENDED = 'Run it: It ran past its 8 seconds and was ended, with everything it started.';
+    const later = chat => waitFor(async () => (await chatMessages(chat)).find(m => m.notice && m.content === ENDED), { timeout: 60000, what: 'its result in the chat' });
+    // On the page.
+    const a = await asked('run the slow note', RUN('spark3', 'bash notes/slow.sh'));
+    const p = await pressed(a.chat, a.yes);
+    assert.deepEqual([p.outcome, p.message.content], ['running', RUNNING]);
+    await later(a.chat);
+    // In the paired chat.
+    const b = await asked('run the slow note again', RUN('spark3', 'bash notes/slow.sh'));
+    const there = await pressedThere(b.chat, b.yes);
+    assert.equal(there.line, 'It is still running. I’ll tell you here when it ends.');
+    assert.equal(there.page, `Approved from Telegram: ${RUNNING}`);
+    await later(b.chat);
+    await waitFor(() => tgSent().some(x => x.body.text === `Result of your earlier press: It ran past its 8 seconds and was ended, with everything it started. ${MORE}`), { timeout: 30000, what: 'its result in the paired chat' });
+    // Nothing said it failed.
+    for (const chat of [a.chat, b.chat]) assert.ok(!(await chatMessages(chat)).some(m => /^(?:Approved from Telegram: )?Couldn’t do/.test(m.content)), chat);
+    assert.ok(!tgSent().some(x => /didn’t work/.test(x.body.text)));
+  } finally { Object.assign(T, was); await G.stop(); }
 });
 
 // K6 (R51): tgKeys first, before the minute's limit, as /lock is: a message holding a key is always taken and deleted.
