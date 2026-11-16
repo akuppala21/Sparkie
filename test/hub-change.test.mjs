@@ -257,3 +257,25 @@ test('off (SPARK_CONSOLE_HUB=0, its own fleet): a change on Spark 2 is not done,
   assert.equal((await r.json()).error, 'Spark 2 runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.');
   assert.ok(!existsSync(join(off.root, 'spark2', 'notes', 'off.txt')));
 });
+
+// K5 (R66, the final read): the net's start line carries the request's task, and every change the net runs counts in
+// the task's report after the yes, whatever the sorter called it (here a command it can't read, risky).
+test('a change on Spark 2 pressed for a task counts in the task’s report, after your yes', { timeout: 240000 * SLOW }, async () => {
+  const words = 'fix the py notes on spark 2, then tell me what changed', command = `python3 -c "open('notes/k5.txt', 'w').write('k5')"`;
+  script([{ match: `^${words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, rounds: [[{ name: 'run', arguments: { on: 'spark2', command, dir: '~' } }]] },
+    { match: '^\\[Spark Console\\] The owner answered your question', calls: [] }]);
+  const chat = await newChat();
+  routes(true);
+  try {
+    const r = await say(chat, words);
+    const yes = (r.message.choices || []).find(x => x.label === 'Run it');
+    assert.ok(yes, JSON.stringify(r.message));
+    const p = await choose(chat, yes.id);
+    assert.match(p.json?.message?.content || '', /: it is kept\./, p.text);
+    assert.equal(readFileSync(at2('notes/k5.txt'), 'utf8'), 'k5');
+    const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report), { timeout: 120000, what: 'the task’s report' });
+    assert.equal(report.content.split('\n')[2], 'Changes: 0 made at once, 1 after your yes; 1 question asked of you. Undone: 0.', report.content);
+    const start = starts().find(x => x.args?.command === command);
+    assert.deepEqual([start?.task, Boolean(start?.net)], [report.report, true], JSON.stringify(start));
+  } finally { noScript(); rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
+});
