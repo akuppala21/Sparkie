@@ -7,8 +7,8 @@
 // change; paths placed against the owner's home alone), bounded work on hostile input with a deadline for long input,
 // no throw for any value, a reason no command can write a line of, what a change places for the copy first (placed,
 // wide), a few thousand looks with a change added that are never a look, 1,140 hidden forms of asked commands that stay
-// asked, and the proof that it is dark: run still sends every command to the look wall. Pure: no stand-in fleet, no
-// port, so it may run on the Mac.
+// asked, and how run uses it (A7c): a look goes to the look wall, anything else to the ladder, never the look wall.
+// Pure: no stand-in fleet, no port, so it may run on the Mac.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -31,8 +31,10 @@ writeFileSync(join(dir, 'sort.mjs'), [
   'const ACTIONS = new Map(), action = a => ACTIONS.set(a.name, a), sparkArg = { type: "string" };',
   'const node = { id: "spark3", host: "100.0.0.3" }, sparkOf = () => node, sparkName = () => "Spark 3", journalId = () => "j_test";',
   'const journal = () => {}, jErr = () => null, jSub = () => [], noteReach = () => {}, maskSecrets = String, agentKeys = () => [];',
-  'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null }, knownOffline = () => hooks.offline;',
+  'const consoleOrigin = () => "", sizeWords = String, hooks = { offline: true, spawn: null, ladder: [], sortOpts: null }, knownOffline = () => hooks.offline;',
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
+  // (run's ladder and the runner's sorter options, 21-ladder.mjs and 21-runner.mjs: stood in, so a test sees what reaches them)
+  'const RUNNER_DIR = "~/work", runnerSortOpts = () => hooks.sortOpts || {}, workChange = async (n, c, s) => { hooks.ladder.push(c); return { ladder: s.class }; };',
   ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shape|shell|sort|tables|tools|uses)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   'export { sortCommand, ACTIONS, hooks };',
@@ -946,13 +948,15 @@ test('a command that must be asked stays asked, however it is hidden', () => {
   console.log(`${ASKED.length * HIDE.length} hidden forms of ${ASKED.length} asked commands: none runs at once`);
 });
 
-// Dark: run behaves as on step-a1b. Every command it takes goes to the root helper's look wall (or is one of the exact
-// forms, run as code's own text); none goes to the run wall, whatever the sorter calls it. That the look wall changes and
-// sends nothing is the helper's own proof (root-helper.test.mjs). A command the sorter calls a look, run takes.
-test('dark: run still sends every command to the look wall, whatever the sorter calls it', async () => {
+// Run sorts every command (A7c): one the sorter calls a look goes to the root helper's look wall (or is one of the exact
+// forms, run as code's own text); anything else goes to the ladder (21-ladder.mjs), never the look wall. A look's own
+// refusals come first: sudo as a command word (when the rest only reads), a key's name. That the look wall changes and
+// sends nothing is the helper's own proof (root-helper.test.mjs).
+test('a look goes to the look wall; anything else goes to the ladder, never the look wall', async () => {
   const run = ACTIONS.get('run');
   assert.ok(run, 'the run action');
   hooks.offline = false;
+  hooks.sortOpts = { hosts: HOSTS, brain: BRAIN };
   hooks.spawn = (n, o) => {
     scripts.push(o.script);
     const id = /^id=(\w+);/.exec(o.script)[1], child = new EventEmitter();
@@ -962,20 +966,28 @@ test('dark: run still sends every command to the look wall, whatever the sorter 
     setImmediate(() => { child.stdout.emit('data', Buffer.from(`hi\n${id} end 0\n`)); child.emit('close', 0); });
     return child;
   };
-  const verbs = {};
+  const verbs = {}, ladder = {};
   for (const [command, , where] of ROWS) {
     if (where || command.length > 2000 || command.includes('\0')) continue;
-    const s = sort(command), before = scripts.length;
+    const s = sort(command), before = scripts.length, led = hooks.ladder.length;
     let out = null, err = null;
     try { out = await run.run({ on: 'spark3', command }, { role: 'owner' }, {}); } catch (e) { err = e; }
     if (s.class === 'look') assert.equal(err, null, `${command}: the sorter's look is one run takes (${err?.message})`);
+    if (hooks.ladder.length > led) {
+      assert.notEqual(s.class, 'look', `${command}: a look went to the ladder`);
+      assert.equal(scripts.length, before, `${command}: the ladder's command never reached the look wall`);
+      ladder[s.class] = (ladder[s.class] || 0) + 1;
+      continue;
+    }
     if (err) { assert.equal(scripts.length, before, command); assert.ok([400, 403].includes(err.status), `${command}: ${err.message}`); continue; }
     assert.equal(out.ran, true, command);
     const script = scripts.at(-1), verb = /exec .*"\$h" (\w+) --id/.exec(script)?.[1] ?? (/"\$h" check --id/.test(script) ? 'check' : null);
     assert.ok(verb === 'look' || (verb === 'check' && s.form), `${command}: run asked the helper for ${verb}`);
+    assert.equal(s.class, 'look', `${command}: only a look reaches the look wall`);
     assert.doesNotMatch(script, /"\$h" (?:run|root) /, command);
     verbs[s.class] = (verbs[s.class] || 0) + 1;
   }
-  assert.ok(verbs.change > 20 && verbs.risky > 20 && verbs.lockout > 20, JSON.stringify(verbs));
+  assert.ok(verbs.look > 20 && ladder.change > 20 && ladder.risky > 20 && ladder.lockout > 20, JSON.stringify({ verbs, ladder }));
   hooks.offline = true;
+  hooks.sortOpts = null;
 });

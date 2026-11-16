@@ -136,7 +136,15 @@ function changeLabel(name, input) {
   if (name === 'power_on') return `Turn on ${sparksSaid || 'a Spark'}`;
   if (name === 'power_settings') return input.idleMinutes ? `Power off idle Sparks after ${input.idleMinutes} minute${input.idleMinutes === 1 ? '' : 's'}` : 'Stop powering off idle Sparks';
   // (the self-test: what it runs is fixed by code; the button says where, and that it stops nothing)
+  // (a proposal of Sparkie's own code, 21-selfchange.mjs: its title is Sparkie's words, marked so)
+  if (name === 'propose_update') {
+    return input.do === 'send' ? `Send the proposal “${maskSecrets(String(input.title || '')).replace(/\s+/g, ' ').slice(0, 80)}” (Sparkie’s words) as a pull request: Spark Console builds the diff and the generated files, and GitHub runs the tests`
+      : input.do === 'drop' ? 'Drop the open proposal: close its pull request and delete its branch'
+      : 'Put main’s code in this chat’s box, to propose a change to Spark Console’s own code';
+  }
   if (name === 'self_test') return `Run the self-test${where || ' on a compute Spark that is free'}: a small model with the healing drill, a web page and a job with the GPU, stopping nothing`;
+  // (the box, 21-box.mjs: where it is and what it can't reach; the command whole, keys masked)
+  if (name === 'run' && input.on === 'box') return `Open the box (a throw-away container on a compute Spark: no network, nothing of the Spark but its own folder) for: ${maskSecrets(String(input.command ?? ''))}`;
   // (a button shows all it would do: never cut, keys masked)
   if (name === 'save_file') return `Save ${String(input.path || 'a file')} in the shared folder${where} (${sizeWords(Buffer.byteLength(String(input.text ?? '')))})`;
   return `${{ start_model: 'Start', stop_model: 'Stop', restart_model: 'Restart' }[name] || name} ${what}${where}${input.setup ? ` with recipe setup ${input.setup}` : ''}`;

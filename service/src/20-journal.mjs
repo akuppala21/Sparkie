@@ -349,7 +349,12 @@ function journalAfterRestart() {
     if (!open.size) return;
     for (const r of open.values()) {
       journal(r.k, { id: r.id, end: true, ok: false, outcome: 'cut-off', act: r.act || null, chat: r.chat || null });
+      // (a change on a Spark may still run there: that Spark is held until its time limit has passed, 21-runner.mjs)
+      if (r.k === 'cmd' && r.act === 'run' && r.class === 'change') runnerHold(r);
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
+      // (a long command, run with minutes: its unit is stopped by id when its Spark answers, then its notice says so,
+      // 21-long.mjs)
+      if (r.k === 'cmd' && r.act === 'run' && r.minutes && longCutOff(r, conv)) continue;
       if (!conv) continue;
       const at = new Date().toISOString();
       conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });

@@ -2108,6 +2108,8 @@ const SVC_LABEL = {
   'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
   'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
   'self-test': j => `Self-test on ${nodeName(j.node)}`,
+  // (run with minutes: a long command, by its Spark alone)
+  run: j => `A command on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 
@@ -2425,7 +2427,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
   const slashDraft = () => owner() && ta.value.trim().startsWith('/');
   // One of the owner's words, exactly (the same rule as the server's): it goes through even while another answer is
   // stuck, as its own small request.
-  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo update', '/help'];
+  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/help'];
   const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && OWNER_WORDS.includes(t); };
   const syncSend = () => { sendBtn.disabled = (c.sending && !isWord(ta.value)) || (!sparkieModel().up && !slashDraft()); };
   ta.addEventListener('input', () => { c.draft = ta.value; grow(); syncSend(); });

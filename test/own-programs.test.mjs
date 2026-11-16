@@ -27,7 +27,9 @@ writeFileSync(join(dir, 'own.mjs'), [
   readFileSync(join(SRC, '21-work.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies-prune.mjs'), 'utf8'),
   readFileSync(join(SRC, '21-copies.mjs'), 'utf8'),
-  'export { helperScript, lookForm, LOOK_FORMS, KEY_SCRIPT, q, copiesOn, ran };',
+  // (the net's own sentences, 21-guard.mjs: GUARD_SAYS alone, as that part keeps it)
+  /^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(readFileSync(join(SRC, '21-guard.mjs'), 'utf8'))[0],
+  'export { helperScript, lookForm, LOOK_FORMS, KEY_SCRIPT, q, copiesOn, ran, HELPER_SAYS, GUARD_SAYS };',
 ].join('\n'));
 const own = await import(pathToFileURL(join(dir, 'own.mjs')).href);
 
@@ -58,8 +60,11 @@ test('every program the call to the root helper and the copies run is on PATH_PR
   const far = { id: 'spark3', host: '100.0.0.3' }, hub = { id: 'spark2', host: 'local' }, texts = [];
   for (const node of [far, hub]) {
     texts.push(own.helperScript(node, 'look', { id: 'abcdefgh1234', command: 'cat x', seconds: 30, words: ['x'], walks: ['y'] }));
-    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30 }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~/work', protect: ['~/models', '~/.cache/huggingface'] }));
     texts.push(own.helperScript(node, 'prove', { id: 'abcdefgh1234' }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~', memory: 4, fleet: true, gpu: true }));
+    texts.push(own.helperScript(node, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, dir: '~/work', open: true }));
+    texts.push(own.helperScript(node, 'state', { id: 'abcdefgh1234' }));
   }
   // Each exact form, by a command that is that form (every row of the table is reached).
   const forms = ['docker ps', 'docker ps -a', 'docker images', 'docker stats --no-stream', 'nvidia-smi', 'tailscale status', 'ip addr', 'ip route',
@@ -77,4 +82,46 @@ test('every program the call to the root helper and the copies run is on PATH_PR
   for (const p of ['sha256sum', 'flock', 'sudo', 'systemd-run', 'timeout', 'bash', 'realpath', 'find', 'python3', 'docker', 'nvidia-smi', 'systemctl']) assert.ok(called.has(p), `${p} is read out of the scripts`);
   assert.ok(programsOf(own.ran[0]).has('systemctl'), 'the copies\' own call of systemctl is read');
   assert.deepEqual([...called].filter(p => !PATH_PROGRAMS.includes(p)).sort(), [], `called but not on PATH_PROGRAMS (read: ${[...called].sort().join(' ')})`);
+});
+
+test('the call to the root helper: a change\'s cap and widenings as the helper takes them, and never a quiet ~ for a dir it can\'t take', () => {
+  const far = { id: 'spark3', host: '100.0.0.3' }, at = opts => own.helperScript(far, 'run', { id: 'abcdefgh1234', command: 'touch x', seconds: 30, ...opts });
+  assert.match(at({ dir: '~', memory: 4, fleet: true, gpu: true }), / --dir "\$HOME" --memory 4G --fleet --gpu -- 'touch x'/);
+  assert.match(at({ dir: '~/work', memory: 8, open: true, fleet: true }), / --dir "\$HOME"'\/work' --memory 8G --open -- 'touch x'/);
+  assert.match(at({ dir: '~', memory: 2, home: true, gpu: true }), / --dir "\$HOME" --memory 2G --home --gpu -- 'touch x'/);
+  assert.match(at({ dir: '~', open: true, home: true }), / --open -- 'touch x'/, 'never --home with --open');
+  assert.match(own.helperScript(far, 'state', { id: 'abcdefgh1234' }), /"\$h" state --id "\$id"/);
+  for (const dir of ['/tmp', '~/../x', 'work', '~/a b', '~/.']) {
+    assert.throws(() => at({ dir }), e => e.status === 400 && /^dir isn’t in the right form for a change/.test(e.message), dir);
+  }
+});
+
+// Every sentence of the helper's that the console reads (HELPER_SAYS, and the net's GUARD_SAYS) is one the helper can
+// print, as its own file says: a sentence the helper changes fails here, not on a Spark (the disk floor's, 2026-11-15).
+test('every helper sentence the console reads is one deploy/spark-console-root prints', () => {
+  const helper = readFileSync(join(REPO, 'deploy', 'spark-console-root'), 'utf8');
+  const render = t => t.replace(/\$\(\([^)]*\)\)/g, '12').replace(/\$\([^)]*\)/g, 'X').replace(/\$\{[^}]*\}/g, 'X').replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, 'X')
+    .replace(/\\"/g, '"').replace(/%s/g, '12').replace(/\\n/g, '\n');
+  // (a double-quoted word as bash reads it: a $( … ) inside it may hold quotes of its own)
+  const quoted = (t, i) => {
+    let depth = 0, out = '';
+    for (; i < t.length; i++) {
+      const c = t[i];
+      if (c === '\\') { out += c + t[++i]; continue; }
+      if (c === '$' && t[i + 1] === '(') { depth++; out += '$('; i++; continue; }
+      if (c === ')' && depth) { depth--; out += c; continue; }
+      if (c === '"' && !depth) return out;
+      out += c;
+    }
+    return out;
+  };
+  const said = [];
+  for (const m of helper.matchAll(/\b(say|refuse)\s+"/g)) said.push((m[1] === 'refuse' ? 'refused: ' : '') + render(quoted(helper, m.index + m[0].length)));
+  for (const m of helper.matchAll(/\bprintf\s+'([^']*)'/g)) said.push(render(m[1]));
+  for (const m of helper.matchAll(/\btail\+=\("/g)) said.push(render(quoted(helper, m.index + m[0].length)));
+  const lines = said.flatMap(s => s.split('\n')).map(s => s.trim()).filter(Boolean);
+  // (a line as said, without the id or the line break printf puts before it, and refuse's way of passing a found reason)
+  const seen = [...new Set(lines.flatMap(l => [l, l.replace(/^\S+ /, ''), `refused: ${l}`, `refused: ${l.replace(/^\S+ /, '')}`]))];
+  assert.ok(seen.length > 100, `the helper's sentences were read: ${seen.length}`);
+  for (const [name, re] of Object.entries({ ...own.HELPER_SAYS, ...own.GUARD_SAYS })) assert.ok(seen.some(l => re.test(l)), `${name} (${re}) matches nothing the helper prints`);
 });
