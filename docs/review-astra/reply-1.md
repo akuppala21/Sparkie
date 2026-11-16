@@ -25,7 +25,8 @@ or its tests were changed, and the place is marked "Since (our check of this rep
 says so: P-5 above all, and one caller in A-5. None of that later build is installed (the guide's section 8). Its
 test result:
 
-TESTS_LINE
+The whole suite is run on the exact commit that is sent, before it is pushed. Its result (how many tests, the date,
+how long it took) is in the owner's message, because a commit cannot hold the result of its own run.
 
 How each finding was checked: a checker read the code paths named, then reproduced the fault with its own scripts on
 the repository's stand-in fleet (the real service, a scripted model) or on the function's own text. Astra's evidence
