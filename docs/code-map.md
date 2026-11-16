@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25929 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25930 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1104,7 +1104,7 @@ run hands every command the sorter does not call a look to workChange (21-work.m
 run with minutes (design A 2.10, step 6) runs one command as an operation of type run (07-jobs.mjs). Code decides first, as it would without minutes: the sorter, the ladder's ask, the rail, the walls, the copies and the journal's start and end lines (21-work.mjs, 21-ladder.mjs, 21-runner.mjs); minutes changes only how long it may run and who waits. The call returns the operation's id at once. Its end is posted in the chat that asked, as every operation's is (runJob → postResult, 14-chats.mjs, which wakes the request's carry-on: the one path every operation's end takes, and the seam a parked …
 
 - **Area:** features. **Rules:** R23, R13, R61. **Tests:** long.test.mjs
-- **Lines:** 128
+- **Lines:** 129
 - **Owns:** none
 - **Timers:** tryStop (every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed)
 - **Wakes:** none

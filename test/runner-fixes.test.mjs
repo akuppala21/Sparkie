@@ -436,3 +436,21 @@ test('S-12: during the put-back hold an agent\'s change on a Spark is refused in
     await waitFor(async () => (await api('/auth/putback')).json?.held === false, { what: 'the hold to go' });
   }
 });
+
+// S-13 (the final sorter read): a long command's operation carried no task, so the task's report said "Operations:
+// none" and "Still open: nothing" while it ran.
+test('S-13: a long command\'s operation carries its request\'s task, so its end line is counted in that task\'s report', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at3('notes/s13.sh'), 'sleep 2; echo s13\n');
+  const chat = await newChat(), words = 'build the s13 notes on spark 3, then tell me how it went';
+  script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command: 'bash notes/s13.sh', dir: '~', minutes: 1 } }] },
+    { match: '^\\[Spark Console\\] What you started for the owner', calls: [] }]);
+  try {
+    const r = await say(chat, words);
+    assert.deepEqual(r.tools.map(t => [t.name, t.outcome]), [['run', 'started']], r.text);
+    const [started] = sentBack(words), j = await ended(started.operation);
+    assert.equal(j.status, 'completed', JSON.stringify(j));
+    const start = startOf('bash notes/s13.sh'), op = await waitFor(() => journalLines().find(x => x.k === 'op' && x.op === started.operation), { what: 'the operation\'s end line' });
+    assert.ok(start?.task, JSON.stringify(start));
+    assert.equal(op.task, start.task, JSON.stringify(op));
+  } finally { noScript(); }
+});

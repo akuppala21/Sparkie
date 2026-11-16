@@ -19174,8 +19174,9 @@ function longStart(node, ctx, kind, fn) {
   if (was && jobs.get(was)?.status === 'running') throw new HttpError(409, `A long command runs on ${at} already (operation ${was}): one at a time on each Spark. Wait for its result, or cancel it (cancel_operation).`);
   // (a change: the runner takes the Spark's claim as the operation begins, in this same tick; taken now, it says so here)
   if (kind !== 'look' && busySparks.has(node.id)) claimSparks([node.id], '');
-  const job = newJob('run', { node: node.id, via: ctx.via || null, actor: ctx.actor || null, minutes: L.minutes, ...(ctx.conv ? { conv: ctx.conv } : {}) });
-  // (run is a read to runAction, which so attaches nothing to what it starts: the owner's own, and Telegram's line)
+  // (run is a read to runAction, which so attaches nothing to what it starts: the chat, the request's task (job.task, so
+  // its report counts it and lists it as still open, 14-tasks.mjs, S-13), the owner's own, and Telegram's line)
+  const job = newJob('run', { node: node.id, via: ctx.via || null, actor: ctx.actor || null, minutes: L.minutes, ...(ctx.conv ? { conv: ctx.conv } : {}), ...(ctx.task ? { task: ctx.task } : {}) });
   if (ctx.via === 'sparkie' && !ctx.agent) job.ownersOwn = true;
   if (ctx.channel && ctx.conv) { job.channel = ctx.channel; tellAwait(job); }
   Object.assign(ctx.long, { job, kind, minutes: L.minutes, seconds: L.seconds });
