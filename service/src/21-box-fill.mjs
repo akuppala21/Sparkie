@@ -20,7 +20,7 @@ const FILL_MAX_ENTRIES = 5000, FILL_MAX_FILE = 8 * 2 ** 20, FILL_MAX_BYTES = 64 
 const FILL_BOUNDS = '5,000 files and folders, 8 MiB a file, 64 MiB in all, 255 bytes a path';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
-const FILL_GIT = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
+const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
 // Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches these two (runCommand).
 const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
 const boxFills = new Map();   // the caller (boxKey) → { tree, box, spark, at }
