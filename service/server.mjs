@@ -4008,7 +4008,7 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
   // owner's press runs it and wakes the rest, contract 4.8)
-  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
+  if (!agent && (carry || ((used.some(u => u.change && u.outcome === 'started') || (!task && taskAsked(asked))) && (task || multiStep(text))))) conv.task = task || { request: kept, at: now, [AHEAD_SINCE]: now, continuations: 0, ...taskBudget(text, agent), ...(channel ? { channel } : {}), ...(channel === 'telegram' ? { tg: tgPairingMark() } : {}), ...(viewer.session ? { away: true, ...(viewer.session.id ? { session: viewer.session.id } : {}) } : {}) };
   // (what it read and wrote goes on with it, A7c)
   if (!agent && conv.task && (!task || conv.task === task)) workKeep(conv.task, ctx);
   // (a reply a budget ended carries on with no operation's result to wake it: budgetCarries, 14-rounds.mjs)
@@ -14763,9 +14763,12 @@ const AHEAD_MAX = 20, ALLOWED_MAX = 50;
 const aheadLists = new Map(), aheadDone = new Map();
 let aheadEpoch = 0;
 
-// The request a chat is on: its task's start, else the owner's last message of their own (a carry-on's is not one).
+// The request a chat is on: the time its task began with (kept on the task under a symbol when keepTask makes it: never
+// written to chats.json, so a task read back after a restart has none; its own start moves when it waits at a button
+// or carries on), else the owner's last message of their own (a carry-on's is not one).
+const AHEAD_SINCE = Symbol('the request a task began with');
 function aheadMark(conv) {
-  if (conv?.task && !conv.task.ended) return String(conv.task.at || '');
+  if (conv?.task && !conv.task.ended) return String(conv.task[AHEAD_SINCE] || '');
   const m = (conv?.messages || []).findLast(x => x.role === 'user' && !x.auto && !x.from);
   return m ? String(m.createdAt || '') : '';
 }
