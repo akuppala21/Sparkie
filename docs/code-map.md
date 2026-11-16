@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25962 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26007 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -919,26 +919,26 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
-- **Area:** features. **Rules:** R62, R52, R43. **Tests:** box-fill.test.mjs
-- **Lines:** 306
+- **Area:** features. **Rules:** R62, R52, R43, R23. **Tests:** box-fill.test.mjs, box-more.test.mjs
+- **Lines:** 309
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `fillShow`, `fillRefuse`, `fillPathWrong`, `fillBlobId`, `tarRead`, `fillStream`, `fillHub`, `fillTreeList`, `fillGate`, `fillBoxNode`, `fillRecord`, `boxFill`, `boxFillOf`, `boxReadBack`, `boxFillDoor`
-- **Uses:** `01-setup` (`HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`)
+- **Uses:** `01-setup` (`HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
 - **Used by:** `21-selfchange`, `21-work`
 
 ### `21-box.mjs`: the box: a throw-away container on a compute Spark (A2; commands in it come with A4)
 
 run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its own folder, …
 
-- **Area:** features. **Rules:** R62, R52, R1, R43. **Tests:** box.test.mjs
-- **Lines:** 424
+- **Area:** features. **Rules:** R62, R52, R1, R43, R23. **Tests:** box.test.mjs, box-more.test.mjs
+- **Lines:** 447
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxRoom`, `boxRecord`, `boxOpen`, `boxEnd`, `boxGate`, `boxReady`, `boxPulling`, `boxExecScript`, `boxExec`, `boxLow`, `boxSaid`, `boxRun`, `boxWrite`, `boxOld`, `boxStop`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `05-library` (`memNow`, `KEEP_FREE`), `12-status` (`statusCache`, `sparkName`), `16-actions` (`action`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`, `question`), `20-danger` (`DANGER_HIDDEN`), `20-journal` (`journal`, `jErr`, `jSub`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`, `lookClean`, `forBrain`), `21-write` (`WRITE_MAX`, `writeKey`, `writeSplit`, `writeSplice`, `writeShown`, `writeProgram`, `WRITE_READ`)
+- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxCount`, `boxRoom`, `boxRecord`, `boxStart`, `boxEnd1`, `boxOpen`, `boxEnd`, `boxGate`, `boxReady`, `boxPulling`, `boxExecScript`, `boxExec`, `boxLow`, `boxSaid`, `boxRun`, `boxWrite`, `boxOld`, `boxStop`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `05-library` (`memNow`, `KEEP_FREE`), `12-status` (`statusCache`, `sparkName`), `16-actions` (`action`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`, `question`), `20-danger` (`DANGER_HIDDEN`), `20-journal` (`journal`, `jErr`, `jSub`, `JOURNAL_REFUSED`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`, `lookClean`, `forBrain`), `21-write` (`WRITE_MAX`, `writeKey`, `writeSplit`, `writeSplice`, `writeShown`, `writeProgram`, `WRITE_READ`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
 - **Used by:** `19-watcher`, `20-words`, `21-apps`, `21-box-fill`, `21-work`, `21-write`
 
 ### `21-brain-check.mjs`: the brain check: does Sparkie's model call tools, with arguments that fit (design E 2.3)
@@ -1196,7 +1196,7 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
-- **Lines:** 502
+- **Lines:** 521
 - **Actions:** `propose_update`
 - **Owns:** tmp (writers: selfTree; a folder: each send's work, removed on every exit)
 - **Timers:** none
@@ -1325,7 +1325,7 @@ Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: i
 - **Wakes:** none
 - **Functions:** `putBackSerial`, `putBackSerialWrite`, `putBackAuth`, `putBackHeld`, `putBackRemovedList`, `putBackRemoved`, `putBackSeed`, `putBackAtStart`, `putBackList`, `putBackRoute`, `putBackNeeds`
 - **Uses:** `01-setup` (`STATE_DIR`, `HttpError`), `03-identity` (`readJson`, `writePrivate`, `clean`), `03-secrets` (`SECRETS_FILE`, `secretsRead`, `secretsWrite`), `14-chats` (`chatData`, `saveChats`), `14-tasks` (`taskEnded`), `16-actions` (`action`), `17-changes` (`agentSettings`, `setAgentSettings`), `19-watcher` (`fleetEvent`), `20-mcp` (`agentKeys`, `AGENTS_FILE`, `maskSecrets`, `audit`), `21-ahead` (`allowedList`, `allowedWords`), `22-passkey` (`passkeys`, `savePasskeys`), `22-sessions` (`sessionList`, `SESSIONS_FILE`, `saveSessions`), `23-http` (`send`)
-- **Used by:** `16-actions`, `20-mcp`, `20-needs`, `20-tg-approve`, `20-words`, `21-ahead`, `22-sessions`, `24-handler`, `25-backup-and-start`
+- **Used by:** `16-actions`, `20-mcp`, `20-needs`, `20-tg-approve`, `20-words`, `21-ahead`, `21-box-fill`, `21-box`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
 ### `22-sessions.mjs`: signing in without Tailscale (docs/contract.md 4.10)
 

@@ -12,7 +12,9 @@
 // form, bytes after the end, a cut stream, a file over 8 MiB, over 5,000 entries, over the bounds in all, a file and a
 // folder of one name, a path twice, a path over 255 bytes), naming the entry masked and bounded. With agents paused,
 // an agent's fill and read back are refused; with no eval on record, Sparkie's fill is a button and opens nothing. Each
-// fill and read back is a journal record. Starts stand-in fleets: run it on a Spark.
+// fill and read back is a journal record. A box removed and opened again by the same caller (the same name, on the same
+// Spark, another container) isn't the box that was filled: read back refuses it. Starts stand-in fleets: run it on a
+// Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -268,4 +270,23 @@ test('with agents paused, an agent’s fill and read back are refused; with no e
   const press = await fetch(`${F.base}/chats/${chat.id}/choose`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify({ choice: done.message.choices[0].id }) });
   assert.equal(press.status, 200, await press.text());
   assert.equal(readFileSync(join(folder(boxName(`chat ${chat.id}`), 'spark3', F), 'spark-console', 'README.md'), 'utf8'), 'hello\n', 'filled by the press');
+});
+
+test('a box removed and opened again by the same caller has the same name and Spark but isn’t the box that was filled: read back refuses it', { timeout: 180000 * SLOW }, async () => {
+  const k = await createActKey('fill-again'), name = boxName(`agent ${k.id}`);
+  // (as Docker does, each container made under a name gets an id of its own)
+  for (const sp of ['spark3', 'spark4']) writeFileSync(join(mock(sp), 'ids-per-run'), '');
+  try {
+    const f = await call(k.token, 'run', { on: 'box', command: `/fill ${T_.good}` });
+    assert.equal(f.isError, false, f.text);
+    const at = f.value.spark;
+    const stop = await call(k.token, 'run', { on: 'box', command: '/stop' });
+    assert.equal(stop.value?.box, 'removed', stop.raw);
+    // (opened again, and something put where the filled tree was)
+    const again = await call(k.token, 'run', { on: 'box', command: 'mkdir -p spark-console && printf "hello\\n" > spark-console/README.md' });
+    assert.deepEqual([again.value?.box, again.value?.name, again.value?.spark], ['opened', name, at], again.raw);
+    const r = await call(k.token, 'run', { on: 'box', command: '/read-back' });
+    assert.ok(r.isError, r.raw);
+    assert.match(r.text, /The box that was filled has ended \(or was opened again since\), so there is nothing to read back\./);
+  } finally { for (const sp of ['spark3', 'spark4']) rmSync(join(mock(sp), 'ids-per-run'), { force: true }); }
 });

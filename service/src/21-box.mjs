@@ -1,5 +1,5 @@
 /* ───────── the box: a throw-away container on a compute Spark (A2; commands in it come with A4) ───────── */
-// Area: features        Rules: R62, R52, R1, R43        Tests: box.test.mjs
+// Area: features        Rules: R62, R52, R1, R43, R23        Tests: box.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a
@@ -10,8 +10,8 @@
 // own folder, ~/.local/share/spark-console/work/<name>, at /work), and a time limit (its process is sleep <seconds>;
 // --rm removes it when that ends). A fixed check then runs inside it and must find every wall (BOX_WALLS); one that got
 // through, or one it can't tell, removes the box, and nothing opens. Opening one is a change: Sparkie's and an agent's
-// call meet the pause, and Sparkie's the rail (R52: unchecked, it is one button the owner presses); the owner's own call
-// meets neither. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
+// call meet the pause, an agent's the put-back hold (R23), and Sparkie's the rail (R52: unchecked, it is one button the
+// owner presses); the owner's own call meets none of them. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
 // it, and at "/stop <its name>" from the owner's own call; the record is kept until its removal is seen. The watcher and
 // workloads skip a container this record knows by its name and label (19-watcher.mjs), and typed starts refuse its
 // names (21-apps.mjs). A command runs in the box by docker exec, in /work, for 30 seconds (boxRun; A4), and write_file
@@ -21,9 +21,9 @@ const BOX_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_SECONDS) |
 const BOX_MEMORY = '4g', BOX_PIDS = 256, BOX_CPUS = 4, BOX_FILE_BYTES = 2 ** 30, BOX_OPEN_MS = 45000, BOX_STOP_MS = 20000, BOX_OUT_MAX = 2 ** 20;
 // A command's seconds in the box (A4): 30, inside the turn; past them the box goes (the stand-in fleet may shorten it).
 const BOX_RUN_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_RUN_SECONDS) || 30;
-// Its bounds on its Spark: the memory a box may take (its --memory) is free beyond the 8 GB kept (R2) before it opens and
-// before each command; the disk keeps the plain wall's floor (R63) before each command, and a box that took it under
-// goes; what a command left running is ended after it.
+// Its bounds on its Spark: the memory every box on record or opening there may take (its --memory, each) is free beyond
+// the 8 GB kept (R2) before one opens and before each command; the disk keeps the plain wall's floor (R63) before each
+// command, and a box that took it under goes; what a command left running is ended after it.
 const BOX_MEMORY_GB = 4, BOX_DISK_FLOOR = 50e9;
 const BOX_LABEL = 'spark-console.box', BOX_DIR = '.local/share/spark-console/work', BOX_PREFIX = 'spark-console-box-', BOX_NAME = /^spark-console-box-[0-9a-f]{12}$/;
 const BOX_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,199}(?::[A-Za-z0-9._-]{1,128})?@sha256:[0-9a-f]{64}$/;
@@ -38,6 +38,7 @@ const BOX_WALLS = {
 const BOX_WORDS = 'not root, no capabilities, no new privileges, nothing writable but its own folder, nothing of the Spark mounted but that folder, no socket, no key handed in, no network, no device beyond Docker’s own and no GPU';
 const boxes = new Map();     // the caller (boxKey) → { spark, name, until, by }
 const boxOpening = new Map(); // the caller → the open under way, which a second call waits for
+const boxClaims = new Map();  // the caller → the Spark its open is asking for room on or opening on (not yet on record)
 
 // The one docker run line (R62). "$n" (the box's name), "$w" (its folder) and "$img" are set by boxScript, from code.
 function workBoxCommand() {
@@ -112,8 +113,9 @@ function boxScript(name, image, id) {
     // (the folders of boxes that have ended, at their time or after a console restart, go before one opens; the
     // daemon answered just now, so "no such container" means it is gone)
     'for d in "$base"/spark-console-box-*; do [ -d "$d" ] && [ ! -L "$d" ] || continue; docker inspect --type container "${d##*/}" >/dev/null 2>&1 || rm -rf -- "$d"; done',
-    // (the pinned image is fetched once, apart from the call: a box opens with --pull never)
-    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 &); say pulling; }',
+    // (the pinned image is fetched once, apart from the call: a box opens with --pull never; the fetch doesn't hold the
+    // lock's descriptor, so the next call is told it is being fetched, not that another box is opening)
+    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 9>&- &); say pulling; }',
     'docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; mkdir -m 700 "$w" || say nofolder',
     `o=$(${workBoxCommand()} 2>&1) || { docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; say failed "$(printf '%s' "$o" | tail -n 1 | head -c 300)"; }`,
     // (its id, kept: a command or a write later goes to this container, never another of its name)
@@ -157,20 +159,36 @@ const boxesOn = spark => [...new Set([...[...boxes.values()].filter(b => b.spark
 function notBoxName(name) {
   if (String(name).startsWith(BOX_PREFIX)) throw new HttpError(400, `Names beginning ${BOX_PREFIX} are the box’s (R62): choose another name. Nothing was started.`);
 }
-// The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the box's own
-// cap. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
-async function boxRoom(node) {
+// The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the cap of every
+// box on record there or opening there, the caller's own included. An open claims its Spark (boxClaims) before it reads
+// the memory, and the count is taken after the read, with nothing awaited between it and the answer, so two opens at
+// once each count the other. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
+const boxCount = (spark, key) => new Set([...[...boxes].filter(([, b]) => b.spark === spark).map(([k]) => k), ...[...boxClaims].filter(([, s]) => s === spark).map(([k]) => k), key]).size;
+async function boxRoom(node, key) {
   const mem = await memNow(node), at = sparkName(node);
   if (!mem && ((await run(node, 'true', { timeout: 15000 })).code === 255 || knownOffline(node))) return 'off';
   if (!mem) return `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`;
-  const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
-  return room >= BOX_MEMORY_GB ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB} GB free beyond the 8 GB kept for the system, and ${Math.max(0, room)} GB is. Nothing ran.`;
+  const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30), n = boxCount(node.id, key);
+  return room >= BOX_MEMORY_GB * n ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB * n} GB free beyond the 8 GB kept for the system${n > 1 ? ` (${BOX_MEMORY_GB} GB for each of the ${n} boxes there, this one included)` : ''}, and ${Math.max(0, room)} GB is. Nothing ran.`;
 }
 // One journal record for each open, reuse, ask, refusal and removal (R43).
 function boxRecord(ctx, fields, text = null) {
   journal('cmd', { chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box', class: 'change', gate: 'box', exit: null,
     ...fields, err: fields.err === undefined ? null : jErr(fields.err), sub: jSub(fields.args?.spark) }, text);
 }
+// A command (or a write) in the box is a change written down first, as the runner's is (21-runner.mjs): a start line
+// that carries the request's task, so a task's report counts it (after the owner's yes when it was pressed), then its
+// end line, by the same id, with what it printed. One that never started in the box (Docker not answering, the box
+// gone, the disk under its floor) ends ran: false, and counts as no change. A start line that can't be written refuses
+// the command (nothing ran).
+const BOX_NEVER = new Set(['nodocker', 'gone', 'disk', 'nodisk']);
+function boxStart(ctx, b, args) {
+  const rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box',
+    class: 'change', gate: ctx.button ? 'button' : 'box', unit: b.name, args: { spark: b.spark, ...args }, sub: jSub(b.spark) });
+  if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
+  return rid;
+}
+const boxEnd1 = (ctx, rid, x, fields, text = null) => boxRecord(ctx, { id: rid, end: true, ...fields, ...(BOX_NEVER.has(x.kind) ? { ran: false } : {}) }, text);
 
 async function boxOpen(key, ctx, command) {
   const t0 = Date.now(), rid = journalId(), rec = { outcome: 'refused', spark: null, name: boxName(key), text: '' };
@@ -193,8 +211,10 @@ async function boxOpen(key, ctx, command) {
     let noRoom = null;
     for (const node of up) {
       if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: '?' })} holds the brain or is the hub, so no box opens there.`);
-      // (the 8 GB rule: a Spark without room for the box is passed over)
-      const short = await boxRoom(node);
+      // (the 8 GB rule: a Spark without room for the box is passed over; it is claimed first, and stays claimed while the
+      // box opens there, until the box is on record or the open ends)
+      boxClaims.set(key, node.id);
+      const short = await boxRoom(node, key);
       if (short === 'off') continue;
       if (short) { noRoom = short; rec.spark = node.id; continue; }
       const at = sparkName(node), id = randomBytes(12).toString('hex');
@@ -229,6 +249,7 @@ async function boxOpen(key, ctx, command) {
     if (noRoom) { rec.outcome = 'noroom'; throw new HttpError(409, noRoom); }
     throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
   } catch (e) { rec.err = e; throw e; } finally {
+    boxClaims.delete(key);
     boxRecord(ctx, { id: rid, unit: rec.name, args: { spark: rec.spark, command: String(command).slice(0, 600) }, ok: !rec.err, outcome: rec.outcome,
       err: rec.err ?? null, ms: Date.now() - t0 }, rec.text ? `$ (the box's open and check)\n${rec.text}` : null);
   }
@@ -245,11 +266,13 @@ async function boxEnd(key, ctx, timeout = 30000) {
   return { at, spark: b.spark, name: b.name, until, removed: word === 'removed', why };
 }
 
-// Who may cause something in the box (R62): Sparkie's and an agent's call are refused while changes are paused, and
-// Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button the owner presses. The owner's own call,
-// a press included, meets neither.
+// Who may cause something in the box (R62): an agent's call (and Sparkie's in an agent's chat) is refused while the
+// state put back from a copy is held (R23), as runAction refuses an agent's change then; Sparkie's and an agent's call
+// are refused while changes are paused, and Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button
+// the owner presses. The owner's own call, a press included, meets none of them.
 async function boxGate(viewer, ctx, key, command, ask) {
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and opening a box is a change, so no box opened. Nothing ran.');
   if (by === 'sparkie' && !(await brainRail()).checked) {
     boxRecord(ctx, { unit: boxName(key), args: { command: command.slice(0, 600) }, ok: true, outcome: 'asked' });
@@ -333,11 +356,11 @@ async function boxRun(input, viewer, ctx = {}) {
   }
   const b = await boxReady(key, ctx, command), at = sparkName(nodeById(b.spark) || { id: b.spark });
   if (b.pulling) return boxPulling(b, observedAt);
-  const room = b.opened ? null : await boxRoom(nodeById(b.spark)), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
+  const room = b.opened ? null : await boxRoom(nodeById(b.spark), key), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
   if (why) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: why }); throw new HttpError(room === 'off' ? 503 : 409, why); }
-  const rid = journalId(), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
+  const rid = boxStart(ctx, b, { command: command.slice(0, 600) }), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
   const done = ['ran', 'time', 'cutoff'].includes(x.kind);
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
     exit: x.exit ?? null, ms: Date.now() - t0, bytes: Buffer.byteLength(x.output || '') }, `$ ${command}\n${text}`);
   if (!done) throw boxSaid(x, at, 'the command didn’t run');
   const shown = forBrain(text), until = new Date(b.until).toISOString();
@@ -396,14 +419,14 @@ async function boxWrite(input, viewer, ctx = {}) {
   } catch (e) { boxRecord(ctx, { unit: boxName(key), args: { command: `write_file ${shownPath}` }, ok: false, outcome: 'refused', err: e }); throw e; }
   b = await boxReady(key, ctx, `write_file ${shownPath}`);
   if (b.pulling) return boxPulling(b, observedAt);
-  const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId(), room = b.opened ? null : await boxRoom(nodeById(b.spark));
+  const at = sparkName(nodeById(b.spark) || { id: b.spark }), room = b.opened ? null : await boxRoom(nodeById(b.spark), key);
   if (room === 'off') throw new HttpError(503, `${at} isn’t answering, so nothing was written.`);
   if (room) throw new HttpError(409, room.replace('Nothing ran.', 'Nothing was written.'));
   // (in the box: the path may not leave /work by a link on the way, and code's own program writes it, one move)
   const program = `p=${q(rel)}; r=$(realpath -m -- "$p"); case "$r" in "$PWD"/*) ;; *) echo 'write_file: that path leads out of the box’s folder, so nothing was written.' >&2; exit 3 ;; esac\nmkdir -p -- "$(dirname -- "$p")" || exit 1\n${writeProgram(rel, old.kind === 'file' ? old : { kind: 'none' })}`;
-  const x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
+  const rid = boxStart(ctx, b, { command: `write_file ${shownPath}: ${bytes.length} bytes`, tool: 'write_file', path: shownPath }), x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
   const wrote = x.kind === 'ran' && x.exit === 0;
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
   if (!['ran', 'time', 'cutoff'].includes(x.kind)) throw boxSaid(x, at, 'nothing was written');
   if (!wrote) return { box: 'open', spark: b.spark, name: b.name, observedAt, notWritten: { path: shownPath, why: maskSecrets(lookClean(x.output || '').trim()).slice(0, 300) || `it ended with code ${x.exit ?? 'none'}` }, record: rid };
   return { box: b.opened ? 'opened' : 'open', spark: b.spark, name: b.name, observedAt, wrote: { path: shownPath, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) }, ...(x.low ? { ended: boxLow(at, x.low) } : {}), record: rid };
