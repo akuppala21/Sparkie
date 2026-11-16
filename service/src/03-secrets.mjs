@@ -27,7 +27,7 @@ function secretsRead() {
   secretsProblem = 'unreadable';
   return null;
 }
-// change(current) returns the whole new content. Written as a temporary file, then renamed.
+// change(current) returns the whole new content. Written as a temporary file, synced, then renamed.
 function secretsWrite(change) {
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets.');
   const now = secretsRead();
@@ -37,7 +37,10 @@ function secretsWrite(change) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
   const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+  // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
+  // the new one, never a short one that can't be read, R23)
+  const fd = openSync(tmp, 'w', 0o600);
+  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(tmp, SECRETS_FILE);
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });

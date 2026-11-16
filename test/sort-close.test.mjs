@@ -60,8 +60,10 @@ test('code a command does not show: unshown says what runs unseen; as root every
   // (the everyday forms stay a plain change, the wall bounding them: their code is unshown, but not asked for that)
   assert.deepEqual(check(['make', 'make -j8', 'npm install', 'npm run build', 'cargo build --release', 'python3 -m venv .venv', 'python3 -m json.tool < out.json',
     'pip install -e .', 'python3 train.py', 'cmake --build build -j8'].map(c => [c]), r => is('change', r)), []);
-  // (what shows its code is not unshown: a one-liner, here-text, a look)
-  for (const c of ["bash -c 'touch /tmp/x'", "python3 -c 'print(1)'", 'bash <<EOF\ntouch /tmp/x\nEOF', 'ls -la', 'apt install -y htop']) assert.equal(sort(c).unshown, null, c);
+  // (what the sorter reads whole is not unshown: a shell's one-liner and here-text, a look; an interpreter's one-liner
+  // is, since A-16: it loads what no button shows)
+  for (const c of ["bash -c 'touch /tmp/x'", 'bash <<EOF\ntouch /tmp/x\nEOF', 'ls -la', 'apt install -y htop']) assert.equal(sort(c).unshown, null, c);
+  assert.ok(sort("python3 -c 'print(1)'").unshown);
   assert.equal(sort('apt install -y htop').simple, true);
 });
 

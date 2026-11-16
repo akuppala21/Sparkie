@@ -49,6 +49,9 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
     const began = Date.now(), child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
+    // (one decoder each for what it prints: a character whose bytes come in two pieces reads whole)
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;

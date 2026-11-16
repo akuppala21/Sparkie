@@ -19,7 +19,10 @@
 // back program files only and never trip it. An always-allowed kind taken away raises the number too: an older copy put
 // back by hand holds, and the kind is taken away again (not live before or after "Keep these"). When the state's first
 // number can't be written, the secrets file's is taken out again, so the next start holds nothing. The notice of what
-// came back masks the names it gives (an agent named like a key).
+// came back masks the names it gives (an agent named like a key). A removal whose note can't be written at once (the
+// write fails, the file can't be read, a sync fails) is done and said, waits on the needs-you list, is written by the
+// retry or at the next start, and an older copy put back then holds with the key removed again; a hold whose own write
+// fails at a start holds in memory (P-3, round two).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync, symlinkSync } from 'node:fs';
@@ -597,5 +600,123 @@ describe('the put-back notice masks the names it gives', { concurrency: 1 }, () 
     const notice = eventLines(B).find(e => e.type === 'notice' && /^Spark Console’s state was put back from a copy\./.test(e.text || ''));
     assert.match(notice?.text || '', /was removed again \(agent key “\[hidden\]”\)/, JSON.stringify(notice));
     assert.ok(!eventLines(B).some(e => e.type === 'notice' && String(e.text).includes(NAME)), 'no notice holds the name whole');
+  });
+});
+
+// P-3, round two: a removal whose note in the secrets file can't be written (the write fails, the file can't be read, a
+// sync fails) is still done at once, and its answer says the note waits; the needs-you list shows it; the retry writes
+// it; a start in between notes it from the state folder (auth-unnoted.json); an older copy put back by hand then holds
+// and the removed key is removed again. A hold whose own write fails at a start is held in memory, and said.
+describe('a removal whose note can’t be written at once', { concurrency: 1 }, () => {
+  const DISK = { NODE_OPTIONS: `--import=${join(REPO, 'test', 'mock', 'disk-full.mjs')}` };
+  const fleets = [];
+  after(async () => { for (const F of fleets) await F?.stop().catch(() => {}); });
+  const begin = async (env = {}, prepare = null) => { const F = await startMock({ env: { SPARK_CONSOLE_PUTBACK_RETRY_MS: '1000', ...env }, ...(prepare ? { prepare } : {}) }); fleets.push(F); use(F); return F; };
+  const startWith = async (state, secrets, env = {}, extra = null) => {
+    const F = await startMock({ env, prepare: ({ stateDir, dir }) => {
+      for (const f of readdirSync(stateDir)) rmSync(join(stateDir, f), { recursive: true, force: true });
+      cpSync(state, stateDir, { recursive: true });
+      mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, 'secrets', 'secrets.json'), secrets, { mode: 0o600 });
+      extra?.(dir);
+    } });
+    fleets.push(F); use(F); return F;
+  };
+  const agentIds = F => (parse(readFileSync(join(F.stateDir, 'agents.json'), 'utf8'))?.keys || []).map(k => k.id);
+  // (read as it is on disk: a file that can't be read just then has nothing noted)
+  const noted = F => (parse(existsSync(F.secretsFile) ? readFileSync(F.secretsFile, 'utf8') : '')?.auth?.removed || []).filter(r => r.kind === 'agent').map(r => r.id);
+  const works = async (F, token) => (await net(F, '/v1/models', { headers: { authorization: `Bearer ${token}` } })).status;
+  const needs = async F => (await ask(F, '/actions/fleet_status', { method: 'POST', body: {} })).json?.needsOwner || [];
+  const WAITS = /^A removal \(agent\) couldn’t be noted outside the state yet/;
+  // An agent key that may change things from anywhere, and a copy of the state taken while it was there.
+  async function keyAndCopy(F, name) {
+    const k = await ask(F, '/agents', { method: 'POST', body: { name } });
+    is(k, 201, name);
+    is(await ask(F, `/agents/${k.json.id}`, { method: 'PUT', body: { act: true, internet: true } }), 200);
+    assert.equal(await works(F, k.json.token), 200, 'it works from the internet');
+    return { key: k.json, older: copyState(F, `p3-${name}`) };
+  }
+  // The removal, with the note not written: done at once, said in its answer and on the needs-you list.
+  async function removedUnnoted(F, key) {
+    const gone = await ask(F, `/agents/${key.id}`, { method: 'DELETE' });
+    is(gone, 200, 'removed');
+    assert.equal(gone.json.noted, false, gone.text);
+    assert.match(gone.json.note, /^Done\. Its note outside the state \(in the secrets file\) couldn’t be written just now/);
+    assert.ok(!agentIds(F).includes(key.id), 'removed at once');
+    assert.deepEqual(noted(F), [], 'not noted yet');
+    assert.ok((await needs(F)).some(l => WAITS.test(l)), JSON.stringify(await needs(F)));
+  }
+  // The older copy, put back by hand on the same disk: held, and the removed key removed again.
+  async function putBackHolds(older, secrets, key) {
+    const B = await startWith(older, secrets);
+    assert.equal((await net(B, '/whoami')).json.held, LINE, 'held');
+    assert.ok(!agentIds(B).includes(key.id), 'the removed key is removed again');
+    assert.notEqual(await works(B, key.token), 200, 'and doesn’t work from the internet');
+    await B.stop();
+  }
+
+  test('the note’s write fails: the removal is done and said; the retry writes the note; the older copy then holds and the key stays removed', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-write-fails');
+    const block = `${A.secretsFile}.${A.servicePid()}.tmp`;
+    mkdirSync(block);
+    try { await removedUnnoted(A, key); } finally { rmSync(block, { recursive: true, force: true }); }
+    await waitFor(() => noted(A).includes(key.id), { timeout: 30000 * SLOW, what: 'the retry writing the note' });
+    assert.equal(secretsOf(A).auth.serial, serialIn(A), 'the two numbers level');
+    assert.ok(!existsSync(join(A.stateDir, 'auth-unnoted.json')), 'nothing waits');
+    await waitFor(async () => !(await needs(A)).some(l => WAITS.test(l)), { timeout: 30000 * SLOW, what: 'the needs-you line gone' });
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    await putBackHolds(older, secrets, key);
+  });
+
+  test('the secrets file can’t be read at the removal, and is mended: the same', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-unreadable');
+    const good = readFileSync(A.secretsFile, 'utf8');
+    writeFileSync(A.secretsFile, '{ "telegram": ');
+    try { await removedUnnoted(A, key); } finally { writeFileSync(A.secretsFile, good, { mode: 0o600 }); }
+    await waitFor(() => noted(A).includes(key.id), { timeout: 30000 * SLOW, what: 'the retry writing the note' });
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    await putBackHolds(older, secrets, key);
+  });
+
+  test('a start between the failed note and the put-back: the start notes it from the state folder, so the older copy holds and the key stays removed', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-start-between');
+    mkdirSync(`${A.secretsFile}.${A.servicePid()}.tmp`);
+    await removedUnnoted(A, key);
+    assert.ok(existsSync(join(A.stateDir, 'auth-unnoted.json')), 'the note waits in the state folder');
+    const now = copyState(A, 'p3-now'), stale = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    const M = await startWith(now, stale);
+    assert.ok(noted(M).includes(key.id), 'the start noted it');
+    assert.equal((await net(M, '/whoami')).json.held, undefined, 'and holds nothing: nothing came back');
+    const secrets = readFileSync(M.secretsFile, 'utf8');
+    await M.stop();
+    await putBackHolds(older, secrets, key);
+  });
+
+  test('the secrets file’s sync fails at the removal: the note isn’t taken as written', { timeout: 300000 * SLOW }, async () => {
+    const A = await begin(DISK), { key } = await keyAndCopy(A, 'p3-sync-fails');
+    const before = readFileSync(A.secretsFile, 'utf8');
+    writeFileSync(join(A.dir, 'secrets-fsync-fail'), '');
+    try {
+      await removedUnnoted(A, key);
+      assert.equal(readFileSync(A.secretsFile, 'utf8'), before, 'the secrets file is as it was');
+    } finally { rmSync(join(A.dir, 'secrets-fsync-fail'), { force: true }); }
+    await waitFor(() => noted(A).includes(key.id), { timeout: 30000 * SLOW, what: 'the retry writing the note' });
+  });
+
+  test('a hold whose own write fails at a start holds in memory all the same, and says so', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-hold-unsaved');
+    is(await ask(A, `/agents/${key.id}`, { method: 'DELETE' }), 200);
+    assert.ok(noted(A).includes(key.id));
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    const B = await startWith(older, secrets, DISK, dir => writeFileSync(join(dir, 'secrets-full'), ''));
+    assert.equal(secretsOf(B).auth.hold, undefined, 'the hold couldn’t be written');
+    assert.equal((await net(B, '/whoami')).json.held, LINE, 'held all the same');
+    assert.notEqual(await works(B, key.token), 200);
+    assert.ok((await needs(B)).some(l => /^Spark Console’s state was put back from a copy.* The hold couldn’t be saved, so it lasts only until Spark Console next starts\./.test(l)), JSON.stringify(await needs(B)));
+    await B.stop();
   });
 });
