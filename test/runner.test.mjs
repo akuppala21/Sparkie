@@ -30,7 +30,9 @@ after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 const keys = {};
 // (a cut-off set counts as its change's for the time limit and a second, not a minute: CUT)
 const CUT = 1;
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: String(CUT) },
+// (Spark 2's changes and root are off for this fleet: the runner's refusals are their off side; hub-change.test and
+// root.test have the on side)
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_CUT_SLACK: String(CUT), SPARK_CONSOLE_HUB: '0', SPARK_CONSOLE_ROOT: '0' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3'), out = join(root, 'outside-spark3');
@@ -150,7 +152,7 @@ test('the runner refuses Spark 2, root, the root helper and anything but a plain
   assert.equal(hub.json.error, 'Spark 2 runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.');
   const root = await run('sudo touch notes/x.txt');
   assert.equal(root.status, 403, root.text);
-  assert.equal(root.json.error, 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
+  assert.equal(root.json.error, 'Nothing ran: root is off in this console, so a command runs as the owner. Leave out sudo.');
   const helper = await run('bash ~/spark-console-src/deploy/root-for-sparkie.sh 3');
   assert.equal(helper.status, 403, helper.text);
   assert.match(helper.json.error, /^It calls the root helper or its sudo line/);

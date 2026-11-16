@@ -9,14 +9,15 @@
 // proposal (its run, the failed tests' names, the review) as outside text; drop closes the pull request and deletes the
 // branch; 6 pushes at most; the protected list is tools/affected.mjs's. The token is never in a chat or an answer.
 // GitHub is a stand-in: a bare repository holding this tree as main (SPARK_CONSOLE_REPO_URL) and test/mock/github.mjs
-// for the API. The box is the stand-in fleet's (STATE_DIR/.test-selfchange.json), as the trial's pass is.
+// for the API. The box is the real one (A2, C8b) on the stand-in fleet's compute Sparks, filled by boxFill and read back
+// by boxReadBack; the test changes files in it as the brain would. The trial's pass is a stand-in record (R67).
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
-import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync, readdirSync, lstatSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync, readdirSync, lstatSync, statSync, chmodSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, choose, REPO, SLOW } from './lib.mjs';
 import { startGitHub } from './mock/github.mjs';
 import { ALWAYS, ALWAYS_PARTS } from '../tools/affected.mjs';
@@ -52,9 +53,13 @@ after(async () => { await GHAPI.close(); for (const d of temps) rmSync(d, { recu
 let HOME, STATE, COPY;
 // (a third dangerous ask inside ten minutes is sent a minute late: not here, as in install-update.test.mjs)
 const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_GITHUB_API: GHAPI.url, SPARK_CONSOLE_DANGER_LATE_MS: '1' };
-useFleet({ env: ENV, prepare: ({ dir, stateDir }) => {
-  HOME = join(dir, 'home');
+// (Spark 2's home is the stand-in hub's own, where the box's fill finds the copy of the repository; the box opens on a
+// compute Spark that has its image, as in box-fill.test.mjs)
+const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
+useFleet({ env: ENV, prepare: ({ root, stateDir }) => {
+  HOME = join(root, 'spark2');
   STATE = stateDir;
+  for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `${IMAGE}\n`);
   ENV.SPARK_CONSOLE_SECRETS_FILE = join(HOME, '.config', 'spark-console', 'secrets.json');
   COPY = join(HOME, '.local', 'share', 'spark-console', 'repo.git');
   for (const d of [join(HOME, '.config', 'spark-console'), join(HOME, '.local', 'share', 'spark-console')]) mkdirSync(d, { recursive: true, mode: 0o700 });
@@ -75,7 +80,7 @@ exec bash "$(dirname "$0")/pull-real.sh" "$@"
 `, { mode: 0o700 });
 } }, () => script(SCRIPT));
 
-// The stand-in fleet's switches (21-selfchange.mjs): on, the trial's pass, the box.
+// The stand-in fleet's switch (21-selfchange.mjs): on.
 const control = v => (v ? writeFileSync(join(STATE, '.test-selfchange.json'), JSON.stringify(v)) : rmSync(join(STATE, '.test-selfchange.json'), { force: true }));
 const ON = { on: true };
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
@@ -108,7 +113,37 @@ const ghBranches = () => spawnSync(REAL_GIT, ['-C', GH, 'for-each-ref', '--forma
 const atMain = path => readFileSync(join(SRC, path), 'utf8');
 // (the open proposal's id, from the copy's refs: the press answers with its note only)
 const openId = () => /^refs\/sparkie\/([0-9a-f]{8}) /m.exec(refs())?.[1] || null;
-const box = files => control({ ...ON, box: { files } });
+// The chat's real box (A2, C8b): its folder on the compute Spark it opened on; box(files) turns the piece on and, once a
+// proposal is open, makes its box hold main's tree with these files changed (a text) or taken out (null), as the brain
+// would leave it, putting back what an earlier box(files) changed there.
+const boxDir = chat => {
+  const name = `spark-console-box-${createHash('sha256').update(`chat ${chat}`).digest('hex').slice(0, 12)}`;
+  return ['spark3', 'spark4'].map(sp => join(T.fleet.root, sp, '.local', 'share', 'spark-console', 'work', name, 'spark-console')).find(existsSync) || null;
+};
+const openChat = () => { const id = openId(); return id ? git(COPY, ['cat-file', 'blob', `refs/sparkie-chat/${id}`]) : null; };
+const boxEdits = new Map();
+function box(files) {
+  control(ON);
+  if (!Object.keys(files).length) return;
+  const chat = openChat(), d = chat && boxDir(chat);
+  assert.ok(d, `the open proposal's chat has a filled box (${chat})`);
+  const done = boxEdits.get(chat) || new Set();
+  for (const p of [...done, ...Object.keys(files)]) {
+    rmSync(join(d, p), { force: true, recursive: true });
+    const src = join(SRC, p);
+    if (existsSync(src) && lstatSync(src).isFile()) { mkdirSync(dirname(join(d, p)), { recursive: true }); writeFileSync(join(d, p), readFileSync(src)); chmodSync(join(d, p), statSync(src).mode & 0o777); }
+    // (a folder only the change made goes too)
+    for (let a = dirname(p); a !== '.'; a = dirname(a)) if (!existsSync(join(SRC, a)) && existsSync(join(d, a))) rmSync(join(d, a), { force: true, recursive: true });
+  }
+  for (const [p, text] of Object.entries(files)) {
+    if (text === null) { rmSync(join(d, p), { force: true, recursive: true }); continue; }
+    mkdirSync(dirname(join(d, p)), { recursive: true });
+    writeFileSync(join(d, p), text);
+    done.add(p);
+  }
+  for (const p of Object.keys(files)) done.add(p);
+  boxEdits.set(chat, done);
+}
 // A pass of the coding trial on record for the stand-in brain serving now, kept as agentbar/trial.mjs's record is (R67:
 // POST /main/trial, the stand-in fleet's record, every task 3 of 3).
 const SET = taskSet(join(REPO, 'agentbar', 'trial', 'tasks'));
@@ -192,11 +227,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8'), /^const SELF_CHANGE_ON = false;$/m);
   });
 
-  test('start: on the owner’s own words it runs at once (here refused: the box holds other work); then it fills this chat’s box with main and notes the commit, and a second start is refused', LONG, async () => {
-    control({ ...ON, box: { busy: true } });
-    const busy = await say(await newChat(), 'please change your own code');
-    assert.match(busy.text, /propose_update said: \[error\] This chat’s box holds other work, so nothing was put in it\./);
-    assert.equal(refs(), '');
+  test('start: it fills this chat’s real box with main’s tree and notes the commit; a second start is refused; on the owner’s own words it runs at once (here refused: the box holds other work)', LONG, async () => {
     box({});
     const chat = await newChat(), s = await pressed(chat, 'please open a proposal');
     assert.match(s.q.choices[0].label, /^Put main’s code in this chat’s box/);
@@ -207,10 +238,25 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(refs(), new RegExp(`refs/sparkie/${id} ${MAIN}`));
     assert.match(refs(), new RegExp(`refs/sparkie-base/${id} ${MAIN}`));
     assert.equal(git(COPY, ['cat-file', 'blob', `refs/sparkie-chat/${id}`]), chat);
+    // (the box holds main's tree, file for file: a part, and the generated server.mjs)
+    for (const f of ['service/src/21-web.mjs', 'service/server.mjs']) assert.equal(readFileSync(join(boxDir(chat), f), 'utf8'), atMain(f), f);
     const again = await pressed(await newChat(), 'please open a proposal');
     assert.match(again.says, new RegExp(`A proposal is open already \\(sparkie/${id}, from another chat\\): send it or drop it first\\. Nothing was started\\.`));
     selfChat = chat;
     selfId = id;
+    // (a chat whose box holds a proposal's work already: dropped, its box stays; a start there, on the owner's own words,
+    // runs at once and is refused by the box)
+    const other = await newChat();
+    await pressed(chat, 'drop your code proposal');
+    assert.equal((await pressed(other, 'please open a proposal')).p.json.outcome, 'started');
+    await pressed(other, 'drop your code proposal');
+    const busy = await say(other, 'please change your own code');
+    assert.match(busy.text, /propose_update said: \[error\] This chat’s box on Spark \d holds other work \(\d+ things? in its folder\), so nothing was put in it\./);
+    assert.equal(refs(), '');
+    // (the first chat's proposal again, in a fresh chat, for the cases below)
+    selfChat = await newChat();
+    assert.equal((await pressed(selfChat, 'please open a proposal')).p.json.outcome, 'started');
+    selfId = openId();
   });
 
   test('send: the diff built by code on the noted commit, generated files rebuilt by the installed generator, protected paths and edited test lines listed; one commit pushed to sparkie/<id>, and a pull request', LONG, async () => {
@@ -333,7 +379,8 @@ describe('propose_update', { concurrency: 1 }, () => {
     for (const bad of ['docs/a\nb.md', `docs/$(touch ${join(MARK, 'shell')}).md`, 'docs/a;b.md', 'docs/a b.md']) {
       box({ 'service/src/21-web.mjs': `${part}// x\n`, [bad]: 'x\n' });
       const r = await pressed(chat, 'send your code proposal');
-      assert.match(r.says, /The box read back entries that can’t be proposed .*so nothing was sent\./, JSON.stringify(bad));
+      // (a newline the box's own reader refuses first; the others, its plain names, this piece)
+      assert.match(r.says, /The box read back entries that can’t be proposed .*so nothing was sent\.|a name holds a control character: .*Nothing was changed\./, JSON.stringify(bad));
     }
     assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]), head, 'nothing pushed');
     assert.deepEqual(marks(), []);
@@ -368,14 +415,15 @@ describe('propose_update', { concurrency: 1 }, () => {
     for (const [path, why] of [
       ['.gitattributes', /A proposal never holds a \.gitattributes file \(\.gitattributes\)/], ['docs/.GitAttributes', /A proposal never holds a \.gitattributes file \(docs\/\.GitAttributes\)/],
       ['.GitHub/workflows/x.yml', /A proposal never changes \.github\/ \(\.GitHub\/workflows\/x\.yml\)/],
-      ['Tools/affected.mjs', /differ only in case \(or Unicode form\) from one already in the tree, which on a Mac is the same file: Tools\/affected\.mjs \(tools is there\)/],
-      ['Deploy/pull.sh', /Deploy\/pull\.sh \(deploy is there\)/], ['test/Lib.mjs', /test\/Lib\.mjs \(test\/lib\.mjs is there\)/],
-      ['AGENTS.MD', /AGENTS\.MD \(AGENTS\.md is there\)/], ['service/src/16-Actions.mjs', /service\/src\/16-Actions\.mjs \(service\/src\/16-actions\.mjs is there\)/],
+      // (in the real box, a twin of a name it holds is refused by the box's own reader first, naming the pair)
+      ['Tools/affected.mjs', /a name differs only by case or Unicode form from (?:tools|Tools)\b/],
+      ['Deploy/pull.sh', /a name differs only by case or Unicode form from (?:deploy|Deploy)\b/], ['test/Lib.mjs', /a name differs only by case or Unicode form from test\/(?:lib|Lib)\.mjs/],
+      ['AGENTS.MD', /a name differs only by case or Unicode form from AGENTS\.(?:md|MD)/], ['service/src/16-Actions.mjs', /a name differs only by case or Unicode form from service\/src\/16-(?:actions|Actions)\.mjs/],
     ]) {
       box({ 'service/src/21-web.mjs': `${part}// x\n`, [path]: 'x\n' });
       const r = await pressed(chat, 'send your code proposal');
       assert.match(r.says, why, path);
-      assert.match(r.says, /Nothing was sent\./);
+      assert.match(r.says, /Nothing was (?:sent|changed)\./);
     }
     assert.deepEqual(ghBranches(), [], 'nothing pushed');
     await pressed(chat, 'drop your code proposal');

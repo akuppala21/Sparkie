@@ -1,4 +1,4 @@
-/* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11, dark) ───────── */
+/* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11) ───────── */
 // Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -24,9 +24,8 @@
 // start netRecover finds the guard by its id and puts it back, which stops the unit first, or the Spark's own timer
 // does; it never runs again. (minutes, A6's long command, is not on Spark 2 yet: 21-work.mjs refuses it.)
 
-// The switch, dark: a change on Spark 2 is not done until this one line is on, once the whole chain has been read. The
-// stand-in fleet may turn it on for a test (SPARK_CONSOLE_HUB=1).
-const HUB_ON = ALL_LOCAL && process.env.SPARK_CONSOLE_HUB === '1';
+// The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_HUB=0); nothing else can.
+const HUB_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_HUB === '0');
 // The run wall's cap there (design A 2.7: 2 GB).
 const HUB_MEMORY = 2;
 const HUB_NOT = 'Spark 2 runs only Spark Console and the brain; nothing was asked or run.';
@@ -114,7 +113,7 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
   whoMayLook(viewer, ctx);
   // (as on every Spark, whatever the caller says: not done, root, the root helper's line, a pause)
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
-  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'Nothing ran: Spark 2 runs Spark Console and the brain, so nothing runs there as root.');
   if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
   const why = hubRefuses(command, sorted, ctx, dir, widen);
@@ -136,6 +135,10 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
+  // (no root helper on Spark 2, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
+  // nothing is asked)
+  const first = await netHelperFirst(node);
+  if (first.needs) return first.needs;
   // The owner's own call with no chat to show a button in (the API): nothing is asked there.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
   return hubAsk(node, command, sorted, viewer, ctx, dir);

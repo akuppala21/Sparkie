@@ -18,7 +18,7 @@ async function viaApi() {
   assert.equal(r.status, 200, r.text);
   return r.json;
 }
-const NEVER = 'SSH, Tailscale, firewalls, users, keys, sudo or who has access';
+const NEVER = 'Spark Console’s own keys, or who may use Spark Console';
 
 test('sparkie_setup {about: "abilities"}: every action by its title, from the list as it is now, with the limits; the same through POST /actions and the agent door', { timeout: 60000 * SLOW }, async () => {
   const x = await viaApi();
@@ -27,7 +27,7 @@ test('sparkie_setup {about: "abilities"}: every action by its title, from the li
   // The live registry: no count is pinned, so a new action needs no edit here.
   assert.deepEqual([...x.canLookUp].sort(), TOOLS.map(n => titleOf[n]).sort());
   assert.deepEqual([...x.canChange].sort(), CHANGE_TOOLS.map(n => titleOf[n]).sort());
-  assert.equal(x.limits.length, 4, JSON.stringify(x.limits));
+  assert.equal(x.limits.length, 5, JSON.stringify(x.limits));
   assert.equal(x.limits[0], `Sparkie never changes ${NEVER}, and never turns Spark Console off. The owner does those by hand.`);
   assert.equal(x.limits[1], 'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.');
   assert.equal(x.limits[2], 'Spark 2 is Sparkie’s own, so no other model or workload starts there.');
