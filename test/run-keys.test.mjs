@@ -249,6 +249,11 @@ test('a script that changed after its ask: the press is refused, nothing ran', {
   assert.ok(!existsSync(at3('notes/othersum.txt')), 'nothing ran');
   assert.equal(keyEntry('OTHER_KEY').hosts, undefined);
   assert.ok(!(await chatMessages(chat)).some(m => m.content.includes(OTHER)));
+  // A script whose text isn't pinned by a hash (after a second cd) is never given a key: refused at the ask.
+  const words = 'update the other notes on spark 3 from the notes folder';
+  await turn(await newChat(), words, [[RUNK('cd notes && cd .. && bash notes/other.sh', ['OTHER_KEY'])]]);
+  assert.equal(sentBack(words)[0]?.error, 'Not run: it runs a script whose text isn’t pinned by a hash here, and a key is never given to a script you weren’t shown as it is. Name the script plainly, from where the change starts or after one first cd <folder> &&. Nothing was asked or run.');
+  assert.ok(!existsSync(at3('notes/othersum.txt')), 'nothing ran');
 });
 
 test('names: one not kept, one with a home of its own, one the shell reads to decide what runs', { timeout: 60000 * SLOW }, async () => {
