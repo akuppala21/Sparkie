@@ -1838,6 +1838,10 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
     }
     return missed;
   };
+  // What the stops said, in an error's words: "both were stopped" only when both checked stops said so; otherwise the
+  // part that may still run, and where (A-23: never said before a tool said so).
+  const stopsSaid = (missed, both = 'both') => (missed.length ? `; ${missed.map(m => `its part on ${sparkName(nodeById(m.node))} (${names[cp.members.indexOf(m)]})`).join(' and ')} may still be running: Spark Console couldn’t confirm ${missed.length > 1 ? 'they' : 'it'} stopped`
+    : `, so ${both} were stopped`);
   let unknownChecks = 0;
   // Both parts get the same memory share: the smaller of what each Spark has free.
   job.checkPause?.();
@@ -1889,23 +1893,23 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
         if (!connected && seen.every(r => r.code === 1) && Date.now() - began >= CONNECT_MS) {
           // Each part's stacks first (they're stopped anyway), then its log; the tail shown is what it said before that.
           const logs = await Promise.all(cp.members.map((m, i) => run(nodeById(m.node), `docker exec ${q(names[i])} python3 -c ${q(DUMP_PY)} 2>/dev/null; sleep 3; docker logs --tail 600 ${q(names[i])} 2>&1`, { timeout: 45000 })));
-          await stopAll();
+          const missed = await stopAll();
           const [hn, wn] = nodeIds.map(id => sparkName(nodeById(id))), roce = Boolean(net.headHca && net.workerHca && !fix.sockets);
           const where = [...new Set(logs.map(r => stuckIn(r.out)).filter(Boolean))];
-          throw new Error(`${hn} and ${wn} didn’t connect to each other over the cable within ${spanOf(CONNECT_MS)} (neither part started loading the model), so both were stopped. ` +
+          throw new Error(`${hn} and ${wn} didn’t connect to each other over the cable within ${spanOf(CONNECT_MS)} (neither part started loading the model)${stopsSaid(missed)}. ` +
             `They connected in the checks before the start, so it’s the engine’s own connection step that didn’t finish${where.length ? ` (stuck in ${where.join(' and ')})` : ''}, with NCCL over ${roce ? 'RoCE' : 'plain sockets'}. Where each part was waiting, then NCCL’s lines, come first below.\n` +
             cp.members.map((m, i) => `── ${m.node}\n${stuckAt(logs[i].out)}${sockLines(logs[i].out)}${connectLines(logs[i].out)}${logs[i].out.split('\n').filter(l => !/^(sock|env) /.test(l)).join('\n').split(/\nFatal Python error/)[0].trim().slice(-1200)}`).join('\n'));
         }
       }
     } else {
       const logs = await Promise.all(cp.members.map((m, i) => run(nodeById(m.node), `docker logs --tail 400 ${q(names[i])} 2>&1`, { timeout: 20000 })));
-      await stopAll();
-      throw new Error(`The part on ${cp.members[down].node} stopped while loading, so both were stopped.\n` +
+      const missed = await stopAll();
+      throw new Error(`The part on ${cp.members[down].node} stopped while loading${stopsSaid(missed)}.\n` +
         cp.members.map((m, i) => `── ${m.node}\n${causeLines(logs[i].out)}${logs[i].out.trim().slice(-1200)}`).join('\n'));
     }
   }
-  await stopAll();
-  throw new Error('The model didn’t become ready across both Sparks within 45 minutes, so both parts were stopped.');
+  const missed = await stopAll();
+  throw new Error(`The model didn’t become ready across both Sparks within 45 minutes${stopsSaid(missed, 'both parts')}.`);
 }
 
 /* ───────── verified deployments ───────── */
