@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26937 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26948 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -920,12 +920,12 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
 - **Area:** features. **Rules:** R62, R52, R43, R23, R47. **Tests:** box-fill.test.mjs, box-more.test.mjs
-- **Lines:** 314
+- **Lines:** 325
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `fillShow`, `fillRefuse`, `fillPathWrong`, `fillBlobId`, `tarRead`, `fillStream`, `fillHub`, `fillTreeList`, `fillGate`, `fillBoxNode`, `fillRecord`, `boxFill`, `boxFillOf`, `boxReadBack`, `boxFillDoor`
-- **Uses:** `01-setup` (`HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
+- **Functions:** `fillSource`, `fillEvalShipped`, `fillEvalLeft`, `fillShow`, `fillRefuse`, `fillPathWrong`, `fillBlobId`, `tarRead`, `fillStream`, `fillHub`, `fillTreeList`, `fillGate`, `fillBoxNode`, `fillRecord`, `boxFill`, `boxFillOf`, `boxReadBack`, `boxFillDoor`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-selfchange` (`selfSource`), `21-work` (`whoMayLook`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
 - **Used by:** `21-selfchange`, `21-work`
 
 ### `21-box.mjs`: the box: a throw-away container on a compute Spark (A2; commands in it come with A4)
@@ -1216,7 +1216,7 @@ propose_update {do: start|send|drop, title, why} (group updates): Sparkie propos
 - **Wakes:** none
 - **Functions:** `selfHome`, `selfRepo`, `selfSource`, `selfTestFile`, `selfGate`, `selfConfigBad`, `selfGit`, `selfGithub`, `selfRemote`, `selfPush`, `selfApiBase`, `selfApi`, `selfOpen`, `selfMine`, `selfOne`, `selfBoxFill`, `selfBoxRead`, `selfWords`, `selfProtected`, `selfFold`, `selfSpellings`, `selfStart`, `selfTree`, `selfTestLines`, `selfSend`, `selfDrop`, `selfInstallFacts`, `selfInstall`, `selfProposalFacts`
 - **Uses:** `01-setup` (`STATE_DIR`, `ALL_LOCAL`, `HttpError`, `q`), `02-ssh` (`run`), `03-identity` (`clean`), `03-secrets` (`SECRETS_FILE`), `07-jobs` (`note`), `14-chats` (`chatData`), `16-actions` (`action`), `20-keys` (`SECRETS_TAIL`), `20-mcp` (`maskSecrets`, `audit`, `maskDeep`), `21-box-fill` (`boxFill`, `boxReadBack`), `21-brain-trial` (`trialPassed`), `21-updates` (`UPD_SETUP`, `updProposalAsk`)
-- **Used by:** `16-actions`, `21-updates`
+- **Used by:** `16-actions`, `21-box-fill`, `21-updates`
 
 ### `21-selftest.mjs`: the self-test: the fleet proved on its real hardware (design D 2.9)
 

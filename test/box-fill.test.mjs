@@ -13,21 +13,29 @@
 // folder of one name, a path twice, a path over 255 bytes), naming the entry masked and bounded. With agents paused,
 // an agent's fill and read back are refused; with no eval on record, Sparkie's fill is a button and opens nothing. Each
 // fill and read back is a journal record. A box removed and opened again by the same caller (the same name, on the same
-// Spark, another container) isn't the box that was filled: read back refuses it. The eval's held-out set never goes into
+// Spark, another container) isn't the box that was filled: read back refuses it. An eval set the console's installed
+// source lacks (here the held-out one, with that source a folder made here) never goes into
 // a box: a fill leaves it out, a read back never says it went, and a file of its name in the box refuses the read. Starts stand-in fleets: run it on a
 // Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync, chmodSync, symlinkSync, linkSync, rmSync, existsSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { T, useFleet, api, call, createActKey, agentSettings, newChat, say, REPO, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
 const MiB = 2 ** 20;
 const DOOR = { SPARK_CONSOLE_BOX_FILL_DOOR: '1' };
+// The console's own source as the installer ships it, whose test/eval/ is the list of eval sets a box may hold (R47,
+// 21-box-fill.mjs): one set, without the held-out one. The repository the stand-in fleet runs from has that one too.
+const SOURCE = mkdtempSync(join(tmpdir(), 'sct-fill-source-'));
+mkdirSync(join(SOURCE, 'test', 'eval'), { recursive: true });
+writeFileSync(join(SOURCE, 'test', 'eval', 'cases.json'), '[]\n');
+after(() => rmSync(SOURCE, { recursive: true, force: true }));
 const T_ = {};   // the trees made in prepare, by name
 
 // git on the bare copy, with nothing from the machine's git config.
@@ -81,7 +89,7 @@ function prepare({ root }) {
   for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `${IMAGE}\n`);
   prepareRepo(root);
 }
-useFleet({ watchMs: 2000, env: DOOR, prepare }, async () => { T_.agent = await createActKey('fill-agent'); T_.agent2 = await createActKey('fill-agent-2'); });
+useFleet({ watchMs: 2000, env: { ...DOOR, SPARK_CONSOLE_SOURCE_DIR: SOURCE }, prepare }, async () => { T_.agent = await createActKey('fill-agent'); T_.agent2 = await createActKey('fill-agent-2'); });
 const later = [];
 after(async () => { for (const F of later) await F.stop().catch(() => {}); });
 
@@ -323,5 +331,5 @@ test('the eval’s held-out set never goes into a box: a fill leaves it out, a r
   writeFileSync(at('memory-held-out.json'), '{"questions":[]}\n');
   const again = await call(k.token, 'run', { on: 'box', command: '/read-back' });
   assert.ok(again.isError, again.raw);
-  assert.match(again.text, /the eval’s held-out set is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
+  assert.match(again.text, /an eval set the installer doesn’t ship is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
 });

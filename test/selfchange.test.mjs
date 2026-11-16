@@ -57,7 +57,11 @@ after(async () => { await GHAPI.close(); for (const d of temps) rmSync(d, { recu
 
 let HOME, STATE, COPY;
 // (a third dangerous ask inside ten minutes is sent a minute late: not here, as in install-update.test.mjs)
-const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_GITHUB_API: GHAPI.url, SPARK_CONSOLE_DANGER_LATE_MS: '1' };
+// (the console's installed source as the installer ships it: the repository's eval sets but the held-out one, R47, whose
+// test/eval/ is the list of sets a box may hold, 21-box-fill.mjs; the stand-in fleet itself runs from the repository)
+const SOURCE = temp('sct-self-source-');
+cpSync(join(REPO, 'test', 'eval'), join(SOURCE, 'test', 'eval'), { recursive: true, filter: p => !p.endsWith('memory-held-out.json') });
+const ENV = { SPARK_CONSOLE_REPO_URL: GH, SPARK_CONSOLE_GITHUB_API: GHAPI.url, SPARK_CONSOLE_DANGER_LATE_MS: '1', SPARK_CONSOLE_SOURCE_DIR: SOURCE };
 // (Spark 2's home is the stand-in hub's own, where the box's fill finds the copy of the repository; the box opens on a
 // compute Spark that has its image, as in box-fill.test.mjs)
 const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
@@ -562,7 +566,7 @@ describe('propose_update', { concurrency: 1 }, () => {
       assert.ok(GHAPI.state.pulls.at(-1).body.includes(`Protected paths (the owner’s passkey, on the page): ${PROT.join(', ')}`), GHAPI.state.pulls.at(-1).body);
       box({ 'test/eval/memory-held-out.json': '{"questions":[]}\n' });
       const held = await pressed(chat, 'send your code proposal');
-      assert.match(held.says, /the eval’s held-out set is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
+      assert.match(held.says, /an eval set the installer doesn’t ship is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
     } finally { if (refs()) await pressed(chat, 'drop your code proposal').catch(() => {}); }
     assert.equal(refs(), '');
   });
