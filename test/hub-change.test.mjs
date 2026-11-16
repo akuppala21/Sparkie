@@ -244,8 +244,9 @@ test('a script it runs, changed after the ask, voids the press and is asked agai
 test('the dangerous delete on Spark 2, pressed with its two digits, runs inside the net through the owner’s service manager, and is kept', { timeout: 180000 * SLOW }, async () => {
   routes(true);
   const d = await newChat();
+  // (named from the folder it starts in: in the rehearsal a command's ~ is a folder that isn't there, test/rehearsal.mjs)
   try {
-    await inChat(d, 'clean up the tmp notes on spark 2 for good', 'rm ~/notes/*.tmp');
+    await inChat(d, 'clean up the tmp notes on spark 2 for good', "find notes -name '*.tmp' -delete");
     const ask = (await chatMessages(d)).filter(m => m.danger).at(-1);
     assert.ok(ask, 'the dangerous ask');
     const p = await api(`/chats/${d}/choose`, { method: 'POST', body: { choice: ask.choices.find(c => c.pair).id, pair: ask.pair } });
@@ -254,7 +255,7 @@ test('the dangerous delete on Spark 2, pressed with its two digits, runs inside 
   } finally { rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
   assert.ok(!existsSync(at2('notes/a.tmp')), 'the delete ran');
   const start = starts().at(-1);
-  assert.deepEqual([start.args.command, start.gate, Boolean(start.net)], ['rm ~/notes/*.tmp', 'asked', true]);
+  assert.deepEqual([start.args.command, start.gate, Boolean(start.net)], ["find notes -name '*.tmp' -delete", 'asked', true]);
   assert.equal(netRecord().at(-1).state, 'kept');
   assert.ok(userUnits().some(l => / run --net /.test(l) && / --memory 2G /.test(l)), userUnits().join('\n'));
 });
