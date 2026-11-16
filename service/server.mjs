@@ -17974,7 +17974,7 @@ async function runnerUndo(viewer, ctx, since = '') {
 }
 /* ───────── Sparkie's own code: a proposal, as a pull request (design C 2.5, step 8; the build map's C8c) ───────── */
 // Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs
-// Owns: none        Timers: none        Wakes: none
+// Owns: tmp (writers: selfTree; a folder: each send's work, removed on every exit)        Timers: none        Wakes: none
 // propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
 // as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and
 // notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by
@@ -17994,14 +17994,16 @@ const SELF_CHANGE_ON = false;
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 const SELF_REFUSED = /^\.github\//;
 // What Sparkie may never change on its own word (design C 2.5): the paths that always run the whole suite
-// (tools/affected.mjs: ALWAYS and ALWAYS_PARTS; of tools/, only build-server.mjs and affected.mjs), and the three
-// documents. selfchange.test.mjs checks this list against tools/affected.mjs.
+// (tools/affected.mjs: ALWAYS and ALWAYS_PARTS; all of tools/, whose installed copy is what runs on a proposal), and the
+// three documents. selfchange.test.mjs checks this list against tools/affected.mjs.
 const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^service\/config\.json$/, /^deploy\//,
-  /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\/(build-server|affected)\.mjs$/,
+  /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//,
   /^AGENTS\.md$/, /^docs\/architecture\.md$/, /^docs\/contract\.md$/];
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
   '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start'].map(p => `service/src/${p}.mjs`);
-const SELF_ID = /^[0-9a-f]{8}$/, SELF_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/+@-]{1,400}$/;
+// (where a send unpacks the proposal for the generator: an empty folder of its own for each, 0700)
+const SELF_TMP = `${STATE_DIR}/tmp`;
+const SELF_ID = /^[0-9a-f]{8}$/, SELF_CHAT = /^sc_[0-9a-f]{16}$/, SELF_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/+@-]{1,400}$/;
 let selfBusy = null;
 
 const selfHome = () => (SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null);
@@ -18034,12 +18036,33 @@ function selfGate(viewer, ctx) {
   if (!own) throw new HttpError(403, 'A change to Spark Console’s own code is proposed only in your own chat with Sparkie: never by an agent’s key, ask_sparkie, the API or a saved workflow. Nothing was done.');
 }
 
-// git in Spark 2's copy of the repository, as pull.sh runs it (no system or global config, no prompt, no hooks, no
-// credential helper; https only, and file too on the stand-in fleet); extra GIT_CONFIG_* entries for a push.
-function selfGit(args, { input = null, config = [], indexFile = null, raw = false } = {}) {
+// The copy's own settings hold only what git init and pull.sh put there: [core] and these keys. An include or includeIf,
+// a hook, an fsmonitor, a filter, a URL rewrite or a proxy there could run or send something: the copy is refused.
+const SELF_CONFIG_KEYS = /^(?:repositoryformatversion|filemode|bare|ignorecase|precomposeunicode|logallrefupdates|symlinks)$/i;
+function selfConfigBad(repo) {
+  let text;
+  try { text = readFileSync(`${repo}/config`, 'utf8'); } catch { return 'its settings can’t be read'; }
+  let section = null;
+  for (const raw of text.split('\n')) {
+    const l = raw.replace(/[#;].*$/, '').trim();
+    if (!l) continue;
+    const s = /^\[\s*([A-Za-z0-9.-]+)\s*\]$/.exec(l);
+    if (s) { section = s[1].toLowerCase(); if (section !== 'core') return `[${clean(s[1], 40)}]`; continue; }
+    const k = /^([A-Za-z0-9-]+)\s*(?:=|$)/.exec(l)?.[1];
+    if (section !== 'core' || !k || !SELF_CONFIG_KEYS.test(k)) return clean(k || l, 40);
+  }
+  return null;
+}
+// git in Spark 2's copy of the repository, as pull.sh runs it, in an environment of its own (nothing of the service's):
+// no system or global config, the copy's own checked first (selfConfigBad), no prompt, no hooks, no fsmonitor, no
+// credential helper; https only, and file too on the stand-in fleet. A push adds the token's header (selfPush), for that
+// one git only; hide is that token, kept out of any error.
+function selfGit(args, { input = null, config = [], indexFile = null, raw = false, hide = null } = {}) {
   const repo = selfRepo();
   if (!repo || !existsSync(repo)) return Promise.reject(new HttpError(409, `Spark 2 has no copy of the repository to work from (${UPD_SETUP}).`));
-  const cfg = [['core.hooksPath', '/dev/null'], ['credential.helper', ''], ...config];
+  const bad = selfConfigBad(repo);
+  if (bad) return Promise.reject(new HttpError(409, `Spark 2’s copy of the repository has settings Spark Console didn’t put there (${bad}), so nothing was done with it.`));
+  const cfg = [['core.hooksPath', '/dev/null'], ['core.fsmonitor', 'false'], ['credential.helper', ''], ['core.quotePath', 'false'], ...config];
   const env = { HOME: selfHome(), PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '/bin/false', SSH_ASKPASS: '', GIT_ALLOW_PROTOCOL: ALL_LOCAL ? 'https:file' : 'https',
     GIT_AUTHOR_NAME: 'Sparkie', GIT_AUTHOR_EMAIL: 'sparkie@spark-console.invalid', GIT_COMMITTER_NAME: 'Sparkie', GIT_COMMITTER_EMAIL: 'sparkie@spark-console.invalid',
@@ -18056,7 +18079,11 @@ function selfGit(args, { input = null, config = [], indexFile = null, raw = fals
       clearTimeout(t);
       const buf = Buffer.concat(out);
       if (code === 0) resolve(raw ? buf : buf.toString('utf8').trim());
-      else reject(Object.assign(new Error(`git ${args[0]}: ${maskSecrets(err.trim().split('\n').slice(-2).join(' ')).slice(0, 300) || `exit ${code}`}`), { gitCode: code }));
+      else {
+        let said = err.trim().split('\n').slice(-2).join(' ');
+        if (hide) for (const h of [hide, Buffer.from(`x-access-token:${hide}`).toString('base64')]) said = said.split(h).join('[hidden]');
+        reject(Object.assign(new Error(`git ${args[0]}: ${maskSecrets(said).slice(0, 300) || `exit ${code}`}`), { gitCode: code }));
+      }
     });
     p.stdin.on('error', () => {});
     p.stdin.end(input ?? undefined);
@@ -18071,7 +18098,19 @@ function selfGithub() {
   }
   return { repo: g.repo, token: g.token };
 }
+// The address is the repository pull.sh setup recorded (the secrets file's), on GitHub's host, fixed here.
 const selfRemote = repo => (ALL_LOCAL && process.env.SPARK_CONSOLE_REPO_URL ? process.env.SPARK_CONSOLE_REPO_URL : `https://github.com/${repo}.git`);
+// The one push: refs/sparkie/<id> to refs/heads/sparkie/<id>, named in full (or that one branch deleted), fast-forward
+// only: never --force, --mirror, --all, tags or a "+". The token is read here and goes to this one git, in its
+// environment, as a header for github.com only; the address is built again from the secrets file and checked first.
+async function selfPush(id, del = false) {
+  if (!SELF_ID.test(String(id))) throw new HttpError(500, 'That isn’t a proposal’s id.');
+  const g = selfGithub(), url = selfRemote(g.repo);
+  if (!(ALL_LOCAL && process.env.SPARK_CONSOLE_REPO_URL) && !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\.git$/.test(url)) throw new HttpError(409, 'The repository pull.sh setup recorded isn’t on GitHub, so nothing was pushed.');
+  const refspec = del ? `:refs/heads/sparkie/${id}` : `refs/sparkie/${id}:refs/heads/sparkie/${id}`;
+  return selfGit(['push', '--porcelain', '--no-verify', url, refspec],
+    { config: [['http.https://github.com/.extraheader', `Authorization: basic ${Buffer.from(`x-access-token:${g.token}`).toString('base64')}`]], hide: g.token });
+}
 const selfApiBase = () => (ALL_LOCAL && /^http:\/\/127\.0\.0\.1:\d+$/.test(process.env.SPARK_CONSOLE_GITHUB_API || '') ? process.env.SPARK_CONSOLE_GITHUB_API : 'https://api.github.com');
 // One call to GitHub's API with the token; its answer, or why not (masked).
 async function selfApi(method, path, body) {
@@ -18084,11 +18123,11 @@ async function selfApi(method, path, body) {
     const text = (await r.text()).slice(0, 2000000);
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch {}
-    if (!r.ok) throw new HttpError(502, `GitHub answered ${r.status} to ${method} ${path.split('?')[0]}${json?.message ? `: ${maskSecrets(String(json.message)).slice(0, 200)}` : ''}.`);
+    if (!r.ok) throw new HttpError(502, `GitHub answered ${r.status} to ${method} ${path.split('?')[0]}${json?.message ? `: ${maskSecrets(String(json.message).split(token).join('[hidden]')).slice(0, 200)}` : ''}.`);
     return json;
   } catch (e) {
     if (e instanceof HttpError) throw e;
-    throw new HttpError(502, `GitHub couldn’t be reached (${maskSecrets(String(e.message || e)).slice(0, 160)}).`);
+    throw new HttpError(502, `GitHub couldn’t be reached (${maskSecrets(String(e.message || e).split(token).join('[hidden]')).slice(0, 160)}).`);
   } finally { clearTimeout(t); }
 }
 
@@ -18103,7 +18142,8 @@ async function selfOpen() {
   const id = Object.keys(by).find(k => by[k].sparkie && by[k]['sparkie-base']);
   if (!id) return null;
   let conv = null;
-  try { conv = by[id]['sparkie-chat'] ? clean(await selfGit(['cat-file', 'blob', by[id]['sparkie-chat']]), 80) : null; } catch {}
+  // (the chat's id, kept as a blob: data, used only if it has a chat id's shape)
+  try { const c = by[id]['sparkie-chat'] ? (await selfGit(['cat-file', 'blob', by[id]['sparkie-chat']], { raw: true })).subarray(0, 64).toString('utf8') : ''; conv = SELF_CHAT.test(c) ? c : null; } catch {}
   return { id, head: by[id].sparkie, base: by[id]['sparkie-base'], conv, branch: `sparkie/${id}` };
 }
 const selfMine = (open, ctx) => open && open.conv === ctx.conv;
@@ -18143,7 +18183,7 @@ const selfWords = (v, max, lines = false) => maskSecrets(String(v || '').replace
 const selfProtected = p => SELF_PROTECTED.some(r => r.test(p)) || SELF_PROTECTED_PARTS.includes(p);
 
 async function selfStart(viewer, ctx) {
-  if (!ctx.conv) throw new HttpError(409, 'A change is proposed from a chat with Sparkie: ask there.');
+  if (!SELF_CHAT.test(String(ctx.conv || ''))) throw new HttpError(409, 'A change is proposed from a chat with Sparkie: ask there.');
   const open = await selfOpen();
   if (open) throw new HttpError(409, `A proposal is open already (${open.branch}${selfMine(open, ctx) ? ', from this chat' : ', from another chat'}): send it or drop it first. Nothing was started.`);
   const commit = await selfGit(['rev-parse', '--verify', '-q', 'refs/heads/main^{commit}']).catch(() => '');
@@ -18162,7 +18202,11 @@ async function selfStart(viewer, ctx) {
 // The proposal's tree: the noted commit's, with the box's entries, then the generated files rebuilt by the installed
 // build's own generator. { tree, changed, generated, refused }.
 async function selfTree(base, entries) {
-  const dir = mkdtempSync(`${tmpdir()}/spark-console-propose-`);
+  // (an empty folder of its own, 0700, in the state folder's tmp: never a place others can write)
+  mkdirSync(SELF_TMP, { recursive: true, mode: 0o700 });
+  if (lstatSync(SELF_TMP).isSymbolicLink() || !statSync(SELF_TMP).isDirectory()) throw new HttpError(500, 'The state folder’s tmp isn’t a folder of its own, so nothing was sent.');
+  chmodSync(SELF_TMP, 0o700);
+  const dir = mkdtempSync(`${SELF_TMP}/propose-`);
   try {
     const index = `${dir}/index`;
     await selfGit(['read-tree', base], { indexFile: index });
@@ -18187,8 +18231,18 @@ async function selfTree(base, entries) {
       p.stdin.on('error', () => {});
       p.stdin.end(tar);
     });
+    // (no link stays: the generator reads only files that are files; the proposal's tools/ goes, the installed build's
+    // takes its place, with a package.json of its own so node looks no further up for one)
+    const folders = [work];
+    while (folders.length) {
+      const d = folders.pop();
+      for (const n of readdirSync(d)) { const q = `${d}/${n}`, st = lstatSync(q); if (st.isSymbolicLink()) unlinkSync(q); else if (st.isDirectory()) folders.push(q); }
+    }
     rmSync(`${work}/tools`, { recursive: true, force: true });
-    cpSync(`${selfSource()}/tools`, `${work}/tools`, { recursive: true });
+    cpSync(`${selfSource()}/tools`, `${work}/tools`, { recursive: true, dereference: false, filter: q => !lstatSync(q).isSymbolicLink() });
+    writeFileSync(`${work}/tools/package.json`, '{ "type": "module" }\n');
+    // (the installed generator, as a process of its own: a clean environment with no secret, no token and no state
+    // folder; a time limit; its output bounded; it needs no network)
     const made = await new Promise(resolve => {
       let out = '';
       const p = spawn(process.execPath, [`${work}/tools/make.mjs`], { cwd: work, env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: work, LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
@@ -18254,12 +18308,13 @@ async function selfSend(viewer, ctx, input) {
   const protectedPaths = paths.filter(selfProtected), testLines = await selfTestLines(baseTree, t.tree);
   const message = `${title}\n\n${why}\n\nProposed by Sparkie in the owner’s chat (Spark Console). The title and the reason above are Sparkie’s words.\n`;
   const commit = await selfGit(['commit-tree', t.tree, '-p', open.head, '-F', '-'], { input: Buffer.from(message) });
-  // (never by force, never another ref: the one branch, fast-forward only; the token only in git's environment)
-  const { repo, token } = selfGithub(), basic = Buffer.from(`x-access-token:${token}`).toString('base64');
-  await selfGit(['push', '--porcelain', selfRemote(repo), `${commit}:refs/heads/${open.branch}`], { config: [['http.https://github.com/.extraheader', `Authorization: basic ${basic}`]] })
-    .catch(e => { throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent: ${maskSecrets(e.message).slice(0, 300)}`); });
+  // (the branch moves here first, then that one ref is pushed; a refused push puts it back)
   await selfGit(['update-ref', `refs/sparkie/${open.id}`, commit, open.head]);
-  const owner = repo.split('/')[0];
+  await selfPush(open.id).catch(async e => {
+    await selfGit(['update-ref', `refs/sparkie/${open.id}`, open.head, commit]).catch(() => {});
+    throw new HttpError(502, `The push to ${open.branch} was refused, so nothing was sent: ${maskSecrets(e.message).slice(0, 300)}`);
+  });
+  const repo = selfGithub().repo, owner = repo.split('/')[0];
   let pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr) {
     const body = [`Sparkie’s words (its reason, as it wrote it):`, '', ...why.split('\n').map(l => `> ${l}`), '',
@@ -18278,13 +18333,13 @@ async function selfDrop(viewer, ctx) {
   const open = await selfOpen();
   if (!open) throw new HttpError(409, 'No proposal is open, so nothing was dropped.');
   if (!selfMine(open, ctx)) throw new HttpError(409, `The open proposal (${open.branch}) is another chat’s: drop it from there. Nothing was dropped.`);
-  const { repo, token } = selfGithub(), owner = repo.split('/')[0], basic = Buffer.from(`x-access-token:${token}`).toString('base64');
+  const repo = selfGithub().repo, owner = repo.split('/')[0];
   const said = [];
   if (open.head !== open.base) {
     const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0];
     if (pr?.number) { await selfApi('PATCH', `/repos/${repo}/pulls/${Number(pr.number)}`, { state: 'closed' }); said.push(`pull request #${pr.number} closed`); }
     // (a delete of that one branch, never a push of anything else)
-    await selfGit(['push', '--porcelain', selfRemote(repo), `:refs/heads/${open.branch}`], { config: [['http.https://github.com/.extraheader', `Authorization: basic ${basic}`]] })
+    await selfPush(open.id, true)
       .then(() => said.push(`${open.branch} deleted on GitHub`), e => said.push(`${open.branch} not deleted on GitHub (${maskSecrets(e.message).slice(0, 160)})`));
   }
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});

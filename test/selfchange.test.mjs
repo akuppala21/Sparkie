@@ -14,7 +14,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, cpSync, existsSync, readdirSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, choose, REPO, SLOW } from './lib.mjs';
@@ -66,8 +66,11 @@ const control = v => (v ? writeFileSync(join(STATE, '.test-selfchange.json'), JS
 const ON = { on: true, trial: 'pass' };
 const script = rules => writeFileSync(join(T.fleet.dir, 'model-script.json'), JSON.stringify(rules));
 const TITLE = 'A calmer page', WHY = 'The page says less while a model starts, as you asked this morning.';
+// ("change your own code" asks for that kind of change, so it runs at once on the owner's own words; "open a proposal"
+// doesn't, so it comes back as a button)
 const SCRIPT = ([
   { match: '^please change your own code', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
+  { match: '^please open a proposal', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
   { match: '^send your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
   { match: '^drop your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'drop' } }] },
 ]);
@@ -86,6 +89,22 @@ const refs = () => spawnSync(REAL_GIT, ['-C', COPY, 'for-each-ref', '--format=%(
 const ghBranches = () => spawnSync(REAL_GIT, ['-C', GH, 'for-each-ref', '--format=%(refname)', 'refs/heads/sparkie/'], { encoding: 'utf8', env: GIT_ENV }).stdout.trim().split('\n').filter(Boolean);
 const atMain = path => readFileSync(join(SRC, path), 'utf8');
 const box = files => control({ ...ON, box: { files } });
+// Hostile files write here if anything ever runs them.
+const MARK = temp('sct-self-mark-');
+const marks = () => readdirSync(MARK);
+// Every file under these folders that holds the text exactly (links aside), but the secrets file.
+function holders(text, dirs) {
+  const out = [];
+  const walk = d => {
+    for (const n of readdirSync(d)) {
+      const q = join(d, n), st = lstatSync(q);
+      if (st.isDirectory()) walk(q);
+      else if (st.isFile() && q !== ENV.SPARK_CONSOLE_SECRETS_FILE && readFileSync(q).includes(text)) out.push(q);
+    }
+  };
+  for (const d of dirs) walk(d);
+  return out;
+}
 
 describe('propose_update', { concurrency: 1 }, () => {
   test('dark: refused for everyone while it is off, the owner’s own chat too; nothing is started or pushed', async () => {
@@ -122,13 +141,18 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(refs(), '');
   });
 
-  test('start: refused while the box holds other work; then it fills this chat’s box with main and notes the commit, and a second start is refused', LONG, async () => {
+  test('the stand-in switches are read only on the stand-in fleet: the function returns before the file without ALL_LOCAL', () => {
+    assert.match(readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8'), /function selfTestFile\(\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
+    assert.match(readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8'), /^const SELF_CHANGE_ON = false;$/m);
+  });
+
+  test('start: on the owner’s own words it runs at once (here refused: the box holds other work); then it fills this chat’s box with main and notes the commit, and a second start is refused', LONG, async () => {
     control({ ...ON, box: { busy: true } });
-    const busy = await pressed(await newChat(), 'please change your own code');
-    assert.match(busy.says, /This chat’s box holds other work, so nothing was put in it\./);
+    const busy = await say(await newChat(), 'please change your own code');
+    assert.match(busy.text, /propose_update said: \[error\] This chat’s box holds other work, so nothing was put in it\./);
     assert.equal(refs(), '');
     box({});
-    const chat = await newChat(), s = await pressed(chat, 'please change your own code');
+    const chat = await newChat(), s = await pressed(chat, 'please open a proposal');
     assert.match(s.q.choices[0].label, /^Put main’s code in this chat’s box/);
     assert.equal(s.p.json.outcome, 'started', s.says);
     assert.match(s.says, new RegExp(`main’s tree \\(commit ${MAIN.slice(0, 12)}\\)`));
@@ -136,7 +160,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(refs(), new RegExp(`refs/sparkie/${id} ${MAIN}`));
     assert.match(refs(), new RegExp(`refs/sparkie-base/${id} ${MAIN}`));
     assert.equal(git(COPY, ['cat-file', 'blob', `refs/sparkie-chat/${id}`]), chat);
-    const again = await pressed(await newChat(), 'please change your own code');
+    const again = await pressed(await newChat(), 'please open a proposal');
     assert.match(again.says, new RegExp(`A proposal is open already \\(sparkie/${id}, from another chat\\): send it or drop it first\\. Nothing was started\\.`));
     selfChat = chat;
     selfId = id;
@@ -216,7 +240,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.deepEqual(ghBranches(), []);
     assert.equal(refs(), '');
     box({});
-    const chat = await newChat(), s = await pressed(chat, 'please change your own code');
+    const chat = await newChat(), s = await pressed(chat, 'please open a proposal');
     assert.equal(s.p.json.outcome, 'started', s.says);
     const part = atMain('service/src/21-web.mjs');
     for (let i = 1; i <= 6; i++) {
@@ -231,14 +255,68 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(refs(), '');
   });
 
-  test('the protected paths are tools/affected.mjs’s that always run everything (of tools/, only build-server.mjs and affected.mjs), and the three documents', () => {
+  test('hostile trees: nothing of a proposal is ever run, imported or handed to a shell; the installed build’s tools only, over its files as data', LONG, async () => {
+    const mark = name => `import { writeFileSync as markIt } from 'node:fs';\nmarkIt(${JSON.stringify(join(MARK, name))}, 'ran');\n`;
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    const part = atMain('service/src/21-web.mjs');
+    box({
+      'service/src/21-web.mjs': `${part}// still a proposal\n`,
+      // (a part whose top level would write if it were imported, as the parts are joined: it is only read)
+      'service/src/21-evil.mjs': `/* ───────── a part that writes a marker if it is ever run ───────── */\n// Area: features        Rules: R69        Tests: selfchange.test.mjs\n// Owns: none        Timers: none        Wakes: none\n${mark('part')}`,
+      'package.json': JSON.stringify({ type: 'commonjs', scripts: { preinstall: `touch ${join(MARK, 'npm')}`, prepare: `touch ${join(MARK, 'npm')}` }, imports: { '#x': './evil.mjs' }, main: 'evil.mjs' }),
+      'evil.mjs': mark('main'),
+      // (its own tools: never run, and listed as protected; and files named like the tools' own imports, elsewhere)
+      'tools/make.mjs': mark('tools-make'), 'tools/parts.mjs': mark('tools-parts'), 'tools/build-server.mjs': mark('tools-build'),
+      'parts.mjs': mark('root-parts'), 'docs/build-server.mjs': mark('docs-build'), 'service/code-map.mjs': mark('code-map'),
+      'node_modules/fs/index.js': mark('node-modules-fs'), 'node_modules/.bin/node': `#!/bin/sh\ntouch ${join(MARK, 'bin-node')}\n`,
+      '.npmrc': `node-options=--import=${join(MARK, 'npmrc.mjs')}\n`, '.node-version': '18\n', 'docs/-n.md': 'a leading dash\n',
+    });
+    const s = await pressed(chat, 'send your code proposal');
+    assert.equal(s.p.json.outcome, 'sent', s.says);
+    assert.deepEqual(marks(), [], 'nothing of the proposal ran');
+    for (const p of ['tools/make.mjs', 'tools/parts.mjs', 'tools/build-server.mjs']) assert.ok(s.p.json.protected.includes(p), `${p} is protected`);
+    const head = git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.id}`]);
+    assert.equal(git(GH, ['show', `${head}:docs/-n.md`]), 'a leading dash', 'a leading dash is a name, as data');
+    assert.match(git(GH, ['show', `${head}:service/server.mjs`]), /a part that writes a marker if it is ever run/, 'joined as text by the installed generator');
+    // (a name with a newline, or shell signs: refused, nothing pushed)
+    for (const bad of ['docs/a\nb.md', `docs/$(touch ${join(MARK, 'shell')}).md`, 'docs/a;b.md', 'docs/a b.md']) {
+      box({ 'service/src/21-web.mjs': `${part}// x\n`, [bad]: 'x\n' });
+      const r = await pressed(chat, 'send your code proposal');
+      assert.match(r.says, /The box read back entries that can’t be proposed .*so nothing was sent\./, JSON.stringify(bad));
+    }
+    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.id}`]), head, 'nothing pushed');
+    assert.deepEqual(marks(), []);
+    await pressed(chat, 'drop your code proposal');
+    assert.equal(refs(), '');
+    assert.ok(!existsSync(join(STATE, 'tmp')) || readdirSync(join(STATE, 'tmp')).length === 0, 'the folders it worked in are gone');
+  });
+
+  test('the token: in no file but the secrets file (the state folder, the logs, the copy’s settings and refs), no answer, no call body; the copy’s settings are checked first', LONG, async () => {
+    const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
+    for (const t of [TOKEN, basic]) assert.deepEqual(holders(t, [T.fleet.dir, GH]), [], 'the token is nowhere else');
+    assert.ok(GHAPI.state.calls.every(c => !JSON.stringify(c.body || '').includes(TOKEN)), 'never in a call’s body');
+    // (an include, or a setting Spark Console didn't put there, in the copy's own settings: refused before git runs)
+    const cfg = join(COPY, 'config'), was = readFileSync(cfg, 'utf8');
+    for (const extra of [`[include]\n\tpath = ${join(MARK, 'inc')}\n`, `[includeIf "gitdir:/"]\n\tpath = ${join(MARK, 'inc')}\n`, '[core]\n\tfsmonitor = true\n', '[url "https://example.com/"]\n\tinsteadOf = https://github.com/\n']) {
+      writeFileSync(cfg, `${was}${extra}`);
+      try {
+        box({});
+        const r = await pressed(await newChat(), 'please open a proposal');
+        assert.match(r.says, /Spark 2’s copy of the repository has settings Spark Console didn’t put there \(.+\), so nothing was done with it\./, extra);
+      } finally { writeFileSync(cfg, was); }
+    }
+    assert.equal(refs(), '');
+  });
+
+  test('the protected paths are tools/affected.mjs’s that always run everything (all of tools/), and the three documents', () => {
     const src = readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8');
     const listed = src.slice(src.indexOf('const SELF_PROTECTED = ['), src.indexOf('const SELF_ID'));
     for (const re of ALWAYS) {
-      if (re.source === '^tools\\/' || re.source === '^\\.github\\/') continue;
+      if (re.source === '^\\.github\\/') continue;
       assert.ok(listed.includes(`/${re.source}/`), `${re.source} is protected`);
     }
-    assert.ok(listed.includes('/^tools\\/(build-server|affected)\\.mjs$/'));
     for (const p of ['AGENTS', 'docs\\/architecture', 'docs\\/contract']) assert.ok(listed.includes(`/^${p}\\.md$/`), p);
     for (const p of ALWAYS_PARTS) assert.ok(listed.includes(`'${p.replace(/\.mjs$/, '')}'`), p);
   });
