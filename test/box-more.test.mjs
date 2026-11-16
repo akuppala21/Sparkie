@@ -134,9 +134,9 @@ test('a command in the box is written down first, carrying its request: a taskâ€
   try { chat = await newChat(); r = await say(chat, words); } finally { rmSync(scriptFile, { force: true }); }
   assert.deepEqual(r.message.tools.map(t => [t.name, t.outcome ?? null]), [['run', 'box'], ['stop_model', 'needs-ok']], r.text);
   const said = journal().find(x => x.k === 'said' && x.chat === chat), start = journal().find(x => x.k === 'cmd' && x.start && x.where === 'box' && x.chat === chat);
-  assert.deepEqual([start?.task, start?.act, start?.class, start?.gate, start?.args?.command], [said.id, 'run', 'change', 'box', 'touch note.txt'], JSON.stringify(start));
+  assert.deepEqual([start?.task, start?.act, start?.class, start?.gate, start?.args?.command], [said.id, 'run', 'change', 'box', 'touch note.txt'], `the box command's start line: ${JSON.stringify(start ?? null)}`);
   const end = journal().find(x => x.k === 'cmd' && x.end && x.id === start.id);
-  assert.deepEqual([end?.ok, end?.outcome, end?.ran], [true, 'ran', undefined], JSON.stringify(end));
+  assert.deepEqual([end?.ok, end?.outcome, end?.ran], [true, 'ran', undefined], `its end line: ${JSON.stringify(end ?? null)}`);
   const stop = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: '/stop' } });
   assert.equal(stop.status, 200, stop.text);
   const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report) || null, { timeout: 60000, every: 500, what: 'the taskâ€™s report' });
@@ -151,5 +151,5 @@ test('a command in the box is written down first, carrying its request: a taskâ€
   const never = journal().filter(x => x.k === 'cmd' && x.start && x.where === 'box' && x.args?.command === 'touch never.txt');
   assert.equal(never.length, 1, JSON.stringify(never));
   const neverEnd = journal().find(x => x.k === 'cmd' && x.end && x.id === never[0].id);
-  assert.deepEqual([neverEnd?.ok, neverEnd?.outcome, neverEnd?.ran], [false, 'disk', false], JSON.stringify(neverEnd));
+  assert.deepEqual([neverEnd?.ok, neverEnd?.outcome, neverEnd?.ran], [false, 'disk', false], `its end line: ${JSON.stringify(neverEnd ?? null)}`);
 });
