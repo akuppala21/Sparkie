@@ -15360,8 +15360,6 @@ const FILL_LINKS_LEFT = 'test/mock/root/';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
-// Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches these two (runCommand).
-const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
 const boxFills = new Map();   // the caller (boxKey) → { tree, box, spark, at }
 const boxFilling = new Set(); // the callers with a fill or a read back under way
 
@@ -21952,6 +21950,9 @@ const PROVE_LOCK_AT = `${ALL_LOCAL ? '"$HOME/.rehearsal"' : ''}/run/spark-consol
 // console gives the call LOOK_SLACK more before it ends it; the stand-in fleet may shorten it); two at once on a Spark; a
 // proof 15 minutes.
 const LOOK_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_LOOK_SECONDS) || 30;
+// Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches C8b's two (runCommand,
+// 21-box-fill.mjs). Defined here, where runCommand reads it, so a harness of this part alone has it.
+const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
 const LOOK_SLACK = 8, LOOK_AT_ONCE = 2, LOOK_HEAD = 2000, LOOK_TAIL = 3500, PROVE_MS = 15 * 60000;
 const looking = new Map();       // Spark id → looks running there now
 const wallsFailed = new Map();   // Spark id → the attempt its last proof (the self-test's) let through; gone when one passes

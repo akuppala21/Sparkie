@@ -29,6 +29,9 @@ const PROVE_LOCK_AT = `${ALL_LOCAL ? '"$HOME/.rehearsal"' : ''}/run/spark-consol
 // console gives the call LOOK_SLACK more before it ends it; the stand-in fleet may shorten it); two at once on a Spark; a
 // proof 15 minutes.
 const LOOK_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_LOOK_SECONDS) || 30;
+// Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches C8b's two (runCommand,
+// 21-box-fill.mjs). Defined here, where runCommand reads it, so a harness of this part alone has it.
+const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
 const LOOK_SLACK = 8, LOOK_AT_ONCE = 2, LOOK_HEAD = 2000, LOOK_TAIL = 3500, PROVE_MS = 15 * 60000;
 const looking = new Map();       // Spark id → looks running there now
 const wallsFailed = new Map();   // Spark id → the attempt its last proof (the self-test's) let through; gone when one passes
