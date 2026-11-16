@@ -1,33 +1,34 @@
 # Call the root helper on a Spark
 
-Anything the console runs on a Spark itself through Sparkie's free work (a look, a change, root, the net) goes
-through the root helper (`deploy/spark-console-root`, R42) and its one caller, `helperCall` in
-`21-work.mjs`. Design: `docs/design-2026-11-13/a-workspace.md`, 2.13.
+Anything the console runs on a Spark through Sparkie's free work (a look, a change, root, the net) goes
+through the root helper (`deploy/spark-console-root`, R42) and its two callers: `helperCall` in `21-work.mjs`, and
+the net's `guardCall` in `21-guard.mjs` (`run --net`, `root --net`, `keep`, `putback`). Design:
+`docs/design-2026-11-13/a-workspace.md`, 2.13.
 
 ## Touch
 
 - `helperScript` (`21-work.mjs`) builds the one script a call runs, as the owner over ssh (local bash on Spark 2): the
   helper's SHA-256 against `HELPER_SHA256` first (an unknown helper is never called), then any check that must run on
-  the Spark, then `sudo -n` of the helper with a fresh id. The brain's text is only ever one word made with `q()`.
+  the Spark, then `sudo -n` of the helper with a fresh id. The brain's command is one word made with `q()`.
 - `helperCall` runs it and gives back `{ id, code, out, cut, timedOut }`; it never rejects. It ends the call at its
   seconds and `LOOK_SLACK` more, or past `J_MAX` of output.
 - `helperAnswer` reads the answer from the lines that begin with the id (a command can learn it); a look's or run's
   answer is its last line, `<id> end <code>` or `<id> end time`; before it only the helper's fixed sentences, whole,
   are `notes`. Map a new kind of answer there, never by searching the output.
-- A change (`runChange`, R61): `--dir`, `--protect` (`helperProtect`), `--memory`; after a yes only `--open`, `--fleet`,
-  `--gpu`. `state --id` (`runnerRunState`): what became of a call.
+- A change (`runChange`, R61): `--dir`, `--protect` (`helperProtect`), `--memory`, `--stdin` (a write's bytes, keys);
+  after a yes only `--open`, `--home`, `--fleet`, `--gpu`, `--asked`. `state --id` (`runnerRunState`): what became of
+  a call; `stop --id` (`longStop`) ends it.
 - With no helper, not this build's, no sudo line or no current proof, an action answers `needsOwner` and runs nothing:
-  the owner's command (`ownerCommand`) once per Spark and reason while the console runs, then one line; never the
-  hub's yet (it waits for the lock-out net). While a proof holds its lock: "being proven right now".
+  the owner's command (`ownerCommand`; Spark 2's: `--hub`) once per Spark and reason while the console runs, then
+  one line. While a proof holds its lock: "being proven right now".
 
 ## Also update
 
 - `HELPER_SHA256` whenever `deploy/spark-console-root` changes (`work.test.mjs` holds them equal); the owner then runs
   the one-time command again on each Spark, so say so in the update's note.
 - A new verb or flag of the helper: its own test in `test/root-helper.test.mjs`, and R42.
-- A test of a call: `test/work.test.mjs` sets up a rehearsal of the real helper under a stand-in Spark's home
-  (`rehearse`), with its own `sudo` and `systemd-run` stand-ins first on the PATH. The stand-in fleet's own `sudo`
-  runs one too: `test/rehearsal.mjs` (`run: true` holds the home for a change).
+- A test of a call: `rehearse` (`test/work.test.mjs`) sets up the real helper under a stand-in Spark's home; the
+  fleet's own: `test/rehearsal.mjs` (`run: true` for a change).
 
 ## Never
 
