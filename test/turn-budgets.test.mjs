@@ -227,7 +227,10 @@ test('three refused calls in a row put the tools away, the answer says what was 
   assert.deepEqual(calls(s), [['run', false], ['run', true], ['run', true], ['run', false], ['run', true], ['guide', true]], errors('refused, then not'));
   assert.deepEqual(rounds('refused, then not'), offeredThen(6));
   assert.equal(looks() - before, 1);
-  assert.doesNotMatch(s.text, /Stopped/);
+  // (no refusal put the tools away: the six rounds ended it, and code says so; its request has a next step, so it
+  // carries on: final read C-5)
+  assert.equal((s.text.match(/Stopped/g) || []).length, 1, s.text.slice(-300));
+  assert.ok(s.text.endsWith('\n\nStopped here: one message may take 6 rounds of tools, and this one has.\nCarrying on with your request in a fresh turn.'), s.text.slice(-300));
 });
 
 // (review after the loop, Later 11: the twelfth command set "steps" before the three refusals of its own round came

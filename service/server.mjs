@@ -4211,7 +4211,9 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
   return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
     works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
     // (the operations its calls started, and a call that may change something still going past its 50 seconds: roundCalls)
-    ops: [], going: null };
+    ops: [], going: null,
+    // (the calls the brain made after its tools were put away, none of them run: roundDropped)
+    dropped: [] };
 }
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
@@ -4227,12 +4229,13 @@ function budgetContext(setup) {
   const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
-// Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
-// (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are paused): only the owner's request that is a
-// task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
+// Whether a turn the steps, the output or the rounds ended carries on by itself, in a fresh turn under the carry-on's
+// own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are
+// paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never after
+// three refusals: the brain was spinning.
 function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
-  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
+  if (!['steps', 'output', 'rounds'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
   // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
   return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
@@ -4278,10 +4281,11 @@ function budgetCut(turn, out, jid) {
   return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${!jid ? 'It wasn’t kept: the record couldn’t be written.' : jOwnCall(turn.viewer, turn.ctx) ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : `It is kept whole in record ${jid}, which only the owner reads back.`} Answer now with what you have.`;
 }
 // A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
-// results weren't read and where they are kept, or which calls were refused and why; then that the task carries on in
-// a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+// results weren't read and where they are kept, or which calls were refused and why, or that the rounds were all taken;
+// the calls made after the tools were put away, none run; then that the task carries on in a fresh turn
+// (budgetCarries; keepTask keeps it), or that the owner can say "go on".
 function budgetReport(turn) {
-  if (!turn.spent) return;
+  if (!turn.spent && !turn.dropped.length) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
   const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
@@ -4290,6 +4294,9 @@ function budgetReport(turn) {
   if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
+  if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
+  const late = turn.dropped.length;
+  if (late) lines.push(`${late === 1 ? '1 more call was' : `${late} more calls were`} asked for after the tools were put away, and not run (${[...new Set(turn.dropped)].join(', ')}).`);
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
   const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
   turn.answer += text;
@@ -4366,19 +4373,27 @@ function modelStep(turn, sent) {
     up.end(JSON.stringify({ ...base, messages, ...(sent?.length ? { tools: sent, tool_choice: 'auto' } : {}) }));
   });
 }
+// What the brain is told in the last round, once its tools are put away (by the rounds a message may take, its token
+// budget or one of the loop's budgets): a call now is not run, so it answers with what the tools said. (Final read
+// C-5: past the rounds it was told nothing, and its system prompt still said it had tools.)
+const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
 // Up to ROUNDS rounds of looking things up (and at most CHANGES changes), then it has to answer.
 async function turnRounds(turn) {
-  const { emit, link, tools, ROUNDS } = turn;
+  const { emit, link, tools, ROUNDS, messages } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
-    // or at one of the loop's budgets, turnBudgets)
+    // (the last round offers no tools: past the rounds a message may take, a budget of its own, or past its brain's
+    // token budget, 13-ask.mjs, or at one of the loop's budgets, turnBudgets; and the brain is told so)
+    if (round >= ROUNDS) turn.spent ||= 'rounds';
     const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
+    if (last && tools.length) messages[0].content = `${messages[0].content}\n\n${toolsAway(turn)}`;
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
     turn.usage = r.usage || turn.usage;
     if (link.gone) throw new Error(TURN_STOPPED);
-    if (!r.calls.length || last) break;
+    if (!r.calls.length) break;
+    // (calls made all the same are not run, and each says so: never dropped unseen, C-5)
+    if (last) { await roundDropped(turn, round, r); break; }
     await roundCalls(turn, round, r);
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
@@ -4436,9 +4451,17 @@ async function roundCalls(turn, round, r) {
   }
   messages.push(...results);
 }
+// The calls of a last round, made after the tools were put away (at most 4, as a round's): none is run; each is on the
+// page and in the journal as not run, and the reply's last lines name them (budgetReport).
+async function roundDropped(turn, round, r) {
+  const calls = r.calls.slice(0, 4), steps = [];
+  for (const [i, c] of calls.entries()) await runOne(turn, { round, calls, steps, away: true }, c, i);
+  turn.used.push(...steps.filter(Boolean));
+  turn.dropped.push(...calls.map(c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool')));
+}
 // One tool call: the checks of this turn (a stop, the agent’s web searches, the changes a message may make), then
 // runAction with 50 seconds, the paste card set aside, the result masked, journalled (tool), cut and told.
-async function runOne(turn, { round, calls, steps, outside = [] }, c, i) {
+async function runOne(turn, { round, calls, steps, outside = [], away = false }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
   let out, ok = true, outcome = null, plan = null, value = null, handed = false, status = null;
@@ -4447,6 +4470,8 @@ async function runOne(turn, { round, calls, steps, outside = [] }, c, i) {
   try {
     // (the owner's /stop came while another call of this round ran: nothing more is handed to runAction)
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
+    // (a call made after the tools were put away, roundDropped: never handed over, and no refusal of its own)
+    if (away) throw Object.assign(new HttpError(409, 'Not run: it was asked for after the tools were put away for this message.'), { waited: true });
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     // (the one before it is still going after the wait, roundCalls: one at a time, so this one isn't started)
     if (turn.going && !roundTogether(a)) throw Object.assign(new HttpError(409, `Not run: the call before it in this message is still going, and calls that may change something run one at a time, in the order asked. Ask for it again once that one has ended (check recent_operations or fleet_events).`), { waited: true });

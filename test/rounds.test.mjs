@@ -5,7 +5,9 @@
 // Spark, a change on one Spark and a look on another; one still going past its 50 seconds is waited for; a change
 // refused because an operation the same turn started still holds its Spark is no refusal of its own. A command marks
 // the turn as having read outside text only once something ran (a failed one too); one refused, answered "nothing
-// ran" or asked does not, so the change after it runs at once.
+// ran" or asked does not, so the change after it runs at once. Past the rounds a message may take, the brain is told
+// its tools are put away, a call it makes all the same is answered "not run" and nothing runs, the reply ends with
+// code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call).
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
@@ -14,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 // (a change may run 60 seconds here, so one can go on past the 50 seconds a tool call has)
@@ -163,4 +165,35 @@ test('a command that ran and printed something is outside text, one that failed 
     assert.match(String(r.back[0]?.question), /\nAsked because Sparkie read text from outside first\.\n/, JSON.stringify(r.back[0]));
     assert.ok(!existsSync(at3(`notes/${name}.txt`)), 'asked, not run');
   }
+});
+
+// Final read C-5: past the round limit the brain was told nothing, a call it made was dropped unseen, and the reply had
+// no line from code and no carry-on.
+const CARRIED = '^\\[Spark Console\\] Your last reply stopped at the limit of one message \\(its last lines say which\\)\\. Carry on with that request: “';
+test('past the rounds a message may take: the brain is told its tools are put away, a call it makes all the same is answered “not run” and nothing runs, the reply ends with code’s own lines, and a task carries on', { timeout: 240000 * SLOW }, async () => {
+  const chat = await newChat(), from = journal().length, words = 'look around, then tell me what you found';
+  // (six rounds of lookups, the stand-in brain's six; in the seventh, with no tools offered, it calls run all the same)
+  const late = { ...RUN('echo late > notes/late.txt'), untooled: true };
+  script([{ match: `^${esc(words)}$`, rounds: [...Array(6).fill([GUIDE]), [late]] }, { match: CARRIED, rounds: [] }]);
+  let r, m;
+  try {
+    r = await say(chat, words);
+    m = await waitFor(async () => { const x = await chatMessages(chat); return x.length >= 4 && x.at(-1).role === 'assistant' && x; }, { timeout: 120000, what: 'the carry-on turn' });
+  } finally { noScript(); }
+  const asked = requests(words);
+  assert.deepEqual(asked.map(x => [x.round, x.tools.length > 0]), [...[0, 1, 2, 3, 4, 5].map(i => [i, true]), [6, false]]);
+  assert.ok(asked.at(-1).system.endsWith('\n\n[Spark Console] Your tools are put away for this message (one message may take 6 rounds of tools). A tool you call now is not run: answer with what the tools said, and say what is left to do.'), asked.at(-1).system.slice(-400));
+  assert.ok(!asked.slice(0, -1).some(x => x.system.includes('tools are put away')), 'only the last request is told');
+  // The call made all the same: not run, and said so on the page and in the journal.
+  assert.deepEqual(r.tools.map(t => [t.name, t.ok]), [...Array(6).fill(['guide', true]), ['run', false]], shown(r.tools));
+  assert.equal(r.tools.at(-1).tail, 'Not run: it was asked for after the tools were put away for this message.');
+  assert.ok(!existsSync(at3('notes/late.txt')), 'nothing ran');
+  assert.deepEqual(toolRecords(chat, from).filter(x => x.act === 'run').map(x => x.ok), [false]);
+  // Code's own lines end the reply, and the task carries on in a fresh turn.
+  assert.ok(r.text.endsWith('Stopped here: one message may take 6 rounds of tools, and this one has.\n1 more call was asked for after the tools were put away, and not run (run).\nCarrying on with your request in a fresh turn.'), r.text.slice(-400));
+  assert.equal(m[2].role, 'user');
+  assert.ok(m[2].auto, 'Spark Console’s own turn');
+  assert.match(m[2].content, new RegExp(`${CARRIED}${esc(words)}”`));
+  const budgets = journal().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets && [x.budgets.spent ?? null, x.budgets.carried ?? null]);
+  assert.deepEqual(budgets[0], ['rounds', true], JSON.stringify(budgets));
 });
