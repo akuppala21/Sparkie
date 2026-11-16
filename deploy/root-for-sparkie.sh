@@ -367,7 +367,7 @@ undo() {
     g=$(sed -n "s/^$id net open: guard \([a-z0-9]*\) goes back at .*/\1/p" <<<"$out" | head -n 1)
     at=$(sed -n "s/^$id net open: guard [a-z0-9]* goes back at \(.*\) unless it is kept;.*/\1/p" <<<"$out" | head -n 1)
     if [ -n "$g" ] && grep -q "^$id net left: " <<<"$out"; then
-      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), then run --undo again. Nothing was changed."
+      stop "the lock-out net still holds a change here (guard $g), and no timer waits to put it back. Put it back first (sudo $HELPER putback --id $g), or, once its put-back has failed, keep it as it stands (sudo $HELPER keep --id $g); then run --undo again. Nothing was changed."
     elif [ -n "$g" ]; then
       stop "the lock-out net still holds a change here (guard $g, which goes back at ${at:-its time} unless it is kept). Keep it (sudo $HELPER keep --id $g) or put it back (sudo $HELPER putback --id $g) first, then run --undo again. Nothing was changed."
     fi

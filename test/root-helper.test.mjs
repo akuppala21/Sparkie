@@ -2745,11 +2745,11 @@ describe("the owner's one-time command", () => {
     assert.equal(u.status, 2, u.stdout + u.stderr);
     assert.match(u.stderr, new RegExp(`Stopped on .*: the lock-out net still holds a change here \\(guard ${g.id}, which goes back at \\d{4}-\\d\\d-\\d\\dT\\S+Z unless it is kept\\)\\. Keep it \\(sudo /usr/local/sbin/spark-console-root keep --id ${g.id}\\) or put it back \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\) first, then run --undo again\\. Nothing was changed\\.\n`));
     for (const p of kept) assert.ok(has(f, p), p);
-    // left with no timer (a restart whose put-back failed, say): only a put-back ends it, and keep is not offered
+    // left with no timer (a restart whose put-back failed, say): a put-back ends it, or, once that has failed, a keep
     rmSync(join(f.target.R, 'standin/timers', `sw-guard-${g.id}.timer`));
     const v = f.cmd(['--undo', '3']);
     assert.equal(v.status, 2, v.stdout + v.stderr);
-    assert.match(v.stderr, new RegExp(`: the lock-out net still holds a change here \\(guard ${g.id}\\), and no timer waits to put it back\\. Put it back first \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\), then run --undo again\\. Nothing was changed\\.\n`));
+    assert.match(v.stderr, new RegExp(`: the lock-out net still holds a change here \\(guard ${g.id}\\), and no timer waits to put it back\\. Put it back first \\(sudo /usr/local/sbin/spark-console-root putback --id ${g.id}\\), or, once its put-back has failed, keep it as it stands \\(sudo /usr/local/sbin/spark-console-root keep --id ${g.id}\\); then run --undo again\\. Nothing was changed\\.\n`));
     for (const p of kept) assert.ok(has(f, p), p);
     assert.ok(!sudoCalls(f).slice(n).some(x => x.startsWith('rm ')), sudoCalls(f).slice(n).join('\n'));
     // put back: --undo goes on, and the line stays gone (no timer is left to write it back)
