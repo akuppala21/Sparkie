@@ -267,7 +267,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
-      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: `Nothing was written: ${maskSecrets(last || (a.exit == null ? 'it was ended before it finished' : `exit ${a.exit}`)).slice(0, 300)}` }) : {}),
+      // (after an end the console can't know, or at the time limit, it may have been written)
+      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };

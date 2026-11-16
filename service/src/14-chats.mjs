@@ -175,12 +175,20 @@ async function runChoice(viewer, conv, id, by) {
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
-  const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  // (an ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page
+  // gets them whole, from memory, chatWholeShown)
+  const whole = asked?.whole?.length ? content : null;
+  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
+  if (whole) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  return { ...(out || { outcome: 'declined' }), message };
+  return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
 }
+// A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
+// the chat file's masked copy), for the owner's page (24-handler.mjs).
+const chatWhole = new WeakMap();
+const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) ? { ...m, content: chatWhole.get(m) } : m));
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',

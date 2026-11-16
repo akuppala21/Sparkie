@@ -37,6 +37,8 @@ useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000'
     put('notes/real/inner.txt', 'inner\n');
     put('notes/ro.txt', 'read only\n', 0o444);
     put('notes/nobreak.txt', 'a\nb');
+    // (a Latin-1 byte, e9, on line 1: not UTF-8 text)
+    put('notes/latin1.txt', Buffer.from('636166e90a6c696e6520320a', 'hex'));
     put('notes/long.txt', 'x\n');
     put('work/server.key', 'placeholder\n', 0o600);
     symlinkSync('real/inner.txt', join(h, 'notes', 'lnk.txt'));
@@ -298,6 +300,43 @@ test('write_file\'s own entry: refused while changes are paused; an agent\'s cal
   assert.equal(a.isError, false, a.text);
   assert.equal(a.value.outcome, 'question', a.text);
   assert.ok(!existsSync(at3('notes/paused.txt')) && !existsSync(at3('notes/agent.txt')));
+});
+
+// The second read, fix 1: lines from to to are put together as text, so a file that isn't UTF-8 would change elsewhere.
+test('lines from to to are refused for a file that isn’t UTF-8 text, and the file is as it was', { timeout: 60000 * SLOW }, async () => {
+  const before = readFileSync(at3('notes/latin1.txt'));
+  const r = await writeApi({ path: '~/notes/latin1.txt', text: 'two\n', from: 2, to: 2 });
+  assert.equal(r.status, 400, r.text);
+  assert.match(r.json.error, /^~\/notes\/latin1\.txt isn’t UTF-8 text, so lines 2 to 2 can’t be put in it without changing other bytes: write the whole file\./);
+  assert.ok(readFileSync(at3('notes/latin1.txt')).equals(before), 'unchanged');
+});
+
+// The second read, fix 2: a hidden part that holds a sign that runs something is shown whole on the button (the paired
+// chat's ask), marked; the records keep it masked.
+test('a hidden part holding a sign that runs something is shown whole on the button, marked; the records keep it masked', { timeout: 240000 * SLOW }, async () => {
+  const TG = 5550001, fleet = await startMock({ evalOnRecord: false, telegram: true, env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
+    prepare: ({ root, dir }) => {
+      rehearse(root, 'spark3', { run: true }); mkdirSync(join(root, 'spark3', 'notes'), { recursive: true });
+      mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', bot: 'spark_test_bot', chatId: TG, userId: TG, name: 'Owner', pairedAt: '2026-11-10T00:00:00.000Z', approve: true } }), { mode: 0o600 });
+    } });
+  const was = { fleet: T.fleet, base: T.base, mcp: T.mcp, origin: T.origin };
+  Object.assign(T, { fleet, base: fleet.base, mcp: fleet.mcp, origin: fleet.origin });
+  try {
+    const chat = await newChat(), mark = '(shown whole: what would be hidden here holds signs that run something)';
+    const r = await turn(chat, 'write the runs note on spark 3', [[WRITE('~/notes/runs.txt', 'token=$(reboot)\npassword=hunter2xyz\n')]]);
+    // (the brain's copy is masked again, with the mark; the plain hidden value has none)
+    const q = r.back[0]?.question || '';
+    assert.ok(q.includes(`\n+ token=[hidden] ${mark}\n`), q);
+    assert.ok(q.includes('\n+ password=[hidden] (a value on this line is hidden here; it is written as given)\n'), q);
+    // (the paired chat's ask shows it whole, and only it)
+    const sent = await waitFor(() => lines(join(fleet.dir, 'telegram-calls.jsonl')).find(c => c.method === 'sendMessage' && c.body?.reply_markup), { what: 'the ask in the paired chat' });
+    assert.ok(sent.body.text.includes(`+ token=$(reboot) ${mark}`), sent.body.text);
+    assert.ok(sent.body.text.includes('+ password=[hidden]'), sent.body.text);
+    // (the chat file and the journal keep it masked)
+    assert.ok(!readFileSync(join(fleet.stateDir, 'chats.json'), 'utf8').includes('token=$(reboot)'), 'masked in chats.json');
+    for (const f of readdirSync(fleet.journalDir)) assert.ok(!readFileSync(join(fleet.journalDir, f), 'utf8').includes('token=$(reboot)'), `masked in ${f}`);
+  } finally { Object.assign(T, was); await fleet.stop(); }
 });
 
 // The rail (R52): with no eval on record, a plain write Sparkie proposes is a button, and the owner's press writes it.

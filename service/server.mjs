@@ -3677,12 +3677,20 @@ async function runChoice(viewer, conv, id, by) {
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
-  const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  // (an ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page
+  // gets them whole, from memory, chatWholeShown)
+  const whole = asked?.whole?.length ? content : null;
+  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
+  if (whole) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
-  return { ...(out || { outcome: 'declined' }), message };
+  return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
 }
+// A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
+// the chat file's masked copy), for the owner's page (24-handler.mjs).
+const chatWhole = new WeakMap();
+const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) ? { ...m, content: chatWhole.get(m) } : m));
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
   compare: 'Comparing models for',
@@ -5901,7 +5909,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+// whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
+// paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -5926,7 +5936,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
       ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
-  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
+  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
     note: ownerOnly ? 'Only the owner can answer this one, from Spark Console. Tell them what it asks; don’t answer it yourself.'
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
@@ -13478,11 +13488,13 @@ function tellParts(text) {
   if (rest) parts[parts.length - 1] = `${parts[parts.length - 1].slice(0, TELL_PART - 40).trimEnd()}\n\n(the rest is in Spark Console)`;
   return parts.filter(Boolean);
 }
-// Secrets hidden, and the bot's own token replaced wherever it appears.
-const tellClean = (text, token) => {
-  let t = maskSecrets(String(text || ''));
-  if (token) t = t.split(token).join('[hidden]');
-  return t;
+// Secrets hidden, and the bot's own token replaced wherever it appears. keep: whole lines code built to be shown as they
+// are (question()'s whole): each one found in the text goes as it is, but for the bot's token.
+const tellClean = (text, token, keep = []) => {
+  const clean = s => { let t = maskSecrets(String(s || '')); if (token) t = t.split(token).join('[hidden]'); return t; };
+  const lines = String(text || '').split('\n'), kept = new Set((Array.isArray(keep) ? keep : []).filter(k => typeof k === 'string' && k && !k.includes('\n')));
+  if (!kept.size) return clean(text);
+  return lines.map(l => (kept.has(l) ? (token ? l.split(token).join('[hidden]') : l) : clean(l))).join('\n');
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
@@ -13492,7 +13504,7 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '' } = {}) {
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [] } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -13502,7 +13514,7 @@ async function tell(why, text, { buttons = null, to = null, pre = null, tail = '
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   if (later && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
+  const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);
@@ -13682,7 +13694,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: q.group, conv: conv.id };
     for (const c of shown) tgAsks.set(c.choice, sent);
     const drop = () => { for (const c of shown) if (tgAsks.get(c.choice) === sent) tgAsks.delete(c.choice); };
-    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })) }).then(ok => { if (!ok) drop(); }, drop);
+    // (lines the button shows whole go as they are: question()'s whole, write_file's)
+    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [] }).then(ok => { if (!ok) drop(); }, drop);
     return true;
   } catch (e) { console.error(`Asking on Telegram: ${e.message}`); return false; }
 }
@@ -16941,7 +16954,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  // (write_file's lines the button shows whole: Telegram's ask and the page's copy of a press; the records keep them masked)
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+    { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
@@ -18357,7 +18372,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
-      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: `Nothing was written: ${maskSecrets(last || (a.exit == null ? 'it was ended before it finished' : `exit ${a.exit}`)).slice(0, 300)}` }) : {}),
+      // (after an end the console can't know, or at the time limit, it may have been written)
+      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
@@ -20474,10 +20490,23 @@ function writeSplice(oldText, text, from, to) {
   return out.length ? `${out.join('\n')}${ends ? '\n' : ''}` : '';
 }
 // One line on the button: masked, cut at 200 signs and said so; a line the mask changed is marked, as it is written as
-// given.
+// given. A hidden part that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >) is shown as
+// written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
+// hidden that way could be a command). The records (the brain's result, the journal, the chat file) mask the line again,
+// with the same mark, which then says the hidden part holds such signs; the button (the page, Telegram) shows it.
+const WRITE_WHOLE = ' (shown whole: what would be hidden here holds signs that run something)', WRITE_RUNS = /[$`()|;&<>]/;
 function writeLineShown(sign, l) {
-  const m = maskSecrets(l), a = Array.from(m);
-  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}`;
+  let m = maskSecrets(l), whole = false;
+  if (m !== l && m.includes('[hidden]')) {
+    const parts = m.split('[hidden]'), esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const got = new RegExp(`^${parts.map(esc).join('([\\s\\S]*?)')}$`).exec(l);
+    if (got && got.slice(1).some(x => WRITE_RUNS.test(x))) {
+      m = parts.map((x, i) => (i ? `${WRITE_RUNS.test(got[i]) ? got[i] : '[hidden]'}${x}` : x)).join('');
+      whole = true;
+    }
+  }
+  const a = Array.from(m);
+  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}${whole ? WRITE_WHOLE : ''}`;
 }
 // The button's first lines: what is written where, and the lines that change, old and new (design A 2.14 row 7).
 function writeShown(at, place, old, text, from, to) {
@@ -20527,6 +20556,8 @@ async function writeFile(input, viewer, ctx = {}) {
   let bytes;
   if (Number.isInteger(from)) {
     if (old.kind !== 'file' || !old.bytes) throw no(400, `Lines ${from} to ${to} need ${place.shown} there as a plain text file of at most 256 KB a look may read, and it isn’t.`);
+    // (the lines are put together as text: a file that doesn't come back byte for byte from it would change elsewhere)
+    if (!Buffer.from(old.bytes.toString('utf8')).equals(old.bytes)) throw no(400, `${place.shown} isn’t UTF-8 text, so lines ${from} to ${to} can’t be put in it without changing other bytes: write the whole file.`);
     const n = writeSplit(old.bytes.toString('utf8')).length;
     if (to > n) throw no(400, `${place.shown} has ${n} line${n === 1 ? '' : 's'}, so lines ${from} to ${to} aren’t all there.`);
     bytes = Buffer.from(writeSplice(old.bytes.toString('utf8'), text, from, to));
@@ -20539,6 +20570,8 @@ async function writeFile(input, viewer, ctx = {}) {
     // (a file whose old text is hidden is asked, never written at once: the owner sees what they can't read here)
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
+    // (the lines the button shows whole, for Telegram's ask and the page's copy: the records keep them masked)
+    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.endsWith(WRITE_WHOLE)),
     file: { path: place.shown, before: old.kind === 'file' && old.bytes ? old.bytes.toString('utf8') : '', after: bytes.toString('utf8') },
     run: writeProgram(place.rel, old),
     as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,
@@ -22002,7 +22035,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(chatWholeShown(conv.messages)) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);

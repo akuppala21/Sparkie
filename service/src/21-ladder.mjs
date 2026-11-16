@@ -179,7 +179,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
       facts: dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {} });
   }
-  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  // (write_file's lines the button shows whole: Telegram's ask and the page's copy of a press; the records keep them masked)
+  return question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, widen, topDirs, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+    { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
