@@ -436,19 +436,57 @@ describe('what the run wall holds in the home', () => {
     refused(change(s, 'true'), '/home/owner/.local/share/systemd is a link, or under one, so the wall would hold only what it points at');
     refused(look(s, 'true'), '/home/owner/.local/share/spark-console is a link, or under one, so a look would see what it points at');
   });
-  test('a link a change left at a listed name that was not there is left alone in both walls, and check names it; changes still run', () => {
+  // (the last round's item 1: a hidden name that is a link is hidden where it leads, or both walls refuse, naming it. This
+  // test held the fault itself. Old: with .npmrc a link to the home, a look and a change ran, the link left alone, and
+  // check said "run ready". New: they are refused by name, and run again once that link is gone; .zshrc, a link to
+  // .profile, which is hidden already, never stopped them)
+  test('a link a change left at a listed name is never named in a setting, and check names it; one whose end is hidden already runs; one to the home is refused by name', () => {
     const s = proven();
     symlinkSync('.profile', join(s.R, 'home/owner/.zshrc'));            // a dotfiles tool does this
     symlinkSync(join(s.R, 'home/owner'), join(s.R, 'home/owner/.npmrc')); // a link to the home at a hidden name
+    const why = '/home/owner/.npmrc is a link out of the home folder, or to it, which a ';
+    refused(change(s, 'true'), `${why}change cannot hide: put the file itself there, or take the link away`);
+    refused(look(s, 'true'), `${why}look cannot hide: put the file itself there, or take the link away`);
+    let c = run(s, ['check', '--id', newId()]).stdout;
+    assert.match(c, / links not held, left alone: \.zshrc \.npmrc\n/, c);   // (.zshrc is on the hidden list now, before .npmrc: R63)
+    assert.match(c, / run refuses: \/home\/owner\/\.npmrc is a link out of the home folder, or to it, which a change cannot hide/, c);
+    rmSync(join(s.R, 'home/owner/.npmrc'));
     const r = change(s, 'true'), l = look(s, 'true');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(l.status, 0, l.stdout + l.stderr);
-    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      assert.ok(!c.some(a => a.includes('.zshrc') || a.includes('.npmrc')), c.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
+    for (const u of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      assert.ok(!u.some(a => a.includes('.zshrc') || a.includes('.npmrc')), u.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
     }
-    const c = run(s, ['check', '--id', newId()]).stdout;
-    assert.match(c, / links not held, left alone: \.zshrc \.npmrc\n/, c);   // (.zshrc is on the hidden list now, before .npmrc: R63)
+    c = run(s, ['check', '--id', newId()]).stdout;
     assert.match(c, / run ready\n/, c);
+  });
+
+  // The last round's item 1: ~/.netrc kept in a dotfiles folder was left alone, and a look read the key where it leads.
+  test('a hidden name that is a link is hidden where it leads (a dotfiles folder): neither wall reads the key by its real path, and both still run; a link to nothing, out of the home, or to a folder the walls hold is refused by name; one to a device is left', () => {
+    const s = proven();
+    s.put('home/owner/dotfiles/netrc', 'machine x password LINKEDSECRET');
+    s.put('home/owner/dotfiles/aws/credentials', 'AKIALINKEDSECRET');
+    symlinkSync('dotfiles/netrc', join(s.R, 'home/owner/.netrc'));
+    symlinkSync('dotfiles/aws', join(s.R, 'home/owner/.aws'));
+    symlinkSync('/dev/null', join(s.R, 'home/owner/.bash_history'));   // (a common way to keep no history: no key there)
+    const see = 'cat "$WALL_VIEW/home/owner/dotfiles/netrc" "$WALL_VIEW/home/owner/dotfiles/aws/credentials" "$WALL_VIEW/home/owner/.netrc" 2>&1; true';
+    for (const [wall, r] of [['look', look(s, see)], ['run', change(s, see)]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(!r.stdout.includes('LINKEDSECRET'), `${wall}: ${r.stdout}`);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
+      assert.ok(c.includes('InaccessiblePaths=/home/owner/dotfiles/netrc') && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
+      assert.ok(!c.some(a => /\.netrc|\.aws|bash_history|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
+    }
+    for (const [name, to, why] of [['.pgpass', 'dotfiles/missing', 'is a link to nothing that is there'], ['.my.cnf', join(s.R, 'etc/shadow'), 'is a link out of the home folder, or to it'],
+      ['.kube', join(s.R, 'home/owner/.config'), 'is a link to a folder that holds what the walls hold']]) {
+      const t = proven();
+      symlinkSync(to, join(t.R, 'home/owner', name));
+      const before = started(t).length;
+      refused(look(t, 'true'), `/home/owner/${name} ${why}, which a look cannot hide: put the file itself there, or take the link away`);
+      refused(change(t, 'true'), `/home/owner/${name} ${why}, which a change cannot hide`);
+      assert.equal(started(t).length, before, name);
+      assert.equal(change(t, 'true', { extra: ['--open'] }).status, 0, `${name}: --open (asked) hides nothing, so it is not stopped`);
+    }
   });
   test('a login shell that is not bash, sh or dash: run is refused by name, and a look still runs', () => {
     const s = proven();

@@ -364,11 +364,13 @@ proof_state() {
 }
 
 # --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
-TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
+TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=() LINKS=() LINK_BAD=()
 # A path in the owner's home that is a link, or under one, is left alone in both walls: not held, and never followed
 # (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem), and a
 # hidden name that is there under a linked folder (UNDER) stops a look and a plain change: either would read it through
-# the link (~/.config kept in a dotfiles folder, say).
+# the link (~/.config kept in a dotfiles folder, say). A hidden name that is itself a link (~/.netrc kept in a dotfiles
+# folder) is hidden where it leads, resolved once here (LINKS); one that leads where no wall can hide it (LINK_BAD)
+# stops a look and a plain change in the same way.
 real_here() {   # $1 a path that is there: is it the real thing, judged from the owner's home (whose own place is root's)?
   local real home
   in_home "$1" || return 0
@@ -387,7 +389,8 @@ unreal() {   # $1 a listed path: 0 (and noted) when it is a link in the owner's 
 hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
   local p=$1
   if unreal "$p"; then
-    if in_home "$p" && { [ -e "$R$p" ] || [ -L "$R$p" ]; } && ! real_here "${p%/*}"; then UNDER+=("$p"); fi
+    if in_home "$p" && { [ -e "$R$p" ] || [ -L "$R$p" ]; } && ! real_here "${p%/*}"; then UNDER+=("$p")
+    elif in_home "$p" && [ -L "$R$p" ]; then LINKS+=("$p"); fi
     return 0
   fi
   safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
@@ -457,7 +460,7 @@ ro() {
   RO+=("$1")
 }
 lists() {
-  TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
+  TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=() LINKS=() LINK_BAD=()
   local name pw uid gid gecos home shell p f kind
   while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
     [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
@@ -498,6 +501,26 @@ lists() {
   [ "$OPEN" = 1 ] && ro "$OWNER_HOME/.ssh"
   ro "$HELPER"
   ro "$LINE"
+  link_targets
+}
+link_targets() {   # each hidden name in the owner's home that is itself a link: where it leads is hidden too, when that is a
+  # file or folder inside the home holding nothing the walls hold; else the link goes on LINK_BAD (a device, /dev/null
+  # say, holds no key and is left as it is)
+  local l t d home held
+  home=$(realpath -e -- "$R$OWNER_HOME" 2> /dev/null) || return 0
+  mapfile -t held < <(places)
+  for l in "${LINKS[@]}"; do
+    if ! t=$(realpath -e -- "$R$l" 2> /dev/null); then LINK_BAD+=("$l is a link to nothing that is there"); continue; fi
+    [ -f "$t" ] || [ -d "$t" ] || continue
+    case "$t/" in "$home"/?*) ;; *) LINK_BAD+=("$l is a link out of the home folder, or to it"); continue ;; esac
+    t=${t#"$R"}
+    under_any "$t" "${TMPFS[@]}" "${GONE[@]}" && continue   # (hidden already)
+    safe_path "$t" || { LINK_BAD+=("$l is a link to a path that cannot stand in a setting"); continue; }
+    for d in "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${held[@]}"; do
+      case "$d/" in "$t"/*) LINK_BAD+=("$l is a link to a folder that holds what the walls hold"); continue 2 ;; esac
+    done
+    if [ -d "$R$t" ]; then TMPFS+=("$t"); else GONE+=("$t"); fi
+  done
 }
 
 # --- what the run wall holds in the owner's home: there, the real thing, and no folder above it movable -------------
@@ -532,8 +555,10 @@ look_problem() {   # why a look cannot hide what it must in the owner's home, or
   done
   under_problem look
 }
-under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or nothing (the lists first)
-  [ ${#UNDER[@]} -eq 0 ] || printf '%s is under a link, so a %s would read it: make each folder above it a real one' "${UNDER[0]}" "$1"
+under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or one that is a link
+  # whose end it cannot hide, or nothing (the lists first)
+  if [ ${#UNDER[@]} -gt 0 ]; then printf '%s is under a link, so a %s would read it: make each folder above it a real one' "${UNDER[0]}" "$1"
+  elif [ ${#LINK_BAD[@]} -gt 0 ]; then printf '%s, which a %s cannot hide: put the file itself there, or take the link away' "${LINK_BAD[0]}" "$1"; fi
 }
 held_problem() {   # why the run wall cannot hold the owner's home as listed, or nothing (the lists must be made first)
   local n real shell=${OWNER_SHELL##*/}
