@@ -64,5 +64,6 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R60](rules/R60.md): The lock-out net: confirm, or it goes back.
 - [R61](rules/R61.md): What the runner does with a change (R55 is the sorter, R42 the root helper and its walls).
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
+- [R66](rules/R66.md): Long tasks (design E 2.1 as cut, step 6; contract 4.8): a task carries on by itself only within limits the owner's own words set, and stops, waits or ends where the owner would …
 - [R67](rules/R67.md): The coding trial (design C 2.5) says whether the brain serving now can change Spark Console's own code, and `trialPassed()` is its one read: `propose_update` (C8) asks it.
 - [R69](rules/R69.md): Sparkie's own code (design C 2.5, step 8): `propose_update {do: start, send, drop}` (in `updates`; its word kinds `code` and `cancel`) proposes a change to Spark Console's own …
