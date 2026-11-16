@@ -7,8 +7,11 @@
 // Spark's own timer puts it back, the Spark stays claimed, a second lock-out change there is refused before it is
 // asked, /stop leaves the timer, and /putback puts it back by the owner's word; what the net can't put back (a
 // Tailscale sign-out, a sign-in as another key) is not done; a restart of Spark Console inside the window puts it back
-// at start and says so. The net's seam (netGuarded, which A11's Spark 2 and A12's root call too) runs nothing with the
-// net off, without the owner's press, with a time or folder out of shape, or with a guard open there.
+// at start and says so; a new connection and the helper down before the press: nothing runs; down after it: left to
+// the Spark's own timer, said, the Spark claimed. Only the owner's own words ask (one sentence of their current message,
+// netAsks); a write_file to a way in is refused. The net's seam (netGuarded, which A11's Spark 2 and A12's root call too)
+// runs nothing with the net off, without the owner's press, with a time or folder out of shape, or with a guard open
+// there, and passes --lockout for the lock-out class.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true): its
 // net's copies and timer are the rehearsal's (the stand-in systemd-run keeps a waiting timer as a file), and a change
 // names the owner's authorized_keys from the Spark's own folder. The ways in tried from outside: a new connection (the
@@ -219,7 +222,6 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
   }
 });
 
-// Last: it stops this file's console.
 test('a lock-out change runs only when the owner asks for it in their own words (contract 8.3): an agent’s, or one after Sparkie read text from outside, is refused, never asked; a saved workflow can’t hold one; the owner’s own words are asked', { timeout: 120000 * SLOW }, async () => {
   const NOT = 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from';
   // An agent's key.
@@ -392,6 +394,65 @@ test('a true lock-out ask inside a code block, a > quote or a pasted log is not 
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
 });
 
+// The final read of the tests (TD-01): no test ever saw SSH or the helper fail, before or after a change. Spark 3 "stops
+// answering" through the fleet's offline file, as box.test.mjs uses it (from the reviewer's fr-td-lost.test.mjs).
+const offOn = { off: () => writeFileSync(T.fleet.offlineFile, 'spark1\nspark3\n'),
+  // (Spark 3 answers again: out of the offline file, then waited for until a look runs there, at most 90 s)
+  on: async () => {
+    writeFileSync(T.fleet.offlineFile, 'spark1\n');
+    await sleep(4000);
+    await waitFor(async () => (await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'ls ~' } })).json?.ran === true, { timeout: 90000, every: 2000, what: 'a look on Spark 3 to run again' });
+  } };
+test('Spark 3 doesn’t answer a new connection when the press comes: nothing runs, and no guard goes on record', { timeout: 240000 * SLOW }, async () => {
+  keysReset();
+  const chat = await newChat(), a = await ask(chat, 'add my key on spark 3 while it is dark', ADD);
+  assert.ok(a.m && a.yes && a.pair, 'the dangerous ask');
+  const seen = netRecord().length;
+  offOn.off();
+  let p;
+  try { p = await press(chat, a.yes.id, a.pair); } finally { await offOn.on(); }
+  assert.match(String(p.json?.message?.content ?? p.text), /Spark 3 doesn’t answer a new connection now, so nothing ran\./, p.text);
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+  assert.equal(netRecord().length, seen, 'no guard on record');
+});
+
+test('the change runs and then Spark 3 stops answering a new connection and the helper: not kept; the put-back can’t reach it, so its own timer is left to put it back, that is said, Spark 3 stays claimed, and /putback puts it back once it answers', { timeout: 300000 * SLOW }, async () => {
+  keysReset();
+  const chat = await newChat(), a = await ask(chat, 'add my key on spark 3 before it goes dark', `${ADD}; sleep 4`);
+  assert.ok(a.m && a.yes && a.pair, 'the dangerous ask');
+  const seen = netRecord().length, pressing = press(chat, a.yes.id, a.pair);
+  let g;
+  try {
+    await waitFor(() => netRecord().length > seen && existsSync(join(guardDir(newest().id), 'pending')), { every: 100, timeout: 60000, what: 'the guard armed' });
+    offOn.off();
+    const p = await pressing;
+    g = newest();
+    assert.equal(p.status, 200, p.text);
+    assert.equal(g.state, 'timer', JSON.stringify(g));
+    assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) broke a new SSH connection, the root helper through its sudo line, and the put-back couldn’t reach Spark 3: its own timer puts it back at \\d\\d:\\d\\d UTC\\. Spark 3 stays claimed until then\\.$`), p.json.message.content);
+    assert.ok(keysNow().includes(ADDED), 'the change is still there: nothing could put it back from outside');
+    assert.ok(timerWaits(g.id), 'its timer still waits');
+  } finally { await pressing.catch(() => {}); await offOn.on(); }
+  // Still claimed once it answers again: a plain change there meets the net's claim.
+  let plain;
+  await waitFor(async () => { plain = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'touch fr-td-note.txt' } }); return plain.status === 409 && /a change inside the lock-out net/.test(plain.json?.error || ''); },
+    { timeout: 60000, every: 2000, what: `the net’s claim on Spark 3 (${plain?.status} ${plain?.text?.slice(0, 200)})` });
+  // The owner's /putback reaches it now.
+  const w = await say(chat, '/putback');
+  assert.match(w.text, new RegExp(`^/putback\\nPut back: the newest change made inside the lock-out net, on Spark 3 \\(record ${g.record}\\), at `), w.text);
+  assert.equal(keysNow(), KEYS_LINE, 'put back');
+  assert.equal(newest().state, 'put back');
+});
+
+// A lead from the final read of the tests: minutes given with a lock-out command was neither refused nor used.
+test('a lock-out command given minutes is refused in plain words, nothing asked or run', { timeout: 60000 * SLOW }, async () => {
+  keysReset();
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: ADD, dir: '~', minutes: 5 } });
+  assert.deepEqual([r.status, r.json?.error], [403, 'Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on Spark 3 runs only as root, inside the lock-out net, held to 10 minutes, so it takes no minutes. Leave out minutes and set root.'], r.text);
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+});
+
+// It kills this file's console: only the tests that need no fleet come after it.
 test('a restart of Spark Console inside the window puts the change back at start, and says so in the chat it was asked in', { timeout: 300000 * SLOW }, async () => {
   keysReset();
   const chat = await newChat();
@@ -685,4 +746,46 @@ test('a change inside the net runs only when its memory cap fits in what is free
   assert.equal((await seamWith(open, room(2)).go(spark2, { memory: 2 })).net.outcome, 'kept');
   const unread = seamWith('', { memNow: async () => null });
   await assert.rejects(unread.go(), e => e.status === 409 && /^Free memory on Spark 3 can’t be read right now, so nothing ran/.test(e.message));
+});
+
+// The final read of the tests (TD-02): "the Spark's own timer puts it back" ran in no test: netAfterTime, the console's
+// look once a guard left to its timer is past its time, could be a no-op and every test passed.
+test('past its time, a change left to the Spark’s own timer is found put back by it and said so; one its Spark still doesn’t answer for is said plainly', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+  const grab = re => re.exec(src)?.[0] || '';
+  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
+    grab(/^const netGoneWords = .*;$/m), grab(/^async function netAfterTime\([\s\S]*?\n\}$/m)].join('\n');
+  const told = [], marks = [], g = { id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: '2026-11-15T22:10:00Z' };
+  let answer = '';
+  const stubs = { netNow: () => ({ guards: [g] }), nodeById: id => ({ id }), sparkName: n => `Spark ${n.id.slice(5)}`, netMark: (id, f) => marks.push([id, f.state, f.putBackAt ?? null]),
+    guardCall: async () => ({ out: answer }), netTell: (x, text) => told.push(text), netHhmm: () => '22:10 UTC', NET_LIVE: 'LIVE', netRestart: at => `Restarting ${at} is the way back.`,
+    netStillLost: async () => [], netStillWords: () => '' };
+  const netAfterTime = new Function('scope', `with (scope) { ${parts}\nreturn netAfterTime; }`)(new Proxy(stubs, { has: (t, k) => k in t }));
+  answer = 'g3 already put back at 2026-11-15T22:10:05Z: 1 went back, 0 did not\n';
+  await netAfterTime('g3');
+  assert.deepEqual(marks, [['g3', 'put back', '2026-11-15T22:10:05Z: 1 went back, 0 did not']]);
+  assert.deepEqual(told, ['A change that could lock you out of Spark 3 (record j_3) went back by Spark 3’s own timer (put back at 2026-11-15T22:10:05Z: 1 went back, 0 did not), and Spark 3 answers every way it did before.']);
+  answer = '';
+  await netAfterTime('g3');
+  assert.equal(told[1], 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but Spark 3 still doesn’t answer: LIVE, and that most likely still cuts Spark 3 off. Restarting Spark 3 is the way back.');
+});
+
+// The final read of the tests (TD-05): the one-sentence rule could be taken out (no split into sentences) and every
+// test passed: no wording had the Spark in one sentence and the change in another.
+test('the Spark and what to change must be in one sentence of the owner’s: split over two, it is not an ask', () => {
+  const { netAsks } = wordsTest(), node = { id: 'spark3' };
+  for (const s of ['Spark 3 was slow today. Add my key.', 'add my key. also look at spark 3', 'On spark 3 the gpu is busy; add my key']) assert.equal(netAsks(node, s), false, s);
+  assert.equal(netAsks(node, 'Spark 3 was slow today. Add my key on spark 3.'), true);
+});
+
+// The final read of the tests (TC-2): root.test checks guardScript turns lockout into --lockout, by hand; nothing checked
+// that the console's own call asks for it. The helper holds a root command in the lock-out class to 10 minutes on it.
+test('the seam asks the helper for --lockout for a root command in the lock-out class, and only then', async () => {
+  const seen = [];
+  const open = `${armed}out\n${ID} net open: nothing differs now; it is kept on the console's word, else at 22:10 what differs then goes back\n${ID} end 0\n`;
+  for (const cls of ['lockout', 'change']) {
+    const s = seamWith(open, { guardCall: async (node, verb, o) => { seen.push([cls, verb, o.lockout ?? null]); return { out: verb === 'keep' ? `${ID} kept: it stays\n` : open }; } });
+    await s.go({ id: 'spark3' }, { root: true, cls });
+  }
+  assert.deepEqual(seen.filter(([, verb]) => verb === 'root'), [['lockout', 'root', true], ['change', 'root', false]]);
 });

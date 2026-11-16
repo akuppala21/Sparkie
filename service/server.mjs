@@ -20102,6 +20102,8 @@ async function netChange(node, command, sorted, viewer, ctx) {
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);
   if (from) throw netNotYours(from, node);
+  // (minutes: a lock-out change is root's, inside the net, held to 10 minutes, and takes none: said, never left unread)
+  if (ctx.long) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} runs only as root, inside the lock-out net, held to 10 minutes, so it takes no minutes. Leave out minutes and set root.`);
   if (!ROOT_ON) throw new HttpError(403, `Nothing was asked or run: a change to SSH, Tailscale, the firewall or users on ${at} is done only as root, and root isn’t on in this build.`);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
@@ -20163,19 +20165,19 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   const g = { id, spark: node.id, chat: ctx.chat || null };
   const end = (fields, text = null) => { if (rid && !ended) { ended = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, net: id, ms: Date.now() - t0, ...fields }, text); } };
   try {
-    // (the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
-    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
-    // squeezes a model or, on Spark 2, the brain)
-    const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
-    if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
-    const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
-    if (room < cap) throw new HttpError(409, `${at} doesn’t have room for this change now: it may use up to ${cap} GB, and ${Math.max(0, room)} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
     // (its caller's own ways in, beside the net's, tried before and after it: A11's Spark 2)
     const probe = async () => ({ ...(await netProbe(node)), ...(ways ? await ways.probe(node) : {}) }), names = { ...NET_PROBES, ...(ways?.words || {}) };
     const before = await probe();
     // (no helper there, or one this build doesn't know: the owner's one command, as before the ask)
     if (before.ssh && !before.helper) { const first = await netHelperFirst(node); if (first.needs) return first.needs; }
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
+    // (then the 8 GB rule, R2, as the runner and the box ask it: what this change may use, its cap (root's unit and a run's
+    // wall: the helper's 8 GB; Spark 2's: its memory), must fit in what is free beyond the 8 GB kept, so it never
+    // squeezes a model or, on Spark 2, the brain)
+    const mem = await memNow(node), cap = Number.isInteger(memory) ? memory : 8;
+    if (!mem) throw new HttpError(409, `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`);
+    const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
+    if (room < cap) throw new HttpError(409, `${at} doesn’t have room for this change now: it may use up to ${cap} GB, and ${Math.max(0, room)} GB is free beyond the 8 GB kept for the system and its models. Nothing ran.`);
     // (the ways that work now, on record: after any put-back they are tried again, netStillLost)
     g.ways = Object.keys(NET_PROBES).filter(p => before[p] === true);
     // (on record before the call: a restart from here on puts it back at start)
