@@ -355,6 +355,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
       putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
+    const cannot = sorted.deletes && lost.length ? `No copy was kept of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removed or overwrote (notKept says which and why), as its ask said: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` : null;
     return {
       spark: node.id, ran: true, change: true, outcome: 'change', where: at, root: false, observedAt: new Date().toISOString(), exit: a.exit ?? null,
       ...(a.ended ? { ended: `It ran past its ${seconds} seconds and was ended, with everything it started.` } : unknown ? { ended: `${at} didn’t answer within ${seconds + LOOK_SLACK} seconds, so whether it finished is unknown; it won’t be run again by itself. ${at} is held until the root helper says it has ended, and its ways-in check comes then.` } : {}),
@@ -363,15 +364,16 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(keyed ? { withheld: `What it printed isn’t shown or kept: it names a key file (${maskSecrets(keyed).slice(0, 120)}).` } : {}),
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it.` } : {}),
       tail: [last && maskSecrets(last).slice(-200), Number.isInteger(a.exit) ? `exit ${a.exit}` : 'ended before it finished (no exit code)'].filter(Boolean).join('\n'),
-      ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
+      ...(a.notes || cannot || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(cannot ? [cannot] : []), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
       // (write_file's own fields: what it wrote only when its program ended well; else what it said)
       // (after an end the console can't know, or at the time limit, it may have been written)
       ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
-      // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back)
-      ...(sorted.deletes && lost.length ? { cannotPutBack: `It ran with no copy of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removes or overwrites (notKept says which and why), after the owner’s yes on an ask that said so: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` } : {}),
+      // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back;
+      // said in notes too, which the press's notice carries, 14-chats.mjs)
+      ...(cannot ? { cannotPutBack: cannot } : {}),
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
   } catch (e) {

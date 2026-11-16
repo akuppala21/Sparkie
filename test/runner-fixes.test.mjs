@@ -241,6 +241,7 @@ test('S-7: the dangerous ask\'s press runs a delete it couldn\'t copy first, its
   const p = await pressDanger(chat, ask);
   assert.equal(p.status, 200, p.text);
   assert.ok(!existsSync(at3('notes/big7')), `the press ran it: ${p.text}`);
+  assert.match(p.json.message.content, /No copy was kept of one file it removed or overwrote \(notKept says which and why\), as its ask said: undo can’t put it back\./, p.json.message.content);
   const start = startOf('rm -r notes/big7');
   assert.deepEqual([start?.gate, start?.gone, start?.notKept], ['asked', 1, 1], JSON.stringify(start));
   assert.equal(endOf(start)?.outcome, 'ran');
