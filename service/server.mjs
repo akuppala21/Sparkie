@@ -10619,30 +10619,36 @@ async function giveKey(conv, given, via, channel = null, after = '') {
   audit({ via, actor: channel === 'telegram' ? 'owner on Telegram' : 'owner', action: 'key-given', args: { name, kept: r.kept }, ok: r.kept });
   return message;
 }
-// A key just kept may already be in the owner's earlier words, typed before it was given with /key: their stored chats
-// (messages, titles, a carried-on request) get every kept value hidden and are saved once if one changed, so the daily
-// copy stops carrying it. A chat that never held one is left exactly as it was (nor is its time touched). Says whether
-// one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too), and
-// whether one of them was on Telegram.
+// A key just kept may already be in the owner's earlier words, typed before it was given with /key, and in what came of
+// them: a command's step line and its last lines, an ask's text, a button's label, an error, the page's snapshot, a task
+// and its report. Every string of every stored chat (all but its id and login, at any depth, so a field added later is
+// covered too) gets every kept value hidden, and the chats are saved once if one changed, so chats.json, the daily copy
+// it next makes and GET /chats/:id stop carrying it; so do the lines the page is shown whole from memory (chatWhole,
+// chatAsksWhole, 14-chats.mjs). A chat that never held one is left exactly as it was (nor is its time touched). Says
+// whether one of the owner's own messages held `value`, the key just given (then the journal's `said` record does too),
+// and whether one of them was on Telegram.
+// (every string in o, at any depth, but its own fields named in skip, in place; true when one changed)
+function keptHiddenIn(o, skip = []) {
+  let changed = false;
+  for (const k of Object.keys(o)) {
+    const v = o[k];
+    if (skip.includes(k)) continue;
+    if (typeof v === 'string') { const t = keptHidden(v); if (t !== v) { o[k] = t; changed = true; } }
+    else if (v && typeof v === 'object' && keptHiddenIn(v)) changed = true;
+  }
+  return changed;
+}
 function hideKeptInChats(value) {
   const owner = accessList().owner, left = { said: false, telegram: false };
   let changed = false;
   for (const c of chatData().conversations) {
-    if (c.login !== owner) continue;
-    // (its title and a carried-on request are the owner's words too)
-    for (const [o, k] of [[c, 'title'], [c.task, 'request']]) {
-      if (typeof o?.[k] !== 'string') continue;
-      const t = keptHidden(o[k]);
-      if (t !== o[k]) { o[k] = t; changed = true; }
+    for (const m of Array.isArray(c.messages) ? c.messages : []) {
+      if (c.login === owner && m?.role === 'user' && !m.auto && typeof m.content === 'string' && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
+      if (chatWhole.has(m)) chatWhole.set(m, keptHidden(chatWhole.get(m)));
+      if (chatAsksWhole.has(m)) chatAsksWhole.set(m, chatAsksWhole.get(m).map(a => ({ ...a, text: keptHidden(a.text) })));
     }
-    for (const m of c.messages) {
-      if (typeof m.content !== 'string') continue;
-      const t = keptHidden(m.content);
-      if (t === m.content) continue;
-      if (m.role === 'user' && !m.auto && m.content.includes(value)) { left.said = true; if (c.channel === 'telegram') left.telegram = true; }
-      m.content = t;
-      changed = true;
-    }
+    // (its id and login say whose it is; everything else, messages, title, task and reports, is cleaned)
+    if (keptHiddenIn(c, ['id', 'login'])) changed = true;
   }
   if (changed) saveChats();
   return left;
@@ -24021,14 +24027,18 @@ function writeSplice(oldText, text, from, to) {
   return out.length ? `${out.join('\n')}${ends ? '\n' : ''}` : '';
 }
 // One line on the button: masked, cut at 200 signs and said so; a line the mask changed is marked, as it is written as
-// given. A hidden part that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >) is shown as
-// written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
+// given. A hidden part of a new line (+) that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >)
+// is shown as written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
 // hidden that way could be a command). The records (the brain's result, the journal, the chat file) mask the line again,
 // with the same mark, which then says the hidden part holds such signs; the button (the page, Telegram) shows it.
+// An old line (-) is the file on the Spark, which nothing checked (a password, a kept key): always masked, never shown
+// whole, and cleaned of signs that don't show as a look's output is (lookClean; any other such sign a space).
 const WRITE_WHOLE = ' (shown whole: what would be hidden here holds signs that run something)', WRITE_RUNS = /[$`()|;&<>]/;
-function writeLineShown(sign, l) {
+const WRITE_UNSEEN = new RegExp(DANGER_HIDDEN.source, 'gu');
+function writeLineShown(sign, line) {
+  const l = sign === '+' ? line : lookClean(String(line)).replace(WRITE_UNSEEN, ' ');
   let m = maskSecrets(l), whole = false;
-  if (m !== l && m.includes('[hidden]')) {
+  if (sign === '+' && m !== l && m.includes('[hidden]')) {
     const parts = m.split('[hidden]'), esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const got = new RegExp(`^${parts.map(esc).join('([\\s\\S]*?)')}$`).exec(l);
     if (got && got.slice(1).some(x => WRITE_RUNS.test(x))) {
@@ -24037,7 +24047,7 @@ function writeLineShown(sign, l) {
     }
   }
   const a = Array.from(m);
-  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}${whole ? WRITE_WHOLE : ''}`;
+  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m === l ? '' : sign === '+' ? ' (a value on this line is hidden here; it is written as given)' : ' (a value on this line is hidden here)'}${whole ? WRITE_WHOLE : ''}`;
 }
 // The button's first lines: what is written where, and the lines that change, old and new (design A 2.14 row 7).
 function writeShown(at, place, old, text, from, to) {
@@ -24109,7 +24119,7 @@ async function writeFile(input, viewer, ctx = {}) {
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
     // (the lines the button shows whole, for Telegram's ask and the page's copy: the records keep them masked)
-    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.endsWith(WRITE_WHOLE)),
+    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.startsWith('+ ') && l.endsWith(WRITE_WHOLE)),
     file: { path: place.shown, before: old.kind === 'file' && old.bytes ? old.bytes.toString('utf8') : '', after: bytes.toString('utf8') },
     run: writeProgram(place.rel, old),
     as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,
