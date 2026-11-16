@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26007 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26008 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1064,13 +1064,13 @@ The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `ru
 Each round Sparkie's brain is offered the core (every action whose group is core) and the groups this request opened, at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens reading. A call to an action that wasn't offered runs through runAction like any other call, and opens its group; so does guide {tools: "<group>"}. With more groups than fit, the newest one the words opened gives way, so a request keeps the groups …
 
 - **Area:** features. **Rules:** R46. **Tests:** tools.test.mjs
-- **Lines:** 125
+- **Lines:** 126
 - **Actions:** `guide`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `groupActions`, `toolCap`, `groupsUnder`, `requestGroups`, `openGroup`, `wordGroups`, `stateGroups`, `offeredNames`, `brainCatalog`, `BRAIN_WORDS`, `brainWordsOf`, `brainWords`
-- **Uses:** `01-setup` (`ALL_LOCAL`), `02-ssh` (`run`), `07-jobs` (`jobs`), `13-ask` (`askSet`), `13-main-model` (`MAIN`), `14-chats` (`TOOL_LINES`, `continueTask`), `14-rounds` (`budgetsSet`, `workStep`, `budgetCut`, `budgetReport`), `16-actions` (`GROUP_WORDS`, `ACTIONS`, `normQuotes`, `action`), `17-changes` (`START_FAILURES`), `18-workflows` (`savedWorkflows`, `notShown`), `20-digest` (`digestOut`), `20-lessons` (`lessonTried`, `lessonFailWords`, `LESSON_APP_FAILS`, `lessonCard`, `lessonSeenBefore`), `20-memory-names` (`memoryPickBlock`)
+- **Uses:** `01-setup` (`ALL_LOCAL`), `02-ssh` (`run`), `07-jobs` (`jobs`), `13-ask` (`askSet`), `13-main-model` (`MAIN`), `14-chats` (`TOOL_LINES`, `continueTask`), `14-rounds` (`budgetsSet`, `workStep`, `budgetCut`, `budgetReport`, `toolsAway`), `16-actions` (`GROUP_WORDS`, `ACTIONS`, `normQuotes`, `action`), `17-changes` (`START_FAILURES`), `18-workflows` (`savedWorkflows`, `notShown`), `20-digest` (`digestOut`), `20-lessons` (`lessonTried`, `lessonFailWords`, `LESSON_APP_FAILS`, `lessonCard`, `lessonSeenBefore`), `20-memory-names` (`memoryPickBlock`)
 - **Used by:** `14-rounds`, `21-brain-rail`, `24-handler`
 
 ### `21-hub.mjs`: a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11)

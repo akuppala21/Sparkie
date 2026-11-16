@@ -8,16 +8,20 @@
 // ran" or asked does not, so the change after it runs at once. Past the rounds a message may take, the brain is told
 // its tools are put away, a call it makes all the same is answered "not run" and nothing runs, the reply ends with
 // code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call). The steps' note
-// counts only the commands that ran, and those asked first apart, as waiting for the owner's yes.
+// counts only the commands that ran, and those asked first apart, as waiting for the owner's yes. The
+// brain's mark covers the last round's note.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
 // tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, mkdtempSync, cpSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { pathToFileURL } from 'node:url';
+import { T, REPO, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 // (a change may run 60 seconds here, so one can go on past the 50 seconds a tool call has)
@@ -209,4 +213,24 @@ test('the steps’ note counts only the commands that ran, and says how many wai
   for (const n of [1, 2, 3, 4]) assert.equal(text(`notes/k${n}.txt`), `${n}\n`);
   for (const n of [5, 12]) assert.ok(!existsSync(at3(`notes/k${n}.txt`)), `k${n} waits`);
   assert.ok(r.text.endsWith('\n\nStopped here: one message may run 12 commands, and 12 were tried and 4 ran; 8 wait for your yes.\nSay “go on” to carry on.'), r.text.slice(-300));
+});
+
+// The last round's note (toolsAway) is among the fixed words the brain's mark hashes (BRAIN_WORDS, 21-guide.mjs), with
+// the report's lines: a build whose note says one word otherwise has another mark there, and the same elsewhere.
+test('the brain’s mark covers the last round’s note: a build whose note says one word otherwise has another report mark', { timeout: 300000 * SLOW }, async () => {
+  const words = (await api('/actions')).json.brain.words, TMP = mkdtempSync(join(tmpdir(), 'rounds-words-')), copy = join(TMP, 'tree');
+  try {
+    for (const d of ['service', 'test', 'tools', 'deploy', 'public']) cpSync(join(REPO, d), join(copy, d), { recursive: true, verbatimSymlinks: true });
+    const part = join(copy, 'service', 'src', '14-rounds.mjs'), was = readFileSync(part, 'utf8');
+    assert.ok(was.includes('Your tools are put away for this message'));
+    writeFileSync(part, was.replace('Your tools are put away for this message', 'Your tools are put aside for this message'));
+    const made = spawnSync(process.execPath, [join(copy, 'tools', 'build-server.mjs')], { cwd: copy, encoding: 'utf8', timeout: 120000 });
+    assert.equal(made.status, 0, made.stdout + made.stderr);
+    const { startMock: startCopy } = await import(pathToFileURL(join(copy, 'test', 'start-mock.mjs')).href);
+    const other = await startCopy({ evalOnRecord: false });
+    let theirs;
+    try { theirs = (await (await fetch(`${other.base}/actions`, { signal: AbortSignal.timeout(30000) })).json()).brain.words; } finally { await other.stop(); }
+    assert.notEqual(theirs.report, words.report, 'the report mark moved');
+    assert.deepEqual({ ...theirs, report: null }, { ...words, report: null }, 'the other words are the same');
+  } finally { rmSync(TMP, { recursive: true, force: true }); }
 });

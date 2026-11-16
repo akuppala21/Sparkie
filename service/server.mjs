@@ -18673,15 +18673,16 @@ function brainCatalog() {
     words: brainWords() };
 }
 // The fixed words the brain is sent outside the system prompt and the tools, by the code that writes them: the carry-on
-// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines (budgetReport),
-// the digest's words (digestOut), the cards' heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
+// line (continueTask), the "Not run" and "Not shown" notices (workStep, budgetCut), the report's lines and the last
+// round's note that the tools are put away (budgetReport, toolsAway), the digest's words (digestOut), the cards'
+// heading and the cards (memoryPickBlock, lessonCard), and "Seen before"
 // (lessonSeenBefore); a card and "Seen before" say what was tried and how it failed with lessonTried and lessonFailWords,
 // from the failures' titles (START_FAILURES', 17-changes.mjs, and LESSON_APP_FAILS). Each is a hash of that code with its
 // whole-line comments left out, and of those titles as JSON, so a change to any of them is another mark and owes an eval
 // (R52); a change to the code around them does too.
 const BRAIN_WORDS = () => {
   const lesson = [lessonTried, lessonFailWords, START_FAILURES.map(f => [f.id, f.title]), LESSON_APP_FAILS];
-  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport], digest: [digestOut],
+  return { carryOn: [continueTask], notRun: [workStep], notShown: [budgetCut], report: [budgetReport, toolsAway], digest: [digestOut],
     cards: [memoryPickBlock, lessonCard, ...lesson], seenBefore: [lessonSeenBefore, ...lesson] };
 };
 const brainWordsOf = parts => createHash('sha256').update(parts.map(f => (typeof f === 'function' ? String(f).split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join('\n') : JSON.stringify(f))).join('\n\n')).digest('hex').slice(0, 16);
