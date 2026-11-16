@@ -32,6 +32,10 @@ const LOOK_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_LOOK_SECONDS)
 // Stand-in fleet only: run {on: "box", command: "/fill <tree>" or "/read-back"} reaches C8b's two (runCommand,
 // 21-box-fill.mjs). Defined here, where runCommand reads it, so a harness of this part alone has it.
 const BOX_FILL_DOOR = ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_FILL_DOOR === '1';
+// Root's switch, dark (A12, 21-root.mjs): this one line turns root on, once the whole chain has been read; it needs the
+// net's switch too (NET_ON, the same env). Here, beside run's schema, which has root only while it is on. The stand-in
+// fleet may turn it on for a test (SPARK_CONSOLE_ROOT=1 with SPARK_CONSOLE_NET=1).
+const ROOT_ON = ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '1' && process.env.SPARK_CONSOLE_ROOT === '1';
 const LOOK_SLACK = 8, LOOK_AT_ONCE = 2, LOOK_HEAD = 2000, LOOK_TAIL = 3500, PROVE_MS = 15 * 60000;
 const looking = new Map();       // Spark id → looks running there now
 const wallsFailed = new Map();   // Spark id → the attempt its last proof (the self-test's) let through; gone when one passes

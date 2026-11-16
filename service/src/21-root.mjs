@@ -12,9 +12,7 @@
 // with --with-root, and nothing is asked. sudo in a plain command is answered "set root" (runnerNever, 21-runner.mjs).
 // Off (ROOT_ON), run has no root in its schema, so what the brain reads is as before.
 
-// The switch, dark: this one line turns root on, once the whole chain has been read; it needs the net (NET_ON). The
-// stand-in fleet may turn it on for a test (SPARK_CONSOLE_ROOT=1).
-const ROOT_ON = NET_ON && ALL_LOCAL && process.env.SPARK_CONSOLE_ROOT === '1';
+// The switch is ROOT_ON, one line in 21-work.mjs beside run's schema (which those tests load on its own).
 // What sudo in a plain command is answered while root is on (runnerNever).
 const ROOT_SET = 'Nothing ran: a command becomes root only by setting root (run with root: true), which is always asked as root and runs inside the lock-out net. Leave out sudo and set root.';
 // The line the ask adds (line 5): what the net puts back for a root command, and what it never does.
