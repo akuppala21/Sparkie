@@ -165,7 +165,7 @@ test('the same ladder as run: the model store and the top of the home asked, the
   assert.match(top.json.error, /^It would fail inside the plain wall \(it writes ~\/top\.txt at the top of the home/);
   const keysFile = await writeApi({ path: '~/.ssh/authorized_keys', text: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\n' });
   assert.equal(keysFile.status, 403, keysFile.text);
-  assert.match(keysFile.json.error, /^Nothing ran: a change that can lock you out of Spark 3 waits for the lock-out net/);
+  assert.match(keysFile.json.error, /^Nothing ran: the lock-out net is switched off in this console, and a change that can lock you out of Spark 3 runs only inside it\./);
   const hub = await api('/actions/write_file', { method: 'POST', body: { on: 'spark2', path: '~/x.txt', text: 'x\n' } });
   assert.equal(hub.status, 403, hub.text);
   symlinkSync('real', at3('notes/via'));
