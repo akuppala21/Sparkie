@@ -219,7 +219,7 @@ test('three refused calls in a row put the tools away, the answer says what was 
   assert.deepEqual(calls(r), [['run', false], ['run', true], ['stop_model', false]], errors(words));
   assert.deepEqual(rounds(words), offeredThen(3));
   assert.equal(looks(), before, 'nothing was run after them');
-  assert.match(r.text, /\n\nStopped asking: 3 calls in a row were refused, so the tools were put away for this message\.\n- run: Leave out sudo: a look already reads what root can read \(keys aside\), and it changes nothing\.\n- run: Commands on Spark 2, the hub, come with a later build \(its set-up waits for the lock-out net\), so nothing ran there\.\n- stop_model: Unknown argument: bogus\. stop_model takes [^\n]+\.\nSay what to change, or “go on” to try again\.$/);
+  assert.match(r.text, /\n\nStopped asking: 3 calls in a row were refused, so the tools were put away for this message\.\n- run: Leave out sudo: a look already reads what root can read \(keys aside\), and it changes nothing\.\n- run: The root helper isn’t set up on Spark 2 yet \(the owner’s one-time command hasn’t run there\); changes on Spark 2 are switched off in this console, so its one-time command isn’t given, and nothing ran there\.\n- stop_model: Unknown argument: bogus\. stop_model takes [^\n]+\.\nSay what to change, or “go on” to try again\.$/);
   await noCarryOn(chat, 2);
   // Two refused, one that works, two refused, a lookup: every round runs.
   before = looks();

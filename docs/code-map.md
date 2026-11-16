@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26958 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26964 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -159,7 +159,7 @@ Serving one model across Sparks (NVIDIA's vllm-cluster playbook) needs the Conne
 ### `07-jobs.mjs`: jobs
 
 - **Area:** ground. **Rules:** R7, R9, R13, R14, R15, R16, R21. **Tests:** change.test.mjs, state.test.mjs, pause.test.mjs
-- **Lines:** 245
+- **Lines:** 246
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1075,7 +1075,7 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 
 ### `21-hub.mjs`: a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11)
 
-Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or …
+Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (never from here: the owner makes it by hand on Spark 2; the fresh visit, A13c, was put off); and the owner's standing rules for the hub …
 
 - **Area:** features. **Rules:** R1, R60, R71, R61. **Tests:** hub-change.test.mjs
 - **Lines:** 219
@@ -1275,10 +1275,10 @@ When Sparkie doesn't know something (a new model, an error message, an engine fl
 
 ### `21-work-shown.mjs`: what the owner sees of a command Sparkie ran
 
-The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root (whether it ran as root), kept (the journal record that holds the whole command and output, when it ran) and look (the result's own line saying it ran as a look: nothing changed, nothing sent), and putBack (true when a change's ways-in check put back …
+The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, step 5) carries six more fields, which the chat loop puts on the step it emits and saves in message.tools (the chat file): where (the Spark's name), line ("$ " and the command), tail (the last line the command printed, then "exit N", or why it ended or did not run), root (whether it ran, or is asked to run, as root: from the result, never the brain's arguments), kept (the journal record that holds the whole command and output, when it ran) and look (the result's own line saying it ran as a look: nothing changed, …
 
 - **Area:** features. **Rules:** R42. **Tests:** work.test.mjs, page.test.mjs
-- **Lines:** 57
+- **Lines:** 61
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1291,7 +1291,7 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing (nine exact forms, LOOK_FORMS, run as code's own fixed text outside it). Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the …
 
 - **Area:** features. **Rules:** R42, R43, R61. **Tests:** work.test.mjs, ladder.test.mjs
-- **Lines:** 448
+- **Lines:** 449
 - **Actions:** `run`
 - **Owns:** none
 - **Timers:** none
