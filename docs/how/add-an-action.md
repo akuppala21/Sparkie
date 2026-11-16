@@ -27,8 +27,8 @@ An action is a named tool that Sparkie, agents (`/mcp`) and `POST /console/api/a
   `DOOR_READ` and `DOOR_ACT` follow from them. With `changes: true`: `CAN_CHANGE` there, `WORK_TOOLS` (`14-rounds.mjs`).
 - For a change: `ACTION_KIND` and `CHANGE_WORDS` (`16-actions.mjs`), `changeLabel` (`17-changes.mjs`), and its own
   target check in `sparkieCheck` for any argument not called model, container, spark or sparks.
-- `INSIDE_READS` (`14-chats.mjs`) for a read of the console's own numbers; `PLAN_SKIP` (`16-actions.mjs`) for an
-  approval argument.
+- `inside: true` only for a read whose every field is code's words or a bare name (R26); `PLAN_SKIP`
+  (`16-actions.mjs`) for an approval argument.
 - The valid-argument tables: `door.test.mjs` (“read tools, valid arguments”) and `VALID` in `test/fuzz.test.mjs`
   (door tests want string, integer, boolean or array properties and the Spark enum on any "spark" property).
 - `NOT_A_STEP` (`18-workflows.mjs`) if it must not be a step of a saved workflow.

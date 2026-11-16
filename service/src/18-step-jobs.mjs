@@ -89,6 +89,41 @@ function startedBy(action, args, out, keep = false) {
   if (action === 'keep_running' && (args.do || 'keep') === 'keep') return [{ kind: out.job || args.once === true ? 'job' : 'app', spark: id(out.spark || args.spark), container: String(out.starting || args.container), keep }];
   return [];
 }
+// What a step started, and what makes it the run's (A-22): the container's Docker id when the step's operation ended, and
+// for a model or an app the `since` of its entry on the list of what should be running just after the step (every start
+// but self-healing's moves it, 20-desired.mjs, and so does the owner's ask answered "already"); for a job, which has no
+// entry, its start time (a run again by hand moves it). The clean-up stops it only while these still match
+// (startedStill).
+// One its Spark couldn't be asked about keeps no receipt, and is stopped by its name, as before.
+const RECEIPT_LOOK = name => `printf 'id\t%s\n' "$(docker inspect -f '{{.Id}}' ${q(name)} 2>/dev/null)"; printf 'at\t%s\n' "$(docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.State.ExitCode}}' ${q(name)} 2>/dev/null | head -1)"`;
+async function receiptOf(spark, container) {
+  const r = await run(nodeById(spark), RECEIPT_LOOK(container), { timeout: 20000 }).catch(() => null);
+  if (r?.code !== 0) return null;
+  const id = (fields(r.out, 'id')[0] || [])[0] || null, at = String((fields(r.out, 'at')[0] || [])[0] || '').split('|')[1] || null;
+  return { id: /^[0-9a-f]{12,64}$/.test(id || '') ? id : null, startedAt: at };
+}
+async function startedReceipts(items) {
+  const out = [];
+  for (const x of items) {
+    const seen = await receiptOf(x.spark, x.container);
+    const entry = x.kind === 'job' ? null : desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`);
+    // (a model or an app: its id and its entry's since, so self-healing's restart, which moves neither, is still the run's;
+    // a job: its id and its start time)
+    out.push(seen ? { ...x, seen: x.kind === 'job' ? seen : { id: seen.id, since: entry?.since || null } } : x);
+  }
+  return out;
+}
+// Inside the stop's own claim (stop_model, keep_running's stop): whether what a run started is still what it started.
+// null when it is, else the words for why it is left running.
+async function startedStill(spark, container, seen) {
+  if (!seen) return null;
+  const now = await receiptOf(spark, container), at = sparkName(nodeById(spark) || { id: spark });
+  if (!now) throw new Error(`Couldn’t look at ${container} on ${at} before stopping it, so it wasn’t stopped.`);
+  const entry = desired().running.find(y => `${y.spark}/${y.container}` === `${spark}/${container}`);
+  const other = (seen.id && now.id && now.id !== seen.id) || (seen.startedAt && now.startedAt && now.startedAt !== seen.startedAt)
+    || ('since' in seen && (entry?.since || null) !== seen.since);
+  return other ? `${container} on ${at} was started again since, not by this run` : null;
+}
 // What a step started that was on the list of what should be running before that step (`listed`: its entry then):
 // the clean-up stops it as anything else the run started, and puts that entry back (the workloads review's Later 13).
 function startedListed(items, before) {
@@ -98,7 +133,7 @@ function startedListed(items, before) {
 // the list of what should be running before the run (listed) goes back on it as it was. Returns the words for it: what
 // was stopped, what went back on the list, what was kept, what couldn't be stopped ('' when there was nothing to say).
 async function stopWhatRan(ran, viewer, ctx, title) {
-  const stopped = [], kept = [], failed = [], back = [];
+  const stopped = [], kept = [], failed = [], back = [], left = [];
   // (never as the agent whose run it was: these stops only take back what this run's own steps answered `started` for,
   // start and wake nothing, and none of them asks an agent; so a key removed or paused meanwhile, or an agent's rule,
   // never leaves the run's leftovers running for nobody, or a question no one can answer)
@@ -115,18 +150,23 @@ async function stopWhatRan(ran, viewer, ctx, title) {
       // (what was on the list just before this stop: only what the stop itself takes off goes back, as it stood then,
       // with the date of the owner's wish from before the run: the run's own start of it was no new wish, C3)
       const was = x.listed ? desired().running.find(y => `${y.spark}/${y.container}` === `${x.spark}/${x.container}`) : null;
-      const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, c)
-        : await stopAppStarted(viewer, x, c);
+      // (only what this run started: its receipt is looked at again inside the stop's own claim, A-22)
+      const cx = x.seen ? { ...c, onlyIf: x.seen } : c;
+      const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, cx)
+        : await stopAppStarted(viewer, x, cx);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
+      if (out?.left) { left.push(name); continue; }
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
+        if (done.left) { left.push(name); continue; }
       }
       if (out?.outcome !== 'already') stopped.push(name);
       if (was && out?.outcome !== 'already' && desiredPutBack([{ ...was, ...(x.listed.since ? { since: x.listed.since } : {}) }]).length) back.push(name);
     } catch (err) { failed.push(`Couldn’t stop ${name}: ${maskSecrets(String(err?.message || err).split('\n')[0]).slice(0, 300)} It may still be running.`); }
   }
   return [...(stopped.length ? [`Stopped what this run had started: ${stopped.join(', ')}.`] : []),
+    ...(left.length ? [`Left running: ${left.join(', ')} ${left.length > 1 ? 'were' : 'was'} started again since, not by this run.`] : []),
     ...(back.length ? [`Still on the list of what should be running, as before this run: ${back.join(', ')}.`] : []),
     ...(kept.length ? [`Kept running, as saved: ${kept.join(', ')}.`] : []), ...failed].join(' ');
 }
@@ -139,6 +179,9 @@ async function stopAppStarted(viewer, x, c) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
     const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
     if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
+    // (one with a receipt that is off the list and running was started again by someone else: left, and never kept first)
+    const why = c.onlyIf ? await startedStill(x.spark, x.container, c.onlyIf) : null;
+    if (why) return { outcome: 'left', left: why };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }

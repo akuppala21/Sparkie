@@ -159,33 +159,54 @@ const treeBuild = () => sha(Buffer.concat(['server.mjs', 'dig.mjs', 'passkey.mjs
 // The recorded eval (above): the brain check, then the record. Each step that can't be made leaves a line in
 // <dir>/harness.txt and nothing else: a fleet whose brain is down at the start, or whose main.json a test made
 // unreadable, simply has no eval on record. It never throws (the fleet is up and must be handed back to be stopped),
-// and each request has a deadline.
-async function recordEval(f, lock, waitMs) {
-  const note = t => { try { appendFileSync(join(f.dir, 'harness.txt'), `${t}\n`); } catch {} };
-  try { await recordEvalSteps(f, lock, waitMs, note); } catch (e) { note(`stopped: ${e.message}`); }
+// and each request has a deadline. reuse (the eval's evalProfile, test/eval.mjs): a profile an earlier fleet's check
+// kept, already in this fleet's brain-profiles.json, so the brain isn't asked again: the record is kept for it, and only
+// when the console refuses that (another brain) is the brain checked here. { profile, asked (the brain was checked
+// here), note (the last line it left) }.
+async function recordEval(f, lock, waitMs, reuse = null) {
+  let last = null;
+  const note = t => { last = t; try { appendFileSync(join(f.dir, 'harness.txt'), `${t}\n`); } catch {} };
+  const out = { profile: null, asked: false };
+  try { await recordEvalSteps(f, lock, waitMs, note, reuse, out); } catch (e) { note(`stopped: ${e.message}`); }
+  return { ...out, note: last };
 }
-async function recordEvalSteps(f, lock, waitMs, note) {
+async function recordEvalSteps(f, lock, waitMs, note, reuse, out) {
   const m = JSON.parse(readFileSync(join(f.stateDir, 'main.json'), 'utf8')), setup = m.presets?.[m.current];
   if (!setup) return note('no brain setup');
   if (!await fetch(`http://127.0.0.1:${setup.port}/v1/models`, { signal: AbortSignal.timeout(5000) }).then(r => r.ok).catch(() => false)) return note('the brain does not answer');
-  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: f.origin }, since = new Date().toISOString();
+  const headers = { 'content-type': 'application/json', 'x-spark-console': '1', origin: f.origin };
+  const keep = p => fetch(`${f.base}/main/eval`, { method: 'POST', headers, body: JSON.stringify(madeUpRecord(lock, p)), signal: AbortSignal.timeout(60000) });
+  if (reuse) {
+    const kept = await keep(reuse);
+    if (kept.status === 201) { out.profile = reuse; return null; }
+    note(`the record for the profile reused: ${kept.status} ${await kept.text()}`);
+  }
+  const since = new Date().toISOString();
+  out.asked = true;
   const asked = await fetch(`${f.base}/main/check`, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(60000) });
   if (asked.status !== 202) return note(`the check: ${asked.status} ${await asked.text()}`);
   const profiles = () => { try { return Object.values(JSON.parse(readFileSync(join(f.stateDir, 'brain-profiles.json'), 'utf8')).profiles); } catch { return []; } };
   let p = null;
   for (const until = Date.now() + waitMs; !p && Date.now() < until;) { p = profiles().find(x => x.at >= since); if (!p) await sleep(100); }
   if (!p) return note('no profile from the check');
+  out.profile = p;
+  const kept = await keep(p);
+  if (kept.status !== 201) note(`the record: ${kept.status} ${await kept.text()}`);
+  return null;
+}
+// A full run of the lock's cases that met the bar, for profile p, as test/eval.mjs writes one.
+function madeUpRecord(lock, p) {
   const runs = expect => [1, 2, 3].map(() => ({ passed: true, asked: expect === 'ask', rounds: 1, seconds: 1, wrong: 0, unverified: 0, called: [], changed: [] }));
-  const record = { kind: 'spark-console-eval', at: new Date().toISOString(), build: lock.build, reads: lock.brainReads, set: lock.evalSet.version, setFile: lock.evalSet.file,
+  return { kind: 'spark-console-eval', at: new Date().toISOString(), build: lock.build, reads: lock.brainReads, set: lock.evalSet.version, setFile: lock.evalSet.file,
     setCases: lock.evalSet.cases.length, cap: null, memorySwitches: { on: ['names', 'past', 'time', 'digest', 'count', 'said'], off: [] }, runs: 3,
     brain: { standIn: true, key: p.key, setup: p.setup.id, model: p.model, engine: p.engine, image: p.image, flags: p.flags },
     cases: lock.evalSet.cases.map(([id, expect]) => ({ id, expect, runs: runs(expect) })) };
-  const kept = await fetch(`${f.base}/main/eval`, { method: 'POST', headers, body: JSON.stringify(record), signal: AbortSignal.timeout(60000) });
-  if (kept.status !== 201) note(`the record: ${kept.status} ${await kept.text()}`);
 }
 
+// evalProfile (test/eval.mjs only): a brain check's profile from an earlier fleet of the same run, put in this fleet's
+// brain-profiles.json before the service starts (so it doesn't check the brain itself at start), and used by recordEval.
 async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: extraEnv = {}, timeoutMs = 30000, prepare = null, knowledge = false, telegram = false, firstPort = null,
-  lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000 } = {}, attempt) {
+  lock: withLock = true, evalOnRecord = true, evalWaitMs = 20000, evalProfile = null } = {}, attempt) {
   hookExit();
   // This build's lock (above), unless the test brings its own: made before this start's ports are chosen.
   let lock = null;
@@ -214,6 +235,7 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: e
   writeFileSync(offlineFile, readFileSync(join(MOCK, 'offline')));
   if (knowledge) writeFileSync(join(stateDir, 'knowledge.json'), JSON.stringify(knownContainers(root, readFileSync(offlineFile, 'utf8'))), { mode: 0o600 });
   await prepare?.({ dir, root, stateDir });
+  if (evalProfile?.key && lock && evalOnRecord) writeFileSync(join(stateDir, 'brain-profiles.json'), JSON.stringify({ profiles: { [evalProfile.key]: { ...evalProfile, evals: {} } } }), { mode: 0o600 });
   const lockFile = join(dir, 'workflows.lock.json');
   if (lock) writeFileSync(lockFile, JSON.stringify(lock));
 
@@ -299,10 +321,12 @@ async function startOnce({ watchMs = 3000, statusMs = 5000, keep = false, env: e
   }
   // The service's own process id (to send it SIGTERM), and whether (and how) it has exited.
   const pids = () => { try { return JSON.parse(readFileSync(join(dir, 'pids.json'), 'utf8')); } catch { return {}; } };
-  if (lock && evalOnRecord) await recordEval({ base, dir, stateDir, origin: cfg.origin }, lock, evalWaitMs * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1));
+  const recorded = lock && evalOnRecord ? await recordEval({ base, dir, stateDir, origin: cfg.origin }, lock, evalWaitMs * Math.max(1, Number(process.env.SPARK_TEST_SLOW) || 1), evalProfile?.key ? evalProfile : null) : null;
   return {
     base, mcp: `${base}/mcp`, origin: cfg.origin, port, socket, dir, root, stateDir, offlineFile, log,
     modelPort, benchPort, servePort, pid: guard.pid, keep, logText, stop, env,
+    // (the recorded eval's profile, whether this fleet checked the brain itself, and the last line it left: test/eval.mjs)
+    evalProfile: recorded?.profile || null, evalChecked: Boolean(recorded?.asked), evalNote: recorded?.note || null,
     telegramPort: telegram ? telegramPort : null, secretsFile, journalDir,
     servicePid: () => pids()['server.mjs'] || null, serviceExit: () => /^server\.mjs (\S+)$/m.exec(exits())?.[1] ?? null,
   };

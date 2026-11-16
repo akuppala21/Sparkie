@@ -12,16 +12,16 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 
 | Action | Kind | Part | Group | Answers to | Page only | Step | Text |
 |---|---|---|---|---|---|---|---|
-| `fleet_status` | read | `16-reads` | core | — | — | yes | inside |
-| `running_models` | read | `16-reads` | core | — | — | yes | inside |
-| `models_on_disk` | read | `16-reads` | find | — | — | yes | inside |
+| `fleet_status` | read | `16-reads` | core | — | — | yes | outside |
+| `running_models` | read | `16-reads` | core | — | — | yes | outside |
+| `models_on_disk` | read | `16-reads` | find | — | — | yes | outside |
 | `find_recipes` | read | `16-reads` | find | — | — | yes | outside |
 | `recipe_detail` | read | `16-reads` | find | — | — | yes | outside |
 | `search_huggingface` | read | `16-reads` | find | — | — | yes | outside |
-| `where_it_fits` | read | `16-reads` | find | — | — | yes | inside |
-| `deploy_plan` | read | `16-reads` | sparks | — | — | yes | inside |
-| `cluster_plan` | read | `16-reads` | sparks | — | — | yes | inside |
-| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | inside |
+| `where_it_fits` | read | `16-reads` | find | — | — | yes | outside |
+| `deploy_plan` | read | `16-reads` | sparks | — | — | yes | outside |
+| `cluster_plan` | read | `16-reads` | sparks | — | — | yes | outside |
+| `linked_sparks` | read | `16-reads` | sparks | — | — | yes | outside |
 | `spark_detail` | read | `16-reads` | sparks | — | — | yes | outside |
 | `recent_operations` | read | `16-reads` | dig | — | — | yes | outside |
 | `operation_log` | read | `16-reads` | dig | — | — | yes | outside |
@@ -29,7 +29,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `spark_diagnostics` | read | `16-reads` | dig | — | — | yes | outside |
 | `service_logs` | read | `16-reads` | dig | — | — | yes | outside |
 | `files` | read | `16-reads` | reading | — | — | yes | outside |
-| `sparkie_setup` | read | `16-reads` | core | — | — | yes | inside |
+| `sparkie_setup` | read | `16-reads` | core | — | — | yes | outside |
 | `workloads` | read | `16-reads` | core | — | — | yes | outside |
 | `fleet_events` | read | `16-reads` | past | — | — | yes | outside |
 | `start_model` | change | `17-changes` | core | start | — | yes | — |
@@ -37,23 +37,23 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `restart_model` | change | `17-changes` | core | restart, start | — | yes | — |
 | `find_setups` | change | `17-changes` | find | find | — | yes | — |
 | `save_file` | change | `17-changes` | reading | file | — | no | — |
-| `workflows` | read | `18-workflows` | routines | — | — | yes | inside |
+| `workflows` | read | `18-workflows` | routines | — | — | yes | outside |
 | `save_workflow` | change | `18-workflows` | routines | save | yes | no | — |
 | `run_workflow` | change | `18-workflows` | routines | start | — | no | — |
 | `forget_workflow` | change | `18-workflows` | routines | forget | yes | no | — |
 | `wait_operation` | read | `18-workflows` | control | — | — | yes | outside |
 | `test_changes` | change | `18-workflows` | checks | test | — | yes | — |
 | `undo_update` | change | `18-workflows` | control | undo | yes | yes | — |
-| `should_be_running` | read | `20-desired` | control | — | — | yes | inside |
+| `should_be_running` | read | `20-desired` | control | — | — | yes | outside |
 | `cancel_operation` | change | `20-desired` | control | cancel | — | yes | — |
 | `undo_last_change` | change | `20-desired` | control | undo | — | yes | — |
 | `recall` | read | `20-journal` | past | — | — | yes | outside |
-| `memory` | read | `20-memory` | memory | — | — | yes | inside |
+| `memory` | read | `20-memory` | memory | — | — | yes | outside |
 | `remember` | change | `20-memory` | core | remember | yes | no | — |
 | `forget_memory` | change | `20-memory` | memory | remember | yes | no | — |
 | `keep_running` | change | `21-apps` | core | keep, start, restart, stop | — | yes | — |
 | `compare_models` | change | `21-compare` | routines | compare | — | no | — |
-| `guide` | read | `21-guide` | core | — | — | yes | inside |
+| `guide` | read | `21-guide` | core | — | — | yes | outside |
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
@@ -87,7 +87,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `brain-profiles.json` | `21-brain-check` | `saveBrainProfile`; `saveBrainProfile` is called by `brainCheck`, `keepEvalRecord`, `keepTrialRecord` | yes | yes |
 | `cases.json` | `21-brain-eval` | none; every install keeps test/eval/cases.json in ~/spark-console-src, evalSetNow reads it | no | no |
 | `chats.json` | `14-chats` | `chatData`, `saveChats`; chatData sets an unreadable one aside | yes | no |
-| `desired.json` | `20-desired` | `desiredAfter`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
+| `desired.json` | `20-desired` | `desiredAfter`, `desiredWish`, `keepApp`, `forgetApp`, `parkDesired`, `desiredPutBack`, `watchHeld`, `markUndone`, `handler` (24-handler); `desiredAfter` is called by `runJob`; `desiredWish` is called by `startModel`, `restart_model`, `START_CODE`, `keep_running`; `keepApp` is called by `keepIt`, `keep_running`; `forgetApp` is called by `keep_running`; `desiredPutBack` is called by `stopWhatRan` | yes | yes |
 | `energy.json` | `12-status` | `sampleEnergy`; `sampleEnergy` is called by `collectStatus` | yes | no |
 | `eval-seal.json` | `21-brain-rail` | `evalSealKey`; beside secrets.json, outside the state folder; `evalSealKey` is called by `keepEvalRecord`, `evalSealed`, `brainRail`, `keepTrialRecord` | no | no |
 | `events.jsonl` | `19-watcher` | `fleetEvent` | yes | no |
@@ -132,12 +132,14 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `test` | `06-links` | the cable test, fabric: 20 s after start, then every 10 minutes |
 | `refreshPlugs` | `12-plugs` | every 15 s, after a first read 2 s after start |
 | `collectStatus` | `12-status` | every 30 s, after a first round 2 s after start |
+| `taskReportsDue` | `14-tasks` | a report Telegram didn't take, again after 1, 2 and 4 minutes |
 | `watchFleet` | `19-watcher` | 15 s after start, then every 60 s |
 | `beatStart` | `20-beat` | once, a minute after the listen callback: the first beat |
 | `beatOnce` | `20-beat` | every 5 minutes after that, and from a beat at once when an address is saved |
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
+| `tellAgain` | `20-tell` | a result Telegram didn't take, again after 1, 2 and 4 minutes |
 | `tryStop` | `21-long` | every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
 | `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |

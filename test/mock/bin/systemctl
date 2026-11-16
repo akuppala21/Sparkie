@@ -23,6 +23,9 @@
 # Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it answers from that one.
 # <rehearsal>/standin/holds/<unit>: a unit marked running (standin/active) that a stop does not end at once: "<n>", the
 # next n answers of its ActiveState say active, then it is gone; "never", SIGKILL does not end it either.
+# A unit written "<active> <file> links" takes its file state from its links in the rehearsal's /etc/systemd/system, as
+# systemd's does (A-15): masked while <unit> there is a link to /dev/null, enabled while a *.wants/<unit> link is there,
+# else disabled; and enable, disable, mask and unmask make and take away those links.
 import json, os, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -47,12 +50,47 @@ def unit(name):
         return None
 
 
+SYSTEM = os.path.join(R, 'etc', 'systemd', 'system')
+
+
+def links_state(name):   # a unit's file state as its links say
+    at = os.path.join(SYSTEM, name)
+    if os.path.islink(at) and os.readlink(at) == '/dev/null':
+        return 'masked'
+    try:
+        wants = [d for d in os.listdir(SYSTEM) if d.endswith('.wants') and os.path.islink(os.path.join(SYSTEM, d, name))]
+    except OSError:
+        wants = []
+    return 'enabled' if wants else 'disabled'
+
+
+def file_of(u, name):
+    return links_state(name) if len(u) > 2 and u[2] == 'links' else u[1]
+
+
+def set_links(name, verb):   # what enable, disable, mask and unmask do to a unit's links, as systemctl does
+    at, want = os.path.join(SYSTEM, name), os.path.join(SYSTEM, 'multi-user.target.wants', name)
+    if verb == 'enable' and not os.path.lexists(want):
+        os.makedirs(os.path.dirname(want), exist_ok=True)
+        os.symlink(f'/usr/lib/systemd/system/{name}', want)
+    elif verb == 'disable':
+        for d in [d for d in os.listdir(SYSTEM) if d.endswith('.wants')] if os.path.isdir(SYSTEM) else []:
+            if os.path.islink(os.path.join(SYSTEM, d, name)):
+                os.unlink(os.path.join(SYSTEM, d, name))
+    elif verb == 'mask' and not os.path.lexists(at):
+        os.makedirs(SYSTEM, exist_ok=True)
+        os.symlink('/dev/null', at)
+    elif verb == 'unmask' and os.path.islink(at) and os.readlink(at) == '/dev/null':
+        os.unlink(at)
+
+
 def set_unit(name, active=None, file=None):
     u = unit(name)
     if u is None:
         return
+    links = len(u) > 2 and u[2] == 'links'
     with open(os.path.join(units, name), 'w') as f:
-        f.write(f'{active or u[0]} {file or u[1]}\n')
+        f.write(f'{active or u[0]} {(links_state(name) if links else file) or u[1]}' + (' links' if links else '') + '\n')
 timers, running = os.path.join(R, 'standin', 'timers'), os.path.join(R, 'standin', 'active')
 
 
@@ -108,7 +146,7 @@ elif args[:2] == ['is-active', '--quiet'] and len(args) == 3:
     sys.exit(3 if os.path.exists(os.path.join(R, 'standin', 'target-dead')) else 0)
 elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and len(args) == 3:
     u = unit(args[2])
-    print(f"ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState={'masked' if u[1] == 'masked' else 'loaded'}" if u
+    print(f"ActiveState={u[0]}\nUnitFileState={file_of(u, args[2])}\nLoadState={'masked' if file_of(u, args[2]) == 'masked' else 'loaded'}" if u
           else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')   # (as systemd: a masked unit's LoadState is masked)
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4 \
         and os.path.exists(os.path.join(R, 'standin', 'silent', args[3])):
@@ -131,6 +169,8 @@ elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 
 elif args[:1] in (['start'], ['restart']) and len(args) == 2 and unit(args[1]):
     set_unit(args[1], active='active')
 elif args[:1] in (['enable'], ['disable'], ['mask'], ['unmask']) and len(args) == 2:
+    if (unit(args[1]) or [])[2:3] == ['links']:
+        set_links(args[1], args[0])
     set_unit(args[1], file={'enable': 'enabled', 'disable': 'disabled', 'mask': 'masked', 'unmask': 'disabled'}[args[0]])
 elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-'):
     if os.path.exists(os.path.join(R, 'standin', 'timer-stop-fails')):

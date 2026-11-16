@@ -69,8 +69,12 @@ function ggufOnDisk(b64) {
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
-// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
+// can write those files. It is still text from outside (a sentence fits): models_on_disk, which hands it to the brain, is
+// an outside read (R26, R53), and nothing the brain reads as the console's own carries it.
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
+// A name from a Spark (a container, a model, a link) as an inside read or the record ahead of the owner's words may carry
+// it (R26, A-17): one word of letters, digits and ._-/:@+, at most 100 signs, no space; anything else is no name (null).
+const bareName = v => (typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._\-/:@+]{0,99}$/.test(v) ? v : null);
 // The same for spark.json's image and setting names: a setting name not shaped like one is left out; an image not
 // shaped like an image reference is never shown (plainImage: the plans' steps), though a start still tries it as named
 // and fails there. True when either was found; the plans say so (PLAIN_NOTE), never what it was.

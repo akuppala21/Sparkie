@@ -4,7 +4,9 @@
 // then `X-Spark-Validate`) validates it and has to answer a test prompt; then agents can; starting across two Sparks is
 // validated on its own; a version not in the lock is off everywhere; a model that loads but doesn't answer fails and
 // what it stopped runs again; out of memory → tried again with the context capped, and that setup recorded; 3 failed
-// attempts → put back, with what was tried; a rejected setting is dropped by name and the result says so; a stop is
+// attempts → put back, with what was tried; out of memory is never cut below 16,384 tokens by itself (A-26): at 16,384
+// it starts and says so, below that it fails after three tries and puts back what it stopped, and the fix's next
+// context is never under 16,384; a rejected setting is dropped by name and the result says so; a stop is
 // checked; from the owner's chat the first restart asks once (a button, not a typed "yes"), one that doesn't answer is
 // stopped again, and the next validates it.
 //
@@ -19,7 +21,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, eventLines, waitFor, newChat, say, choose, SLOW } from './lib.mjs';
+import { T, REPO, useFleet, api, call, createKey, createActKey, eventLines, waitFor, newChat, say, choose, SLOW } from './lib.mjs';
 import { startMock } from './start-mock.mjs';
 
 const keys = {};
@@ -207,6 +209,65 @@ describe('done means it answers, and known problems are fixed', () => {
       // (one that ran past the test isn't left holding Spark 4 for the next)
       if (id) await api(`/jobs/${id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
       rmSync(mock('spark4', 'oom-ctx'), { force: true });
+    }
+  });
+
+  // T12 (part): never cut below 16,384 tokens by itself; a context fixed in a named setup is still cut without asking (T42: not built).
+  // (T42 needs a question inside a running operation, or a new argument: the rule's Today, R16, says so.)
+  test('out of memory even at 16,384 tokens: it fails after three tries, never cut shorter by itself; nothing of it runs and what it stopped runs again', { timeout: 420000 * SLOW }, async () => {
+    writeFileSync(mock('spark4', 'oom-ctx'), '8192');
+    let id = null;
+    try {
+      assert.equal(stateOf('spark4', `sc-${RADIX}`), 'running');
+      const r = await api('/deploy', { method: 'POST', body: await deployBody(NEMO, 'spark4') });
+      assert.equal(r.status, 202, r.text);
+      id = r.json.id;
+      const w = await finished(r.json.id);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      assert.match(w.error, /^It didn’t start: it ran out of memory while loading \(3 attempts\)\. Even a short context didn’t fit \(16,384 tokens, the shortest it is cut to without asking\)/, w.error);
+      assert.ok(w.recentLog.some(l => /Starting it with a shorter context \(32,768 tokens, then 16,384; never shorter without asking\)\. \(attempt 3 of 3\)/.test(l)), w.recentLog.join('\n'));
+      const args = readFileSync(mock('spark4', 'last-run-args'), 'utf8').split('\n');
+      assert.equal(args[args.findLastIndex(a => a === '--context-length' || a === '--max-model-len') + 1], '16384', args.join(' '));
+      assert.notEqual(stateOf('spark4', `sc-${NEMO}`), 'running', 'nothing of it runs');
+      assert.equal(stateOf('spark4', `sc-${RADIX}`), 'running', 'put back');
+    } finally {
+      if (id) await api(`/jobs/${id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
+      rmSync(mock('spark4', 'oom-ctx'), { force: true });
+    }
+  });
+
+  test('out of memory above 16,384 tokens: the third try at 16,384 starts, and it says it runs with a context of 16,384 tokens', { timeout: 420000 * SLOW }, async () => {
+    writeFileSync(mock('spark4', 'oom-ctx'), '16384');
+    let id = null;
+    try {
+      const r = await api('/deploy', { method: 'POST', body: await deployBody(NEMO, 'spark4') });
+      assert.equal(r.status, 202, r.text);
+      id = r.json.id;
+      const w = await finished(r.json.id);
+      assert.equal(w.status, 'completed', JSON.stringify(w));
+      assert.deepEqual(w.fixed, { problems: ['out-of-memory', 'out-of-memory'], gaveUp: 'a context of 16,384 tokens' });
+      assert.ok(w.recentLog.some(l => /Started after fixing: it ran out of memory while loading; it ran out of memory while loading \(it runs with a context of 16,384 tokens\)/.test(l)), w.recentLog.join('\n'));
+      const args = readFileSync(mock('spark4', 'last-run-args'), 'utf8').split('\n');
+      assert.equal(args[args.findLastIndex(a => a === '--context-length' || a === '--max-model-len') + 1], '16384', args.join(' '));
+      id = null;
+    } finally {
+      if (id) await api(`/jobs/${id}/cancel`, { method: 'POST', body: {} }).catch(() => {});
+      rmSync(mock('spark4', 'oom-ctx'), { force: true });
+    }
+  });
+
+  test('the out-of-memory fix\'s next context is never under 16,384 tokens', () => {
+    // START_FAILURES as written in the part, run on its own: each next try from where the last one left off.
+    const src = readFileSync(join(REPO, 'service', 'src', '17-changes.mjs'), 'utf8');
+    const text = src.slice(src.indexOf('const START_FAILURES = ['), src.indexOf('];', src.indexOf('const START_FAILURES = [')) + 1).replace(/^const START_FAILURES = /, '');
+    const floor = Number(/^const CONTEXT_FLOOR = (\d+);$/m.exec(src)?.[1]);
+    const oom = new Function('CONTEXT_FLOOR', 'rejectedFlags', 'dig', `return ${text};`)(floor, () => [], {}).find(f => f.id === 'out-of-memory');
+    const caps = [];
+    for (let fix = {}, next; (next = oom.next({ fix, tried: [], message: '' })) && caps.length < 10; fix = next.fix) caps.push(next.fix.contextCap);
+    assert.deepEqual(caps, [32768, 16384]);
+    for (const from of [65536, 32768, 20000, 16385, 16384, 12000, 8192, 1024]) {
+      const cap = oom.next({ fix: { contextCap: from }, tried: [], message: '' })?.fix.contextCap;
+      assert.ok(cap === undefined || cap >= 16384, `after ${from}: ${cap}`);
     }
   });
 

@@ -384,15 +384,19 @@ async function clusterDeploy(job, modelName, nodeIds, viewer, keep = [], how = n
 // It didn't start: what was set aside gets its name back and starts again. It's taken off this start's lists, so
 // putting the rest back (putBack) doesn't stop it again as one of this start's parts.
 async function asideBack(job) {
+  const held = [];
   for (const a of job.asideHere || []) {
     const x = `${a.node}/${a.name}`;
+    // (never beside a part this start ran on that Spark that isn't known to have stopped: it stays set aside, and the
+    // put-back looks again once its own stops are done, A-23)
+    if ((await runningOn(job, a.node, x)).length) { held.push(a); continue; }
     const r = await run(nodeById(a.node), `docker stop --time 20 ${q(a.name)} >/dev/null 2>&1; docker rm -f ${q(a.name)} >/dev/null 2>&1; docker rename ${q(a.aside)} ${q(a.name)} && docker start ${q(a.name)} >/dev/null`, { timeout: 120000 });
     job.ranHere = (job.ranHere || []).filter(y => y !== x);
     job.stoppedHere = (job.stoppedHere || []).filter(y => y !== x);
     consoleStopped.delete(x);
     note(job, r.code ? `Couldn’t start ${a.name} on ${a.node} again (it’s there as ${a.aside}); start it from Spark Console.` : `Started ${a.name} on ${a.node} again`);
   }
-  job.asideHere = [];
+  job.asideHere = held;
 }
 
 // Copies and images, then both parts, then waiting until the first answers (both still running).
@@ -412,10 +416,14 @@ async function clusterParts(job, { cp, net, model, modelName, names, nodeIds, vi
   }
   job.checkPause?.();
   await engineCheck(job, { cp, model, net, nodeIds, fix });
+  // (each stop looked at, A-23: a Spark that didn't answer, and a stop that didn't take there, are both said)
   const stopAll = async () => {
-    const r = await Promise.all(cp.members.map((m, i) => run(nodeById(m.node), `docker stop --time 20 ${q(names[i])} >/dev/null 2>&1; true`, { timeout: 90000 })));
-    const missed = cp.members.filter((m, i) => r[i].code !== 0);
-    for (const m of missed) note(job, `Couldn’t reach ${m.node} to stop its part. Stop it there: docker stop ${names[cp.members.indexOf(m)]}`);
+    const r = await Promise.all(cp.members.map((m, i) => stopChecked(nodeById(m.node), names[i])));
+    const missed = cp.members.filter((m, i) => r[i] !== 'stopped');
+    for (const m of missed) {
+      const i = cp.members.indexOf(m);
+      note(job, r[i] === 'unknown' ? `Couldn’t reach ${m.node} to stop its part. Stop it there: docker stop ${names[i]}` : `Its part on ${m.node} didn’t stop: it is still running there. Stop it there: docker stop ${names[i]}`);
+    }
     return missed;
   };
   let unknownChecks = 0;

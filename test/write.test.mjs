@@ -15,11 +15,12 @@
 // Spark with tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync, readdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { mkdtempSync } from 'node:fs';
 import { T, useFleet, api, call, createActKey, newChat, say, choose, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
@@ -312,6 +313,160 @@ test('the unit\'s own program: it checks the file, writes beside it and makes on
       process.kill(-p.pid, 'SIGTERM');
     }, 500));
   } finally { setTimeout(() => rmSync(dir, { recursive: true, force: true }), 2000); }
+});
+
+// A-19 (the outside reviewer's, round two): a second writer between the program's look and its publish. The program,
+// lifted as above, waits in old.hold (a folder the test gives it: it makes `at` there and waits for `go`, at most 30 s)
+// after the text is staged and before it is published; the test writes the file there meanwhile. The other writer's
+// file must stay as it is, the program end 3 and leave nothing behind. Real GNU tools and python3 (Linux).
+const A19 = mkdtempSync(join(tmpdir(), 'sct-a19-'));
+process.on('exit', () => rmSync(A19, { recursive: true, force: true }));
+const BEFORE = 'the file as it was read\n', NEWER = 'another program’s newer edit\n', WANTED = 'Sparkie’s text\n';
+const sha = s => createHash('sha256').update(s).digest('hex');
+const liftWrite = () => {
+  const fn = /^function writeProgram\(rel, old\) \{[\s\S]*?\n\}$/m.exec(readFileSync(join(REPO, 'service', 'src', '21-write.mjs'), 'utf8'))?.[0];
+  assert.ok(fn, 'writeProgram');
+  return new Function('q', `${fn}\nreturn writeProgram;`)(s => `'${String(s).replace(/'/g, "'\\''")}'`);
+};
+const a19Dir = name => { const d = join(A19, name); mkdirSync(d, { recursive: true }); return d; };
+const a19Left = d => readdirSync(d).filter(f => f.startsWith('.write_file.') || f.startsWith('.spark-console-put-back-'));
+// Runs `argv` in `dir` with `input` on its input; when it waits in `hold`, `during()` runs, then it may go on.
+async function held(argv, dir, hold, input, during, env = {}) {
+  mkdirSync(hold, { recursive: true });
+  const p = spawn(argv[0], argv.slice(1), { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+  let out = '', err = '';
+  p.stdout.on('data', d => { out += d; });
+  p.stderr.on('data', d => { err += d; });
+  const closed = new Promise(r => p.on('close', code => r(code)));
+  p.stdin.end(input);
+  try {
+    await waitFor(() => existsSync(join(hold, 'at')), { timeout: 20000, every: 20, what: 'the program to wait between its look and its publish' });
+    await during();
+    writeFileSync(join(hold, 'go'), '');
+    const code = await Promise.race([closed, sleep(30000 * SLOW).then(() => 'never ended')]);
+    return { code, out, err: err.trim() };
+  } finally { p.kill('SIGKILL'); }
+}
+
+test('A-19: a replace never loses an edit another program makes between the look and the publish: what it displaced is checked and put back, and nothing is left', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('replace'), f = join(d, 'notes.txt'), writeProgram = liftWrite();
+  writeFileSync(f, BEFORE);
+  const hold = join(d, 'hold1');
+  const r = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER));
+  assert.equal(r.code, 3, r.err);
+  assert.match(r.err, /^write_file: the file changed since it was read here, so nothing was written\.$/);
+  assert.equal(readFileSync(f, 'utf8'), NEWER, 'the other program’s edit is there');
+  assert.deepEqual(a19Left(d), []);
+  // (nobody else writing: written, with the old permission bits only)
+  writeFileSync(f, BEFORE);
+  chmodSync(f, 0o640);
+  const hold2 = join(d, 'hold2');
+  const ok = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold: hold2 })], d, hold2, WANTED, () => {});
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual([readFileSync(f, 'utf8'), statSync(f).mode & 0o777, a19Left(d)], [WANTED, 0o640, []]);
+});
+
+test('A-19: a new file another program makes between the look and the publish stays theirs (a link, never a move over it)', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('new'), g = join(d, 'new.txt'), hold = join(d, 'hold');
+  const r = await held(['bash', '-c', liftWrite()('./new.txt', { kind: 'none', hold })], d, hold, WANTED, () => writeFileSync(g, NEWER));
+  assert.equal(r.code, 3, r.err);
+  assert.match(r.err, /the file changed since it was read here/);
+  assert.equal(readFileSync(g, 'utf8'), NEWER, 'their file is kept');
+  assert.deepEqual(a19Left(d), []);
+});
+
+test('A-19: where there is no exchange, the program compares once more just before its one move', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('no-exchange'), f = join(d, 'notes.txt'), bin = join(d, 'bin');
+  // (a python3 that says this libc or filesystem has no exchange, as the program's own exchange answers then)
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 4\n', { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH}` }, writeProgram = liftWrite();
+  writeFileSync(f, BEFORE);
+  const hold = join(d, 'hold1');
+  const r = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER), env);
+  assert.equal(r.code, 3, r.err);
+  assert.equal(readFileSync(f, 'utf8'), NEWER, 'the other program’s edit is there');
+  assert.deepEqual(a19Left(d), []);
+  writeFileSync(f, BEFORE);
+  const hold2 = join(d, 'hold2');
+  const ok = await held(['bash', '-c', writeProgram('./notes.txt', { kind: 'file', sha: sha(BEFORE), hold: hold2 })], d, hold2, WANTED, () => {}, env);
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(readFileSync(f, 'utf8'), WANTED);
+});
+
+test('A-19: a hidden file, whose text is never read, is compared by its inode, size and time: an edit since the look is kept', { timeout: 60000 * SLOW }, async () => {
+  const d = a19Dir('hidden'), f = join(d, 'server.key'), writeProgram = liftWrite();
+  const sig = () => spawnSync('stat', ['-c', '%i %s %y', '--', f], { encoding: 'utf8', timeout: 10000 }).stdout.trim();
+  writeFileSync(f, BEFORE, { mode: 0o600 });
+  const hold = join(d, 'hold1');
+  const r = await held(['bash', '-c', writeProgram('./server.key', { kind: 'hidden', sig: sig(), hold })], d, hold, WANTED, () => writeFileSync(f, NEWER));
+  assert.equal(r.code, 3, r.err);
+  assert.equal(readFileSync(f, 'utf8'), NEWER, 'the other program’s edit is there');
+  assert.deepEqual(a19Left(d), []);
+  // (changed since the ask, before the program even starts: it stops at its first compare; unchanged: written)
+  const stale = spawnSync('bash', ['-c', writeProgram('./server.key', { kind: 'hidden', sig: `${sig()}x` })], { cwd: d, input: WANTED, encoding: 'utf8', timeout: 20000 });
+  assert.equal(stale.status, 3, stale.stderr);
+  assert.equal(readFileSync(f, 'utf8'), NEWER);
+  const hold3 = join(d, 'hold3');
+  const ok = await held(['bash', '-c', writeProgram('./server.key', { kind: 'hidden', sig: sig(), hold: hold3 })], d, hold3, WANTED, () => {});
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual([readFileSync(f, 'utf8'), statSync(f).mode & 0o777], [WANTED, 0o600]);
+});
+
+// Undo's put-back (A-19, beside): the copies' program (21-copies.mjs), lifted with its pruning part, run with python3
+// as the console runs it, in a home of its own: copy, the change, after, then restore waiting in A.hold between its
+// look and its put-back while the test writes the file. What another program wrote since stays, and is said.
+async function copiesPy() {
+  const d = a19Dir('copies-program'), S = join(REPO, 'service', 'src');
+  writeFileSync(join(d, 'copies.mjs'), ["import { randomBytes } from 'node:crypto';", 'const ALL_LOCAL = false;',
+    'class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }',
+    'const sparkName = () => "Spark 3", maskSecrets = String, run = async () => ({ code: 0, out: "" });',
+    readFileSync(join(S, '21-copies-prune.mjs'), 'utf8'), readFileSync(join(S, '21-copies.mjs'), 'utf8'),
+    'export { COPIES_PY, COPIES_FILE_MAX, COPIES_SET_MAX };'].join('\n'));
+  const m = await import(pathToFileURL(join(d, 'copies.mjs')).href);
+  // (as copiesOn sends it: the limits, and the ways in, none here)
+  const arg = A => Buffer.from(JSON.stringify({ fileMax: m.COPIES_FILE_MAX, allMax: m.COPIES_SET_MAX, ways: [], ...A })).toString('base64');
+  const answer = (out, err) => { const x = /^RESULT ([A-Za-z0-9+/=]+)$/m.exec(out); assert.ok(x, `no answer: ${out.slice(-300)} ${String(err).slice(-600)}`); return JSON.parse(Buffer.from(x[1], 'base64').toString('utf8')); };
+  return {
+    once: (home, A) => { const r = spawnSync('python3', ['-', arg(A)], { input: m.COPIES_PY, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 30000 }); return answer(String(r.stdout), r.stderr); },
+    held: async (home, A, hold, during) => { const r = await held(['python3', '-', arg({ ...A, hold })], home, hold, m.COPIES_PY, during, { HOME: home }); assert.equal(r.code, 0, r.err); return answer(r.out, r.err); },
+  };
+}
+
+test('A-19, undo: the put-back never replaces an edit another program made since its look; a file the change removed is put back only where nothing is', { timeout: 60000 * SLOW }, async () => {
+  const P = await copiesPy(), home = a19Dir('home'), notes = join(home, 'notes');
+  mkdirSync(notes, { recursive: true });
+  writeFileSync(join(notes, 'a.txt'), BEFORE);
+  writeFileSync(join(notes, 'b.txt'), BEFORE);
+  const set = 'sa19test0001', c = P.once(home, { mode: 'copy', set, ways: [], placed: ['~/notes/a.txt', '~/notes/b.txt'], wide: [] });
+  assert.ok(c.sha, JSON.stringify(c));
+  // (the change: a.txt rewritten, b.txt removed; then its after-look)
+  writeFileSync(join(notes, 'a.txt'), 'what the change wrote\n');
+  unlinkSync(join(notes, 'b.txt'));
+  P.once(home, { mode: 'after', set, sha: c.sha });
+  // A second writer while the put-back waits between its look and its put-back, one file a time: a.txt edited, then
+  // b.txt made anew.
+  for (const [name, i] of [['a.txt', 1], ['b.txt', 2]]) {
+    const r = await P.held(home, { mode: 'restore', set, sha: c.sha, check: true, only: [`~/notes/${name}`] }, join(home, `hold${i}`), () => writeFileSync(join(notes, name), NEWER));
+    assert.deepEqual([r.restored, r.notRestored.map(e => [e.path, e.why])], [[], [[`~/notes/${name}`, 'changed again since the change: left as it is']]], JSON.stringify(r));
+    assert.equal(readFileSync(join(notes, name), 'utf8'), NEWER, `what the other program wrote in ${name} is there`);
+  }
+  assert.deepEqual(a19Left(notes), []);
+});
+
+test('A-19, undo: with nobody else writing, the put-back puts both back, exactly', { timeout: 60000 * SLOW }, async () => {
+  const P = await copiesPy(), home = a19Dir('home2'), notes = join(home, 'notes');
+  mkdirSync(notes, { recursive: true });
+  writeFileSync(join(notes, 'a.txt'), BEFORE, { mode: 0o640 });
+  writeFileSync(join(notes, 'b.txt'), BEFORE);
+  const set = 'sa19test0002', c = P.once(home, { mode: 'copy', set, ways: [], placed: ['~/notes/a.txt', '~/notes/b.txt'], wide: [] });
+  writeFileSync(join(notes, 'a.txt'), 'what the change wrote\n');
+  unlinkSync(join(notes, 'b.txt'));
+  P.once(home, { mode: 'after', set, sha: c.sha });
+  const r = await P.held(home, { mode: 'restore', set, sha: c.sha, check: true }, join(home, 'hold'), () => {});
+  assert.deepEqual([...r.restored].sort(), ['~/notes/a.txt', '~/notes/b.txt'], JSON.stringify(r));
+  assert.deepEqual([readFileSync(join(notes, 'a.txt'), 'utf8'), statSync(join(notes, 'a.txt')).mode & 0o777, readFileSync(join(notes, 'b.txt'), 'utf8')], [BEFORE, 0o640, BEFORE]);
+  assert.deepEqual(a19Left(notes), []);
 });
 
 test('write_file\'s own entry: refused while changes are paused; an agent\'s call is answered with a question for the owner, with no button to press', { timeout: 60000 * SLOW }, async () => {
