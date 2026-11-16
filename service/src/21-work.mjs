@@ -268,8 +268,9 @@ function helperNeeds(node, a) {
   return null;
 }
 // The owner's one-time command for a compute Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
-function ownerCommand(node) {
-  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
+// withRoot: the same, turning root's switch on there too (R70: where root is off and a command as root was asked for).
+function ownerCommand(node, withRoot = false) {
+  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${withRoot ? '--with-root ' : ''}${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
   let host = '';
   try { host = new URL(consoleOrigin()).hostname; } catch {}
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && /^[a-z_][a-z0-9_-]*$/.test(String(CONFIG.user)) ? `ssh -t ${CONFIG.user}@${host} ${q(line)}` : line;
@@ -283,7 +284,7 @@ function needsOwner(node, kind, why) {
   if (node.host === 'local') return { spark: node.id, ran: false, why: `Commands on ${at}, the hub, come with a later build (its set-up waits for the lock-out net), so nothing ran there.`, next: `Until then ${others}.`, observedAt: new Date().toISOString() };
   const told = ownerTold.has(`${node.id} ${kind}`);
   ownerTold.add(`${node.id} ${kind}`);
-  return { spark: node.id, ran: false, ...(told ? {} : { ownerCommand: ownerCommand(node) }), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
+  return { spark: node.id, ran: false, ...(told ? {} : { ownerCommand: ownerCommand(node, kind === 'root off') }), why: `${why}, so nothing ran there.`, observedAt: new Date().toISOString(),
     next: told ? `The owner was given its one-time command earlier; until it has run, ${others}.` : `Give the owner that command: they run it once, in their own terminal, and it asks ${at}’s password once. Until then ${others}.` };
 }
 // Who may look (design A 2.3): the owner, in their own chats (the page, Telegram) and on POST /actions; an agent only
@@ -317,6 +318,8 @@ function forBrain(t) {
 // the ladder (21-ladder.mjs: at once, asked or not done). A look's own refusals come first (no command, sudo as a
 // command word, a key's name), with the look's own words.
 async function runCommand(input, viewer, ctx = {}) {
+  // (as root, A12: always the dangerous ask, inside the lock-out net; only while its switch is on, 21-root.mjs)
+  if (input.root === true) return rootChange(input, viewer, ctx);
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: opened and checked; A4 runs the command)
   // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
@@ -399,6 +402,8 @@ action({
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
     minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
+    // (A12: only while root's switch is on, so what the brain reads is as before while it is off, 21-root.mjs)
+    ...(ROOT_ON ? { root: { type: 'boolean', description: 'Run the command as root, on a compute Spark: always asked first, as root (the owner presses), and always inside the lock-out net, which puts back the ways in unless the Spark still answers right after it. Leave out sudo. Never with keys, minutes, fleet or gpu.' } } : {}),
     keys: { type: 'array', maxItems: 8, items: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,40}$' }, description: 'Names of keys the owner gave (/key NAME …), like ["HF_TOKEN"]: each is in the command’s environment by that name for this run only. A command given a key is always asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),

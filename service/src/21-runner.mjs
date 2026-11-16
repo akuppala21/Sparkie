@@ -46,7 +46,8 @@ function runnerNever(node, sorted, ctx) {
   const at = sparkName(node);
   if (node.host === 'local') throw new HttpError(403, `${at} runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.`);
   if (brainSparks().includes(node.id)) throw new HttpError(403, `${at} holds the brain, so the runner changes nothing there.`);
-  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
+  // (sudo, su, or another way to root: with root on, answered "set root", 21-root.mjs; off, as before)
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, ROOT_ON ? ROOT_SET : 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
   if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
 }
