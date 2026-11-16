@@ -387,11 +387,13 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
   // Another change holds Spark 3: the press is refused before it reads anything there.
   const slow = await run('bash notes/slow6.sh', '~', { minutes: 1 });
   assert.equal(slow.json?.outcome, 'started', slow.text);
-  await waitFor(() => live().length > 0, { every: 100, what: 'the slow change to run' });
-  const n = looks(), p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
-  assert.match(p.json?.message?.content || '', /Something is already changing on Spark 3/, p.text);
-  assert.equal(looks(), n, 'no look read the script while another change held the Spark');
-  await ended(slow.json.operation);
+  // (the slow change is waited out whatever happens here, so the next test finds Spark 3 free)
+  try {
+    await waitFor(() => live().length > 0, { every: 100, what: 'the slow change to run' });
+    const n = looks(), p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+    assert.match(p.json?.message?.content || '', /Something is already changing on Spark 3/, p.text);
+    assert.equal(looks(), n, 'no look read the script while another change held the Spark');
+  } finally { await ended(slow.json.operation); }
   // Pressed with Spark 3 free: it runs, the unit's first lines hold the script's hash, and what it printed is only its own.
   const c2 = await newChat(), t2 = await turn(c2, 'run the s6a script again', [[RUN('bash notes/s6a.sh')]]);
   const p2 = await choose(c2, t2.choices.find(c => c.label === 'Run it').id);
@@ -518,4 +520,17 @@ test('S-17: an agent that asks Sparkie for a change on a compute Spark gets a bu
   const p = await choose(r.value.conversation, yes.id);
   assert.equal(p.status, 200, p.text);
   assert.ok(existsSync(at3('notes/agent17.txt')), `the owner's press ran it: ${p.text}`);
+});
+
+// The sorter's builder's find: the dangerous ask for the brain's names did not show the sorter's reason, which says why
+// (it names the brain's container or files, it may be Spark 2, a protected container's id). It is on the ask now.
+test('the dangerous ask for the brain\'s names carries the sorter\'s reason on a line of its own', { timeout: 60000 * SLOW }, async () => {
+  const chat = await newChat();
+  await turn(chat, 'touch the sparkie note on spark 3', [[RUN('touch notes/sparkie-main.txt')]]);
+  const ask = await dangerOf(chat);
+  assert.match(ask?.danger.lines.join('\n') || '', /^THE BRAIN on Spark 3/, JSON.stringify(ask?.danger));
+  const why = ask.danger.lines.find(l => l.startsWith('Why it is asked: '));
+  assert.match(why || '', /^Why it is asked: It names the brain \(its container, model files or setup\): “~\/notes\/sparkie-main\.txt”/, JSON.stringify(ask.danger.lines));
+  assert.ok(!existsSync(at3('notes/sparkie-main.txt')), 'nothing ran');
+  await choose(chat, ask.choices.find(c => c.label === 'No').id);
 });
