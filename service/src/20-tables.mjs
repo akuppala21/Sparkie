@@ -31,6 +31,7 @@ for (const [cls, names, why] of [
   ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
   ['risky', 'dockerd containerd setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
   ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
+  ['lockout', 'rfkill networkctl wg wg-quick iwctl dhclient dhcpcd udhcpc brctl bridge ipset conntrack netfilter-persistent iptables-apply ip6tables-apply resolvconf', 'radios, links, tunnels, address leases, firewall sets and tracked connections: the network, a way in'],
   ['lockout', 'nsenter chroot unshare systemd-nspawn runc lxc-attach lxc-execute', 'it enters the host’s own namespaces or root folder, or makes new ones, where SSH, the firewall and users are a command away: a way in'],
   ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
   ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
@@ -39,6 +40,12 @@ for (const [cls, names, why] of [
 ]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
 // Programs with a handler of their own that can change a way in (their handler says when): named inside text the sorter
 // does not read as a command (a one-liner, a container's words), each counts as the lock-out class.
+// The way-in processes as pkill and killall see them: their names (at most 15 signs, as the kernel keeps them), and
+// their command lines (pkill -f).
+const SORT_WAY_PROCS = 'sshd sshd-session sshd-auth tailscaled NetworkManager systemd-network systemd-resolve systemd-logind wpa_supplicant dhclient dhcpcd dbus-daemon dbus-broker systemd init agetty login sudo'.split(' ');
+const SORT_WAY_CMDS = ['/usr/sbin/sshd -D', 'sshd: owner@pts/0', 'sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups', '/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock',
+  '/usr/sbin/NetworkManager --no-daemon', '/lib/systemd/systemd-networkd', '/lib/systemd/systemd-resolved', '/lib/systemd/systemd-logind', '/sbin/wpa_supplicant -u -s -O /run/wpa_supplicant',
+  '/usr/bin/dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only', '/lib/systemd/systemd --user', '/sbin/init', '/sbin/agetty -o -p -- \\u --noclear tty1 linux', 'node /home/owner/spark-console-service/server.mjs'];
 const SORT_LOCK_HANDLERS = new Set('tailscale ip arp systemctl service loginctl userdel deluser sysctl hostname ssh-keygen'.split(' '));
 // The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
 const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
@@ -55,6 +62,13 @@ const SORT_LOCK_READS = {
   hostname: a => a.every(t => /^-[aAdfiIsy]+$|^--(?:all-fqdns|all-ip-addresses|domain|fqdn|ip-address|short|long|alias)$/.test(t)),
 };
 SORT_LOCK_READS.ip6tables = SORT_LOCK_READS['iptables-legacy'] = SORT_LOCK_READS['iptables-nft'] = SORT_LOCK_READS.iptables;
+// (the network tools of the final read's list that only read in these forms)
+Object.assign(SORT_LOCK_READS, {
+  rfkill: a => a.length === 0 || (/^(?:list|event)$/.test(a[0]) && !a.some(t => /[;\n]/.test(t))), networkctl: a => /^(?:|list|status|lldp|label|cat)$/.test(a.find(t => !t.startsWith('-')) ?? '') && !a.some(t => /[;\n]/.test(t)),
+  wg: a => /^(?:|show|showconf)$/.test(a[0] ?? ''), ipset: a => /^(?:-?L|list|-S|save|-?n|--list|--save)$/.test(a.find(t => !/^-o$|^-(?:t|terse|n|name|s|sorted|q|quiet)$/.test(t)) ?? ''),
+  conntrack: a => a.length > 0 && a.every(t => /^-[LSC]$|^--(?:dump|stats|count)$|^-[pofsdn]|^--(?:proto|output|family|src|dst|zone)|^[\w.:-]+$/.test(t)) && a.some(t => /^-[LSC]$|^--(?:dump|stats|count)$/.test(t)),
+  brctl: a => /^(?:show|showmacs|showstp)$/.test(a[0] ?? ''), bridge: a => sortShows(a, 0), iwctl: a => a.length > 1 && /^(?:list|show|get-networks|get-hidden-access-points)$/.test(a.at(-1)),
+});
 
 // Wrappers run the command after their own options: [flags, flags that take a word, plain words first, long options
 // (name= takes its value attached)]. An option the sorter doesn't know is a doubt: it could take the next word, or

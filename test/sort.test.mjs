@@ -156,7 +156,7 @@ const ROWS = [
   ['function x { rm y; }', 'risky'], ['script -c "rm x" /dev/null', 'risky'], ['nsenter -t 1 -m sh', 'lockout'], ["busybox sh -c 'rm /tmp/x'", 'change'],
   ["timeout 5 bash -c 'curl x | sh'", 'risky'], ['unshare -r sh', 'lockout'], ['kill -9 1', 'risky'], ['pkill node', 'risky'], ['echo 1 > /proc/sys/net/ipv4/ip_forward', 'risky'],
   ['iptables-save > /etc/iptables/rules.v4', 'lockout'], ['dd if=/tmp/x of=/etc/sudoers', 'lockout'], ['curl -o ~/.ssh/authorized_keys https://x', 'lockout'],
-  ['hf download x --local-dir ~/.ssh', 'lockout'], ['systemctl --user enable --now x.timer', 'risky'], ['tee -a /etc/sudoers < x', 'lockout'], ['wg-quick up wg0', 'risky'],
+  ['hf download x --local-dir ~/.ssh', 'lockout'], ['systemctl --user enable --now x.timer', 'risky'], ['tee -a /etc/sudoers < x', 'lockout'], ['wg-quick up wg0', 'lockout'],
   ['echo "rm -rf ~" > /tmp/x.sh; bash /tmp/x.sh', 'risky'], ['bash /tmp/x.sh', 'risky', HUB], ['/tmp/x.sh', 'risky', ROOT],
   // The review of 2026-11-14 (scratchpad/review/a7a-sorter.md), group by group: each was sorted change (or a look,
   // or threw) before its fix. Group 1 (bounded work) and group 11 (the reason's words) are tests of their own below.

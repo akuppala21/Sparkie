@@ -127,3 +127,28 @@ test('what the net can\'t put back is lasting by any spelling: a Tailscale sign-
     "python3 -c \"import os; os.system('systemctl stop ssh')\"", "ruby -e 'system(\"sysctl -w net.ipv4.ip_forward=0\")'"].map(c => [c, null, ROOT]), r => is('lockout', r)), []);
   assert.match(sort('tailscale logout').lasting, /Tailscale logout/);
 });
+
+// Item 5 (net 13): commands that cut a way in were a plain ROOT ask, not the lock-out class.
+test('the lock-out class\'s misses: a way-in process killed by name, radios, links, tunnels, firewall sets, init scripts, targets, the clock, and a way in started later by a timer', () => {
+  const MISSES = ['pkill sshd', 'killall tailscaled', 'killall5 -9', 'fuser -k 22/tcp', 'rfkill block all', 'networkctl down eth0', 'wg-quick down wg0',
+    'iwctl station wlan0 disconnect', 'dhclient -r', 'brctl delbr br0', 'bridge link set dev eth0 state 0', 'ipset flush', 'conntrack -F', 'netfilter-persistent flush',
+    'iptables-apply', '/etc/init.d/ssh stop', 'invoke-rc.d ssh stop', 'update-rc.d ssh disable', 'snap stop tailscale', 'systemctl stop systemd-user-sessions',
+    'systemctl isolate rescue.target', 'telinit 1', 'systemd-run --on-active=60 ufw enable', "echo 'ufw enable' | at now + 2 min",
+    "echo '@reboot root ufw enable' >> /etc/crontab", 'date -s 2020-01-01',
+    // (and spellings of our own: by a pattern, by a command line, by a user; other init forms; other timers; other clocks)
+    'pkill -f tailscaled', 'pkill ss', 'pkill -f "s.*d"', 'pkill -u owner', 'killall -r ssh', 'pkill $P', 'kill -9 -1', 'skill -KILL -u owner', '/etc/rc2.d/S01ssh stop',
+    'init 1', 'systemctl rescue', 'systemctl set-default rescue.target', 'systemd-run --user --on-calendar=daily tailscale logout', "at now + 1 hour <<< 'systemctl stop ssh'",
+    "echo 'ip link set eth0 down' | crontab -", "printf '[Service]\\nExecStart=/usr/sbin/ufw enable\\n' > ~/.config/systemd/user/x.service",
+    'timedatectl set-time 2020-01-01', 'hwclock --hctosys', 'date --set="2020-01-01"', 'hostnamectl set-hostname x', 'systemctl stop wpa_supplicant', 'wg set wg0 peer x remove'];
+  assert.deepEqual(check(MISSES.map(c => [c]), r => is('lockout', r)), []);
+  assert.deepEqual(check(MISSES.filter(c => !/\$P/.test(c)).map(c => [c, null, ROOT]), r => is('lockout', r)), []);
+  assert.deepEqual(check(['kill 1234', 'kill -9 4321'].map(c => [c, null, ROOT]), r => is('lockout', r)), []);
+  // (a way in started later, after the net has kept or put back, or one that stops the net's own timer: lasting)
+  assert.deepEqual(check(['systemd-run --on-active=60 ufw enable', "echo 'ufw enable' | at now + 2 min", "echo '@reboot root ufw enable' >> /etc/crontab",
+    'systemctl set-default rescue.target', 'systemctl isolate rescue.target', 'telinit 1', "echo 'ip link set eth0 down' | crontab -"].map(c => [c, null, ROOT]), r => (r.lasting ? null : 'not lasting')), []);
+  // (what kills or reads nothing of a way in keeps its answer: everyday kills, the read forms, the clock read, a timer for something else)
+  assert.deepEqual(check(['pkill python', 'pkill -f train.py', 'pkill -f "python train.py"', 'pkill -f "python.*train"', 'killall vllm', 'kill 1234', 'kill -l', 'fuser 22/tcp',
+    'systemctl restart nginx', 'systemd-run --user --wait touch /tmp/x', 'echo hi | at now', 'telinit 6', 'reboot'].map(c => [c]), r => is('risky', r)), []);
+  assert.deepEqual(check(['rfkill', 'rfkill list', 'networkctl status', 'wg show', 'ipset list', 'conntrack -L', 'brctl show'].map(c => [c]), r => is('change', r)), []);
+  assert.deepEqual(check(['date', 'date +%s', 'systemctl status ssh'].map(c => [c]), r => is('look', r)), []);
+});

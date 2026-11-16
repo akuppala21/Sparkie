@@ -12446,6 +12446,8 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && p.split('/').some(g => /[*?[]/.test(g) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortSeg(g, `${u}.${x}`) || sortSeg(g, `${u}.${x}.d`))))) || (glob ? (base.startsWith('.') || base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2) && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
+  // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
+  if (touched === true && (RISKY_PATHS[2][0].test(p) || /(?:^|\/)systemd\/|^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket)$/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -12767,10 +12769,11 @@ const SORT_HANDLERS = {
   cd(a, ctx) { const t = a.find(w => !/^-[LPe@]+$|^--$/.test(w.text)); ctx.cdTo = !t ? ['~'] : t.unknown || t.glob || t.text.startsWith('-') ? [null] : sortPaths(t.text, ctx); for (const p of ctx.cdTo) sortCd(p, ctx); },
   pushd(a, ctx) { sortCd(null, ctx); ctx.cdTo = [null]; },
   // (crontab -l only lists; anything else is a job that runs by itself)
-  crontab: (a, ctx, r) => {
+  crontab: (a, ctx, r, x) => {
     if (/^(?:-u \S+ )?-l(?: -u \S+)?$/.test(a.map(w => w.text).join(' '))) return raise(r, 'change', 'crontab -l lists the jobs, which a look’s wall hides.');
     if (!a.some(w => /^-\w*[er]/.test(w.text))) sortUnshown(r, 'the jobs the crontab file or its input holds');
     raise(r, 'risky', 'crontab: a job that runs by itself, outside the wall.');
+    sortLaterWords(ctx, r, 'crontab', x);
   },
   hostname(a, ctx, r) { if (!SORT_LOCK_READS.hostname(a.map(w => w.text))) raise(r, 'lockout', 'hostname with a name renames the Spark, which its ways in go by.'); },
   journalctl: (a, ctx, r) => (a.some(w => /^--vac/.test(w.text)) ? sortGone(ctx, r, 'journalctl --vacuum removes old logs.') : sortReads('journalctl', SORT_READS.journalctl, a, ctx, r)),
@@ -12847,6 +12850,67 @@ const SORT_HANDLERS = {
     if (out.length) for (const w of out) sortTouch(w, ctx, r); else sortInto(o.all('d', 'directory').at(-1) ?? null, ctx, r);
     for (const w of [...o.plain, ...o.all('i', 'input')]) sortTouch(w, ctx, r, false, false);
   },
+  // Killing a way in by name (the final read `net`, 13): pkill, killall and skill match names or command lines; a pattern
+  // that may match a way-in process (or one the sorter can't safely read), killall5, fuser -k, kill -1, or kill as root
+  // (a number can be any process), is the lock-out class. Otherwise they need the processes the run wall hides.
+  ...Object.fromEntries('pkill killall skill killall5 fuser kill'.split(' ').map(n => [n, (a, ctx, r) => {
+    const t = a.map(w => w.text), lock = why => raise(r, 'lockout', `${sortQ(n)} ${why}: a way in (SSH, Tailscale, the network, the logins) stops with it.`);
+    if (a.some(w => w.unknown)) lock('kills processes named by a $ or a command');
+    else if (n === 'killall5') lock('kills every process');
+    else if (n === 'fuser' ? t.some(s => /^-\w*k/.test(s)) : n === 'skill' ? t.some(s => /^-[ut]$/.test(s)) || !t.some(s => /^-[cp]$/.test(s)) : false) lock('kills what uses a file, a port, a user or a terminal');
+    else if (n === 'kill' && !/^-[lL]/.test(t[0] ?? '')) {
+      // (its first word may be the signal: -9, -KILL, -s KILL, -n 9; what follows, after --, are the targets)
+      let k = /^-[sn]$/.test(t[0] ?? '') ? 2 : /^-./.test(t[0] ?? '') && t[0] !== '--' ? 1 : 0;
+      if (t[k] === '--') k++;
+      if (t.slice(k).includes('-1')) lock('kills every process it may');
+      else if (ctx.root && t.length > k) lock('as root may kill any process, a way in among them');
+    }
+    else if (/^(?:pkill|killall)$/.test(n)) {
+      const takes = n === 'pkill' ? /^-(?:[sugGPtFUM]|-signal|-session|-uid|-euid|-group|-pgroup|-parent|-terminal|-pidfile|-runstates|-ns|-nslist)$/ : /^-(?:[sunoyY]|-signal|-user|-older-than|-younger-than|-context)$/;
+      const pats = [];
+      for (let k = 0; k < t.length; k++) { if (takes.test(t[k])) k++; else if (!t[k].startsWith('-')) pats.push(t[k]); }
+      const full = n === 'pkill' && t.some(s => /^-\w*f|^--full$/.test(s)), exact = t.some(s => (n === 'pkill' ? /^-\w*x|^--exact$/ : /^-\w*e|^--exact$/).test(s)) || (n === 'killall' && !t.some(s => /^-\w*r|^--regexp$/.test(s)));
+      const ci = t.some(s => /^-\w*[iI]|^--ignore-case$/.test(s)), user = t.some(s => /^-(?:u|U|-uid|-euid|-user)$/.test(s));
+      for (const p of pats.length ? pats : user ? ['.'] : []) {
+        // (only a short pattern of plain signs, with at most three * or +, is read: it can't make the sorter slow)
+        const safe = p.length <= 200 && /^[\w .:/@=,^$[\]-]*$/.test(p.replace(/\.[*+]/g, '')) && (p.match(/[*+]/g) || []).length <= 3 && !/\[[^\]]*$/.test(p);
+        let re = null;
+        try { re = safe ? new RegExp(exact ? `^(?:${p})$` : p, ci ? 'i' : '') : null; } catch { re = null; }
+        const hit = re ? (full ? SORT_WAY_CMDS : SORT_WAY_PROCS).find(s => re.test(s)) : null;
+        if (!re || hit) { lock(re ? `matches ${sortQ(hit)}` : `matches by ${sortQ(p)}, which the sorter can't read as it does`); break; }
+      }
+    }
+    sortOpen(ctx, r, `${sortQ(n)} needs the processes the run wall hides.`);
+  }])),
+  // (init scripts and their tools are systemctl by another name; telinit and init change the run level)
+  'invoke-rc.d': (a, ctx, r, x) => SORT_HANDLERS.service(a.filter(w => !w.text.startsWith('-')), ctx, r, x),
+  'update-rc.d': (a, ctx, r, x) => { const p = a.filter(w => !w.text.startsWith('-')); return SORT_HANDLERS.systemctl([{ text: /^(?:enable|defaults)/.test(p[1]?.text ?? '') ? 'enable' : /^(?:disable|remove)$/.test(p[1]?.text ?? '') ? 'disable' : p[1]?.text ?? '', subs: [] }, ...(p[0] ? [p[0]] : [])], ctx, r, x); },
+  ...Object.fromEntries(['telinit', 'init'].map(n => [n, (a, ctx, r) => {
+    const v = a.find(w => !w.text.startsWith('-'));
+    if (!v || v.unknown || /^(?:[1sS]|single|rescue|emergency)$/.test(v.text)) return (r.lasting ??= `${n} to one user stops the net’s own timer with everything else, so only a restart puts it back.`), raise(r, 'lockout', `${sortQ(n)} ${sortQ(v?.text ?? '')} takes the Spark to one user, or a level the sorter can't read: SSH and the network stop.`);
+    raise(r, 'risky', `${sortQ(n)} ${sortQ(v.text)}: power or the run level, so what runs on that Spark stops.`);
+  }])),
+  // A way in started later, by a timer or a schedule (systemd-run, at, batch): what it runs is sorted, and when that is
+  // the lock-out class it is lasting too, since it runs after the net has kept or put back.
+  'systemd-run'(a, ctx, r, x) {
+    const takes = /^-(?:[upEMHd]|-unit|-property|-description|-slice|-setenv|-machine|-host|-uid|-gid|-nice|-working-directory|-service-type|-on-\w+|-timer-property|-path-property|-socket-property|-slice-inherit|-expand-environment)$/;
+    let k = 0;
+    for (; k < a.length && (a[k].unknown || a[k].text.startsWith('-')); k++) if (takes.test(a[k].text)) k++;
+    const c = sortFresh();
+    try { if (k < a.length) sortProgram(a.slice(k), ctx, c, { ...x, unknownArgs: a.slice(0, k).some(w => w.unknown) }); } catch (e) { if (!(e instanceof SortDoubt)) throw e; raise(c, 'risky', e.message); }
+    sortLater(c, ctx, r, 'systemd-run');
+  },
+  ...Object.fromEntries(['at', 'batch'].map(n => [n, (a, ctx, r, x) => {
+    if (a.some(w => /^-\w*[lrd]$/.test(w.text)) && !a.some(w => /^-\w*[fm]/.test(w.text))) return sortOpen(ctx, r, `${sortQ(n)} lists or removes jobs, which needs what the run wall hides.`);
+    if (a.some(w => /^-\w*f/.test(w.text)) || x?.stdin === false) sortUnshown(r, `the commands the ${n} job file holds`);
+    sortLaterWords(ctx, r, n, x);
+  }])),
+  // The clock (date -s, timedatectl set-time, hwclock --hctosys): Tailscale and every signed answer check the time, so a
+  // wrong clock cuts the ways in.
+  date: (a, ctx, r) => (a.some(w => w.unknown || /^-\w*s|^--set(?:=|$)/.test(w.text)) ? raise(r, 'lockout', 'date -s sets the clock: Tailscale and every signed answer check it, so a wrong one cuts the ways in.') : sortReads('date', SORT_READS.date, a, ctx, r)),
+  timedatectl: (a, ctx, r) => (a.some(w => w.unknown || /^(?:set-time|set-ntp)$/.test(w.text)) ? raise(r, 'lockout', 'timedatectl sets the clock or stops its sync: Tailscale and every signed answer check it, so a wrong one cuts the ways in.') : sortOpen(ctx, r, 'timedatectl needs systemd’s bus, which the run wall hides.')),
+  hwclock: (a, ctx, r) => (a.some(w => w.unknown || /^-\w*s$|^--(?:hctosys|set|systz|adjust)$/.test(w.text)) ? raise(r, 'lockout', 'hwclock sets the clock: Tailscale and every signed answer check it, so a wrong one cuts the ways in.') : raise(r, 'risky', 'hwclock reads or writes the hardware clock, a device.')),
+  hostnamectl: (a, ctx, r) => (a.some(w => w.unknown || /^(?:set-hostname|hostname)$/.test(w.text)) && a.filter(w => !w.text.startsWith('-')).length > 1 ? raise(r, 'lockout', 'hostnamectl with a name renames the Spark, which its ways in go by.') : sortOpen(ctx, r, 'hostnamectl needs systemd’s bus, which the run wall hides.')),
   'ssh-keygen'(a, ctx, r) {
     // (-f names the key it writes, and its .pub beside it)
     const t = a.map(w => w.text);
@@ -13630,6 +13694,23 @@ function sortRuns(file, ctx, r, why, dir = null) {
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
   if (ctx.root) raise(r, 'risky', `${why} As root, a script or a one-liner is always asked.`);
 }
+// What a timer or a schedule runs later (systemd-run, at, crontab, a schedule or a unit written), sorted into c: when it
+// is the lock-out class it is lasting too, since it runs after the net has kept or put back (the final read `net`, 13).
+function sortLater(c, ctx, r, via) {
+  sortMerge(r, c);
+  raise(r, 'risky', `${sortQ(via)}: a job or a unit that runs by itself, outside the wall.`);
+  if (/^(?:lockout|notdone)$/.test(c.class)) { raise(r, 'lockout', `${sortQ(via)} starts a change to a way in later, by itself: ${c.why}`); r.lasting ??= `${via} starts a change to a way in later, by itself, after the net has kept or put it back: the net can’t put that back.`; }
+}
+// …when what it runs is text among the command's words or on its input: each word read for a way-in program it names
+// (a way-in file it names is the lock-out class already, and one the net puts back).
+function sortLaterWords(ctx, r, via, x = {}) {
+  const c = sortFresh(), text = [...ctx.words.map(w => w.text), typeof x?.stdin === 'string' ? x.stdin : ''].join('\n');
+  for (const s of text.length <= SORT_MAX * 2 ? text.split(/[\s;&|()<>`'"=,{}]+/) : []) {
+    const b = s.split('/').pop(), g = SORT_PROGS[b];
+    if (g?.cls === 'lockout' || g?.cls === 'notdone' || SORT_LOCK_HANDLERS.has(b)) raise(c, g?.cls === 'notdone' ? 'notdone' : 'lockout', `it names ${sortQ(b)}, a program that changes a way in.`);
+  }
+  sortLater(c, ctx, r, via);
+}
 const sortGone = (ctx, r, why) => { ctx.kinds.add('delete'); raise(r, 'risky', `${why} That cannot be put back.`); };
 const sortOpen = (ctx, r, why) => { r.open = !ctx.root; raise(r, 'risky', why); };
 // A command handed over as text (bash -c, eval, watch, ssh): read and sorted like the rest.
@@ -13666,6 +13747,8 @@ function sortProgram(words, ctx, r, x) {
     if (name.includes('/')) {
       // A file it runs; and, when its last part names a program the sorter knows, that program too.
       const p = sortPaths(name, ctx)[0], base = p.slice(p.lastIndexOf('/') + 1);
+      // (an init script is its service: /etc/init.d/ssh stop is service ssh stop)
+      if (/^\/etc\/(?:init\.d|rc[0-6S]?\.d)\/[^/]+$/.test(p)) return sortProgram([{ ...w0, text: 'service' }, { ...w0, text: base.replace(/^[SK]\d\d/, '') }, ...args], ctx, r, x);
       via = p;
       if (!/^\/(?:usr\/)?(?:local\/)?s?bin\/[^/]+$/.test(p)) { sortNames(p, ctx, r); sortRuns(name, ctx, r, `It runs the file ${sortQ(name)}.`); if (!sortKnown(base.replace(/^(mkfs|fsck)\.\w+$/, '$1'))) return; }
       name = base;
@@ -13999,6 +14082,7 @@ for (const [cls, names, why] of [
   ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
   ['risky', 'dockerd containerd setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
   ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
+  ['lockout', 'rfkill networkctl wg wg-quick iwctl dhclient dhcpcd udhcpc brctl bridge ipset conntrack netfilter-persistent iptables-apply ip6tables-apply resolvconf', 'radios, links, tunnels, address leases, firewall sets and tracked connections: the network, a way in'],
   ['lockout', 'nsenter chroot unshare systemd-nspawn runc lxc-attach lxc-execute', 'it enters the host’s own namespaces or root folder, or makes new ones, where SSH, the firewall and users are a command away: a way in'],
   ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
   ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
@@ -14007,6 +14091,12 @@ for (const [cls, names, why] of [
 ]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
 // Programs with a handler of their own that can change a way in (their handler says when): named inside text the sorter
 // does not read as a command (a one-liner, a container's words), each counts as the lock-out class.
+// The way-in processes as pkill and killall see them: their names (at most 15 signs, as the kernel keeps them), and
+// their command lines (pkill -f).
+const SORT_WAY_PROCS = 'sshd sshd-session sshd-auth tailscaled NetworkManager systemd-network systemd-resolve systemd-logind wpa_supplicant dhclient dhcpcd dbus-daemon dbus-broker systemd init agetty login sudo'.split(' ');
+const SORT_WAY_CMDS = ['/usr/sbin/sshd -D', 'sshd: owner@pts/0', 'sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups', '/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock',
+  '/usr/sbin/NetworkManager --no-daemon', '/lib/systemd/systemd-networkd', '/lib/systemd/systemd-resolved', '/lib/systemd/systemd-logind', '/sbin/wpa_supplicant -u -s -O /run/wpa_supplicant',
+  '/usr/bin/dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only', '/lib/systemd/systemd --user', '/sbin/init', '/sbin/agetty -o -p -- \\u --noclear tty1 linux', 'node /home/owner/spark-console-service/server.mjs'];
 const SORT_LOCK_HANDLERS = new Set('tailscale ip arp systemctl service loginctl userdel deluser sysctl hostname ssh-keygen'.split(' '));
 // The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
 const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
@@ -14023,6 +14113,13 @@ const SORT_LOCK_READS = {
   hostname: a => a.every(t => /^-[aAdfiIsy]+$|^--(?:all-fqdns|all-ip-addresses|domain|fqdn|ip-address|short|long|alias)$/.test(t)),
 };
 SORT_LOCK_READS.ip6tables = SORT_LOCK_READS['iptables-legacy'] = SORT_LOCK_READS['iptables-nft'] = SORT_LOCK_READS.iptables;
+// (the network tools of the final read's list that only read in these forms)
+Object.assign(SORT_LOCK_READS, {
+  rfkill: a => a.length === 0 || (/^(?:list|event)$/.test(a[0]) && !a.some(t => /[;\n]/.test(t))), networkctl: a => /^(?:|list|status|lldp|label|cat)$/.test(a.find(t => !t.startsWith('-')) ?? '') && !a.some(t => /[;\n]/.test(t)),
+  wg: a => /^(?:|show|showconf)$/.test(a[0] ?? ''), ipset: a => /^(?:-?L|list|-S|save|-?n|--list|--save)$/.test(a.find(t => !/^-o$|^-(?:t|terse|n|name|s|sorted|q|quiet)$/.test(t)) ?? ''),
+  conntrack: a => a.length > 0 && a.every(t => /^-[LSC]$|^--(?:dump|stats|count)$|^-[pofsdn]|^--(?:proto|output|family|src|dst|zone)|^[\w.:-]+$/.test(t)) && a.some(t => /^-[LSC]$|^--(?:dump|stats|count)$/.test(t)),
+  brctl: a => /^(?:show|showmacs|showstp)$/.test(a[0] ?? ''), bridge: a => sortShows(a, 0), iwctl: a => a.length > 1 && /^(?:list|show|get-networks|get-hidden-access-points)$/.test(a.at(-1)),
+});
 
 // Wrappers run the command after their own options: [flags, flags that take a word, plain words first, long options
 // (name= takes its value attached)]. An option the sorter doesn't know is a doubt: it could take the next word, or
@@ -14723,7 +14820,10 @@ Object.assign(SORT_HANDLERS, {
     if (t.some(s => /^(?:-H|--host|-M|--machine)/.test(s))) unsure('systemctl -H or -M reaches another machine.');
     const plain = o.plain, v = plain[0]?.text ?? 'list-units', at = ctx.root && !user;
     if (plain[0]?.unknown) unsure('systemctl’s sub-command comes from a $ or a command.');
+    // (one user, or a target the sorter can't tell from one: SSH and the network stop with everything else)
+    if (/^(?:rescue|emergency|isolate|default)$/.test(v)) { r.lasting ??= `systemctl ${v} stops the net’s own timer with everything else, so only a restart puts it back.`; return raise(r, 'lockout', `systemctl ${sortQ(v)} takes the Spark to another target: SSH and the network may stop with everything else.`); }
     if (SYSTEMCTL_POWER.test(v)) return raise(r, 'risky', `systemctl ${sortQ(v)}: power, so what runs on that Spark stops.`);
+    if (v === 'set-default' && plain.slice(1).some(u => u.unknown || !/^(?:graphical|multi-user)\.target$/.test(u.text))) { raise(r, 'lockout', 'systemctl set-default picks the target the Spark starts in next time, which may have no SSH or network.'); r.lasting ??= 'systemctl set-default takes effect at the next start, after the net has kept or put it back: the net can’t put that back.'; }
     if (/^(?:status|show|cat|list-\S+|is-\S+|get-default|show-environment|help)$/.test(v)) return at ? raise(r, 'change', `systemctl ${sortQ(v)} needs systemd’s bus, which a look’s wall hides.`) : sortOpen(ctx, r, `systemctl ${sortQ(v)} needs ${bus}, which the run wall hides.`);
     if (!SYSTEMCTL_CHANGE.test(v)) unsure(`The sorter doesn’t know systemctl ${sortQ(v)}.`);
     for (const u of plain.slice(1)) {
@@ -14731,7 +14831,7 @@ Object.assign(SORT_HANDLERS, {
       // (systemctl matches a pattern itself, quoted or not; an instance, name@x, is its template's unit)
       const pat = u.glob || /[*?[]/.test(u.text), base = u.text.replace(/@.*$/, '').replace(/\.(?:service|socket)$/, '');
       const is = n => (pat ? [n, `${n}.service`, `${n}.socket`].some(m => sortGlob(base).test(m) || sortGlob(u.text).test(m)) : base === n);
-      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
+      if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager|systemd-user-sessions$|user-runtime-dir|wg-quick|rfkill|systemd-timesyncd$|chrony|ntp)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
       else if (['docker', 'containerd'].some(is)) raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`);
       else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);

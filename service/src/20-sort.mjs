@@ -168,6 +168,23 @@ function sortRuns(file, ctx, r, why, dir = null) {
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
   if (ctx.root) raise(r, 'risky', `${why} As root, a script or a one-liner is always asked.`);
 }
+// What a timer or a schedule runs later (systemd-run, at, crontab, a schedule or a unit written), sorted into c: when it
+// is the lock-out class it is lasting too, since it runs after the net has kept or put back (the final read `net`, 13).
+function sortLater(c, ctx, r, via) {
+  sortMerge(r, c);
+  raise(r, 'risky', `${sortQ(via)}: a job or a unit that runs by itself, outside the wall.`);
+  if (/^(?:lockout|notdone)$/.test(c.class)) { raise(r, 'lockout', `${sortQ(via)} starts a change to a way in later, by itself: ${c.why}`); r.lasting ??= `${via} starts a change to a way in later, by itself, after the net has kept or put it back: the net can’t put that back.`; }
+}
+// …when what it runs is text among the command's words or on its input: each word read for a way-in program it names
+// (a way-in file it names is the lock-out class already, and one the net puts back).
+function sortLaterWords(ctx, r, via, x = {}) {
+  const c = sortFresh(), text = [...ctx.words.map(w => w.text), typeof x?.stdin === 'string' ? x.stdin : ''].join('\n');
+  for (const s of text.length <= SORT_MAX * 2 ? text.split(/[\s;&|()<>`'"=,{}]+/) : []) {
+    const b = s.split('/').pop(), g = SORT_PROGS[b];
+    if (g?.cls === 'lockout' || g?.cls === 'notdone' || SORT_LOCK_HANDLERS.has(b)) raise(c, g?.cls === 'notdone' ? 'notdone' : 'lockout', `it names ${sortQ(b)}, a program that changes a way in.`);
+  }
+  sortLater(c, ctx, r, via);
+}
 const sortGone = (ctx, r, why) => { ctx.kinds.add('delete'); raise(r, 'risky', `${why} That cannot be put back.`); };
 const sortOpen = (ctx, r, why) => { r.open = !ctx.root; raise(r, 'risky', why); };
 // A command handed over as text (bash -c, eval, watch, ssh): read and sorted like the rest.
@@ -204,6 +221,8 @@ function sortProgram(words, ctx, r, x) {
     if (name.includes('/')) {
       // A file it runs; and, when its last part names a program the sorter knows, that program too.
       const p = sortPaths(name, ctx)[0], base = p.slice(p.lastIndexOf('/') + 1);
+      // (an init script is its service: /etc/init.d/ssh stop is service ssh stop)
+      if (/^\/etc\/(?:init\.d|rc[0-6S]?\.d)\/[^/]+$/.test(p)) return sortProgram([{ ...w0, text: 'service' }, { ...w0, text: base.replace(/^[SK]\d\d/, '') }, ...args], ctx, r, x);
       via = p;
       if (!/^\/(?:usr\/)?(?:local\/)?s?bin\/[^/]+$/.test(p)) { sortNames(p, ctx, r); sortRuns(name, ctx, r, `It runs the file ${sortQ(name)}.`); if (!sortKnown(base.replace(/^(mkfs|fsck)\.\w+$/, '$1'))) return; }
       name = base;
