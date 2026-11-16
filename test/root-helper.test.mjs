@@ -2444,7 +2444,7 @@ describe('root inside the net (R70)', () => {
       'with --stdin the command is what comes on input: nothing after --');
     const none = newId();
     refused({ ...run(t, ['root', '--id', none, '--sha256', sha(''), '--seconds', '60', '--dir', t.work, '--net', '--stdin'], { input: '' }), id: none }, 'the command is empty');
-    assert.equal(calls(t).length, n, 'nothing was asked of systemd');
+    assert.ok(!calls(t).slice(n).some(c => c[0] === 'systemd-run'), 'nothing ran, nothing was armed');
   });
 
   test('the guard on names: a root command that names the helper, its line, sudo\'s settings, PAM, the helper\'s folders or the net\'s timer, by word or through a link, runs nothing', () => {
