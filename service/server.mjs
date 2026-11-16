@@ -4645,7 +4645,12 @@ function taskCounts(id) {
       if (r.start) { allowed.set(r.id, r.allowed); continue; }
       if (ACTIONS.get(r.act)?.kind !== 'change' || !r.ok || ['question', 'needs-ok', 'already', 'already-starting', 'declined', 'refused'].includes(r.outcome)) continue;
       ((r.end ? allowed.get(r.id) : r.allowed) === 'button' ? c.afterYes++ : c.atOnce++);
-      if (r.act === 'undo_last_change' || r.act === 'cancel_operation') c.undone++;
+      // (a cancel is counted once, by the operation it cancelled, below)
+      if (r.act === 'undo_last_change') c.undone++;
+    } else if (r.k === 'cmd') {
+      // (a command that changed something: the runner's start line marks it a change, and after the owner's yes when it
+      // was asked; a look is no change, run being a lookup to runAction)
+      if (r.start && r.act === 'run' && r.class === 'change') (['asked', 'button'].includes(r.gate) ? c.afterYes++ : c.atOnce++);
     } else if (r.k === 'op') {
       c.ops++;
       if (r.outcome === 'completed') c.finished++;

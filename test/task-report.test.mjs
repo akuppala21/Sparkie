@@ -5,7 +5,8 @@
 // questions asked, what was undone, how long and how many turns, and the watt-hours its operations' end lines give,
 // summed, with one that has no number "not measured", never 0. No log line is in it. It is written once in the chat,
 // and told once on Telegram for a task that began there; a restart neither tells it again nor loses one still owed.
-// /status shows a task under way with its counts so far.
+// /status shows a task under way with its counts so far. A command that changed something (the runner's start line marks
+// it a change) counts as a change, after the owner's yes when it was asked; a cancel counts once under "Undone".
 //
 // The stand-in fleet: Spark 3's plug reads a steady 60 W (test/mock/plugs.mjs) and the status loop counts every
 // second, so an operation of a few seconds there has watt-hours on its end line; Spark 4 has no plug, so one there has
@@ -23,6 +24,23 @@ const plugs = await startPlugs([{ node_id: 2, available: true, attributes: { '1/
 let current = null;   // the service started again by a test, on the same state
 after(() => { try { current?.kill('SIGKILL'); } catch {} plugs.close(); });
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
+// A task parked at a button, and its own journal lines as the runner, a cancel and the operation it cancelled write them.
+const SEED = { chat: 'sc_e7e70000000000a1', task: 'j_e7e700000001', words: 'tidy the notes folder, then tell me what changed' };
+function seedTask(dir, stateDir) {
+  const at = new Date(Date.now() - 600000).toISOString(), line = r => JSON.stringify({ at, chat: SEED.chat, task: SEED.task, ...r });
+  writeFileSync(join(stateDir, 'chats.json'), JSON.stringify({ conversations: [{ id: SEED.chat, login: 'owner@test', title: 'notes', spark: null, createdAt: at, updatedAt: at,
+    messages: [{ role: 'user', content: SEED.words, createdAt: at }, { role: 'assistant', content: 'Asked first.', createdAt: at }],
+    task: { id: SEED.task, since: at, request: SEED.words, at, continuations: 0, hours: 2, turns: 8, parked: at } }] }), { mode: 0o600 });
+  mkdirSync(join(dir, 'journal'), { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, 'journal', `journal-${new Date().toISOString().slice(0, 7)}.jsonl`), [
+    line({ id: 'j_e7e7000000c1', k: 'cmd', start: true, act: 'run', class: 'change', gate: 'asked' }),
+    line({ id: 'j_e7e7000000c1', k: 'cmd', end: true, act: 'run', ok: true, outcome: 'ended' }),
+    line({ id: 'j_e7e7000000c2', k: 'cmd', start: true, act: 'run', class: 'change', gate: 'sparkie' }),
+    line({ id: 'j_e7e7000000c3', k: 'cmd', act: 'run', class: 'look', gate: 'look', ok: true }),
+    line({ id: 'j_e7e7000000c4', k: 'call', act: 'cancel_operation', allowed: 'words', ok: true, outcome: 'cancelled' }),
+    line({ id: 'j_e7e7000000c5', k: 'op', op: 'e7e7000000c5', act: 'deploy', ok: false, outcome: 'cancelled', noWh: 'it ran on no Spark' }),
+  ].join('\n') + '\n', { mode: 0o600 });
+}
 useFleet({ telegram: true, watchMs: 60000, statusMs: 1000,
   env: { SPARK_CONSOLE_PLUGS_URL: plugs.url, SPARK_CONSOLE_PLUGS_MS: '300', SPARK_CONSOLE_CONTINUE_MS: '2000', SPARK_CONSOLE_TASK_REPORT_MS: '6000', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' },
   prepare: ({ dir, root, stateDir }) => {
@@ -32,6 +50,7 @@ useFleet({ telegram: true, watchMs: 60000, statusMs: 1000,
     writeFileSync(join(stateDir, 'power.json'), JSON.stringify({ idleMinutes: 0, off: {} }), { mode: 0o600 });
     for (const spark of ['spark3', 'spark4']) writeFileSync(join(root, spark, '.mock', 'slow-stop'), '3');
     for (const c of ['start', 'restart']) writeFileSync(join(root, 'spark3', '.mock', `slow-${c}`), '20');
+    seedTask(dir, stateDir);
   } }, () => waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' }));
 
 const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF';
@@ -58,6 +77,17 @@ async function restart() {
   await waitFor(async () => (await api('/health').catch(() => null))?.status === 200, { timeout: 30000, what: 'the service back' });
   await waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling again' });
 }
+
+// The read after E7: a command's change was not counted, and a cancel counted twice.
+test('a task’s report counts a command that changed something, after the yes when it was asked, and a cancel once', { timeout: 120000 * SLOW }, async () => {
+  const stop = await api(`/chats/${SEED.chat}/messages`, { method: 'POST', body: { text: '/stop' } });
+  assert.equal(stop.status, 200, stop.text);
+  const report = await waitFor(async () => (await reportsIn(SEED.chat))[0] || null, { timeout: 60000 * SLOW, what: 'the seeded task’s report', every: 500 });
+  const lines = report.content.split('\n');
+  assert.equal(lines[0], `Report on your request “${SEED.words}”: stopped by you.`);
+  assert.equal(lines[1], 'Operations: 1 (1 cancelled).');
+  assert.equal(lines[2], 'Changes: 2 made at once, 1 after your yes; 0 questions asked of you. Undone: 1.');
+});
 
 // (Sparkie offers each change as a button here, and the owner presses them: the counts below say so)
 test('a task that ends done: one report in its chat, counted from its own journal lines, its watt-hours summed and an operation with no number not measured', { timeout: 300000 * SLOW }, async () => {
