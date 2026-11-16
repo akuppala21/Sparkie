@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, newChat, say, TOOLS, CHANGE_TOOLS, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, newChat, say, TOOLS, CHANGE_TOOLS, CAN_CHANGE, SLOW } from './lib.mjs';
 
 let look;
 useFleet({ watchMs: 60000 }, async () => { look = (await createKey('abilities-look')).token; });
@@ -24,10 +24,13 @@ test('sparkie_setup {about: "abilities"}: every action by its title, from the li
   const x = await viaApi();
   assert.deepEqual(Object.keys(x), ['observedAt', 'canLookUp', 'canChange', 'limits', 'says']);
   const titleOf = Object.fromEntries((await api('/actions')).json.actions.map(a => [a.name, a.title]));
-  // The live registry: no count is pinned, so a new action needs no edit here.
-  assert.deepEqual([...x.canLookUp].sort(), TOOLS.map(n => titleOf[n]).sort());
-  assert.deepEqual([...x.canChange].sort(), CHANGE_TOOLS.map(n => titleOf[n]).sort());
-  assert.equal(x.limits.length, 5, JSON.stringify(x.limits));
+  // The live registry: no count is pinned, so a new action needs no edit here. run and write_file change things, so
+  // they are listed with the changes (TR-4).
+  assert.deepEqual([...x.canLookUp].sort(), TOOLS.filter(n => !CAN_CHANGE.includes(n)).map(n => titleOf[n]).sort());
+  assert.deepEqual([...x.canChange].sort(), [...CHANGE_TOOLS, ...CAN_CHANGE].map(n => titleOf[n]).sort());
+  assert.ok(x.canChange.includes('Run a command on a Spark') && x.canChange.includes('Write a file on a Spark'), JSON.stringify(x.canChange));
+  assert.equal(x.limits.length, 6, JSON.stringify(x.limits));
+  assert.equal(x.limits[5], 'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.');
   assert.equal(x.limits[0], `Sparkie never changes ${NEVER}, and never turns Spark Console off. The owner does those by hand.`);
   assert.equal(x.limits[1], 'In chat, a change runs at once only when the owner’s own words ask for it and name what it is about. Anything less clear comes back as one question with a button.');
   assert.equal(x.limits[2], 'Spark 2 is Sparkie’s own, so no other model or workload starts there.');
