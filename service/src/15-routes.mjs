@@ -168,8 +168,9 @@ async function sparkieApi(req, res, path, viewer = null) {
   if (req.method === 'GET' && path === '/v1/models') {
     const running = await runningModels(viewer).catch(() => []);
     const seen = new Set();
-    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52)
-    if (MAIN) await brainRanLook().catch(() => null);
+    // (and the brain serving now, as the eval's runner keys its record by it, from a compute Spark: R52; apps poll this,
+    // so a look up to 5 seconds old does)
+    if (MAIN) await brainRanLook({ within: 5000 }).catch(() => null);
     return send(res, 200, { object: 'list', ...(MAIN ? { spark_console: { brain: brainInUse() } } : {}), data: [
       agents ? { id: SPARKIE_ID, object: 'model', created: 0, owned_by: 'spark-console', title: agents.title } : null,
       main ? { id: main.model, object: 'model', created: 0, owned_by: 'spark-console', title: main.title } : null,

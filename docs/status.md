@@ -76,6 +76,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R61](rules/R61.md) | partly | `test/runner.test.mjs`; `test/prune.test.mjs` | falls short today: its file says where |
 | [R62](rules/R62.md) | partly | `test/box.test.mjs` | falls short today: its file says where |
 | [R64](rules/R64.md) | partly | `test/sort.test.mjs` | falls short today: its file says where |
+| [R67](rules/R67.md) | partly | `test/trial.test.mjs`; `test/owner-only.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
