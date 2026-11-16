@@ -1808,7 +1808,7 @@ describe('what bounds a plain change (R63)', () => {
     const go = cmd => { const id = newId(); return { ...run(s, ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '120', '--dir', s.work, '--', cmd], { env }), id }; };
     s.put('standin/free', '49000000000\n');
     const before = started(s).length;
-    refused(go('true'), 'the disk has 49 GB free; a plain change needs 50 GB free: free space first, by a change the owner asks for (it may run under the floor)');
+    refused(go('true'), 'the disk has 49 GB free; a plain change needs 50 GB free: free space first, by a change the owner asks for (it may start under the floor, and is ended if the free space falls under 5 GB)');
     assert.equal(started(s).length, before);
     for (const asked of [['--open'], ['--home']]) {   // (an asked change may free space: no floor, no watch)
       const id = newId();
@@ -1819,6 +1819,35 @@ describe('what bounds a plain change (R63)', () => {
     const cmd = 'printf "40000000000\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; for i in $(seq 60); do sleep 0.5; ls "$SPARK_CONSOLE_REHEARSAL"/standin/stopped/sw-run-* > /dev/null 2>&1 && exit 9; done';
     const r = go(cmd);
     assert.match(r.stdout, new RegExp(`\\n${r.id} stopped: the disk's free space fell under 50 GB\\n${r.id} end 9\\n$`), r.stdout);
+  });
+
+  test('--asked (the owner pressed): no start floor, but the watch ends it under 5 GB; --home is watched the same; one started under 5 GB, 100 MB under its start', { timeout: 200000 }, () => {
+    const setup = free => {
+      const s = proven(), bin = join(s.R, 'standin', 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, 'df'), '#!/bin/bash\necho Avail\ncat "$SPARK_CONSOLE_REHEARSAL/standin/free"\n', { mode: 0o755 });
+      s.put('standin/free', `${free}\n`);
+      return { s, env: { ...s.env, PATH: `${bin}:${s.env.PATH}` } };
+    };
+    const go = ({ s, env }, cmd, extra) => { const id = newId(); return { ...run(s, ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '120', '--dir', s.work, ...extra, '--', cmd], { env }), id }; };
+    const fill = to => `printf "${to}\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; for i in $(seq 60); do sleep 0.5; ls "$SPARK_CONSOLE_REHEARSAL"/standin/stopped/sw-run-* > /dev/null 2>&1 && exit 9; done`;
+    const ended = (r, under) => assert.match(r.stdout, new RegExp(`\\n${r.id} stopped: the disk's free space fell under ${under}\\n${r.id} end 9\\n$`), r.stdout);
+    // Under the floor and pressed: it starts, and is ended when the free space falls under 5 GB.
+    ended(go(setup(40000000000), fill(4000000000), ['--asked']), '5 GB');
+    // --home: the same watch (it had none).
+    ended(go(setup(60000000000), fill(4000000000), ['--home']), '5 GB');
+    // Started under 5 GB: a delete runs to its end; a change that fills the disk further is ended 100 MB under its start.
+    const del = go(setup(3000000000), 'printf "3500000000\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; sleep 7; exit 0', ['--asked']);
+    assert.match(del.stdout, new RegExp(`(^|\\n)${del.id} end 0\\n$`), del.stdout);
+    assert.ok(!del.stdout.includes('stopped:'), del.stdout);
+    ended(go(setup(3000000000), fill(2800000000), ['--asked']), '2.9 GB');
+    // --asked is run's alone, and gives nothing else: the unit is a plain change's.
+    const t = setup(60000000000);
+    refused(look(t.s, 'true', { extra: ['--asked'] }), '--asked is for run: a look changes nothing');
+    const p = go(t, 'true', []), q = go(t, 'true', ['--asked']);
+    assert.equal(q.status, 0, q.stdout + q.stderr);
+    const strip = c => c.filter(a => !a.startsWith('--unit=') && !a.startsWith('--description=') && !a.includes('/run/spark-console/'));
+    assert.deepEqual(strip(unitCall(t.s, `sw-run-${q.id}`)), strip(unitCall(t.s, `sw-run-${p.id}`)));
   });
 
   test('the proof shows a change can write where it may (27), that --home writes the top (28) and still keeps ~/.ssh shut (29); one that fails, fails the proof', () => {

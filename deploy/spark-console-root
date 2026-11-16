@@ -9,7 +9,8 @@
 #   sudo -n /usr/local/sbin/spark-console-root prove --id <id>
 #   sudo -n /usr/local/sbin/spark-console-root look --id <id> --sha256 <hash> --seconds <n> --dir <folder> -- '<command>'
 #   sudo -n /usr/local/sbin/spark-console-root run --id <id> --sha256 <hash> --seconds <n> --dir <folder>
-#        [--open | --home] [--protect <folder>]... [--stdin] [--memory <1G to 8G>] [--fleet] [--gpu] [--net] -- '<command>'
+#        [--open | --home] [--asked] [--protect <folder>]... [--stdin] [--memory <1G to 8G>] [--fleet] [--gpu] [--net]
+#        -- '<command>'
 #   sudo -n /usr/local/sbin/spark-console-root run --net ...  a change with the lock-out net armed first (R60)
 #   sudo -n /usr/local/sbin/spark-console-root keep --id <id>     keeps what a change inside the net did
 #   sudo -n /usr/local/sbin/spark-console-root putback --id <id>  puts it back now, on the console's word
@@ -22,10 +23,10 @@
 #                                                                 may still start), or has ended
 #
 # What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
-# command's bytes and their SHA-256; the seconds; the folder; for run, --open, --home, --protect, --stdin, --memory,
-# --fleet, --gpu and --net (R60, R63; --home never with --open); for root (R70), --net (always), --lockout, --path, --unit
-# and --stdin (the command itself on input). Every other path, name and setting is this file's own text, or read from
-# the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
+# command's bytes and their SHA-256; the seconds; the folder; for run, --open, --home, --asked, --protect, --stdin,
+# --memory, --fleet, --gpu and --net (R60, R63; --home never with --open; --asked only says the owner pressed); for
+# root (R70), --net (always), --lockout, --path, --unit and --stdin (the command itself on input). Every other path,
+# name and setting is this file's own text, or read from the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
 # The command never goes on a unit's command line (systemd would expand ${...} there): it is written to a root-owned
 # file in /run/spark-console/<id>/, hashed there, and run from there by bash.
 #
@@ -54,8 +55,10 @@ ROOTY=' docker lxd libvirt disk sudo adm systemd-journal '
 LOOK_MEMORY=2G LOOK_TASKS=512 RUN_MEMORY=8G RUN_TASKS=4096
 # What else bounds a plain change (docs/rules/R63.md; the wall analyst's "what a sorter miss can cost"): a small share of
 # the processors and the disk's traffic when anything else wants them, no swap, and a disk floor: a change does not
-# start, and is ended, while the home's disk has less than 50 GB free.
-RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000
+# start, and is ended, while the home's disk has less than 50 GB free. A change the owner pressed (--asked) may start
+# under it, and so may --home: both are ended when the free space falls under 5 GB (or, started under that, 100 MB under
+# what was free at the start, so a delete runs and a change that fills the disk further is ended). --open: neither.
+RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000 DISK_HARD=5000000000 DISK_SLACK=100000000
 # The ranges a plain change cannot reach: private, link-local, unique-local and the tailnet. --fleet, the caller's
 # choice for a change that was asked, lifts them. (127.0.0.53 stays open whole, for name look-up: the filter knows no
 # ports, so a program on this Spark that listens on every address answers there too. A global IPv6 address is in no
@@ -216,7 +219,7 @@ init() {
 }
 
 # --- the call ---------------------------------------------------------------------------------------------------------
-VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 PROTECT=() CMD=() BAD='' ID_IN=''
+VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 ASKED=0 PROTECT=() CMD=() BAD='' ID_IN=''
 LOCKOUT=0 NAMED_PATHS=() NAMED_UNITS=()
 parse() {
   VERB=${1-}
@@ -235,11 +238,11 @@ parse() {
           case "$1" in --id) ID_IN=$2 ;; --sha256) SHA=$2 ;; --seconds) SECS=$2 ;; --dir) DIR=$2 ;; --memory) MEM=$2 ;; esac
         fi
         shift 2 ;;
-      --open|--stdin|--net|--fleet|--gpu|--home|--lockout)
+      --open|--stdin|--net|--fleet|--gpu|--home|--lockout|--asked)
         if [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break; fi
         seen+="$1 "
         case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; --fleet) FLEET=1 ;; --gpu) GPU=1 ;; --home) HOMEW=1 ;;
-          --lockout) LOCKOUT=1 ;; esac
+          --lockout) LOCKOUT=1 ;; --asked) ASKED=1 ;; esac
         shift ;;
       --) shift; CMD=("$@"); break ;;
       *) BAD="not understood: an option this helper does not know, or a command without -- before it"; break ;;
@@ -608,14 +611,27 @@ disk_problem() {   # a change does not start while the disk has less than the fl
   local a
   a=$(disk_free)
   if [ -z "$a" ]; then printf "the disk's free space could not be read, so no change starts"
-  elif (( a < DISK_FLOOR )); then printf 'the disk has %s GB free; a plain change needs %s GB free: free space first, by a change the owner asks for (it may run under the floor)' "$((a / 1000000000))" "$((DISK_FLOOR / 1000000000))"; fi
+  elif (( a < DISK_FLOOR )); then printf 'the disk has %s GB free; a plain change needs %s GB free: free space first, by a change the owner asks for (it may start under the floor, and is ended if the free space falls under %s)' "$((a / 1000000000))" "$((DISK_FLOOR / 1000000000))" "$(bytes_said "$DISK_HARD")"; fi
 }
-disk_watch() {   # $1 the change's unit: every 5 s while it runs; under the floor it is ended, and noted
+bytes_said() {   # $1 bytes: as GB, with tenths when they are not whole (2.9 GB), or as MB under 1 GB
+  if (( $1 >= 1000000000 )); then
+    if (( $1 % 1000000000 == 0 )); then printf '%s GB' "$(( $1 / 1000000000 ))"; else printf '%s.%s GB' "$(( $1 / 1000000000 ))" "$(( $1 % 1000000000 / 100000000 ))"; fi
+  else printf '%s MB' "$(( $1 / 1000000 ))"; fi
+}
+watch_floor() {   # the floor the watch holds a change to: 50 GB for a plain one; 5 GB for one pressed (--asked) or --home,
+  # or, when it starts under that, 100 MB under what was free at its start
+  local a
+  if [ "$HOMEW$ASKED" = 00 ]; then printf '%s' "$DISK_FLOOR"; return; fi
+  a=$(disk_free)
+  if [ -n "$a" ] && (( a - DISK_SLACK < DISK_HARD )); then printf '%s' "$(( a > DISK_SLACK ? a - DISK_SLACK : 0 ))"
+  else printf '%s' "$DISK_HARD"; fi
+}
+disk_watch() {   # $1 the change's unit, $2 its floor: every 5 s while it runs; under the floor it is ended, and noted
   local a
   while sleep 5; do
     a=$(disk_free)
-    if [ -n "$a" ] && (( a < DISK_FLOOR )); then
-      : > "$H/disk-low"
+    if [ -n "$a" ] && (( a < $2 )); then
+      printf '%s' "$2" > "$H/disk-low"
       systemctl stop "$1.service" > /dev/null 2>&1
       return
     fi
@@ -767,7 +783,7 @@ START
 }
 
 # --- verbs -----------------------------------------------------------------------------------------------------------
-only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT" = 0000000 ] && [ ${#PROTECT[@]} -eq 0 ] \
+only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT$ASKED" = 00000000 ] && [ ${#PROTECT[@]} -eq 0 ] \
   && [ ${#CMD[@]} -eq 0 ] && [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
@@ -827,6 +843,7 @@ do_unit() {
   if [ "$VERB" = root ]; then
     # (its switch was read first, in parse: root is on here)
     [ "$NET" = 1 ] || refuse "root runs only inside the net, armed in this same call: --net is missing"
+    [ "$ASKED" = 0 ] || refuse "--asked is for run: a root command is always pressed"
     [ "$OPEN$HOMEW$FLEET$GPU" = 0000 ] && [ -z "$MEM" ] && [ ${#PROTECT[@]} -eq 0 ] \
       || refuse "root takes no --open, --home, --fleet, --gpu, --memory or --protect: those bound the run wall, and root has no wall"
     if [ "$LOCKOUT" = 1 ]; then (( 10#$SECS <= LOCKOUT_MAX )) || refuse "a root command in the lock-out class is held to $((LOCKOUT_MAX / 60)) minutes"
@@ -848,6 +865,7 @@ do_unit() {
     [ -z "$MEM" ] || refuse "--memory is for run: a look's memory is fixed"
     [ "$FLEET$GPU" = 00 ] || refuse "--fleet and --gpu are for run: a look reaches no network and no device"
     [ "$HOMEW" = 0 ] || refuse "--home is for run: a look writes nothing"
+    [ "$ASKED" = 0 ] || refuse "--asked is for run: a look changes nothing"
     (( 10#$SECS <= max )) || refuse "a look is held to $LOOK_MAX seconds"
   else
     max=$RUN_MAX
@@ -886,7 +904,7 @@ do_unit() {
   lists
   if [ "$VERB" = run ]; then
     p=$(held_problem)
-    [ -n "$p" ] || [ "$OPEN$HOMEW" != 00 ] || p=$(disk_problem)   # (an asked change may free space: no floor)
+    [ -n "$p" ] || [ "$OPEN$HOMEW$ASKED" != 000 ] || p=$(disk_problem)   # (a pressed change may free space: no floor)
   elif [ "$VERB" = look ]; then
     p=$(look_problem)
   else
@@ -938,8 +956,8 @@ do_unit() {
   if [ "$VERB" = run ]; then
     home_was=$(stat -c '%a %u %g' -- "$R$OWNER_HOME" 2>/dev/null) || home_was=''
     if command -v getfacl > /dev/null 2>&1 && [ -n "$(getfacl -cps -- "$R$OWNER_HOME" 2> /dev/null)" ]; then home_acl=1; fi
-    if [ "$OPEN$HOMEW" = 00 ]; then
-      disk_watch "$unit" < /dev/null > /dev/null 2>&1 &   # (holding none of the caller's pipes)
+    if [ "$OPEN" = 0 ]; then
+      disk_watch "$unit" "$(watch_floor)" < /dev/null > /dev/null 2>&1 &   # (holding none of the caller's pipes)
       watch=$!
     fi
   fi
@@ -957,7 +975,7 @@ do_unit() {
   # (systemd silent for a minute: the mark stays "handed", and state --id asks systemd itself, never "ended" unasked)
   if (( quiet < 60 )); then mark ended "$rc"; CALL_MARK=ended; fi
   if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
-  if [ -e "$H/disk-low" ]; then tail+=("stopped: the disk's free space fell under $((DISK_FLOOR / 1000000000)) GB"); fi
+  if [ -e "$H/disk-low" ]; then l=$(cat -- "$H/disk-low"); [[ $l =~ ^[0-9]{1,15}$ ]] || l=$DISK_FLOOR; tail+=("stopped: the disk's free space fell under $(bytes_said "$l")"); fi
   rm -rf -- "$H"
   if [ "$VERB" = run ]; then l=$(home_back "$home_was"); [ -z "$l" ] || tail+=("$l"); fi
   # (inside the net its own line comes first, after the line break that ends what the command printed)
