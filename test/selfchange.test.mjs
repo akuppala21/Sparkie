@@ -28,7 +28,7 @@ const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' })
 const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@test',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@test' };
 const git = (dir, args, input) => {
-  const r = spawnSync(REAL_GIT, ['-C', dir, ...args], { encoding: 'utf8', env: GIT_ENV, input });
+  const r = spawnSync(REAL_GIT, ['-C', dir, ...args], { encoding: 'utf8', env: GIT_ENV, input, maxBuffer: 256 * 1024 * 1024 });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 };
