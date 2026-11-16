@@ -7,7 +7,8 @@
 // the turn as having read outside text only once something ran (a failed one too); one refused, answered "nothing
 // ran" or asked does not, so the change after it runs at once. Past the rounds a message may take, the brain is told
 // its tools are put away, a call it makes all the same is answered "not run" and nothing runs, the reply ends with
-// code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call).
+// code's own lines, and a task carries on in a fresh turn (the stand-in brain's "untooled" call). The steps' note
+// counts only the commands that ran, and those asked first apart, as waiting for the owner's yes.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
@@ -196,4 +197,16 @@ test('past the rounds a message may take: the brain is told its tools are put aw
   assert.match(m[2].content, new RegExp(`${CARRIED}${esc(words)}”`));
   const budgets = journal().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets && [x.budgets.spent ?? null, x.budgets.carried ?? null]);
   assert.deepEqual(budgets[0], ['rounds', true], JSON.stringify(budgets));
+});
+
+// Final read of the sorter, S-15: the steps' note counted a command asked first as one that ran.
+test('the steps’ note counts only the commands that ran, and says how many wait for the owner’s yes', { timeout: 300000 * SLOW }, async () => {
+  const k = n => RUN(`echo ${n} > notes/k${n}.txt`);
+  const r = await turn(await newChat(), 'fix the k notes on spark 3', [[1, 2, 3, 4].map(k), [5, 6, 7, 8].map(k), [9, 10, 11, 12].map(k)]);
+  // (the first round's four ran at once; after what they printed, each later one is asked first: R26)
+  const asked = o => (['needs-ok', 'question'].includes(o) ? 'asked' : o);
+  assert.deepEqual(r.tools.map(t => asked(t.outcome)), [...Array(4).fill('change'), ...Array(8).fill('asked')], shown(r.tools));
+  for (const n of [1, 2, 3, 4]) assert.equal(text(`notes/k${n}.txt`), `${n}\n`);
+  for (const n of [5, 12]) assert.ok(!existsSync(at3(`notes/k${n}.txt`)), `k${n} waits`);
+  assert.ok(r.text.endsWith('\n\nStopped here: one message may run 12 commands, and 12 were tried and 4 ran; 8 wait for your yes.\nSay “go on” to carry on.'), r.text.slice(-300));
 });

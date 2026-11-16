@@ -195,7 +195,7 @@ test('a write is a work step, as run is: one message writes at most as many as i
   const w = n => WRITE(`~/notes/step${n}.txt`, `${n}\n`), words = 'fix the step notes';
   const r = await turn(await newChat(), words, [[w(1), w(2), w(3), w(4)], [w(5), w(6), w(7), w(8)], [w(9), w(10), w(11), w(12)], [w(13)]]);
   // (twelve steps spent: the turn answers, and the thirteenth is never called)
-  assert.match(r.message.content, /\n\nStopped here: one message may run 12 commands, and 12 ran\./, r.message.content.slice(-300));
+  assert.match(r.message.content, /\n\nStopped here: one message may run 12 commands, and 12 were tried and none ran; 12 wait for your yes\./, r.message.content.slice(-300));
   assert.ok(!JSON.stringify(r.back).includes('step13'), 'the thirteenth not called');
 });
 

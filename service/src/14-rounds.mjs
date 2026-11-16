@@ -46,7 +46,7 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
   const done = taskStepsDone(task), left = taskStepsLeft(task);
   const WORK_STEPS = Math.min(limits.steps, left);
   return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
-    works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
+    works: 0, ran: 0, waitsYes: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
     // (the operations its calls started, and a call that may change something still going past its 50 seconds: roundCalls)
     ops: [], going: null,
     // (the calls the brain made after its tools were put away, none of them run: roundDropped)
@@ -92,9 +92,10 @@ function workStep(turn) {
   if (++turn.works >= turn.WORK_STEPS) turn.spent ||= turn.taskBound ? 'task' : 'steps';
 }
 // After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
-// refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
-// sent of the result (budgetCut).
-function budgetsAfter(turn, { name, ok, nothing, jid, waited = false }, out) {
+// refusals in a row and a call that worked ends them; the third makes the next round the last. A command counts as run
+// only when it ran there (or started, with minutes), and one asked first as waiting for the owner's yes (final read
+// S-15: an asked one was counted as run). Then what the brain is sent of the result (budgetCut).
+function budgetsAfter(turn, { name, ok, nothing, jid, waited = false, ran = false, asked = false }, out) {
   const why = ok ? nothing : out.replace(/^\[error\] /, '');
   if (why == null) turn.refusedRow.length = 0;
   // (three refusals end the carrying on even in the round whose command reached the steps: the brain was spinning; calls
@@ -104,7 +105,8 @@ function budgetsAfter(turn, { name, ok, nothing, jid, waited = false }, out) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }
-  if (WORK_TOOLS.has(name) && ok && nothing == null) turn.ran++;
+  if (WORK_TOOLS.has(name) && ok && ran) turn.ran++;
+  else if (WORK_TOOLS.has(name) && ok && asked) turn.waitsYes++;
   return budgetCut(turn, out, jid);
 }
 // The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
@@ -126,9 +128,11 @@ function budgetReport(turn) {
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
   const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
-  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${more}.`);
+  // (those asked first, each with its button or as its own message: they ran nothing yet)
+  const waits = turn.waitsYes ? `; ${turn.waitsYes} ${turn.waitsYes === 1 ? 'waits' : 'wait'} for your yes` : '';
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran || 'none'} ran`}${waits}${more}.`);
   // (a task's last: no carrying on, and the owner's next message is a new request with its own 120)
-  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
+  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${waits}${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
@@ -349,7 +353,7 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false },
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
-  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid, waited }, out);
+  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid, waited, ran: value?.ran === true || outcome === 'started', asked: outcome === 'needs-ok' || outcome === 'question' }, out);
   // (run with minutes started an operation, as a change does: its result wakes the request's carry-on, 21-long.mjs)
   const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read') || (c.name === 'run' && outcome === 'started'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
