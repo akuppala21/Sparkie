@@ -92,7 +92,8 @@ function netTailnet(node) {
 }
 async function netProbe(node) {
   const [ssh, helper, tailnet] = await Promise.all([
-    run(node, 'echo net-ok', { timeout: 20000 }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
+    // (a new connection, never one shared with another ssh: 02-ssh.mjs spawnOn's fresh)
+    run(node, 'echo net-ok', { timeout: 20000, fresh: true }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
     helperCall(node, 'check', { limitMs: 30000 }).then(c => c.out.includes(`${c.id} helper `)).catch(() => false),
     netTailnet(node).catch(() => null),
   ]);

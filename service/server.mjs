@@ -154,8 +154,9 @@ class HttpError extends Error {
 // Timers: none        Wakes: none
 // Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command.
 // `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there
-// after this side gave up.
-function spawnOn(node, { script, command, limit }) {
+// after this side gave up. `fresh`: a new connection, never one shared with another ssh (the lock-out net's check that a
+// new SSH connection still works, 21-net.mjs netProbe: a shared one would ride an old connection a firewall lets through).
+function spawnOn(node, { script, command, limit, fresh = false }) {
   if (ALL_LOCAL && offlineNow(node.id)) {
     return spawn('bash', ['-c', `sleep 1; echo "ssh: connect to host ${node.host} port 22: Operation timed out" >&2; exit 255`]);
   }
@@ -166,6 +167,7 @@ function spawnOn(node, { script, command, limit }) {
   const child = local
     ? spawn(guard[0] || 'bash', [...guard.slice(1), ...(guard.length ? ['bash'] : []), ...(script != null ? ['-s'] : ['-c', PATH_FIRST + command])], { env })
     : spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
+      ...(fresh ? ['-o', 'ControlMaster=no', '-o', 'ControlPath=none'] : []),
       `${node.user || CONFIG.user}@${node.host}`, PATH_FIRST + (script != null ? `${guard.join(' ')}${guard.length ? ' ' : ''}bash -s` : command)]);
   // (a program that isn't there fails this command, never the service: its callers see the close, R53)
   child.on('error', () => {});
@@ -188,11 +190,11 @@ function noteReach(node, code) {
   } else if (code === 0) { reachMisses.delete(node.id); unreachableUntil.delete(node.id); }
 }
 
-function run(node, script, { timeout = 60000, onLine, signal } = {}) {
+function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = {}) {
   if (knownOffline(node)) return Promise.resolve({ code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
-    const child = spawnOn(node, { script, limit: timeout / 1000 + 5 });
+    const child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -19279,7 +19281,8 @@ function netTailnet(node) {
 }
 async function netProbe(node) {
   const [ssh, helper, tailnet] = await Promise.all([
-    run(node, 'echo net-ok', { timeout: 20000 }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
+    // (a new connection, never one shared with another ssh: 02-ssh.mjs spawnOn's fresh)
+    run(node, 'echo net-ok', { timeout: 20000, fresh: true }).then(r => r.code === 0 && /\bnet-ok\b/.test(r.out)).catch(() => false),
     helperCall(node, 'check', { limitMs: 30000 }).then(c => c.out.includes(`${c.id} helper `)).catch(() => false),
     netTailnet(node).catch(() => null),
   ]);

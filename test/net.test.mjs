@@ -438,3 +438,23 @@ test('a way-in word counts only as what the verb changes: not after a place word
     'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password',
     'add bob to the sudo group on spark 3', 'add an alias to my .bashrc on spark 3', 'change the firewall rules on spark 3', 'change the password of bob on spark 3']) assert.equal(netAsks(node, s), true, s);
 });
+
+// The final read's ssh-probe: with the console's SSH shared (a ControlMaster in its ssh settings), the check after a change
+// would ride an old connection that a firewall rule dropping new ones lets through.
+test('the net’s check that a new SSH connection still works asks ssh for a new one, never a shared one', async () => {
+  const ssh = readFileSync(join(REPO, 'service', 'src', '02-ssh.mjs'), 'utf8'), net = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
+  const spawnSrc = /^function spawnOn\([\s\S]*?\n\}$/m.exec(ssh)?.[0], probeSrc = /^async function netProbe\([\s\S]*?\n\}$/m.exec(net)?.[0];
+  assert.ok(spawnSrc && probeSrc, 'spawnOn and netProbe');
+  const seen = [], child = { on() {}, stdin: { end() {} } };
+  const spawnOn = new Function('ALL_LOCAL', 'offlineNow', 'process', 'PATH_FIRST', 'PREAMBLE', 'CONFIG', 'spawn', `${spawnSrc}\nreturn spawnOn;`)(
+    false, () => false, process, '', '', { user: 'u' }, (cmd, args) => { seen.push(args.join(' ')); return child; });
+  spawnOn({ id: 'spark3', host: '100.64.0.3' }, { script: 'echo net-ok', limit: 25, fresh: true });
+  spawnOn({ id: 'spark3', host: '100.64.0.3' }, { script: 'echo net-ok', limit: 25 });
+  assert.match(seen[0], / -o ControlMaster=no -o ControlPath=none u@100\.64\.0\.3 /, seen[0]);
+  assert.doesNotMatch(seen[1], /Control/, 'only where it is asked for');
+  const asked = [];
+  const netProbe = new Function('run', 'helperCall', 'netTailnet', `${probeSrc}\nreturn netProbe;`)(
+    (n, s, o) => { asked.push([s, o]); return Promise.resolve({ code: 0, out: 'net-ok' }); }, () => Promise.resolve({ id: 'x', out: '' }), () => Promise.resolve(true));
+  await netProbe({ id: 'spark3' });
+  assert.deepEqual(asked.map(([s, o]) => [s, o?.fresh]), [['echo net-ok', true]]);
+});
