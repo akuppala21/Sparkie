@@ -372,7 +372,8 @@ case "$cmd" in
     all=("$@"); ref=""; i=0
     while [ $i -lt ${#all[@]} ]; do case "${all[$i]}" in -w|--workdir|-u|--user|-e|--env) i=$((i + 2)) ;; -*) i=$((i + 1)) ;; *) ref=${all[$i]}; i=$((i + 1)); break ;; esac; done
     bname=$(resolve "$ref") || bname=""
-    if [ -n "$bname" ] && [ "$(lineOf "$bname" | cut -d'|' -f4)" = box ] && ! printf '%s\n' "${all[@]}" | grep -qx box-check; then
+    # (A4's own form, with -w /work; C8b's fill and read back, below, come without it)
+    if [ -n "$bname" ] && [ "$(lineOf "$bname" | cut -d'|' -f4)" = box ] && printf '%s\n' "${all[@]:0:$i}" | grep -qx -- -w; then
       [ "$(lineOf "$bname" | cut -d'|' -f2)" = running ] || { echo "Error response from daemon: container $ref is not running" >&2; exit 1; }
       w=$(sed -n 's/^type=bind,src=\(.*\),dst=\/work$/\1/p' "$M/run-$bname"); cd -P -- "$w" || exit 126
       # (with -i its input goes in; without, it runs while the box is there: removed, as docker rm -f does, it is killed)
