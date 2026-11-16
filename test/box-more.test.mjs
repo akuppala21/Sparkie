@@ -33,7 +33,8 @@ let MEM0 = null;
 const available = kB => { MEM0 ??= text(join(mock('spark3'), 'meminfo')); writeFileSync(join(mock('spark3'), 'meminfo'), MEM0.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${kB} kB`)); };
 const ROOM_ONE = 13107200, ROOM_TWO = 17825792;   // 12.5 GB (4 beyond the 8 kept) and 17 GB (9 beyond)
 const short = (need, n, room) => `Spark 3 doesn’t have room for the box now: it needs ${need} GB free beyond the 8 GB kept for the system (4 GB for each of the ${n} boxes there, this one included), and ${room} GB is. Nothing ran.`;
-after(() => { if (MEM0 !== null) writeFileSync(join(mock('spark3'), 'meminfo'), MEM0); });
+// (the fleet may be gone already: then there is nothing to put back)
+after(() => { if (MEM0 !== null && existsSync(join(mock('spark3'), 'meminfo'))) writeFileSync(join(mock('spark3'), 'meminfo'), MEM0); });
 // (Spark 4 off, so every box here is asked for on Spark 3)
 const spark4Off = async () => { writeFileSync(T.fleet.offlineFile, 'spark1\nspark4\n'); await sleep(3500); };
 
