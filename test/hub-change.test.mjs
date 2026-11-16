@@ -114,6 +114,17 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   assert.equal(readFileSync(at2('.ssh/authorized_keys'), 'utf8'), KEYS_LINE);
 });
 
+// The final read's hub-words: a refused command spelled through a shell, a wrapper or a variable was asked, not refused.
+test('Spark 2’s power, spelled through a shell, busybox, a variable or another program’s text, is refused too, not asked', { timeout: 60000 * SLOW }, async () => {
+  const before = starts().length;
+  for (const command of ['bash -c reboot', 'busybox reboot', 'x=reboot; $x', `awk 'BEGIN{system("reboot")}'`, 'sh -ec poweroff']) {
+    const r = await run(command);
+    assert.equal(r.status, 403, `${command}: ${r.text}`);
+    assert.equal(r.json.error, `Not done on Spark 2: it touches Spark 2’s power or its plug, which are never changed from here. ${NOT}`, command);
+  }
+  assert.equal(starts().length, before, 'nothing began');
+});
+
 test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, a look and a change get the owner’s one command with --hub, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const r = await run('sudo touch notes/r.txt');
   assert.equal(r.status, 403, r.text);
