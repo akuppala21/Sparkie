@@ -39,6 +39,8 @@ const GUARD_SAYS = {
   netOpen: /^net open: (.*)$/,
   kept: /^kept: |^kept already: /,
   putBack: /^(?:net |already )?put back at (.*)$/,
+  // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
+  failed: /^net: the put-back failed: ?(.*)$/,
 };
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
@@ -58,6 +60,7 @@ function guardAnswer(id, out) {
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: after(GUARD_SAYS.putBack),
+    failed: after(GUARD_SAYS.failed),
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }

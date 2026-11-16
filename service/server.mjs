@@ -18383,6 +18383,8 @@ const GUARD_SAYS = {
   netOpen: /^net open: (.*)$/,
   kept: /^kept: |^kept already: /,
   putBack: /^(?:net |already )?put back at (.*)$/,
+  // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
+  failed: /^net: the put-back failed: ?(.*)$/,
 };
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
@@ -18402,6 +18404,7 @@ function guardAnswer(id, out) {
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
     putBackAt: after(GUARD_SAYS.putBack),
+    failed: after(GUARD_SAYS.failed),
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
@@ -19562,6 +19565,27 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       const words = `A change that could lock you out of ${at} (record ${rid}) was put back: its timer wasn’t waiting after it (put back at ${a.putBackAt}).${cut}${await still()}`;
       netTell(g, words, late());
       return result('put back', words);
+    }
+    // The helper had to put it back at once and that put-back failed: never kept (keep would stop its timer, the one
+    // thing left that tries again). Left to its timer, the Spark claimed until then, and said plainly.
+    if (a.failed != null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit, putBackFailed: true }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) had to go back at once, but the put-back failed${a.failed ? ` (${String(a.failed).slice(0, 200)})` : ''}, so it was not kept and may still be in place. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}; /putback tries again now. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
+    }
+    // (an answer of the helper's this build doesn't know is never kept: left to its timer, said)
+    if (a.open == null) {
+      netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: 'timer', exit: a.exit }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) ran, but the root helper’s answer after it wasn’t one Spark Console knows, so it was not kept: ${at}’s own timer puts it back at ${netHhmm(back)}. ${at} stays claimed until then.${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result('timer', words);
     }
     const after = await probe();
     lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
