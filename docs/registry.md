@@ -57,6 +57,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `power_off` | change | `21-power` | power | poweroff | — | yes | — |
 | `power_on` | change | `21-power` | power | poweron | — | yes | — |
 | `power_settings` | change | `21-power` | power | poweroff, stop, powerset | — | no | — |
+| `propose_update` | change | `21-selfchange` | updates | code, cancel | yes | no | — |
 | `self_test` | change | `21-selftest` | checks | selftest | — | no | — |
 | `install_update` | change | `21-updates` | updates | install | — | no | — |
 | `check_update` | read | `21-updates` | updates | — | — | yes | outside |
@@ -108,6 +109,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
 | `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
+| `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |
 | `update-asked.json` | `21-updates` | `updInstallStart`, `updResultLook`; `updInstallStart` is called by `updInstallRun`; `updResultLook` is called by `updAfterRestart` | yes | no |
 | `update-note.json` | `18-workflows` | none; the installer writes it, noteUpdate reads it | yes | no |
 | `update-result.json` | `21-updates` | none; pull.sh writes it | yes | no |
@@ -134,6 +136,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
+| `tryStop` | `21-long` | every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
 | `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |
 | `selfTestRecover` | `21-selftest` | 5 s after start, then each minute while the Spark doesn’t answer |
@@ -186,6 +189,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `power-off` | `power_off` (21-power) |
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
+| `run` | `longStart` (21-long) |
 | `self-test` | `self_test` (21-selftest) |
 | `start-model` | `startModel` (17-changes) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |

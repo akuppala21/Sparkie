@@ -67,7 +67,8 @@ function dangerBack(f) {
   return [];
 }
 // Lines 5 and 6: the ways-in files a command names; an install's tree, the day and time it was tested, what differs (or
-// that it isn't known: differs null), what the brain reads; why it runs outside the wall.
+// that it isn't known: differs null), what the brain reads; why it runs outside the wall; the raiser's own lines, built
+// by code (lines: what its wall lets it do, what it reaches, a script's hash), each one line.
 function dangerMore(f) {
   const out = [];
   if (f.lockWhy) out.push(`Why it can lock you out: ${dangerPlain(f.lockWhy, 300)}`);
@@ -78,10 +79,15 @@ function dangerMore(f) {
       !d ? 'What differs from the build installed now isn’t known: its commit isn’t in Spark 2’s copy of the repository.'
         : d.length ? `${d.length} file${d.length === 1 ? ' differs' : 's differ'} from the build installed now: ${d.slice(0, 8).map(x => dangerPlain(x, 120)).join(', ')}${d.length > 8 ? ` and ${d.length - 8} more` : ''}.` : 'No file differs from the build installed now.');
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
+    // (a proposal of Sparkie's own code: GitHub's run, the protected paths and tests it changes, the review, C8d)
+    if (f.install.proposal) out.push(dangerPlain(f.install.proposal, 700));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
   // (on Spark 2: where it starts, how it runs there and what is checked after it, a line each, 21-hub.mjs)
   for (const l of [].concat(f.hub || [])) out.push(dangerPlain(l, 400));
+  for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));
+  // (run with minutes, A6: how long the press lets it run, as the plain ask's button says, 21-long.mjs)
+  if (Number.isInteger(f.minutes) && f.minutes > 0) out.push(`It may run for up to ${f.minutes} minute${f.minutes === 1 ? '' : 's'} as an operation.`);
   return out;
 }
 
@@ -102,10 +108,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, hub, whoApproves, switchBrain,
-// recheck}); shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install);
-// call: {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller
-// (the brain, an agent) is told.
+// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, hub, lines, minutes, whoApproves,
+// switchBrain, wall, recheck}); shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none
+// for an install); call: {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}).
+// Returns what the caller (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');

@@ -18,7 +18,8 @@
 # head of main before its full run passed, an older tested build, a tree only on another branch); one older than the
 # build installed (going back is go-back.sh's job); a tag that does more than add the lock to that commit; a lock for
 # another tree or another build; a tree holding a submodule, a link other than the stand-in fleet's (below), or a
-# .gitattributes with export-; a second install while one runs. Each install leaves
+# .gitattributes anywhere (any case); a tree that unpacks as anything but itself, file by file; a second install while
+# one runs. Each install leaves
 # ~/.local/state/spark-console/update-result.json: {tree, build, result: kept | not kept | refused, why, at}; kept
 # means the new build answers, the installed lock names this tree, and (when a build answered before) the real address
 # answered with it.
@@ -40,7 +41,7 @@ RESULT="$STATE/update-result.json"
 LOCK_PATH=service/workflows.lock.json
 ME="bash $SHARE/pull.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WANT='' W='' DOOR='' ARMED=''
+WANT='' W='' DOOR='' ARMED='' ARMING=''
 CONFIRM_S=600
 # On the stand-in fleet the incoming installer is told so by an argument (--stand-in), not by what it inherits.
 STAND_IN=''; [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || STAND_IN=--stand-in
@@ -73,10 +74,18 @@ ask() {
   echo "$a"
 }
 # Stopped before the way back is armed: by the time limit of the unit an install from chat runs in, or by hand. Nothing
-# of the install has changed yet (once the way back is armed, interrupted puts back and says what answers).
+# of the install has changed yet (once the way back is armed, interrupted puts back and says what answers). A stop that
+# lands while the way back is being armed takes this install's own back (half made, or whole with its timer), so it
+# isn't left armed for its 30 minutes; another update's is never touched.
 stopped() {
   set +e; trap '' PIPE
   trap - INT TERM HUP
+  if [ -n "$ARMING" ] && [ -e "$SHARE/update-guard" ]; then
+    local gf="$SHARE/update-guard/guard"
+    if [ ! -s "$gf" ] || { [ "$(sed -n 's/^tree=//p' "$gf" | head -n 1)" = "$WANT" ] && [ "$(sed -n 's/^pgid=//p' "$gf" | head -n 1)" = "$ARMING" ]; }; then
+      bash "$HERE/update-guard.sh" disarm 9>&- >/dev/null 2>&1
+    fi
+  fi
   echo "  The install was stopped before it changed anything." >&2
   result refused "the install was stopped before it changed anything"
   exit 130
@@ -100,11 +109,14 @@ interrupted() {
 
 # git, on the bare copy only, with nothing from the system's or the user's git config (a rewrite to SSH, a credential
 # store), no prompt, no hooks, HTTPS only, and every fetched object checked.
-g() { git_safe git -C "$REPO" "$@"; }
+# (no attributes file but the tree's: not the system's, not the owner's ~/.config/git/attributes, which
+# GIT_CONFIG_GLOBAL=/dev/null doesn't turn off; an export-ignore there would leave a file out of what is unpacked)
+NO_ATTRS='core.attributesFile=/dev/null'
+g() { git_safe git -c "$NO_ATTRS" -C "$REPO" "$@"; }
 git_safe() {  # git_safe <command…>: runs it with that environment (the command is git, or timeout in front of git)
   local proto=https
   [ "${SPARK_CONSOLE_ALL_LOCAL:-}" != 1 ] || proto=https:file
-  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS='' \
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS='' \
     GIT_ALLOW_PROTOCOL="$proto" "$@"
 }
 need_git() {
@@ -131,7 +143,7 @@ fetch() {
   err=$(GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="Authorization: basic $2" \
     GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='' GIT_CONFIG_KEY_2=core.hooksPath GIT_CONFIG_VALUE_2=/dev/null \
     GIT_CONFIG_KEY_3=fetch.fsckObjects GIT_CONFIG_VALUE_3=true \
-    git_safe ${cut[@]+"${cut[@]}"} git -C "$REPO" fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
+    git_safe ${cut[@]+"${cut[@]}"} git -c "$NO_ATTRS" -C "$REPO" fetch -q --no-tags --prune "$1" '+refs/heads/main:refs/heads/main' '+refs/tags/tested/*:refs/tags/tested/*' 2>&1 >/dev/null) \
     || code=$?
   [ "$code" != 0 ] || return 0
   if [ "$code" = 124 ] && [ ${#cut[@]} -gt 0 ]; then
@@ -313,7 +325,7 @@ setup() {
   # The copy first, then a fetch with the new token: it is kept only if GitHub took it.
   if [ ! -d "$REPO" ]; then
     mkdir -p "$SHARE"; chmod 700 "$SHARE" 2>/dev/null || true
-    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c init.defaultBranch=main init -q --bare "$REPO"
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 git -c "$NO_ATTRS" -c init.defaultBranch=main init -q --bare "$REPO"
   fi
   fetch "$url" "$auth" "$FETCH_SETUP_S" || die "GitHub didn't accept that token for $1, or couldn't be reached. Nothing was saved."
   # Into the secrets file beside Telegram's: read whole, written whole (a temporary file renamed over it, 0600). A file
@@ -491,8 +503,9 @@ install() {
   # The tag: that commit plus the lock, nothing else; the lock names this tree and the build this code is.
   tag_check "$c" "$t" || refuse "$TAG_WHY"
   tc=$TAG_COMMIT lat=$TAG_AT code_build=$TAG_BUILD
-  # Plain files and folders (a submodule is code from elsewhere), and no .gitattributes that changes what git archive
-  # gives out. Links only where links_ok allows them (a link elsewhere could copy a secret into the page folder).
+  # Plain files and folders (a submodule is code from elsewhere), and no .gitattributes at all (git archive obeys one:
+  # export-ignore, export-subst). Links only where links_ok allows them (a link elsewhere could copy a secret into the
+  # page folder).
   p=$(g ls-tree -r "$tc" | awk -F'\t' '{ split($1, m, " ") } m[1] != "100644" && m[1] != "100755" && m[1] != "120000" && !n++ { print $2 }')
   [ -z "$p" ] || refuse "Tree $WANT holds something that isn't a file or a link ($p): a submodule."
   p=$(g ls-tree -r -z "$tc" | while IFS= read -r -d '' rec; do
@@ -502,11 +515,13 @@ install() {
       done | links_ok) || refuse "Tree $WANT's links couldn't be read."
   [ -z "$p" ] || refuse "Tree $WANT holds a link that isn't allowed ($p): only links under test/mock/root/ that point inside it, or at /hf/."
   while IFS= read -r -d '' p; do
-    case "$p" in .gitattributes|*/.gitattributes)
+    case "$(printf '%s' "$p" | tr 'A-Z' 'a-z')" in .gitattributes|*/.gitattributes)
       txt=$(g cat-file blob "$tc:$p")
-      case "$txt" in *export-*) refuse "Tree $WANT has $p with export-, which would change what is installed." ;; esac ;;
+      case "$txt" in *export-*) refuse "Tree $WANT has $p with export-, which would change what is installed." ;; esac
+      refuse "Tree $WANT has $p: git archive obeys a .gitattributes file, so what is unpacked could differ from the tested tree. A tree with one isn't installed." ;;
     esac
   done < <(g ls-tree -r -z --name-only "$tc")
+  [ ! -e "$REPO/info/attributes" ] || refuse "This Spark's copy of the repository has an attributes file, which git archive would obey. Remove it once (rm '$REPO/info/attributes'), then run this again."
   g cat-file -e "$tc:deploy/host-on-portal.sh" 2>/dev/null || refuse "Tree $WANT has no deploy/host-on-portal.sh."
 
   # The files, out of git into a folder of this run's own, checked again on disk. Nothing in them has run yet.
@@ -516,6 +531,31 @@ install() {
   # (never the eval's held-out set: it tests a brain, so it is not unpacked on Spark 2 even for these minutes, R47)
   g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - --exclude='test/eval/memory-held-out.json' || refuse "git archive of tested/$WANT failed."
   [ -z "$(find "$W/tree" ! -type f ! -type d ! -type l -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a file or a link."
+  # (and what was unpacked is the tree, file by file: the same names, each one's kind (a file or a link) and a file's
+  # executable bit as the tree's mode says, each file's bytes, or link's target, the blob the tree holds; the held-out
+  # set is the one name left out on purpose)
+  p=$(g ls-tree -r -z "$tc" | python3 -I -c 'import hashlib, os, sys
+root, held = sys.argv[1], "test/eval/memory-held-out.json"
+want, have = {}, {}
+for rec in sys.stdin.buffer.read().split(b"\0"):
+    if not rec: continue
+    meta, path = rec.split(b"\t", 1)
+    mode, kind, obj = meta.decode().split(" ")
+    if path != held.encode(): want[os.fsdecode(path)] = (mode, obj)
+for d, dirs, files in os.walk(root):
+    for n in dirs + files:
+        q = os.path.join(d, n)
+        if os.path.islink(q) or os.path.isfile(q): have[os.path.relpath(q, root)] = q
+odd = sorted(set(want) ^ set(have))
+for p, (mode, obj) in sorted(want.items()):
+    if p not in have: continue
+    q = have[p]
+    if os.path.islink(q) != (mode == "120000") or (mode != "120000" and bool(os.stat(q).st_mode & 0o100) != (mode == "100755")):
+        odd.append(p); continue
+    data = os.fsencode(os.readlink(q)) if mode == "120000" else open(q, "rb").read()
+    if (hashlib.sha1 if len(obj) == 40 else hashlib.sha256)(b"blob %d\0" % len(data) + data).hexdigest() != obj: odd.append(p)
+print(odd[0] if odd else "")' "$W/tree") || refuse "Tree $WANT couldn't be compared with what was unpacked."
+  [ -z "$p" ] || refuse "Tree $WANT unpacked as something other than itself ($p differs from the tree), so nothing was installed."
   p=$(cd "$W/tree" && find . -type l -print0 | while IFS= read -r -d '' f; do printf '%s\0%s\0' "${f#./}" "$(readlink "$f")"; done | links_ok) \
     || refuse "Tree $WANT's links couldn't be read after unpacking."
   [ -z "$p" ] || refuse "Tree $WANT unpacked with a link that isn't allowed ($p)."
@@ -555,7 +595,9 @@ print(int(d.get("jobsRunning") or 0), int(d.get("replying") or 0))' 2>/dev/null 
       case "$answer" in [yY]|[yY][eE][sS]) ;; *) refuse "Spark Console is busy, and the update wasn't confirmed (ASSUME_YES=1 updates anyway)." ;; esac
     fi
     [ -f "$HERE/update-guard.sh" ] || refuse "update-guard.sh isn't beside pull.sh ($HERE), so the way back couldn't be armed."
-    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$(ps -o pgid= -p $$ | tr -d ' ')" 9>&- \
+    # (ARMING: this process group, as the guard file names it, while the way back is being armed)
+    ARMING=$(ps -o pgid= -p $$ | tr -d ' ')
+    bash "$HERE/update-guard.sh" arm "$WANT" "$code_build" "$before" "$ARMING" 9>&- \
       || refuse "The way back couldn't be armed (see above), so the new build wasn't installed."
     ARMED=yes
     trap interrupted INT TERM HUP

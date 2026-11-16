@@ -476,7 +476,7 @@ test('who may look: the owner; an agent only when its key may change things too;
   assert.match((await call(keys.act.token, 'recall', { id })).value.text, /^\$ cat docs\/plain\.txt\nhello from spark 3\n$/);
   assert.match((await api('/actions/recall', { method: 'POST', body: { id } })).json.text, /hello from spark 3/);
   // The one page's later inputs aren't there yet: refused as any action refuses an input it doesn't know.
-  for (const extra of [{ root: true }, { minutes: 5 }, { seconds: 10 }]) {
+  for (const extra of [{ root: true }, { seconds: 10 }]) {
     const r = await look({ on: 'spark3', command: 'ls', ...extra });
     assert.equal(r.status, 400, r.text);
     assert.match(r.json.error, new RegExp(`^Unknown argument: ${Object.keys(extra)[0]}\\. run takes on, command`));

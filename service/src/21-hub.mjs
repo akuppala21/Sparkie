@@ -120,15 +120,19 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
   const why = hubRefuses(command, sorted, ctx, dir, widen);
   if (why) throw new HttpError(403, `Not done on Spark 2: ${why}. ${HUB_NOT}`);
   if (sorted.class === 'lockout') throw new HttpError(403, `Not done on Spark 2 yet: a change that can lock you out of Spark 2 is kept only by a fresh visit to Spark Console, which comes with a later build. ${sorted.why} Nothing was asked or run.`);
-  if (widen.fleet === true || sorted?.reach?.fleet) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
+  if (widen.fleet === true || (Array.isArray(sorted?.reach) && sorted.reach.includes('fleet'))) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
   const dangerous = (sorted.kinds || []).filter(k => k === 'delete');
   // The owner's yes, pressed (the dangerous ask's press carries its pair): sorted again, its scripts read again.
   if (ctx.button && ctx.ownerConfirmed && (!dangerous.length || ctx.danger)) {
-    const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
-    workAsks.delete(key);
-    if (was && Object.keys(was.sums).length) {
-      const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) return hubAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false, danger: false }, dir, 'a script it runs changed after you were asked, so that yes was void');
+    // (what the button that was pressed asked, by its own id, as the ladder keeps it: workRecord, 21-ladder.mjs)
+    const was = workAsks.get(String(ctx.pressed || ''));
+    workAsks.delete(String(ctx.pressed || ''));
+    const again = why => hubAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false, danger: false }, dir, `${why}, so that yes was void`);
+    if (!was || was.spark !== node.id || was.command !== command || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
+    if (!was.unread && Object.keys(was.sums).length) {
+      const now = await workScripts(node, sorted.scripts, dir, command);
+      if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on Spark 2 (${now.unread}), so nothing ran.`);
+      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again('a script it runs changed after you were asked');
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
@@ -142,22 +146,21 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
 async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command);
-  for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
-  workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
   const starts = `It starts in ${dir}.`;
   const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_WALL}`;
-  if ((sorted.kinds || []).includes('delete')) {
-    return dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
-      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net] } });
-  }
-  const reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {} } = scripts;
-  const label = [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
-    'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []),
-    ...Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`)].join('\n');
-  return question(viewer, ctx, label, [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  const reads = (ctx.reads || []).slice(-4).map(r => r.label);
+  const out = (sorted.kinds || []).includes('delete')
+    ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
+      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net], lines: workScriptLines(scripts) } })
+    : question(viewer, ctx, [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
+      'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
+      ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n'),
+    [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+  // (kept under the yes button's own id, as the ladder keeps its asks: the press reads it back, workRecord)
+  workRecord(call.args, { spark: node.id, command, dir, wall: 'hub', sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  return out;
 }
 
 // Spark Console's own ways in, as the installer's check_ways tries them (deploy/host-on-portal.sh), from its own socket

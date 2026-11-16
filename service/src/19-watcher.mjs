@@ -30,6 +30,9 @@ setTimeout(() => {
     if (selfTestCutOff(e)) continue;
     // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
     if (savedRunCutOff(e)) continue;
+    // (a long command, run with minutes: the journal's own cut-off notice, in the chat that asked, says what became of
+    // it; it is never started again, 21-long.mjs)
+    if (e.operation === 'run') continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
   savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
@@ -113,9 +116,12 @@ function darkPeriods(spark, max = 5) {
 }
 
 // One look per Spark: every container's id, name and state; and the full inspect only for ones that are new or changed.
-const watchScript = known => `${readingsScript}
-known=${q(known)}
-docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}' 2>/dev/null | while IFS='|' read -r id name state; do
+// A box (21-box.mjs, R62) is no workload: one this console knows on that Spark (boxesOn), whose label is its own name,
+// is left out here, so workloads never lists it; any other container is watched, whatever its name or labels.
+const watchScript = (known, boxNames = []) => `${readingsScript}
+known=${q(known)}; boxes=${q(boxNames.filter(n => /^spark-console-box-[0-9a-f]{12}$/.test(n)).join(' '))}
+docker ps -a --no-trunc --format '{{.ID}}|{{.Names}}|{{.State}}|{{.Label "spark-console.box"}}' 2>/dev/null | while IFS='|' read -r id name state box; do
+  case " $boxes " in *" $name "*) [ "$box" = "$name" ] && continue ;; esac
   printf 'ps\\t%s\\t%s\\t%s\\n' "$id" "$name" "$state"
   case " $known " in *" $id:$state "*) ;; *) printf 'inspect\\t%s\\t%s\\n' "$id" "$(docker inspect "$id" 2>/dev/null | head -c 300000 | base64 | tr -d '\\n')" ;; esac
 done
@@ -147,7 +153,7 @@ function learnedFrom(spark, c) {
 async function watchSpark(node) {
   const mine = Object.values(knowledge.workloads).filter(w => w.spark === node.id && w.id && w.state !== 'removed');
   const sent = new Map(mine.map(w => [w.id, w.state]));
-  const r = await run(node, watchScript(mine.map(w => `${w.id}:${w.state}`).join(' ')), { timeout: 45000 });
+  const r = await run(node, watchScript(mine.map(w => `${w.id}:${w.state}`).join(' '), boxesOn(node.id)), { timeout: 45000 });
   const [rd] = fields(r.out, 'read');
   if (rd) (knowledge.sparks[node.id] ||= {}).readings = { at: new Date().toISOString(), hottestC: reading(rd[0], 1000, 150), nvmeC: reading(rd[1], 1000, 120), fanRpm: reading(rd[2], 1, 30000) };
   if (r.code !== 0) return false;
