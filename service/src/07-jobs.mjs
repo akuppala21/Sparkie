@@ -22,12 +22,15 @@ function newJob(type, meta) {
   for (const [id] of [...jobs].filter(([, j]) => j.status !== 'running').slice(0, Math.max(0, jobs.size - 50))) jobs.delete(id);
   return job;
 }
+// An operation's record holds no key: each log line, its step and its error are masked as they are written (as the
+// fleet's record masks them), so every view of it (/jobs, wait_operation, the journal) shows them masked (R7).
 function note(job, line) {
-  job.log.push(`${new Date().toTimeString().slice(0, 8)}  ${line}`);
+  job.log.push(`${new Date().toTimeString().slice(0, 8)}  ${maskSecrets(String(line))}`);
   journalNote(job, line);
   if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
 }
-function step(job, text) { job.step = text; note(job, text); }
+function step(job, text) { job.step = maskSecrets(String(text)); note(job, text); }
+const jobMasked = v => (v == null ? v : maskSecrets(String(v)));
 const publicJob = ({ release, ...job }) => ({ ...job, log: job.log.slice(-120) });
 // One change at a time on each Spark (deploys, stops, Sparkie's model), claimed before anything else happens, so two
 // clicks or two agents can't both start changing the same Spark. Released when the operation ends.
@@ -61,12 +64,12 @@ function runJob(job, fn) {
     // Cancelled on purpose isn't a failure: no retries, no rollback offer, and it doesn't count against agents.
     if (e?.cancelled || job.cancelled) {
       job.status = 'cancelled';
-      job.error = e.message;
+      job.error = jobMasked(e?.message);
       note(job, e.message);
       return;
     }
     job.status = 'failed';
-    job.error = e.message;
+    job.error = jobMasked(e?.message);
     note(job, `Failed: ${e.message}`);
     // Three failed operations in a row pause agents (R9). The owner's own never count: the page, self-healing, a saved
     // workflow's steps, a /v1 start, POST /actions (api), a press, a typed yes or /undo in the paired Telegram chat

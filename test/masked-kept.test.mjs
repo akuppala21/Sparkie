@@ -1,5 +1,6 @@
-// Covers: A key inside an error never comes back whole (R7; R1-06 and the final read): what wait_operation returns (its
-// error, step and log lines, the owner's own call included) is masked as the fleet's record is; a restart whose Docker
+// Covers: A key inside an error never comes back whole (R7; R1-06 and the final read): an operation's record holds no
+// key (its log lines, step and error are masked as written), so GET /jobs, GET /jobs/<id> and wait_operation (the
+// owner's own call included) show them masked; a restart whose Docker
 // output names a key keeps its error masked; a refused shutdown's own words keep the key masked in the operation's
 // error; a failed wake's problem, kept in power.json and shown by fleet_status, is masked. Each case puts a made-up key
 // shape where the error is built, and looks for it where the error is kept or returned. (The put-back notice's names
@@ -67,13 +68,35 @@ describe('a key inside an error never comes back whole', { concurrency: 1 }, () 
     } finally { rmSync(check, { force: true }); }
     const raw = await opEnd(id, 'the run');
     assert.equal(raw.status, 'failed');
-    assert.ok(raw.error.includes(key), `the run's error quotes the key where it is built: ${raw.error}`);
+    assert.match(raw.error, /\[hidden\] isn’t one of Spark Console’s models on spark4/, 'the run’s error quotes the key, masked where it is kept');
     let w;
     await waitFor(async () => { w = (await act('wait_operation', { id, seconds: 1 })).json; return w?.status === 'failed'; }, { timeout: 30000 * SLOW, what: 'wait_operation saying it failed' });
     const said = JSON.stringify(w);
     assert.ok(!said.includes(key), `no key in what wait_operation returns: ${said}`);
     assert.match(w.error, /^Step 1 \(stop_model\) failed: \[hidden\] isn’t one of Spark Console’s models on spark4\./);
     assert.ok(w.recentLog.some(l => l.includes('[hidden]')), JSON.stringify(w.recentLog));
+  });
+
+  test('an operation’s record holds no key: GET /jobs and GET /jobs/<id> show its log line and its error masked, and wait_operation too', { timeout: 240000 * SLOW }, async () => {
+    const key = FAKE(6), check = join(T.fleet.stateDir, '.test-check-fails');
+    const s = await act('save_workflow', { title: 'masked record', steps: [{ action: 'stop_model', args: { spark: 'spark4', container: key } }] });
+    assert.equal(s.status, 200, s.text);
+    writeFileSync(check, '');
+    let id;
+    try {
+      const r = await act('run_workflow', { name: 'masked record' });
+      assert.equal(r.json?.outcome, 'started', r.text);
+      id = r.json.operation;
+    } finally { rmSync(check, { force: true }); }
+    const one = await opEnd(id, 'the run');
+    assert.equal(one.status, 'failed');
+    assert.match(one.error, /^Step 1 \(stop_model\) failed: \[hidden\] isn’t one of Spark Console’s models on spark4\./);
+    assert.ok(one.log.some(l => /Step 1 of 1: stop_model .*\[hidden\]/.test(l)), JSON.stringify(one.log));
+    assert.ok(!JSON.stringify(one).includes(key), 'GET /jobs/<id> shows no key whole');
+    const all = await api('/jobs');
+    assert.ok(all.json.jobs.some(j => j.id === id), 'the run is listed');
+    assert.ok(!all.text.includes(key), 'GET /jobs shows no key whole');
+    assert.ok(!JSON.stringify((await act('wait_operation', { id, seconds: 1 })).json).includes(key), 'nor wait_operation');
   });
 
   test('restart_model: Docker’s own words naming a key keep it masked in the operation’s error', { timeout: 240000 * SLOW }, async () => {
