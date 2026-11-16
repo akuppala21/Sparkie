@@ -685,6 +685,9 @@ test('the mark holds what a Telegram turn is sent: only its prompt or its tools 
   } });
   try {
     const head = { 'content-type': 'application/json', 'x-spark-console': '1', origin: fleet.origin }, post = (p, b) => fetch(`${fleet.base}${p}`, { method: 'POST', headers: head, body: JSON.stringify(b) });
+    // (the lock names the build this tree had when the shared fleet started: a copy of other code put under this run since
+    // would leave this fleet with no lock for its build, and say so here, not as a wrong answer later)
+    assert.equal((await (await fetch(`${fleet.base}/health`)).json()).build, lock.build, 'the code under this run changed while it ran');
     const since = new Date().toISOString();
     assert.equal((await post('/main/check', {})).status, 202);
     const p = await waitFor(() => { try { return Object.values(JSON.parse(readFileSync(join(fleet.stateDir, 'brain-profiles.json'), 'utf8')).profiles).find(x => x.at > since); } catch { return null; } }, { timeout: 60000, what: 'the check' });

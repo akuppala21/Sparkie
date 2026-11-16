@@ -21,6 +21,9 @@
 # suite runs with SPARK_TEST_MAP=1 and SPARK_TEST_TREE, git's hash of the files copied (taken here before and after
 # the copy, kept only when the two agree). An empty file ../spark-test-runs/run-now still means "the main folder's
 # whole suite", answered in latest.log, done and workflows.lock.json. tools/land.mjs queues a request the same way.
+# On the Spark each queue folder has its own copy of a work folder, ~/sparkie-tests-<folder>-<queue folder> (2026-11-15:
+# two queues ran the main folder on one Spark at once in ~/sparkie-tests-spark-console; the later copy put newer code
+# under the earlier run, whose fleets started after it found no lock for their build). A queue runs one at a time.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BASE=$(dirname "$HERE")
@@ -112,11 +115,11 @@ run_req() {
   case "$tree" in *[!A-Za-z0-9._-]*|*..*) refuse "not a folder name: $tree"; return 2 ;; esac
   case "$slow$conc" in ''|*[!0-9]*) refuse "slow and conc are whole numbers"; return 2 ;; esac
   [ -f "$BASE/$tree/test/lock.mjs" ] || { refuse "no such work folder: $tree"; return 2; }
-  run_once "$BASE/$tree" "sparkie-tests-$tree" "$files" "$slow" "$conc" "$name"
+  run_once "$BASE/$tree" "sparkie-tests-$tree-$(basename "$OUT")" "$files" "$slow" "$conc" "$name"
 }
 
 if [ "$MODE" != "--watch" ]; then
-  run_once "$HERE" "sparkie-tests-$(basename "$HERE")" "" "$DSLOW" "$DCONC" latest
+  run_once "$HERE" "sparkie-tests-$(basename "$HERE")-$(basename "$OUT")" "" "$DSLOW" "$DCONC" latest
   rc=$?; [ -f "$OUT/latest.lock.json" ] && cp "$OUT/latest.lock.json" "$OUT/workflows.lock.json"; exit $rc
 fi
 # One watcher at a time: two would take the same request and run it twice into one folder on the Spark.
