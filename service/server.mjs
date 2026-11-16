@@ -688,8 +688,12 @@ function ggufOnDisk(b64) {
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
-// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
+// can write those files. It is still text from outside (a sentence fits): models_on_disk, which hands it to the brain, is
+// an outside read (R26, R53), and nothing the brain reads as the console's own carries it.
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
+// A name from a Spark (a container, a model, a link) as an inside read or the record ahead of the owner's words may carry
+// it (R26, A-17): one word of letters, digits and ._-/:@+, at most 100 signs, no space; anything else is no name (null).
+const bareName = v => (typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._\-/:@+]{0,99}$/.test(v) ? v : null);
 // The same for spark.json's image and setting names: a setting name not shaped like one is left out; an image not
 // shaped like an image reference is never shown (plainImage: the plans' steps), though a start still tries it as named
 // and fails there. True when either was found; the plans say so (PLAIN_NOTE), never what it was.
@@ -3622,21 +3626,7 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
 // core and this request's groups (21-guide.mjs, R46). Operations post their result in the conversation when they
 // finish, so it never waits on them.
 const sparkieToolNames = () => [...ACTIONS.keys()];
-// Lookups whose results are the console's own numbers and names, or the owner's own lines: not text from outside.
-const INSIDE_READS = new Set([
-  'cluster_plan',
-  'deploy_plan',
-  'fleet_status',
-  'guide',
-  'linked_sparks',
-  'memory',
-  'models_on_disk',
-  'running_models',
-  'should_be_running',
-  'sparkie_setup',
-  'where_it_fits',
-  'workflows',
-]);
+// (Which lookups are inside reads is said by each action itself, `inside`: readInside, 14-rounds.mjs, R26.)
 const sparkieTools = () => sparkieToolNames().map(n => ACTIONS.get(n)).filter(Boolean)
   .map(a => ({ type: 'function', function: { name: a.name, description: a.description, parameters: liveSchema(a.input) } }));
 // Each Spark Console model call at a time: helpers (search terms) step aside while Sparkie answers someone.
@@ -3771,7 +3761,7 @@ function pressLate(x, c, conv, ctx, by, askedNow) {
     if (by.via === 'telegram') {
       const line = out.outcome === 'error' ? (/paused/i.test(out.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.')
         : ['question', 'needs-ok'].includes(out?.outcome) ? 'It needs your answer to a question in Spark Console.' : tgRanLine(out);
-      tell('result', `Result of your earlier press: ${line}`, { last: true }).catch(() => {});
+      tellAgain('result', `Result of your earlier press: ${line}`, { last: true }, 'press', { chat: conv.id }).catch(() => {});
     }
     if (!asked && !by.agentId) taskAnswered(conv, c.group);
   } catch (e) { console.error(`A press’s result: ${e.message}`); }
@@ -3790,6 +3780,26 @@ function chatAsks(asked, message) {
   message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
   if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
   return message;
+}
+// What a chat read from outside, in every turn of it (contract 8.5: "a command quoted from an earlier answer counts as
+// read"): each read by its journal record, {id, label, at} as ctx.reads holds them (workRead, 21-ladder.mjs; the label
+// built by code, the text only in the journal), the newest 40, kept on the chat in chats.json (conv.reads).
+const CHAT_READS = 40;
+function chatReadsKeep(conv, ctx) {
+  const add = (Array.isArray(ctx?.reads) ? ctx.reads : []).filter(r => r && /^j_[0-9a-f]{12}$/.test(String(r.id || '')));
+  if (!add.length) return;
+  const have = Array.isArray(conv.reads) ? conv.reads : [], seen = new Set(have.map(r => r.id));
+  conv.reads = [...have, ...add.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, label: String(r.label || '').slice(0, 120), at: r.at }))].slice(-CHAT_READS);
+}
+// What a later turn of this chat needs to tell a command that came from what was read, in the form cameFrom takes
+// (20-came-from.mjs): reads, the chat's earlier ones and this request's (ctx.reads), loaded from the journal by
+// dangerReadsLoaded ([{label, at, text, cut}]); answers, Sparkie's own earlier answers in the chat ([{at, text}]),
+// which can quote what was read. Use: cameFrom(dangerThings(command), dangerOwnerWords(conv), e.reads, e.answers).
+function chatEarlier(conv, ctx = {}) {
+  const byId = new Map();
+  for (const r of [...(Array.isArray(conv?.reads) ? conv.reads : []), ...(Array.isArray(ctx?.reads) ? ctx.reads : [])]) if (r?.id && !byId.has(r.id)) byId.set(r.id, r);
+  const answers = (conv?.messages || []).filter(m => m.role === 'assistant' && !m.notice && !m.danger && m.content).map(m => ({ at: m.createdAt, text: m.content }));
+  return { reads: dangerReadsLoaded([...byId.values()]), answers };
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
@@ -4115,6 +4125,9 @@ function brainContext({ viewer, text, context, agent, channel, history, tools, t
 // same way when the reply itself fails after starting them. It keeps where the request came from: a channel, or a
 // device signed in over the internet (away, R31).
 function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, groups, carry, ctx, spent, asked, failed }) {
+  // (what this turn read from outside stays with its chat for the turns after it, whatever becomes of its request:
+  // chatEarlier, contract 8.5)
+  chatReadsKeep(conv, ctx);
   // (a task ended while this turn ran, by a pressed No or the way in it came by going: endTask, stays ended)
   if (task?.ended) return;
   // (a request with a next step whose first change came back as a button is a task too, parked at that button: the
@@ -4494,15 +4507,25 @@ async function turnRounds(turn) {
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
 const ROUND_CALLS = 4;              // limit: calls run in one round (each past them is answered "not run")
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
-// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
-// (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
+// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup its action doesn't mark
+// inside (readInside: outside is the default, A-17) once handed over, its error too (it can quote what it
 // read); run and write_file only once something ran there: a command that ran (one that failed too, its error output
 // is in its result), one started with minutes, write_file's ask (it shows the file's old lines), or a failure on the
 // far side (a 5xx can quote the command's own first line). Never a call refused, asked or answered "nothing ran"
 // before anything ran (final read of the net, 5: "Leave out sudo and set root" was followed by "this came from text
 // Sparkie read first", though nothing had run or been read).
+// An inside read (R26, A-17): only an action that says so itself, `inside: true` or, for some of its arguments, a function
+// of them (sparkie_setup with about "abilities"), where every field it returns is the console's own words or a bare name
+// (bareName, 05-library.mjs). Every other lookup, a new one too, is outside text.
+function readInside(a, args) {
+  if (a?.inside === true) return true;
+  if (typeof a?.inside !== 'function') return false;
+  let x = {};
+  try { x = JSON.parse(args || '{}'); } catch { return false; }
+  try { return a.inside(x && typeof x === 'object' ? x : {}) === true; } catch { return false; }
+}
 function readOutsideBy(c, a, { handed, ok, value, status }) {
-  if (!handed || a?.kind !== 'read' || (INSIDE_READS.has(c.name) && !(c.name === 'running_models' && /"detail"/.test(c.args || '')))) return false;
+  if (!handed || a?.kind !== 'read' || readInside(a, c.args)) return false;
   if (!WORK_TOOLS.has(c.name)) return true;
   if (!ok) return !(status >= 400 && status < 500);
   return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
@@ -4616,7 +4639,7 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false, p
 }
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
 // Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
-// Owns: none        Timers: none        Wakes: none
+// Owns: none        Timers: taskReportsDue (a report Telegram didn't take, again after 1, 2 and 4 minutes)        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
 // and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work
@@ -4925,10 +4948,18 @@ function taskEnded(conv, t, how) {
   } catch (e) { console.error(`A task’s report: ${e.message}`); }
 }
 // The reports owed in a chat: written in it once, told on Telegram once, then taken off.
+// One at a time a chat (a send waits on Telegram, and a tick that came meanwhile, the start-up's or a retry's, would
+// take a report in flight off the list): one that comes while another runs goes again a second later.
+const taskReportsBusy = new Set();
 async function taskReportsDue(id) {
+  if (taskReportsBusy.has(id)) { setTimeout(() => taskReportsDue(id).catch(e => console.error(`A task’s report: ${e.message}`)), 1000).unref?.(); return; }
+  taskReportsBusy.add(id);
+  try { await taskReportsNow(id); } finally { taskReportsBusy.delete(id); }
+}
+async function taskReportsNow(id) {
   const conv = chatData().conversations.find(c => c.id === id);
   if (!conv?.reports?.length) return;
-  for (const r of conv.reports) {
+  for (const r of [...conv.reports]) {
     if (!r.text) {
       r.text = taskReportText(conv, r);
       conv.messages.push({ role: 'assistant', content: r.text, createdAt: new Date().toISOString(), notice: true, report: r.task });
@@ -4936,12 +4967,20 @@ async function taskReportsDue(id) {
       saveChats();
     }
     if (r.tg && !r.told) {
+      // (marked before the send, so two ticks never send it twice; put back on a failure for now and tried again on a
+      // later tick, with a growing wait, TELL_TRIES in all; one that never will, or past them, is dropped and said in
+      // the journal: A-8, 20-tell.mjs)
       r.told = true;
       saveChats();
-      await tell('result', taskReportText(conv, r, true), { last: true }).catch(() => false);
+      const got = await tellTry('result', taskReportText(conv, r, true), { last: true }).catch(() => 'later');
+      r.tgTries = (Number(r.tgTries) || 0) + 1;
+      if (got === 'later' && r.tgTries < TELL_TRIES) {
+        r.told = false;
+        setTimeout(() => taskReportsDue(conv.id).catch(e => console.error(`A task’s report: ${e.message}`)), tellWait(r.tgTries)).unref?.();
+      } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
-  conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));
+  conv.reports = (conv.reports || []).filter(r => !r.text || (r.tg && !r.told));
   if (!conv.reports.length) delete conv.reports;
   saveChats();
 }
@@ -5989,6 +6028,8 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (an inside read, R26: the console's own numbers and words, names bare, bareName; needsOwner is code's lines, R21)
+  inside: true,
   description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose has state "off" and offOnPurpose (when, why, parked models, how to turn it on): not a fault unless it carries a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
@@ -5996,13 +6037,13 @@ action({
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: n.poweredOff, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: { ...n.poweredOff, parkedModels: (n.poweredOff.parkedModels || []).map(bareName).filter(Boolean) }, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
         : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
         ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
         id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
-        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: n.runningContainers || [], issues: n.issues || [],
+        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: (n.runningContainers || []).map(bareName).filter(Boolean), issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
       wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,
@@ -6318,6 +6359,7 @@ action({
 const LINK_WHY = { full: 'every cable between them passed at full size', partial: 'some cables fail or only pass small packets', fail: 'no cable answered', 'no-shared-subnet': 'no cable between them' };
 action({
   name: 'linked_sparks', title: 'Linked Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
+  inside: true,
   description: 'Use before running one model across two Sparks. Which pairs are cabled together and whether each can run a model together (the last connection test). Pass detail for each Spark’s ConnectX links (speed, MTU, addresses).',
   input: { type: 'object', properties: { detail: { type: 'boolean', description: 'Include each Spark’s network links.' } }, additionalProperties: false },
   run: async ({ detail = false }) => {
@@ -6325,7 +6367,7 @@ action({
     return {
       observedAt: f.checkedAt, testedAt: f.checkedAt,
       pairs: f.pairs.map(p => ({ sparks: [p.a, p.b], link: p.fastLink, canRunTogether: p.fastLink === 'full', why: LINK_WHY[p.fastLink] || null })),
-      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: l.name, up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: l.ipv4 })) })) } : {}),
+      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: bareName(l.name), up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: (Array.isArray(l.ipv4) ? l.ipv4 : [l.ipv4]).map(bareName).filter(Boolean) })) })) } : {}),
     };
   },
 });
@@ -6483,6 +6525,8 @@ function abilities() {
 }
 action({
   name: 'sparkie_setup', title: 'Sparkie’s setup', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (inside only with about "abilities", code's own list; the rest carries the brain's last line, faults, install notes)
+  inside: ({ about } = {}) => about === 'abilities',
   description: 'Use for “what can you do?” (pass about: "abilities"), “what is Sparkie running on?” and “which build of Spark Console is running?” and “what changed in Spark Console, and was anything undone?” and “did Spark Console crash, or is something in it failing?” and “why do you ask before every change?” (changes, and brainCheck), and, when the owner asks, “who is signed in?” and “how many recovery codes are left?”. With about "abilities": only what Sparkie can look up and change today, from Spark Console’s own action list, and its limits. Otherwise: Sparkie, the fleet’s own assistant: its model, Spark, state and health, which model answers chats and which answers apps at the /v1 address, the saved setups it can switch to, Spark Console’s own build and its last five updates (which build replaced which, when, the note given at install, and whether it went back a build), its own recent errors, its last crash and the watchdog’s restarts, and whether Telegram works. For the owner only, never an agent: access, with the devices signed in without Tailscale, the passkeys by name and the recovery codes left (names, times and counts; no addresses).',
   input: { type: 'object', properties: {
     about: { type: 'string', enum: ['abilities'], description: '"abilities" for what Sparkie can look up and change, and its limits. Only that comes back.' },
@@ -8797,6 +8841,21 @@ const describeEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model |
         : e.type === 'notice' ? String(e.text || '')
       : `${e.container} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.drill ? ' (the self-test’s healing drill, on purpose)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
 
+// An event as the record ahead of the owner's words says it (fleetNotes, R26, A-17): only the console's own words and
+// bare names (bareName, 05-library.mjs): what happened, where, when, its kind. Never text from a Spark, a container, a
+// model or an agent: an operation's error (it quotes a container's log), a bring-back's reason, a notice's words (some
+// carry a name a device or a file gave). fleet_events and operation_log, outside reads, have the words.
+const recordName = v => bareName(String(v ?? '')) || 'a name not shown here';
+const recordEvent = e => (e.type === 'operation' ? `${e.operation} ${e.model ? recordName(e.model) : ''} ${e.status}${e.error ? ' (operation_log has why)' : ''}`
+  : e.type === 'spark-powered-off' ? `${e.spark} was powered off by Spark Console on purpose${e.parked?.length ? `; parked ${e.parked.map(recordName).join(', ')}` : ''}`
+  : e.type === 'spark-powered-on' ? `${e.spark} was turned on again`
+  : e.type.startsWith('spark-') ? `${e.spark} went ${e.type.slice(6)}${e.poweredOff ? ' (powered off by Spark Console on purpose)' : ''}${e.last ? ` (last reading ${e.last.ageSeconds} s before: ${readingWords(e.last)})` : ''}`
+    : e.type === 'learned' ? `learned ${recordName(e.model)} from ${recordName(e.container)} on ${e.spark}${e.recipe ? ' (saved as a recipe)' : ''}`
+      : e.type === 'healing' ? `bringing back ${recordName(e.container)} on ${e.spark}`
+        : e.type === 'heal-skipped' ? `didn’t restart ${recordName(e.container)} on ${e.spark} (should_be_running says why)`
+        : e.type === 'notice' ? `a notice from Spark Console${e.spark ? ` about ${e.spark}` : ''} (fleet_events has its words)`
+      : `${recordName(e.container)} ${e.type} on ${e.spark}${e.exitCode ? ` (exit ${e.exitCode})` : ''}${e.oomKilled ? ' (out of memory)' : ''}${e.drill ? ' (the self-test’s healing drill, on purpose)' : ''}${e.outside ? ', started outside Spark Console' : ''}`).replace(/\s+/g, ' ').trim();
+
 // What a Spark read last, for "why did Spark 4 go dark?" (round two, item 2). The status check keeps the GPU's numbers
 // (busy, watts, temperature, uptime); the watcher adds the hottest sensor on the board, the NVMe drive and the fan from
 // sysfs. Numbers or null only, and nothing here decides anything. The readings print first: they never change how the
@@ -9054,6 +9113,8 @@ function plannedWake(id) {
   return events.some(e => e.type === 'spark-powered-on' && e.spark === id && (Date.parse(e.at) || 0) >= dark);
 }
 // What Sparkie is told about the fleet in the owner's chats: built here from what the watcher saw, not by the browser.
+// The record rides ahead of the owner's words in every turn, so it holds the console's own words and bare names only
+// (recordEvent, recordName; R26, A-17): no log, error, served id with a space, bring-back reason or notice's words.
 function fleetNotes(viewer) {
   if (viewer.role !== 'owner') return null;
   const running = Object.values(knowledge.workloads).filter(w => w.running);
@@ -9065,14 +9126,17 @@ function fleetNotes(viewer) {
     if (off) return `${sparkName(n)}: ${off.problem ? '' : 'asleep, on purpose (not a fault). '}${off.words}`;
     if (ws.length && sparkOff(n.id)) {
       const at = knowledge.sparks[n.id].lastSeenAt;
-      return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${w.name} (${w.kind})`).join('; ')}`;
+      return `${sparkName(n)}: off or not answering${at ? ` since ${String(at).slice(0, 16).replace('T', ' ')} UTC` : ''}, so nothing there is known to be running. Last seen running: ${ws.map(w => `${recordName(w.name)} (${w.kind})`).join('; ')}`;
     }
-    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${w.name} (${w.kind}${w.servedModels?.length ? `, serves ${w.servedModels.join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
+    // (names bare: a served model's id is whatever its server answers, R26)
+    const served = w => (w.servedModels || []).map(bareName).filter(Boolean);
+    return ws.length ? `${sparkName(n)}: ${ws.map(w => `${recordName(w.name)} (${w.kind}${served(w).length ? `, serves ${served(w).join(', ')}` : ''}${w.byConsole ? '' : ', started outside Spark Console'}${apps.has(`${w.spark}/${w.name}`) ? ', an app kept running (keep_running restarts or stops it)' : ''})`).join('; ')}` : null;
   }).filter(Boolean);
-  const recentEv = events.slice(-10).reverse().map(e => `${e.at.slice(0, 16).replace('T', ' ')} UTC: ${describeEvent(e)}`);
+  const recentEv = events.slice(-10).reverse().map(e => `${e.at.slice(0, 16).replace('T', ' ')} UTC: ${recordEvent(e)}`);
   const off = WORKFLOWS.map(w => workflowStatus(w.id)).filter(st => st.state !== 'active').map(st => `${st.id}: ${st.state === 'untested' ? 'off (this version wasn’t tested)' : 'not validated yet (the owner’s first run validates it)'}`);
   // What should be running but isn't (held), from the last look: the owner can bring it back or forget it.
-  const held = (heldLast || []).map(x => `${x.container} on ${x.spark}: held (${x.why})`);
+  // (its reason can quote a failure's first line: should_be_running, an outside read, says it)
+  const held = (heldLast || []).map(x => `${recordName(x.container)} on ${x.spark}: held (should_be_running says why)`);
   // Telegram, only while it has a problem (the owner fixes a token or a pairing; Sparkie says how).
   const telegram = tgProblem() ? [`Telegram: ${TG_WORDS[tg.state]}`] : [];
   // What is waiting on the owner (20-needs.mjs), first, only when there is something.
@@ -14541,9 +14605,9 @@ function sortWrap(args, ctx, r, x, name) {
   sortProgram(rest, ctx, r, { ...x, unknownArgs: x.unknownArgs || name === 'xargs' });
 }
 /* ───────── telling the owner on Telegram ───────── */
-// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs
+// Area: safety        Rules: R32        Tests: telegram.test.mjs, needs-me.test.mjs, tasks-telegram.test.mjs
 // Owns: none
-// Timers: none        Wakes: none
+// Timers: tellAgain (a result Telegram didn't take, again after 1, 2 and 4 minutes)        Wakes: none
 // tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13,
 // docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on
 // with a request made there, Spark Console's own fixed lines (pairing, /status, "restarted while answering"), and an ask
@@ -14603,29 +14667,49 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
+// true when it went; tellTry says why not: 'later' (Telegram not answering, slowing it down, a limit here holding it) or
+// 'never' (nobody paired, nothing to send, or Telegram refused it: the chat gone, the bot blocked, a token refused).
+async function tell(why, text, opts = {}) { return (await tellTry(why, text, opts)) === 'sent'; }
+async function tellTry(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
-  if (!b) return false;
+  if (!b) return 'never';
   const now = Date.now();
   while (tellSends.length && now - tellSends[0] > 60000) tellSends.shift();
   while (tellResults.length && now - tellResults[0] > 3600000) tellResults.shift();
   const later = why === 'result' || why === 'carry';
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   // (a request's last reply is never held back by it: last)
-  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
+  if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return 'later'; }
   const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
-  if (!parts.length) return false;
-  if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
+  if (!parts.length) return 'never';
+  if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return 'later'; }
   if (later) tellResults.push(now);
   const silent = later && now - tellOwnerAt > TELL_QUIET_MS;
-  let ok = true;
+  let failed = null;
   for (const [i, p] of parts.entries()) {
     tellSends.push(Date.now());
-    ok = (await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities })) && ok;
+    const sent = await tgSend(b, p.text ?? p, { silent, buttons: i === parts.length - 1 ? buttons : null, entities: p.entities });
+    if (sent !== true) failed ||= sent || 'unreachable';
   }
-  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok });
-  return ok;
+  audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok: !failed });
+  return !failed ? 'sent' : TELL_NEVER.has(failed) ? 'never' : 'later';
+}
+// Telegram's answers that will never turn into a send (tgCall's codes): a token refused (401, 404), a request refused
+// (400, 403: the chat gone, the bot blocked), Telegram off here.
+const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
+// A result that must reach the paired chat (a task's report, an operation's line, a press's late result): a send that
+// failed for now is tried again a few times with a growing wait (A-8: tgSend's own three tries span seconds), one that
+// never will is not, and a dropped one is said in the journal. TELL_TRIES in all.
+const TELL_TRIES = 4, TELL_RETRY_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_TELL_RETRY_MS) || 60000;
+const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
+const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
+// In memory (a restart forgets the tries left): an operation's line, a press's late result.
+async function tellAgain(why, text, opts, what, fields = {}, n = 1) {
+  const got = await tellTry(why, text, opts).catch(() => 'later');
+  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1).catch(() => {}), tellWait(n)).unref?.(); return got; }
+  if (got !== 'sent') tellDropped(what, { ...fields, tries: n, err: got });
+  return got;
 }
 
 // An operation's result on Telegram: a fixed line from its type, name, Spark and status. No error text, log line,
@@ -14680,7 +14764,8 @@ function tellResult(job, conv) {
   // (lines held for a request the owner has since moved on from go out with this one)
   const held = tellHeld.get(conv.id) || [];
   tellHeld.delete(conv.id);
-  tell('result', [...held, line].join('\n')).catch(() => {});
+  // (a send that failed for now is tried again, A-8)
+  tellAgain('result', [...held, line].join('\n'), {}, 'result', { op: job.id, chat: conv.id }).catch(() => {});
 }
 async function tellCarry(convId, message, last = false) {
   const held = tellHeld.get(convId) || [];
@@ -19272,6 +19357,7 @@ const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([
 
 action({
   name: 'guide', title: 'Guide to the tools', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  inside: true,   // (the tools' own names and titles, code's words: an inside read, R26)
   description: `Use when you need a tool you weren’t offered. Each round offers the core tools and the groups this request opened; every other tool is in one of these groups: ${GROUP_WORDS.map(([group, about]) => `${group} (${about})`).join('; ')}. guide with tools set to a group lists its tools and offers them from your next round.`,
   input: { type: 'object', properties: {
     tools: { type: 'string', enum: [...TOOL_GROUPS], description: 'A group, by its name.' },
@@ -23740,18 +23826,21 @@ async function tgCall(token, method, body = {}, { timeoutMs = 15000, signal = nu
   if (res.status >= 400 && res.status < 500) throw new TgError('bad-request');
   throw new TgError('unreachable');
 }
-// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once.
+// One message out (only tell() calls this). Tried 3 times; a 429 is obeyed once. true when sent, else why not (tgCall's
+// code: refused and bad-request, a 401, 403 or 400 from Telegram, will never succeed; the rest may later).
 async function tgSend(b, text, { silent = false, buttons = null, entities = null } = {}) {
   const body = { chat_id: b.chatId, text, link_preview_options: { is_disabled: true }, ...(silent ? { disable_notification: true } : {}), ...(entities?.length ? { entities } : {}),
     ...(buttons?.length ? { reply_markup: { inline_keyboard: buttons.map(x => [{ text: x.label, callback_data: x.id }]) } } : {}) };
+  let why = 'unreachable';
   for (let i = 0, waited = false; i < 3; i++) {
     try { await tgCall(b.token, 'sendMessage', body); return true; } catch (e) {
+      why = e.code || 'unreachable';
       if (e.code === 'slow-down' && !waited) { waited = true; await sleep(e.retryAfter * 1000); continue; }
       if (e.code === 'unreachable') { await sleep(1000 * (i + 1)); continue; }
-      return false;
+      return why;
     }
   }
-  return false;
+  return why;
 }
 // "typing…" while Sparkie answers: every 4.5 s, for 5 minutes at most.
 function tgTyping() {

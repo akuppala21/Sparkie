@@ -39,6 +39,8 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (an inside read, R26: the console's own numbers and words, names bare, bareName; needsOwner is code's lines, R21)
+  inside: true,
   description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose has state "off" and offOnPurpose (when, why, parked models, how to turn it on): not a fault unless it carries a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
@@ -46,13 +48,13 @@ action({
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: n.poweredOff, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: { ...n.poweredOff, parkedModels: (n.poweredOff.parkedModels || []).map(bareName).filter(Boolean) }, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
         : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
         ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
         id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
-        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: n.runningContainers || [], issues: n.issues || [],
+        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: (n.runningContainers || []).map(bareName).filter(Boolean), issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
       wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,
@@ -368,6 +370,7 @@ action({
 const LINK_WHY = { full: 'every cable between them passed at full size', partial: 'some cables fail or only pass small packets', fail: 'no cable answered', 'no-shared-subnet': 'no cable between them' };
 action({
   name: 'linked_sparks', title: 'Linked Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
+  inside: true,
   description: 'Use before running one model across two Sparks. Which pairs are cabled together and whether each can run a model together (the last connection test). Pass detail for each Spark’s ConnectX links (speed, MTU, addresses).',
   input: { type: 'object', properties: { detail: { type: 'boolean', description: 'Include each Spark’s network links.' } }, additionalProperties: false },
   run: async ({ detail = false }) => {
@@ -375,7 +378,7 @@ action({
     return {
       observedAt: f.checkedAt, testedAt: f.checkedAt,
       pairs: f.pairs.map(p => ({ sparks: [p.a, p.b], link: p.fastLink, canRunTogether: p.fastLink === 'full', why: LINK_WHY[p.fastLink] || null })),
-      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: l.name, up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: l.ipv4 })) })) } : {}),
+      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: bareName(l.name), up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: (Array.isArray(l.ipv4) ? l.ipv4 : [l.ipv4]).map(bareName).filter(Boolean) })) })) } : {}),
     };
   },
 });
@@ -533,6 +536,8 @@ function abilities() {
 }
 action({
   name: 'sparkie_setup', title: 'Sparkie’s setup', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (inside only with about "abilities", code's own list; the rest carries the brain's last line, faults, install notes)
+  inside: ({ about } = {}) => about === 'abilities',
   description: 'Use for “what can you do?” (pass about: "abilities"), “what is Sparkie running on?” and “which build of Spark Console is running?” and “what changed in Spark Console, and was anything undone?” and “did Spark Console crash, or is something in it failing?” and “why do you ask before every change?” (changes, and brainCheck), and, when the owner asks, “who is signed in?” and “how many recovery codes are left?”. With about "abilities": only what Sparkie can look up and change today, from Spark Console’s own action list, and its limits. Otherwise: Sparkie, the fleet’s own assistant: its model, Spark, state and health, which model answers chats and which answers apps at the /v1 address, the saved setups it can switch to, Spark Console’s own build and its last five updates (which build replaced which, when, the note given at install, and whether it went back a build), its own recent errors, its last crash and the watchdog’s restarts, and whether Telegram works. For the owner only, never an agent: access, with the devices signed in without Tailscale, the passkeys by name and the recovery codes left (names, times and counts; no addresses).',
   input: { type: 'object', properties: {
     about: { type: 'string', enum: ['abilities'], description: '"abilities" for what Sparkie can look up and change, and its limits. Only that comes back.' },

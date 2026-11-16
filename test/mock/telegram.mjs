@@ -8,6 +8,7 @@
 //   POST /__mode  { refuse, inUse, down, slowDown }  refuse: 401 on everything; inUse: 409 on getUpdates;
 //                 down: 502 on everything; slowDown: N sendMessage calls answer 429 with retry_after 1;
 //                 noDelete: deleteMessage answers 400, as Telegram does for a message it can't delete
+//                 blocked: sendMessage answers 403, as Telegram does when the owner blocked the bot
 import http from 'node:http';
 import { appendFileSync } from 'node:fs';
 
@@ -64,6 +65,7 @@ http.createServer(async (req, res) => {
   }
   if (method === 'sendMessage') {
     if (mode.slowDown > 0) { mode.slowDown--; return fail(res, 429, 'Too Many Requests: retry after 1', { parameters: { retry_after: 1 } }); }
+    if (mode.blocked) return fail(res, 403, 'Forbidden: bot was blocked by the user');
     if (typeof body.text !== 'string' || !body.text.length || body.text.length > 4096) return fail(res, 400, 'Bad Request: message is too long');
     return ok(res, { message_id: messageId++, chat: { id: body.chat_id, type: 'private' }, date: Math.floor(Date.now() / 1000), text: body.text });
   }
