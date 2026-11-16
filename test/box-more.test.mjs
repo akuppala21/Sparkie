@@ -1,0 +1,73 @@
+// Covers: The box's bounds when there is more than one (21-box.mjs; R62; R2): the memory free on a Spark beyond the
+// 8 GB kept must hold 4 GB for every box on record or opening there, the caller's own included. Of two opens at once
+// on a Spark with room for one box, one opens and the other is refused, saying why; with room for two, a third is
+// refused while two are open; a command in an open box is refused once the free memory has dropped below what the
+// boxes there may take, and runs again once it is back. Starts a stand-in fleet: run it on a Spark.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { T, useFleet, api, call, createActKey, sleep, REPO, SLOW } from './lib.mjs';
+
+const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
+const K = {};
+useFleet({ prepare: ({ root }) => { for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `\n${IMAGE}\n`); } },
+  async () => { K.a = await createActKey('box-more-a'); K.b = await createActKey('box-more-b'); });
+
+const boxName = key => `spark-console-box-${createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
+const mock = spark => join(T.fleet.root, spark, '.mock');
+const text = f => { try { return readFileSync(f, 'utf8'); } catch { return ''; } };
+const boxLines = spark => text(join(mock(spark), 'containers')).split('\n').filter(l => l.split('|')[3] === 'box');
+const folder = (name, spark = 'spark3') => join(T.fleet.root, spark, '.local/share/spark-console/work', name);
+const own = command => api('/actions/run', { method: 'POST', body: { on: 'box', command } });
+// What one caller's call answered: { opened, said } (said: the refusal's words).
+const asOwner = async command => { const r = await own(command); return { r, ok: r.status === 200, box: r.json?.box, said: r.json?.error || r.text }; };
+const asAgent = async (k, command) => { const r = await call(k.token, 'run', { on: 'box', command }); return { r, ok: r.isError === false, box: r.value?.box, said: r.text || r.raw }; };
+// Spark 3's free memory (MemAvailable, in kB), as its stand-in /proc/meminfo says it.
+let MEM0 = null;
+const available = kB => { MEM0 ??= text(join(mock('spark3'), 'meminfo')); writeFileSync(join(mock('spark3'), 'meminfo'), MEM0.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${kB} kB`)); };
+const ROOM_ONE = 13107200, ROOM_TWO = 17825792;   // 12.5 GB (4 beyond the 8 kept) and 17 GB (9 beyond)
+const short = (need, n, room) => `Spark 3 doesn’t have room for the box now: it needs ${need} GB free beyond the 8 GB kept for the system (4 GB for each of the ${n} boxes there, this one included), and ${room} GB is. Nothing ran.`;
+after(() => { if (MEM0 !== null) writeFileSync(join(mock('spark3'), 'meminfo'), MEM0); });
+// (Spark 4 off, so every box here is asked for on Spark 3)
+const spark4Off = async () => { writeFileSync(T.fleet.offlineFile, 'spark1\nspark4\n'); await sleep(3500); };
+
+let first = null;
+test('two opens at once on a Spark with room for one box: one opens, the other is refused and says why', { timeout: 120000 * SLOW }, async () => {
+  await spark4Off();
+  available(ROOM_ONE);
+  const [o, a] = await Promise.all([asOwner('true'), asAgent(K.a, 'true')]);
+  assert.equal([o, a].filter(x => x.ok && x.box === 'opened').length, 1, `${o.r.text}\n${a.r.raw}`);
+  const refused = o.ok ? a : o;
+  assert.ok(!refused.ok, refused.said);
+  assert.ok(refused.said.includes(short(8, 2, 4)), refused.said);
+  assert.equal(boxLines('spark3').length, 1, boxLines('spark3').join('\n'));
+  first = o.ok ? 'owner' : 'agent';
+});
+
+test('with room for two boxes, a third is refused while two are open', { timeout: 120000 * SLOW }, async () => {
+  assert.ok(first, 'the first test opened one box');
+  available(ROOM_TWO);
+  const second = first === 'owner' ? await asAgent(K.a, 'true') : await asOwner('true');
+  assert.deepEqual([second.ok, second.box], [true, 'opened'], second.said);
+  assert.equal(boxLines('spark3').length, 2);
+  const third = await asAgent(K.b, 'true');
+  assert.ok(!third.ok, third.said);
+  assert.ok(third.said.includes(short(12, 3, 9)), third.said);
+  assert.equal(boxLines('spark3').length, 2, 'no third box');
+});
+
+test('a command in an open box is refused once free memory has dropped below what the boxes there may take, and runs once it is back', { timeout: 120000 * SLOW }, async () => {
+  const mine = folder(boxName('api owner'));
+  assert.ok(existsSync(mine), 'the owner’s box is open');
+  available(ROOM_ONE);
+  const r = await asOwner('touch ran.txt');
+  assert.equal(r.r.status, 409, r.r.text);
+  assert.equal(r.said, short(8, 2, 4));
+  assert.ok(!existsSync(join(mine, 'ran.txt')), 'nothing ran');
+  available(ROOM_TWO);
+  const again = await asOwner('touch ran.txt');
+  assert.deepEqual([again.ok, again.box, again.r.json?.exit], [true, 'open', 0], again.r.text);
+  assert.ok(existsSync(join(mine, 'ran.txt')));
+});
