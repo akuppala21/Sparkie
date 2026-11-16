@@ -290,8 +290,9 @@ function helperNeeds(node, a) {
 }
 // The owner's one-time command for a compute Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
 // withRoot: the same, turning root's switch on there too (R70: where root is off and a command as root was asked for).
+// Never on Spark 2: root is never on there, and the one-time command refuses --with-root --hub.
 function ownerCommand(node, withRoot = false) {
-  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${withRoot ? '--with-root ' : ''}${node.host === 'local' ? '--hub ' : ''}${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
+  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${withRoot && node.host !== 'local' ? '--with-root ' : ''}${node.host === 'local' ? '--hub ' : ''}${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
   let host = '';
   try { host = new URL(consoleOrigin()).hostname; } catch {}
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && /^[a-z_][a-z0-9_-]*$/.test(String(CONFIG.user)) ? `ssh -t ${CONFIG.user}@${host} ${q(line)}` : line;

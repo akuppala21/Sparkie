@@ -12,10 +12,11 @@
 // Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, cpSync, symlinkSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, cpSync, symlinkSync, statSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
-import { rehearse } from './rehearsal.mjs';
+import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, SLOW, REPO } from './lib.mjs';
+import { rehearse, rehearsalEnv } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
 const MINUTE = 3, SECONDS = 4;
@@ -243,6 +244,54 @@ test('the dangerous ask says how long it may run: one line among its own facts',
 });
 
 // Last: it ends this file's console.
+// Round two with the outside reviewer (the helper's new stop answers): systemd silent for a unit was "gone" to the helper
+// ("none of … was running") or "stopped"; now it says whether it stopped, or runs, is not known. The console reads each
+// as what it is (the older "neither … nor …" was no longer read since root came in: "none of" fell through).
+test('the helper’s answers to stop are read as what they are: stopped, none running, a stop sent into silence, or silence before any stop', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-long.mjs'), 'utf8'), fn = /^const longStopSaid = [\s\S]*?\n\};$/m.exec(src)?.[0];
+  assert.ok(fn, 'longStopSaid');
+  const said = new Function(`${fn}\nreturn longStopSaid;`)(), id = 'abcdef0123456789abcdef01';
+  for (const [out, want] of [[`${id} stopped sw-run-${id}: it was running, and it is gone`, 'stopped'], [`${id} stop: none of sw-run-${id}, sw-look-${id} and sw-root-${id} was running`, 'gone'],
+    [`${id} stop: systemd does not answer for sw-run-${id}, so whether it stopped is not known`, 'sent'], [`${id} stop: systemd does not answer for sw-run-${id}, sw-look-${id}, sw-root-${id}, so whether it runs is not known`, 'unseen'],
+    [`${id} stop: sw-run-${id} is still running`, null], ['', null], ['other stop: none of x was running', null]]) assert.equal(said(id, `${out}\n`), want, out);
+});
+
+// Through the rehearsed helper: its own stop answers, with systemd silent for a unit (the stand-in's silent knob) and
+// without, read by the console; and what the cancel then says, for each run of answers: never "stopped" unless it was.
+test('the rehearsed helper’s stop answers, systemd silent or not, are read right, and a cancel says only what is known of its stop', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-long.mjs'), 'utf8'), grab = re => { const m = re.exec(src)?.[0]; assert.ok(m, String(re)); return m; };
+  const longStopSaid = new Function(`${grab(/^const longStopSaid = [\s\S]*?\n\};$/m)}\nreturn longStopSaid;`)();
+  const helper = join(T.fleet.root, 'usr/local/sbin/spark-console-root'), env = rehearsalEnv(realpathSync(H3()), realpathSync(T.fleet.root));
+  const stop = id => spawnSync(helper, ['stop', '--id', id], { env, encoding: 'utf8', timeout: 120000 });
+  const silent = u => join(T.fleet.root, 'standin', 'silent', `${u}.service`);
+  const id = 'abcdef0123456789abcdef02', made = [];
+  try {
+    const none = stop(id);
+    assert.deepEqual([none.status, longStopSaid(id, none.stdout)], [0, 'gone'], none.stdout + none.stderr);
+    for (const u of [`sw-run-${id}`]) { mkdirSync(dirname(silent(u)), { recursive: true }); writeFileSync(silent(u), ''); made.push(silent(u)); }
+    const one = stop(id);
+    assert.deepEqual([one.status, one.stdout, longStopSaid(id, one.stdout)], [1, `${id} stop: systemd does not answer for sw-run-${id}, so whether it runs is not known\n`, 'unseen']);
+    for (const u of [`sw-look-${id}`, `sw-root-${id}`]) { writeFileSync(silent(u), ''); made.push(silent(u)); }
+    const all = stop(id);
+    assert.deepEqual([all.status, longStopSaid(id, all.stdout)], [1, 'unseen'], all.stdout);
+  } finally { for (const f of made) rmSync(f, { force: true }); }
+  // (the cancel's stop, longStop, asked again for each answer in turn; then what the operation's end says)
+  const ends = [];
+  for (const answers of [['unseen', 'unseen'], ['sent', 'gone'], ['unseen', 'gone'], ['unseen', 'stopped'], [null, null]]) {
+    const L = { id, over: false }, out = { unseen: `${id} stop: systemd does not answer for sw-run-${id}, so whether it runs is not known`, sent: `${id} stop: systemd does not answer for sw-run-${id}, so whether it stopped is not known`,
+      gone: `${id} stop: none of sw-run-${id}, sw-look-${id} and sw-root-${id} was running`, stopped: `${id} stopped sw-run-${id}: it was running, and it is gone` };
+    let n = 0;
+    const longStop = new Function('helperCall', 'runnerRunState', 'sleep', 'longStopSaid', `${grab(/^async function longStop\([\s\S]*?\n\}$/m)}\nreturn longStop;`)(
+      async () => { const a = answers[n++]; if (n >= answers.length) L.over = true; return { out: a ? `${out[a]}\n` : '' }; }, async () => 'gone', async () => {}, longStopSaid);
+    await longStop({ id: 'spark3' }, L);
+    ends.push(new Function(`${grab(/^const longCancelWords = [\s\S]*?;\n(?=\S)/m)}\nreturn longCancelWords;`)()(L, 'Spark 3', '6 seconds', 0));
+  }
+  assert.deepEqual(ends, ['The cancel couldn’t stop it on Spark 3: systemd there didn’t answer for its unit, so no stop was sent. It ended after 6 seconds, with exit code 0.',
+    'Whether the cancel stopped it on Spark 3 isn’t known: systemd there didn’t answer after the stop. It ended after 6 seconds, with exit code 0.',
+    'It ended before it could be stopped, after 6 seconds, with exit code 0.', 'It was stopped on Spark 3 after 6 seconds, with everything it started.',
+    'It ended before it could be stopped, after 6 seconds, with exit code 0.']);
+});
+
 test('a console killed while a long command runs: after the restart its unit is stopped by id, one cut-off notice says so, and it never runs again', { timeout: 240000 * SLOW }, async () => {
   const chat = await newChat(), words = 'build the slow notes on spark 3', command = 'touch notes/k-start; sleep 25; touch notes/k-late';
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command, dir: '~', minutes: 10 } }] }]);

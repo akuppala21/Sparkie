@@ -72,7 +72,7 @@ function longStart(node, ctx, kind, fn) {
     if (ctx.long.answer === 'ended') throw new Error(`${at} didn’t answer within its time, so whether it finished is unknown; it won’t be run again by itself.${r?.record ? ` Its record: ${r.record}.` : ''}`);
     j.exit = r.exit ?? null;
     const files = kind !== 'look' && r.copied > 0 ? ` undo_last_change puts back the ${r.copied === 1 ? 'file' : `${r.copied} files`} it copied first.` : '';
-    const how = j.cancelled ? (ctx.long.stopped ? `It was stopped on ${at} after ${took}, with everything it started.` : `It ended before it could be stopped, after ${took}${Number.isInteger(r.exit) ? `, with exit code ${r.exit}` : ''}.`)
+    const how = j.cancelled ? longCancelWords(ctx.long, at, took, r.exit)
       : ctx.long.limit ? `It was stopped at its limit of ${L.minutes} minute${L.minutes === 1 ? '' : 's'}, with everything it started.`
         : Number.isInteger(r.exit) ? `It ran for ${took} and ended with exit code ${r.exit}.` : `It ran for ${took} and was ended before it finished (no exit code).`;
     j.cleanUp = [how, r.cut ? r.cut : '', `What it printed is record ${r.record} (recall reads it).`, files.trim(),
@@ -85,16 +85,35 @@ function longStart(node, ctx, kind, fn) {
     note: `It runs on ${at} as operation ${job.id}, for up to ${L.minutes} minute${L.minutes === 1 ? '' : 's'}; the turn doesn’t wait for it. When it ends, ${ctx.conv ? 'its result is posted in this chat' : 'its operation says how it went (operation_log)'}: how long it ran, its exit code and the record of what it printed (recall reads that). cancel_operation stops it.` };
 }
 
+// The helper's answer to stop --id (do_stop): 'stopped' ("stopped sw-…: it was running, and it is gone"), 'gone' ("stop:
+// none of sw-run-…, sw-look-… and sw-root-… was running"; "neither … nor …" before root), systemd silent, never read as
+// stopped or gone: 'sent' ("stop: systemd does not answer for sw-run-…, so whether it stopped is not known": the stop was
+// sent, and whether it took is not known) or 'unseen' ("…, so whether it runs is not known": silent at the first look, so
+// no stop was sent); or null (still running, or no answer the console knows).
+const longStopSaid = (id, out) => {
+  const m = new RegExp(`(?:^|\\n)${id} (stopped sw-|stop: none of |stop: neither |stop: systemd does not answer for .*?, so whether it (stopped|runs) is not known$)`, 'm').exec(String(out));
+  return !m ? null : m[2] ? (m[2] === 'stopped' ? 'sent' : 'unseen') : m[1] === 'stopped sw-' ? 'stopped' : 'gone';
+};
+// What a cancelled long command's end says of its stop (L: the stop's own record, longStop).
+const longCancelWords = (L, at, took, exit) => (L.stopped ? `It was stopped on ${at} after ${took}, with everything it started.`
+  : L.unknown === 'sent' ? `Whether the cancel stopped it on ${at} isn’t known: systemd there didn’t answer after the stop. It ended after ${took}${Number.isInteger(exit) ? `, with exit code ${exit}` : ''}.`
+    : L.unknown === 'unseen' ? `The cancel couldn’t stop it on ${at}: systemd there didn’t answer for its unit, so no stop was sent. It ended after ${took}${Number.isInteger(exit) ? `, with exit code ${exit}` : ''}.`
+      : `It ended before it could be stopped, after ${took}${Number.isInteger(exit) ? `, with exit code ${exit}` : ''}.`);
 // cancel_operation's stop: its unit by id through the root helper (stop --id, for its look or its change), asked again
-// while the helper says its call may still start, for a minute at most. Before its unit, the runner sees the cancel
-// itself and runs nothing (21-runner.mjs). L.stopped is set once the helper says it stopped it.
+// while the helper says its call may still start, or that systemd doesn't answer, for a minute at most. Before its unit,
+// the runner sees the cancel itself and runs nothing (21-runner.mjs). L.stopped is set once the helper says it stopped
+// it; L.unknown is 'sent' once a stop went into systemd's silence (whether it stopped isn't known), 'unseen' while systemd
+// was silent before any stop was sent.
 async function longStop(node, L) {
   for (let i = 0; i < 30 && L.id && !L.over; i++) {
-    const r = await helperCall(node, 'stop', { id: L.id, limitMs: 75000 });
-    const said = new RegExp(`(?:^|\\n)${L.id} (stopped sw-|stop: neither)`).exec(r.out)?.[1];
-    if (said === 'stopped sw-') { L.stopped = true; return; }
+    const said = longStopSaid(L.id, (await helperCall(node, 'stop', { id: L.id, limitMs: 75000 })).out);
+    // (a stop sent into silence stays not known; silence before any stop was sent, then none running, ended by itself)
+    if (said === 'sent') L.unknown = 'sent';
+    else if (said === 'unseen' && L.unknown !== 'sent') L.unknown = 'unseen';
+    else if (said === 'gone' && L.unknown === 'unseen') L.unknown = null;
+    if (said === 'stopped') { L.stopped = true; return; }
     // (the helper's marks by id are the same for a look and a change: runnerRunState asks state --id)
-    if (said && (await runnerRunState(node, `sw-run-${L.id}`)) !== 'running') return;
+    if (said === 'gone' && (await runnerRunState(node, `sw-run-${L.id}`)) !== 'running') return;
     await sleep(2000);
   }
 }
@@ -109,7 +128,8 @@ function longCutOff(r, conv) {
   const tell = how => {
     if (!conv) return;
     const words = { stopped: 'It was stopped there by id after the restart, with everything it started.', gone: 'It had ended there by then.',
-      limit: `It couldn’t be stopped there (${at} didn’t answer), so it ended at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC.` }[how];
+      limit: `It couldn’t be stopped there (${at} didn’t answer), so it ended at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC.`,
+      unknown: `Whether it was stopped there isn’t known: systemd on ${at} didn’t answer for its unit, so it ends at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC at the latest.` }[how];
     const t = new Date().toISOString();
     conv.messages.push({ role: 'assistant', createdAt: t, notice: true, content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC, with up to ${r.minutes} minute${r.minutes === 1 ? '' : 's'}). ${words} What it did until then stays, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`) });
     conv.updatedAt = t;
@@ -117,11 +137,15 @@ function longCutOff(r, conv) {
   };
   // (an exact form of a look runs no unit: it ends within its minute by itself)
   if (!id) { tell('gone'); return true; }
+  let silent = false;
   const tryStop = async () => {
-    const a = await helperCall(node, 'stop', { id, limitMs: 75000 });
-    const said = new RegExp(`(?:^|\\n)${id} (stopped sw-|stop: neither)`).exec(a.out)?.[1];
-    if (said) return tell(said === 'stopped sw-' ? 'stopped' : 'gone');
-    if (Date.now() >= until) return tell('limit');
+    const out = (await helperCall(node, 'stop', { id, limitMs: 75000 })).out, said = longStopSaid(id, out);
+    if (said === 'stopped' || said === 'gone') return tell(said);
+    // (systemd silent there: asked again, as for no answer; at the limit, said as not known, never as a Spark that didn't
+    // answer. The helper's last answer decides; no answer at all leaves it as it was)
+    if (['sent', 'unseen'].includes(said)) silent = true;
+    else if (String(out).includes(`${id} `)) silent = false;
+    if (Date.now() >= until) return tell(silent ? 'unknown' : 'limit');
     setTimeout(() => { tryStop().catch(e => console.error(`Stopping a long command a restart cut off: ${e.message}`)); }, 30000).unref?.();
   };
   tryStop().catch(e => console.error(`Stopping a long command a restart cut off: ${e.message}`));
