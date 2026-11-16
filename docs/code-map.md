@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27921 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27941 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -302,13 +302,13 @@ The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them i
 A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made, and kept on it: an ordinary request with a next step has 2 hours and 8 carry-on turns; one the owner sends off to work on its own ("sort it out on your own", "work through it overnight", "while I'm away") has 4 hours and 60 turns; hours the owner asks it to work for ("work on this for 6 hours") give those hours, 1 to 72, and 15 turns an hour. Only an instruction …
 
 - **Area:** brain. **Rules:** R66. **Tests:** tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
-- **Lines:** 366
+- **Lines:** 382
 - **Owns:** none
 - **Timers:** taskReportsDue (a report Telegram didn't take, again after 1, 2 and 4 minutes)
 - **Wakes:** none
-- **Functions:** `taskBudget`, `taskLimits`, `taskOver`, `taskGone`, `TASKS_AT_START`, `tasksAfterRestart`, `taskStopped`, `taskAgain`, `tasksNeeds`, `taskJobsOwed`, `taskRetry`, `taskRetryLines`, `taskAsked`, `taskPark`, `taskUnpark`, `taskAnswered`, `taskText`, `taskCounts`, `taskTook`, `taskPlural`, `taskOpen`, `taskReportText`, `taskEnded`, `taskReportsDue`, `taskReportsNow`, `tasksNow`, `tasksNowLines`
-- **Uses:** `01-setup` (`q`, `nodeById`), `07-jobs` (`jobs`), `12-status` (`sparkName`, `energy`), `14-chats` (`CONTINUE_HOURS`, `turns`, `CONTINUE_MAX`, `chatData`, `endTask`, `resultSince`, `wakeWork`, `saveChats`, `OP_WORDS`), `14-rounds` (`taskStepsLeft`, `TASK_STEPS`), `16-actions` (`normQuotes`, `ACTIONS`), `17-changes` (`pendingChoices`), `19-watcher` (`knowledge`), `20-journal` (`journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `20-tell` (`tell`, `tellTry`, `TELL_TRIES`, `tellWait`, `tellDropped`), `21-telegram` (`tgPaired`, `tg`), `22-sessions` (`sessionList`, `sessionOver`)
-- **Used by:** `12-status`, `14-chats`, `14-rounds`, `20-needs`, `20-words`, `22-putback`
+- **Functions:** `taskBudget`, `taskLimits`, `taskOver`, `taskGone`, `TASKS_AT_START`, `tasksAfterRestart`, `taskStopped`, `taskAgain`, `tasksNeeds`, `taskJobsOwed`, `taskRetry`, `taskRetryLines`, `taskAsked`, `taskPark`, `taskUnpark`, `taskAnswered`, `taskText`, `taskCounts`, `taskTook`, `taskPlural`, `taskOpen`, `taskReportText`, `taskEnded`, `taskReportLater`, `taskReportsDue`, `taskReportsNow`, `tasksNow`, `tasksNowLines`
+- **Uses:** `01-setup` (`q`, `nodeById`), `07-jobs` (`jobs`), `12-status` (`sparkName`, `energy`), `14-chats` (`CONTINUE_HOURS`, `turns`, `CONTINUE_MAX`, `chatData`, `endTask`, `resultSince`, `wakeWork`, `saveChats`, `OP_WORDS`), `14-rounds` (`taskStepsLeft`, `TASK_STEPS`), `16-actions` (`normQuotes`, `ACTIONS`), `17-changes` (`pendingChoices`), `19-watcher` (`knowledge`), `20-journal` (`journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `20-tell` (`tell`, `tellDropped`, `tellTry`, `TELL_TRIES`, `tellWait`), `21-telegram` (`tgPaired`, `tg`), `22-sessions` (`sessionList`, `sessionOver`)
+- **Used by:** `12-status`, `14-chats`, `14-rounds`, `20-needs`, `20-tell`, `20-words`, `22-putback`
 
 ### `15-routes.mjs`: choosing what Sparkie and agents use
 
@@ -828,12 +828,12 @@ Moved out of 20-sort.mjs as it was (2026-11-15, no word changed): the programs t
 tell() is the only thing that sends to Telegram, and it sends only what the owner asked for (docs/contract.md 13, docs/architecture.md R32): a reply to a message sent there, the result of work started there, Sparkie carrying on with a request made there, Spark Console's own fixed lines (pairing, /status, "restarted while answering"), and an ask that waits for the owner's yes, with its buttons (20-tg-approve.mjs, only while approvals from Telegram are on). Never heals, crashes nobody asked about, notices, sign-ins or digests, with one exception the owner switches on: the needs-me line at the …
 
 - **Area:** safety. **Rules:** R32. **Tests:** telegram.test.mjs, needs-me.test.mjs, tasks-telegram.test.mjs
-- **Lines:** 221
+- **Lines:** 225
 - **Owns:** none
 - **Timers:** tellAgain (a result Telegram didn't take, again after 1, 2 and 4 minutes)
 - **Wakes:** none
 - **Functions:** `TELL_LIMITS`, `tellParts`, `tellClean`, `tellBlock`, `tell`, `tellTry`, `tellWait`, `tellDropped`, `tellAgain`, `tellName`, `tellWhat`, `tellResultLine`, `tellAwait`, `tellAwaitDone`, `tellResult`, `tellCarry`, `tellReplyText`, `tellButtons`, `needsLine`, `needsMeTick`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`deploy`, `draining`), `12-status` (`sparkName`), `16-actions` (`action`), `17-changes` (`pendingChoices`), `20-journal` (`journal`), `20-mcp` (`maskSecrets`, `audit`), `20-needs` (`openProblems`), `20-tg-approve` (`tgAsks`), `21-telegram` (`tgPaired`, `tgSend`, `tgSaved`, `tgSave`, `tg`)
+- **Uses:** `01-setup` (`ALL_LOCAL`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`clean`), `07-jobs` (`deploy`, `draining`), `12-status` (`sparkName`), `14-tasks` (`tgPairingMark`), `16-actions` (`action`), `17-changes` (`pendingChoices`), `20-journal` (`journal`), `20-mcp` (`maskSecrets`, `audit`), `20-needs` (`openProblems`), `20-tg-approve` (`tgAsks`), `21-telegram` (`tgPaired`, `tgSend`, `tgSaved`, `tgSave`, `tg`)
 - **Used by:** `07-jobs`, `14-chats`, `14-tasks`, `16-actions`, `18-run-record`, `20-danger`, `20-keys`, `20-tg-approve`, `21-apps`, `21-long`, `21-power`, `21-selftest`, `21-telegram`, `21-updates`, `25-backup-and-start`
 
 ### `20-tg-approve.mjs`: approving from Telegram: the owner's yes from the paired chat (A10a)

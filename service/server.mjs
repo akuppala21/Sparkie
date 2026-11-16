@@ -4982,12 +4982,21 @@ function taskEnded(conv, t, how) {
     // (only a task begun there, R32; never when its way in is gone: Telegram unpaired or paired with someone else is told
     // nothing of it)
     const tg = how !== 'gone' && t.channel === 'telegram';
-    conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, jobs: (t.jobs || []).slice(-20) }];
+    // (and which pairing it is owed to: a report waiting for its next try goes to that chat only, final read C4)
+    conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, ...(tg ? { tgMark: t.tg || tgPairingMark() } : {}), jobs: (t.jobs || []).slice(-20) }];
     saveChats();
     setTimeout(() => taskReportsDue(conv.id), TASK_REPORT_MS).unref?.();
   } catch (e) { console.error(`A task’s report: ${e.message}`); }
 }
 // The reports owed in a chat: written in it once, told on Telegram once, then taken off.
+// A report's next try, one timer a report (in memory: after a restart the start-up tick sets it again from tgNext).
+const taskReportTimers = new Set();
+function taskReportLater(id, task, ms) {
+  const key = `${id} ${task}`;
+  if (taskReportTimers.has(key)) return;
+  taskReportTimers.add(key);
+  setTimeout(() => { taskReportTimers.delete(key); taskReportsDue(id).catch(e => console.error(`A task’s report: ${e.message}`)); }, Math.max(0, ms) + 50).unref?.();
+}
 // One at a time a chat (a send waits on Telegram, and a tick that came meanwhile, the start-up's or a retry's, would
 // take a report in flight off the list): one that comes while another runs goes again a second later.
 const taskReportsBusy = new Set();
@@ -5006,17 +5015,24 @@ async function taskReportsNow(id) {
       conv.updatedAt = new Date().toISOString();
       saveChats();
     }
+    // (each on its own schedule: a tick for another report of this chat leaves one whose next try isn't due, and one is
+    // set for it when none is, as after a restart, C9)
+    if (r.tg && !r.told && r.tgNext && Date.parse(r.tgNext) > Date.now()) { taskReportLater(conv.id, r.task, Date.parse(r.tgNext) - Date.now()); continue; }
     if (r.tg && !r.told) {
+      // (owed to another pairing than the chat paired now: never sent there, dropped, said in the journal, C4)
+      if (r.tgMark && r.tgMark !== tgPairingMark()) { r.told = true; tellDropped('report', { task: r.task, chat: conv.id, tries: Number(r.tgTries) || 0, err: 'another pairing' }); continue; }
       // (marked before the send, so two ticks never send it twice; put back on a failure for now and tried again on a
       // later tick, with a growing wait, TELL_TRIES in all; one that never will, or past them, is dropped and said in
       // the journal: A-8, 20-tell.mjs)
       r.told = true;
+      delete r.tgNext;
       saveChats();
       const got = await tellTry('result', taskReportText(conv, r, true), { last: true }).catch(() => 'later');
       r.tgTries = (Number(r.tgTries) || 0) + 1;
       if (got === 'later' && r.tgTries < TELL_TRIES) {
         r.told = false;
-        setTimeout(() => taskReportsDue(conv.id).catch(e => console.error(`A task’s report: ${e.message}`)), tellWait(r.tgTries)).unref?.();
+        r.tgNext = new Date(Date.now() + tellWait(r.tgTries)).toISOString();
+        taskReportLater(conv.id, r.task, tellWait(r.tgTries));
       } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
@@ -14960,7 +14976,6 @@ async function tellTry(why, text, { buttons = null, to = null, pre = null, tail 
   const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return 'never';
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return 'later'; }
-  if (later) tellResults.push(now);
   const silent = later && now - tellOwnerAt > TELL_QUIET_MS;
   let failed = null;
   for (const [i, p] of parts.entries()) {
@@ -14969,10 +14984,13 @@ async function tellTry(why, text, { buttons = null, to = null, pre = null, tail 
     if (sent !== true) failed ||= sent || 'unreachable';
   }
   audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-send', args: { why, parts: parts.length, chars: parts.reduce((n, p) => n + (p.text ?? p).length, 0) }, ok: !failed });
+  // (a result counts toward the hour's six only when it went: tries that failed use none of them, final read C7)
+  if (later && !failed) tellResults.push(now);
   return !failed ? 'sent' : TELL_NEVER.has(failed) ? 'never' : 'later';
 }
 // Telegram's answers that will never turn into a send (tgCall's codes): a token refused (401, 404), a request refused
-// (400, 403: the chat gone, the bot blocked), Telegram off here.
+// (400, 403: the chat gone, the bot blocked), Telegram off here. Tried again: 429 (slow down) and 409 ("in-use": another
+// program is reading the bot's updates, which says nothing about this message; it can stop), and no answer.
 const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
 // A result that must reach the paired chat (a task's report, an operation's line, a press's late result): a send that
 // failed for now is tried again a few times with a growing wait (A-8: tgSend's own three tries span seconds), one that
@@ -14980,10 +14998,12 @@ const TELL_NEVER = new Set(['refused', 'bad-request', 'off']);
 const TELL_TRIES = 4, TELL_RETRY_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_TELL_RETRY_MS) || 60000;
 const tellWait = n => TELL_RETRY_MS * 2 ** Math.max(0, n - 1);
 const tellDropped = (what, fields = {}) => { try { journal('event', { act: 'telegram-dropped', outcome: 'dropped', what, ...fields }); } catch {} };
-// In memory (a restart forgets the tries left): an operation's line, a press's late result.
-async function tellAgain(why, text, opts, what, fields = {}, n = 1) {
+// In memory (a restart forgets the tries left): an operation's line, a press's late result. Each try goes only to the
+// pairing it was meant for (mark, taken at the first: final read C4); paired with another since, it is dropped.
+async function tellAgain(why, text, opts, what, fields = {}, n = 1, mark = tgPairingMark()) {
+  if (mark !== tgPairingMark()) { tellDropped(what, { ...fields, tries: n - 1, err: 'another pairing' }); return 'never'; }
   const got = await tellTry(why, text, opts).catch(() => 'later');
-  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1).catch(() => {}), tellWait(n)).unref?.(); return got; }
+  if (got === 'later' && n < TELL_TRIES) { setTimeout(() => tellAgain(why, text, opts, what, fields, n + 1, mark).catch(() => {}), tellWait(n)).unref?.(); return got; }
   if (got !== 'sent') tellDropped(what, { ...fields, tries: n, err: got });
   return got;
 }
