@@ -13,8 +13,12 @@
 # writes as <rehearsal>/standin/units/<unit> ("<active> <file>", as "active enabled") is shown by show
 # --property=ActiveState,UnitFileState,LoadState, and start, stop, restart, enable, disable, mask and unmask change it
 # (--no-block too); one with no such file is not-found.
-# A look's or a change's unit (sw-look-, sw-run-) is active (is-active, show ActiveState)
-# while the stand-in systemd-run runs it, and stop ends it there. Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it
+# A look's or a change's unit (sw-look-, sw-run-) is active
+# while the stand-in systemd-run runs it (to show ActiveState, and stop ends it there, only with
+# <rehearsal>/standin/stop-ends). Real systemd does what stop-ends does: ActiveState is active while the unit runs, and
+# stop ends it (SIGTERM, then SIGKILL past TimeoutStopSec) and waits until it is gone. Without the knob a stop of a
+# running run unit only leaves <rehearsal>/standin/stopped/<unit>, and root-helper.test's disk-floor test relies on
+# that: its command sees the mark and exits 9 by itself, where on a Spark the helper's stop would end it (no exit 9). Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it
 # answers from that one.
 import json, os, sys
 
@@ -50,13 +54,16 @@ timers, running = os.path.join(R, 'standin', 'timers'), os.path.join(R, 'standin
 
 
 live = os.path.join(R, 'standin', 'live')
+# <rehearsal>/standin/stop-ends (test/long.test.mjs): a look's or a change's unit the stand-in systemd-run runs now is
+# active to show ActiveState, and stop ends it. Without it neither does, as the helper's own tests expect.
+stop_ends = os.path.exists(os.path.join(R, 'standin', 'stop-ends'))
 
 
 def stop_live(name):
     # A look's or a change's unit the stand-in systemd-run runs now: ended with everything it started (its stand-in gets
     # SIGTERM), waited for until it is gone, as systemctl stop waits.
     f = os.path.join(live, name.removesuffix('.service'))
-    if not name.startswith(('sw-run-', 'sw-look-')) or not os.path.exists(f):
+    if not stop_ends or not name.startswith(('sw-run-', 'sw-look-')) or not os.path.exists(f):
         return
     import signal, time
     try:
@@ -93,7 +100,7 @@ elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and 
     print(f'ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState=loaded' if u else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4:
     print('active' if os.path.exists(os.path.join(timers, args[3])) or os.path.exists(os.path.join(running, args[3]))
-          or (args[3].startswith(('sw-run-', 'sw-look-')) and os.path.exists(os.path.join(live, args[3].removesuffix('.service'))))
+          or (stop_ends and args[3].startswith(('sw-run-', 'sw-look-')) and os.path.exists(os.path.join(live, args[3].removesuffix('.service'))))
           or (unit(args[3]) or ['inactive'])[0] == 'active' else 'inactive')
 elif args[:1] in (['start'], ['restart']) and len(args) == 2 and unit(args[1]):
     set_unit(args[1], active='active')

@@ -23,7 +23,9 @@ const later = [];
 after(async () => { for (const f of later) await f.stop().catch(() => {}); });
 useFleet({ env: { SPARK_CONSOLE_MINUTE_SECONDS: String(MINUTE), SPARK_CONSOLE_RUN_SECONDS: String(SECONDS) },
   prepare: ({ root }) => {
-    rehearse(root, 'spark3', { run: true });
+    // (stop-ends: the stand-in systemctl's stop ends a running unit, as systemd's does; cancel and the restart's stop
+    // need it)
+    rehearse(root, 'spark3', { run: true, knobs: { 'stop-ends': '' } });
     const h = join(root, 'spark3');
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
     put('notes/a.txt', 'a before\n');
@@ -84,9 +86,13 @@ test('with minutes a change is an operation: the call answers at once, exit code
   assert.equal(hj.status, 'completed', JSON.stringify(hj));
   assert.match(hj.cleanUp, / Held to 10 minutes: a change that runs without your yes is kept short \(asked first, it may have up to 120\)\.$/);
   assert.ok(unitProps(startOf('echo held > notes/c.txt').unit).includes(`RuntimeMaxSec=${10 * MINUTE}`));
-  // 121 minutes is no number run takes.
-  const over = await run({ command: 'echo x > notes/c.txt', minutes: 121 });
-  assert.equal(over.status, 400, over.text);
+  // minutes is a whole number from 1 to 120: anything else is refused, the bounds named, and nothing runs.
+  for (const minutes of [121, 0, 2.5, '5']) {
+    const bad = await run({ command: 'echo bad > notes/c.txt', minutes });
+    assert.equal(bad.status, 400, `${minutes}: ${bad.text}`);
+    assert.equal(bad.json.error, 'minutes should be a whole number from 1 to 120.');
+  }
+  assert.equal(readFileSync(at3('notes/c.txt'), 'utf8'), 'held\n', 'nothing ran');
 });
 
 test('a look with minutes is held to 1 and says so; it has a start and an end line, its unit the look wall\'s', { timeout: 120000 * SLOW }, async () => {
@@ -146,7 +152,7 @@ test('one long command a Spark at a time; cancel_operation stops its unit by id,
 });
 
 test('in the chat that asked: its end is posted, built by code with none of the output, and the request carries on; an asked one keeps its minutes, and its button says how long', { timeout: 180000 * SLOW }, async () => {
-  const chat = await newChat(), words = 'build the notes on spark 3, then tell me how it went', command = "printf 'CHAT-OUTPUT-WORD\\n'; exit 3";
+  const chat = await newChat(), words = 'build the notes on spark 3, then tell me how it went', command = "printf 'CHAT-OUTPUT-WORD\\n' > notes/chat.txt; cat notes/chat.txt; exit 3";
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command, dir: '~', minutes: 5 } }] }, { match: FINISHED, calls: [] }]);
   try {
     const r = await say(chat, words);
