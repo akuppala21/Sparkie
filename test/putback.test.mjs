@@ -17,7 +17,8 @@
 // snapshot never comes back, so the start stops nothing of that name (R57); a narrowing notes only the right it took, so a
 // put-back never takes one the owner never took. go-back.sh and an update's way back put
 // back program files only and never trip it. An always-allowed kind taken away raises the number too: an older copy put
-// back by hand holds, and the kind is taken away again (not live before or after "Keep these").
+// back by hand holds, and the kind is taken away again (not live before or after "Keep these"). When the state's first
+// number can't be written, the secrets file's is taken out again, so the next start holds nothing.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync, symlinkSync } from 'node:fs';
@@ -547,5 +548,28 @@ describe('an always-allowed kind taken away, then an older copy put back by hand
     is(await confirmed(B, 'POST', '/auth/putback/keep', {}, K5), 200, 'kept');
     assert.deepEqual(kinds(B), [], 'not live after “Keep these” either');
     assert.match((await say(await newChat(), '/allowed')).text, /\nNothing is always allowed\./);
+  });
+});
+
+// putBackSeed's two writes (R1-14): the secrets file's number, then the state's. A state folder whose number can't be
+// written (here auth-serial.json is a folder, so the save can't take its place) leaves neither number: the secrets
+// file's is taken out again, so the next start, with the state writable again, holds nothing and gives both 1.
+describe('the state’s first number when its second write fails', { concurrency: 1 }, () => {
+  let S, N;
+  after(async () => { await S?.stop(); await N?.stop(); });
+
+  test('the secrets file’s number is taken out again, and the next start holds nothing', { timeout: 300000 * SLOW }, async () => {
+    S = await startMock({ prepare: ({ stateDir }) => mkdirSync(join(stateDir, 'auth-serial.json')) });
+    use(S);
+    is(await ask(S, '/agents', { method: 'POST', body: { name: 'Seed agent' } }), 201, 'an agent key, which starts the number');
+    assert.deepEqual(readdirSync(join(S.stateDir, 'auth-serial.json')), [], 'the state’s write failed: still a folder');
+    assert.equal(secretsOf(S)?.auth?.serial, undefined, `the secrets file holds no number alone: ${JSON.stringify(secretsOf(S))}`);
+    const state = copyState(S, 'seed-failed'), secrets = existsSync(S.secretsFile) ? readFileSync(S.secretsFile, 'utf8') : null;
+    await S.stop(); S = null;
+    N = await startFrom(state, secrets, stateDir => rmSync(join(stateDir, 'auth-serial.json'), { recursive: true, force: true }));
+    use(N);
+    assert.equal((await net(N, '/whoami')).json.held, undefined, 'no hold');
+    assert.equal(secretsOf(N).auth?.hold, undefined);
+    assert.deepEqual([serialIn(N), secretsOf(N).auth?.serial], [1, 1], 'both numbers started at this start');
   });
 });

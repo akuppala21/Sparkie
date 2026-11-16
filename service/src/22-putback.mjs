@@ -82,16 +82,22 @@ function putBackRemoved(kind, id = null, name = null, extra = {}) {
 }
 
 // A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
-// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. The secrets file
-// first: if writing it fails, neither has a number and nothing holds.
+// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. Either number
+// alone reads as a put-back at the next start (the secrets file's alone, an older copy; the state's alone, a new disk),
+// so a failed write leaves neither: the secrets file first (if that fails, nothing was written), then the state; if the
+// state's write fails, the secrets file's number is taken out again. (Only a stop between the two writes, or both
+// writes to the secrets file failing, leaves the secrets file's alone: a hold, which the owner's "Keep these" ends.)
 function putBackSeed() {
   if (!SECRETS_FILE) return;
   try {
     const s = secretsRead();
     if (s === null || putBackSerial() || (Number.isInteger(s.auth?.serial) && s.auth.serial > 0) || !(passkeys().length || agentKeys().length)) return;
+    const had = s.auth;
     secretsWrite(x => ({ ...x, auth: { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}), serial: 1 } }));
-    putBackSerialWrite(1);
-    putBackSeen.at = 0;
+    try { putBackSerialWrite(1); } catch (e) {
+      try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); } catch (e2) { console.error(`The secrets file’s number couldn’t be taken out again: ${e2.message}`); }
+      throw e;
+    } finally { putBackSeen.at = 0; }
   } catch (e) { console.error(`The state’s number couldn’t be started: ${e.message}`); }
 }
 

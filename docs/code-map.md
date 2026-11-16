@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25806 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25812 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1319,7 +1319,7 @@ Tailscale, or a device the owner signed in, says the owner is asking, and for th
 Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json, so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only, tailnet-only), agents' changes paused, an "always allowed" kind taken away (/allowed off, 21-ahead.mjs). The secrets file also …
 
 - **Area:** ways in. **Rules:** R23, R33. **Tests:** putback.test.mjs
-- **Lines:** 203
+- **Lines:** 209
 - **Owns:** auth-serial.json (writers: putBackSerialWrite)
 - **Timers:** none
 - **Wakes:** none
