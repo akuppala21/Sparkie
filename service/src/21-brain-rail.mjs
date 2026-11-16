@@ -21,26 +21,65 @@
 const EVAL_MAIN_SET = 'test/eval/cases.json';
 const EVAL_SEAL_FILE = ALL_LOCAL ? (SECRETS_FILE ? `${SECRETS_FILE.slice(0, SECRETS_FILE.lastIndexOf('/'))}/eval-seal.json` : null) : `${homedir()}/.config/spark-console/eval-seal.json`;
 
-// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's). The
-// last look is kept (brainRanOf reads it for the key); every caller that decides something looks again first.
-let brainRan = null;
-async function brainRanLook() {
-  const m = MAIN, node = m ? mainNode(m) : null;
+// What Sparkie's model runs now: the image id of its container and the snapshot of its weights (and its draft's) that
+// the container loaded: the commit in its weights' path among the container's own arguments, or, for a setup served
+// from an overlay (rope settings), in the overlay's links its start made; for a model in the models folder, the folder.
+// Never the snapshot a start would serve now: one downloaded later moves no key until a start loads it. The last look is
+// kept (brainRanOf reads it for the key); every caller that decides something looks again first, and GET /v1/models,
+// which apps poll, takes one up to 5 seconds old (within). One look runs at a time (the others share it), and the chat's
+// callers wait for it at most 3 seconds (wait, RAIL_LOOK_WAIT_MS): a Docker that doesn't answer by then gives "not seen,
+// slow" (slow: true), and the look goes on to its end by itself.
+const RAIL_LOOK_WAIT_MS = 3000;    // limit: how long a reply or a change waits for the look at what Sparkie's model runs
+let brainRan = null, brainRanAt = 0, brainLooking = null;
+const brainRanScript = m => `c=${q(m.container)}; ov="$HOME/.cache/spark-console/overlay/"${q(m.served)}
+a=$(docker inspect -f '{{json .Args}}' "$c" 2>/dev/null | head -1)
+snap() {
+  case "$a" in *'"/overlay/'"$1"'"'*) l=$(find "$ov/$1" -maxdepth 1 -type l 2>/dev/null | head -1); [ -n "$l" ] && readlink "$l" ;; *) printf '%s\\n' "$a" ;; esac |
+    awk -v p="/hf/$2/snapshots/" '{ i = index($0, p); if (i) { s = substr($0, i + length(p)); split(s, x, "/"); s = x[1]; sub(/".*/, "", s); print s; exit } }'
+}
+model=${m.store === 'models' ? q(m.model) : `$(snap model ${q(`models--${m.model}`)})`}; draft=${m.draft && m.store !== 'models' ? `$(snap draft ${q(`models--${m.draft}`)})` : ''}
+printf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' "$c" 2>/dev/null | head -1)" "$model" "$draft"`;
+async function brainRanLook({ within = 0, wait = 0 } = {}) {
+  const m = MAIN;
   if (!m) return null;
+  if (within && brainRan?.id === m.id && Date.now() - brainRanAt < within) return brainRan;
+  if (brainLooking?.id !== m.id) {
+    const p = brainLookNow(m).finally(() => { if (brainLooking?.p === p) brainLooking = null; });
+    brainLooking = { id: m.id, p };
+  }
+  if (!wait) return brainLooking.p;
+  const look = brainLooking.p, late = new Promise(r => { setTimeout(() => r(null), wait).unref?.(); });
+  return (await Promise.race([look, late])) || { id: m.id, image: null, model: null, draft: null, slow: true };
+}
+async function brainLookNow(m) {
+  const node = mainNode(m);
   let seen = { id: m.id, image: null, model: null, draft: null };
   if (node) {
     try {
-      const r = await run(node, `${mainSnapshots(m)}\nprintf 'ran\\t%s\\t%s\\t%s\\n' "$(docker inspect -f '{{.Image}}' ${q(m.container)} 2>/dev/null | head -1)" "$model" "$draft"`, { timeout: 20000 });
+      const r = await run(node, brainRanScript(m), { timeout: 20000 });
       const [image, model, draft] = fields(r.out, 'ran')[0] || [];
-      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: model || null, draft: draft || null };
+      const name = v => (/^[\w.-]{1,200}$/.test(v || '') ? v : null);
+      seen = { ...seen, image: /^sha256:[0-9a-f]{1,64}$/.test(image || '') ? image : null, model: name(model), draft: name(draft) };
     } catch {}
   }
-  if (MAIN === m) brainRan = seen;
+  if (MAIN === m) { brainRan = seen; brainRanAt = Date.now(); }
   return seen;
 }
 const brainRanOf = m => (brainRan && brainRan.id === m?.id && brainRan.image && brainRan.model ? { image: brainRan.image, model: brainRan.model, draft: brainRan.draft } : null);
-// The console's own limits for this brain: what turnBudgets and toolCap give its chats.
-const brainLimits = m => { const b = turnBudgets({ tuned: m }); return { toolRounds: b.ROUNDS, maxChanges: b.CHANGES, toolCap: String(toolCap(m)) }; };
+// The console's own limits for this brain (setupLimits, 14-rounds.mjs: tool rounds, changes, work steps and tool output a
+// message) and its tool cap: part of its key, so a profile and an eval belong to the limits they were made with.
+const brainLimits = m => { const l = setupLimits(m); return { toolRounds: l.rounds, maxChanges: l.changes, workSteps: l.steps, toolOutput: l.output, toolCap: String(toolCap(m)) }; };
+// The loop's limits for one turn (E5b; design E 2.3): a brain checked for this setup and build (brainRail: its check
+// passed and the eval on record met the bar) gets the limits its profile was made with (its key holds them, so they are
+// its setup's own); any other, and a chat routed to another model, the careful ones: at most 8 rounds and 16 work steps
+// a message. (Its changes are each a button then anyway: R52.) The look it judges by may be 5 seconds old, and it waits
+// for one at most 3 seconds: a Docker that doesn't answer makes the reply careful, never late.
+const CAREFUL_LIMITS = { rounds: 8, steps: 16 };
+async function turnLimits({ target, tuned }) {
+  const own = setupLimits(tuned), careful = { ...own, rounds: Math.min(own.rounds, CAREFUL_LIMITS.rounds), steps: Math.min(own.steps, CAREFUL_LIMITS.steps) };
+  if (target?.kind !== 'main' || tuned !== MAIN) return careful;
+  return (await brainRail({ within: 5000, wait: RAIL_LOOK_WAIT_MS }).catch(() => null))?.checked && tuned === MAIN ? own : careful;
+}
 // The setup's key without what runs now: the eval's runner compares it with its own stand-in console's (test/eval.mjs).
 const brainSetupKey = m => { const { ran, ...declared } = brainSetupOf(m); return createHash('sha256').update(JSON.stringify(declared)).digest('hex').slice(0, 16); };
 
@@ -78,9 +117,11 @@ function evalSealed(profileKey, x) {
   return timingSafeEqual(Buffer.from(seal, 'hex'), Buffer.from(evalSealOf(key, profileKey, rec), 'hex'));
 }
 
-// A record of the main case set with every memory addition on: the only kind that can count (and the only kind kept in
-// a slot's five that count).
-const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length;
+// A record of the main case set with every memory addition on (each of the runner's switches named on, none off): the
+// only kind that can count (and the only kind kept in a slot's five that count).
+const EVAL_SWITCHES = ['names', 'past', 'time', 'digest', 'count', 'said'];
+const evalMainSet = x => x?.setFile === EVAL_MAIN_SET && Array.isArray(x?.memorySwitches?.off) && !x.memorySwitches.off.length
+  && Array.isArray(x.memorySwitches.on) && [...x.memorySwitches.on].map(String).sort().join() === [...EVAL_SWITCHES].sort().join();
 // What could let Sparkie change things without asking once stored: a full run of the main set, with no cap, that met
 // the bar (counted here from the runs). Storing one needs the owner's passkey (needsPasskey, 22-passkey.mjs).
 const evalCouldUnlock = r => !evalRecordProblem(r) && r.cap === null && evalMainSet(r) && evalScore(r).met === true;
@@ -93,14 +134,16 @@ function evalCounts(x, key, reads, set, sealed = true) {
 }
 
 // The rail. { checked, why }: why it runs at once, or why it asks. Never throws.
-async function brainRail() {
+async function brainRail({ within = 0, wait = 0 } = {}) {
   const no = why => ({ checked: false, why });
   try {
     if (!MAIN) return no('Sparkie has no model set up');
-    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look)
-    const ran = await brainRanLook();
+    // (what it runs is looked at first, every time: sparkie_setup's brainCheck reads the same look; a reply's may be a
+    // few seconds old, and the chat waits for it a few seconds at most: within, wait)
+    const ran = await brainRanLook({ within, wait });
     if (chatTarget()?.kind !== 'main') return no('Sparkie’s chat is routed to another model, which no eval has checked');
     if (mainBusy()) return no('Sparkie’s model is starting, stopping or changing');
+    if (ran?.slow) return no(`Docker didn’t say within ${Math.round(wait / 1000)} seconds what Sparkie’s model runs (its Spark may be busy or stuck), so it counts as not checked`);
     const reads = brainReadsNow(), set = evalSetLocked();
     if (!reads) return no('there is no lock for this build, so what its brain reads isn’t known');
     if (!set) return no('this build’s lock doesn’t name the eval’s case set');
@@ -112,14 +155,16 @@ async function brainRail() {
     const slot = p.evals?.[`${reads}:${set.version}`], kept = Array.isArray(slot) ? slot : [];
     const counted = kept.filter(x => evalCounts(x, key, reads, set)).sort((a, b) => evalOrder(a, b, evalScore));
     const full = counted.find(x => evalScore(x).full), day = full ? String(full.at).slice(0, 10) : '';
-    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : 'no eval result on record counts for this brain and build');
+    // (records with no seal's key to read them by count for nothing: said, so it isn't taken for a bad run; R52)
+    const unsealed = kept.length && !counted.length && !evalSealKey() ? ': the eval seal’s key (eval-seal.json, beside the secrets file) can’t be read, so no record on file is sealed' : '';
+    if (!full) return no(!kept.length ? 'the eval has not been run for this build' : counted.length ? 'only a partial run of the eval is on record for this build' : `no eval result on record counts for this brain and build${unsealed}`);
     if (!evalScore(full).met) return no(`the newest full run of the eval on record for this build (${day}) didn’t meet the bar`);
     return { checked: true, why: `the brain check passed, and the eval on record for this build (${day}) ran in full and met the bar` };
   } catch (e) { return no(`its record couldn’t be read (${String(e?.message || e).slice(0, 160)})`); }
 }
 // sparkie_setup's one line about changes.
 async function railWords() {
-  const r = await brainRail();
+  const r = await brainRail({ wait: RAIL_LOOK_WAIT_MS });
   return r.checked ? `Sparkie makes a change your words clearly ask for at once: ${r.why}.`
     : `Sparkie asks before every change, one button each: ${r.why}.${evalWaiting ? ` An eval result for this build is waiting for your yes in the chat “${EVAL_CHAT}”.` : ''}`;
 }
@@ -195,7 +240,8 @@ async function evalYes(args, viewer, ctx) {
   let keys = 1;
   try { keys = passkeys().length; } catch {}
   const out = keepEvalRecord(p, { ...w.rec, keptWith: keys ? 'passkey' : 'the owner’s press' }, w.setup);
-  return { outcome: 'kept', note: out.stored ? 'Kept: Sparkie makes the changes your words clearly ask for at once again.' : out.says };
+  // (what the rail says now, not what keeping it was hoped to mean: a newer failing run, or a check that says not checked)
+  return { outcome: out.stored ? 'kept' : 'not kept', note: out.stored ? `Kept. ${await railWords()}` : out.says };
 }
 // One needs-you line while a result waits (20-needs.mjs).
 function evalWaitingNeeds(add) {

@@ -1,0 +1,11 @@
+{
+  "id": "sparks-in-words",
+  "title": "Sparks said together are each a name",
+  "minutes": 30,
+  "test": "test/trial-sparks-in-words.test.mjs",
+  "plant": {
+    "file": "service/src/20-memory-names.mjs",
+    "good": "((?:\\s*(?:,|and|&|\\+|or)\\s*\\d+)*)/g, (m, a, rest)",
+    "bad": "((?:\\s*(?:,|&|\\+)\\s*\\d+)*)/g, (m, a, rest)"
+  }
+}

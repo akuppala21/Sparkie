@@ -1,0 +1,11 @@
+{
+  "id": "day-words",
+  "title": "A day in another year is said with its year",
+  "minutes": 30,
+  "test": "test/trial-day-words.test.mjs",
+  "plant": {
+    "file": "service/src/20-memory-time.mjs",
+    "good": "...(day.slice(0, 4) === memoryDay().slice(0, 4) ? {} : { year: 'numeric' })",
+    "bad": "...(day.slice(0, 4) !== memoryDay().slice(0, 4) ? {} : { year: 'numeric' })"
+  }
+}
