@@ -1239,8 +1239,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
     const mk = mark0(), hold = join(home, 'git-hold'), held = join(home, 'git-held');
     writeFileSync(hold, '');
     rmSync(held, { force: true });
+    // (its own process group, made for this one pull.sh: only that group is ever signalled, and it is ended below)
+    let child = null;
     try {
-      const run = pull(home, ['install', g.t12], { detached: true });
+      const run = pull(home, ['install', g.t12], { detached: true, onOut: (out, p) => { child = p; } });
       await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'pull.sh at git archive' });
       // (as systemd stops a unit: every process in it gets SIGTERM)
       process.kill(-Number(read(held).trim()), 'SIGTERM');
@@ -1249,7 +1251,10 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.match(r.out, /The install was stopped before it changed anything\./);
       assert.deepEqual([resultOf(home).tree, resultOf(home).result, resultOf(home).why], [g.t12, 'refused', 'the install was stopped before it changed anything']);
       await fromBefore(r, mk);
-    } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
+    } finally {
+      rmSync(hold, { force: true }); rmSync(held, { force: true });
+      if (child && child.exitCode === null && child.signalCode === null) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
+    }
   });
 
   // (the eighth read of C5, Later 1: a stop that lands while the way back is being armed)
@@ -1260,19 +1265,25 @@ describe('the way back for an update from GitHub, armed by the build installed n
     const mk = mark0(), hold = join(home, 'guard-hold'), held = join(home, 'guard-held');
     writeFileSync(hold, '');
     rmSync(held, { force: true });
+    // (its own process group, made for this one pull.sh: only that group is ever signalled, and it is ended below)
+    let child = null;
     try {
-      const run = pull(home, ['install', g.t12], { detached: true });
+      const run = pull(home, ['install', g.t12], { detached: true, onOut: (out, p) => { child = p; } });
       await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'the way back being armed, its timer on' });
       assert.ok(existsSync(join(home, 'guard-enabled')), 'the timer was on when the stop came');
       // (as systemd stops a unit: every process in it gets SIGTERM; then the stand-in's is-active answers again, which
       // nothingArmed asks below)
-      process.kill(-Number(read(held).trim()), 'SIGTERM');
+      assert.ok(child && Number(read(held).trim()) === child.pid, 'the group is the one made for this pull.sh');
+      process.kill(-child.pid, 'SIGTERM');
       rmSync(hold, { force: true });
       const r = await run;
       assert.equal(r.code, 130, r.out);
       assert.match(r.out, /The install was stopped before it changed anything\./);
       assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
       await fromBefore(r, mk);
-    } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
+    } finally {
+      rmSync(hold, { force: true }); rmSync(held, { force: true });
+      if (child && child.exitCode === null && child.signalCode === null) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
+    }
   });
 });
