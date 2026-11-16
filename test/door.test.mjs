@@ -11,11 +11,11 @@
 // Run with the rest: node --test --test-concurrency=4 'test/*.test.mjs'   (SPARK_TEST_STRICT=1 makes known product bugs fail)
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { T, useFleet, TOOLS, CHANGE_TOOLS, ALL_TOOLS, ASK, DOOR_READ, post, rpc, call, api, createKey, createActKey, deleteKey, KeyPool, OWNER, MEMBER, bug } from './lib.mjs';
+import { T, useFleet, TOOLS, CHANGE_TOOLS, CAN_CHANGE, ALL_TOOLS, ASK, DOOR_READ, REPO, post, rpc, call, api, createKey, createActKey, deleteKey, KeyPool, OWNER, MEMBER, bug } from './lib.mjs';
 
 const pool = new KeyPool('door');
 // At most 6 web searches a minute per key, so the tools that reach the web (search_huggingface, search_web, read_page)
@@ -161,10 +161,22 @@ describe('MCP handshake', () => {
         const sp = p.type === 'array' ? p.items : p;
         if (/spark/.test(k)) assert.deepEqual(sp.enum, ['spark1', 'spark2', 'spark3', 'spark4'], `${t.name}.${k}`);
       }
-      assert.equal(t.annotations.readOnlyHint, true, t.name);
-      assert.equal(t.annotations.destructiveHint, false, t.name);
+      assert.equal(t.annotations.readOnlyHint, !CAN_CHANGE.includes(t.name), t.name);
+      assert.equal(t.annotations.destructiveHint, CAN_CHANGE.includes(t.name), t.name);
       assert.equal(t.annotations.openWorldHint, OPEN_WORLD.includes(t.name), t.name);
     }
+  });
+  test('tools/list: run and write_file say they are not read-only: each can change files on a Spark (A7d)', async () => {
+    const r = await rpc(await pool.token(), 'tools/list');
+    assertRpcOk(r);
+    for (const name of ['run', 'write_file']) {
+      const t = r.json.result.tools.find(x => x.name === name);
+      assert.deepEqual([t?.annotations?.readOnlyHint, t?.annotations?.destructiveHint], [false, true], name);
+    }
+    // (CAN_CHANGE is the set of actions that carry changes: true in the code, so no action takes or loses it unlisted)
+    const src = join(REPO, 'service', 'src'), flagged = [];
+    for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) for (const m of readFileSync(join(src, f), 'utf8').matchAll(/\bname: '([a-z_]+)'[^\n]*\bchanges: true\b/g)) flagged.push(m[1]);
+    assert.deepEqual(flagged.sort(), [...CAN_CHANGE].sort());
   });
   test('unknown method → -32601 with the id', async () => {
     const r = await post({ jsonrpc: '2.0', id: 'u1', method: 'resources/list' }, { token: await pool.token() });

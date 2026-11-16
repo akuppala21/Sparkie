@@ -10537,7 +10537,9 @@ async function mcpDoor(req, res, viewer) {
       { name: ASK_SPARKIE.name, title: ASK_SPARKIE.title, description: ASK_SPARKIE.description, inputSchema: ASK_SPARKIE.input,
         annotations: { title: ASK_SPARKIE.title, readOnlyHint: false, destructiveHint: (agent.scopes || []).includes('fleet:act'), openWorldHint: false } },
       ...offered.map(a => ({ name: a.name, title: a.title, description: a.description, inputSchema: liveSchema(a.input),
-        annotations: { title: a.title, readOnlyHint: a.kind === 'read', destructiveHint: a.kind === 'destructive' || Boolean(a.destructive), openWorldHint: Boolean(a.openWorld) } }))] } });
+        // (run and write_file are kind read to runAction, their gates being the ladder's, but they can change files: the
+        // door says so, A7d. Nothing else keys off changes.)
+        annotations: { title: a.title, readOnlyHint: a.kind === 'read' && !a.changes, destructiveHint: a.kind === 'destructive' || Boolean(a.destructive) || Boolean(a.changes), openWorldHint: Boolean(a.openWorld) } }))] } });
   }
   if (msg.method === 'tools/call' && msg.params?.name === ASK_SPARKIE.name) {
     const toolError = text => reply(200, { id, result: { content: [{ type: 'text', text }], isError: true } });

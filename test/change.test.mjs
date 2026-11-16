@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, closeSync, openSync, truncateSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { T, useFleet, CHANGE_TOOLS, ASK, DOOR_READ, DOOR_ACT, rpc, call, api, createKey, createActKey, deleteKey, agentSettings, KeyPool, MEMBER, auditLines, SLOW } from './lib.mjs';
+import { T, useFleet, CHANGE_TOOLS, CAN_CHANGE, ASK, DOOR_READ, DOOR_ACT, rpc, call, api, createKey, createActKey, deleteKey, agentSettings, KeyPool, MEMBER, auditLines, SLOW } from './lib.mjs';
 
 const pool = new KeyPool('chg', 90, { act: true });
 const keys = {};
@@ -139,7 +139,7 @@ describe('who may change things', () => {
     assert.deepEqual(tools.map(t => t.name).sort(), [...DOOR_ACT].sort());
     assert.equal(tools.find(t => t.name === ASK).annotations.destructiveHint, true, 'through Sparkie it can change things now');
     for (const t of tools) {
-      const change = CHANGE_TOOLS.includes(t.name) || t.name === ASK;
+      const change = CHANGE_TOOLS.includes(t.name) || t.name === ASK || CAN_CHANGE.includes(t.name);
       assert.equal(t.annotations.readOnlyHint, !change, t.name);
       assert.equal(t.inputSchema.additionalProperties, false, t.name);
     }
