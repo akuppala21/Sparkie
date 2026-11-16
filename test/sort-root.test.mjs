@@ -93,3 +93,20 @@ test('every loader and its kin is unshown, so root refuses it; the plain root wo
   // (git as root reads the repository's own settings; a clone makes a new repository)
   assert.ok(sort('git log -1', { root: true }).unshown && !sort('git log -1').unshown && !sort('git clone https://e.com/x /opt/x', { root: true }).unshown);
 });
+
+// Item 2: work started later, outside the button and the net.
+test('work started later is marked later, so root refuses it, whatever it runs; reading or listing a schedule is not', () => {
+  const LATER = ['systemd-run --on-active=60s systemctl stop ssh', 'systemd-run --on-active=60s bash /tmp/repair.sh', 'systemd-run --on-active=60s /usr/local/bin/repair',
+    'systemd-run --on-active=60s /opt/tools/repair', 'systemd-run --on-active=60s rm -rf /etc/nginx', 'systemd-run --on-active=60s apt-get -y autoremove',
+    'systemd-run --on-active=60s touch /tmp/later', 'systemd-run --on-calendar=daily --unit nightly python3 -c "import nightly"',
+    `systemd-run bash -c 'sleep 900; python3 -c "import repair"'`, "echo 'python3 /tmp/repair.py' | at now + 2 minutes", `at now + 2 minutes <<< 'python3 -c "import repair"'`,
+    'at -f /tmp/repair.sh now + 2 minutes', "batch <<< '/opt/tools/repair'", `printf '* * * * * root python3 -c "import repair"\\n' > /etc/cron.d/repair`,
+    "printf '[Service]\\nExecStart=/opt/tools/repair\\n' > /etc/systemd/system/repair.service", 'systemctl enable --now repair.timer',
+    // (and spellings of our own: any systemd-run, any at or crontab, a unit's drop-in, a user unit, a timer started)
+    'systemd-run --wait touch /tmp/x', 'systemd-run --scope ls', 'echo hi | at now', 'crontab /tmp/c', 'crontab -r', "echo '* * * * * x' | crontab -",
+    "tee /etc/systemd/system/docker.service.d/override.conf <<'EOF'\n[Service]\nEnvironment=HTTP_PROXY=http://10.0.0.1:3128\nEOF",
+    'cp /tmp/x.timer ~/.config/systemd/user/', 'echo x >> /var/spool/cron/crontabs/root', 'systemctl start backup.timer'];
+  assert.deepEqual(each(LATER, r => (r.later && typeof r.later === 'string' ? null : 'no later')), []);
+  assert.deepEqual(each(['crontab -l', 'systemctl list-timers', 'atq', 'systemctl restart docker', "sed -i 's/a/b/' /etc/systemd/journald.conf", 'systemctl daemon-reload',
+    'cat /etc/crontab', 'systemctl status cron'], r => (r.later ? `later: ${r.later}` : null)), []);
+});

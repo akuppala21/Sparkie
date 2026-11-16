@@ -29,7 +29,8 @@
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
-// refuses on it); overwrites (with
+// (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
+// refuses on it); later (work it starts later, outside the button and the net: root refuses on it); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
@@ -37,10 +38,10 @@
 // name count too). scripts, placed and wide hold no control sign or line break: a name with one is refused (risky).
 const SORT_ORDER = ['look', 'change', 'risky', 'lockout', 'notdone'], SORT_MAX = 16384, SORT_DEPTH = 4, SORT_WRAPS = 32, SORT_SEEN = 8 * SORT_MAX;
 const raise = (r, cls, why) => { if (SORT_ORDER.indexOf(cls) > SORT_ORDER.indexOf(r.class)) Object.assign(r, { class: cls, why }); };
-const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null });
+const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null, later: null });
 function sortMerge(r, c) {
   raise(r, c.class, c.why);
-  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown });
+  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown, later: r.later ?? c.later });
   r.scripts.push(...c.scripts);
 }
 // Code it runs that the command does not show (unshown, in the sorter's own words): a file of code named as a word (in
@@ -173,8 +174,10 @@ function sortRuns(file, ctx, r, why, dir = null) {
 }
 // What a timer or a schedule runs later (systemd-run, at, crontab, a schedule or a unit written), sorted into c: when it
 // is the lock-out class it is lasting too, since it runs after the net has kept or put back (the final read `net`, 13).
+// later: what it starts runs outside the button and the net, whatever it is (root refuses it, A-16).
 function sortLater(c, ctx, r, via) {
   sortMerge(r, c);
+  r.later ??= `${via} starts work later, by itself, outside this command and the net`;
   raise(r, 'risky', `${sortQ(via)}: a job or a unit that runs by itself, outside the wall.`);
   if (/^(?:lockout|notdone)$/.test(c.class)) { raise(r, 'lockout', `${sortQ(via)} starts a change to a way in later, by itself: ${c.why}`); r.lasting ??= `${via} starts a change to a way in later, by itself, after the net has kept or put it back: the net can’t put that back.`; }
 }
@@ -237,7 +240,9 @@ function sortProgram(words, ctx, r, x) {
     ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     sortInstall(name, args, ctx, via);
-    if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
+    // (a program it doesn't know: said by name, so an ask can say what the sorter doesn't check; what it is handed by find
+    // -exec or xargs as its own name, {}, is code from the file system)
+    if (!sortKnown(name)) { ctx.unknownProgram ??= name.replace(/[^\w.+@-]/g, '').slice(0, 60) || null; if (x.unknownArgs && /^\{\}$/.test(name)) sortUnshown(r, 'a program find or xargs names from what it finds'); unsure(`The sorter doesn't know the program ${sortQ(name)}.`); }
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
     if (x.unknownArgs && reads !== '') { if (file === 'del') ctx.kinds.add('delete'); raise(r, 'risky', `${sortQ(name)} gets words it reads from its input, which the sorter can't see.`); }

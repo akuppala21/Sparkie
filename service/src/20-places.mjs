@@ -148,6 +148,8 @@ const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-netw
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
 const WAYS_FILE = new RegExp(`(?:^|/)(?:${WAYS_UNITS.join('|')})\\.(?:service|socket|timer)(?:\\.d)?(?:/|$)`);
 const SIGNIN = /spark-console\/(?:access\.json|sessions\.json|passkeys\.json|agents\.json|telegram\.json|agent-settings\.json)|(?:^|\/)api\.sock$|spark-console-(?:api|watchdog)/;
+// Where systemd reads units (the system's, the owner's, the packages'): a file written there is work started later.
+const SORT_UNIT_DIRS = /^(?:\/etc|\/run|\/usr\/lib|\/lib|\/usr\/local\/lib|~\/\.config|~\/\.local\/share|\/root\/\.config)\/systemd\/(?:system|user)(?:\.control|\.conf\.d)?(?:\/|$)/;
 // The root helper and its sudo line: changed only by the owner's one-time command.
 const HELPER_PATHS = ['/usr/local/sbin/spark-console-root', '/etc/sudoers.d/spark-console-root'];
 // Risky to name in a change: [the test, what it is, whether what goes can't be put back, the places a glob may match].
@@ -193,7 +195,8 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
-  if (touched === true && (RISKY_PATHS[2][0].test(p) || /(?:^|\/)systemd\/|^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket)$/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
+  // (a folder of units, a unit's own file or drop-in, by a pattern too: not systemd's settings, journald.conf)
+  if (touched === true && (RISKY_PATHS[2][0].test(p) || SORT_UNIT_DIRS.test(p) || /^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket|target|mount)(?:\.d(?:\/|$)|$)/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);

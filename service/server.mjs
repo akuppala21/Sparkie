@@ -12698,6 +12698,8 @@ const WAYS_UNITS = ['ssh', 'sshd', 'tailscaled', 'NetworkManager', 'systemd-netw
   'netfilter-persistent', 'firewalld', 'iptables', 'wpa_supplicant', 'systemd-logind', 'dbus', 'spark-console-api', 'spark-console-watchdog'];
 const WAYS_FILE = new RegExp(`(?:^|/)(?:${WAYS_UNITS.join('|')})\\.(?:service|socket|timer)(?:\\.d)?(?:/|$)`);
 const SIGNIN = /spark-console\/(?:access\.json|sessions\.json|passkeys\.json|agents\.json|telegram\.json|agent-settings\.json)|(?:^|\/)api\.sock$|spark-console-(?:api|watchdog)/;
+// Where systemd reads units (the system's, the owner's, the packages'): a file written there is work started later.
+const SORT_UNIT_DIRS = /^(?:\/etc|\/run|\/usr\/lib|\/lib|\/usr\/local\/lib|~\/\.config|~\/\.local\/share|\/root\/\.config)\/systemd\/(?:system|user)(?:\.control|\.conf\.d)?(?:\/|$)/;
 // The root helper and its sudo line: changed only by the owner's one-time command.
 const HELPER_PATHS = ['/usr/local/sbin/spark-console-root', '/etc/sudoers.d/spark-console-root'];
 // Risky to name in a change: [the test, what it is, whether what goes can't be put back, the places a glob may match].
@@ -12743,7 +12745,8 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
   // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
-  if (touched === true && (RISKY_PATHS[2][0].test(p) || /(?:^|\/)systemd\/|^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket)$/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
+  // (a folder of units, a unit's own file or drop-in, by a pattern too: not systemd's settings, journald.conf)
+  if (touched === true && (RISKY_PATHS[2][0].test(p) || SORT_UNIT_DIRS.test(p) || /^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket|target|mount)(?:\.d(?:\/|$)|$)/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -13871,7 +13874,8 @@ function sortSedSafe(s) {
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
-// refuses on it); overwrites (with
+// (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
+// refuses on it); later (work it starts later, outside the button and the net: root refuses on it); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
@@ -13879,10 +13883,10 @@ function sortSedSafe(s) {
 // name count too). scripts, placed and wide hold no control sign or line break: a name with one is refused (risky).
 const SORT_ORDER = ['look', 'change', 'risky', 'lockout', 'notdone'], SORT_MAX = 16384, SORT_DEPTH = 4, SORT_WRAPS = 32, SORT_SEEN = 8 * SORT_MAX;
 const raise = (r, cls, why) => { if (SORT_ORDER.indexOf(cls) > SORT_ORDER.indexOf(r.class)) Object.assign(r, { class: cls, why }); };
-const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null });
+const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null, later: null });
 function sortMerge(r, c) {
   raise(r, c.class, c.why);
-  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown });
+  Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown, later: r.later ?? c.later });
   r.scripts.push(...c.scripts);
 }
 // Code it runs that the command does not show (unshown, in the sorter's own words): a file of code named as a word (in
@@ -14015,8 +14019,10 @@ function sortRuns(file, ctx, r, why, dir = null) {
 }
 // What a timer or a schedule runs later (systemd-run, at, crontab, a schedule or a unit written), sorted into c: when it
 // is the lock-out class it is lasting too, since it runs after the net has kept or put back (the final read `net`, 13).
+// later: what it starts runs outside the button and the net, whatever it is (root refuses it, A-16).
 function sortLater(c, ctx, r, via) {
   sortMerge(r, c);
+  r.later ??= `${via} starts work later, by itself, outside this command and the net`;
   raise(r, 'risky', `${sortQ(via)}: a job or a unit that runs by itself, outside the wall.`);
   if (/^(?:lockout|notdone)$/.test(c.class)) { raise(r, 'lockout', `${sortQ(via)} starts a change to a way in later, by itself: ${c.why}`); r.lasting ??= `${via} starts a change to a way in later, by itself, after the net has kept or put it back: the net can’t put that back.`; }
 }
@@ -14079,7 +14085,9 @@ function sortProgram(words, ctx, r, x) {
     ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     sortInstall(name, args, ctx, via);
-    if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
+    // (a program it doesn't know: said by name, so an ask can say what the sorter doesn't check; what it is handed by find
+    // -exec or xargs as its own name, {}, is code from the file system)
+    if (!sortKnown(name)) { ctx.unknownProgram ??= name.replace(/[^\w.+@-]/g, '').slice(0, 60) || null; if (x.unknownArgs && /^\{\}$/.test(name)) sortUnshown(r, 'a program find or xargs names from what it finds'); unsure(`The sorter doesn't know the program ${sortQ(name)}.`); }
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
     if (x.unknownArgs && reads !== '') { if (file === 'del') ctx.kinds.add('delete'); raise(r, 'risky', `${sortQ(name)} gets words it reads from its input, which the sorter can't see.`); }
@@ -15206,7 +15214,7 @@ Object.assign(SORT_HANDLERS, {
       if (WAYS_UNITS.some(is) || /^user@/.test(u.text) || /getty|^(?:netplan-|wpa_supplicant|iwd$|ModemManager$|network-manager$|dhcpcd|dhclient|connman$|NetworkManager|systemd-user-sessions$|user-runtime-dir|wg-quick|rfkill|systemd-timesyncd$|chrony|ntp)/.test(base)) raise(r, 'lockout', `${sortQ(u.text)} is a way in (SSH, Tailscale, the network, the firewall, the logins, or Spark Console itself).`);
       else if (at && /^(?:systemd-.+|emergency|rescue|debug-shell|initrd-.+|kexec|halt|poweroff|reboot|suspend|hibernate|hybrid-sleep|sleep|ctrl-alt-del|dbus|polkit|udev|cron|atd|snapd?)$/.test(base)) raise(r, 'risky', `As root, ${sortQ(u.text)} is one of systemd's own units, or one that powers the Spark down or runs jobs: asked.`);
       else if (['docker', 'containerd'].some(is)) { raise(r, 'risky', `${sortQ(u.text)} is the Docker service.`); if (/^(?:stop|restart|kill|try-restart|reload-or-restart|disable|mask|freeze|isolate)$/.test(v)) ctx.kinds.add('brain'); }
-      else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`);
+      else if (/\.timer$/.test(u.text) && /^(?:start|enable|reenable|restart|link|unmask)$/.test(v)) { raise(r, 'risky', `${sortQ(u.text)} is a timer: a job that runs by itself.`); r.later ??= `the timer ${u.text} starts work later, by itself, outside this command and the net`; }
       if (at && (pat || !/^[A-Za-z0-9_-]+(?:\.service)?$/.test(u.text))) raise(r, 'risky', `As root, systemctl changes at once only a service named plainly, not ${sortQ(u.text)} (a pattern, a target, a slice, an instance, a path or another kind of unit).`);
     }
     if (/^(?:daemon-\S+|set-default|\S+-environment|preset-all)$/.test(v)) raise(r, 'risky', `systemctl ${sortQ(v)} changes how systemd runs every service.`);
