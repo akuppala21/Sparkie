@@ -13880,8 +13880,8 @@ function sortSedSafe(s) {
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
-// (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
-// refuses on it); later (work it starts later, outside the button and the net: root refuses on it); overwrites (with
+// refuses on it); later (work it starts later, outside the button and the net: root refuses on it); unknownProgram (a
+// program it doesn't know, by name); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches

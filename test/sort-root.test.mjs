@@ -122,3 +122,12 @@ test('changing or removing a way-in program\'s own file is the lock-out class; k
   // (as root a number can be any process: lock-out when the sorter is told it is root, which rootChange is to say)
   for (const c of ['kill -9 812', 'kill 1', 'kill -HUP 4321']) { assert.equal(sort(c, { root: true }).class, 'lockout', c); assert.notEqual(sort(c).class, 'lockout', c); }
 });
+
+// Item 4: a program the sorter doesn't know is said by name; it stays asked.
+test('a program the sorter doesn\'t know is named in unknownProgram and stays asked; a known one names none', () => {
+  for (const [c, name] of [['gdb -batch -x /tmp/repair.gdb', 'gdb'], ['nvidia-ctk runtime configure --runtime=docker', 'nvidia-ctk'], ["sqlite3 /tmp/x.db '.shell bash x'", 'sqlite3'],
+    ['ansible-playbook /tmp/repair.yml', 'ansible-playbook'], ["tmux new -d 'sleep 900'", 'tmux'], ['/usr/local/bin/frob --all', 'frob'], ['ls && gdb -p 1', 'gdb']]) {
+    for (const m of MODES) { const r = sort(c, m); assert.deepEqual([c, r.unknownProgram, r.class], [c, name, 'risky']); }
+  }
+  for (const c of ['ls -la', 'apt-get install -y htop', 'systemctl restart docker', 'python3 -c "print(1)"']) assert.equal(sort(c, { root: true }).unknownProgram, null, c);
+});
