@@ -45,12 +45,12 @@ if [ -e "$HOME/kill-at-$v" ]; then mv "$HOME/kill-at-$v" "$HOME/killed"; kill -9
 exit 0
 `;
 // Spark 2's home with the build from before installed, the way back armed from it, then the new build's files in.
-function armedHome({ big = false } = {}) {
+function armedHome({ big = false, unit = true } = {}) {
   const h = mkdtempSync(join(tmpdir(), 'ugd-'));
   put(h, 'bin/systemctl', SYSTEMCTL, 0o755);
   put(h, 'spark-console/index.html', 'old page\n');
   put(h, 'spark-console-service/server.mjs', big ? OLD_SERVER : 'old server\n');
-  put(h, '.config/systemd/user/spark-console-api.service', '[Unit]\nDescription=old\n');
+  if (unit) put(h, '.config/systemd/user/spark-console-api.service', '[Unit]\nDescription=old\n');
   for (const f of BY) put(h, `.local/share/spark-console/${f}`, `old ${f}\n`, 0o700);
   put(h, 'spark-console-src/README.md', 'old source\n');
   const r = run(h, [GUARD_SH, 'arm', 'aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', '2147483646']);
@@ -134,7 +134,8 @@ case "$d" in *.putback*) if [ -d "$d" ]; then f=$(find "$d" -type f | head -n 1)
 exit 0
 `;
   test('a staged copy that isn\'t the saved one (cp said yes) changes nothing live: the page and the service, then a by-hand file', { timeout: 300000 * SLOW }, () => {
-    let h = armedHome();
+    // (no unit file here: the unit's own compare would catch it too, and this is about the folders' staging)
+    let h = armedHome({ unit: false });
     put(h, 'bin/cp', BAD_CP, 0o755);
     let r = putBack(h);
     assert.equal(r.status, 1, r.stdout + r.stderr);
