@@ -11,8 +11,9 @@
 // journal, the audit, a button's label, a tool result or an event. On the page one request carries the press and the
 // pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
 // minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
-// close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5); the
-// other raisers come with A7c, A12, A13 and D12; on the stand-in fleet a test raises one through dangerForTest.
+// close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5),
+// and run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c); the rest come
+// with A12, A13 and D12; on the stand-in fleet a test raises one through dangerForTest.
 const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
 // Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
 const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };

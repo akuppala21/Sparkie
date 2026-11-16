@@ -145,6 +145,8 @@ const CHANGE_WORDS = [
   ['powerset', /\b(?:set|change|make|switch|lower|raise)\b[^.?!;\n]{0,60}?\b(?:idle|auto(?:matic)?(?:ally)?|shut\s*down|shutdown|power[\s-]*off)\b/gi],
   // Sparkie's memory (20-memory.mjs): "remember…", "from now on…", "keep in mind…", "no, I meant…", "forget that…".
   ['remember', /\b(remember|from\s+now\s+on|going\s+forward|next\s+time|keep\s+in\s+mind|make\s+a\s+note|note\s+that|don't\s+forget|no,?\s+i\s+meant|forget\s+(?:that|this|what\s+i\s+said|the\s+note))\b/gi],
+  // Work on a Spark itself, a command run as a change (run, 21-ladder.mjs hostClear; design A 2.5).
+  ['work', /\b(fix|install|set\s+up|change|edit|build|clean\s*up|update|try)\b/gi],
 ];
 // … and, after a "not", the other forms rule it out too ("without stopping anything", "not restarting it").
 const CHANGE_FORMS = [
@@ -163,7 +165,7 @@ const GROUP_WORDS = [
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
-  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file, write a file on a Spark', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them, compare models on one', /\b(?:workflows?|routines?|pipelines?|workloads?|compar\w*|whatever\s+is\s+best|keep\s+the\s+winner)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
@@ -242,6 +244,7 @@ const ACTION_KIND = {
   power_settings: ['poweroff', 'stop', 'powerset'],
   remember: ['remember'],
   restart_model: ['restart', 'start'],
+  run: ['work'],
   run_workflow: ['start'],
   save_file: ['file'],
   save_workflow: ['save'],
@@ -488,7 +491,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   }
   // The pause is for agents (Sparkie, outside agents, auto-restart); the owner's own clicks always go through.
   // (Self-healing goes on through the automatic pause for a looping agent; only the owner's own pause stops it.)
-  if (ctx.via !== 'page' && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
+  // (and the owner's own typed word, /undo, answered by code on the page and on Telegram: 20-words.mjs)
+  if (ctx.via !== 'page' && !ctx.ownerWord && agentSettings().halted && !(ctx.via === 'watcher' && agentSettings().autoPaused)) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram).');
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
   if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);

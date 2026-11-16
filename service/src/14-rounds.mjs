@@ -75,6 +75,8 @@ function budgetCarries({ spent, agent, task, text, now, conv }) {
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
 // One run call is one work step (runOne, before it is handed over): past the message's steps (or what its task has
 // left) it is not run, and the step that reaches them makes the next round the last.
+// The tools that run on a Spark, each a work step (A7d: write_file counts as run does).
+const WORK_TOOLS = new Set(['run', 'write_file']);
 function workStep(turn) {
   if (turn.works >= turn.WORK_STEPS) {
     turn.notRun++;
@@ -93,7 +95,7 @@ function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }
-  if (name === 'run' && ok && nothing == null) turn.ran++;
+  if (WORK_TOOLS.has(name) && ok && nothing == null) turn.ran++;
   return budgetCut(turn, out, jid);
 }
 // The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
@@ -253,7 +255,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
-    if (c.name === 'run') workStep(turn);
+    if (WORK_TOOLS.has(c.name)) workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
     let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -272,6 +274,9 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
   const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  // What this request read from outside, by its record (A7c; the dangerous ask's "came from", 20-danger.mjs): a label
+  // built by code, the tool and its Spark, never its source's words.
+  if (ok && jid && a?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')))) workRead(ctx, jid, a.title, c.args);
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
