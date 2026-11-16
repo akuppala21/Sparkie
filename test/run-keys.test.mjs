@@ -1,7 +1,8 @@
 // Covers: A kept key, by its name, in one change's environment (A14b; R51, R61; design A step 14, E 2.4): run with keys
 // hands each value to the root helper on its input (--stdin), and the unit's own first line puts it in the environment
 // for that run only. The command gets the right value; the value is searched for exactly (as is, in base64 and
-// %-encoded) in the whole stand-in fleet's folder after it ran (chats, journal with its pieces made small, the state,
+// %-encoded) in the whole stand-in fleet's folder after it ran (chats, journal with its pieces made small (256 bytes,
+// a quarter held back: more than the longest form of the key), the state,
 // the copies, what the stand-in brain was sent, the unit's settings as the helper gave them, which systemctl show would
 // show, and the process list the command itself wrote while it ran): only the secrets file holds it, and the held
 // folder that carried it is gone. A key's first use on a Spark is asked on a button that names it and the Spark; after
@@ -58,10 +59,10 @@ const USE = [
   'echo "as is: $DEMO_KEY"',
   'echo "base64: $(printf "%s" "$DEMO_KEY" | base64 -w0)"',
   'echo "url: $(python3 -c "import os, urllib.parse; print(urllib.parse.quote(os.environ[\'DEMO_KEY\'], safe=\'\'))")"',
-  // (the key at every place across the journal's 64-byte pieces)
+  // (the key at every place across the journal's 256-byte pieces)
   'for i in $(seq 0 70); do printf "%*s%s\\n" "$i" "" "$DEMO_KEY"; done',
 ].join('\n');
-useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_JOURNAL_PIECE: '64' },
+useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_JOURNAL_PIECE: '256' },
   prepare: ({ root }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
@@ -98,6 +99,14 @@ const sentBack = words => {
   const x = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(m => m.words === words && m.lastRole === 'tool').at(-1);
   return (x?.results || []).map(r => (String(r.content).startsWith('[error] ') ? { error: String(r.content).slice(8) } : JSON.parse(r.content)));
 };
+// A record's long text (its end line's, in this month's .out).
+function recordText(id) {
+  for (const f of readdirSync(T.fleet.journalDir).filter(x => x.endsWith('.jsonl'))) {
+    const end = lines(join(T.fleet.journalDir, f)).find(x => x.id === id && x.end && Array.isArray(x.o));
+    if (end) return readFileSync(join(T.fleet.journalDir, f.replace(/\.jsonl$/, '.out'))).subarray(end.o[0], end.o[0] + end.o[1]).toString();
+  }
+  return '';
+}
 const keyEntry = name => JSON.parse(readFileSync(T.fleet.secretsFile, 'utf8')).keys[name];
 
 test('a key named on run: its first use on a Spark is asked on a button that names it; after the yes the command ran with it, and only the secrets file holds it', { timeout: 180000 * SLOW }, async () => {
@@ -111,9 +120,8 @@ test('a key named on run: its first use on a Spark is asked on a button that nam
   assert.equal(keyEntry('DEMO_KEY').hosts, undefined);
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
-  assert.equal(p.json.exit, 0, p.text);
+  assert.deepEqual([p.json.outcome, p.json.message.content], ['change', 'Run it: done.'], p.text);
   assert.equal(text('notes/keysum.txt').trim(), sha(VALUE), 'the command had the right value');
-  assert.match(p.json.output, /as is: \[hidden\]/, 'what it printed comes back masked');
   // Kept with the key: the Spark it went to.
   assert.deepEqual(keyEntry('DEMO_KEY').hosts, ['spark3']);
   // Never on a command line (the process list it wrote while it ran shows the helper, with --stdin), never in the unit's
@@ -121,6 +129,8 @@ test('a key named on run: its first use on a Spark is asked on a button that nam
   assert.match(text('notes/ps.txt'), /spark-console-root run --id [a-z0-9]+ .*--stdin --/);
   const start = journalLines().filter(x => x.k === 'cmd' && x.start && x.args?.command === 'bash notes/usekey.sh').at(-1);
   assert.deepEqual(start.keys, ['DEMO_KEY']);
+  // What it printed, kept whole in the journal: masked there, piece by piece.
+  assert.match(recordText(start.id), /\nas is: \[hidden\]\n/);
   const unitCall = lines(join(T.fleet.root, 'calls.log')).find(c => c[0] === 'systemd-run' && c.includes(`--unit=${start.unit}`));
   assert.ok(unitCall && !unitCall.some(a => /^Environment/.test(a)), JSON.stringify(unitCall));
   assert.ok(!existsSync(join(T.fleet.root, 'run', 'spark-console', start.unit.slice('sw-run-'.length))), 'the held folder that carried it is gone');
@@ -191,7 +201,7 @@ test('a script that changed after its ask: the press is refused, nothing ran', {
   writeFileSync(at3('notes/other.sh'), 'printf "%s" "$OTHER_KEY" > notes/othersum.txt\n');
   const p = await choose(chat, yes.id);
   assert.equal(p.status, 200, p.text);
-  assert.equal(p.json.error, 'Not run: a script it runs changed after you were asked, and a key is never given to a script you weren’t shown. Nothing ran: ask for it again to see the script as it is now.');
+  assert.deepEqual([p.json.outcome, p.json.message.content], ['error', 'Couldn’t do “Run it”: Not run: a script it runs changed after you were asked, and a key is never given to a script you weren’t shown. Nothing ran: ask for it again to see the script as it is now.']);
   assert.ok(!existsSync(at3('notes/othersum.txt')), 'nothing ran');
   assert.equal(keyEntry('OTHER_KEY').hosts, undefined);
   assert.ok(!(await chatMessages(chat)).some(m => m.content.includes(OTHER)));
