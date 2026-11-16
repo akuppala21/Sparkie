@@ -1115,7 +1115,7 @@ describe('the lock-out net (R60)', () => {
   // The final read's TC-11: the restart unit and pending are there before the command runs (seen from inside it).
   test('the restart unit and pending are there before the change runs, seen by the change itself', () => {
     const s = netted();
-    const cmd = 'R="$SPARK_CONSOLE_REHEARSAL"; for f in "$R"/etc/systemd/system/sw-guard-boot-*.service "$R"/etc/systemd/system/multi-user.target.wants/sw-guard-boot-*.service "$R"/var/lib/spark-console/guard/*/pending; do [ -e "$f" ] && echo "there ${f#"$R"}"; done; true';
+    const cmd = 'R="$SPARK_CONSOLE_REHEARSAL"; for f in "$R"/etc/systemd/system/sw-guard-boot-*.service "$R"/etc/systemd/system/multi-user.target.wants/sw-guard-boot-*.service "$R"/var/lib/spark-console/guard/*/pending; do { [ -e "$f" ] || [ -L "$f" ]; } && echo "there ${f#"$R"}"; done; true';   // (the .wants entry is a link to /etc/...)
     const r = net(s, cmd);
     for (const p of [`/etc/systemd/system/sw-guard-boot-${r.id}.service`, `/etc/systemd/system/multi-user.target.wants/sw-guard-boot-${r.id}.service`,
       `/var/lib/spark-console/guard/${r.id}/pending`]) assert.ok(r.stdout.includes(`\nthere ${p}\n`), `${p}: ${r.stdout}`);
