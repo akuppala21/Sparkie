@@ -2667,8 +2667,9 @@ describe("the owner's one-time command", () => {
     const r = f.cmd(['--with-root', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     // (item 6 of the A-2 round changed these words. Old: "root is on here: Sparkie may run a command as root on <host>,
-    // each time inside the put-back net, after your press." New: they say the helper cannot tell who calls it)
-    assert.match(r.stdout, /root is on here: Sparkie asks you before each root command it runs on .*, and runs it inside the\n {2}put-back net\. The helper itself cannot tell who calls it: any program that runs as you on .* can now\n {2}run a command as root through it, inside the net, with no press\. Turn it off again with --without-root\.\n/);
+    // each time inside the put-back net, after your press." New: Sparkie asks, the net puts back only the ways in, and
+    // the helper cannot tell who calls it)
+    assert.match(r.stdout, /root is on here: Sparkie asks you before each root command it runs on .*\. The helper runs every root\n {2}command inside the put-back net, which puts back only the ways in \(SSH, Tailscale, the firewall, the sign-in\n {2}files\) unless they are kept, never anything else the command changed\. The helper cannot tell who calls it: any\n {2}program that runs as you on .* can now run a command as root through it, with no press\. Turn it off\n {2}again with --without-root\.\n/);
     const sw = join(f.target.R, 'var/lib/spark-console/root-on');
     assert.match(readFileSync(sw, 'utf8'), new RegExp(`^on \\d{4}-\\d\\d-\\d\\d helper ${sha(readFileSync(HELPER_SRC))}\\n$`));
     assert.equal(statSync(sw).mode & 0o777, 0o600);
