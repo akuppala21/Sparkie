@@ -485,3 +485,30 @@ test('R1-10: with the journal\'s disk full, a changing run, an undo and a long l
     assert.equal(lookUnits(), looks, 'no look ran');
   } finally { rmSync(flag, { force: true }); }
 });
+
+// S-17 (the final sorter read): ladder.test's "an agent's change is a button for the owner" checks an agent's own call,
+// where there is no button; no test sent run through ask_sparkie, the path that makes one.
+async function askSparkie(token, words, rounds) {
+  script([{ match: `^${words}$`, rounds }]);
+  try {
+    let r = await call(token, ASK, { message: words });
+    if (r.value?.status === 'thinking') r = await waitFor(async () => { const x = await call(token, ASK, { conversation: r.value.conversation }); return x.value?.status !== 'thinking' && x; }, { timeout: 90000, what: 'Sparkie\'s answer to the agent' });
+    return r;
+  } finally { noScript(); }
+}
+test('S-17: an agent that asks Sparkie for a change on a compute Spark gets a button only the owner can press: the agent\'s press is refused, nothing ran before, and the owner\'s press runs it', { timeout: 180000 * SLOW }, async () => {
+  const words = 'fix the agent17 note on spark 3', r = await askSparkie(keys.act.token, words, [[RUN('touch notes/agent17.txt')]]);
+  assert.equal(r.isError, false, r.text);
+  const [asked] = sentBack(words);
+  assert.equal(asked?.outcome, 'needs-ok', JSON.stringify(asked));
+  assert.match(asked.question, /^Run this on Spark 3\?\n\$ touch notes\/agent17\.txt\nAsked because an agent asked for it\.\n/, asked.question);
+  const yes = (await chatMessages(r.value.conversation)).flatMap(m => m.choices || []).find(c => c.label === 'Run it');
+  assert.ok(yes, 'the button, in the agent\'s conversation');
+  assert.ok(!existsSync(at3('notes/agent17.txt')), 'nothing ran before the press');
+  const taken = await call(keys.act.token, ASK, { conversation: r.value.conversation, choice: yes.id });
+  assert.match(taken.raw, /Only the owner can answer this one/, taken.raw);
+  assert.ok(!existsSync(at3('notes/agent17.txt')), 'the agent\'s press ran nothing');
+  const p = await choose(r.value.conversation, yes.id);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(existsSync(at3('notes/agent17.txt')), `the owner's press ran it: ${p.text}`);
+});
