@@ -284,9 +284,10 @@ const envFor = (home, extra = {}) => ({ HOME: home, USER: 'standin', PATH: `${jo
   SPARK_CONSOLE_UPDATE_GUARD_S: String(120 * SLOW), SPARK_CONSOLE_UPDATE_CONFIRM_S: String(20 * SLOW), ...extra });
 // The pull.sh at the fixed path, as the owner runs it.
 // onOut(all output so far, the child) is called as output comes; detached runs it in a process group of its own.
-function pull(home, args, { input = '', extra, onOut = null, detached = false } = {}) {
+function pull(home, args, { input = '', extra, onOut = null, detached = false, onSpawn = null } = {}) {
   return new Promise(resolve => {
     const p = spawn('bash', [join(home, '.local', 'share', 'spark-console', 'pull.sh'), ...args], { env: envFor(home, extra), stdio: ['pipe', 'pipe', 'pipe'], detached });
+    onSpawn?.(p);
     let out = '';
     p.stdout.on('data', d => { out += d; onOut?.(out, p); });
     p.stderr.on('data', d => { out += d; onOut?.(out, p); });
@@ -1242,7 +1243,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     // (its own process group, made for this one pull.sh: only that group is ever signalled, and it is ended below)
     let child = null;
     try {
-      const run = pull(home, ['install', g.t12], { detached: true, onOut: (out, p) => { child = p; } });
+      const run = pull(home, ['install', g.t12], { detached: true, onSpawn: p => { child = p; } });
       await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'pull.sh at git archive' });
       // (as systemd stops a unit: every process in it gets SIGTERM)
       process.kill(-Number(read(held).trim()), 'SIGTERM');
@@ -1268,7 +1269,7 @@ describe('the way back for an update from GitHub, armed by the build installed n
     // (its own process group, made for this one pull.sh: only that group is ever signalled, and it is ended below)
     let child = null;
     try {
-      const run = pull(home, ['install', g.t12], { detached: true, onOut: (out, p) => { child = p; } });
+      const run = pull(home, ['install', g.t12], { detached: true, onSpawn: p => { child = p; } });
       await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'the way back being armed, its timer on' });
       assert.ok(existsSync(join(home, 'guard-enabled')), 'the timer was on when the stop came');
       // (as systemd stops a unit: every process in it gets SIGTERM; then the stand-in's is-active answers again, which
