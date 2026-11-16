@@ -16,7 +16,8 @@
 // and with nothing removed since nothing is removed and "Keep these" ends it; a saved workflow's run on record in the
 // snapshot never comes back, so the start stops nothing of that name (R57); a narrowing notes only the right it took, so a
 // put-back never takes one the owner never took. go-back.sh and an update's way back put
-// back program files only and never trip it.
+// back program files only and never trip it. An always-allowed kind taken away raises the number too: an older copy put
+// back by hand holds, and the kind is taken away again (not live before or after "Keep these").
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync, symlinkSync } from 'node:fs';
@@ -508,5 +509,43 @@ describe('under the hold, the paired Telegram chat', { concurrency: 1 }, () => {
     assert.match(r.raw, /state was put back from a copy, so agents can’t change anything/, r.raw);
     await sleep(1000);
     assert.equal(stateOf('spark4', RADIX), was, 'nothing changed there');
+  });
+});
+
+// An "always allowed" kind taken away with /allowed off raises the number and is noted (R1-04, R65): an older copy of
+// the state, put back by hand on the same disk with nothing else removed since, holds, and the kind is taken away again,
+// so it is not live, before "Keep these" or after it.
+describe('an always-allowed kind taken away, then an older copy put back by hand', { concurrency: 1 }, () => {
+  const KIND = { id: 'a1b2c3d4', spark: 'spark3', program: 'touch', under: '~/notes', addedAt: '2026-11-14T00:00:00.000Z' };
+  const K5 = new Authenticator(TAILNET, ORIGIN);
+  let A, B;
+  after(async () => { await A?.stop(); await B?.stop(); });
+  const kinds = F => parse(readFileSync(join(F.stateDir, 'agent-settings.json'), 'utf8'))?.allowed || [];
+
+  test('taken away: the number goes up and the secrets file notes it; the older copy holds and the kind is taken away again', { timeout: 300000 * SLOW }, async () => {
+    A = await startMock({ prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'agent-settings.json'), JSON.stringify({ allowed: [KIND] }), { mode: 0o600 }) });
+    use(A);
+    is(await ask(A, '/auth/passkey/register', { method: 'POST', body: K5.register((await ask(A, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } })).json) }), 201, 'a passkey');
+    assert.equal(serialIn(A), 1);
+    assert.match((await say(await newChat(), '/allowed')).text, /\n1\. “touch” in ~\/notes on Spark 3\n/);
+    const older = copyState(A, 'allowed-older');
+    assert.match((await say(await newChat(), '/allowed off 1')).text, /\nTaken away: “touch” in ~\/notes on Spark 3\. It is asked again\.$/);
+    assert.deepEqual(kinds(A), []);
+    assert.equal(serialIn(A), 2, 'the state’s number went up');
+    const s = secretsOf(A);
+    assert.equal(s.auth.serial, 2, 'and the secrets file’s');
+    assert.deepEqual(s.auth.removed.map(r => [r.kind, r.id]), [['allowed', KIND.id]]);
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop(); A = null;
+    B = await startFrom(older, secrets);
+    use(B);
+    assert.equal((await net(B, '/whoami')).json.held, LINE, 'held');
+    assert.deepEqual(kinds(B), [], 'taken away again');
+    assert.deepEqual((await ask(B, '/auth/putback')).json.allowed, []);
+    assert.ok(eventLines(B).some(e => e.type === 'notice' && /was removed again \(always-allowed command “touch in ~\/notes on Spark 3”\)/.test(e.text || '')), JSON.stringify(eventLines(B).filter(e => e.type === 'notice')));
+    assert.match((await say(await newChat(), '/allowed')).text, /\nNothing is always allowed\./);
+    is(await confirmed(B, 'POST', '/auth/putback/keep', {}, K5), 200, 'kept');
+    assert.deepEqual(kinds(B), [], 'not live after “Keep these” either');
+    assert.match((await say(await newChat(), '/allowed')).text, /\nNothing is always allowed\./);
   });
 });
