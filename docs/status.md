@@ -85,6 +85,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R70](rules/R70.md) | partly | `test/root-helper.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
 | [R71](rules/R71.md) | partly | `test/net.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
 | [R72](rules/R72.md) | partly | `test/ladder.test.mjs`; `test/runner.test.mjs`; `test/runner-fixes.test.mjs` | falls short today: its file says where |
+| [R73](rules/R73.md) | partly | `test/door-repeat.test.mjs` | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
 
@@ -105,9 +106,9 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 3.11 | partly | `test/brain-rail.test.mjs` | holds part of T136: “a switch to a brain with no eval on record makes every change a button; once the eval has passed for this brain and build, a clear change runs at once.” |
 | 3.12 | no test yet |  | T142: no test holds it yet |
 | 4.1 | no test yet |  | no acceptance test lists it |
-| 4.2 | no test yet |  | T58: no test holds it yet |
+| 4.2 | partly | `test/door-repeat.test.mjs` | holds part of T58: “the same call twice runs the start once.” |
 | 4.3 | no test yet |  | no acceptance test lists it |
-| 4.4 | no test yet |  | T37, T58: no test holds them yet |
+| 4.4 | partly | `test/door-repeat.test.mjs` | holds part of T58: “the same call twice runs the start once.”; T37: no test holds it yet |
 | 4.5 | no test yet |  | T72: no test holds it yet |
 | 4.6 | no test yet |  | T75, T101, T103: no test holds them yet |
 | 4.7 | no test yet |  | T80: no test holds it yet |
