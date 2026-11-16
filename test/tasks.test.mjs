@@ -259,7 +259,7 @@ test('(E6b) the owner’s “carry on” in a chat stopped at its 120 commands: 
 
 test('a task’s 120 commands are one count: the carry-on turn that reaches them is stopped by it, the task stops at its limit with that reply, and its record holds 120', { timeout: 120000 * SLOW }, async () => {
   assert.ok(made.g, 'set-up');
-  const t = await waitFor(() => { const x = chatsOf(B).find(c => c.id === made.near).task; return x?.stopped && x; }, { timeout: 60000 * SLOW, what: 'the task stopped at its 120' });
+  const t = await waitFor(() => { const x = chatsOf(B).find(c => c.id === made.near).task; return x?.stopped && x; }, { timeout: 100000, what: 'the task stopped at its 120' });   // (waitFor multiplies by SLOW itself: this ends before the test's own limit, with words)
   assert.deepEqual([t.steps, t.stopped, t.continuations], [120, 'steps', 1], JSON.stringify(t));
   const m = await messagesOn(made.near), last = m.at(-1);
   assert.deepEqual([last.role, last.stopped, last.notice ?? null], ['assistant', 'steps', null]);

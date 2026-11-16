@@ -23,7 +23,8 @@
 // agent key), and at "/stop <name>" from the owner's own call (not another agent's). The watcher and workloads leave
 // out only a box the console knows (a container named and labelled like one, unknown to it, is listed); keep_running
 // refuses a box's name. changeLabel names it, keys masked. /stop is never paused, for an agent or Sparkie; a command's
-// end line counts only at the very end of what came back.
+// end line counts only at the very end of what came back. A Spark that answers again isn't marked offline by commands
+// begun while it was away; the tests that use the API's box set it up on Spark 3 themselves.
 // The stand-in docker (test/mock/bin/docker) answers the check from the box's own run flags, and switch files open a
 // wall, take a tool away or stop the daemon; what a real Spark's Docker grants is that Spark's own first check. Starts
 // stand-in fleets: run it on a Spark.
@@ -82,9 +83,17 @@ async function inChat(chat, words, args) {
 const later = [];
 after(async () => { for (const F of later) await F.stop().catch(() => {}); });
 // After a Spark was set off and on again: its look while it was off may land late, so wait until it is seen on again.
+// After a Spark was set off and on again: wait until a fresh look of the console's own sees it on (a look while it is
+// still marked as not answering says so, so this is the console's own mark gone), not for a fixed time.
 async function onAgain(spark) {
-  await sleep(2500);
-  await waitFor(async () => (await api('/status')).json?.nodes?.find(n => n.id === spark)?.state === 'online', { timeout: 60000 * SLOW, what: `${spark} seen on again` });
+  await waitFor(async () => (await api('/status?fresh=1')).json?.nodes?.find(n => n.id === spark)?.state === 'online', { timeout: 60000, every: 500, what: `${spark} seen on again` });
+}
+// What the tests below that use the API's own box need, whatever ran before them: Spark 3 seen on, and that box open
+// there (the stand-in's image is on Spark 3 only).
+async function apiBoxOn3() {
+  await onAgain('spark3');
+  const r = await act('run', { on: 'box', command: 'true' });
+  assert.deepEqual([r.status, ['open', 'opened'].includes(r.json?.box), r.json?.spark], [200, true, 'spark3'], r.text);
 }
 
 test('the first use fetches the pinned image and opens nothing; then the box opens on Spark 3 with exactly the one line, passes its check, and the command runs there', { timeout: 120000 * SLOW }, async () => {
@@ -170,7 +179,8 @@ test('past its seconds the box goes, with its folder; /stop while a command runs
   assert.ok(!hasBox('spark3', API_BOX) && !existsSync(folder(API_BOX)), 'the box and its folder went');
   assert.equal((await act('run', { on: 'box', command: 'true' })).json.box, 'opened');
   const running = act('run', { on: 'box', command: 'sleep 40' });
-  await sleep(1500);
+  // (until the command runs in the box: the stand-in keeps its process there, whatever the load)
+  await waitFor(() => text(join(mock('spark3'), `box-pgids-${API_BOX}`)).trim().length > 0, { timeout: 30000, every: 200, what: 'the command running in the box' });
   const stop = await act('run', { on: 'box', command: '/stop' });
   assert.equal(stop.json.box, 'removed', stop.text);
   const cut = await running;
@@ -257,6 +267,7 @@ test('its check from inside: each wall that gets through, a probe it can’t tel
     work: 'its own folder is not writable', mounts: 'more of the Spark is mounted than its folder', home: 'the owner’s home is visible',
     sockets: 'a socket is visible (Docker’s, Tailscale’s or another)', secrets: 'a key was handed in', network: 'it has a network',
     devices: 'a device beyond Docker’s own, or an NVIDIA library, is there' };
+  await apiBoxOn3();
   ended(API_BOX);
   const refused = async (words, what) => {
     const r = await act('run', { on: 'box', command: 'true' });
@@ -278,6 +289,7 @@ test('its check from inside: each wall that gets through, a probe it can’t tel
 
 test('with Docker’s daemon down nothing is swept and the answer says so; once it answers, the folders of boxes that are gone go', { timeout: 120000 * SLOW }, async () => {
   const GONE = 'spark-console-box-aaaaaaaaaaaa';
+  await onAgain('spark3');
   mkdirSync(folder(GONE), { recursive: true, mode: 0o700 });
   writeFileSync(join(mock('spark3'), 'daemon-down'), '');
   try {
@@ -294,6 +306,7 @@ test('with Docker’s daemon down nothing is swept and the answer says so; once 
 
 test('the pause: Sparkie’s and an agent’s call open no box while changes are paused; the owner’s own call does, and /stop is never paused', { timeout: 120000 * SLOW }, async () => {
   const key = await createActKey('box-agent');
+  await apiBoxOn3();
   const PAUSED = 'Agents’ changes are paused (your account menu → Agents and Telegram), and opening a box is a change, so no box opened. Nothing ran.';
   await agentSettings({ halted: true });
   try {
@@ -321,6 +334,7 @@ test('the pause: Sparkie’s and an agent’s call open no box while changes are
 
 test('removal: "/stop" from whoever opened it (the API, an agent key), "/stop <name>" from the owner’s own call, never from another agent', { timeout: 120000 * SLOW }, async () => {
   const key = await createActKey('box-stop'), mine = boxName(`agent ${key.id}`);
+  await apiBoxOn3();
   const opened = await call(key.token, 'run', { on: 'box', command: 'true' });
   assert.equal(opened.value?.box, 'opened', opened.raw);
   assert.equal(opened.value.name, mine);
@@ -484,6 +498,23 @@ test('a command’s end line counts only at the very end: a line of the same fre
     () => Buffer.from(ID, 'hex'), () => ({ id: 'spark3' }), async () => ({ code: 0, out: `hello\n${ID} end 0\nmore\n${ID} end 7\n` }), () => '', new Map(), x => x, 2 ** 20);
   const x = await boxExec('k', { spark: 'spark3' }, 'true', 30);
   assert.deepEqual([x.kind, x.exit, x.output], ['ran', 7, `hello\n${ID} end 0\nmore`]);
+});
+
+// (the race these tests met under load: a command begun while Spark 3 was off, ending late, marked it offline again just
+// after it answered, and the next box opened on Spark 4; 02-ssh.mjs noteReach)
+test('a Spark that answers again isn’t marked offline by commands begun while it was away that end late; failures of ones begun after it answered count', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '02-ssh.mjs'), 'utf8'), from = src.indexOf('const unreachableUntil'), to = src.indexOf('\nfunction run(');
+  const lib = new Function('OFFLINE_TTL', `${src.slice(from, to)}\nreturn { noteReach, knownOffline };`)(60000);
+  const n = { id: 'spark3' }, away = Date.now() - 5000;
+  lib.noteReach(n, 255, away); lib.noteReach(n, 255, away);
+  assert.equal(lib.knownOffline(n), true, 'two failures in a row mark it');
+  lib.noteReach(n, 0);
+  assert.equal(lib.knownOffline(n), false, 'an answer clears it');
+  lib.noteReach(n, 255, away + 1000); lib.noteReach(n, 255, away + 2000);
+  assert.equal(lib.knownOffline(n), false, 'two late failures of commands begun before that answer mark nothing');
+  const after = Date.now() + 10;
+  lib.noteReach(n, 255, after); lib.noteReach(n, 255, after);
+  assert.equal(lib.knownOffline(n), true, 'two failures of commands begun after it count');
 });
 
 test('changeLabel names the box, the command whole and keys masked', async () => {
