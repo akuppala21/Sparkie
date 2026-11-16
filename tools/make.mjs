@@ -3,7 +3,8 @@
 //   node tools/make.mjs           writes service/server.mjs (the parts joined), docs/code-map.md, docs/registry.md and
 //                                 docs/rules.md when they differ, then runs tools/check-docs.mjs and the header check
 //                                 (checkParts in tools/parts.mjs); docs/status.md and its check too (tools/status.mjs);
-//                                 test/covers.md, from each test file's "// Covers:" comment (tools/check-docs.mjs)
+//                                 test/covers.md, from each test file's "// Covers:" comment (tools/check-docs.mjs);
+//                                 and that each part tools/affected.mjs names is still there (checkAffected)
 //   node tools/make.mjs --check   changes nothing: fails if any of the six is stale or a check finds a problem
 //
 // It exits 1 on any problem, with one line each.
@@ -15,6 +16,7 @@ import { codeMap } from './code-map.mjs';
 import { checkDocs, rulesIndex, coversTable, describe } from './check-docs.mjs';
 import { checkParts, registry } from './parts.mjs';
 import { checkStatus, statusTable } from './status.mjs';
+import { checkAffected } from './affected.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');
@@ -42,7 +44,7 @@ for (const [file, make, from] of MADE) {
   }
 }
 
-const problems = [...checkDocs(ROOT), ...checkParts(ROOT), ...checkStatus(ROOT)];
+const problems = [...checkDocs(ROOT), ...checkParts(ROOT), ...checkStatus(ROOT), ...checkAffected(ROOT)];
 for (const p of problems) console.error(describe(p));
 if (problems.length) {
   console.error(`The documents have drifted from the code (${problems.length} problem${problems.length === 1 ? '' : 's'}): fix the document, or the code if the document is right.`);

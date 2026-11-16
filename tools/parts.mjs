@@ -536,6 +536,11 @@ export function checkParts(root = ROOT, tree = readParts(root)) {
   }
   for (const [file, d] of declared) if (!files.has(file)) say(d.part, 1, `owns ${file}, which no part keeps (a state file is a top-level constant: \`\${STATE_DIR}/${file}\`)`);
   // The names this tool reads by their text.
+  // (an action is read from its first line's text, name: 'x', title: '…', kind: '…'; one written another way would be
+  // left out of the registry, and out of the docs check's groups, without a word)
+  for (const p of tree.parts.filter(x => x.bad == null)) {
+    for (const a of p.acts.filter(x => !p.actions.some(y => y.name === x.name))) say(p.file, lineAt(p.text, a.start), `defines the action ${a.name}, but not on one line as name: '${a.name}', title: '…', kind: 'read' or 'change' (in that order), which is how tools/parts.mjs and tools/check-docs.mjs read an action: write it that way`);
+  }
   for (const n of namesGone(tree)) {
     const as = TABLES.includes(n) ? ` table (const ${n} = new Set([…]) or = { …: […] })` : ' at the top level of a part';
     out.push({ check: 'parts', file: 'service/src', line: 1, message: `has no ${n}${as}, which tools/parts.mjs reads for ${READ_BY_NAME[n]}: point the tool at the name the service uses now (READ_BY_NAME, and where it reads it), or put the name back` });

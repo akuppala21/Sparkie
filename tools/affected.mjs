@@ -42,6 +42,15 @@ export const ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/,
   /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//, /^\.github\//];
 // What every test depends on: all, even in a landing.
 export const LANDING_ALWAYS_PARTS = ['03-identity', '03-secrets', '22-passkey', '22-sessions', '25-backup-and-start'].map(p => `${p}.mjs`);
+// Each part the two lists name, by its file name, must be in service/src/: one renamed or folded into another would
+// drop off them in silence, and a change to it would stop running everything. tools/make.mjs runs this with the
+// documents' checks, so a missing one fails there.
+export function checkAffected(root = ROOT) {
+  const src = join(root, 'service', 'src'), have = new Set(existsSync(src) ? readdirSync(src) : []);
+  const own = readFileSync(fileURLToPath(import.meta.url), 'utf8'), lineOf = p => own.slice(0, own.indexOf(`'${p.slice(0, -4)}'`)).split('\n').length;
+  return [...new Set([...ALWAYS_PARTS, ...LANDING_ALWAYS_PARTS])].filter(p => !have.has(p)).map(p => ({ check: 'affected', file: 'tools/affected.mjs', line: lineOf(p),
+    message: `names ${p} (${[ALWAYS_PARTS.includes(p) && 'ALWAYS_PARTS', LANDING_ALWAYS_PARTS.includes(p) && 'LANDING_ALWAYS_PARTS'].filter(Boolean).join(', ')}), which service/src/ doesn’t have: a change to it would no longer run everything. Name the part it is now` }));
+}
 export const LANDING_ALWAYS = [/^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/, /^deploy\//, /^test\/lib\.mjs$/,
   /^test\/start-mock\.mjs$/, /^test\/mock\//, /^test\/lock\.mjs$/, /^tools\//];
 // Everything starts and answers, sign-in works, the installer can still read the service.
