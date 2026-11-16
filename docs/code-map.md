@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27974 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27988 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -263,12 +263,12 @@ What one model needs is said by its brain setup, never by the chat loop (contrac
 Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after reboots until someone stops it here, and it's labeled protected, so deploys never stop it. Setups come from config.json (`main`, or `main.presets`) plus any made from a model the Sparks hold (setupFromLibrary); the one in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its brain is asked and read …
 
 - **Area:** brain. **Rules:** R2, R8, R14, R15, R17, R19, R20, R22, R27, R34. **Tests:** brain.test.mjs, agent-setup.test.mjs
-- **Lines:** 315
+- **Lines:** 329
 - **Owns:** main.json (writers: writeMainFile)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `configPresets`, `mainPresets`, `loadMainSetup`, `saveMainChoice`, `writeMainFile`, `brainLeftDown`, `markBrainLeftDown`, `saveRoutes`, `routeTarget`, `chatTarget`, `agentTarget`, `mainNode`, `repoOf`, `mainBusy`, `mainSnapshots`, `mainStatusScript`, `mainStatus`, `mainPlan`, `mainRunCommand`, `mainOverlayScript`, `startMain`, `setupFromLibrary`, `switchMain`, `stopMain`
-- **Uses:** `01-setup` (`STATE_DIR`, `CONFIG`, `ALL_LOCAL`, `nodeById`, `q`, `HF_HUB`, `hfSnap`, `HttpError`, `isProtected`, `sleep`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `readJson`), `05-library` (`gpuUsersScript`, `inventory`), `07-jobs` (`jobs`, `note`, `stopContainer`, `step`, `copyModel`), `09-verified` (`recordVerified`), `13-ask` (`withAsk`), `21-brain-check` (`checkBrainSoon`), `21-web` (`readable`), `25-backup-and-start` (`local`)
+- **Functions:** `configPresets`, `mainPresets`, `loadMainSetup`, `saveMainChoice`, `writeMainFile`, `brainLeftDown`, `markBrainLeftDown`, `saveRoutes`, `routeTarget`, `chatTarget`, `agentTarget`, `mainNode`, `repoOf`, `mainBusy`, `mainSnapshots`, `mainStatusScript`, `mainStatus`, `mainPlan`, `mainRunCommand`, `mainOverlayScript`, `startMain`, `setupFromLibrary`, `mainLook`, `unconfirmedWords`, `switchMain`, `stopMain`
+- **Uses:** `01-setup` (`STATE_DIR`, `CONFIG`, `ALL_LOCAL`, `nodeById`, `q`, `HF_HUB`, `hfSnap`, `HttpError`, `isProtected`, `sleep`), `02-ssh` (`run`, `fields`), `03-identity` (`readKept`, `readJson`), `05-library` (`gpuUsersScript`, `inventory`), `07-jobs` (`jobs`, `note`, `stopContainer`, `step`, `copyModel`), `09-verified` (`recordVerified`), `13-ask` (`withAsk`), `17-stop-checked` (`STOPPED_STATES`), `21-brain-check` (`checkBrainSoon`), `21-web` (`readable`), `25-backup-and-start` (`local`)
 - **Used by:** `05-library`, `09-verified`, `10-recipes`, `14-chats`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-workflows`, `19-watcher`, `20-heal`, `20-memory-names`, `20-words`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-brain-trial`, `21-compare`, `21-guide`, `21-hub`, `21-runner`, `21-updates`, `24-handler`
 
 ### `14-chats.mjs`: Sparkie's chats
@@ -375,7 +375,7 @@ The put-back after a failed start (putBack, asideBack), an app that didn't come 
 - **Wakes:** none
 - **Functions:** `stopLook`, `stopChecked`, `runningOn`, `owedWords`, `withOwed`
 - **Uses:** `01-setup` (`q`, `nodeById`), `02-ssh` (`run`), `12-status` (`sparkName`)
-- **Used by:** `08-cluster`, `17-changes`, `18-workflows`, `21-apps`
+- **Used by:** `08-cluster`, `13-main-model`, `17-changes`, `18-workflows`, `21-apps`
 
 ### `18-job-model.mjs`: a saved workflow's job is handed the one model address (D7)
 
