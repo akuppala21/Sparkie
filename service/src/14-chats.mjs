@@ -197,6 +197,8 @@ const OP_WORDS = {
   'power-on': 'Turning on',
   restart: 'Restarting',
   'restart-model': 'Restarting',
+  // (run with minutes, a long command: its notice is built by code, never its output, 21-long.mjs)
+  run: 'The command',
   'self-test': 'The self-test with',
   'start-model': 'Downloading and starting',
   stop: 'Stopping',
