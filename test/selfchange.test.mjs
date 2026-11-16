@@ -12,7 +12,9 @@
 // GitHub would take only by force is refused, both refs left where they were; a name the box no longer holds, spelled
 // again only in case, is refused; the eval's held-out set is never in the box. The install's ask names the protected
 // paths, the test files and the review of its head (never an older head's), and its yes merges nothing once the proposal
-// was sent again or GitHub's branch moved. The token is never in a chat or an answer.
+// was sent again or GitHub's branch moved. The ask needs the full run by its name. The yes moves main forward to the very
+// commit shown (fast-forward only, as the stand-in GitHub refuses any other); main moved between the look and the move
+// lands nothing, and the answer says so. The token is never in a chat or an answer.
 // GitHub is a stand-in: a bare repository holding this tree as main (SPARK_CONSOLE_REPO_URL) and test/mock/github.mjs
 // for the API. The box is the real one (A2, C8b) on the stand-in fleet's compute Sparks, filled by boxFill and read back
 // by boxReadBack; the test changes files in it as the brain would. The trial's pass is a stand-in record (R67).
@@ -52,7 +54,7 @@ git(SRC, ['add', '-A']);
 git(SRC, ['commit', '-q', '-m', 'main as it is']);
 git(SRC, ['push', '-q', GH, 'HEAD:refs/heads/main']);
 const MAIN = git(GH, ['rev-parse', 'refs/heads/main']);
-const GHAPI = await startGitHub({ token: TOKEN });
+const GHAPI = await startGitHub({ token: TOKEN, bare: GH });
 after(async () => { await GHAPI.close(); for (const d of temps) rmSync(d, { recursive: true, force: true }); });
 
 let HOME, STATE, COPY;
@@ -629,7 +631,11 @@ describe('propose_update', { concurrency: 1 }, () => {
     // (a job that failed: no ask; then as on a pull request: the run passed, the mark job skipped)
     GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'failure', completed_at: new Date().toISOString(), output: { summary: '✖ a test' } }];
     assert.match((await say(chat, 'install my code proposal')).text, /hasn’t passed \(quick: failure\)/);
-    GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } },
+    // (another check passing is not the full run: no ask until the one named as the repository's full run passed; the
+    // review's P-6, beside it)
+    GHAPI.state.checkRuns[p.head] = [{ name: 'lint', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    assert.match((await say(chat, 'install my code proposal')).text, /hasn’t passed \(lint: success\), so nothing was asked\. Its full run, “suite”, isn’t among its checks\./);
+    GHAPI.state.checkRuns[p.head] = [{ name: 'suite', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } },
       { name: 'mark', status: 'completed', conclusion: 'skipped', completed_at: new Date().toISOString(), output: { summary: '' } }];
     const a = await theAsk(chat);
     assert.ok(a.ask, 'the ask');
@@ -642,6 +648,9 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(r.json.outcome, 'merged', r.text);
     assert.match(r.json.message.content, new RegExp(`Merged: pull request #\\d+ \\(sparkie/${p.id}, tree ${p.tree.slice(0, 12)}\\) is on main\\. GitHub is testing main now; when that tree is marked as tested, install_update installs it`));
     assert.equal(git(GH, ['rev-parse', 'refs/heads/main^{tree}']), p.tree, 'merged at that head: main holds exactly that tree');
+    // (main moved forward to the very commit shown, no merge commit; GitHub takes the pull request as merged; P-6)
+    assert.equal(ghRev('refs/heads/main'), p.head, 'main is the commit shown');
+    assert.ok(GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${p.id}`)?.merged_at, 'the pull request reads as merged');
     assert.equal(installLog(), '', 'nothing installed: the tree isn’t marked yet');
     assert.equal(refs(), '', 'the proposal is no longer open');
     // (main's run marks it: then install_update offers exactly that tree, with its own ask)
@@ -658,7 +667,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     // older head; final read TE-01)
     const chat2 = await newChat(), q = await sent(chat2, 'a second proposal', { 'service/src/20-danger.mjs': `${atMain('service/src/20-danger.mjs')}// a proposal’s line\n`,
       'test/abilities.test.mjs': `${atMain('test/abilities.test.mjs')}// a line the proposal adds\n` });
-    const passed = () => [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    const passed = () => [{ name: 'suite', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
     GHAPI.state.checkRuns[q.head] = passed();
     const prNo = GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).number;
     GHAPI.state.reviews[String(prNo)] = [{ user: { login: 'old-bot' }, state: 'CHANGES_REQUESTED', commit_id: MAIN, body: 'An older head’s words.' },
@@ -686,6 +695,18 @@ describe('propose_update', { concurrency: 1 }, () => {
       assert.match(void2.json.message.content, new RegExp(`sparkie/${q.id}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed\\. Ask again\\.`));
       assert.deepEqual([GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state, ghRev('refs/heads/main')], ['open', mainNow]);
     } finally { git(GH, ['update-ref', `refs/heads/sparkie/${q.id}`, h2, q.head]); }
+    // (main moved by someone else after the yes's look at it, before main is moved: nothing lands, and the answer says so;
+    // the review's P-6)
+    const a3 = await theAsk(chat2), mainThen = ghRev('refs/heads/main');
+    let pushed = null;
+    GHAPI.state.afterLook = () => { pushed = git(GH, ['commit-tree', `${mainThen}^{tree}`, '-p', mainThen, '-m', 'Pushed in between']); git(GH, ['update-ref', 'refs/heads/main', pushed, mainThen]); };
+    const raced = await api(`/chats/${chat2}/choose`, { method: 'POST', body: { choice: a3.yes.id, pair: a3.pair } });
+    assert.equal(raced.status, 200, raced.text);
+    assert.ok(pushed, 'main moved between the look and the move');
+    assert.match(raced.json.message.content, new RegExp(`main moved on GitHub after you were asked \\(it is ${pushed.slice(0, 12)} now\\), so main isn’t the commit you were shown and nothing landed\\.`));
+    assert.notEqual(raced.json.outcome, 'merged', raced.text);
+    assert.deepEqual([ghRev('refs/heads/main'), GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state], [pushed, 'open'], 'main holds only the commit pushed in between; the pull request is still open');
+    assert.match(refs(), new RegExp(`refs/sparkie/${q.id} `), 'the proposal is still open here');
     const b = await theAsk(chat2);
     const main = ghRev('refs/heads/main'), moved = git(GH, ['commit-tree', `${main}^{tree}`, '-p', main, '-m', 'Someone else’s change']);
     git(GH, ['update-ref', 'refs/heads/main', moved, main]);

@@ -22540,6 +22540,8 @@ async function runnerUndo(viewer, ctx, since = '') {
 // use (C8a) and the piece is turned on (SELF_CHANGE_ON). Only the owner's own chat, never an agent's key,
 // ask_sparkie, an API call or a saved workflow's step (NOT_A_STEP).
 const SELF_CHANGE_ON = false;
+// (the repository's full run, .github/workflows/full-run.yml: its job's check run, by name)
+const SELF_FULL_RUN = 'suite';
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 // (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
 const SELF_REFUSED = /^\.github\//i;
@@ -22970,11 +22972,12 @@ async function selfInstallFacts(viewer, ctx) {
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
   const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
-  // (passed: every check finished, at least one with success, none failed, cancelled or timed out; a skipped job, such as
-  // the mark job on a pull request, or a neutral one, is no failure)
-  const ok = new Set(['success', 'skipped', 'neutral']);
-  if (!runs.some(r => r.conclusion === 'success') || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
-    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked. check_update says how it is doing.`);
+  // (passed: the full run itself, by its name, passed, and every other check finished with none failed, cancelled or timed
+  // out; a skipped job, such as the mark job on a pull request, or a neutral one, is no failure. Any other check passing
+  // is not the full run.)
+  const ok = new Set(['success', 'skipped', 'neutral']), full = runs.find(r => r.name === SELF_FULL_RUN);
+  if (full?.status !== 'completed' || full?.conclusion !== 'success' || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
+    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked.${full ? '' : ` Its full run, “${SELF_FULL_RUN}”, isn’t among its checks.`} check_update says how it is doing.`);
   }
   const reviews = ((await selfApi('GET', `/repos/${repo}/pulls/${Number(pr.number)}/reviews`)) || []).filter(r => String(r.commit_id || '') === open.head).slice(-5)
     .map(r => `${clean(r.user?.login, 60)} ${clean(r.state, 30)}${r.body ? `: “${clean(r.body, 200)}” (their words)` : ''}`);
@@ -22989,9 +22992,11 @@ async function selfInstallFacts(viewer, ctx) {
     testedAt: done ? new Date(done).toISOString() : null };
 }
 // C8d: the owner's yes. Exactly the tree on the button: the proposal and its pull request still at the head shown, and
-// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and that is
-// all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
-// install_update with its own ask, once that tree is marked. main moved: nothing is merged.
+// GitHub's main still the commit the proposal was made on; then main is moved forward to that very head, fast-forward
+// only (no merge commit, so no other tree can come of it; GitHub refuses the move if main moved meanwhile, and takes
+// the pull request as merged), and main is read back: it is the commit shown, or nothing landed and the owner is told.
+// That is all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
+// install_update with its own ask, once that tree is marked.
 async function selfInstall(viewer, ctx, input) {
   if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
     throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
@@ -23003,8 +23008,13 @@ async function selfInstall(viewer, ctx, input) {
   if (!pr?.number || pr.head?.sha !== input.head) throw new HttpError(409, `${open.branch}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed. Ask again.`);
   const main = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
   if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged. Drop it and propose it again on the new main.`);
-  await selfApi('PUT', `/repos/${repo}/pulls/${Number(pr.number)}/merge`, { sha: input.head, merge_method: 'merge' });
-  // (merged: the proposal is no longer open here)
+  let refused = null;
+  await selfApi('PATCH', `/repos/${repo}/git/refs/heads/main`, { sha: input.head, force: false }).catch(e => { refused = e; });
+  const now = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
+  if (now !== input.head) {
+    throw new HttpError(409, `${now && now !== open.base ? `main moved on GitHub after you were asked (it is ${clean(now, 12)} now)` : `GitHub didn’t move main to the proposal${refused ? ` (${clean(refused.message, 200)})` : ''}`}, so main isn’t the commit you were shown and nothing landed. Look at main, then ask again (or drop the proposal and propose it on the new main).`);
+  }
+  // (landed: main is the commit shown; the proposal is no longer open here)
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-merge', args: { id: open.id, head: input.head.slice(0, 12), pr: pr.number }, ok: true });
   return { ok: true, outcome: 'merged', tree: input.tree.slice(0, 12), pullRequest: pr.number,
