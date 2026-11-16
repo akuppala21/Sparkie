@@ -62,6 +62,8 @@ async function restart() {
 // (Sparkie offers each change as a button here, and the owner presses them: the counts below say so)
 test('a task that ends done: one report in its chat, counted from its own journal lines, its watt-hours summed and an operation with no number not measured', { timeout: 300000 * SLOW }, async () => {
   assert.deepEqual([stateOf('spark3', GGUF), stateOf('spark4', RADIX)], ['running', 'running']);
+  // (Spark 3's plug readings are being counted before anything starts, as an operation's number needs: op-energy.test.mjs)
+  await waitFor(async () => ((await api('/status')).json.energy?.nodes?.spark3?.wallCoverageSeconds || 0) >= 3 || null, { timeout: 60000 * SLOW, what: 'Spark 3’s wall readings counted', every: 500 });
   const words = `please stop the two models on spark 3 and spark 4, then tell me what is left running`;
   script([{ match: `^${esc(words)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }, { name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }] },
     { match: FINISHED, calls: [] }, { match: ANSWERED, calls: [] }]);
