@@ -45,17 +45,20 @@ function selfTestFile() {
   if (!ALL_LOCAL) return null;
   try { const v = JSON.parse(readFileSync(`${STATE_DIR}/.test-selfchange.json`, 'utf8')); return v && typeof v === 'object' ? v : null; } catch { return null; }
 }
-// The coding trial's verdict for the brain in use (C8a's trialPassed). Until it is in this build: no pass on record.
+// The coding trial's verdict for the brain in use (C8a's trialPassed: { passed, says }, never throws), its own sentence
+// quoted as it is. Until it is in this build: no pass on record (the stand-in fleet's tests may stand in for one).
+const SELF_NO_TRIAL = 'No coding trial result is on record for this brain.';
 function selfTrial() {
   if (typeof trialPassed === 'function') {
-    try { const r = trialPassed(); return r === true || r?.passed === true; } catch { return false; }
+    try { const r = trialPassed(); return { passed: r?.passed === true, says: clean(r?.says, 400) || SELF_NO_TRIAL }; } catch { return { passed: false, says: SELF_NO_TRIAL }; }
   }
-  return selfTestFile()?.trial === 'pass';
+  return selfTestFile()?.trial === 'pass' ? { passed: true, says: '' } : { passed: false, says: SELF_NO_TRIAL };
 }
 // The gate (runAction): dark until turned on and the trial has a pass; then only the owner's own chat.
 function selfGate(viewer, ctx) {
   if (!(SELF_CHANGE_ON || selfTestFile()?.on === true)) throw new HttpError(403, 'Proposing changes to Spark Console’s own code isn’t turned on yet, so nothing was done.');
-  if (!selfTrial()) throw new HttpError(403, 'Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record for the brain in use. Nothing was done.');
+  const trial = selfTrial();
+  if (!trial.passed) throw new HttpError(403, `Sparkie can’t propose changes to Spark Console’s own code: the coding trial has no pass on record for the brain in use. ${trial.says} Nothing was done.`);
   const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
   const own = viewer?.role === 'owner' && !ctx.agent && !ctx.agentId && conv && !conv.agent
     && (ctx.via === 'sparkie' || (ctx.via === 'page' && ctx.button));

@@ -125,7 +125,7 @@ describe('propose_update', { concurrency: 1 }, () => {
   test('turned on, but the coding trial has no pass on record: refused', async () => {
     control({ on: true });
     const r = await say(await newChat(), 'please change your own code');
-    assert.match(r.text, /the coding trial has no pass on record for the brain in use\. Nothing was done\./);
+    assert.match(r.text, /the coding trial has no pass on record for the brain in use\. No coding trial result is on record for this brain\. Nothing was done\./);
     assert.equal(refs(), '');
   });
 
