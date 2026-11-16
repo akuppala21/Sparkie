@@ -1,7 +1,7 @@
 # Call the root helper on a Spark
 
-Anything the console runs on a Spark itself through Sparkie's free work (a look today; changes, root and the net
-later) goes through the root helper (`deploy/spark-console-root`, R42) and its one caller, `helperCall` in
+Anything the console runs on a Spark itself through Sparkie's free work (a look, a change, root, the net) goes
+through the root helper (`deploy/spark-console-root`, R42) and its one caller, `helperCall` in
 `21-work.mjs`. Design: `docs/design-2026-11-13/a-workspace.md`, 2.13.
 
 ## Touch
@@ -58,4 +58,4 @@ later) goes through the root helper (`deploy/spark-console-root`, R42) and its o
 
 ## Copy from
 
-- `runCommand` in `21-work.mjs` (`run`, a look today); `selfTestWalls` there (a verb with no command).
+- `runCommand` in `21-work.mjs` (`run`, a look); `selfTestWalls` there (a verb with no command).

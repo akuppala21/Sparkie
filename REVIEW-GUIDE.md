@@ -1,8 +1,9 @@
 # Review guide for Astra
 
-This is the whole Spark Console folder as of 2026-11-15, with nothing left out. The code is commit `36db95e` on
-`main`; this guide is a later commit that changes no code. Please review it for bugs, gaps and suggestions. This page
-says what to read, what changed, what was left out on purpose, how it was checked, and how it gets installed.
+This is the whole Spark Console folder as of 2026-11-15, with nothing left out. The code is as of commit `36db95e`
+on `main`. Two commits came after it: this guide, and fixes to stale documents and to three comments in the parts.
+Neither changes what the code does. Please review it for bugs, gaps and suggestions. This page says what to read,
+what changed, what was left out on purpose, how it was checked, and how it gets installed.
 
 Two things are new since your first review:
 
@@ -40,9 +41,8 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
 ## 2. Reading order
 
 1. **`AGENTS.md`.** The front door: the layout, how to work, the rules that are never broken, one card per task.
-2. **`docs/architecture.md`.** The diagram, one sentence followed from chat to a running model, the known traps.
-   Its diagram does not yet draw the root helper, the box, the ladder or the lock-out net: for those, read the
-   rules and the code.
+2. **`docs/architecture.md`.** The diagram (the root helper, the box, the ladder and the lock-out net are on it),
+   one sentence followed from chat to a running model, one command followed to a Spark, and the known traps.
 3. **`docs/rules.md`.** One line per rule, R1 to R70 (there is no R44). Each rule's file in `docs/rules/` says why,
    where the code falls short today, where it lives and what checks it. Start with the newest: R42, R51, R52, R54,
    R55 and R60 to R70.
@@ -62,11 +62,11 @@ later). The owner's own agents reach Sparkie through the agent door (MCP), one k
 Other documents: `docs/sharing.md` (sign-in), `docs/agent-door.md` (MCP), `docs/recipes.md`, `docs/multi-spark.md`,
 `docs/state.md` and `docs/state-outside.md` (who holds each fact), `docs/glossary.md`, `docs/history/` (dated).
 
-**Some documents lag the code.** The code is what runs; please tell us where a document is wrong. The ones we know:
-"Today" notes written before a later step landed (R3 "nothing calls it yet", R42 "`run` is today a look", R61 "No
-`minutes` yet", R64 "Dark with R55", R67 and R68 on the box); `docs/glossary.md`, which still marks `run`,
-`write_file` and the box "not built yet"; the card for the root helper ("a look today"); and the opening comment of
-`service/src/21-box.mjs`, which still says a box command is not run.
+**Some documents may still lag the code.** The code is what runs; please tell us where a document is wrong. The
+stale notes we found while writing this guide are fixed. The ones we know are left: R54's Today ("the other kinds
+arrive with their steps") and R62's ("called by nothing yet"); the `task` row of `docs/glossary.md`; the root
+helper's card on the hub's command ("never the hub's yet"); and the opening comments of `agentbar/trial.mjs` and
+`service/src/21-box-fill.mjs`.
 
 ## 3. Where the code is
 
@@ -219,12 +219,13 @@ The lists are in four places: each rule's "Today" (what that piece does not do y
 R61, R62, R69 and R70); `docs/history/later-2026-11-15.md` (the net's later lines, moved out of a full rule file);
 `docs/review-astra/reply-1.md` ("Later, in one place"); and below.
 
-**The build does not match three contract sentences.** It is stricter or different; the contract is the owner's to
-change.
+**The build does not match these contract sentences.** It is stricter or different; the contract is the owner's
+to change.
 
 - 8.11 says a change on Spark 2 is kept only by a fresh visit through the changed way in. The build keeps a Spark 2
-  change by code once the console's own ways in still answer, and refuses a lock-out change there. 8.11 also says
-  the net is armed for every command on Spark 2; a look is not armed.
+  change by code once the console's own ways in still answer, and refuses a lock-out change there.
+- 8.11 says the net is armed for every command on Spark 2. A look is not armed.
+- 8.11 allows a command 10 minutes on Spark 2 and for a lock-out change. The build gives both 30 seconds.
 - 8.14 lists plain root commands among the changes that run at once. In the build root is always the dangerous ask.
 - 8.15 says one command for each Spark, once. Root also needs `--with-root`.
 
@@ -349,6 +350,10 @@ TESTS_LINE
 - **The brain eval.** `test/eval.mjs` runs 33 cases, 3 runs each; six are command cases for `run`
   (`test/eval-commands.test.mjs` checks their grading on the stand-in). It has not run on the real Qwen for this
   build.
+- **The page.** On 2026-11-15 the page was checked in a browser on a stand-in fleet, at desktop and phone width: it
+  loads, a chat and a button ask work, a change ask shows its lines above its buttons, and the dangerous ask shows
+  its lines, the exact command and the two-digit box. The change ask and the dangerous ask were sample messages put
+  into the page, because a stand-in fleet on a Mac has no helper.
 - **Not checked: the live run.** No real Spark has the root helper, and no Spark has root on (R42 and R70 say so).
   So no look, change, lock-out change, Spark 2 change or root command of this build has run on real hardware, and
   the walls' proof has never run on a real systemd and kernel. Section 8 says what is installed; what is not has
@@ -445,7 +450,9 @@ and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60; `
   applied until a restart. Live firewall rules are said, not put back.
 - "The owner's own words" is decided by `netWhose`: a list of verbs plus the Spark's name. By our reading of the
   code (not run), "Fix the build on Spark 3" passes it, and so does a question such as "Why is ssh open on
-  Spark 3?". A firewall change Sparkie then proposes is asked, not refused. Is that the right line for contract 8.3?
+  Spark 3?". A firewall change Sparkie then proposes is asked, not refused. The cost, by the same reading, is one
+  more dangerous ask, not a change that runs by itself: nothing runs before the owner's press with its two digits,
+  and then it runs inside the net. Is that the right line for contract 8.3?
 - The timer: a way for the change to stop, delay or outlive it; a power cut at each step of arming and put-back.
 
 **5. Changes on Spark 2.** `service/src/21-hub.mjs`; R1; `test/hub-change.test.mjs`.

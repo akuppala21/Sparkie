@@ -54,6 +54,10 @@ flowchart TD
   ROLL["Rollback unit: the last snapshot's restore.sh. By hand: go-back.sh, the same at a fixed path"]
   DOG["Watchdog timer, outside the service"]
   GUARD["Update guard (pull.sh, update-guard.sh): the installed build's copy and one timer, for one install"]
+  WORK["run and write_file (21-work, 21-write): the sorter (20-sort), then the ladder (21-ladder): at once, a button, the dangerous ask or refused"]
+  HELPER["Root helper on each Spark (deploy/spark-console-root, R42): look wall, run wall, root"]
+  NETG["Lock-out net (21-net, R60): a timer on that Spark puts the ways in back unless kept"]
+  BOX["The box (21-box, R62): a throw-away container on a compute Spark"]
 
   PAGE -->|"GETs plain, changes with X-Spark-Console and Origin (checked on non-GET only)"| LISTEN
   AGENT -->|"JSON-RPC to /mcp with a Bearer key"| LISTEN
@@ -96,6 +100,12 @@ flowchart TD
   RUN -->|"read actions probe on demand, no job; files reads, and save_file writes one new file, in a Spark's shared folder through the worker, no job"| SSH
   RUN -->|"memory, saved workflows, audit line"| STATE
   RUN -->|"undo_update"| ROLL
+  RUN -->|"run and write_file are lookups to runAction: the ladder makes a change's checks"| WORK
+  WORK -->|"helperCall, one script over ssh with sudo -n: a look, or a change with its copies first (21-runner)"| HELPER
+  WORK -->|"a lock-out change and root (21-root) after the dangerous ask's press, a change on Spark 2 (21-hub) after its button's"| NETG
+  NETG -->|"armed in the same call; the ways in tried from outside; then keep or putback (21-guard)"| HELPER
+  HELPER -->|"a short-lived systemd unit for each command; the put-back from the Spark's own timer"| FLEET
+  WORK -->|"on box: docker run and exec over ssh, no helper"| BOX
   RUN -->|"before a change written down first, its start line, synced (none written: nothing runs); each change's result; agents' looks; recall reads it"| JOURNAL
   CHAT -->|"the owner's words, each tool call with its result, the turn"| JOURNAL
   JOBS -->|"each operation's end and log; a start's attempts"| JOURNAL
@@ -178,6 +188,13 @@ list (`docs/state.md`, `docs/state-outside.md`); the owner's words (R34); the br
     line in the service log, when its file can’t be read at that moment: R20), posts the result in the chat (and calls
     `wakeWork`, which starts a carry-on turn once nothing of that chat is running or being answered) and writes the
     event.
+
+**A command instead** ("free up space in ~/work on Spark 3"). The brain calls `run`, and `runCommand` (`21-work.mjs`)
+has `sortCommand` (`20-sort.mjs`) sort it. A look runs in the root helper's look wall. Anything else goes to
+`workChange` (`21-ladder.mjs`): a plain change the owner's own words asked for, with nothing read since, runs at once
+(`runChange` in `21-runner.mjs`: the copies, the journal's start line, the run wall); the rest is a button or the
+dangerous ask (`dangerAsk` in `20-danger.mjs`). A lock-out change, root and a change on Spark 2 run only after their
+press, inside the net (`netGuarded` in `21-net.mjs`): kept if the ways in still answer, else put back.
 
 ## 4. Known traps
 

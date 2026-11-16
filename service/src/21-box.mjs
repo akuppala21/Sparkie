@@ -14,8 +14,9 @@
 // meets neither. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
 // it, and at "/stop <its name>" from the owner's own call; the record is kept until its removal is seen. The watcher and
 // workloads skip a container this record knows by its name and label (19-watcher.mjs), and typed starts refuse its
-// names (21-apps.mjs). Today the command is not run: the answer says the box opened and passed its check, and that
-// nothing ran (A4 runs it). Which box is where lives only in memory: after a restart a box left open ends at its time.
+// names (21-apps.mjs). A command runs in the box by docker exec, in /work, for 30 seconds (boxRun; A4), and write_file
+// writes there from inside it (boxWrite). Which box is where lives only in memory: after a restart a box left open
+// ends at its time.
 const BOX_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_SECONDS) || 2 * 3600;
 const BOX_MEMORY = '4g', BOX_PIDS = 256, BOX_CPUS = 4, BOX_FILE_BYTES = 2 ** 30, BOX_OPEN_MS = 45000, BOX_STOP_MS = 20000, BOX_OUT_MAX = 2 ** 20;
 // A command's seconds in the box (A4): 30, inside the turn; past them the box goes (the stand-in fleet may shorten it).

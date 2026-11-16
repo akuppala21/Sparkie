@@ -16086,8 +16086,9 @@ async function boxFillDoor(input, viewer, ctx) {
 // meets neither. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
 // it, and at "/stop <its name>" from the owner's own call; the record is kept until its removal is seen. The watcher and
 // workloads skip a container this record knows by its name and label (19-watcher.mjs), and typed starts refuse its
-// names (21-apps.mjs). Today the command is not run: the answer says the box opened and passed its check, and that
-// nothing ran (A4 runs it). Which box is where lives only in memory: after a restart a box left open ends at its time.
+// names (21-apps.mjs). A command runs in the box by docker exec, in /work, for 30 seconds (boxRun; A4), and write_file
+// writes there from inside it (boxWrite). Which box is where lives only in memory: after a restart a box left open
+// ends at its time.
 const BOX_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_SECONDS) || 2 * 3600;
 const BOX_MEMORY = '4g', BOX_PIDS = 256, BOX_CPUS = 4, BOX_FILE_BYTES = 2 ** 30, BOX_OPEN_MS = 45000, BOX_STOP_MS = 20000, BOX_OUT_MAX = 2 ** 20;
 // A command's seconds in the box (A4): 30, inside the turn; past them the box goes (the stand-in fleet may shorten it).
@@ -18755,9 +18756,11 @@ const HUB_WAYS = {
 // Timers: none        Wakes: none
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
-// said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 (21-hub.mjs, behind its
-// switch) or a Spark holding the brain; the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
-// once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
+// said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root":
+// root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside
+// the net) and the lock-out class to netChange (21-net.mjs: the dangerous ask, inside the net); a write_file or a
+// command given a key is refused in both.
+// At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
 // placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
 // with the exact command, built here, on the page and in the paired Telegram chat; a risky change of a dangerous kind
@@ -23436,8 +23439,9 @@ function commandShown(c, ok, out) {
 // sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42;
 // design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account
 // with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a
-// change on a compute Spark at once or asked, through the runner's run wall with the copy first (root, Spark 2 and the
-// net are later steps). helperCall is the one
+// change on a compute Spark at once or asked, through the runner's run wall with the copy first; a change on Spark 2
+// (21-hub.mjs) and the lock-out class (21-net.mjs) are asked and run inside the lock-out net, and root: true goes to
+// rootChange (21-root.mjs). helperCall is the one
 // way the console calls the helper: one script over ssh (local bash on Spark 2) that first checks the Spark's helper is
 // the one this build ships, then the command's key names, then calls the helper through sudo -n with a fresh id, the
 // command's SHA-256 and its seconds. Spark 2's console unit forbids new privileges, so there the call goes through the
