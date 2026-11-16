@@ -97,6 +97,8 @@ What only a real Spark proves (R63's Today has the lines to run there):
   brings ssh back running (A-15: the start it queues runs after the restart unit); a change whose unit will not end is
   still put back and its guard stays open (P-1); and the real answers of a failed reload, `ufw` and a console start
   each leave the guard open (A-14), while a reload of a unit that is not there (`sshd.service`) does not.
+- that a pinned script (`--script`) is bound read-only from the helper's copy for the whole run (P-5): a change runs
+  `bash` on a script that sleeps, the script is appended to from outside meanwhile, and the added line does not run.
 
 ## How it's put together
 

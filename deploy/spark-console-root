@@ -9,8 +9,8 @@
 #   sudo -n /usr/local/sbin/spark-console-root prove --id <id>
 #   sudo -n /usr/local/sbin/spark-console-root look --id <id> --sha256 <hash> --seconds <n> --dir <folder> -- '<command>'
 #   sudo -n /usr/local/sbin/spark-console-root run --id <id> --sha256 <hash> --seconds <n> --dir <folder>
-#        [--open | --home] [--asked] [--protect <folder>]... [--stdin] [--memory <1G to 8G>] [--fleet] [--gpu] [--net]
-#        -- '<command>'
+#        [--open | --home] [--asked] [--protect <folder>]... [--script <sha256>:<file>]... [--stdin] [--memory <1G to 8G>]
+#        [--fleet] [--gpu] [--net] -- '<command>'
 #   sudo -n /usr/local/sbin/spark-console-root run --net ...  a change with the lock-out net armed first (R60)
 #   sudo -n /usr/local/sbin/spark-console-root keep --id <id>     keeps what a change inside the net did
 #   sudo -n /usr/local/sbin/spark-console-root putback --id <id>  puts it back now, on the console's word
@@ -23,8 +23,9 @@
 #                                                                 may still start), or has ended
 #
 # What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
-# command's bytes and their SHA-256; the seconds; the folder; for run, --open, --home, --asked, --protect, --stdin,
-# --memory, --fleet, --gpu and --net (R60, R63; --home never with --open; --asked only says the owner pressed); for
+# command's bytes and their SHA-256; the seconds; the folder; for run, --open, --home, --asked, --protect, --script (a
+# file the command runs, pinned by its SHA-256: copied, checked and bound read-only over its path for the whole run),
+# --stdin, --memory, --fleet, --gpu and --net (R60, R63; --home never with --open; --asked only says the owner pressed); for
 # root (R70), --net (always), --lockout, --path, --unit and --stdin (the command itself on input). Every other path,
 # name and setting is this file's own text, or read from the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
 # The command never goes on a unit's command line (systemd would expand ${...} there): it is written to a root-owned
@@ -49,6 +50,8 @@ LOOK_MAX=60        # seconds a look may take
 RUN_MAX=7200       # seconds a change may take (120 minutes)
 STDIN_MAX=16777216 # bytes of input (--stdin)
 PROTECT_MAX=8
+SCRIPTS_MAX=8          # --script files a change may pin (R63, R72)
+SCRIPT_MAX=4194304     # bytes of each (4 MB)
 # Memberships that are root by another name: the run wall leaves them out (--open keeps them).
 ROOTY=' docker lxd libvirt disk sudo adm systemd-journal '
 # Fixed limits of each wall.
@@ -221,7 +224,7 @@ init() {
 }
 
 # --- the call ---------------------------------------------------------------------------------------------------------
-VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 ASKED=0 PROTECT=() CMD=() BAD='' ID_IN=''
+VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 ASKED=0 PROTECT=() SCRIPTS=() CMD=() BAD='' ID_IN=''
 LOCKOUT=0 NAMED_PATHS=() NAMED_UNITS=()
 parse() {
   VERB=${1-}
@@ -229,9 +232,10 @@ parse() {
   local seen=' '
   while [ $# -gt 0 ]; do
     case "$1" in
-      --id|--sha256|--seconds|--dir|--protect|--memory|--path|--unit)
+      --id|--sha256|--seconds|--dir|--protect|--script|--memory|--path|--unit)
         if [ $# -lt 2 ]; then BAD="$1 needs a value"; break; fi
         if [ "$1" = --protect ]; then PROTECT+=("$2")
+        elif [ "$1" = --script ]; then SCRIPTS+=("$2")
         elif [ "$1" = --path ]; then NAMED_PATHS+=("$2")
         elif [ "$1" = --unit ]; then NAMED_UNITS+=("$2")
         elif [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break
@@ -658,6 +662,8 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
                                                   | while IFS= read -r p; do inside_any "$p" "${rw[@]}" && printf '%s\n' "$p"; done)
     else mapfile -t held < <({ pins "${RO[@]}" "${PROTECT[@]}" "${place[@]}"; for p in "${place[@]}"; do printf '%s\n' "$p"; done; } | LC_ALL=C sort -u); fi
     for p in "${held[@]}"; do PROPS+=(-p "BindPaths=$p"); done
+    # (each pinned script: its copy in the held folder, read-only over its path, for the whole run: R63, R72)
+    for p in "${!SCRIPT_PATHS[@]}"; do PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID/script-$((p + 1)):${SCRIPT_PATHS[$p]}"); done
   fi
   PROPS+=(-p "BindReadOnlyPaths=$HOLD/$ID")
   if [ "$wall" = look ]; then PROPS+=(-p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$LOOK_MEMORY" -p "TasksMax=$LOOK_TASKS")
@@ -848,7 +854,7 @@ START
 }
 
 # --- verbs -----------------------------------------------------------------------------------------------------------
-only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT$ASKED" = 00000000 ] && [ ${#PROTECT[@]} -eq 0 ] \
+only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT$ASKED" = 00000000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#SCRIPTS[@]} -eq 0 ] \
   && [ ${#CMD[@]} -eq 0 ] && [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
@@ -898,6 +904,50 @@ do_check() {
   exit 0
 }
 
+# --script (R63, R72): a file the command runs, pinned by the SHA-256 the owner's press approved. Bash reads a script as
+# it runs, and a write shows through an open file, so only a copy the owner's account cannot reach binds the bytes: the
+# helper reads each as the owner (so it reads nothing the owner cannot), into the held folder (root's), hashes that
+# copy, and the unit gets the copy read-only over the path for its whole run. The copy goes with the held folder.
+SCRIPT_GIVEN=() SCRIPT_SHAS=() SCRIPT_PATHS=()
+script_form() {   # each --script's form: <sha256>:<path>, ~/ and a file or a whole path in the owner's home, each once
+  local s p q
+  [ ${#SCRIPTS[@]} -le $SCRIPTS_MAX ] || refuse "at most $SCRIPTS_MAX --script"
+  for s in "${SCRIPTS[@]}"; do
+    [[ $s =~ ^([0-9a-f]{64}):(.+)$ ]] \
+      || refuse "--script takes <sha256>:<path>: 64 hex digits, a colon, and ~/ and a file, or a whole path, in the owner's home"
+    p=${BASH_REMATCH[2]}
+    case "$p" in '~/'?*) p="$OWNER_HOME/${p#'~/'}" ;; esac
+    safe_path "$p" && in_home "$p" \
+      || refuse "--script takes <sha256>:<path>: 64 hex digits, a colon, and ~/ and a file, or a whole path, in the owner's home"
+    for q in "${SCRIPT_PATHS[@]}"; do [ "$q" != "$p" ] || refuse "--script names ${BASH_REMATCH[2]} twice"; done
+    SCRIPT_GIVEN+=("${BASH_REMATCH[2]}") SCRIPT_SHAS+=("${BASH_REMATCH[1]}") SCRIPT_PATHS+=("$p")
+  done
+}
+script_files() {   # each a plain file that is there, with no link in its path, and not where the wall hides or puts back
+  local n p real
+  for n in "${!SCRIPT_PATHS[@]}"; do
+    p=${SCRIPT_PATHS[$n]}
+    real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
+    [ -f "$R$p" ] && [ ! -L "$R$p" ] && [ "$real" = "$R$p" ] && real_here "$p" \
+      || refuse "--script must name a plain file in the owner's home that is there, with no link in its path: ${SCRIPT_GIVEN[$n]}"
+    if [ "$OPEN" = 0 ] && under_any "$p" "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}"; then refuse "the script ${SCRIPT_GIVEN[$n]} is where the wall hides it"; fi
+  done
+}
+script_copies() {   # each read as the owner into the held folder, held to its size, and hashed there
+  local n got headb timeb
+  [ ${#SCRIPT_PATHS[@]} -gt 0 ] || return 0
+  headb=$(command -v head) && timeb=$(command -v timeout) || { rm -rf -- "$H"; refuse "head or timeout is not there, so no script can be copied"; }
+  for n in "${!SCRIPT_PATHS[@]}"; do
+    if ! "$SETPRIV" "--reuid=$OWNER_UID" "--regid=$OWNER_GID" "--groups=$WALL_GIDS" "$timeb" 30 "$headb" -c $((SCRIPT_MAX + 1)) "$R${SCRIPT_PATHS[$n]}" \
+         > "$H/script-$((n + 1))" 2> /dev/null; then
+      rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} could not be read as the owner, so nothing ran"
+    fi
+    if (( $(stat -c %s -- "$H/script-$((n + 1))") > SCRIPT_MAX )); then rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} is over 4 MB"; fi
+    read -r got _ < <(sha256sum -- "$H/script-$((n + 1))")
+    if [ "$got" != "${SCRIPT_SHAS[$n]}" ]; then rm -rf -- "$H"; refuse "the script ${SCRIPT_GIVEN[$n]} changed: its SHA-256 is not the one asked, so nothing ran"; fi
+  done
+}
+
 do_unit() {
   local max got unit start rc=0 p real ran=1
   # (what state --id answers: this call has begun; an id is never used twice)
@@ -909,6 +959,7 @@ do_unit() {
   if [ "$VERB" != root ]; then
     [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] && [ "$LOCKOUT" = 0 ] || refuse "--path, --unit and --lockout are for root"
   fi
+  [ "$VERB" = run ] || [ ${#SCRIPTS[@]} -eq 0 ] || refuse "--script is for run"
   if [ "$VERB" = root ]; then
     # (its switch was read first, in parse: root is on here)
     [ "$NET" = 1 ] || refuse "root runs only inside the net, armed in this same call: --net is missing"
@@ -958,6 +1009,7 @@ do_unit() {
       real=$(realpath -e -- "$R$p" 2>/dev/null) || real=''
       [ -d "$R$p" ] && [ "$real" = "$R$p" ] || refuse "--protect must name a folder that is there, with no link in its path"
     done
+    script_form
   fi
   [[ $DIR == /* ]] && [ "${#DIR}" -le 4096 ] && [[ $DIR != *[[:cntrl:]]* ]] || refuse "--dir must be a whole path on one line"
   if [ "$VERB" = root ] && [ "$STDIN" = 1 ]; then
@@ -980,6 +1032,7 @@ do_unit() {
     p=''   # (root has no wall to hold the home: the net copies what it names)
   fi
   [ -z "$p" ] || refuse "$p"
+  [ "$VERB" != run ] || script_files
   hold_folder
   # A hang-up or an interrupt (the caller's connection dropped) before the unit is handed to systemd removes the held
   # folder and marks the call "never"; after it, the call waits for the unit (below).
@@ -993,6 +1046,7 @@ do_unit() {
   fi
   read -r got _ < <(sha256sum -- "$H/command")
   if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
+  [ "$VERB" != run ] || script_copies
   if [ "$VERB" = root ]; then
     p=$(root_named "$H/command" "${NAMED_PATHS[@]}")
     p=${p//[![:print:]]/?}

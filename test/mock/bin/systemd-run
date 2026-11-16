@@ -8,7 +8,10 @@
 #                               RuntimeMaxSec it is ended with everything it started, as systemd ends a unit; while it
 #                               runs <rehearsal>/standin/live/<unit> is there (what systemctl is-active answers). WALL_VIEW
 #                               names a copy of the rehearsal's /home as the unit's settings would show it (a hidden
-#                               folder empty, a hidden file gone, what is put back there), for a command to look in
+#                               folder empty, a hidden file gone, what is put back there), for a command to look in:
+#                               each file a hard link to the real one, so a write to it from outside shows there, as
+#                               with no wall; but a file bound over a path (BindReadOnlyPaths=<copy>:<path>, a pinned
+#                               script) is that copy, read-only, and a write to the real file never reaches it
 #   sw-prove-<part>-<id>        the wall proof's units are played, not run: every attempt works outside the walls and is
 #                               stopped inside them, except what <rehearsal>/standin/let-through names, one per line:
 #                               "<attempt> <wall> [direct|child|after]". <rehearsal>/standin/outside overrides what an
@@ -139,7 +142,7 @@ def wall_view():
     # put back copied in. Only /home; no wall is built.
     view = os.path.join(R, 'standin', 'view', unit)
     if os.path.isdir(os.path.join(R, 'home')):
-        shutil.copytree(os.path.join(R, 'home'), os.path.join(view, 'home'), symlinks=True)
+        shutil.copytree(os.path.join(R, 'home'), os.path.join(view, 'home'), symlinks=True, copy_function=os.link)
     props = [args[k + 1] for k, a in enumerate(args) if a in ('-p', '--property') and k + 1 < len(args)]
     for kind, path in (p.split('=', 1) for p in props if '=' in p):
         path = path.removesuffix(':ro').removeprefix('-')
@@ -155,8 +158,17 @@ def wall_view():
                 os.unlink(view + path)
     for kind, path in (p.split('=', 1) for p in props if '=' in p):
         path = path.removeprefix('-')   # ("-": left out when it is not there)
-        if kind == 'BindReadOnlyPaths' and path.startswith('/home/') and os.path.isfile(R + path):
+        src, _, dest = path.partition(':')
+        if kind == 'BindReadOnlyPaths' and dest.startswith('/home/') and src.startswith('/run/spark-console/') and os.path.isfile(R + src):
+            if os.path.lexists(view + dest):   # (a hard link to the real file: never written through)
+                os.unlink(view + dest)
+            os.makedirs(os.path.dirname(view + dest), exist_ok=True)
+            shutil.copyfile(R + src, view + dest)
+            os.chmod(view + dest, 0o444)
+        elif kind == 'BindReadOnlyPaths' and path.startswith('/home/') and os.path.isfile(R + path):
             os.makedirs(os.path.dirname(view + path), exist_ok=True)
+            if os.path.lexists(view + path):
+                os.unlink(view + path)
             shutil.copyfile(R + path, view + path)
     return view
 

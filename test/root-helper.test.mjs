@@ -21,7 +21,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync, accessSync, truncateSync, constants as fsConstants } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync, accessSync, truncateSync, constants as fsConstants } from 'node:fs';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -2222,6 +2222,73 @@ describe('what bounds a plain change (R63)', () => {
     symlinkSync(join(s.R, 'home/owner/models'), join(s.R, 'home/owner/models-link'));
     refused(change(s, 'true', { extra: ['--protect', '~/models-link'] }), '--protect must name a folder that is there, with no link in its path');
     assert.equal(change(s, 'true', { extra: Array(8).fill(['--protect', '~/models']).flat() }).status, 0);
+  });
+
+  // P-5 (Astra's; the checker found it wider): bash reads a script as it runs, and a write shows through an open file,
+  // so a hash checked before the run never bound the bytes. --script <sha256>:<path>: the helper reads each pinned
+  // script as the owner into its held folder, hashes that copy, and binds it read-only over the path for the whole run.
+  // (The stand-in's WALL_VIEW shows /home through hard links, as with no wall, and a bound copy as that copy.)
+  const SCRIPT = 'echo first >> "$SPARK_CONSOLE_REHEARSAL/ran"\nsleep 4\necho last >> "$SPARK_CONSOLE_REHEARSAL/ran"\n';
+  test('a pinned script written to after its unit started: what runs is what was hashed, the copy bound read-only over its path (P-5)', { timeout: 60000 }, async () => {
+    const s = proven(), id = newId(), cmd = 'bash "$WALL_VIEW/home/owner/proj/s.sh"', file = join(s.R, 'home/owner/proj/s.sh');
+    s.put('home/owner/proj/s.sh', SCRIPT);
+    const call = new Promise(done => {
+      const c = spawn(join(s.R, 'usr/local/sbin/spark-console-root'), ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '60', '--dir', s.work,
+        '--script', `${sha(SCRIPT)}:~/proj/s.sh`, '--', cmd], { env: s.env });
+      let out = '';
+      c.stdout.on('data', d => { out += d; });
+      const k = setTimeout(() => c.kill('SIGKILL'), 50000);
+      c.on('close', status => { clearTimeout(k); done({ status, stdout: out }); });
+    });
+    for (const t0 = Date.now(); !(existsSync(join(s.R, 'ran')) && readFileSync(join(s.R, 'ran'), 'utf8').includes('first')); await new Promise(res => setTimeout(res, 200)))
+      assert.ok(Date.now() - t0 < 30000, 'the script began');
+    appendFileSync(file, 'echo added >> "$SPARK_CONSOLE_REHEARSAL/ran"\n');   // (a writer outside the unit, while it runs)
+    const r = await call;
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(readFileSync(join(s.R, 'ran'), 'utf8'), 'first\nlast\n', 'the line added after the hash never ran');
+    assert.ok(unitCall(s, `sw-run-${id}`).includes(`BindReadOnlyPaths=/run/spark-console/${id}/script-1:/home/owner/proj/s.sh`));
+    assert.equal(readFileSync(join(s.R, 'standin/ran', `sw-run-${id}`, 'script-1'), 'utf8'), SCRIPT, 'the copy holds the bytes hashed');
+    assert.ok(calls(s).some(c => c[0] === 'setpriv' && c[1] === '--reuid=1000' && c.at(-1) === file), 'read as the owner');
+    assert.ok(!existsSync(join(s.R, 'run/spark-console', id)), 'the copy went with the held folder');
+  });
+
+  test('a pinned script changed between the ask and the call is refused "changed", and nothing runs or is armed (P-5)', () => {
+    const s = proven();
+    s.put('home/owner/proj/s.sh', `${SCRIPT}echo changed\n`);
+    s.put('etc/ssh/sshd_config', 'Port 22\n', 0o640);
+    for (const extra of [[], ['--net']]) {
+      const r = change(s, 'true', { secs: 300, extra: [...extra, '--script', `${sha(SCRIPT)}:~/proj/s.sh`] });
+      refused(r, 'the script ~/proj/s.sh changed: its SHA-256 is not the one asked, so nothing ran');
+      assert.ok(!started(s).some(c => c.includes(`--unit=sw-run-${r.id}`)) && !existsSync(join(s.R, 'run/spark-console', r.id)), extra.join(' '));
+      assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/guard', r.id)), 'no net armed');
+    }
+  });
+
+  test('--script refuses a link, a link in its path, a file not there or over 4 MB, more than 8, one named twice, one outside the home or where the wall hides it, and any verb but run (P-5)', () => {
+    const s = proven(), h = sha(SCRIPT), home = join(s.R, 'home/owner');
+    s.put('home/owner/proj/s.sh', SCRIPT);
+    s.put('home/owner/.aws/s.sh', SCRIPT);
+    s.put('home/owner/proj/big.sh', '');
+    truncateSync(join(home, 'proj/big.sh'), 4 * 2 ** 20 + 1);
+    symlinkSync(join(home, 'proj/s.sh'), join(home, 'proj/link.sh'));
+    symlinkSync(join(home, 'proj'), join(home, 'via'));
+    const plain = "--script must name a plain file in the owner's home that is there, with no link in its path: ";
+    const form = "--script takes <sha256>:<path>: 64 hex digits, a colon, and ~/ and a file, or a whole path, in the owner's home";
+    for (const [scripts, why] of [
+      [[`${h}:~/proj/link.sh`], `${plain}~/proj/link.sh`], [[`${h}:~/via/s.sh`], `${plain}~/via/s.sh`], [[`${h}:~/proj/none.sh`], `${plain}~/proj/none.sh`],
+      [[`${h}:~/proj`], `${plain}~/proj`], [[`${sha('x')}:~/proj/big.sh`], 'the script ~/proj/big.sh is over 4 MB'],
+      [Array.from({ length: 9 }, () => `${h}:~/proj/s.sh`), 'at most 8 --script'],
+      [[`${h}:~/proj/s.sh`, `${h}:/home/owner/proj/s.sh`], '--script names /home/owner/proj/s.sh twice'],
+      [[`${h}:/etc/passwd`], form], [[`${h.toUpperCase()}:~/proj/s.sh`], form], [['~/proj/s.sh'], form], [[`${h}:~/../other/s.sh`], form],
+      [[`${h}:~/.aws/s.sh`], 'the script ~/.aws/s.sh is where the wall hides it'],
+    ]) refused(change(s, 'true', { extra: scripts.flatMap(x => ['--script', x]) }), why);
+    refused(look(s, 'true', { extra: ['--script', `${h}:~/proj/s.sh`] }), '--script is for run');
+    assert.equal(started(s).length, 0, 'nothing ran');
+    // Eight, each a plain file there: it runs, each bound over its own path.
+    for (let i = 0; i < 8; i++) s.put(`home/owner/proj/s${i}.sh`, SCRIPT);
+    const ok = change(s, 'true', { extra: Array.from({ length: 8 }, (_, i) => ['--script', `${h}:~/proj/s${i}.sh`]).flat() });
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.equal(unitCall(s, `sw-run-${ok.id}`).filter(a => a.startsWith(`BindReadOnlyPaths=/run/spark-console/${ok.id}/script-`)).length, 8);
   });
 
   test('state --id: never (its call ended without starting it), running (or may still start), ended; unknown for an id never seen; an id is never used twice', async () => {
