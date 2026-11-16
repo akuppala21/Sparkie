@@ -211,6 +211,21 @@ function runnerMemoryCap(available) {
 }
 const RUNNER_ONLY_COPIED = 'Put-back covers only the files counted in copied: anything else it wrote (a program’s own writes, a file the sorter could not place) isn’t copied first.';
 
+// The pinned scripts handed to the root helper's --script ("<sha256>:<path>"), each once: two spellings of one file
+// (run.sh from ~/work and /home/<owner>/work/run.sh) are one script, which the helper would refuse as named twice
+// (R-11). Only what the helper copies: ~/ and a file, or a whole path, in the owner's home (workHelperPins).
+function runnerScripts(pins, node) {
+  const home = `/home/${node?.user || CONFIG.user}/`, seen = new Set(), out = [];
+  for (const [p, h] of Object.entries(pins || {})) {
+    if (!/^[0-9a-f]{64}$/.test(String(h)) || !workHelperPins(p, node)) continue;
+    const whole = p.startsWith('~/') ? `${home}${p.slice(2)}` : p;
+    if (seen.has(whole)) continue;
+    seen.add(whole);
+    out.push(`${h}:${p}`);
+  }
+  return out;
+}
+
 // The folders at the top of the home a change names that are there now, real and not ~/bin (one look): a write inside
 // one is inside the plain wall's writable folders, not at the top (R63). null when the look gave no whole answer: never
 // "none is there", which would widen the wall.
@@ -315,7 +330,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // (its pinned scripts: the helper's own copies, bound over their paths for the whole run (--script, P-5); the unit's
     // own first lines check them once more, a second check of those same copies, R72)
     const pinned = pins && !as && Object.keys(pins).length ? runnerPins(pins, dir) : '';
-    const scripts = pins && !as ? Object.entries(pins).filter(([p, h]) => /^[0-9a-f]{64}$/.test(String(h)) && workHelperPins(p, node)).map(([p, h]) => `${h}:${p}`) : [];
+    const scripts = as ? [] : runnerScripts(pins, node);
     const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + pinned + command, seconds, dir, protect, bare, scripts, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
