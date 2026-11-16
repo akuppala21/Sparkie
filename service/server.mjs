@@ -199,6 +199,9 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
     const began = Date.now(), child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
+    // (one decoder each for what it prints: a character whose bytes come in two pieces reads whole)
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -4417,6 +4420,8 @@ function modelStep(turn, sent) {
     const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
     link.cancel = () => settle(reject, new Error(TURN_STOPPED));
     const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+      // (one decoder for the whole answer: a character whose bytes come in two pieces reads whole, error body too)
+      r.setEncoding('utf8');
       // (after a whole answer its end comes first, and close changes nothing)
       r.on('error', e => settle(reject, e));
       r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
@@ -17285,6 +17290,7 @@ function brainAsk(m, messages, tools = null) {
     let first = null, buf = '', content = '', settled = false;
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(limit); fn(v); } };
     const req = http.request({ hostname: '127.0.0.1', port: m.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      res.setEncoding('utf8');   // (one decoder for the whole answer: a character cut between two pieces reads whole)
       res.on('error', e => settle(reject, e));
       res.on('close', () => settle(reject, new Error('its answer was cut off')));
       if (res.statusCode !== 200) {
