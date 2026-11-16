@@ -1254,7 +1254,11 @@ describe('the lock-out net (R60)', () => {
     rmSync(join(s.R, 'standin/timers', `sw-guard-${r.id}.timer`));
     const left = run(s, ['check', '--id', newId()]).stdout;
     assert.ok(left.includes(` net open: guard ${r.id} goes back at ${at} unless it is kept; its timer is not waiting (inactive)\n`), left);
-    assert.ok(left.endsWith(` net left: guard ${r.id} waits for no timer; putback --id ${r.id} puts it back now, keep --id ${r.id} keeps it\n`), left);
+    // (the final read's net-left: the sentence was "...waits for no timer; putback --id <id> puts it back now, keep --id
+    // <id> keeps it", but keep refuses such a guard; now it says so, and the refusal is held here)
+    assert.ok(left.endsWith(` net left: guard ${r.id} waits for no timer: putback --id ${r.id} puts it back now (keep --id ${r.id} is refused while no timer waits)\n`), left);
+    refused({ ...run(s, ['keep', '--id', r.id]), id: r.id }, 'its timer is not waiting (inactive), so keeping does not count');
+    assert.match(run(s, ['putback', '--id', r.id]).stdout, new RegExp(`^${r.id} put back at \\S+: 1 went back, 0 did not\n$`), 'putback does');
   });
 
   // Fix 4: what the helper says is what happens.

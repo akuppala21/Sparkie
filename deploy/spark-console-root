@@ -863,8 +863,9 @@ do_check() {
     timer=$(systemctl show --property=ActiveState --value "sw-guard-$open.timer" 2>/dev/null) || timer=''
     if [ "$timer" = active ]; then timer='its timer waits'; else timer="its timer is not waiting (${timer:-gone})"; fi
     say "net open: guard $open goes back at $(guard_at "$R$GUARD/$open") unless it is kept; $timer"
-    # (left open with no timer, after a restart whose put-back failed say: the console tells the owner, who decides)
-    case "$timer" in *'not waiting'*) say "net left: guard $open waits for no timer; putback --id $open puts it back now, keep --id $open keeps it" ;; esac
+    # (left open with no timer, after a restart whose put-back failed, say: keep is refused then, so only a put-back ends
+    # it. The one-time command's --check shows this line, and its --undo stops on it)
+    case "$timer" in *'not waiting'*) say "net left: guard $open waits for no timer: putback --id $open puts it back now (keep --id $open is refused while no timer waits)" ;; esac
   fi
   exit 0
 }
