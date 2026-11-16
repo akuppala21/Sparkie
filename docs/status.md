@@ -80,7 +80,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R65](rules/R65.md) | partly | `test/ahead.test.mjs`; `test/allowed.test.mjs`; `test/putback.test.mjs` (“an always-allowed kind taken away”) | falls short today: its file says where |
 | [R66](rules/R66.md) | partly | `test/tasks.test.mjs`; `test/tasks-telegram.test.mjs`; `test/tasks-more.test.mjs`; `test/task-report.test.mjs`; `test/pressed.test.mjs`; `test/hub-change.test.mjs`; `test/tasks-wake.test.mjs`; `test/carry-keeps.test.mjs` | falls short today: its file says where |
 | [R67](rules/R67.md) | partly | `test/trial.test.mjs`; `test/owner-only.test.mjs` | falls short today: its file says where |
-| [R68](rules/R68.md) | partly | `test/write.test.mjs` | falls short today: its file says where |
+| [R68](rules/R68.md) | partly | `test/write.test.mjs`; `test/steps.test.mjs` (“every tool that refuses to run as a saved step”) | falls short today: its file says where |
 | [R69](rules/R69.md) | partly | `test/selfchange.test.mjs`; `test/check-update.test.mjs`; `test/tools.test.mjs` (“everyday requests”) | falls short today: its file says where |
 | [R70](rules/R70.md) | partly | `test/root-helper.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
 | [R71](rules/R71.md) | partly | `test/net.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |

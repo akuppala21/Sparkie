@@ -184,7 +184,8 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps; install_update: a dangerous ask,
-// answered only by the owner's yes to it; propose_update: only in the owner's own chat)
+// answered only by the owner's yes to it; propose_update: only in the owner's own chat; run and write_file, the reads
+// that change: whoMayLook refuses them as a step, 21-work.mjs, so they are refused at the save, never mid-run)
 const NOT_A_STEP = new Set([
   'compare_models',
   'forget_memory',
@@ -198,6 +199,7 @@ const NOT_A_STEP = new Set([
   'save_file',
   'save_workflow',
   'self_test',
+  'write_file',
 ]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
