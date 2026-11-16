@@ -6,7 +6,7 @@ passed it over.
 ## Touch
 
 Look in this order:
-1. `should_be_running`: is it on the owner's list, and how is it now (running, held, waiting, with a reason)?
+1. `should_be_running`: is it on the owner's list, and how is it now (running, changing, parked with its Spark off, or held with a reason)?
 2. `fleet_events`: stopped, crashed (exit code, out of memory), removed, a Spark offline or back, healing and
    `heal-skipped` lines with their reason.
 3. `recent_operations` and `operation_log`: an operation that stopped it on purpose (a start making room, an undo, a
