@@ -122,10 +122,13 @@ async function use(preset) {
 const budgetsIn = chat => records().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets);
 // What the stand-in brain is told in a carry-on turn after a reply a budget ended (continueTask), for a script's rule.
 const CARRIED = '^\\[Spark Console\\] Your last reply stopped at the limit of one message \\(its last lines say which\\)\\. Carry on with that request: “';
-// No carry-on turn comes: the chat still holds the n messages it had, a while after its reply.
+// No carry-on turn comes: the chat still holds the n messages it had, a while after its reply (E7's report of a task's
+// end is a line of its own, no turn: at most one such line is left out, and it is that report).
 async function noCarryOn(chat, n) {
   await sleep(2000 * SLOW);
-  assert.equal((await chatMessages(chat)).length, n, 'no carry-on turn');
+  const m = await chatMessages(chat), left = m.filter(x => x.report);
+  assert.equal(m.filter(x => !x.report).length, n, 'no carry-on turn');
+  assert.ok(left.length <= 1 && left.every(x => x.notice === true && x.report), `only the task's report besides: ${JSON.stringify(left.map(x => [x.role, x.notice, x.report, String(x.content).slice(0, 60)]))}`);
 }
 
 test('a brain that runs commands again and again stops at 12, twice its 6 rounds: no command past them runs, the answer says how many ran and that the owner can say go on, and the next message starts fresh', { timeout: 300000 * SLOW }, async () => {
