@@ -270,6 +270,17 @@ async function setupFromLibrary(name) {
   });
 }
 
+// One look at the brain's container after it was to be removed (the final read, W-13): 'gone' only when Docker there
+// says it has none by that name; 'stopped' when it has one that isn't running; 'running'; or 'unknown' when Docker
+// didn't answer. (stopLook, 17-stop-checked.mjs, asks the same and tells only stopped or not.)
+async function mainLook(m) {
+  const r = await run(mainNode(m), `docker inspect -f '{{.State.Status}}' ${q(m.container)} 2>/dev/null || { docker ps -q >/dev/null 2>&1 && echo missing; }`, { timeout: 20000 });
+  const state = r.code === 0 ? r.out.trim() : '';
+  return state === 'missing' ? 'gone' : STOPPED_STATES.includes(state) ? 'stopped' : state ? 'running' : 'unknown';
+}
+// The words when a removal isn't known to have worked: what was asked, and what the look says.
+const unconfirmedWords = (look, why = '') => `Spark Console asked Docker to remove it${why}, but couldn’t confirm it is gone: ${look === 'stopped' ? 'it isn’t running, but it is still there' : 'it may still be loading'}.`;
+
 // Switching Sparkie's model: plan the new one first (a setup that can't start leaves the one in use untouched), stop
 // the one in use, start the new one, and keep the choice only once it answers. If the new one fails, the previous one
 // is started again, and the error says whether it came back.
@@ -281,19 +292,22 @@ async function switchMain(job, target, keep) {
     await startMain(job, keep, target);
   } catch (e) {
     // (the new one, still loading at the limit, doesn't stay when there is one to go back to: it is removed for it)
-    const removed = Boolean(e.stillLoading && previous);
-    const why = removed ? `${MAIN_SLOW}, so it was removed to start ${previous.title} again.` : e.message;
-    note(job, `${target.title} didn’t start: ${removed ? `${MAIN_SLOW}; going back to ${previous.title} removes it.` : e.message.split('\n')[0]}`);
-    let back = false;
+    const slow = Boolean(e.stillLoading && previous);
+    note(job, `${target.title} didn’t start: ${slow ? `${MAIN_SLOW}; going back to ${previous.title} removes it.` : e.message.split('\n')[0]}`);
+    let back = false, look = null;
     if (previous) {
       step(job, `Going back to ${previous.title}`);
       try { await startMain(job, [], previous); back = true; } catch (e2) {
-        note(job, `${previous.title} didn’t come back either: ${e2.stillLoading ? `${MAIN_SLOW}; it is removed too.` : e2.message.split('\n')[0]}`);
         // No half-started container stays behind: Docker would keep restarting it, and "/restart sparkie" must find it
         // gone and start the saved setup, never the one that just failed.
         await run(mainNode(previous), `docker rm -f ${q(previous.container)} >/dev/null 2>&1; true`, { timeout: 60000 });
+        look = await mainLook(previous).catch(() => 'unknown');
+        note(job, `${previous.title} didn’t come back either: ${e2.stillLoading ? (look === 'gone' ? `${MAIN_SLOW}; it is removed too.` : `${MAIN_SLOW}. ${unconfirmedWords(look)}`) : e2.message.split('\n')[0]}`);
       }
     }
+    // (removed only where it is known: the old one started again under the same name, or a look says it is gone, W-13)
+    const why = !slow ? e.message : back || look === 'gone' ? `${MAIN_SLOW}, so it was removed to start ${previous.title} again.`
+      : `${MAIN_SLOW}. ${unconfirmedWords(look, ` to start ${previous.title} again`)}`;
     const outcome = !previous ? '' : back ? `, so ${ASSISTANT_NAME} is back on ${previous.title}`
       : `, and ${previous.title} didn’t come back either, so ${ASSISTANT_NAME} is down. To start it again, type /restart sparkie in Spark Console’s chat`;
     throw new Error(`${target.title} didn’t start${outcome}. ${why}`);
