@@ -1,5 +1,5 @@
 /* ───────── long tasks: the carry-on made to last (E6) ───────── */
-// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs
+// Area: brain        Rules: R66        Tests: tasks.test.mjs, tasks-telegram.test.mjs, tasks-more.test.mjs, tasks-wake.test.mjs, carry-keeps.test.mjs, task-report.test.mjs, pressed.test.mjs
 // Owns: none        Timers: none        Wakes: none
 // A task is the owner's request that Sparkie carries on with in fresh turns (`conv.task`, kept in chats.json with the
 // chat: design E 2.1 as cut, step 6). Its limits are picked by code from the owner's own instruction when it is made,
@@ -218,11 +218,11 @@ function taskAnswered(conv, group) {
 // never as 0; and what is still open (an operation of it still running, a job of it still to end, a button waiting in
 // its chat). Text others can write (a model or container name, a failure line, the request's words) is masked and
 // bounded before it is in it. It is kept as owed in chats.json first (conv.reports), then written in the task's chat once
-// (posted, in the same save), and sent to Telegram once (told, saved before the send) when the task began there, asked
-// there at a button, or ran over an hour; at start-up anything still owed is finished, so a restart neither loses it
-// nor tells it twice. A task stopped at a limit is reported then, and not again when it is then left.
+// (posted, in the same save), and sent to Telegram once (told, saved before the send) only when the task began there
+// (R32: work started in that chat), without the failure lines (no error text there: their count, and where they are);
+// at start-up anything still owed is finished, so a restart neither loses it nor tells it twice. A task stopped at a
+// limit is reported then, and not again when it is then left.
 const TASK_REPORT_MS = Number(process.env.SPARK_CONSOLE_TASK_REPORT_MS || 2000);
-const TASK_REPORT_TG_MS = 3600000;
 const taskText = (s, n) => maskSecrets(String(s ?? '').replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g, ' ').trim()).slice(0, n);
 const TASK_ENDS = {
   done: 'done', stopped: 'stopped by you', replaced: 'ended: you asked something new in this chat', no: 'ended: you said no to its question',
@@ -233,8 +233,10 @@ const TASK_ENDS = {
 function taskCounts(id) {
   const c = { ops: 0, finished: 0, failed: [], cancelled: 0, undone: 0, atOnce: 0, afterYes: 0, asked: 0, turns: 0, wh: 0, measured: 0, unmeasured: 0 };
   if (!id) return c;
-  const tag = `"task":${JSON.stringify(id)}`, allowed = new Map();
+  const tag = `"task":${JSON.stringify(id)}`, allowed = new Map(), changes = new Map(), never = new Set();
   for (const f of journalFiles().slice(0, 2).reverse()) for (const line of jLinesOf(f)) {
+    // (a command's end line carries no task: one that says it never ran takes its start line off the count below, K5)
+    if (line.includes('"ran":false')) { const e = jParse(line); if (e?.k === 'cmd' && e.end && e.ran === false) never.add(e.id); }
     if (!line.includes(tag)) continue;
     const r = jParse(line);
     if (r?.task !== id) continue;
@@ -247,9 +249,10 @@ function taskCounts(id) {
       // (a cancel is counted once, by the operation it cancelled, below)
       if (r.act === 'undo_last_change') c.undone++;
     } else if (r.k === 'cmd') {
-      // (a command that changed something: the runner's start line marks it a change, and after the owner's yes when it
-      // was asked; a look is no change, run being a lookup to runAction)
-      if (r.start && r.act === 'run' && r.class === 'change') (['asked', 'button'].includes(r.gate) ? c.afterYes++ : c.atOnce++);
+      // (a command that changed something: the runner's start line marks it a change, and the net's seam marks every one
+      // it runs (net: a lock-out change, one on Spark 2, root), whatever the sorter called it; after the owner's yes when
+      // it was asked. A look is no change, run being a lookup to runAction; one whose end says it never ran is none, K5)
+      if (r.start && r.act === 'run' && (r.class === 'change' || r.net)) changes.set(r.id, ['asked', 'button'].includes(r.gate));
     } else if (r.k === 'op') {
       c.ops++;
       if (r.outcome === 'completed') c.finished++;
@@ -258,6 +261,7 @@ function taskCounts(id) {
       if (typeof r.wh === 'number' && Number.isFinite(r.wh)) { c.wh += r.wh; c.measured++; } else c.unmeasured++;
     }
   }
+  for (const [rid, yes] of changes) if (!never.has(rid)) (yes ? c.afterYes++ : c.atOnce++);
   return c;
 }
 const taskTook = ms => { const m = Math.round(ms / 60000); return m < 1 ? `${Math.max(0, Math.round(ms / 1000))} s` : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
@@ -270,8 +274,8 @@ function taskOpen(conv, r) {
   const button = conv.messages.some(m => (m.choices || []).some(c => c.state === 'open' && pendingChoices.has(c.id)));
   return [...open.map(x => `${x} is still running`), ...owed.map(x => `${x} hasn’t ended yet`), ...(button ? ['a button waits for you in this chat'] : [])];
 }
-// The report's lines, from the journal and what is open now.
-function taskReportText(conv, r) {
+// The report's lines, from the journal and what is open now. tg: Telegram's copy, with no failure line (R32).
+function taskReportText(conv, r, tg = false) {
   const c = taskCounts(r.task), took = Math.max(0, Date.parse(r.end) - Date.parse(r.since));
   const how = TASK_ENDS[r.how] || (r.how === 'turns' ? `stopped at its ${r.turns} carry-on turns` : r.how === 'hours' ? `stopped at its ${r.hours} hours` : r.how === 'steps' ? `stopped at its ${TASK_STEPS} commands` : r.how);
   const failed = c.failed.slice(0, 3).map(x => `${OP_WORDS[x.act] || taskText(x.act, 40)}${x.model ? ` ${taskText(x.model, 80)}` : ''}: ${taskText(String(x.err || x.outcome || 'it failed').split('\n')[0], 160)}`);
@@ -282,7 +286,7 @@ function taskReportText(conv, r) {
   const limit = ['turns', 'hours', 'steps'].includes(r.how) ? `It stopped at ${how.replace(/^stopped at /, '')}: say “carry on” for another ${taskPlural(r.hours, 'hour')} and ${r.turns} turns.`
     : r.how === 'full' ? 'It stopped because this chat is full: start a new chat and ask again there.' : null;
   return [`Report on your request “${taskText(r.request, 120)}”: ${how}.`,
-    `${ops}${failed.length ? ` Failed: ${failed.join('; ')}.` : ''}`,
+    `${ops}${!failed.length ? '' : tg ? ' What failed is in Spark Console.' : ` Failed: ${failed.join('; ')}.`}`,
     `Changes: ${c.atOnce} made at once, ${c.afterYes} after your yes; ${taskPlural(c.asked, 'question')} asked of you. Undone: ${c.undone}.`,
     `Time: ${taskTook(took)}, ${taskPlural(Math.max(1, c.turns), 'turn')}.`,
     energy, open.length ? `Still open: ${open.join('; ')}.` : 'Still open: nothing.', limit].filter(Boolean).join('\n');
@@ -296,8 +300,9 @@ function taskEnded(conv, t, how) {
     if (t.stopped && how !== t.stopped && ['replaced', 'stopped', 'no', 'gone', 'put-back'].includes(how)) return;
     t.reported = how;
     const end = new Date().toISOString(), since = t.since || t.at, { hours, turns } = taskLimits(t);
-    // (never when its way in is gone: Telegram unpaired or paired with someone else is told nothing of it)
-    const tg = how !== 'gone' && (t.channel === 'telegram' || Boolean(t.tgAsked) || Date.parse(end) - Date.parse(since) > TASK_REPORT_TG_MS);
+    // (only a task begun there, R32; never when its way in is gone: Telegram unpaired or paired with someone else is told
+    // nothing of it)
+    const tg = how !== 'gone' && t.channel === 'telegram';
     conv.reports = [...(conv.reports || []).slice(-4), { task: t.id, how, request: taskText(t.request, 200), since, end, hours, turns, tg, jobs: (t.jobs || []).slice(-20) }];
     saveChats();
     setTimeout(() => taskReportsDue(conv.id), TASK_REPORT_MS).unref?.();
@@ -317,7 +322,7 @@ async function taskReportsDue(id) {
     if (r.tg && !r.told) {
       r.told = true;
       saveChats();
-      await tell('result', r.text, { last: true }).catch(() => false);
+      await tell('result', taskReportText(conv, r, true), { last: true }).catch(() => false);
     }
   }
   conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));

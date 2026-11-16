@@ -1,5 +1,5 @@
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
-// Area: features        Rules: R62, R52, R43        Tests: box-fill.test.mjs
+// Area: features        Rules: R62, R52, R43, R23        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -25,7 +25,7 @@ const FILL_LINKS_LEFT = 'test/mock/root/';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
-const boxFills = new Map();   // the caller (boxKey) → { tree, box, spark, at }
+const boxFills = new Map();   // the caller (boxKey) → { tree, box, cid, spark, at }
 const boxFilling = new Set(); // the callers with a fill or a read back under way
 
 // A name as a refusal may show it: no control character, keys masked, at most 120 characters.
@@ -172,11 +172,13 @@ async function fillTreeList(tree) {
   }
   return { blobs, trees, links, bytes };
 }
-// Opening a box is a change, and so are a fill and a read back: Sparkie's and an agent's call meet the pause, Sparkie's
-// the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
+// Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
+// Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
+// carries rail: true (run's door makes it a button).
 async function fillGate(viewer, ctx) {
   whoMayLook(viewer, ctx);
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and filling or reading back a box is a change, so nothing was done.');
   if (by === 'sparkie') {
     const rail = await brainRail();
@@ -243,7 +245,7 @@ async function boxFill(viewer, ctx, tree) {
       if (last[0] === 'done') await fillStream(node, `docker exec ${q(b.name)} rm -rf -- ${FILL_FOLDER}`, { max: 4096, timeout: 30000 });
       throw new HttpError(502, `The tree couldn’t be put in the box on ${at}${r.code === 255 ? ` (${at} didn’t answer)` : ''} (${fillShow(said)}); what was unpacked was taken out again. Nothing else was changed.`);
     }
-    boxFills.set(key, { tree, box: b.name, spark: b.spark, at: new Date().toISOString() });
+    boxFills.set(key, { tree, box: b.name, cid: b.cid, spark: b.spark, at: new Date().toISOString() });
     rec.outcome = 'filled';
     return { filled: true, box: b.name, spark: b.spark, tree, folder: FILL_FOLDER, files: got.files.length, bytes: got.bytes, observedAt: new Date().toISOString() };
   } catch (e) { rec.err = e; throw e; } finally {
@@ -251,10 +253,11 @@ async function boxFill(viewer, ctx, tree) {
     fillRecord(ctx, `fill ${rec.args.tree}`, { unit: boxName(key), args: rec.args, ok: !rec.err, outcome: rec.outcome, err: rec.err }, t0);
   }
 }
-// The tree a caller's box was filled from, while that box is the one open: { tree, box, spark, at }, or null.
+// The tree a caller's box was filled from, while that box is the one open: { tree, box, cid, spark, at }, or null. A
+// box opened again in the same chat has the same name and often the same Spark: its container's id tells them apart.
 function boxFillOf(ctx) {
   const key = boxKey(ctx), f = boxFills.get(key), b = boxes.get(key);
-  return f && b && b.name === f.box && b.spark === f.spark && b.until > Date.now() ? { ...f } : null;
+  return f && b && b.name === f.box && b.cid === f.cid && b.spark === f.spark && b.until > Date.now() ? { ...f } : null;
 }
 // Reads the caller's filled box back: its folder streamed out as tar (`tar --create --format=ustar` in the box),
 // taken entry by entry by tarRead, as data. { box, spark, tree, folder, changes: [{ path, blob, mode }] sorted by path

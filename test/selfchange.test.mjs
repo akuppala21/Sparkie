@@ -4,10 +4,11 @@
 // start fills this chat's box with main's tree and notes the commit (refused while the box holds other work, or a
 // proposal is open); send builds the diff itself on the noted commit, rebuilds the generated files with the installed
 // build's own generator, lists the protected paths and every edited line of an existing test, pushes sparkie/<id> and
-// opens the pull request; sent again it adds a commit to the same branch (fast-forward, never by force); .github/ and a
-// generated file the generator doesn't make are refused with nothing pushed; check_update answers for the open
-// proposal (its run, the failed tests' names, the review) as outside text; drop closes the pull request and deletes the
-// branch; 6 pushes at most; the protected list is tools/affected.mjs's. The token is never in a chat or an answer.
+// opens the pull request; sent again it adds a commit to the same branch (fast-forward, never by force); .github/, a
+// test run's lock or map, and a generated file the generator doesn't make are refused with nothing pushed; check_update
+// answers for the open proposal (its run, the failed tests' names, the review) as outside text; drop closes the pull
+// request and deletes the branch; 6 pushes at most; the protected list is tools/affected.mjs's, and holds every part
+// whose Area is safety or ways in, or that raises an ask or calls a gate. The token is never in a chat or an answer.
 // GitHub is a stand-in: a bare repository holding this tree as main (SPARK_CONSOLE_REPO_URL) and test/mock/github.mjs
 // for the API. The box is the real one (A2, C8b) on the stand-in fleet's compute Sparks, filled by boxFill and read back
 // by boxReadBack; the test changes files in it as the brain would. The trial's pass is a stand-in record (R67).
@@ -461,6 +462,22 @@ describe('propose_update', { concurrency: 1 }, () => {
     } finally { rmSync(attrs, { force: true }); }
   });
 
+  // (the final read's S1: what a test run writes is refused, like .github/)
+  test('refused with nothing pushed: what a test run writes for the build it tested (service/workflows.lock.json, test/affected-map.json)', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    const part = atMain('service/src/21-web.mjs');
+    for (const path of ['service/workflows.lock.json', 'test/affected-map.json']) {
+      box({ 'service/src/21-web.mjs': `${part}// x\n`, [path]: '{"build":"0123456789ab"}\n' });
+      const r = await pressed(chat, 'send your code proposal');
+      assert.ok(r.says.includes(`A proposal never holds what a test run writes for the build it tested (${path}): git keeps neither file. Take that out of the box. Nothing was sent.`), r.says);
+    }
+    assert.deepEqual(ghBranches(), [], 'nothing pushed');
+    await pressed(chat, 'drop your code proposal');
+    assert.equal(refs(), '');
+  });
+
   // (the C8c read's list for before it is turned on)
   test('a send in a request that read outside text is a button, though the owner’s words ask for it; without that read it runs at once', LONG, async () => {
     const chat = await newChat();
@@ -633,5 +650,22 @@ describe('propose_update', { concurrency: 1 }, () => {
     // (and the parts that hold the gates, the page and the test helpers)
     for (const p of ['21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner']) assert.ok(listed.includes(`'${p}'`), p);
     for (const p of ['public', 'test\\/authenticator\\.mjs', 'test\\/eval\\.mjs', 'test\\/eval\\/cases\\.json']) assert.ok(listed.includes(`/^${p}`), p);
+  });
+
+  // (the final read's S1: a proposal that rewrites the ladder, the sorter or another gate lists it as protected)
+  test('every part whose header Area is safety or ways in, or that raises an ask or calls a gate, is a protected path', () => {
+    const src = readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8');
+    const listed = src.slice(src.indexOf('const SELF_PROTECTED_PARTS = ['), src.indexOf('].map(p => `service/src/${p}.mjs`)'));
+    const GATES = ['question(', 'dangerAsk(', 'brainRail(', 'netGuarded(', 'sortCommand(', 'runChange(', 'propose(', 'whoMayLook(', 'putBackHeld(', 'agentSettings().halted', 'trialPassed('];
+    const dir = join(REPO, 'service', 'src'), missing = [];
+    for (const f of readdirSync(dir).filter(n => /^\d\d-[a-z0-9-]+\.mjs$/.test(n))) {
+      const text = readFileSync(join(dir, f), 'utf8'), area = /^\/\/ Area: (?:safety|ways in)\b/m.test(text), gate = GATES.find(g => text.includes(g));
+      if ((area || gate) && !listed.includes(`'${f.slice(0, -4)}'`)) missing.push(`${f} (${area ? 'its Area' : gate})`);
+    }
+    assert.deepEqual(missing, []);
+    for (const p of ['21-ladder', '20-sort', '20-shape', '21-net', '21-hub', '21-root', '21-work', '21-write', '21-ahead', '20-came-from', '20-tg-approve', '21-box', '21-box-fill', '21-brain-trial', '21-brain-eval', '21-brain-check']) {
+      assert.ok(listed.includes(`'${p}'`), p);
+      assert.ok(existsSync(join(dir, `${p}.mjs`)), `${p} is a part`);
+    }
   });
 });
