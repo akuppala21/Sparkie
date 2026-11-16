@@ -1013,15 +1013,26 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
       assert.equal((await health(home))?.build, buildOf(g.files), 'the new build goes on running, whole');
       assert.equal(read(home, 'spark-console-service', 'server.mjs'), g.files['service/server.mjs'].text);
-      // (an install from outside meanwhile: it can't put that build back either, so it is refused, or that update's
-      // timer would undo it later)
-      rmSync(join(home, 'door-down'), { force: true });
+    } finally { rmSync(join(home, 'door-down'), { force: true }); if (existsSync(copy)) chmodSync(copy, 0o644); }
+    r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    await fromBefore({ out: r.stdout }, mk);
+  });
+
+  test('an install from outside while an update\'s way back can\'t put its build back is refused: that timer would undo it later', CASE, async () => {
+    needs('kept');
+    const mk = mark0(), copy = share('update-guard', 'service', 'server.mjs');
+    let r = bash(share('update-guard.sh'), 'arm', 'abcdefabcdef', '0123456789ab', buildOf(base.files), OTHER_PGID);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    writeFileSync(join(home, 'spark-console', 'index.html'), 'changed by the update that went wrong\n');
+    chmodSync(copy, 0o000);
+    try {
       const r2 = await byHand(push(treeFiles(81), 'From outside, while that way back stays armed'));
       assert.notEqual(r2.code, 0, r2.out);
       assert.match(r2.out, /That update's way back is still armed: its build from before couldn't be put back whole .*This install changed nothing\./);
-      assert.equal((await health(home))?.build, buildOf(g.files));
+      assert.equal((await health(home))?.build, buildOf(base.files));
       assert.ok(existsSync(share('update-guard', 'guard')), 'still armed');
-    } finally { rmSync(join(home, 'door-down'), { force: true }); if (existsSync(copy)) chmodSync(copy, 0o644); }
+    } finally { if (existsSync(copy)) chmodSync(copy, 0o644); }
     r = bash(share('update-guard', 'update-guard.sh'), 'put-back', 'hand', 'a test');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     await fromBefore({ out: r.stdout }, mk);
