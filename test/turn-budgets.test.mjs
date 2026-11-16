@@ -63,7 +63,8 @@ function rehearse(root, spark) {
   mkdirSync(join(home, 'docs'), { recursive: true });
   writeFileSync(join(home, 'docs', 'plain.txt'), `hello from ${spark}\n`);
 }
-useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_LOOK_SECONDS: '10', SPARK_CONSOLE_CONTINUE_MS: '300' },
+// (Spark 2's changes are off for this fleet: its refused calls on Spark 2 are the hub's off side, hub-change.test the on side)
+useFleet({ env: { PATH: `${BIN}:${MOCKBIN}:${process.env.PATH}`, SPARK_CONSOLE_LOOK_SECONDS: '10', SPARK_CONSOLE_CONTINUE_MS: '300', SPARK_CONSOLE_HUB: '0' },
   prepare: ({ root, stateDir }) => {
     rehearse(root, 'spark3');
     rehearse(root, 'spark4');
