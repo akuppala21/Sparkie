@@ -334,6 +334,42 @@ test('the root ask, end to end, says in one line that Sparkie doesn’t know the
   } finally { await press(chat, a.no.id); }
 });
 
+// The final read of round two, F1: as root, what the sorter decided after its first doubt was lost, so a script, a
+// one-liner that loads a file, work started later or kill 1 after an unknown program was asked as plain ROOT. The
+// sorter now reads every part and names a part it couldn't read at all (sorted.unreadable); root refuses that, unless
+// the whole command is one plain program.
+test('as root, a command part of which the sorter couldn’t read is refused, unless it is one plain program; one plain program is asked with its unknown-program line', async () => {
+  const shell = readFileSync(join(REPO, 'service', 'src', '20-shell.mjs'), 'utf8'), src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8');
+  const grab = re => { const m = re.exec(src)?.[0]; assert.ok(m, String(re)); return m; };
+  const { rootOnePlain, rootUnread } = new Function(`${shell}\n${grab(/^function rootOnePlain\([\s\S]*?\n\}$/m)}\n${grab(/^function rootUnread\([\s\S]*?\n\}$/m)}\nreturn { rootOnePlain, rootUnread };`)();
+  for (const c of ['nvidia-ctk runtime configure --runtime=docker', 'dpkg --configure -a', 'frobnicate --all', 'ldconfig']) assert.equal(rootOnePlain(c), true, c);
+  for (const c of ['ldconfig; kill 1', 'a && b', 'a | b', 'echo $(id)', 'cat <(id)', 'x > y', '{ a; }', 'FOO=1 bar', 'for f in a; do b; done']) assert.equal(rootOnePlain(c), false, c);
+  const un = { class: 'risky', unreadable: 'an unclosed quote in its second part' };
+  assert.equal(rootUnread(un, 'ldconfig; bash /tmp/repair.sh'), 'Nothing was asked or run: as root, a command is run only when Spark Console can read all of it, and part of this one it can’t (an unclosed quote in its second part). Give each step as its own command.');
+  assert.equal(rootUnread(un, 'nvidia-ctk runtime configure --runtime=docker'), null, 'one plain program: asked');
+  assert.equal(rootUnread({ class: 'risky', unreadable: null }, 'ldconfig; bash /tmp/repair.sh'), null, 'read whole: the other checks decide');
+  // (end to end: one plain program the sorter doesn't know is asked, with its unknown-program line)
+  const chat = await newChat(), a = await ask(chat, 'as root on spark 3, configure the docker runtime', 'nvidia-ctk runtime configure --runtime=docker');
+  assert.ok(a.m, 'asked');
+  try {
+    assert.equal(a.m.danger.lines[0], 'ROOT on Spark 3');
+    assert.ok(a.m.danger.lines.includes('Sparkie doesn’t know the program nvidia-ctk, so it can’t tell you what it does as root: read the command before you answer.'), a.m.danger.lines.join('\n'));
+  } finally { await press(chat, a.no.id); }
+});
+
+// The reviewer's commands end to end: each after an unknown program, an option or a sign the sorter doubts. Waits for
+// the sorter's step-f2-sorter on main (it reads every part, and names what it couldn't read).
+test('as root, the reviewer’s commands with a doubt in front are refused, and kill 1 after one is the lock-out class (F1)', { todo: 'waits for step-f2-sorter on main (sorted.unreadable, every part read)', timeout: 120000 * SLOW }, async () => {
+  for (const c of ['ldconfig; bash /tmp/repair.sh', `nvidia-ctk runtime configure --runtime=docker && python3 -c "exec(open('/tmp/repair.py').read())"`,
+    'dpkg --configure -a; systemd-run --on-active=600 /opt/tools/repair', `echo "fixing…"; python3 -c "exec(open('/tmp/repair.py').read())"`, 'bash /tmp/repair.sh # é']) {
+    const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: c, root: true } });
+    assert.equal(r.status, 403, `${c}: ${r.text}`);
+    assert.match(r.json.error, /^Nothing was asked or run: as root, /, c);
+  }
+  const k = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'ldconfig; kill 1', root: true } });
+  assert.deepEqual([k.status, k.json?.question], [200, 'ROOT on Spark 3 · CAN LOCK YOU OUT'], k.text);
+});
+
 // The helper's round two: its one-time command refuses --with-root --hub (root is never on Spark 2). The console never
 // gives it: the owner's command for Spark 2 has no --with-root, whatever is asked; another Spark's keeps it.
 test('the owner’s one-time command never carries --with-root for Spark 2, which it refuses; for another Spark it does', () => {
@@ -349,17 +385,19 @@ test('the owner’s one-time command never carries --with-root for Spark 2, whic
 // sets root: false), so the sorter's root-only rules never applied there: kill -9 812 or kill 1 as root, where a number
 // can be any process (a way in among them), was asked as plain ROOT, outside the lock-out class's own path. Sorted as
 // root, each is the lock-out class: its ask, and from anything but the owner's own words, refused.
-test('as root, kill -9 812 and kill 1 are the lock-out class: ROOT on Spark 3 · CAN LOCK YOU OUT, and from Sparkie’s own proposal refused, never asked', { timeout: 180000 * SLOW }, async () => {
-  for (const [words, command] of [['as root on spark 3, stop the ssh process 812', 'kill -9 812'], ['as root on spark 3, stop sshd', 'kill 1']]) {
+test('as root, kill -9 812 and kill 1 are the lock-out class: ROOT on Spark 3 · CAN LOCK YOU OUT, the owner’s own order to kill a process asked as theirs, and from Sparkie’s own proposal refused, never asked', { timeout: 180000 * SLOW }, async () => {
+  // (the final read of round two, F3: the owner's plain order to kill a process by number is theirs, "You asked for this.")
+  for (const [words, command] of [['as root on spark 3, stop the ssh process 812', 'kill -9 812'], ['as root on spark 3, stop sshd', 'kill 1'], ['as root on spark 3, kill process 812', 'kill -9 812']]) {
     const chat = await newChat(), a = await ask(chat, words, command);
     assert.ok(a.m, `${command}: the dangerous ask (${JSON.stringify(sentBack(words))})`);
     try {
       assert.equal(a.m.danger.lines[0], 'ROOT on Spark 3 · CAN LOCK YOU OUT', `${command}: ${a.m.danger.lines.join('\n')}`);
       assert.match(a.m.danger.lines.join('\n'), /\nWhy it can lock you out: “kill” as root may kill any process, a way in among them/, command);
+      assert.equal(a.m.danger.lines[1], 'You asked for this.', words);
     } finally { await press(chat, a.no.id); }
   }
   // (the lock-out class's own path: words that ask for no lock-out change are refused, never asked)
-  const words = 'as root on spark 3, kill process 812', chat = await newChat(), a = await ask(chat, words, 'kill -9 812');
+  const words = 'as root on spark 3, tidy up', chat = await newChat(), a = await ask(chat, words, 'kill -9 812');
   if (a.no) await press(chat, a.no.id);
   assert.equal(a.m, undefined, 'refused, never asked');
   assert.match(sentBack(words)[0]?.error || '', /^Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal/);

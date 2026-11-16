@@ -66,6 +66,22 @@ function rootMounts(command, depth = 0) {
 function rootUnreadable(command) {
   try { shellParse(shellLex(String(command)).toks); return null; } catch (e) { return String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200); }
 }
+// One program with its words and nothing more (one command, no chain or pipe, no group, no redirection, nothing set
+// before it, no $( ) or <( ) in a word): what root still asks when part of a command could not be read, as an unknown
+// program's own words. Read by the sorter's own reader; a command it can't read is not that.
+function rootOnePlain(command) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return false; }
+  const c = items.length === 1 && items[0].length === 1 ? items[0][0] : null;
+  return Boolean(c && !c.group && !c.assigns.length && !c.redirs.length && c.words.length && c.words.every(w => !(w.subs || []).length));
+}
+// Part of a command the sorter couldn't read at all (its unreadable: an unclosed quote, a form the shell reader doesn't
+// know, a part past its bounds): what that part does is on no field, so as root it isn't run, unless the whole command is
+// one plain program (asked, with its unknown-program line). The refusal's words, or null. F1.
+function rootUnread(sorted, command) {
+  if (!sorted?.unreadable || rootOnePlain(command)) return null;
+  return `Nothing was asked or run: as root, a command is run only when Spark Console can read all of it, and part of this one it can’t (${String(sorted.unreadable).replace(/\.$/, '').slice(0, 200)}). Give each step as its own command.`;
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -87,6 +103,10 @@ async function rootChange(input, viewer, ctx = {}) {
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (part of it the sorter couldn't read at all, its unreadable: what that part does is on no field, so as root it isn't
+  // run, unless the whole command is one plain program, asked with its unknown-program line. F1)
+  const unread = rootUnread(sorted, command);
+  if (unread) throw new HttpError(403, unread);
   // (a command the reader can't read whole: as root it isn't run)
   const doubt = rootUnreadable(command);
   if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);

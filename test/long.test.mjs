@@ -292,6 +292,29 @@ test('the rehearsed helper’s stop answers, systemd silent or not, are read rig
     'It ended before it could be stopped, after 6 seconds, with exit code 0.']);
 });
 
+// The final read of round two, F10d and F13: after a restart, a long command's stop by id with systemd silent for its
+// unit is said, once its limit has passed, as not known (never as a Spark that didn't answer, and with no claim of
+// what ended it); with no answer at all, as before.
+test('after a restart, a stop systemd stays silent for is said as not known once its limit has passed; no answer at all, as the Spark’s', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-long.mjs'), 'utf8'), grab = re => { const m = re.exec(src)?.[0]; assert.ok(m, String(re)); return m; };
+  const id = 'abcdef0123456789abcdef03', at = new Date(Date.now() - 3600000).toISOString(), ends = [];
+  for (const answer of [`${id} stop: systemd does not answer for sw-run-${id}, so whether it runs is not known\n`, `${id} stop: systemd does not answer for sw-run-${id}, so whether it stopped is not known\n`, '']) {
+    const conv = { messages: [] };
+    const longCutOff = new Function('nodeById', 'runnerSparkOf', 'RUNNER_STOP_S', 'sparkName', 'maskSecrets', 'jTitle', 'jCommand', 'jWhere', 'saveChats', 'helperCall', 'setTimeout', 'console',
+      `${grab(/^const longStopSaid = [\s\S]*?\n\};$/m)}\n${grab(/^function longCutOff\([\s\S]*?\n\}$/m)}\nreturn longCutOff;`)(
+      x => ({ id: x }), () => 'spark3', 6, n => `Spark ${n.id.slice(5)}`, s => s, () => 'Run a command on a Spark', () => ': $ sleep 600', () => ' on Spark 3', () => {},
+      async () => ({ out: answer }), () => ({ unref() {} }), console);
+    assert.equal(longCutOff({ id: 'j_1', unit: `sw-run-${id}`, minutes: 1, seconds: 60, at }, conv), true);
+    await waitFor(() => conv.messages.length, { every: 10, timeout: 5000, what: 'the notice' });
+    ends.push(/\)\. (.*) What it did until then stays/.exec(conv.messages[0].content)?.[1]);
+  }
+  const hhmm = new Date(Date.parse(at) + 66000).toISOString().slice(11, 16);
+  assert.deepEqual(ends, [`Whether it was stopped there isn’t known: systemd on Spark 3 didn’t answer for its unit until its limit, ${hhmm} UTC, had passed.`,
+    `Whether it was stopped there isn’t known: systemd on Spark 3 didn’t answer for its unit until its limit, ${hhmm} UTC, had passed.`,
+    `It couldn’t be stopped there (Spark 3 didn’t answer), so it ended at its own limit, by ${hhmm} UTC.`]);
+  for (const e of ends.slice(0, 2)) assert.doesNotMatch(e, /ends at its own limit|didn’t answer\)/, e);
+});
+
 test('a console killed while a long command runs: after the restart its unit is stopped by id, one cut-off notice says so, and it never runs again', { timeout: 240000 * SLOW }, async () => {
   const chat = await newChat(), words = 'build the slow notes on spark 3', command = 'touch notes/k-start; sleep 25; touch notes/k-late';
   script([{ match: `^${words}$`, calls: [{ name: 'run', arguments: { on: 'spark3', command, dir: '~', minutes: 10 } }] }]);

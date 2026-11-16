@@ -19517,6 +19517,8 @@ const GUARD_SAYS = {
   putBack: /^(?:net |already )?put back at (.*)$/,
   // (the put-back the helper tried at once, sshd -t refusing the change or its timer gone, failed: never kept)
   failed: /^net: the put-back failed: ?(.*)$/,
+  // (after the command: a put-back finished first, the owner's /putback while it ran; put back, never kept)
+  alreadyBack: /^net: already put back$/,
   // (the line just before a put-back at once, saying why: sshd's own words, or the timer's state)
   sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
   timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
@@ -19557,6 +19559,7 @@ function guardAnswer(id, out) {
     goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
+    alreadyBack: Boolean(end) && GUARD_SAYS.alreadyBack.test(net),
     putBackAt: part == null ? back : null,
     part,
     failed: counted == null ? failed : null,
@@ -19571,10 +19574,11 @@ function guardAnswer(id, out) {
 // own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
 // (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
 const GUARD_TAIL = 65536;
-// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn), so
-// it must outlast the helper's worst case, from the helper's own numbers: its command's unit given 60 s to stop and 10
-// more to be killed, then three tries 20 s apart, each with a systemd call that hangs to guard.py's 120 s bound, and
-// another put-back holding the guard's lock for up to 120 s before it: 60 + 10 + 3 × 120 + 40 + 120, and 70 to spare.
+// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn). From
+// the helper's own numbers (restore.sh, guard.py): its command's unit given 60 s to stop and 30 more after SIGKILL,
+// three tries 20 s apart, each with one systemd call hung to guard.py's 120 s bound, and another put-back holding the
+// guard's lock for up to 120 s before it: 90 + 3 × 120 + 40 + 120 = 610 s, and 50 to spare. A try in which more than one
+// call hangs can outlast it: the put-back goes on on the Spark, and the console reads no answer from this call.
 const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
@@ -19863,6 +19867,10 @@ async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, w
     }
     return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true, protect: RUNNER_PROTECT });
   }
+  // (a change still open there, its put-back unfinished say: refused before it is asked, as root's is, never asked and
+  // its press then refused)
+  const open = netOpenOn(node.id);
+  if (open) throw new HttpError(409, `${netOpenWords(open, sparkName(node))} Nothing was asked or run.`);
   // (no root helper on Spark 2, one this build doesn't know, or walls not proven: the owner's one command with --hub, and
   // nothing is asked)
   const first = await netHelperFirst(node);
@@ -20641,7 +20649,7 @@ function longCutOff(r, conv) {
     if (!conv) return;
     const words = { stopped: 'It was stopped there by id after the restart, with everything it started.', gone: 'It had ended there by then.',
       limit: `It couldn’t be stopped there (${at} didn’t answer), so it ended at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC.`,
-      unknown: `Whether it was stopped there isn’t known: systemd on ${at} didn’t answer for its unit, so it ends at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC at the latest.` }[how];
+      unknown: `Whether it was stopped there isn’t known: systemd on ${at} didn’t answer for its unit until its limit, ${new Date(until).toISOString().slice(11, 16)} UTC, had passed.` }[how];
     const t = new Date().toISOString();
     conv.messages.push({ role: 'assistant', createdAt: t, notice: true, content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC, with up to ${r.minutes} minute${r.minutes === 1 ? '' : 's'}). ${words} What it did until then stays, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`) });
     conv.updatedAt = t;
@@ -20696,15 +20704,19 @@ const NET_FILE = `${STATE_DIR}/net.json`;
 const NET_AFTER_S = 600, NET_SLACK_MS = 60000, NET_KEPT = 50, NET_LATE_MS = 45000;
 const NET_PROBES = { ssh: 'a new SSH connection', helper: 'the root helper through its sudo line', tailnet: 'its Tailscale connection' };
 const netHhmm = t => { const d = new Date(t); return Number.isNaN(d.getTime()) ? 'an unknown time' : `${d.toISOString().slice(11, 16)} UTC`; };
-// net.json: { guards: [{ id, spark, state, at, goesBackAt, record, chat, putBackAt, keptAt, unfinished, went, could }] },
+// net.json: { guards: [{ id, spark, state, at, goesBackAt, record, chat, putBackAt, keptAt, unfinished, went, could, reached }] },
 // the newest last. state: arming (on record before the call), open (armed, the change ended), kept, put back, timer
 // (left to the Spark's own timer: no answer), part (a put-back in part), never (nothing ran). unfinished: its put-back did
-// not finish (went, could: the helper's count). Names, ids, times and numbers only (R20: writePrivate, readKept).
+// not finish (went, could: the helper's count). reached: when a /putback last called it. Every open guard is kept, and
+// the newest NET_KEPT closed ones (netSave). Names, ids, times and numbers only (R20: writePrivate, readKept).
 const netNow = () => { const f = readKept(NET_FILE); return f && Array.isArray(f.guards) ? f : { guards: [] }; };
 function netSave(change) {
   const f = netNow();
   change(f);
-  f.guards = f.guards.slice(-NET_KEPT);
+  // (only closed guards are cut past the newest NET_KEPT: one still open, or whose put-back did not finish, stays on
+  // record however many come after it, as the helper's guard stays open on the Spark)
+  const closed = f.guards.filter(g => !netStillOpen(g)), cut = new Set(closed.slice(0, Math.max(0, closed.length - NET_KEPT)));
+  f.guards = f.guards.filter(g => !cut.has(g));
   writePrivate(NET_FILE, f);
   return f;
 }
@@ -20715,6 +20727,7 @@ function netMark(id, fields) {
 // helper's count (went, could): the helper keeps its guard open, timer or not, until a put-back finishes or the owner
 // keeps it as it stands, so the record holds it open as long, whatever its time)
 const NET_OPEN = ['arming', 'open', 'timer', 'part'];
+const netStillOpen = g => NET_OPEN.includes(g.state) || Boolean(g.unfinished && !['kept', 'put back', 'never'].includes(g.state));
 const netLeft = text => { const c = GUARD_COUNT.exec(String(text ?? '')); return { unfinished: true, went: c ? Number(c[1]) : null, could: c ? Number(c[2]) : null }; };
 // The guard still open on a Spark, by the record: armed (or being armed) and neither kept nor put back, before its time;
 // or one whose put-back did not finish.
@@ -20814,7 +20827,17 @@ function netNeeds(add) {
     add(`net:${g.id}`, `The put-back of a change that could lock you out of ${at} (record ${g.record || g.id}) did not finish${count}: what did not go back is still as the change left it. ${netWaysOn(at, g)}`);
   }
 }
-const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, so something it doesn’t put back may still cut ${at} off. ${netRestart(at)}`;
+const netGoneWords = (which, at, g) => (g.unfinished ? `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}. ${netDarkWords(at, g)}`
+  : `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, so something it doesn’t put back may still cut ${at} off. ${netRestart(at)}`);
+// A put-back on record as not finished, and a Spark that doesn't answer: what did not go back may be what cuts it off (never
+// blamed on live state alone), and a restart of that Spark makes its own put-back try again (the helper keeps its restart
+// unit until a put-back finishes); then both ways on.
+const netCount = g => (Number.isInteger(g.went) && Number.isInteger(g.could) ? ` (${g.went} went back, ${g.could} could not)` : '');
+const netDarkWords = (at, g) => `Its put-back did not finish there${netCount(g)}, and ${at} doesn’t answer now: what did not go back may be what cuts it off. Restarting ${at} (switch its plug off and on) makes its own put-back try again, and clears live firewall and network state. Once it answers: ${netWaysOn(at, g)}`;
+// The console's own "console none" or "console unknown …" (guardScript: no root helper there, or one this build doesn't
+// know, as after an update of either side): the helper wasn't called, so nothing is known of the guard; never said as a
+// Spark that doesn't answer. The owner's one-time command sets the helper up for this build.
+const netNoHelperWords = (at, node, said, g) => `Spark Console didn’t call the root helper on ${at}: ${said === 'none' ? 'none is set up there' : 'it is one this build doesn’t know (an older or changed copy)'}, so it can’t say what became of that change; ${at}’s own timer still puts it back unless it was kept. The owner’s one-time command sets the helper up again: ${ownerCommand(node)}${g.unfinished ? `. Its put-back did not finish${netCount(g)}: ${netWaysOn(at, g)}` : '.'}`;
 // Once a guard left to the Spark's own timer is past its time: put back now if its timer didn't (the helper answers
 // "already put back" when it did), the ways in tried again, and the owner told what is true, once.
 async function netAfterTime(id) {
@@ -20824,8 +20847,10 @@ async function netAfterTime(id) {
   if (!node) return;
   const at = sparkName(node), which = `A change that could lock you out of ${at} (record ${g.record || g.id})`;
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
-  if (p.kept) return netMark(g.id, { state: 'kept' });
+  // (kept there: a keep whose answer was lost, or the owner's own keep by hand; told, once)
+  if (p.kept) { netMark(g.id, { state: 'kept' }); return netTell(g, `${which} is kept: at its time the root helper on ${at} says it was kept${g.unfinished ? ' as it stands, so what did not go back stays as the change left it' : ''}, so its timer put nothing back.`); }
   if (/^there is no guard /.test(p.refused || '')) return netMark(g.id, { state: 'never' });
+  if (p.said) return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}. ${netNoHelperWords(at, node, p.said, g)}`);
   // (in part: never told as put back; the helper's guard stays open, and so does the record)
   if (p.part != null) { netMark(g.id, { state: 'part', ...netLeft(p.part) }); return netTell(g, `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}. ${netPartWords(at, p.part, g)}`); }
   // (the helper answered that its put-back failed: the Spark answers, so it isn't cut off; say what is true)
@@ -20873,13 +20898,14 @@ const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out n
 // "whether to …"), no "don't" (NET_NOT), and no question about how things are: one that starts with why, is, does,
 // can … or ends in "?" (NET_QUESTION) counts only when "can you", "could you", "would you", "will you" or "please" opens
 // it; "tell me", "show me", "check" … (INFO_START, 16-actions.mjs) ask to be told. The intent sorter's `work` verbs are
-// all in NET_ASK but "try", which asks for an attempt. A word list is never perfect: what it misses is refused, never
-// run, and the refusal says how to ask.
+// all in NET_ASK but "try", which asks for an attempt; and kill, end and terminate, for a process. A word list is never
+// perfect: what it misses is refused, never run, and the refusal says how to ask.
 // What a lock-out change is about, as the owner names it (point 2): the sorter's lock-out class (20-tables.mjs,
 // 20-places.mjs) in plain words: SSH and keys, Tailscale, the firewall and ports, the network settings, users, accounts,
-// passwords, sudo and groups, the shell's start files, signing in, logging in, access.
-const NET_WHAT = /\b(?:ssh\w*|openssh\S*|authorized_keys2?|(?:pub)?keys?|tailscale\w*|tailnet|firewall\w*|ufw|iptables|ip6tables|nft(?:ables)?|ports?|network\w*|netplan|nmcli|wi-?fi|ip|dns|routes?|interfaces?|hostname|users?|usernames?|accounts?|admins?|passwords?|passwd|sudo\w*|groups?|bashrc|bash_profile|profile|zshrc|shell|sign(?:ed|ing)?[\s-]?in(?:s|to)?|log(?:ged|ging)?[\s-]?in(?:s|to)?|logon|access)\b/i;
-const NET_ASK = /\b(?:fix|install|uninstall|reinstall|set(?:\s+up)?|change|edit|update|upgrade|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give(?!\s+me\b)|reset|rotate|restart|reload|start|stop|create|make|put|copy|replace|rename|lock|unlock|configure|build|clean\s*up|(?:turn|switch)(?:\s+[\w.-]+){0,3}?\s+(?:on|off))\b/gi;
+// passwords, sudo and groups, the shell's start files, signing in, logging in, access; and a process or pid (as root, a
+// kill by number is the lock-out class, 20-programs.mjs: "as root on Spark 3, kill process 812" is the owner's order).
+const NET_WHAT = /\b(?:ssh\w*|process(?:es)?|pids?|openssh\S*|authorized_keys2?|(?:pub)?keys?|tailscale\w*|tailnet|firewall\w*|ufw|iptables|ip6tables|nft(?:ables)?|ports?|network\w*|netplan|nmcli|wi-?fi|ip|dns|routes?|interfaces?|hostname|users?|usernames?|accounts?|admins?|passwords?|passwd|sudo\w*|groups?|bashrc|bash_profile|profile|zshrc|shell|sign(?:ed|ing)?[\s-]?in(?:s|to)?|log(?:ged|ging)?[\s-]?in(?:s|to)?|logon|access)\b/i;
+const NET_ASK = /\b(?:fix|kill|end|terminate|install|uninstall|reinstall|set(?:\s+up)?|change|edit|update|upgrade|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give(?!\s+me\b)|reset|rotate|restart|reload|start|stop|create|make|put|copy|replace|rename|lock|unlock|configure|build|clean\s*up|(?:turn|switch)(?:\s+[\w.-]+){0,3}?\s+(?:on|off))\b/gi;
 const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need|not\s+to|shouldn'?t|should\s+not|mustn'?t|must\s+not)\b/i;
 // (a greeting or a joining word before the sentence's own start: "hey Sparkie, why …", "so can you …")
 const NET_LEAD = String.raw`^\s*(?:(?:hey|hi|hello|ok|okay|so|and|but|also|now|then|well|sparkie)\b[\s,]*)*`;
@@ -20945,12 +20971,12 @@ function netNowSaid(ctx) {
   return m && !m.auto && !m.from ? String(m.content || '') : '';
 }
 const NET_READ_FIRST = 'text Sparkie read first (a log, a page or a command’s output)';
-const NET_NOT_ORDER = 'your words, but not as an order of its own (they tell of a change, or give it after a statement in the same sentence)';
+const NET_NOT_ORDER = 'your words, but not as an order that starts its sentence (after nothing but a greeting, the Spark as in “on Spark 3,”, “as root”, or a request such as “can you”)';
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
 // how to ask for one: after a read, ask again before Sparkie reads anything; else, say it in one sentence.
 const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. ${from === NET_READ_FIRST
   ? 'To ask, say it again in a new message: it counts only before Sparkie reads anything for it.'
-  : from === NET_NOT_ORDER ? `To ask, say it as an order on its own, in a sentence of its own: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`
+  : from === NET_NOT_ORDER ? `To ask, say it as an order on its own, in a sentence that starts with it: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`
     : `To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`}`);
 
 // From the ladder (workChange), for every change the sorter calls lock-out on a compute Spark, as the owner. As the
@@ -21075,7 +21101,12 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
     }
     const back = a.goesBackAt || new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString(), output = lookClean(netOutput(id, called.out));
-    netMark(id, { state: 'open', goesBackAt: back });
+    // (the owner's /putback may reach this guard while the command runs, or before its keep: its record says so, by
+    // its mark or what it wrote. Then it is never kept here, nothing is written over what /putback found, and that is
+    // what is said; F2. The helper's "net: already put back" is one such: /putback's put-back finished first.)
+    const reachedNow = was => { try { const r = netNow().guards.find(x => x.id === id); return r && (r.reached || r.unfinished || r.state !== was) ? r : null; } catch { return null; } };
+    const reached0 = a.alreadyBack ? { ...(reachedNow('arming') || {}), state: 'put back' } : reachedNow('arming');
+    if (!reached0) netMark(id, { state: 'open', goesBackAt: back });
     let lost = [];
     // (ended at its time limit: said, in every outcome's words, R70)
     const cut = a.exit === null ? ` The command itself was ended at its time limit (${netTimeWords(seconds)}), before it finished.` : '';
@@ -21084,6 +21115,37 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     const late = () => Date.now() - t0 > NET_LATE_MS;
     // (after a put-back: the ways in that worked before, tried again; what still doesn't work is said, netStillWords)
     const still = async () => { const l = await netStillLost(node, g); return l.length ? ` ${netStillWords(at, l)}` : ''; };
+    // What /putback found, said here as this press's own outcome, never kept.
+    const afterPutback = async r => {
+      if (r.state === 'put back') {
+        netMark(id, { state: 'put back', goesBackAt: back });
+        end({ ok: false, outcome: 'put back', exit: a.exit ?? null }, `$ ${command}\n${output}`);
+        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and /putback put it back while it ran${r.putBackAt ? ` (put back at ${r.putBackAt})` : ''}.${cut}${await still()}`;
+        netTell(g, words, late());
+        return result('put back', words);
+      }
+      if (r.state === 'kept') {
+        end({ ok: true, outcome: 'kept', exit: a.exit ?? null }, `$ ${command}\n${output}`);
+        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and /putback found it kept${r.unfinished ? ' as it stands, so what did not go back stays as the change left it' : ''}: it stays.${cut}`;
+        netTell(g, words, late());
+        return result('kept', words);
+      }
+      if (r.state === 'never') {
+        end({ ok: false, outcome: 'never', exit: a.exit ?? null }, `$ ${command}\n${output}`);
+        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, but /putback found no guard for it on ${at} any more, so the net can’t put it back, and whatever it changed stays as it is.${cut}`;
+        netTell(g, words, late());
+        return result('never', words);
+      }
+      // (in part, failed, or /putback's call still under way: not kept; held, and looked at again at its time)
+      if (['arming', 'open'].includes(r.state)) netMark(id, { state: 'timer' });
+      end({ ok: false, outcome: r.unfinished ? 'part' : 'timer', exit: a.exit ?? null }, `$ ${command}\n${output}`);
+      const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net while /putback was putting it back${r.unfinished ? `, and that put-back did not finish${netCount(r)}` : ''}, so it is not kept. ${r.unfinished ? `What did not go back is still as the change left it, and may still cut you off from ${at}. If ${at}’s own timer still waits, it tries again at ${netHhmm(back)}, and ${at} stays claimed until then. ${netWaysOn(at, g)}` : `What /putback finds is said in its own answer; ${at}’s own timer, if it still waits, puts it back at ${netHhmm(back)}, and ${at} stays claimed until then.`}${cut}`;
+      netTell(g, words, late());
+      netHold(node.id, Date.parse(back) || Date.now(), release, () => netAfterTime(id));
+      held = true;
+      return result(r.unfinished ? 'part' : 'timer', words);
+    };
+    if (reached0) return afterPutback(reached0);
     // No answer: the call was cut off, or the Spark stopped answering. What it did is left to the Spark's own timer.
     if (a.exit === undefined) {
       netMark(id, { state: 'timer' });
@@ -21138,6 +21200,9 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     const after = await probe();
     lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
     if (!lost.length) {
+      // (and again just before keep: a /putback meanwhile is never kept over)
+      const reached1 = reachedNow('open');
+      if (reached1) return afterPutback(reached1);
       const k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
       if (k.kept) {
         netMark(id, { state: 'kept', keptAt: new Date().toISOString() });
@@ -21209,15 +21274,28 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   }
 }
 
-// /putback, the owner's word on the page and in the paired Telegram chat: the newest change made inside the net that is
-// still open put back now, by code, with no brain; with none open, the newest kept one is named, and stays: the helper
-// puts nothing back once it is kept. (A kept one never hides an older one still open, on another Spark say.)
+// /putback, the owner's word on the page and in the paired Telegram chat, by code, with no brain: every change made
+// inside the net that is still open on record put back now, oldest first, one answer each (one alone is "the newest";
+// an older one, unfinished on another Spark, is never left behind a newer one); with none open, the newest kept one is
+// named, and stays: the helper puts nothing back once it is kept. Each is marked reached before its call, so the press
+// still running it never keeps it (netGuarded).
 async function netPutbackWord() {
-  let g;
-  try { const gs = netNow().guards; g = gs.filter(x => NET_OPEN.includes(x.state)).at(-1) || gs.filter(x => x.state === 'kept').at(-1); } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
+  let gs;
+  try { gs = netNow().guards; } catch (e) { return `The lock-out net’s record couldn’t be read (${maskSecrets(e.message).slice(0, 200)}), so nothing was put back.`; }
+  const open = gs.filter(x => NET_OPEN.includes(x.state));
+  if (open.length > 1) {
+    const said = [];
+    for (const g of open) said.push(await netPutbackOne(g, 'the change made inside the lock-out net'));
+    return [`${open.length} changes made inside the lock-out net are still open, so each was tried, oldest first:`, ...said].join('\n');
+  }
+  const g = open[0] || gs.filter(x => x.state === 'kept').at(-1);
   if (!g) return 'No change made inside the lock-out net is on record, so nothing was put back.';
-  const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `the newest change made inside the lock-out net, on ${at} (record ${g.record || g.id})`;
+  return netPutbackOne(g, 'the newest change made inside the lock-out net');
+}
+async function netPutbackOne(g, name) {
+  const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `${name}, on ${at} (record ${g.record || g.id})`;
   if (!node) return `${which[0].toUpperCase()}${which.slice(1)} is on a Spark no longer on the list, so nothing was put back.`;
+  if (NET_OPEN.includes(g.state)) netMark(g.id, { reached: new Date().toISOString() });
   const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
   if (p.part != null) { netMark(g.id, { state: 'part', ...netLeft(p.part) }); return `The put-back of ${which} did not finish. ${netPartWords(at, p.part, g)}`; }
   if (p.failed != null) { netMark(g.id, { unfinished: true }); return `Nothing was put back: the put-back of ${which} failed (${String(p.failed || 'no reason given').slice(0, 200)}). What that change did may still be in place, in part or whole. ${netWaysOn(at, g)}`; }
@@ -21229,7 +21307,15 @@ async function netPutbackWord() {
   }
   // (kept: by code once it passed, or by the owner's keep after a put-back that did not finish, as it stands)
   if (p.kept) { netMark(g.id, { state: 'kept' }); netUnhold(g.spark); return `Nothing was put back: ${which} was kept${g.unfinished ? ' as it stands, so what did not go back stays as the change left it' : ''}, and once kept the net puts nothing back. Change it back with a new change.`; }
+  // (its guard is gone from the Spark: off the open list, as at its time and at start, and the Spark let go)
+  if (/^there is no guard /.test(p.refused || '')) {
+    netMark(g.id, { state: 'never' });
+    netUnhold(g.spark);
+    return `Nothing was put back: the root helper on ${at} has no guard for ${which} any more (its copy of the ways in is gone), so the net can’t put that change back, and whatever it changed stays as it is. It is off the list of open changes now, and ${at} is free.`;
+  }
   if (p.refused) return `Nothing was put back: the root helper on ${at} refused (${String(p.refused).slice(0, 200)}).`;
+  if (p.said) return `Nothing was put back now. ${netNoHelperWords(at, node, p.said, g)}`;
+  if (g.unfinished) return `Nothing was put back now: ${at} doesn’t answer. ${netDarkWords(at, g)}`;
   if (Date.parse(g.goesBackAt || 0) + NET_SLACK_MS <= Date.now()) return `Nothing was put back now: ${at} still doesn’t answer, past ${netHhmm(g.goesBackAt)}, when its own timer was to put ${which} back: ${NET_LIVE}, so something it doesn’t put back may still cut ${at} off. ${netRestart(at)}`;
   return `Nothing was put back now: ${at} didn’t answer. Unless it was kept, its own timer puts ${which} back at ${netHhmm(g.goesBackAt)}.`;
 }
@@ -21242,15 +21328,17 @@ async function netRecover() {
   // (a put-back that did not finish, told already, is not tried again at every start: /putback is the owner's way to try
   // again, or their keep. Its time is still looked at, when the Spark's own timer may have finished it, netAfterTime)
   try { const gs = netNow().guards.filter(g => NET_OPEN.includes(g.state)); open = gs.filter(g => g.state !== 'part' && !g.unfinished); told = gs.filter(g => g.state === 'part' || g.unfinished); } catch { return; }
-  for (const g of told) {
+  const lookAtItsTime = g => {
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
     if (wait > 0) setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
-  }
+  };
+  for (const g of told) lookAtItsTime(g);
   for (const g of open) {
     const node = nodeById(g.spark), at = sparkName(node || { id: g.spark }), which = `A change that could lock you out of ${at} (record ${g.record || g.id}), made inside the lock-out net before Spark Console restarted,`;
     if (!node) continue;
     const p = guardAnswer(g.id, (await guardCall(node, 'putback', { id: g.id })).out);
-    if (p.part != null) { netMark(g.id, { state: 'part', ...netLeft(p.part) }); netTell(g, `${which} had to go back. ${netPartWords(at, p.part, g)}`); continue; }
+    // (in part now: told, and looked at again at its time, as one told before the restart)
+    if (p.part != null) { netMark(g.id, { state: 'part', ...netLeft(p.part) }); netTell(g, `${which} had to go back. ${netPartWords(at, p.part, g)}`); lookAtItsTime(g); continue; }
     if (p.putBackAt) {
       netMark(g.id, { state: 'put back', putBackAt: p.putBackAt });
       const lost = await netStillLost(node, g);
@@ -21266,8 +21354,9 @@ async function netRecover() {
     if (failed) netTell(g, `${which} couldn’t be put back now: the put-back failed there (${String(failed[1] || 'no reason given').slice(0, 200)}). ${netFailedNow(at, g)}`);
     // (past its time and still no answer: what the timer can't put back most likely cut it off; else looked at again then)
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
-    if (!(wait > 0)) { if (!failed) netTell(g, netGoneWords(which, at, g)); continue; }
-    if (!failed) netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
+    if (!(wait > 0)) { if (p.said) netTell(g, `${which} couldn’t be put back now. ${netNoHelperWords(at, node, p.said, g)}`); else if (!failed) netTell(g, netGoneWords(which, at, g)); continue; }
+    if (p.said) netTell(g, `${which} couldn’t be put back now. ${netNoHelperWords(at, node, p.said, g)} ${at} stays claimed until its time, ${netHhmm(g.goesBackAt)}.`);
+    else if (!failed) netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
     // (claimed until its time, as before the restart: nothing else changes there while its own timer may still put it
     // back; then looked at again, netAfterTime, and let go)
     let release = null;
@@ -22542,6 +22631,22 @@ function rootMounts(command, depth = 0) {
 function rootUnreadable(command) {
   try { shellParse(shellLex(String(command)).toks); return null; } catch (e) { return String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200); }
 }
+// One program with its words and nothing more (one command, no chain or pipe, no group, no redirection, nothing set
+// before it, no $( ) or <( ) in a word): what root still asks when part of a command could not be read, as an unknown
+// program's own words. Read by the sorter's own reader; a command it can't read is not that.
+function rootOnePlain(command) {
+  let items;
+  try { items = shellParse(shellLex(String(command)).toks); } catch { return false; }
+  const c = items.length === 1 && items[0].length === 1 ? items[0][0] : null;
+  return Boolean(c && !c.group && !c.assigns.length && !c.redirs.length && c.words.length && c.words.every(w => !(w.subs || []).length));
+}
+// Part of a command the sorter couldn't read at all (its unreadable: an unclosed quote, a form the shell reader doesn't
+// know, a part past its bounds): what that part does is on no field, so as root it isn't run, unless the whole command is
+// one plain program (asked, with its unknown-program line). The refusal's words, or null. F1.
+function rootUnread(sorted, command) {
+  if (!sorted?.unreadable || rootOnePlain(command)) return null;
+  return `Nothing was asked or run: as root, a command is run only when Spark Console can read all of it, and part of this one it can’t (${String(sorted.unreadable).replace(/\.$/, '').slice(0, 200)}). Give each step as its own command.`;
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -22563,6 +22668,10 @@ async function rootChange(input, viewer, ctx = {}) {
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (part of it the sorter couldn't read at all, its unreadable: what that part does is on no field, so as root it isn't
+  // run, unless the whole command is one plain program, asked with its unknown-program line. F1)
+  const unread = rootUnread(sorted, command);
+  if (unread) throw new HttpError(403, unread);
   // (a command the reader can't read whole: as root it isn't run)
   const doubt = rootUnreadable(command);
   if (doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
