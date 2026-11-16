@@ -94,7 +94,9 @@ What only a real Spark proves (R63's Today has the lines to run there):
   root;
 - that a stopped change ends on a real systemd (the stand-in `systemctl` only marks a stop unless told otherwise);
 - the lock-out net's put-back on a real systemd (R60): a change that disables ssh, then a restart inside its window,
-  brings ssh back running (A-15: the start it queues runs after the restart unit); a change whose unit will not end is
+  brings ssh back running (A-15: the start it queues runs after the restart unit, and its look, `sw-guard-look-<id>`,
+  90 s on finds ssh running, or starts it, before the result is written; `systemctl list-timers` shows the look, gone
+  once it ran); a change whose unit will not end is
   still put back and its guard stays open (P-1); and the real answers of a failed reload, `ufw` and a console start
   each leave the guard open (A-14), while a reload of a unit that is not there (`sshd.service`) does not.
 - that a pinned script (`--script`) is bound read-only from the helper's copy for the whole run (P-5): a change runs
