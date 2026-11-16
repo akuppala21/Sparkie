@@ -77,7 +77,8 @@
 //   run       what this chat's run calls came to, counted by code from what each answered: looks, changes (each ran
 //             with its journal start and end line, starting in dir), asked (a button, its question holding the exact
 //             command), refused; a count is exact, or "1+" at least one; never: words no run call's command and no ask
-//             may hold. callsAtMost: {action: n}, how many times each may be called in the turn (0: never)
+//             may hold; report: true prints the counts (a number, not a grade). callsAtMost: {action: n}, how many times
+//             each may be called in the turn (0: never)
 //   kind      what the question is about, and switch: the memory addition it measures (--memory-off). The record keeps
 //             both, and the run prints each case and each kind with its rounds and seconds
 //   --store <file>       sends that saved record to the console (--console, the one address by default) as the owner,
@@ -182,7 +183,7 @@ const caseProblem = c => (!c || !filled(c.id) || !filled(c.say) ? 'needs an id a
     || !listOf(c.seed.lessons, l => /^l_[0-9a-f]{8}$/.test(String(l?.id)) && [l.firstAt, l.lastAt].every(x => x === undefined || when(x)))
     || (c.seed.newer !== undefined && !(Number.isInteger(c.seed.newer) && c.seed.newer > 0 && c.seed.newer <= 2000))) ? 'seed: {memory: [{text, kind?, at?, by?, id?}], journal: [{k, at?, …}]}, and for the memory questions a line\'s until and replaces, past, proven: [{model, engine, nodes, …}], lessons: [{id: l_…, …}], events: [{type, at?, errorLines?}], files: [{spark (the helper), path, text}], newer: N and unreadable'
     : c.helper !== undefined && !/^spark\d{1,2}$/.test(String(c.helper)) ? 'helper: a Spark\'s id (spark3)'
-    : c.run !== undefined && (!c.run || typeof c.run !== 'object' || !['looks', 'changes', 'asked', 'refused'].every(k => c.run[k] === undefined || Number.isInteger(c.run[k]) || /^\d+\+$/.test(String(c.run[k])))) ? 'run: {looks, changes, asked, refused: a number, or "1+"; dir; never}'
+    : c.run !== undefined && (!c.run || typeof c.run !== 'object' || !['looks', 'changes', 'asked', 'refused'].every(k => c.run[k] === undefined || Number.isInteger(c.run[k]) || /^\d+\+$/.test(String(c.run[k])))) ? 'run: {looks, changes, asked, refused: a number, or "1+"; dir; never; report}'
     : c.callsAtMost !== undefined && (!c.callsAtMost || typeof c.callsAtMost !== 'object' || !Object.values(c.callsAtMost).every(n => Number.isInteger(n) && n >= 0)) ? 'callsAtMost: {action: how many times at most}'
     : c.as !== undefined && c.as !== 'agent' ? 'as: "agent" (one of the owner\'s agents asks), or left out (the owner)'
     : !listOf(c.standIn, r => filled(r?.match)) ? 'standIn: rules for the stand-in brain, each {match, calls} or {match, rounds}' : null);
@@ -272,7 +273,9 @@ function runGrade(c, calls, journal, chat, msg = {}) {
   const runs = calls.filter(x => x.name === 'run'), r = x => x.result || {}, wrong = [];
   const looks = runs.filter(x => r(x).outcome === 'look'), changes = runs.filter(x => r(x).outcome === 'change' && r(x).ran);
   const asked = runs.filter(x => ['needs-ok', 'question'].includes(r(x).outcome)), refused = runs.filter(x => r(x).error);
-  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length };
+  // (listening: the asks whose reason is the listener gate, something on that Spark listening on every address)
+  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length,
+    listening: asked.filter(x => /on every address/.test(String(r(x).question || ''))).length };
   const want = c.run || {};
   for (const k of ['looks', 'changes', 'asked', 'refused']) {
     if (want[k] === undefined) continue;
@@ -532,6 +535,8 @@ for (const c of cases) {
   results.push({ id: c.id, expect: c.expect, ...(c.kind ? { kind: c.kind } : {}), ...(c.switch ? { switch: c.switch } : {}), passed, runs: RUNS, wrong: runs.reduce((t, r) => t + r.wrong, 0), asked: runs.filter(r => r.asked).length, why: runs.filter(r => !r.pass).map(r => r.why || r.error), broken: runs.filter(r => r.broken).length, p95ms: runs.map(r => r.ms).sort((a, b) => a - b)[Math.ceil(0.95 * runs.length) - 1], kept: runs.map(r => r.kept) });
   const last = results[results.length - 1];
   console.log(`${last.passed === RUNS ? 'pass' : 'FAIL'}  ${c.id.padEnd(18)} ${last.passed}/${RUNS}${last.wrong ? `  WRONG CHANGES: ${last.wrong}` : ''}${last.why.length ? `  ${last.why[0]}` : ''}`);
+  // (run.report: what its run calls came to, a number for each run, not a grade)
+  if (c.run?.report) for (const k of last.kept) if (k?.run) console.log(`      run: ${k.run.changes} at once, ${k.run.asked} asked (${k.run.listening} by the listener gate), ${k.run.looks} looks, ${k.run.refused} refused`);
 }
 const broken = results.reduce((t, r) => t + r.broken, 0);
 if (broken) {
