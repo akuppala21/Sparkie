@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25802 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25822 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -920,7 +920,7 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
 - **Area:** features. **Rules:** R62, R52, R43, R23. **Tests:** box-fill.test.mjs, box-more.test.mjs
-- **Lines:** 308
+- **Lines:** 309
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -1196,7 +1196,7 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
-- **Lines:** 502
+- **Lines:** 521
 - **Actions:** `propose_update`
 - **Owns:** tmp (writers: selfTree; a folder: each send's work, removed on every exit)
 - **Timers:** none
