@@ -69,7 +69,7 @@ const TITLE = 'A calmer page', WHY = 'The page says less while a model starts, a
 // ("change your own code" asks for that kind of change, so it runs at once on the owner's own words; "open a proposal"
 // doesn't, so it comes back as a button)
 const SCRIPT = ([
-  { match: '^please change your own code', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
+  { match: '^please change your own code$', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
   { match: '^please open a proposal', calls: [{ name: 'propose_update', arguments: { do: 'start' } }] },
   { match: '^send your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'send', title: TITLE, why: WHY } }] },
   { match: '^drop your code proposal', calls: [{ name: 'propose_update', arguments: { do: 'drop' } }] },
