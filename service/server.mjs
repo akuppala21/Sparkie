@@ -17799,12 +17799,16 @@ function workScriptLines(scripts) {
   return [...Object.entries(sums).map(([p, h]) => (h ? `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.` : not(p))), ...unpinned.slice(0, 4).map(n => not(n.slice(0, 120)))];
 }
 
+// The folder a change starts in, as run took it (~ or a folder under it, no . or .. part: 21-work.mjs), on both asks.
+const workStartsIn = dir => `It starts in ${dir}.`;
 // The button's words, built by code: the exact command, the Spark, why it is asked, the wall it runs in after the yes
-// and what that lets it do, what put-back covers, what Sparkie read before proposing it, each script's hash.
+// and what that lets it do, the folder it starts in, what put-back covers, what Sparkie read before proposing it, each
+// script's hash.
 function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir)) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
+  // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`, ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
-    sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
+    workStartsIn(dir), sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
 async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
@@ -17816,7 +17820,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts)] } })
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts), workStartsIn(dir)] } })
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
