@@ -349,6 +349,43 @@ test('a hidden part holding a sign that runs something is shown whole on the but
   } finally { Object.assign(T, was); await fleet.stop(); }
 });
 
+// The final read, K1: an old line (-) comes from the file on the Spark, which nothing checked. A password the mask hides
+// by its shape, and a kept key, each holding signs that run something, stay hidden on the ask as the page and Telegram
+// get it; a new line (+) with such signs is still shown whole.
+test('an old line\'s password or kept key is never shown whole on the ask, on the page or on Telegram; a new line still is', { timeout: 240000 * SLOW }, async () => {
+  const TG = 5550001, PW = 'Tr0ub4dor&3(x)', KEPT = 'pg://u:Pa$$w0rd&more';
+  const fleet = await startMock({ evalOnRecord: false, telegram: true, env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
+    prepare: ({ root, dir }) => {
+      rehearse(root, 'spark3', { run: true }); mkdirSync(join(root, 'spark3', 'notes'), { recursive: true });
+      writeFileSync(join(root, 'spark3', 'notes', 'settings.txt'), `import os\nDB_PASSWORD = "${PW}"\nURL=${KEPT}\nDEBUG = False\n`);
+      mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', bot: 'spark_test_bot', chatId: TG, userId: TG, name: 'Owner', pairedAt: '2026-11-10T00:00:00.000Z', approve: true },
+        keys: { DB_URL: { value: KEPT, at: '2026-11-10T00:00:00.000Z' } } }), { mode: 0o600 });
+    } });
+  const was = { fleet: T.fleet, base: T.base, mcp: T.mcp, origin: T.origin };
+  Object.assign(T, { fleet, base: fleet.base, mcp: fleet.mcp, origin: fleet.origin });
+  try {
+    const chat = await newChat(), mark = '(shown whole: what would be hidden here holds signs that run something)';
+    const leaks = s => [PW, KEPT, 'Pa$$w0rd', encodeURIComponent(KEPT)].filter(x => String(s).includes(x));
+    const r = await turn(chat, 'fix the settings note on spark 3', [[WRITE('~/notes/settings.txt', 'URL = None\ntoken=$(reboot)\n', { from: 2, to: 3 })]]);
+    const q = r.back[0]?.question || '';
+    assert.match(q, /^Write this file on Spark 3\?\n~\/notes\/settings\.txt: lines 2 to 3 replaced \(4 lines now\)\n- DB_PASSWORD = "\[hidden\]" \(a value on this line is hidden here\)\n- URL=\[hidden\] \(a value on this line is hidden here\)\n\+ URL = None\n\+ token=\[hidden\] /, q);
+    // (the paired chat's ask: the new line whole, the old ones masked)
+    const sent = await waitFor(() => lines(join(fleet.dir, 'telegram-calls.jsonl')).find(c => c.method === 'sendMessage' && c.body?.reply_markup), { what: 'the ask in the paired chat' });
+    assert.ok(sent.body.text.includes(`+ token=$(reboot) ${mark}`), sent.body.text);
+    assert.ok(sent.body.text.includes('- DB_PASSWORD = "[hidden]"') && sent.body.text.includes('- URL=[hidden]'), sent.body.text);
+    assert.deepEqual(leaks(sent.body.text), [], sent.body.text);
+    // (the page: on the reply and on a later read)
+    const page = r.message.asks?.[0]?.text || '';
+    assert.ok(page.includes(`+ token=$(reboot) ${mark}`) && page.includes('- DB_PASSWORD = "[hidden]"') && page.includes('- URL=[hidden]'), page);
+    assert.deepEqual(leaks(page), [], page);
+    assert.equal((await api(`/chats/${chat}`)).json.messages.at(-1).asks?.[0]?.text, page);
+    assert.deepEqual(leaks(JSON.stringify(lines(join(fleet.dir, 'telegram-calls.jsonl')))), [], 'in no Telegram call');
+    assert.deepEqual(leaks(readFileSync(join(fleet.stateDir, 'chats.json'), 'utf8')), [], 'in chats.json');
+    for (const f of readdirSync(fleet.journalDir)) assert.deepEqual(leaks(readFileSync(join(fleet.journalDir, f), 'utf8')), [], `in ${f}`);
+  } finally { Object.assign(T, was); await fleet.stop(); }
+});
+
 // The rail (R52): with no eval on record, a plain write Sparkie proposes is a button, and the owner's press writes it.
 test('with no eval on record, a plain write Sparkie proposes is a button, and the owner\'s press writes it', { timeout: 240000 * SLOW }, async () => {
   const fleet = await startMock({ evalOnRecord: false, env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1' },
