@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26253 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (26255 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -841,7 +841,7 @@ The owner's yes may come from Telegram (owner decisions 20 and 22; contract 8.7,
 The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the package managers (apt, dpkg, pip, conda, npm, hf), git, Docker, the builds (make and its kin), and systemd (systemctl, service, loginctl). Each knows its sub-commands: one not on its list is a doubt (risky), and so is an option its spec (20-options.mjs) doesn't hold. A sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words are its own, so the options …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 363
+- **Lines:** 365
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

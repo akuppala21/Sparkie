@@ -574,7 +574,7 @@ test('no command makes the sorter slow, throw or run out of memory, and no input
     const r = sortCommand('rm /tmp/x', o);
     assert.ok(['change', 'risky'].includes(r.class), `${JSON.stringify(o)}: ${r.class}`);
   }
-  assert.equal(sortCommand('ssh spark9 uptime', { hosts: { spark9: 'Hub' } }).class, 'risky');
+  assert.equal(sortCommand('ssh spark9 uptime', { hosts: { spark9: 'Hub' } }).class, 'notdone');
   assert.equal(sortCommand('touch /tmp/x', { at: 'Hub' }).class, 'risky');
 });
 

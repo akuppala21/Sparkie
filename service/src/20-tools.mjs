@@ -114,6 +114,8 @@ function sortDockerProtect(a, ctx, r, name) {
   }
   const protectedName = n => ctx.brain.includes(n) || ctx.protect.some(g => sortGlob(g.replace(/\//g, '')).test(n));
   const hit = names.find(w => !w.unknown && !w.glob && protectedName(w.text));
+  // (on Spark 2 the hub's own rules refuse it, in their words, on the kind: hubRefuses, 21-hub.mjs)
+  if (hit && ctx.at === 'hub') return ask(`names ${sortQ(hit.text)}, a protected container`);
   if (hit) return raise(r, 'notdone', `${sortQ(name)} ${sortQ(sub)} ${sortQ(hit.text)}: it is a protected container (the brain’s, or one the owner keeps), which a command never stops or changes.`);
   const odd = names.find(w => w.unknown || w.glob || w.brace || /^[0-9a-f]{1,64}$/.test(w.text));
   if (odd) ask(`names ${odd.unknown ? 'containers through a $ or a command' : odd.glob || odd.brace ? 'containers by a pattern' : `${sortQ(odd.text)}, which may be the start of a protected container’s id`}`);
