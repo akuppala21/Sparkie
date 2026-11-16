@@ -7103,25 +7103,32 @@ async function restartChecked(viewer, ctx, spark, container) {
   notBrainsSpark([spark]);
   const m = inv.library.find(x => x.name === dep.model);
   if (!m) throw new HttpError(409, `${dep.model} isn’t in the library on ${spark} any more.`);
-  // Room for it now, beyond the 8 GB kept free, without stopping anything else.
-  const p = await plan(m.name, spark, viewer, inv), avail = p.memory.available, total = p.memory.total;
-  // A GPU app or job there has the GPU to itself (A13): a restart never stops it.
-  const held = p.steps.find(s => s.hold);
-  if (held) throw new HttpError(409, `${held.container} has ${sparkName(nodeById(spark) || { id: spark })}’s GPU now. start_model can ask to stop it.`);
+  await restartRoom(viewer, spark, container, m.name, inv);
+  return restartJob(viewer, ctx, spark, container, m.name);
+}
+// Room for it now, beyond the 8 GB kept free, without stopping anything else; and no GPU app or job there (A13: it has
+// the GPU to itself, and a restart never stops it). Asked before the claim, for the plain refusal, and again inside it
+// just before the docker start, from a fresh look (A-2b, as keep_running does: another GPU app or job, or less free
+// memory, may have come between the two).
+async function restartRoom(viewer, spark, container, model, inv = null) {
   // It comes back with the share it was started with, so that's what it takes: the larger of that and the estimate.
   const cmd = await run(nodeById(spark), `docker inspect -f '{{json .Config.Cmd}}' ${q(container)} 2>/dev/null`, { timeout: 20000 });
+  const p = await plan(model, spark, viewer, inv || await inventory(null)), avail = p.memory.available, total = p.memory.total;
+  const held = p.steps.find(s => s.hold);
+  if (held) throw new HttpError(409, `${held.container} has ${sparkName(nodeById(spark) || { id: spark })}’s GPU now. start_model can ask to stop it.`);
   let own = null;
   try { const args = JSON.parse(cmd.out.trim() || '[]'); own = shareIn(args, '--gpu-memory-utilization') ?? shareIn(args, '--mem-fraction-static'); } catch {}
   const need = Math.max(p.memory.need || 0, own != null && Number.isFinite(total) ? own * total : 0);
   if (!Number.isFinite(avail) || !need) throw new HttpError(409, `free memory on ${spark} is unknown right now, so it can’t be checked`);
   if (avail - KEEP_FREE < need) throw new HttpError(409, `${spark} doesn’t have room for ${container} now (it takes about ${Math.round(need / 1e9)} GB beyond the 8 GB kept free). start_model can make room.`);
-  return restartJob(viewer, ctx, spark, container);
 }
-function restartJob(viewer, ctx, spark, container) {
+function restartJob(viewer, ctx, spark, container, model) {
   const node = nodeById(spark);
   const job = claimed([spark], `restarting ${container}`, () => newJob('restart', { node: spark, container, by: viewer?.login || null, actor: ctx.actor || null, via: ctx.via || null, request: ctx.request ? String(ctx.request).slice(0, 300) : null }));
   runJob(job, async j => {
     pausedCheck(ctx);
+    // (looked at again inside the claim; a refusal here started nothing, so there is nothing to stop again)
+    await restartRoom(viewer, spark, container, model);
     step(j, `Starting ${container} on ${spark}`);
     const r = await run(node, `docker start ${q(container)}`, { timeout: 90000 });
     if (r.code) throw new Error(`Docker couldn’t start it: ${r.err || r.out}`);
@@ -7867,7 +7874,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.

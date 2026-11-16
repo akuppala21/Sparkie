@@ -90,7 +90,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
