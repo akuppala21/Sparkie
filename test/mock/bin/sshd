@@ -1,0 +1,11 @@
+#!/bin/bash
+# Stand-in sshd for rehearsals of the root helper (deploy/spark-console-root; test/root-helper.test.mjs): only `sshd -t`
+# (check the settings), which passes, or fails as sshd does (exit 255, its words on standard error) with what
+# <rehearsal>/standin/sshd-refuses holds. Each call is one JSON line in <rehearsal>/calls.log. Outside a rehearsal
+# (SPARK_CONSOLE_REHEARSAL naming its folder) it fails.
+R=${SPARK_CONSOLE_REHEARSAL-}
+[[ $R == /* ]] && [ -d "$R" ] || { echo 'sshd: this stand-in only answers inside a rehearsal of the root helper' >&2; exit 1; }
+[ "$*" = -t ] || { echo 'sshd: the stand-in only answers -t' >&2; exit 1; }
+echo '["sshd", "-t"]' >> "$R/calls.log"
+if [ -f "$R/standin/sshd-refuses" ]; then cat -- "$R/standin/sshd-refuses" >&2; exit 255; fi
+exit 0
