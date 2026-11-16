@@ -775,10 +775,16 @@ test('a2 P-5: a script written to while its unit runs: what ran is what was hash
   const yes = t.choices.find(c => c.label === 'Run it');
   assert.ok(yes, JSON.stringify(t.choices));
   const pressing = choose(chat, yes.id);
+  // A real Spark binds the helper's copy over the path inside the unit's own mounts, so this writer outside writes the
+  // real file and the unit never sees it. The stand-in has no mount namespace: while the unit runs, the copy stands at the
+  // path itself, read-only, and the writer is refused (EACCES). Either way, what ran is what was hashed.
+  let wrote = 'not tried';
   try {
     await waitFor(() => existsSync(at3('notes/p5-out.txt')) && text('notes/p5-out.txt').startsWith('first'), { every: 100, timeout: 20000, what: 'the script to start' });
-    appendFileSync(at3('notes/p5.sh'), 'echo injected >> notes/p5-out.txt\n');
+    try { appendFileSync(at3('notes/p5.sh'), 'echo injected >> notes/p5-out.txt\n'); wrote = 'written'; } catch (e) { wrote = e.code; }
   } finally { const p = await pressing; assert.equal(p.status, 200, p.text); }
+  assert.equal(wrote, 'EACCES', 'on the stand-in the script’s path holds the helper’s read-only copy while the unit runs');
   assert.equal(text('notes/p5-out.txt'), 'first\nsecond\n', 'the line written while it ran was not run');
+  assert.equal(text('notes/p5.sh'), 'echo first > notes/p5-out.txt\nsleep 3\necho second >> notes/p5-out.txt\n', 'the owner’s file is back as it was');
   assert.ok(propsOf('bash notes/p5.sh').some(a => /^BindReadOnlyPaths=\/run\/spark-console\/[0-9a-f]+\/script-1:\/.*\/notes\/p5\.sh$/.test(a)), JSON.stringify(propsOf('bash notes/p5.sh')));
 });
