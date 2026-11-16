@@ -5567,6 +5567,20 @@ async function firmModel(name, input) {
   const exact = found.lib?.name || found.recipe?.id || found.repo || null;
   return exact ? { ...input, model: exact } : input;
 }
+// Whose changes count toward the hour's 12 (R9): not the owner's own clicks, POST /actions, a saved workflow's steps,
+// nor self-healing.
+const hourCounts = ctx => Boolean(ctx.via) && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+// A change that ran through run or write_file (reads to runAction: the ladder decides) counts as runAction's own do,
+// for whoever caused it (S-11): one that ran, or a long one started as an operation. A look, a button, the box and a
+// refusal don't. The twelfth in the hour pauses agents' changes, and the runner refuses the next while paused.
+function hourCounted(ctx, out) {
+  if (!(out?.change === true && (out.ran === true || out.outcome === 'started')) || !hourCounts(ctx)) return out;
+  const hourAgo = Date.now() - 3600000;
+  while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
+  agentChanges.push(Date.now());
+  if (agentChanges.length >= AGENT_CHANGES_PER_HOUR) tripBreaker(`${AGENT_CHANGES_PER_HOUR} changes in the last hour`);
+  return out;
+}
 // The asker's words on an audit line: masked before the cut, so a key across it is hidden whole.
 const requestLine = r => (r ? maskSecrets(String(r).slice(0, 400)).slice(0, 200) : null);
 async function runAction(name, viewer, args, ctx = {}) {
@@ -5582,8 +5596,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   if (a.who === 'owner' && viewer.role !== 'owner') throw new HttpError(403, 'Only the owner can do that.');
   // A button's arguments were kept here when it was offered (and checked then, or built here): they run as kept.
   let input = ctx.trusted ? args : checkInput(a.input, args, name);
-  if (a.kind === 'read' && journalLooks(ctx)) return journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx));
-  if (a.kind === 'read') return a.run(input, viewer, ctx);
+  if (a.kind === 'read' && journalLooks(ctx)) return hourCounted(ctx, await journalLook(name, input, args, ctx, () => a.run(input, viewer, ctx)));
+  if (a.kind === 'read') return hourCounted(ctx, await a.run(input, viewer, ctx));
   if (!ctx.canChange) {
     throw new HttpError(403, ctx.via === 'sparkie' ? 'This agent may look but not change things. The owner can allow it in your account menu → Agents and Telegram.' : 'This agent can look but not change things. The owner can allow it in your account menu → Agents and Telegram.');
   }
@@ -5660,7 +5674,7 @@ async function runAction(name, viewer, args, ctx = {}) {
   // Many changes in an hour (ones that started an operation) pause agents, so a confused loop can't keep starting and
   // stopping models.
   // (the owner's own saved workflows and self-healing aren't an agent looping)
-  const byAgent = ctx.via && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+  const byAgent = hourCounts(ctx);
   if (byAgent) {
     const hourAgo = Date.now() - 3600000;
     while (agentChanges.length && agentChanges[0] < hourAgo) agentChanges.shift();
