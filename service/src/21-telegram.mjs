@@ -1,5 +1,5 @@
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */
-// Area: features        Rules: R32, R34        Tests: telegram.test.mjs
+// Area: features        Rules: R32, R34        Tests: telegram.test.mjs, pressed.test.mjs
 // Owns: telegram.json (writers: tgSave)
 // Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
 //   Sparkie answers, 5 minutes at most)
@@ -355,11 +355,27 @@ async function tgRun(conv, choice, ask) {
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
-    return await tell('system', 'Done.');
+    return await tell('system', tgRanLine(r));
   } catch (e) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
     return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
+}
+// What a press that ran answers here, from its result's own fields (K2, as the page's line, pressRan in 14-chats.mjs):
+// "Done." only for a command that ran and ended with exit 0, and for a result that is no command's, as before. Fixed
+// lines with no output, error or address (R32): the page's line in that chat says the rest, the one-time command too.
+function tgRanLine(r) {
+  const more = 'The details are in Spark Console.', node = nodeById(String(r?.spark || '')), at = node ? sparkName(node) : 'that Spark';
+  if (r?.net) {
+    if (r.net.outcome === 'put back') return `It ran inside the lock-out net and was put back. ${more}`;
+    if (r.net.outcome !== 'kept') return `It wasn’t kept: if it ran, ${at}’s own timer puts it back. ${more}`;
+    return r.exit === 0 ? 'Done: it ran inside the lock-out net and is kept.' : `It ran inside the lock-out net and is kept, but the command itself ${Number.isInteger(r.exit) ? `ended with exit code ${r.exit}` : 'was ended before it finished'}. ${more}`;
+  }
+  if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
+  if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
+  if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
+  if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
+  return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;
 }
 // /status: from Spark Console's own record, no brain.
 async function tgStatusText() { return `${await statusText()}\n${tgApprovalsLine()}`; }

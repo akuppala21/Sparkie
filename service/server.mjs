@@ -3506,7 +3506,7 @@ async function stopMain(job, m = MAIN) {
 /* ───────── Sparkie's chats ───────── */
 // Area: brain
 // Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46
-// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs
 // Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 // Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
@@ -3631,11 +3631,29 @@ let modelInUse = 0;
 function sparkieMessageChoices(q) {
   return q.choices.filter(c => c.choice).map(c => ({ id: c.choice, label: c.label, state: 'open', group: q.group }));
 }
-function outcomeText(label, out) {
+function outcomeText(label, out, agentChat = false) {
   if (out?.outcome === 'question' || out?.outcome === 'needs-ok') return out.question;
   if (out?.outcome === 'already' || out?.outcome === 'already-starting') return out.note;
   if (out?.operation) return `${label}: under way. I’ll post the result here when it’s done.`;
-  return out?.note || `${label}: done.`;
+  return out?.note || pressRan(label, out, agentChat) || `${label}: done.`;
+}
+// A pressed command's words (run's, write_file's, the box's: the plain runner's results carry no note), from its result's
+// own fields: "done" only for one that ran and ended with exit 0. Else what happened: it didn't run and why (with the
+// owner's one-time command when the result carries it: needsOwner marked it told, and here it is shown), nothing was
+// written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
+// these words in its history. null for any other result. (The net's, Spark 2's and root's carry their own, note.)
+function pressRan(label, out, agentChat = false) {
+  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
+  const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';
+  const tail = String(out.tail || '').split('\n'), last = tail.length > 1 ? s(tail.slice(0, -1).join(' ')).slice(0, 200) : '';
+  const said = out.ran === false ? (out.why ? s(out.why) : 'nothing ran.')
+    : out.notWritten ? (typeof out.notWritten === 'string' ? s(out.notWritten) : `Nothing was written to ${s(out.notWritten.path)}: ${s(out.notWritten.why).replace(/\.$/, '')}.`)
+      : out.exit === 0 || (out.wrote && out.exit === undefined) ? `done.${out.ended ? ` ${s(out.ended)}` : ''}`
+        : Number.isInteger(out.exit) ? `it ran and failed, with exit code ${out.exit}.${last ? ` Its last line: “${last}”.` : ''}`
+          : s(out.ended || out.cut || 'Whether it finished isn’t known.');
+  const notes = Array.isArray(out.notes) ? out.notes.map(n => ` ${s(n)}`).join('') : '';
+  const command = out.ran === false && out.ownerCommand ? `\n${agentChat ? 'The owner runs this once, in their own terminal' : 'Run this once in your own terminal'} (it asks ${at}’s password once), then ask again:\n${out.ownerCommand}` : '';
+  return `${label}: ${said}${notes}${command}`;
 }
 async function runChoice(viewer, conv, id, by) {
   // (a dangerous ask past its life is closed first, so a late press is told so: 20-danger.mjs)
@@ -3680,7 +3698,7 @@ async function runChoice(viewer, conv, id, by) {
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
-      content = outcomeText(c.label, out);
+      content = outcomeText(c.label, out, Boolean(conv.agent));
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
       // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
       const ran = !['question', 'needs-ok'].includes(out?.outcome);
@@ -22327,7 +22345,7 @@ function selfTestCutOff(e) {
   return Boolean(rec?.spark && (e.spark === rec.spark || (e.sparks || []).includes(rec.spark)) && String(e.at) >= String(rec.since || '~'));
 }
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */
-// Area: features        Rules: R32, R34        Tests: telegram.test.mjs
+// Area: features        Rules: R32, R34        Tests: telegram.test.mjs, pressed.test.mjs
 // Owns: telegram.json (writers: tgSave)
 // Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
 //   Sparkie answers, 5 minutes at most)
@@ -22683,11 +22701,27 @@ async function tgRun(conv, choice, ask) {
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
-    return await tell('system', 'Done.');
+    return await tell('system', tgRanLine(r));
   } catch (e) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
     return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
+}
+// What a press that ran answers here, from its result's own fields (K2, as the page's line, pressRan in 14-chats.mjs):
+// "Done." only for a command that ran and ended with exit 0, and for a result that is no command's, as before. Fixed
+// lines with no output, error or address (R32): the page's line in that chat says the rest, the one-time command too.
+function tgRanLine(r) {
+  const more = 'The details are in Spark Console.', node = nodeById(String(r?.spark || '')), at = node ? sparkName(node) : 'that Spark';
+  if (r?.net) {
+    if (r.net.outcome === 'put back') return `It ran inside the lock-out net and was put back. ${more}`;
+    if (r.net.outcome !== 'kept') return `It wasn’t kept: if it ran, ${at}’s own timer puts it back. ${more}`;
+    return r.exit === 0 ? 'Done: it ran inside the lock-out net and is kept.' : `It ran inside the lock-out net and is kept, but the command itself ${Number.isInteger(r.exit) ? `ended with exit code ${r.exit}` : 'was ended before it finished'}. ${more}`;
+  }
+  if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
+  if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
+  if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
+  if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
+  return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;
 }
 // /status: from Spark Console's own record, no brain.
 async function tgStatusText() { return `${await statusText()}\n${tgApprovalsLine()}`; }

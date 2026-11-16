@@ -1,7 +1,7 @@
 /* ───────── Sparkie's chats ───────── */
 // Area: brain
 // Rules: R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46
-// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs
+// Tests: sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs
 // Owns: chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 // Timers: none        Wakes: none
 // Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
@@ -126,11 +126,29 @@ let modelInUse = 0;
 function sparkieMessageChoices(q) {
   return q.choices.filter(c => c.choice).map(c => ({ id: c.choice, label: c.label, state: 'open', group: q.group }));
 }
-function outcomeText(label, out) {
+function outcomeText(label, out, agentChat = false) {
   if (out?.outcome === 'question' || out?.outcome === 'needs-ok') return out.question;
   if (out?.outcome === 'already' || out?.outcome === 'already-starting') return out.note;
   if (out?.operation) return `${label}: under way. I’ll post the result here when it’s done.`;
-  return out?.note || `${label}: done.`;
+  return out?.note || pressRan(label, out, agentChat) || `${label}: done.`;
+}
+// A pressed command's words (run's, write_file's, the box's: the plain runner's results carry no note), from its result's
+// own fields: "done" only for one that ran and ended with exit 0. Else what happened: it didn't run and why (with the
+// owner's one-time command when the result carries it: needsOwner marked it told, and here it is shown), nothing was
+// written, it failed with its exit code, or it was ended at its time limit or its end isn't known. A woken task reads
+// these words in its history. null for any other result. (The net's, Spark 2's and root's carry their own, note.)
+function pressRan(label, out, agentChat = false) {
+  if (!out || typeof out !== 'object' || !['ran', 'exit', 'notWritten', 'ownerCommand', 'wrote'].some(k => Object.hasOwn(out, k))) return null;
+  const s = x => maskSecrets(String(x ?? '')).slice(0, 600), node = nodeById(String(out.spark || '')), at = node ? sparkName(node) : 'that Spark';
+  const tail = String(out.tail || '').split('\n'), last = tail.length > 1 ? s(tail.slice(0, -1).join(' ')).slice(0, 200) : '';
+  const said = out.ran === false ? (out.why ? s(out.why) : 'nothing ran.')
+    : out.notWritten ? (typeof out.notWritten === 'string' ? s(out.notWritten) : `Nothing was written to ${s(out.notWritten.path)}: ${s(out.notWritten.why).replace(/\.$/, '')}.`)
+      : out.exit === 0 || (out.wrote && out.exit === undefined) ? `done.${out.ended ? ` ${s(out.ended)}` : ''}`
+        : Number.isInteger(out.exit) ? `it ran and failed, with exit code ${out.exit}.${last ? ` Its last line: “${last}”.` : ''}`
+          : s(out.ended || out.cut || 'Whether it finished isn’t known.');
+  const notes = Array.isArray(out.notes) ? out.notes.map(n => ` ${s(n)}`).join('') : '';
+  const command = out.ran === false && out.ownerCommand ? `\n${agentChat ? 'The owner runs this once, in their own terminal' : 'Run this once in your own terminal'} (it asks ${at}’s password once), then ask again:\n${out.ownerCommand}` : '';
+  return `${label}: ${said}${notes}${command}`;
 }
 async function runChoice(viewer, conv, id, by) {
   // (a dangerous ask past its life is closed first, so a late press is told so: 20-danger.mjs)
@@ -175,7 +193,7 @@ async function runChoice(viewer, conv, id, by) {
     try {
       out = await Promise.race([runAction(c.action, viewer, c.args, ctx),
         sleep(50000).then(() => { throw new HttpError(504, 'It took over 50 seconds and may still be going; its result will show here.'); })]);
-      content = outcomeText(c.label, out);
+      content = outcomeText(c.label, out, Boolean(conv.agent));
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
       // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
       const ran = !['question', 'needs-ok'].includes(out?.outcome);
