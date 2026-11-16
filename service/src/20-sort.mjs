@@ -29,7 +29,8 @@
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
-// refuses on it); later (work it starts later, outside the button and the net: root refuses on it); unknownProgram (a
+// refuses on it); unpinnable (each piece of it that is no file named as a word, so no script's hash pins it, all of them);
+// later (work it starts later, outside the button and the net: root refuses on it); unknownProgram (a
 // program it doesn't know, by name); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
@@ -38,18 +39,20 @@
 // name count too). scripts, placed and wide hold no control sign or line break: a name with one is refused (risky).
 const SORT_ORDER = ['look', 'change', 'risky', 'lockout', 'notdone'], SORT_MAX = 16384, SORT_DEPTH = 4, SORT_WRAPS = 32, SORT_SEEN = 8 * SORT_MAX;
 const raise = (r, cls, why) => { if (SORT_ORDER.indexOf(cls) > SORT_ORDER.indexOf(r.class)) Object.assign(r, { class: cls, why }); };
-const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null, later: null });
+const sortFresh = () => ({ class: 'look', why: 'It only reads.', simple: true, open: false, deletes: false, scripts: [], answer: null, lasting: null, unshown: null, unpinnable: [], later: null });
 function sortMerge(r, c) {
   raise(r, c.class, c.why);
   Object.assign(r, { simple: r.simple && c.simple, open: r.open || c.open, deletes: r.deletes || c.deletes, answer: r.answer ?? c.answer, lasting: r.lasting ?? c.lasting, unshown: r.unshown ?? c.unshown, later: r.later ?? c.later });
   r.scripts.push(...c.scripts);
+  for (const u of c.unpinnable) if (r.unpinnable.length < 16 && !r.unpinnable.includes(u)) r.unpinnable.push(u);
 }
 // Code it runs that the command does not show (unshown, in the sorter's own words): a file of code named as a word (in
 // scripts too, to hash), a shell or an interpreter fed its code from input, a module or a package's scripts run by name,
 // a build, a start file a setting names, a file words from input name. Root refuses on it; for a change as the owner only
 // code fed from input or a start-file setting is asked: a script, a build, a module or a project's scripts runs inside
 // the run wall, which is what bounds it, as a plain change does.
-const sortUnshown = (r, what) => { r.unshown ??= String(what).slice(0, 200); r.simple = false; };
+// (unpinnable: every such code that is not a file named as a word, whose hash can't pin it: all of them, not the first)
+const sortUnshown = (r, what, file = false) => { const w = String(what).slice(0, 200); r.unshown ??= w; if (!file && !r.unpinnable.includes(w) && r.unpinnable.length < 16) r.unpinnable.push(w); r.simple = false; };
 // Signs that don't show (controls but tab and new line, format and private ones, lone halves, selectors, blank fillers):
 // refused, since what is shown would not be what runs (design A 2.5).
 const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-️ﾠ\u{e0100}-\u{e01ef}]/u;
@@ -157,7 +160,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
   ctx.unread = true;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
-  if (file) { r.scripts.push(file); sortUnshown(r, `the file ${file}`); }
+  if (file) { r.scripts.push(file); sortUnshown(r, `the file ${file}`, true); }
   raise(r, 'change', why);
   // (a file to run named by a pattern or a {…}, or a shell's input by one: what it names can't be matched to what was written)
   if ((file && /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(file)) || (ctx.inputs ?? []).some(w => w.glob || w.brace)) unsure(`${why} It names the file it runs by a pattern or a {…}.`);
@@ -410,6 +413,8 @@ function sortCommand(command, opts) {
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     unshown: (r.class === 'look' && !ctx.root) || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    // (each piece of unseen code that no script's hash can pin: a module, a build, a pipe into a shell, a one-liner…)
+    unpinnable: (r.class === 'look' && !ctx.root) ? [] : [...new Set(r.unpinnable)].slice(0, 16).map(u => u.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ')),
     // (work it starts later, outside the button and the net; a program the sorter doesn't know, by name)
     later: r.class === 'look' || r.later == null ? null : r.later.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
     unknownProgram: r.class === 'look' || typeof ctx.unknownProgram !== 'string' ? null : ctx.unknownProgram,

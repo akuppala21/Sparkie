@@ -148,3 +148,13 @@ test('a key file copied, moved, archived, linked or sent to a place that isn\'t 
   assert.equal(sort(`cat ${TOKEN}`).class, 'notdone');
   assert.equal(sort('ls -la ~/.cache/huggingface').class, 'look');
 });
+
+// The runner's builder: a key goes only to a pinned script, so unseen code that is no script must be told apart, all of it.
+test('unpinnable lists every piece of unseen code that no script\'s hash pins; a named script is in scripts, not there', () => {
+  const r = sort('bash a.sh && python3 -m train');
+  assert.deepEqual([r.scripts, r.unpinnable], [['a.sh'], ['the python3 module train']]);
+  assert.ok(r.unshown, 'root refuses it still');
+  for (const c of ['bash a.sh', 'python3 train.py', './fix.sh']) assert.deepEqual([c, sort(c).unpinnable], [c, []]);
+  for (const [c, n] of [['make -f x.mk', 1], ['pip install -e .', 1], ['python3 -c "print(1)" | bash', 2], ['npm run a && make && python3 -m x', 3]]) assert.equal(sort(c).unpinnable.length, n, c);
+  assert.deepEqual(sort('ls -la').unpinnable, []);
+});
