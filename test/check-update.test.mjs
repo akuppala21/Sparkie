@@ -13,7 +13,7 @@
 // code's, or a tree without a code file, is not offered (check works the build out from git, as install does); a bad
 // tag on main's head is said once; a lock a cut-off fetch left in Spark 2's copy is named, with the rm for it. The
 // final read: never newer when the installed build's commit can't be told (its lock names no tree or commit on main),
-// and a lock's tree alone is placed on main.
+// and a lock's tree alone is placed on main; a newer build says to ask for it in chat (install_update), not "later".
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -336,5 +336,18 @@ describe('check_update', { concurrency: 1 }, () => {
       assert.equal(x.newest.tree, newer.t12);
       assert.deepEqual(x.commits.lines.map(l => l.replace(/^\w+ /, '')), ['Newer, and tested']);
     } finally { writeFileSync(lock, was); }
+  });
+
+  // (the final read's U3: a newer build's answer said installing it from chat "comes later" and gave only a terminal
+  // command, while install_update is built and offered with check_update)
+  test('a newer build says how to install it from chat (install_update, in the same group as check_update), not that it comes later', async () => {
+    const c = commit('A build to install from chat');
+    mark(c, READS_A, buildOf(c));
+    const x = await check();
+    assert.equal(x.newer, true, JSON.stringify(x));
+    assert.match(x.says, new RegExp(`To install it, ask for it in your own chat: you are asked first, in a message of its own, and only your yes installs it\\. Or, in a terminal on Spark 2: bash ~/\\.local/share/spark-console/pull\\.sh install ${c.t12}$`));
+    assert.doesNotMatch(x.says, /comes later/);
+    const { actions } = (await api('/actions')).json;
+    assert.deepEqual(['check_update', 'install_update'].map(name => actions.find(a => a.name === name)?.group), ['updates', 'updates']);
   });
 });

@@ -22912,7 +22912,8 @@ async function updCheck(given) {
   else if (newer) {
     parts.push(`A newer tested build is on GitHub: tree ${updShort(n.tree)}${updShort(n.build) ? `, build ${updShort(n.build)}` : ''}${updDay(n.testedAt) ? `, tested ${updDay(n.testedAt)}` : ''}.`);
     parts.push(updBrainWords(brain, false));
-    parts.push(`Installing it from chat comes later; on Spark 2: bash ~/.local/share/spark-console/pull.sh install ${updShort(n.tree)}`);
+    // (install_update is in the same group: asked for in chat, it raises its own ask, and only the owner's yes installs)
+    parts.push(`To install it, ask for it in your own chat: you are asked first, in a message of its own, and only your yes installs it. Or, in a terminal on Spark 2: bash ~/.local/share/spark-console/pull.sh install ${updShort(n.tree)}`);
   } else if (n.tree !== f.installed.tree && f.newerKnown !== true) {
     parts.push(`The newest tested build on GitHub is tree ${updShort(n.tree)}, but whether it is newer than the build installed now can’t be told: that build’s lock names no commit or tree on main (it was installed from the Mac). So it isn’t offered. Installing a build of main from the Mac once lets this tell again.`);
   } else parts.push(`No newer tested build: the newest with the tested mark (tree ${updShort(n.tree)}) ${n.tree === f.installed.tree ? 'is the one installed' : 'isn’t newer than the one installed'}.`);
