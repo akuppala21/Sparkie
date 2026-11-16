@@ -203,7 +203,7 @@ async function boxOpen(key, ctx, command) {
       if (word !== 'removed') await boxRemove(node, rec.name);
       rec.outcome = 'walls';
       const said1 = k => { const t = /^open can't tell: (\S+) is missing$/.exec(walls.get(k) || ''); return t ? `the check can’t tell for “${k}”: ${t[1]} is missing in the box` : BOX_WALLS[k]; };
-      const why = ended || walls.size ? open.map(said1).join('; ') : `its check didn’t finish (${maskSecrets(lines.find(l => l && !l.startsWith('box ')) || 'no answer').slice(0, 200)})`;
+      const why = ended || walls.size ? open.map(said1).join('; ') : `its check didn’t finish (${maskSecrets(lines.find(l => l && !l.startsWith('box ') && !l.startsWith('boxid ')) || 'no answer').slice(0, 200)})`;
       throw new HttpError(409, `The box on ${at} failed its check from inside and was removed: ${why || 'the check’s answer was not its own'}. Nothing ran.`);
     }
     throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
@@ -380,7 +380,8 @@ if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then printf 'file %s %s\\n' "$
   if (x.kind !== 'ran') return { kind: 'error', error: boxSaid(x, at, 'nothing was written') };
   const [head = '', b64 = ''] = String(x.output).split('\n'), m = /^file (\d+) ([0-9a-f]{64})$/.exec(head.trim());
   if (m) return { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null };
-  return { kind: ['none', 'link', 'other', 'outside'].includes(head.trim()) ? head.trim() : 'other' };
+  const h = head.trim();
+  return ['none', 'link', 'other', 'outside'].includes(h) ? { kind: h } : { kind: 'error', error: boxSaid({ kind: 'broken', detail: maskSecrets(h).slice(0, 200) }, at, 'nothing was written') };
 }
 // /stop in a chat (20-words.mjs): its box goes, with its folder. What is true afterwards, or null when it had none.
 const boxStop = conv => boxEnd(`chat ${conv.id}`, { chat: conv.id }, BOX_STOP_MS);

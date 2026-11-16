@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 91 parts in `service/src/`, joined in name order into `service/server.mjs` (22934 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 91 parts in `service/src/`, joined in name order into `service/server.mjs` (22935 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -893,7 +893,7 @@ Typed as the whole message in the owner's own page chat, they're answered by cod
 run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its own folder, …
 
 - **Area:** features. **Rules:** R62, R52, R1, R43. **Tests:** box.test.mjs
-- **Lines:** 386
+- **Lines:** 387
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
