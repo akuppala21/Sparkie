@@ -1277,7 +1277,7 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
-const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Open Deploy again to see the new plan.`);
+const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
   const extra = unapprovedStops(p.steps, nodeId, keep, approved);
@@ -4124,8 +4124,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
   // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
   // after this, so this turn's are no count of keepTask's)
-  // (the steps, the output or the rounds a message may take, alike: R50)
-  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output', 'rounds'].includes(spent) ? taskOver(task) : null;
+  // (the steps, the output, the rounds or the brain's tokens a message may take, alike: R50)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output', 'rounds', 'tokens'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
@@ -6448,8 +6448,9 @@ action({
 // “What can you do?” (A3): what Sparkie can look up and change, read from the action list when asked (a new action
 // shows up by itself), and its limits. Only action titles and lines written here: nothing from a Spark, a file, memory
 // or a saved workflow, so sparkie_setup stays an inside read (R26) and masking leaves the text as written.
+// (run and write_file are reads to runAction but change things, `changes: true`: they are listed with the changes, TR-4)
 function abilities() {
-  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read') === read).map(a => a.title);
+  const titles = read => [...ACTIONS.values()].filter(a => (a.kind === 'read' && !a.changes) === read).map(a => a.title);
   const pageOnly = [...PAGE_ONLY].map(n => ACTIONS.get(n)?.title).filter(Boolean).join(', ');
   return {
     observedAt: new Date().toISOString(), canLookUp: titles(true), canChange: titles(false),
@@ -6459,6 +6460,7 @@ function abilities() {
       ...(MAIN ? [`${sparkName(mainNode() || { id: MAIN.node })} is Sparkie’s own, so no other model or workload starts there.`] : []),
       `From Telegram, these wait in Spark Console, pressed there with the passkey: ${pageOnly}. Memory is the one exception for your own words there: what you say to remember or forget is done as in Spark Console, marked as said on Telegram; a memory button and erasing a line for good still wait.`,
       CHANGES_ASKED,
+      'A command run or a file written on a Spark is sorted by code first: a look runs at once, and a change may be asked first, with the exact command on its button.',
     ],
     says: 'This is everything Sparkie can do today. Anything not listed here, it can’t do yet.',
   };
@@ -6760,16 +6762,16 @@ const inRecipes = m => recipeCatalog().models.some(r => r.variants.some(v => onD
 function agentSafeSetup(m) {
   const args = Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [];
   const own = args.filter(a => a.startsWith('-') && dig.OWN.has(dig.flagKey(a.split('=')[0])));
-  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it from Deploy`;
-  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, from Spark Console’s Deploy`;
+  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
+  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const flags = dig.cleanFlags(args, m.repo || m.name);
-  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it from Deploy`;
+  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const env = { ...(m.manifest?.env || {}), ...(m.manifest?.cluster?.env || {}) }, cleaned = dig.cleanEnv(env);
   const dropped = Object.keys(env).filter(k => !(k in cleaned)), named = dropped.filter(k => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k));
-  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it from Deploy`;
+  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const image = m.manifest?.image;
   if (image && !(String(image).includes('@sha256:') && (CONFIG.imageSources || []).some(p => String(image).startsWith(p)))) {
-    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
+    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   }
   return null;
 }
@@ -7184,7 +7186,7 @@ async function startModel(args, viewer, ctx) {
     const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
     if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
-    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
+    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
     for (const line of passedOver) note(job, line);
