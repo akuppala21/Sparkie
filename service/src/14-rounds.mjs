@@ -66,13 +66,13 @@ function budgetContext(setup) {
   const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
-// Whether a turn the steps, the output or the rounds ended carries on by itself, in a fresh turn under the carry-on's
-// own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are
-// paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never after
-// three refusals: the brain was spinning.
+// Whether a turn the steps, the output, the rounds or the tokens ended carries on by itself, in a fresh turn under the
+// carry-on's own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents
+// are paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never
+// after three refusals: the brain was spinning.
 function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
-  if (!['steps', 'output', 'rounds'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
+  if (!['steps', 'output', 'rounds', 'tokens'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
   // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
   return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
@@ -136,6 +136,7 @@ function budgetReport(turn) {
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
   if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
+  if (turn.spent === 'tokens') lines.push(`Stopped here: one message may use ${n(Number(askOf(turn.tuned).tokenBudget))} of the brain’s tokens (what it reads and writes), and this one has.`);
   const late = turn.dropped.length;
   if (late) lines.push(`${late === 1 ? '1 more call was' : `${late} more calls were`} asked for after the tools were put away, and not run (${[...new Set(turn.dropped)].join(', ')}).`);
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
@@ -217,16 +218,18 @@ function modelStep(turn, sent) {
 // What the brain is told in the last round, once its tools are put away (by the rounds a message may take, its token
 // budget or one of the loop's budgets): a call now is not run, so it answers with what the tools said. (Final read
 // C-5: past the rounds it was told nothing, and its system prompt still said it had tools.)
-const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
+const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)`
+  : turn.spent === 'tokens' ? ` (one message may use ${Number(askOf(turn.tuned).tokenBudget).toLocaleString('en-US')} of your tokens)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
 // Up to ROUNDS rounds of looking things up (and at most CHANGES changes), then it has to answer.
 async function turnRounds(turn) {
   const { emit, link, tools, ROUNDS, messages } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, a budget of its own, or past its brain's
-    // token budget, 13-ask.mjs, or at one of the loop's budgets, turnBudgets; and the brain is told so)
+    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
+    // each a budget of its own, or at one of the loop's budgets, turnBudgets; and the brain is told so)
     if (round >= ROUNDS) turn.spent ||= 'rounds';
-    const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
+    else if (overBudget(turn)) turn.spent ||= 'tokens';
+    const last = Boolean(turn.spent);
     if (last && tools.length) messages[0].content = `${messages[0].content}\n\n${toolsAway(turn)}`;
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
