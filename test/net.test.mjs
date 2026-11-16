@@ -82,15 +82,19 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3', ADD);
   assert.ok(a.m, 'the dangerous ask');
-  const shown = a.m.danger.lines.join('\n');
-  assert.match(shown, /^CAN LOCK YOU OUT of Spark 3\n/);
-  assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts Spark 3 off, restarting Spark 3 is the way back.'), shown);
-  assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
-  assert.equal(a.m.danger.code, ADD);
-  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
-  assert.equal(newest(), undefined, 'no guard');
-  // No: nothing runs.
-  const no = await press(chat, a.no.id);
+  let no;
+  try {
+    const shown = a.m.danger.lines.join('\n');
+    assert.match(shown, /^CAN LOCK YOU OUT of Spark 3\n/);
+    assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts Spark 3 off, restarting Spark 3 is the way back.'), shown);
+    assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
+    assert.equal(a.m.danger.code, ADD);
+    assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+    assert.equal(newest(), undefined, 'no guard');
+  } finally {
+    // No: nothing runs (pressed also when a line above failed, so no ask is left open for the tests after it).
+    no = await press(chat, a.no.id);
+  }
   assert.equal(no.status, 200, no.text);
   assert.equal(keysNow(), KEYS_LINE);
 });
