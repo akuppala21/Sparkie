@@ -1602,6 +1602,39 @@ describe('the held lists, after the analyst', () => {
     }
   });
 
+  // The final read's "look-links" (its F2a and F2b, run on a Spark): ~/.config or ~/.local/state a link (kept on another
+  // disk, or in a dotfiles folder) and a look read the console's secrets file, chats.json and the sign-in files.
+  test('a look refuses while the console\'s secrets or state folder is a link or under one, or any hidden name that is there lies under a link; so does a plain change', () => {
+    const see = 'cat "$WALL_VIEW/home/owner/.config/spark-console/secrets.json" "$WALL_VIEW/home/owner/.local/state/spark-console/chats.json" 2>&1; true';
+    // ~/.config in a dotfiles folder: the look is refused by name and runs nothing (a change was refused already)
+    const s = proven();
+    s.put('home/owner/.config/spark-console/secrets.json', '{"hf":"hf_KEPTSECRET"}');
+    renameSync(join(s.R, 'home/owner/.config'), join(s.R, 'home/owner/dotfiles-config'));
+    symlinkSync('dotfiles-config', join(s.R, 'home/owner/.config'));
+    let before = started(s).length;
+    const a = look(s, see);
+    refused(a, '/home/owner/.config/spark-console is a link, or under one, so a look would see what it points at: put the real folder there');
+    assert.ok(!a.stdout.includes('hf_KEPTSECRET'));
+    assert.equal(started(s).length, before);
+    // ~/.local/state moved and linked back (Spark 2): the look and a plain change are refused, and check says why
+    const t = proven();
+    renameSync(join(t.R, 'home/owner/.local/state'), join(t.R, 'home/owner/state-moved'));
+    symlinkSync('../state-moved', join(t.R, 'home/owner/.local/state'));
+    before = started(t).length;
+    refused(look(t, see), '/home/owner/.local/state/spark-console is a link, or under one, so a look would see what it points at');
+    refused(change(t, see), '/home/owner/.local/state/spark-console is under a link, so a change would read it: make each folder above it a real one');
+    assert.equal(started(t).length, before);
+    const c = run(t, ['check', '--id', newId()]).stdout;
+    assert.match(c, / run refuses: \/home\/owner\/\.local\/state\/spark-console is under a link, so a change would read it/, c);
+    assert.equal(change(t, 'true', { extra: ['--open'] }).status, 0, '--open (asked) drops the hidden list: it is not stopped by it');
+    // any other hidden name under a link: ~/.cache (the Hugging Face token) moved and linked back
+    const u = proven();
+    renameSync(join(u.R, 'home/owner/.cache'), join(u.R, 'home/owner/cache-moved'));
+    symlinkSync('cache-moved', join(u.R, 'home/owner/.cache'));
+    refused(look(u, 'true'), '/home/owner/.cache/huggingface/token is under a link, so a look would read it: make each folder above it a real one');
+    // (a listed name that is itself a link is still left alone, and named by check: the earlier test's .zshrc and .npmrc)
+  });
+
   test('a held place under a --protect folder is not bound onto itself (that would make it writable inside the read-only one)', () => {
     const s = proven(), shared = '/home/owner/.local/share/spark-portal/workspaces/shared';
     const r = change(s, 'true', { extra: ['--protect', shared] });

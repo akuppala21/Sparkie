@@ -87,8 +87,9 @@ SIGNIN=' api.sock door.sock sessions.json passkeys.json agents.json telegram.jso
 # And what the owner and Sparkie said, which R43 keeps from every agent key: never put back in either wall, nor the
 # copies kept beside them (.prev, .1, .unreadable-...). (The journal is in ~/.local/share/spark-console, hidden whole.)
 WORDS='chats.json memory.json memory-past.json audit.jsonl saved-workflows.json'
-# The look refuses while one of these is a link in the owner's home: a look would then see what it points at.
-LOOK_REAL='.ssh .docker .local/share/spark-console'
+# The look refuses while one of these is a link in the owner's home: a look would then see what it points at. (Both
+# walls refuse, too, while a name on the hidden list that is there lies under a link: UNDER, below.)
+LOOK_REAL='.ssh .docker .local/share/spark-console .config/spark-console .local/state/spark-console'
 # --- the lock-out net (docs/rules/R60.md; design A 2.8; step A13a: dark, only tests call it) ---------------------------
 # run --net copies the ways in to /var/lib/spark-console/guard/<id>/, writes restore.sh beside them and arms a timer in
 # the Spark's own systemd before the command runs; what is not kept goes back when it fires.
@@ -362,9 +363,11 @@ proof_state() {
 }
 
 # --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
-TMPFS=() GONE=() BACK=() RO=() LINKED=()
+TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
 # A path in the owner's home that is a link, or under one, is left alone in both walls: not held, and never followed
-# (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem).
+# (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem), and a
+# hidden name that is there under a linked folder (UNDER) stops a look and a plain change: either would read it through
+# the link (~/.config kept in a dotfiles folder, say).
 real_here() {   # $1 a path that is there: is it the real thing, judged from the owner's home (whose own place is root's)?
   local real home
   in_home "$1" || return 0
@@ -382,7 +385,10 @@ unreal() {   # $1 a listed path: 0 (and noted) when it is a link in the owner's 
 }
 hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
   local p=$1
-  unreal "$p" && return 0
+  if unreal "$p"; then
+    if in_home "$p" && { [ -e "$R$p" ] || [ -L "$R$p" ]; } && ! real_here "${p%/*}"; then UNDER+=("$p"); fi
+    return 0
+  fi
   safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
   if [ -d "$R$p" ] && [ ! -L "$R$p" ]; then TMPFS+=("$p"); else GONE+=("$p"); fi
 }
@@ -437,7 +443,7 @@ ro() {
   RO+=("$1")
 }
 lists() {
-  TMPFS=() GONE=() BACK=() RO=() LINKED=()
+  TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
   local name pw uid gid gecos home shell p f kind
   while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
     [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
@@ -504,6 +510,10 @@ look_problem() {   # why a look cannot hide what it must in the owner's home, or
       return
     fi
   done
+  under_problem look
+}
+under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or nothing (the lists first)
+  [ ${#UNDER[@]} -eq 0 ] || printf '%s is under a link, so a %s would read it: make each folder above it a real one' "${UNDER[0]}" "$1"
 }
 held_problem() {   # why the run wall cannot hold the owner's home as listed, or nothing (the lists must be made first)
   local n real shell=${OWNER_SHELL##*/}
@@ -518,6 +528,7 @@ held_problem() {   # why the run wall cannot hold the owner's home as listed, or
     [ -e "$R$OWNER_HOME/$n" ] || { printf '%s is not there, so it cannot be held: run the one-time command again' "$OWNER_HOME/$n"; return; }
     real_here "$OWNER_HOME/$n" || { printf '%s is a link, or under one, so the wall would hold only what it points at: put the real file or folder there' "$OWNER_HOME/$n"; return; }
   done
+  [ "$OPEN" = 1 ] || under_problem change   # (--open drops the hidden list: it is asked, and reads what it reads)
 }
 
 # --- the walls -------------------------------------------------------------------------------------------------------
