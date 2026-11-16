@@ -145,7 +145,7 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null, input = false, asked = false }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
@@ -155,7 +155,7 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
   // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument;
   // input, a change's keys, 21-run-keys.mjs: after this script on the same input, which --stdin reads to its end)
   const bytes = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${bytes != null || input === true ? ' --stdin' : ''}` : '';
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${asked === true ? ' --asked' : ''}${bytes != null || input === true ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -225,8 +225,8 @@ const HELPER_SAYS = {
   lookRefuses: /^look refuses: (.*)$/,
   lookReady: /^look ready$/,
   state: /^state (never|running|ended|unknown): /,
-  diskFloor: /^refused: the disk has (\d+) GB free; a plain change needs (\d+) GB free: free space first, by a change the owner asks for \(it may run under the floor\)$/,
-  diskStopped: /^stopped: the disk's free space fell under (\d+) GB$/,
+  diskFloor: /^refused: the disk has (\d+) GB free; a plain change needs (\d+) GB free: free space first, by a change the owner asks for \(it may start under the floor, and is ended if the free space falls under (.+)\)$/,
+  diskStopped: /^stopped: the disk's free space fell under (.+)$/,
 };
 function helperAnswer({ id, code, out, err, cut, timedOut }) {
   if (cut) return { kind: 'ran', output: out, exit: null, cut: true };

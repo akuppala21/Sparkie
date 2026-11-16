@@ -489,7 +489,7 @@ test('a change that would fail inside the plain wall is asked, not run to fail: 
   const chat = await newChat(), cmd = 'echo top > top.txt';
   const r = await turn(chat, 'fix the top note on spark 3', [[RUN(cmd)]]);
   const [asked] = sentBack('fix the top note on spark 3');
-  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nIt writes where a plain change can’t: ~\/top\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt may fill the disk\.\n/, JSON.stringify(asked));
+  assert.match(asked?.question || '', /\nAsked because it writes ~\/top\.txt at the top of the home, which the plain wall keeps read-only, so it runs after your yes with the top of your home writable\.\nIt writes where a plain change can’t: ~\/top\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt is ended if the disk’s free space falls under 5 GB \(or, when less was free at its start, 100 MB under that\)\.\n/, JSON.stringify(asked));
   assert.ok(!existsSync(at3('top.txt')), 'nothing ran');
   const p = await choose(chat, r.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
@@ -628,7 +628,7 @@ test('the dangerous ask says the wall it runs in after the yes and what that let
   assert.ok(ask, 'the dangerous ask');
   const shown = ask.danger.lines.join('\n');
   assert.match(shown, /^DELETES FOR GOOD on Spark 3/);
-  assert.match(shown, /\nIt writes where a plain change can’t: ~\/top2\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt may fill the disk\.(?:\n|$)/, shown);
+  assert.match(shown, /\nIt writes where a plain change can’t: ~\/top2\.txt at the top of your home\.\nIt runs walled: no Docker, no keys, no other Spark\. But it may add or replace programs and settings that your own terminal on Spark 3 runs by itself\. If the command is not what it says, your next terminal there runs what it left\.\nIt is ended if the disk’s free space falls under 5 GB \(or, when less was free at its start, 100 MB under that\)\.(?:\n|$)/, shown);
   const pair = (await api(`/chats/${chat}`)).json.messages.find(m => m.danger?.ask === ask.danger.ask)?.pair;
   const p = await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: ask.choices.find(c => c.pair).id, pair } });
   assert.equal(p.status, 200, p.text);
@@ -679,14 +679,20 @@ test('what a pressed change wrote joins its request\'s task, so a later command 
   assert.ok((task().written || []).includes('~/notes/w2.sh'), JSON.stringify(task()));
 });
 
-test('the root helper\'s disk floor is said plainly: under 50 GB free nothing runs', { timeout: 60000 * SLOW }, async () => {
+test('the root helper\'s disk floor is said plainly: under 50 GB free nothing runs at once; a change the owner pressed goes with --asked and runs', { timeout: 60000 * SLOW }, async () => {
   const free = join(H3(), '.rehearsal', 'standin', 'free');
   writeFileSync(free, '49000000000\n');
-  let r;
-  try { r = await run('echo d > notes/d.txt', 'spark3', '~'); } finally { rmSync(free, { force: true }); }
+  let r, p;
+  try {
+    r = await run('echo d > notes/d.txt', 'spark3', '~');
+    const chat = await newChat(), asked = await turn(chat, 'fix the d note', [[RUN('echo d > notes/d2.txt')]]);
+    p = await choose(chat, asked.choices.find(c => c.label === 'Run it').id);
+  } finally { rmSync(free, { force: true }); }
   assert.equal(r.status, 409, r.text);
-  assert.equal(r.json.error, 'Nothing ran: Spark 3’s disk has 49 GB free, and a change in the plain wall needs 50 GB free (the root helper’s floor), asked or not. Free space there first: stop or remove a model, or delete files yourself.');
+  assert.equal(r.json.error, 'Nothing ran: Spark 3’s disk has 49 GB free, and a change that runs at once needs 50 GB free (the root helper’s floor). With your yes it may start under the floor, and is ended if the free space falls under 5 GB: ask for it in your chat, or free space there first.');
   assert.ok(!existsSync(at3('notes/d.txt')));
+  assert.equal(p.status, 200, p.text);
+  assert.equal(text('notes/d2.txt'), 'd\n', 'pressed, it ran under the floor');
 });
 
 test('a plain change that ends with the signs of no GPU says so: the GPU isn\'t open to a plain change, GPU work is a job, or ask again with gpu', { timeout: 60000 * SLOW }, async () => {

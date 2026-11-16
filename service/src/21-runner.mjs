@@ -107,8 +107,11 @@ const RUNNER_OPEN_HOLDS = 'There it runs as you with all your groups, Docker’s
 function runnerHomeLines(node, walls, wide = {}) {
   return [`It writes where a plain change can’t: ${walls.at.join('; ')}.`,
     `It runs walled: no Docker, no keys${wide.fleet ? '' : ', no other Spark'}. But it may add or replace programs and settings that your own terminal on ${sparkName(node)} runs by itself. If the command is not what it says, your next terminal there runs what it left.`,
-    'It may fill the disk.'];
+    RUNNER_HOME_DISK];
 }
+// The root helper's floor for a change the owner pressed, or one with the top of the home writable (R63: DISK_HARD and
+// DISK_SLACK in deploy/spark-console-root, which own-programs.test holds these words to).
+const RUNNER_HOME_DISK = 'It is ended if the disk’s free space falls under 5 GB (or, when less was free at its start, 100 MB under that).';
 // The signs a program prints when it finds no GPU (the plain wall gives a change no devices, R63): said after it.
 const RUNNER_NO_DEVICE = /no CUDA-capable device is detected|No CUDA GPUs are available|CUDA_ERROR_NO_DEVICE|cudaErrorNoDevice|Found no NVIDIA driver|couldn't communicate with the NVIDIA driver|Failed to initialize NVML|\/dev\/nvidia[a-z0-9-]*: No such file/;
 const RUNNER_NO_GPU = 'The GPU isn’t open to a plain change (it gets no devices): GPU work is a job (keep_running with once and gpu), or ask for this again with gpu, which is asked first.';
@@ -258,7 +261,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu,
+    const called = await helperCall(node, 'run', { id, command: (given ? given.prefix : '') + RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, asked,
       ...(as?.stdin ? { stdin: as.stdin } : {}), ...(given ? { input: given.payload } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
@@ -282,11 +285,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
-      // (the disk floor, R63: said plainly)
-      // (the disk floor, R63: said plainly, and true of this console: a change in the plain wall, at once or asked,
-      // doesn't start under it; only one that runs with the top of the home writable or outside the wall may)
+      // (the disk floor, R63: said plainly. Only a change at once meets it: one the owner pressed goes with --asked, which
+      // may start under it and is ended at the helper's lower floor)
       const floor = HELPER_SAYS.diskFloor.exec(a.said || '');
-      if (floor) throw new HttpError(409, `Nothing ran: ${at}’s disk has ${floor[1]} GB free, and a change in the plain wall needs ${floor[2]} GB free (the root helper’s floor), asked or not. Free space there first: stop or remove a model, or delete files yourself.`);
+      if (floor) throw new HttpError(409, `Nothing ran: ${at}’s disk has ${floor[1]} GB free, and a change that runs at once needs ${floor[2]} GB free (the root helper’s floor). With your yes it may start under the floor, and is ended if the free space falls under ${floor[3]}: ask for it in your chat, or free space there first.`);
       if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the command: ${why}. Nothing ran.`);
       // (the Spark stopped answering mid-change: what it did is unknown, and the owner is told once, here)
       if (a.kind === 'unreachable') {

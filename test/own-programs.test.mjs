@@ -90,6 +90,13 @@ test('the call to the root helper: a change\'s cap and widenings as the helper t
   assert.match(at({ dir: '~/work', memory: 8, open: true, fleet: true }), / --dir "\$HOME"'\/work' --memory 8G --open -- 'touch x'/);
   assert.match(at({ dir: '~', memory: 2, home: true, gpu: true }), / --dir "\$HOME" --memory 2G --home --gpu -- 'touch x'/);
   assert.match(at({ dir: '~', open: true, home: true }), / --open -- 'touch x'/, 'never --home with --open');
+  // (a change the owner pressed says so: --asked, which the helper's disk floor reads)
+  assert.match(at({ dir: '~', memory: 2, home: true, asked: true }), / --memory 2G --home --asked -- 'touch x'/);
+  assert.match(at({ dir: '~', memory: 2, asked: true }), / --memory 2G --asked -- 'touch x'/);
+  // (the --home button's floor sentence, 21-runner.mjs RUNNER_HOME_DISK, holds to the helper's own numbers)
+  const helper = readFileSync(join(REPO, 'deploy', 'spark-console-root'), 'utf8');
+  assert.match(helper, /\bDISK_HARD=5000000000\b/);
+  assert.match(helper, /\bDISK_SLACK=100000000\b/);
   assert.match(own.helperScript(far, 'state', { id: 'abcdefgh1234' }), /"\$h" state --id "\$id"/);
   for (const dir of ['/tmp', '~/../x', 'work', '~/a b', '~/.']) {
     assert.throws(() => at({ dir }), e => e.status === 400 && /^dir isn’t in the right form for a change/.test(e.message), dir);
