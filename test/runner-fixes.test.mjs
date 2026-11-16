@@ -227,3 +227,30 @@ test('S-1: a delete whose file couldn\'t be copied first is not run at once: it 
   assert.deepEqual(a.json.notKept, [{ path: '~/notes/big/huge.bin', why: 'over 16 MB' }]);
   assert.ok(!('lost' in a.json) && !('asks' in a.json), a.text);
 });
+
+// S-7 (the final sorter read): after the owner pressed the dangerous ask that said what it removes can't be put back,
+// the runner still refused, for good, to remove a file it couldn't copy. Contract 8.2: asked first, then done.
+test('S-7: the dangerous ask\'s press runs a delete it couldn\'t copy first, its own ask\'s or the sorter\'s, and its record says what can\'t be put back', { timeout: 180000 * SLOW }, async () => {
+  sparse('notes/big7/huge.bin', 16 * 2 ** 20 + 1);
+  writeFileSync(at3('notes/big7/small.txt'), 'small\n');
+  const chat = await newChat();
+  await turn(chat, 'clean up the big7 notes on spark 3', [[RUN('rm -r notes/big7')]]);
+  const ask = await dangerOf(chat);
+  assert.ok(ask?.danger.lines.includes('Not copied first, so gone for good: ~/notes/big7/huge.bin (over 16 MB).'), JSON.stringify(ask?.danger));
+  const p = await pressDanger(chat, ask);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(!existsSync(at3('notes/big7')), `the press ran it: ${p.text}`);
+  const start = startOf('rm -r notes/big7');
+  assert.deepEqual([start?.gate, start?.gone, start?.notKept], ['asked', 1, 1], JSON.stringify(start));
+  assert.equal(endOf(start)?.outcome, 'ran');
+  // The sorter's own delete (a pattern it can't see through): its ask said it can't be put back, and its press runs it.
+  sparse('notes/big8/huge.bin', 16 * 2 ** 20 + 1);
+  const c2 = await newChat();
+  await turn(c2, 'clean up the big8 bin files on spark 3', [[RUN('rm notes/big8/*.bin')]]);
+  const ask2 = await dangerOf(c2);
+  assert.match(ask2?.danger.lines.join('\n') || '', /^DELETES FOR GOOD on Spark 3/);
+  const p2 = await pressDanger(c2, ask2);
+  assert.equal(p2.status, 200, p2.text);
+  assert.ok(!existsSync(at3('notes/big8/huge.bin')), `the press ran it: ${p2.text}`);
+  assert.equal(startOf('rm notes/big8/*.bin')?.gone, 1);
+});

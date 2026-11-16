@@ -18986,7 +18986,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [], at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [],
+    gone: more.gone?.length ? more.gone.map(x => String(x.path)) : dangerous.includes('delete') ? true : null, at: Date.now() });
   return out;
 }
 
@@ -19034,7 +19035,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
         return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
       }
     }
-    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [] }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [], gone: was.gone ?? null }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
@@ -21173,7 +21174,9 @@ async function runnerTopDirs(node, sorted) {
 // result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
 // keys (run's, 21-run-keys.mjs): the names of the keys it is given. bare: the protect folders whose link leads to no
 // folder that the owner's yes let it run without (helperProtect, 21-work.mjs; asked by the ladder, 21-ladder.mjs).
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [] } = {}) {
+// gone: the owner pressed an ask that said what it removes can't be put back (R54): true (the sorter's own delete, of
+// files it can't see), or the paths that ask named as not copied first; those may then go with no copy.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null, keys = [], bare = [], gone = null } = {}) {
   // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
   const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (given keys, a command that only reads runs as a change: only a change's wall takes input, 21-run-keys.mjs)
@@ -21193,7 +21196,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
   // writes counts for the request's later commands now, 21-long.mjs)
   if (ctx.long && !ctx.long.job) {
-    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare }));
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs, as, keys, bare, gone }));
     workWrote(ctx, sorted);
     return started;
   }
@@ -21221,8 +21224,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
     // deletes), whoever asked and whatever was pressed: otherwise nothing runs, the set goes, and the ladder asks it as
     // one that can't be put back, naming each file and why (asks, lost: 21-ladder.mjs; R61, R54).
-    const lost = copied.notKept.filter(x => !x.way);
-    if (sorted.deletes && lost.length) {
+    const lost = copied.notKept.filter(x => !x.way), yes = asked && (gone === true || (Array.isArray(gone) && lost.every(x => gone.includes(String(x.path)))));
+    if (sorted.deletes && lost.length && !yes) {
       await copiesOn(node, 'drop', { set }).catch(() => null);
       return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(),
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
@@ -21234,7 +21237,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha, ...(given ? { keys } : {}),
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
-      copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
+      copied: mine, notKept: copied.notKept.length, ...(sorted.deletes && lost.length ? { gone: lost.length } : {}), sub: jSub(node.id) });
     if (!rid) { await copiesOn(node, 'drop', { set }).catch(() => null); throw new HttpError(507, JOURNAL_REFUSED); }
     unitAt = Date.now();
     // The plain ways-in check after it (and the after-look undo compares with): what differs puts the set back, pauses
@@ -21316,6 +21319,8 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       // (after an end the console can't know, or at the time limit, it may have been written)
       ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
+      // (it ran past files it couldn't copy first, after the owner's yes on an ask that said so: those can't come back)
+      ...(sorted.deletes && lost.length ? { cannotPutBack: `It ran with no copy of ${lost.length === 1 ? 'one file' : `${lost.length} files`} it removes or overwrites (notKept says which and why), after the owner’s yes on an ask that said so: undo can’t put ${lost.length === 1 ? 'it' : 'them'} back.` } : {}),
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
   } catch (e) {

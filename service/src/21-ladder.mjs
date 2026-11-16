@@ -234,7 +234,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [], at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, bare: more.bare || [],
+    gone: more.gone?.length ? more.gone.map(x => String(x.path)) : dangerous.includes('delete') ? true : null, at: Date.now() });
   return out;
 }
 
@@ -282,7 +283,7 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
         return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
       }
     }
-    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [] }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
+    return workAfter(await runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as, keys, bare: was.bare || [], gone: was.gone ?? null }), node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys);
   }
   const listeners = await workListeners(node);
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
