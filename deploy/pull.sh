@@ -513,7 +513,7 @@ install() {
       refuse "Tree $WANT has $p: git archive obeys a .gitattributes file, so what is unpacked could differ from the tested tree. A tree with one isn't installed." ;;
     esac
   done < <(g ls-tree -r -z --name-only "$tc")
-  [ ! -e "$REPO/info/attributes" ] || refuse "This Spark's copy of the repository has an attributes file ($REPO/info/attributes), which git archive would obey. Remove it, then run this again."
+  [ ! -e "$REPO/info/attributes" ] || refuse "This Spark's copy of the repository has an attributes file, which git archive would obey. Remove it once (rm '$REPO/info/attributes'), then run this again."
   g cat-file -e "$tc:deploy/host-on-portal.sh" 2>/dev/null || refuse "Tree $WANT has no deploy/host-on-portal.sh."
 
   # The files, out of git into a folder of this run's own, checked again on disk. Nothing in them has run yet.
@@ -523,8 +523,9 @@ install() {
   # (never the eval's held-out set: it tests a brain, so it is not unpacked on Spark 2 even for these minutes, R47)
   g archive --format=tar "$tc" | tar -x -C "$W/tree" -f - --exclude='test/eval/memory-held-out.json' || refuse "git archive of tested/$WANT failed."
   [ -z "$(find "$W/tree" ! -type f ! -type d ! -type l -print -quit)" ] || refuse "Tree $WANT unpacked with something that isn't a file or a link."
-  # (and what was unpacked is the tree, file by file: the same names, each file's bytes, or link's target, the blob the
-  # tree holds; the held-out set is the one name left out on purpose)
+  # (and what was unpacked is the tree, file by file: the same names, each one's kind (a file or a link) and a file's
+  # executable bit as the tree's mode says, each file's bytes, or link's target, the blob the tree holds; the held-out
+  # set is the one name left out on purpose)
   p=$(g ls-tree -r -z "$tc" | python3 -I -c 'import hashlib, os, sys
 root, held = sys.argv[1], "test/eval/memory-held-out.json"
 want, have = {}, {}
@@ -541,6 +542,8 @@ odd = sorted(set(want) ^ set(have))
 for p, (mode, obj) in sorted(want.items()):
     if p not in have: continue
     q = have[p]
+    if os.path.islink(q) != (mode == "120000") or (mode != "120000" and bool(os.stat(q).st_mode & 0o100) != (mode == "100755")):
+        odd.append(p); continue
     data = os.fsencode(os.readlink(q)) if mode == "120000" else open(q, "rb").read()
     if (hashlib.sha1 if len(obj) == 40 else hashlib.sha256)(b"blob %d\0" % len(data) + data).hexdigest() != obj: odd.append(p)
 print(odd[0] if odd else "")' "$W/tree") || refuse "Tree $WANT couldn't be compared with what was unpacked."
