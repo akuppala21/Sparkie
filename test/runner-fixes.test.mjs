@@ -654,6 +654,8 @@ test('TA-6: a change whose end is unknown still holds its Spark after the hold h
   await sleep(2500);
   const again = await run('touch notes/beside6.txt');
   assert.equal(again.status, 409, again.text);
+  // (the console's own hold, not the root helper's refusal of a second unit)
+  assert.match(again.json.error, /^Something is already changing on Spark 3 \(a command Sparkie is running there\)/, again.text);
   assert.ok(!existsSync(at3('notes/beside6.txt')));
   await waitFor(() => existsSync(at3('notes/held6-done')), { every: 200, what: 'the change to end on the Spark' });
   await waitFor(async () => (await run('touch notes/beside6.txt')).status === 200, { every: 500, timeout: 10000, what: 'the Spark to be let go once its unit is gone' });
