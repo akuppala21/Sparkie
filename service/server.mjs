@@ -18195,7 +18195,7 @@ async function selfStart(viewer, ctx) {
   await selfGit(['update-ref', `refs/sparkie-base/${id}`, commit, '']);
   await selfGit(['update-ref', `refs/sparkie/${id}`, commit, '']);
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-start', args: { id, commit: commit.slice(0, 12) }, ok: true });
-  return { ok: true, outcome: 'started', id, branch: `sparkie/${id}`, commit: commit.slice(0, 12),
+  return { ok: true, outcome: 'started', proposal: id, branch: `sparkie/${id}`, commit: commit.slice(0, 12),
     note: `This chat’s box holds main’s tree (commit ${commit.slice(0, 12)}) and nothing else. Work there, then propose_update {do: "send"} with a title and why.` };
 }
 
@@ -18324,7 +18324,7 @@ async function selfSend(viewer, ctx, input) {
     pr = await selfApi('POST', `/repos/${repo}/pulls`, { title: `Sparkie: ${title}`, head: open.branch, base: 'main', body, maintainer_can_modify: false });
   }
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-send', args: { id: open.id, commit: commit.slice(0, 12), pr: pr?.number ?? null }, ok: true });
-  return { ok: true, outcome: 'sent', id: open.id, branch: open.branch, commit: commit.slice(0, 12), pushes: pushes + 1, pullRequest: pr?.number ?? null,
+  return { ok: true, outcome: 'sent', proposal: open.id, branch: open.branch, commit: commit.slice(0, 12), pushes: pushes + 1, pullRequest: pr?.number ?? null,
     files: paths.slice(0, 200), generated: t.generated, protected: protectedPaths, testLines: testLines.slice(0, 100),
     title: { note: 'Sparkie’s words.', text: title },
     note: `Sent: ${open.branch} (commit ${commit.slice(0, 12)}, push ${pushes + 1} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}. GitHub runs its tests; check_update says how it is doing.` };
@@ -18344,7 +18344,7 @@ async function selfDrop(viewer, ctx) {
   }
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-drop', args: { id: open.id }, ok: true });
-  return { ok: true, outcome: 'dropped', id: open.id, branch: open.branch, note: `Dropped ${open.branch}${said.length ? `: ${said.join('; ')}` : ''}. The box stays until this chat’s box is removed.` };
+  return { ok: true, outcome: 'dropped', proposal: open.id, branch: open.branch, note: `Dropped ${open.branch}${said.length ? `: ${said.join('; ')}` : ''}. The box stays until this chat’s box is removed.` };
 }
 
 // check_update's answer for the open proposal: its pull request, the run on its head, the names of the failed tests and

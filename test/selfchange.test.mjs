@@ -156,7 +156,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(s.q.choices[0].label, /^Put main’s code in this chat’s box/);
     assert.equal(s.p.json.outcome, 'started', s.says);
     assert.match(s.says, new RegExp(`main’s tree \\(commit ${MAIN.slice(0, 12)}\\)`));
-    const id = s.p.json.id;
+    const id = s.p.json.proposal;
     assert.match(refs(), new RegExp(`refs/sparkie/${id} ${MAIN}`));
     assert.match(refs(), new RegExp(`refs/sparkie-base/${id} ${MAIN}`));
     assert.equal(git(COPY, ['cat-file', 'blob', `refs/sparkie-chat/${id}`]), chat);
@@ -277,7 +277,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(s.p.json.outcome, 'sent', s.says);
     assert.deepEqual(marks(), [], 'nothing of the proposal ran');
     for (const p of ['tools/make.mjs', 'tools/parts.mjs', 'tools/build-server.mjs']) assert.ok(s.p.json.protected.includes(p), `${p} is protected`);
-    const head = git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.id}`]);
+    const head = git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.proposal}`]);
     assert.equal(git(GH, ['show', `${head}:docs/-n.md`]), 'a leading dash', 'a leading dash is a name, as data');
     assert.match(git(GH, ['show', `${head}:service/server.mjs`]), /a part that writes a marker if it is ever run/, 'joined as text by the installed generator');
     // (a name with a newline, or shell signs: refused, nothing pushed)
@@ -286,7 +286,7 @@ describe('propose_update', { concurrency: 1 }, () => {
       const r = await pressed(chat, 'send your code proposal');
       assert.match(r.says, /The box read back entries that can’t be proposed .*so nothing was sent\./, JSON.stringify(bad));
     }
-    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.id}`]), head, 'nothing pushed');
+    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.proposal}`]), head, 'nothing pushed');
     assert.deepEqual(marks(), []);
     await pressed(chat, 'drop your code proposal');
     assert.equal(refs(), '');
