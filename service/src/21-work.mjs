@@ -207,6 +207,25 @@ function helperCall(node, verb, opts = {}) {
 // What a call's output says. The helper's own lines begin with the call's id, a random word the command was never given,
 // and a look's last line is "<id> end <code>" or "<id> end time": what the command printed, a line shaped like the
 // helper's own included, is only ever output.
+// Every sentence of the helper's own that the console reads (what follows "<id> " on its line), one place: helperAnswer,
+// the runner (21-runner.mjs) and the net (21-guard.mjs) read through these, and own-programs.test checks each against
+// the sentences deploy/spark-console-root can print, so a sentence the helper changes fails a test, not a Spark.
+const HELPER_SAYS = {
+  end: /^end (\d{1,3}|time)$/,
+  proofPassed: /^proof passed: /,
+  proofFailed: /^proof failed: (.*)\. No mark was written, so the look and run walls refuse on this Spark\.$/,
+  refused: /^refused: (.*)$/,
+  proofState: /^(?:refused|look refuses): the wall proof is (\S+) on this Spark(?:: prove first)?$/,
+  lookRefuses: /^look refuses: (.*)$/,
+  lookReady: /^look ready$/,
+  state: /^state (never|running|ended|unknown): /,
+  diskFloor: /^refused: the disk has (\d+) GB free; a plain change needs (\d+) GB free: free space first, by a change the owner asks for \(it may run under the floor\)$/,
+  diskStopped: /^stopped: the disk's free space fell under (\d+) GB$/,
+  netArmed: /^net armed: the ways in go back at (\S+) /,
+  netOpen: /^net open: (.*)$/,
+  kept: /^kept: |^kept already: /,
+  putBack: /^(?:net |already )?put back at (.*)$/,
+};
 function helperAnswer({ id, code, out, err, cut, timedOut }) {
   if (cut) return { kind: 'ran', output: out, exit: null, cut: true };
   const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time)\\n$`).exec(out);
@@ -221,10 +240,12 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   const own = out.split('\n').filter(l => l.startsWith(`${id} `)).map(l => l.slice(id.length + 1)), find = p => own.find(l => l.startsWith(p))?.slice(p.length);
   const said = find('console ');
   if (said != null) return { kind: said.split(' ')[0], detail: said.split(' ').slice(1).join(' ') };
-  if (find('proof passed:') != null) return { kind: 'proven' };
-  const failed = find('proof failed: '), refused = find('refused: ') ?? find('look refuses: ');
-  if (failed != null) return { kind: 'failed', detail: failed.replace(/\. No mark was written.*$/, '') };
-  if (refused != null) return { kind: /^the wall proof is /.test(refused) ? 'proof' : 'refused', detail: refused.replace(/ on this Spark(?:: prove first)?$/, '') };
+  const line = re => own.find(l => re.test(l)), got = re => re.exec(line(re) ?? '');
+  if (line(HELPER_SAYS.proofPassed) != null) return { kind: 'proven' };
+  const failed = got(HELPER_SAYS.proofFailed), proof = got(HELPER_SAYS.proofState), refused = got(HELPER_SAYS.refused) ?? got(HELPER_SAYS.lookRefuses);
+  if (failed) return { kind: 'failed', detail: failed[1] };
+  if (proof) return { kind: 'proof', detail: `the wall proof is ${proof[1]}` };
+  if (refused) return { kind: 'refused', detail: refused[1].replace(/ on this Spark(?:: prove first)?$/, ''), said: `refused: ${refused[1]}` };
   if (code === 255 && !own.length) return { kind: 'unreachable', detail: maskSecrets(String(err).split('\n').pop()).slice(0, 200) };
   const first = maskSecrets(String(out || err).trim().split('\n')[0] || '').slice(0, 200);
   return { kind: /a password is required|a terminal is required|not in the sudoers|may not run sudo/.test(out + err) ? 'nosudo' : 'broken', detail: first };

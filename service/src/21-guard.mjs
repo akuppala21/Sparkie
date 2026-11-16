@@ -34,16 +34,16 @@ function guardAnswer(id, out) {
   if (lines.at(-1) === '') lines.pop();
   const own = l => (String(l).startsWith(`${id} `) ? String(l).slice(id.length + 1) : null);
   const last = own(lines.at(-1)) ?? '', first = own(lines[0]) ?? '';
-  const end = /^end (\d{1,3}|time)$/.exec(last);
+  const end = HELPER_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
-  const after = p => (net.startsWith(p) ? net.slice(p.length) : null);
+  const after = re => re.exec(net)?.[1] ?? null;
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
-    goesBackAt: /^net armed: the ways in go back at (\S+) /.exec(first)?.[1] || null,
-    open: after('net open: '),
-    kept: !end && (last.startsWith('kept: ') || last.startsWith('kept already')),
-    putBackAt: after('net put back at ') ?? after('already put back at ') ?? after('put back at '),
+    goesBackAt: HELPER_SAYS.netArmed.exec(first)?.[1] || null,
+    open: after(HELPER_SAYS.netOpen),
+    kept: !end && HELPER_SAYS.kept.test(last),
+    putBackAt: after(HELPER_SAYS.putBack),
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }

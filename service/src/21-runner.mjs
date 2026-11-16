@@ -99,7 +99,7 @@ const RUNNER_OPEN_HOLDS = 'There it still can’t gain root by itself, and the w
 const RUNNER_NO_DEVICE = /no CUDA-capable device is detected|No CUDA GPUs are available|CUDA_ERROR_NO_DEVICE|cudaErrorNoDevice|Found no NVIDIA driver|couldn't communicate with the NVIDIA driver|Failed to initialize NVML|\/dev\/nvidia[a-z0-9-]*: No such file/;
 const RUNNER_NO_GPU = 'The GPU isn’t open to a plain change (it gets no devices): GPU work is a job (keep_running with once and gpu), or ask for this again with gpu, which is asked first.';
 // The root helper's own lines after a change (R63), as the owner reads them.
-const runnerNote = n => (/^stopped: /.test(n) ? `It was stopped: ${n.slice(9)} (the root helper's floor).` : `${n[0].toUpperCase()}${n.slice(1)}.`);
+const runnerNote = n => (HELPER_SAYS.diskStopped.test(n) ? `It was stopped: ${n.slice('stopped: '.length)} (the root helper's floor).` : `${n[0].toUpperCase()}${n.slice(1)}.`);
 // The protect folders a sorted command reaches: one of its places is in one, or holds one (rm -r ~/.cache), or it
 // starts in one (dir: make or npm install there writes what the sorter doesn't place).
 const runnerProtected = (sorted, dir = RUNNER_DIR) => RUNNER_PROTECT.filter(d => dir === d || String(dir).startsWith(`${d}/`)
@@ -239,7 +239,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
       if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
       // (the disk floor, R63: said plainly)
-      if (a.kind === 'refused' && /^the disk has \d+ GB free; a change needs \d+ GB free$/.test(why)) throw new HttpError(409, `Nothing ran: ${why.replace(/^the disk has/, `${at}’s disk has`)}. Free some space there first.`);
+      // (the disk floor, R63: said plainly, and true of this console: a change in the plain wall, at once or asked,
+      // doesn't start under it; only one that runs with the top of the home writable or outside the wall may)
+      const floor = HELPER_SAYS.diskFloor.exec(a.said || '');
+      if (floor) throw new HttpError(409, `Nothing ran: ${at}’s disk has ${floor[1]} GB free, and a change in the plain wall needs ${floor[2]} GB free (the root helper’s floor), asked or not. Free space there first: stop or remove a model, or delete files yourself.`);
       if (a.kind === 'refused') throw new HttpError(409, `The root helper on ${at} refused the command: ${why}. Nothing ran.`);
       // (the Spark stopped answering mid-change: what it did is unknown, and the owner is told once, here)
       if (a.kind === 'unreachable') {
@@ -304,7 +307,7 @@ async function runnerRunState(node, unit) {
   const id = /^sw-run-([0-9a-f]{24})$/.exec(String(unit || ''))?.[1];
   if (!id) return 'unknown';
   const r = await helperCall(node, 'state', { id, limitMs: 15000 });
-  return new RegExp(`(?:^|\\n)${id} state (never|running|ended|unknown): `).exec(r.out)?.[1] || 'unanswered';
+  return String(r.out).split('\n').filter(l => l.startsWith(`${id} `)).map(l => HELPER_SAYS.state.exec(l.slice(id.length + 1))?.[1]).find(Boolean) || 'unanswered';
 }
 // A change a console restart cut off (journalAfterRestart): its Spark is held as above, from its start line's time.
 function runnerHold(r) {
