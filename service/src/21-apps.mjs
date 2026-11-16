@@ -428,6 +428,9 @@ action({
       const job = claimed([spark], `stopping ${container}`, () => newJob('stop', meta));
       runJob(job, async j => {
         pausedCheck(ctx);
+        // (a saved workflow's clean-up stops only what its run started: looked at again under this claim, A-22)
+        const left = ctx.onlyIf ? await startedStill(spark, container, ctx.onlyIf) : null;
+        if (left) { j.left = left; j.stoppedHere = []; note(j, `Left running: ${left}.`); return; }
         // (one whose container is gone only comes off the list: a name Docker doesn't have is never handed to docker stop)
         if (state !== 'missing') {
           await stopContainer(j, spark, container, viewer);
@@ -458,6 +461,8 @@ action({
     }
     if (state === 'running') {
       if (changed) keepIt();
+      // (the owner's ask for what already runs is their newest wish for it, A-22: 20-desired.mjs)
+      if (ownersAsk(viewer, ctx) && (entry || changed)) desiredWish([key]);
       const answers = link ? await appAnswers(sp.tsip, hostPort) : null;
       const said = !entry ? `${container} on ${at} is now on the list of what should be running: Spark Console starts it again if it stops by itself or ${at} is powered off and on.`
         : changed ? `${container} on ${at} was already kept running; its port and memory figure on the list are updated.`

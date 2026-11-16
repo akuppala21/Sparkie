@@ -44,38 +44,65 @@ function writeKey(text) {
 // The file as it is now. What is at the name, by code's own look at the name (no content read): a plain file (and
 // whether its owner may write it), a link, something else, nothing. Its text only through the helper's look, the same
 // wall run's looks go through, so its one hidden list decides: a key, or a file that wall hides, is "hidden" and its
-// text is never read. A helper that can't look there: its own answer (helperNeeds).
+// text is never read; then the program compares it by what code sees without reading it (sig: its inode, size and
+// modification time, from the same look at the name). A helper that can't look there: its own answer (helperNeeds).
 async function writeOld(node, place) {
   const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
-  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo file; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo "file $(stat -c '%i %s %y' -- "$p")"; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
   if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `${sparkName(node)} couldn’t be asked what is at ${place.shown}, so nothing was asked or written.`);
-  const kind = String(r.out).trim().split('\n')[0];
+  const [kind, ...rest] = String(r.out).trim().split('\n')[0].split(' '), sig = rest.join(' ');
   if (kind !== 'file') return { kind: ['link', 'other', 'readonly'].includes(kind) ? kind : 'none' };
-  if (keyWord(place.look)) return { kind: 'hidden' };
+  if (keyWord(place.look)) return { kind: 'hidden', sig };
   const command = `p=${q(place.look)}; s=$(sha256sum < "$p" 2>/dev/null | cut -d' ' -f1); if [ -f "$p" ] && [ ! -L "$p" ] && [ -n "$s" ]; then printf 'file %s %s\\n' "$(stat -c %s -- "$p")" "$s"; head -c ${WRITE_READ + 1} -- "$p" | base64 -w0; echo; else echo hidden; fi`;
   const { words, walks } = lookWords(command);
   const a = helperAnswer(await helperCall(node, 'look', { command, seconds: LOOK_SECONDS, words, walks }));
   if (a.kind === 'ran') {
     const [head = '', b64 = ''] = String(a.output).split('\n'), m = /^file (\d+) ([0-9a-f]{64})$/.exec(head.trim());
-    return m ? { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null } : { kind: 'hidden' };
+    return m ? { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null } : { kind: 'hidden', sig };
   }
-  if (['key', 'walk', 'refused'].includes(a.kind)) return { kind: 'hidden' };
+  if (['key', 'walk', 'refused'].includes(a.kind)) return { kind: 'hidden', sig };
   return { kind: 'helper', answer: a };
 }
 
 // Code's own program for the unit: the whole new text comes on its input. It writes only while the file is as it was
-// read here and its owner may write it; beside it, then one move into place, with the old permission bits only (0644
-// for a new file); the temporary file never stays behind, the unit ended or not.
+// read here (a hidden file, whose text is never read: its inode, size and modification time) and its owner may write it,
+// with the old permission bits only (0644 for a new file); the temporary file never stays behind, the unit ended or not.
+// It compares at the start, stages the text beside the file, then publishes in one step that can't lose another
+// program's edit made in between (A-19): a new file by a link, which fails when anything is at the name by then; a
+// replace by exchanging the two names (renameat2 with RENAME_EXCHANGE, through python3), then checking what it
+// displaced: not the file as read, it is exchanged back and nothing is written. Where this libc or filesystem has no
+// exchange (or no python3, in a box), it compares once more just before one move. old.hold, a folder (tests only, never
+// set by code): the program waits there between staging and publishing, as a test's second writer needs it to.
 function writeProgram(rel, old) {
-  const same = old.kind === 'file' ? `[ -f "$p" ] && [ ! -L "$p" ] && [ "$(sha256sum < "$p" | cut -d' ' -f1)" = ${old.sha} ]`
-    : old.kind === 'hidden' ? '[ -f "$p" ] && [ ! -L "$p" ]' : '[ ! -e "$p" ] && [ ! -L "$p" ]';
+  // (the exchange: 0 done, 4 where this libc or filesystem has none, 1 on any other failure; all inside this function,
+  // which tests lift on its own)
+  const swap = `python3 -I -c 'import ctypes, errno, os, sys
+try:
+    f = ctypes.CDLL(None, use_errno=True).renameat2
+except AttributeError:
+    sys.exit(4)
+if f(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2) == 0:
+    sys.exit(0)
+sys.exit(4 if ctypes.get_errno() in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP) else 1)'`;
+  const same = x => (old.kind === 'file' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(sha256sum < "${x}" | cut -d' ' -f1)" = ${old.sha} ]`
+    : old.kind === 'hidden' ? `[ -f "${x}" ] && [ ! -L "${x}" ] && [ "$(stat -c '%i %s %y' -- "${x}")" = ${q(old.sig ?? '')} ]` : `[ ! -e "${x}" ] && [ ! -L "${x}" ]`);
+  const changed = "{ echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }";
+  const hold = typeof old.hold === 'string' ? [`: > ${q(`${old.hold}/at`)}; n=0; until [ -e ${q(`${old.hold}/go`)} ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done`] : [];
+  const publish = old.kind === 'none'
+    // (a link fails when anything is at the name now: their file stays, ours goes with the temporary name)
+    ? [`ln -T -- "$t" "$p" 2>/dev/null || { if [ -e "$p" ] || [ -L "$p" ]; then ${changed}; fi; exit 1; }`]
+    : [`${swap} "$t" "$p"; r=$?`,
+      // (exchanged: the temporary name holds what was at the name; not the file as read, it goes back)
+      `if [ $r = 0 ]; then ${same('$t')} || { ${swap} "$t" "$p" || { k=$t; t=; echo "write_file: the file changed since it was read here and couldn’t be put back: its newer text is kept as $k." >&2; exit 3; }; ${changed}; }`,
+      `elif [ $r = 4 ] || [ $r = 127 ]; then ${same('$p')} || ${changed}; mv -fT -- "$t" "$p" || exit 1; t=`,
+      'else exit 1; fi'];
   return [`p=${q(rel)}; t=`, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'exit 143' TERM INT HUP",
-    `${same} || { echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }`,
+    `${same('$p')} || ${changed}`,
     `[ ! -e "$p" ] || [ -w "$p" ] || { echo 'write_file: the file is read-only, so nothing was written.' >&2; exit 3; }`,
     't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
     'cat > "$t" || exit 1',
     `if [ -f "$p" ]; then m=$(stat -c %a -- "$p") && chmod "$(printf '%o' $(( 8#$m & 8#777 )))" -- "$t" || exit 1; else chmod 0644 -- "$t" || exit 1; fi`,
-    'mv -fT -- "$t" "$p" || exit 1', 't='].join('\n');
+    ...hold, ...publish].join('\n');
 }
 
 // A text's lines, without the empty one after its last line break.
@@ -175,7 +202,7 @@ async function writeFile(input, viewer, ctx = {}) {
   const spec = {
     key: `write_file\n${place.shown}\n${from ?? ''}-${to ?? ''}\n${createHash('sha256').update(text).digest('hex')}`,
     args: { on: node.id, path: input.path, text, ...(Number.isInteger(from) ? { from, to } : {}) },
-    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind },
+    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind === 'hidden' ? `hidden ${old.sig}` : old.kind },
     // (a file whose old text is hidden is asked, never written at once: the owner sees what they can't read here)
     ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
     lines: at => writeShown(at, place, old, text, from, to),
