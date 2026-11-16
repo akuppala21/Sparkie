@@ -139,7 +139,7 @@ const HIDDEN = (extra = []) => [
   ...[...START, '/home/owner/.cache/huggingface/token', '/home/other/.bash_history', '/etc/shadow', '/etc/gshadow',
     '/etc/ssh/ssh_host_ed25519_key', '/swap.img'].flatMap(p => ['-p', `InaccessiblePaths=${p}`]),
   ...['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/known_hosts', '/home/owner/.ssh/id_ed25519.pub',
-    '/home/owner/.local/state/spark-console/desired.json'].flatMap(p => ['-p', `BindReadOnlyPaths=${p}`]),
+    '/home/owner/.local/state/spark-console/desired.json'].flatMap(p => ['-p', `BindReadOnlyPaths=-${p}`]),
 ];
 // The read-only list of a plain change; with --open (no hidden list) the start files and units are read-only first.
 const READ_ONLY = ['/home/owner/.cache/spark-console', '/home/owner/spark-console-src', '/usr/local/sbin/spark-console-root'];
@@ -477,7 +477,7 @@ describe('what the run wall holds in the home', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const c = unitCall(s, `sw-run-${r.id}`).filter(a => a.includes('/home/owner/.docker') || a.includes('/.local/state/spark-console'));
     assert.deepEqual(c, ['TemporaryFileSystem=/home/owner/.docker:ro', 'TemporaryFileSystem=/home/owner/.local/state/spark-console:ro',
-      ...['desired.json', 'lessons.json', 'plugs.json'].map(f => `BindReadOnlyPaths=/home/owner/.local/state/spark-console/${f}`)]);
+      ...['desired.json', 'lessons.json', 'plugs.json'].map(f => `BindReadOnlyPaths=-/home/owner/.local/state/spark-console/${f}`)]);
   });
   test('no sign-in file and no socket of the state folder is put back, in a look or a change, with or without --open', () => {
     // These two were single hidden files (InaccessiblePaths=…/api.sock and …/sessions.json) before the state folder was
@@ -493,7 +493,48 @@ describe('what the run wall holds in the home', () => {
     }
     // --open drops the hidden list on purpose (asked first, outside the wall): it is the only way these are seen.
     const o = change(s, 'true', { extra: ['--open'] });
-    assert.ok(!unitCall(s, `sw-run-${o.id}`).some(a => a.startsWith('BindReadOnlyPaths=/home/owner/.local/state/')), 'nothing is put back under --open: nothing is hidden');
+    assert.ok(!unitCall(s, `sw-run-${o.id}`).some(a => /^BindReadOnlyPaths=-?\/home\/owner\/\.local\/state\//.test(a)), 'nothing is put back under --open: nothing is hidden');
+  });
+
+  // The final read's "tmp-putback" (its F4, run on a Spark): the console writes a state file as <name>.<pid>.tmp and
+  // renames it, so a look printed sessions.json's half-written copy; and a put-back whose file was gone by the unit's
+  // start would fail the unit (systemd: 226), which was then told as a command that ran.
+  test('a file the console is writing now (.tmp) and a sign-in file\'s copies (by its start) are put back in neither wall; each put-back, and --home\'s dot names, is asked with "-"', () => {
+    const s = proven();
+    for (const f of ['sessions.json.4242.tmp', 'agents.json.4242.tmp', 'desired.json.77.tmp', 'passkeys.json.prev', 'telegram.json.1']) {
+      s.put(`home/owner/.local/state/spark-console/${f}`, 'HALF-WRITTEN');
+    }
+    const see = 'cat "$WALL_VIEW"/home/owner/.local/state/spark-console/* 2>/dev/null; true';
+    const walls = [['look', look(s, see)], ['run', change(s, see)], ['run', change(s, see, { extra: ['--home'] })]];
+    for (const [wall, r] of walls) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(!r.stdout.includes('HALF-WRITTEN'), `${wall}: ${r.stdout}`);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
+      assert.ok(!c.some(a => a.includes('/.local/state/spark-console/') && /\.tmp$|\.prev$|\.json\.1$/.test(a)), c.filter(a => a.includes('/.local/state/')).join(' '));
+      assert.ok(c.includes('BindReadOnlyPaths=-/home/owner/.local/state/spark-console/desired.json'), `${wall}: a plain file is put back, "-" first`);
+      assert.ok(!c.some(a => /^BindReadOnlyPaths=\/home\//.test(a)), `${wall}: every put-back with "-"`);
+    }
+    const h = unitCall(s, `sw-run-${walls[2][1].id}`);
+    assert.ok(h.includes('ReadOnlyPaths=-/home/owner/.config') && !h.includes('ReadOnlyPaths=/home/owner/.config'), "--home: a dot name gone by the start is left out, never a unit that fails");
+  });
+
+  test('a unit that never started (systemd refused it, or it failed before its command: 226) answers that the command never ran, never an exit code; state says never', () => {
+    const s = proven();
+    for (const [knob, value, answered] of [['refuse', 'sw-run-', 1], ['start-fails', 'sw-run- 226', 226], ['refuse', 'sw-look-', 1], ['start-fails', 'sw-look- 226', 226]]) {
+      s.put(`standin/${knob}`, value);
+      const r = value.startsWith('sw-look-') ? look(s, 'touch "$SPARK_CONSOLE_REHEARSAL/ran"') : change(s, 'touch "$SPARK_CONSOLE_REHEARSAL/ran"');
+      rmSync(join(s.R, 'standin', knob));
+      assert.equal(r.status, 125, r.stdout + r.stderr);
+      assert.equal(r.stdout, `${r.id} refused: its unit never started (systemd answered ${answered}), so the command never ran\n`);
+      assert.ok(!existsSync(join(s.R, 'ran')), 'nothing ran');
+      assert.equal(run(s, ['state', '--id', r.id]).stdout, `${r.id} state never: it never started, and its call has ended, so it cannot start now\n`);
+    }
+    // (the control: a command that ran and ended by itself with 226 or 1 keeps its code)
+    for (const code of [226, 1]) {
+      const r = change(s, `exit ${code}`);
+      assert.equal(r.status, code, r.stdout + r.stderr);
+      assert.equal(r.stdout, `\n${r.id} end ${code}\n`);
+    }
   });
 });
 
@@ -510,7 +551,7 @@ describe("the owner's words on Spark 2", () => {
       const c = unitCall(s, `sw-${wall}-${r.id}`);
       assert.ok(c.includes('TemporaryFileSystem=/home/owner/.local/state/spark-console:ro'), c.join(' '));
       for (const f of WORDS) assert.ok(!c.some(a => a.endsWith(`/.local/state/spark-console/${f}`)), `${f} is not put back`);
-      assert.ok(c.includes('BindReadOnlyPaths=/home/owner/.local/state/spark-console/lessons.json'), 'what holds no words is');
+      assert.ok(c.includes('BindReadOnlyPaths=-/home/owner/.local/state/spark-console/lessons.json'), 'what holds no words is');
       // A command in the wall: each file of what was said is not there; the rest is read.
       for (const f of WORDS) assert.match(r.stderr, new RegExp(`cat: ${esc(f)}: No such file or directory\n`));
       assert.match(r.stdout, /^desired\.json read\nlessons\.json read\n/);
@@ -855,7 +896,9 @@ describe('the lock-out net (R60)', () => {
     const before = calls(s).length;
     const r = net(s, 'true');
     assert.match(r.stdout, ARMED(r.id));
-    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: nothing differs now; it is kept on the console's word, else at \\S+ what differs then goes back\\n${r.id} end 1\\n$`));
+    // (its last line: the final read's tmp-putback fix. Old: "<id> end 1", told as a change that ran and failed; new: it
+    // never ran, said as a refusal)
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net open: nothing differs now; it is kept on the console's word, else at \\S+ what differs then goes back\\n${r.id} refused: its unit never started \\(systemd answered 1\\), so the command never ran\\n$`));
     const asked = calls(s).slice(before).map(at);
     const timer = asked.indexOf(`--unit=sw-guard-${r.id}`), change_ = asked.indexOf(`--unit=sw-run-${r.id}`);
     assert.ok(timer >= 0 && change_ > timer, `the timer is asked for before the change: ${asked.join(', ')}`);
@@ -1672,7 +1715,7 @@ describe('the held lists, after the analyst', () => {
     for (const f of ['door.json', 'cloud.json']) s.put(`home/owner/.local/state/spark-console/${f}`, '{"token":"x"}');
     const r = change(s, 'true'), l = look(s, 'true');
     for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      assert.ok(c.includes('BindReadOnlyPaths=/home/owner/.local/state/spark-console/desired.json'), 'its other plain files are');
+      assert.ok(c.includes('BindReadOnlyPaths=-/home/owner/.local/state/spark-console/desired.json'), 'its other plain files are');
       assert.ok(!c.some(a => /door\.json|cloud\.json/.test(a)), c.filter(a => /door|cloud/.test(a)).join(' '));
     }
   });
@@ -1866,7 +1909,7 @@ describe('what bounds a plain change (R63)', () => {
     assert.ok(!c.includes('ReadOnlyPaths=/home/owner'), 'the top itself is writable');
     const rw = c.filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));
     for (const p of ['/home/owner/bin', '/home/owner/.local', '/home/owner/.cargo/bin', '/home/owner/.cache', '/home/owner/work']) assert.ok(rw.includes(p), `${p} in ${rw}`);
-    assert.ok(c.includes('ReadOnlyPaths=/home/owner/.config') && !rw.includes('/home/owner/.config'), 'other dot names stay read-only');
+    assert.ok(c.includes('ReadOnlyPaths=-/home/owner/.config') && !rw.includes('/home/owner/.config'), 'other dot names stay read-only');
     for (const x of ['IPAddressAllow=127.0.0.53', 'PrivateDevices=yes', 'PrivateIPC=yes', 'TemporaryFileSystem=/home/owner/.ssh:ro', 'InaccessiblePaths=/home/owner/.bashrc', 'MemorySwapMax=0']) assert.ok(c.includes(x), x);
     assert.ok(c.includes('--groups=1000,44,992'), 'its groups as a plain change');
     for (const p of SHARED_PINS) assert.ok(c.includes(`BindPaths=${p}`), `${p}: held in place again, ~/.local being writable`);
@@ -1883,7 +1926,7 @@ describe('what bounds a plain change (R63)', () => {
       for (const d of ['.local/share/jupyter', '.jupyter', '.mozilla', '.config/sops']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
       for (const f of ['.env', '.cargo/credentials.toml']) assert.ok(c.includes(`InaccessiblePaths=/home/owner/${f}`), f);
       // (its key and what the owner typed to models stay hidden with the folder; the models are in view, read-only)
-      assert.ok(c.includes('TemporaryFileSystem=/home/owner/.ollama:ro') && c.includes('BindReadOnlyPaths=/home/owner/.ollama/models'), "Ollama's folder");
+      assert.ok(c.includes('TemporaryFileSystem=/home/owner/.ollama:ro') && c.includes('BindReadOnlyPaths=-/home/owner/.ollama/models'), "Ollama's folder");
       assert.ok(!c.some(a => /\.ollama\/(id_ed25519|history)/.test(a)), 'neither its key nor its history is put back');
     }
     const rw = unitCall(s, `sw-run-${r.id}`).filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));

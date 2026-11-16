@@ -205,13 +205,13 @@ test('the copies come first: a file\'s bytes, mode and path before it is overwri
   writeFileSync(refuse, 'sw-run-');
   let x;
   try { x = await run('echo changed > notes/b.txt'); } finally { rmSync(refuse, { force: true }); }
-  assert.equal(x.status, 200, x.text);
-  assert.equal(x.json.exit, 1, x.text);
-  assert.match(x.json.output, /Failed to start transient service unit/);
+  // (the root helper's answer for a unit that never started is "never ran", no exit code: final read, tmp-putback)
+  assert.equal(x.status, 409, x.text);
+  assert.match(x.json.error, /its unit never started \(systemd answered 1\), so the command never ran\. Nothing ran\./);
   assert.equal(text('notes/b.txt'), 'b before\n');
-  assert.equal(copyOf(x.json.set, 'notes/b.txt').bytes.toString(), 'b before\n');
   assert.equal(units().length, u + 1, 'asked for, and refused');
-  assert.equal(pair('echo changed > notes/b.txt')[0].set, x.json.set);
+  const [xs, xe] = pair('echo changed > notes/b.txt');
+  assert.ok(xs?.set && !sets().includes(xs.set) && xe?.ran === false, `its copy set is dropped, nothing left for /undo: ${JSON.stringify(xe)}`);
 });
 
 test('a file over 16 MB, or past the 128 MB one command keeps, is not kept and the result says which; a command that removes or overwrites one runs nothing', { timeout: 180000 * SLOW }, async () => {

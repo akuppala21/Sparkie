@@ -426,13 +426,15 @@ hide_home() {
   if [[ " ${TMPFS[*]} " == *" $h/.ollama "* ]] && [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p" && safe_path "$p"; then BACK+=("$p"); fi
   # Spark Console's state folder (on Spark 2 only), the same way in both walls: hidden, and its plain files put back
   # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
-  # way or write the brain's memory, and no look or change reads what was said).
+  # way or write the brain's memory, and no look or change reads what was said). Each by its start, so their copies
+  # stay hidden too; and no file the console is writing now (<name>.<pid>.tmp: half-written, and renamed away soon).
   p="$h/.local/state/spark-console"
   if [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p"; then
     TMPFS+=("$p")
     for f in "$R$p"/*; do
-      [ -f "$f" ] && [ ! -L "$f" ] && [[ $SIGNIN != *" ${f##*/} "* ]] || continue
-      for w in $WORDS; do [[ ${f##*/} == "$w"* ]] && continue 2; done
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      case "${f##*/}" in *.tmp) continue ;; esac
+      for w in $WORDS $SIGNIN; do [[ ${f##*/} == "$w"* ]] && continue 2; done
       f=${f#"$R"}
       if safe_path "$f"; then BACK+=("$f"); fi
     done
@@ -569,7 +571,8 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
   if [ "$wall" = look ] || [ "$OPEN" = 0 ]; then
     for p in "${TMPFS[@]}"; do PROPS+=(-p "TemporaryFileSystem=$p:ro"); done
     for p in "${GONE[@]}"; do PROPS+=(-p "InaccessiblePaths=$p"); done
-    for p in "${BACK[@]}"; do PROPS+=(-p "BindReadOnlyPaths=$p"); done
+    # (a put-back whose file is gone by the time the unit starts is left out, never a unit that fails to start: "-")
+    for p in "${BACK[@]}"; do PROPS+=(-p "BindReadOnlyPaths=-$p"); done
     if [ "$wall" = run ] && [ -d "$R/run/systemd/resolve" ]; then PROPS+=(-p BindReadOnlyPaths=/run/systemd/resolve); fi
   fi
   if [ "$wall" = run ]; then
@@ -581,7 +584,7 @@ wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and
       if [ "$HOMEW" = 0 ]; then PROPS+=(-p "ReadOnlyPaths=$OWNER_HOME")
       else   # (--home: the top itself writable; each dot name there read-only as in a plain change, but those below)
         mapfile -t dots < <(home_dots "${rw[@]}")
-        for p in "${dots[@]}"; do PROPS+=(-p "ReadOnlyPaths=$p"); done
+        for p in "${dots[@]}"; do PROPS+=(-p "ReadOnlyPaths=-$p"); done   # (one gone by the start is left out, as above)
       fi
       for p in "${rw[@]}"; do PROPS+=(-p "ReadWritePaths=$p"); done
     fi
@@ -786,14 +789,19 @@ start_script() {
   cat <<'START'
 #!/bin/bash
 # The fixed start of every command spark-console-root runs; nothing here comes from a caller. The folder, the home
-# and the account are in files the helper wrote beside it, and the command is the held file itself, run by bash.
+# and the account are in files the helper wrote beside it, and the command is the held file itself, run by bash. Its
+# input is the helper's one byte, taken just before the command runs (left there, the helper knows the command never
+# ran); the command's own input is the held input, or nothing.
 here=${BASH_SOURCE[0]%/*}
 IFS= read -r -d '' dir < "$here/dir"
 IFS= read -r -d '' HOME < "$here/home"
 IFS= read -r -d '' USER < "$here/user"
 export HOME USER LOGNAME="$USER"
 cd -- "$dir" || exit 125
-exec "$BASH" --noprofile --norc -- "$here/command"
+IFS= read -r -n 1 -t 10 _ || exit 125
+in=/dev/null
+[ ! -e "$here/stdin" ] || in=$here/stdin
+exec "$BASH" --noprofile --norc -- "$here/command" < "$in"
 START
 }
 
@@ -845,7 +853,7 @@ do_check() {
 }
 
 do_unit() {
-  local max got input=/dev/null unit start rc=0 p real
+  local max got unit start rc=0 p real ran=1
   # (what state --id answers: this call has begun; an id is never used twice)
   mkdir -p -m 0700 -- "$R$CALLS" 2> /dev/null
   ( set -C; printf 'begun %s %s\n' "$$" "$(started_at $$)" > "$R$CALLS/$ID" ) 2> /dev/null || refuse "this id was used already"
@@ -954,9 +962,12 @@ do_unit() {
   if [ "$STDIN" = 1 ] && [ "$VERB" != root ]; then
     head -c $((STDIN_MAX + 1)) > "$H/stdin"
     if (( $(stat -c %s -- "$H/stdin") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the input is over 16 MB"; fi
-    input="$H/stdin"
   fi
   seal
+  # (the unit's input: one byte its start takes just before the command runs. Still there once the unit is gone, the
+  # command never ran, whatever systemd answered; the command's own input is the held one, which the start opens)
+  mkfifo -m 0600 -- "$H/go" && exec 6<> "$H/go" && rm -f -- "$H/go" && printf x >&6 \
+    || { rm -rf -- "$H"; refuse "the unit's input could not be made, so nothing ran"; }
   # The net, armed before anything changes: the copy, restore.sh, the timer. If it cannot be armed, nothing runs.
   [ "$NET" = 0 ] || net_arm
   # (the record: a root command is said as such, before anything of it runs)
@@ -982,13 +993,18 @@ do_unit() {
   mark handed "$$ $(started_at $$)"
   trap '' HUP PIPE INT TERM
   systemd-run "--unit=$unit" "--description=Spark Console $VERB $ID sha256 $SHA" --wait --pipe --collect --quiet \
-    "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" < "$input" || rc=$?
+    "${PROPS[@]}" -- "${PRE[@]}" "$BASH_BIN" --noprofile --norc "$HOLD/$ID/start" <&6 || rc=$?
   local quiet=0   # (an empty answer is systemd not answering, not the unit gone: asked again, up to a minute)
   while case "$(systemctl show --property=ActiveState --value "$unit.service" 2> /dev/null)" in
           active|activating|deactivating|reloading|refreshing) quiet=0; true ;; '') quiet=$((quiet + 1)); (( quiet < 60 )) ;; *) false ;; esac
   do sleep 1; done
+  # (its byte still there: the start never took it, so the command never ran: a unit systemd refused, or one that
+  # failed before its start, a put-back's file gone, say. Taken now, so a late start cannot run it either)
+  if read -r -t 0 -u 6 && IFS= read -r -n 1 -t 1 -u 6 _; then ran=0; fi
+  exec 6<&-
   # (systemd silent for a minute: the mark stays "handed", and state --id asks systemd itself, never "ended" unasked)
-  if (( quiet < 60 )); then mark ended "$rc"; CALL_MARK=ended; fi
+  if [ "$ran" = 0 ]; then mark never; CALL_MARK=never
+  elif (( quiet < 60 )); then mark ended "$rc"; CALL_MARK=ended; fi
   if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
   if [ -e "$H/disk-low" ]; then l=$(cat -- "$H/disk-low"); [[ $l =~ ^[0-9]{1,15}$ ]] || l=$DISK_FLOOR; tail+=("stopped: the disk's free space fell under $(bytes_said "$l")"); fi
   rm -rf -- "$H"
@@ -998,6 +1014,8 @@ do_unit() {
   if [ "$NET" = 1 ] || [ ${#tail[@]} -gt 0 ]; then printf '\n'; nl=''; fi
   for l in "${tail[@]}"; do say "$l"; done
   if [ "$NET" = 1 ]; then net_after; fi
+  # (never an exit code for a command that never ran: told as a refusal, and nothing of it ran)
+  if [ "$ran" = 0 ]; then printf '%s refused: its unit never started (systemd answered %s), so the command never ran\n' "$ID" "$rc"; exit 125; fi
   if [ "$rc" -ne 0 ] && (( SECONDS - start >= 10#$SECS )); then printf '%s%s end time\n' "$nl" "$ID"
   else printf '%s%s end %s\n' "$nl" "$ID" "$rc"; fi
   exit "$rc"
