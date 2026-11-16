@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, choose, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { serviceConfig } from './start-mock.mjs';
 import { Authenticator, passkeyHeader } from './authenticator.mjs';
@@ -72,6 +72,11 @@ test('"Always allow" is the page\'s, with the passkey: not in the paired chat; i
   const always = r.choices.find(c => c.label === ALWAYS);
   const sent = await waitFor(() => tgCalls().slice(from).find(c => c.method === 'sendMessage' && c.body?.reply_markup), { what: 'the ask in the paired chat' });
   assert.ok(!JSON.stringify(sent.body).includes(always.id) && !sent.body.text.includes('Always allow'), JSON.stringify(sent.body));
+  // (pressed without the passkey: refused, nothing run, nothing kept)
+  const bare = await choose(chat, always.id);
+  assert.equal(bare.status, 428, bare.text);
+  assert.ok(!existsSync(at3('notes/a1.txt')), 'a press without the passkey ran nothing');
+  assert.deepEqual(existsSync(join(T.fleet.stateDir, 'agent-settings.json')) ? allowed() : [], [], 'and kept nothing');
   const p = await press(chat, always.id);
   assert.equal(p.status, 200, p.text);
   assert.ok(existsSync(at3('notes/a1.txt')), 'the press ran it');
@@ -83,8 +88,9 @@ test('"Always allow" is the page\'s, with the passkey: not in the paired chat; i
   assert.equal(startOf('touch notes/a2.txt')?.gate, `always:${e.id}`);
   assert.deepEqual(asks(r2.choices).map(a => a[0]), ['Run it'], 'the other kind is asked');
   assert.ok(!existsSync(at3('notes/a3')));
-  await turn(await newChat(), 'how are my notes', [[RUN('touch notes/a4.txt')]]);
+  const r4 = await turn(await newChat(), 'how are my notes', [[RUN('touch notes/a4.txt')]]);
   assert.ok(!existsSync(at3('notes/a4.txt')), 'words that ask for no change: asked');
+  assert.deepEqual(asks(r4.choices).map(a => a[0]), ['Run it'], `a button came: ${JSON.stringify(r4.choices)}`);
   await turn(await newChat(), 'fix my notes', [[RUN('cat notes/plan.txt')], [RUN('touch ~/notes/from.txt')]]);
   assert.ok(!existsSync(at3('notes/from.txt')), 'what came from a read: asked');
 });
