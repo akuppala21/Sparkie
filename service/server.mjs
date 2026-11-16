@@ -4948,10 +4948,18 @@ function taskEnded(conv, t, how) {
   } catch (e) { console.error(`A task’s report: ${e.message}`); }
 }
 // The reports owed in a chat: written in it once, told on Telegram once, then taken off.
+// One at a time a chat (a send waits on Telegram, and a tick that came meanwhile, the start-up's or a retry's, would
+// take a report in flight off the list): one that comes while another runs goes again a second later.
+const taskReportsBusy = new Set();
 async function taskReportsDue(id) {
+  if (taskReportsBusy.has(id)) { setTimeout(() => taskReportsDue(id).catch(e => console.error(`A task’s report: ${e.message}`)), 1000).unref?.(); return; }
+  taskReportsBusy.add(id);
+  try { await taskReportsNow(id); } finally { taskReportsBusy.delete(id); }
+}
+async function taskReportsNow(id) {
   const conv = chatData().conversations.find(c => c.id === id);
   if (!conv?.reports?.length) return;
-  for (const r of conv.reports) {
+  for (const r of [...conv.reports]) {
     if (!r.text) {
       r.text = taskReportText(conv, r);
       conv.messages.push({ role: 'assistant', content: r.text, createdAt: new Date().toISOString(), notice: true, report: r.task });
@@ -4972,7 +4980,7 @@ async function taskReportsDue(id) {
       } else if (got !== 'sent') tellDropped('report', { task: r.task, chat: conv.id, tries: r.tgTries, err: got });
     }
   }
-  conv.reports = conv.reports.filter(r => !r.text || (r.tg && !r.told));
+  conv.reports = (conv.reports || []).filter(r => !r.text || (r.tg && !r.told));
   if (!conv.reports.length) delete conv.reports;
   saveChats();
 }
