@@ -11,6 +11,8 @@
 // counts only the commands that ran, and those asked first apart, as waiting for the owner's yes. The
 // brain's mark covers the last round's note. The brain's token budget ends a turn as the others do: the brain is told,
 // code's own line ends the reply, and a task carries on. Calls past the 4 one round runs are not run, and each says so.
+// The model's answer (the chat's modelStep and the brain check's brainAsk) and a command's output (run) are read through
+// one decoder: with their bytes cut inside any character, what comes out is what went in (pure: no port, no fleet).
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
@@ -22,6 +24,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import { T, REPO, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
@@ -288,4 +292,68 @@ test('past the brain’s token budget: the brain is told its tools are put away,
   assert.ok(m[2].auto, 'Spark Console’s own turn');
   const budgets = journal().filter(x => x.k === 'turn' && x.chat === chat).map(x => x.budgets && [x.budgets.spent ?? null, x.budgets.carried ?? null]);
   assert.deepEqual(budgets[0], ['tokens', true], JSON.stringify(budgets));
+});
+
+// (the outside review's A-7b: a character whose bytes the stream cuts between two pieces came out spoiled)
+const SRC = f => readFileSync(join(REPO, 'service', 'src', f), 'utf8');
+const lift = (src, head) => { const from = src.indexOf(head); assert.ok(from >= 0, head); return src.slice(from, src.indexOf('\n}\n', from) + 2); };
+// A body in the pieces given, as a socket hands them: Buffers through a real stream, which decodes only if asked to.
+const piecesOut = (pieces, extra = {}) => { const r = Object.assign(new PassThrough(), extra); setImmediate(() => { for (const p of pieces) r.write(p); r.end(); }); return r; };
+const sse = o => `data: ${JSON.stringify(o)}\n\n`;
+const ANSWER = 'Voilà — Señor Peña’s “notes”, 日本語 🎉';
+const ARGS = JSON.stringify({ on: 'box', path: 'notes/café.txt', text: 'Ça marche — 日本語 🎉\n' });
+const BODY = Buffer.from([
+  sse({ choices: [{ index: 0, delta: { role: 'assistant', content: ANSWER }, finish_reason: null }] }),
+  sse({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'write_file', arguments: '' } }] }, finish_reason: null }] }),
+  sse({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: ARGS } }] }, finish_reason: null }] }),
+  sse({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }), 'data: [DONE]\n\n'].join(''), 'utf8');
+// Every cut inside a character of 2, 3 and 4 bytes: the left piece ends part-way through it.
+const CUTS = [...BODY.keys()].filter(i => i > 0 && (BODY[i] & 0xc0) === 0x80);
+
+test('the chat’s model answer is read through one decoder: cut inside any character, its words and a write_file call’s text come out as they went in', async () => {
+  const fn = new Function('http', 'answerReader', 'modelInUse', 'TURN_STOPPED', `${SRC('13-ask.mjs')}\n${lift(SRC('14-rounds.mjs'), 'function modelStep(turn, sent) {')}\nreturn modelStep;`);
+  let pieces = [];
+  const http = { request(opts, cb) { const up = new EventEmitter(); up.end = () => cb(piecesOut(pieces, { statusCode: 200 })); up.destroy = () => {}; return up; } };
+  const modelStep = fn(http, null, 0, 'stopped');
+  const step = async p => { pieces = p; return modelStep({ emit: () => {}, link: {}, target: { host: 'x', port: 1 }, messages: [], base: {}, tuned: {}, answer: '' }, [{ type: 'function', function: { name: 'write_file' } }]); };
+  assert.ok(CUTS.length >= 20, `cuts inside characters: ${CUTS.length}`);
+  for (const i of CUTS) {
+    const r = await step([BODY.subarray(0, i), BODY.subarray(i)]);
+    assert.deepEqual([r.content, r.calls?.[0]?.args], [ANSWER, ARGS], `cut at byte ${i}`);
+  }
+});
+
+test('the brain check’s answer is read through one decoder: cut inside any character, it comes out as it went in', async () => {
+  const src = SRC('21-brain-check.mjs');
+  const fn = new Function('http', 'howAsked', 'clean', 'CHECK_TOOL', 'CHECK_ASK_MS', `${SRC('13-ask.mjs')}\n${lift(src, 'function brainAsk(m, messages, tools = null) {')}\nreturn brainAsk;`);
+  let pieces = [];
+  const http = { request(opts, cb) { const req = new EventEmitter(); req.end = () => cb(piecesOut(pieces, { statusCode: 200 })); req.destroy = () => {}; return req; } };
+  const brainAsk = fn(http, () => ({ base: {} }), s => String(s), {}, 30000);
+  for (const i of CUTS) {
+    pieces = [BODY.subarray(0, i), BODY.subarray(i)];
+    const r = await brainAsk({ port: 1, served: 'm' }, []);
+    assert.deepEqual([r.content, r.calls?.[0]?.args], [ANSWER, ARGS], `cut at byte ${i}`);
+  }
+});
+
+test('a command’s output is read through one decoder: cut inside any character, run gives it back whole, its errors too', async () => {
+  const fn = new Function('knownOffline', 'spawnOn', 'noteReach', `${lift(SRC('02-ssh.mjs'), 'function run(node, script, {')}\nreturn run;`);
+  const OUT = Buffer.from('café — Señor Peña’s “list”: 日本語 🎉\n', 'utf8'), ERR = Buffer.from('erreur: déjà vu 🎉\n', 'utf8');
+  const inside = b => [...b.keys()].filter(i => i > 0 && (b[i] & 0xc0) === 0x80);
+  let cut = 0;
+  const spawnOn = () => {
+    const child = new EventEmitter(), o = OUT, e = ERR, io = cut % o.length || 1, ie = inside(e)[cut % inside(e).length];
+    child.stdout = piecesOut([o.subarray(0, io), o.subarray(io)]);
+    child.stderr = piecesOut([e.subarray(0, ie), e.subarray(ie)]);
+    child.kill = () => {};
+    let ended = 0;
+    for (const s of [child.stdout, child.stderr]) s.on('end', () => { if (++ended === 2) setImmediate(() => child.emit('close', 0)); });
+    return child;
+  };
+  const run = fn(() => false, spawnOn, () => {});
+  for (const i of inside(OUT)) {
+    cut = i;
+    const r = await run({ id: 'spark3' }, 'true', { timeout: 5000 });
+    assert.deepEqual([r.code, r.out, r.err], [0, OUT.toString('utf8'), ERR.toString('utf8').trim()], `cut at byte ${i}`);
+  }
 });

@@ -181,6 +181,8 @@ function modelStep(turn, sent) {
     const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
     link.cancel = () => settle(reject, new Error(TURN_STOPPED));
     const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+      // (one decoder for the whole answer: a character whose bytes come in two pieces reads whole, error body too)
+      r.setEncoding('utf8');
       // (after a whole answer its end comes first, and close changes nothing)
       r.on('error', e => settle(reject, e));
       r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));

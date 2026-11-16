@@ -59,6 +59,7 @@ function brainAsk(m, messages, tools = null) {
     let first = null, buf = '', content = '', settled = false;
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(limit); fn(v); } };
     const req = http.request({ hostname: '127.0.0.1', port: m.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      res.setEncoding('utf8');   // (one decoder for the whole answer: a character cut between two pieces reads whole)
       res.on('error', e => settle(reject, e));
       res.on('close', () => settle(reject, new Error('its answer was cut off')));
       if (res.statusCode !== 200) {

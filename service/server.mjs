@@ -199,6 +199,9 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
     const began = Date.now(), child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
+    // (one decoder each for what it prints: a character whose bytes come in two pieces reads whole)
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -469,7 +472,7 @@ function secretsRead() {
   secretsProblem = 'unreadable';
   return null;
 }
-// change(current) returns the whole new content. Written as a temporary file, then renamed.
+// change(current) returns the whole new content. Written as a temporary file, synced, then renamed.
 function secretsWrite(change) {
   if (!SECRETS_FILE) throw new HttpError(409, 'This copy of Spark Console keeps no secrets.');
   const now = secretsRead();
@@ -479,7 +482,10 @@ function secretsWrite(change) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch {}
   const tmp = `${SECRETS_FILE}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+  // (synced to disk before it takes the file's place, as writePrivate does: after a power cut the file is the old one or
+  // the new one, never a short one that can't be read, R23)
+  const fd = openSync(tmp, 'w', 0o600);
+  try { writeSync(fd, JSON.stringify(next, null, 2)); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(tmp, SECRETS_FILE);
   // (what maskSecrets hides is read again at its next use)
   Object.assign(keptSeen, { at: 0, mtime: null });
@@ -4427,6 +4433,8 @@ function modelStep(turn, sent) {
     const settle = (fn, value) => { if (!settled) { settled = true; modelInUse--; fn(value); } };
     link.cancel = () => settle(reject, new Error(TURN_STOPPED));
     const up = http.request({ hostname: target.host, port: target.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 300000 }, r => {
+      // (one decoder for the whole answer: a character whose bytes come in two pieces reads whole, error body too)
+      r.setEncoding('utf8');
       // (after a whole answer its end comes first, and close changes nothing)
       r.on('error', e => settle(reject, e));
       r.on('close', () => settle(reject, new Error('The model’s answer was cut off.')));
@@ -15516,15 +15524,15 @@ async function statusText() {
 
 function pauseWord(via) {
   const was = agentSettings(), already = was.halted && !was.autoPaused;
-  setAgentSettings({ halted: true, autoPaused: false });
+  // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said below)
+  const unnoted = putBackRemoval({ kind: 'paused' }, () => setAgentSettings({ halted: true, autoPaused: false }));
   // (an open dangerous ask closes: 20-danger.mjs)
   dangerPaused();
-  putBackRemoved('paused');
   audit({ via, actor: 'owner', action: 'agent-settings', args: { halted: true, word: '/pause' }, ok: true });
   if (!already) fleetEvent({ type: 'operation', operation: 'agents paused', status: 'completed', by: 'owner' });
   // (on Telegram: no file path, and it's never resumed from there, R32)
   return `${already ? 'Already paused.' : 'Paused.'} Operations started by Sparkie, an agent, Telegram or the API stop at their next step and put back what they changed. Models already running stay up. Self-healing is off while paused.
-${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}`;
+${via === 'telegram' ? 'To resume: in Spark Console, your account menu → Agents and Telegram, with your passkey. It can’t be resumed from Telegram.' : `To resume: your account menu → Agents and Telegram, with your passkey. Or by hand ${consoleSparkWords()}: set "halted": false in ${SETTINGS_FILE}.`}${unnoted ? `\n${unnoted}` : ''}`;
 }
 
 async function restartWord(via) {
@@ -15819,12 +15827,11 @@ function allowedWord(word, via) {
   if (off) {
     const gone = off === 'all' ? list : list[Number(off) - 1] ? [list[Number(off) - 1]] : [];
     if (!gone.length) return list.length ? `There is no ${off} in the list (${list.length} kept). /allowed lists them.` : 'Nothing is always allowed.';
-    setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) });
     // (a removal that raises the put-back number, as a passkey's or a key's does: a copy from before it put back by
-    // hand holds, and the entry is taken away again, 22-putback.mjs)
-    for (const e of gone) putBackRemoved('allowed', e.id, allowedWords(e));
+    // hand holds, and the entry is taken away again; its note first, then the save, 22-putback.mjs)
+    const unnoted = putBackRemoval(gone.map(e => ({ kind: 'allowed', id: e.id, name: allowedWords(e) })), () => setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) }));
     audit({ via, actor: via === 'telegram' ? 'owner on Telegram' : 'owner', action: 'always-removed', args: { ids: gone.map(e => e.id) }, ok: true });
-    return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.`;
+    return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.${unnoted ? `\n${unnoted}` : ''}`;
   }
   if (!list.length) return 'Nothing is always allowed. A change’s button offers “Always allow …” on the page, with your passkey.';
   return [`Always allowed in your chats (${list.length}):`, ...list.map((e, i) => `${i + 1}. ${allowedWords(e)}`),
@@ -17290,6 +17297,7 @@ function brainAsk(m, messages, tools = null) {
     let first = null, buf = '', content = '', settled = false;
     const settle = (fn, v) => { if (!settled) { settled = true; clearTimeout(limit); fn(v); } };
     const req = http.request({ hostname: '127.0.0.1', port: m.port, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      res.setEncoding('utf8');   // (one decoder for the whole answer: a character cut between two pieces reads whole)
       res.on('error', e => settle(reject, e));
       res.on('close', () => settle(reject, new Error('its answer was cut off')));
       if (res.statusCode !== 200) {
@@ -22616,6 +22624,8 @@ async function runnerUndo(viewer, ctx, since = '') {
 // use (C8a) and the piece is turned on (SELF_CHANGE_ON). Only the owner's own chat, never an agent's key,
 // ask_sparkie, an API call or a saved workflow's step (NOT_A_STEP).
 const SELF_CHANGE_ON = false;
+// (the repository's full run, .github/workflows/full-run.yml: its job's check run, by name)
+const SELF_FULL_RUN = 'suite';
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 // (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
 const SELF_REFUSED = /^\.github\//i;
@@ -23046,11 +23056,12 @@ async function selfInstallFacts(viewer, ctx) {
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
   const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
-  // (passed: every check finished, at least one with success, none failed, cancelled or timed out; a skipped job, such as
-  // the mark job on a pull request, or a neutral one, is no failure)
-  const ok = new Set(['success', 'skipped', 'neutral']);
-  if (!runs.some(r => r.conclusion === 'success') || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
-    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked. check_update says how it is doing.`);
+  // (passed: the full run itself, by its name, passed, and every other check finished with none failed, cancelled or timed
+  // out; a skipped job, such as the mark job on a pull request, or a neutral one, is no failure. Any other check passing
+  // is not the full run.)
+  const ok = new Set(['success', 'skipped', 'neutral']), full = runs.find(r => r.name === SELF_FULL_RUN);
+  if (full?.status !== 'completed' || full?.conclusion !== 'success' || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
+    throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked.${full ? '' : ` Its full run, “${SELF_FULL_RUN}”, isn’t among its checks.`} check_update says how it is doing.`);
   }
   const reviews = ((await selfApi('GET', `/repos/${repo}/pulls/${Number(pr.number)}/reviews`)) || []).filter(r => String(r.commit_id || '') === open.head).slice(-5)
     .map(r => `${clean(r.user?.login, 60)} ${clean(r.state, 30)}${r.body ? `: “${clean(r.body, 200)}” (their words)` : ''}`);
@@ -23065,9 +23076,11 @@ async function selfInstallFacts(viewer, ctx) {
     testedAt: done ? new Date(done).toISOString() : null };
 }
 // C8d: the owner's yes. Exactly the tree on the button: the proposal and its pull request still at the head shown, and
-// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and that is
-// all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
-// install_update with its own ask, once that tree is marked. main moved: nothing is merged.
+// GitHub's main still the commit the proposal was made on; then main is moved forward to that very head, fast-forward
+// only (no merge commit, so no other tree can come of it; GitHub refuses the move if main moved meanwhile, and takes
+// the pull request as merged), and main is read back: it is the commit shown, or nothing landed and the owner is told.
+// That is all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
+// install_update with its own ask, once that tree is marked.
 async function selfInstall(viewer, ctx, input) {
   if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
     throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
@@ -23079,8 +23092,13 @@ async function selfInstall(viewer, ctx, input) {
   if (!pr?.number || pr.head?.sha !== input.head) throw new HttpError(409, `${open.branch}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed. Ask again.`);
   const main = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
   if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged. Drop it and propose it again on the new main.`);
-  await selfApi('PUT', `/repos/${repo}/pulls/${Number(pr.number)}/merge`, { sha: input.head, merge_method: 'merge' });
-  // (merged: the proposal is no longer open here)
+  let refused = null;
+  await selfApi('PATCH', `/repos/${repo}/git/refs/heads/main`, { sha: input.head, force: false }).catch(e => { refused = e; });
+  const now = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
+  if (now !== input.head) {
+    throw new HttpError(409, `${now && now !== open.base ? `main moved on GitHub after you were asked (it is ${clean(now, 12)} now)` : `GitHub didn’t move main to the proposal${refused ? ` (${clean(refused.message, 200)})` : ''}`}, so main isn’t the commit you were shown and nothing landed. Look at main, then ask again (or drop the proposal and propose it on the new main).`);
+  }
+  // (landed: main is the commit shown; the proposal is no longer open here)
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-merge', args: { id: open.id, head: input.head.slice(0, 12), pr: pr.number }, ok: true });
   return { ok: true, outcome: 'merged', tree: input.tree.slice(0, 12), pullRequest: pr.number,
@@ -25524,14 +25542,15 @@ async function passkeyGate(req, path, viewer) {
 
 /* ───────── state put back from a copy lets no device or key in by itself ───────── */
 // Area: ways in        Rules: R23, R33        Tests: putback.test.mjs
-// Owns: auth-serial.json (writers: putBackSerialWrite)
-// Timers: none        Wakes: none
+// Owns: auth-serial.json (writers: putBackSerialWrite), auth-unnoted.json (writers: putBackUnnotedSave)
+// Timers: putBackRetry (every 60 s: a removal's note that couldn't be written yet)        Wakes: none
 // Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json,
 // so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
 // that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
 // each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
 // tailnet-only), agents' changes paused, an "always allowed" kind taken away (/allowed off, 21-ahead.mjs). The secrets
-// file also notes what was removed (kind and id; for a narrowing, the right it took). Nothing else writes either number;
+// file also notes what was removed (kind and id; for a narrowing, the right it took), first, before the removal is saved
+// (putBackRemoval); a note that can't be written is kept, said and tried again. Nothing else writes either number;
 // restore.sh --with-state removes the state's. (Grants that never travel with a state copy need none: the go-ahead and
 // open asks live in memory; the Telegram pairing, its approvals switch and recovery codes in the secrets file; root's
 // switch on its Spark, read there at each command. Not covered: a saved workflow's yes to its images, R23's Today.)
@@ -25548,7 +25567,9 @@ async function passkeyGate(req, path, viewer) {
 // changes are refused on the tailnet too, and an approval from Telegram waits. The tailnet door is the owner at once,
 // the owner's own chat and Telegram requests work, and go-back.sh and an update's way back (program files only) never
 // trip it. A secrets file that can't be read keeps the last answer read while Spark Console runs, so a hold doesn't lift;
-// after a start with the file unreadable, nothing is held until it reads again. A right the owner gave back to a key
+// after a start with the file unreadable, nothing is held until it reads again; a hold whose own write fails is held in
+// memory until the next start, and said. The check runs only at a start: an older copy untarred under a running Spark
+// Console is live until then (R23's Today). A right the owner gave back to a key
 // after taking it is taken again at a put-back (the owner gives it back again).
 const PUTBACK_FILE = `${STATE_DIR}/auth-serial.json`;
 const PUTBACK_LINE = 'Spark Console’s state was put back from a copy. Open it once on your tailnet and look at the list of what came back; after that, sign-in from the internet works again.';
@@ -25579,31 +25600,95 @@ function putBackAuth() {
   }
   return putBackSeen.auth;
 }
-const putBackHeld = () => Boolean(putBackAuth().hold);
+// A hold that couldn't be written to the secrets file at a start is held in memory until the next start (said).
+let putBackMemHold = null;
+const putBackHold = () => putBackAuth().hold || putBackMemHold;
+const putBackHeld = () => Boolean(putBackHold());
 const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r => r && typeof r === 'object') : []);
 
-// A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
-// between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
-// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused,
-// allowed (an "always allowed" kind, by its id); resumed notes the owner's resume and changes no number.
-function putBackRemoved(kind, id = null, name = null, extra = {}) {
-  if (!SECRETS_FILE) return;
+// A removal by the owner (P-3, round two): the note goes first, then the removal's own save, then the state's number.
+// The note is the secrets file's number (one above the higher of the two) and what went; if the save then throws, the
+// note is taken out again and the error is the route's, as before. A stop between the note and the save leaves the
+// secrets file ahead with the removal noted: the next start holds and removes it again (the safe side). A note that
+// can't be written (the secrets file can't be written or read just then) never stops the removal: it is done at once,
+// the state's number still goes up, and the note is kept in the state folder (auth-unnoted.json, which an older copy
+// untarred over the folder doesn't hold, so it stays), said in the removal's answer and on the needs-you list, and
+// written at the next removal, each minute (putBackRetry), and at the next start before anything is judged. items: one
+// or more of { kind, id, name, extra }; kind: session, passkey, agent, narrowed (with the right it took: extra
+// { act: false } or { internet: false }, or both), paused, allowed (an "always allowed" kind, by its id); resumed notes
+// the owner's resume and changes no number. Returns null when it was noted, else the sentence for the answer.
+const PUTBACK_UNNOTED_FILE = `${STATE_DIR}/auth-unnoted.json`;
+const PUTBACK_RETRY_MS = Number(process.env.SPARK_CONSOLE_PUTBACK_RETRY_MS || 60000);
+const PUTBACK_UNNOTED_SAID = 'Done. Its note outside the state (in the secrets file) couldn’t be written just now, so an older copy of the state put back by hand could bring it back: Spark Console tries again every minute and says so on the needs-you list until it is written.';
+const putBackUnnoted = { why: null };
+function putBackUnnotedRead() {
+  const v = readJson(PUTBACK_UNNOTED_FILE);
+  return Array.isArray(v?.notes) ? v.notes.filter(x => x && typeof x === 'object' && typeof x.kind === 'string').slice(-PUTBACK_KEPT_MAX) : [];
+}
+function putBackUnnotedSave(notes) {
+  if (notes.length) writePrivate(PUTBACK_UNNOTED_FILE, { notes: notes.slice(-PUTBACK_KEPT_MAX) });
+  else if (existsSync(PUTBACK_UNNOTED_FILE)) unlinkSync(PUTBACK_UNNOTED_FILE);
+}
+// Writes notes into the secrets file: its number at least `serial`, what went added, the pause as the last pause or resume
+// left it. Throws when the file can't be read or written.
+function putBackNoteWrite(notes, serial) {
+  const s = secretsRead();
+  if (s === null) throw new Error('the secrets file can’t be read');
+  secretsWrite(x => {
+    const a = { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}) };
+    a.serial = Math.max(serial, Number.isInteger(a.serial) ? a.serial : 0);
+    for (const r of notes) {
+      // (a resume is noted only over a pause that was: nothing else to put right later)
+      if (r.kind === 'paused' || r.kind === 'resumed') { if (r.kind === 'paused' || a.halted === true) a.halted = r.kind === 'paused'; continue; }
+      a.removed = [...putBackRemovedList(a), { kind: r.kind, id: String(r.id), ...(r.name ? { name: clean(r.name, 60) } : {}), ...(r.extra || {}), at: r.at || new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
+    }
+    return { ...x, auth: a };
+  });
+  putBackSeen.at = 0;
+}
+function putBackRemoval(items, save) {
+  const now = new Date().toISOString(), notes = [].concat(items).map(r => ({ ...r, at: now }));
+  if (!SECRETS_FILE) { save(); return null; }
+  const pending = putBackUnnotedRead(), raises = notes.some(r => r.kind !== 'resumed');
+  let n = null, had, noted = false;
   try {
     const s = secretsRead();
     if (s === null) throw new Error('the secrets file can’t be read');
-    // (a resume is noted only over a pause that was: nothing else to put right later)
-    if (kind === 'resumed' && s.auth?.halted !== true) return;
-    const n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (kind === 'resumed' ? 0 : 1);
-    if (kind !== 'resumed') putBackSerialWrite(n);
-    secretsWrite(x => {
-      const a = { ...(x.auth && typeof x.auth === 'object' ? x.auth : {}), serial: n };
-      if (kind === 'paused' || kind === 'resumed') a.halted = kind === 'paused';
-      else a.removed = [...putBackRemovedList(a), { kind, id: String(id), ...(name ? { name: clean(name, 60) } : {}), ...extra, at: new Date().toISOString() }].slice(-PUTBACK_KEPT_MAX);
-      return { ...x, auth: a };
-    });
-    putBackSeen.at = 0;
-  } catch (e) { console.error(`What was removed couldn’t be noted for a state put back later: ${e.message}`); }
+    had = s.auth;
+    n = Math.max(putBackSerial(), Number.isInteger(s.auth?.serial) ? s.auth.serial : 0) + (raises ? 1 : 0);
+    putBackNoteWrite([...pending, ...notes], n);
+    noted = true;
+  } catch (e) { putBackUnnoted.why = e.message; console.error(`What was removed couldn’t be noted outside the state just now (it is tried again): ${e.message}`); }
+  try { save(); } catch (e) {
+    // (the removal itself failed: its note is taken out again, and the error is the route's)
+    if (noted) try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); putBackSeen.at = 0; } catch (e2) { console.error(`A note of a removal that failed couldn’t be taken out again: ${e2.message}`); }
+    throw e;
+  }
+  if (noted) {
+    try { if (raises) putBackSerialWrite(n); } catch (e) { console.error(`The state’s number couldn’t be raised (the secrets file is ahead, so the next start holds): ${e.message}`); }
+    try { if (pending.length) putBackUnnotedSave([]); putBackUnnoted.why = null; } catch (e) { console.error(`The note of earlier removals stays on disk: ${e.message}`); }
+    return null;
+  }
+  // (not noted: the removal stands; the state's number still goes up, and the note waits on disk)
+  try { if (raises) putBackSerialWrite(Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0) + 1); } catch (e) { console.error(`The state’s number couldn’t be raised: ${e.message}`); }
+  try { putBackUnnotedSave([...pending, ...notes]); } catch (e) { console.error(`The removal couldn’t be kept to note later either: ${e.message}`); }
+  return PUTBACK_UNNOTED_SAID;
 }
+// The notes still waiting, written now if the secrets file takes them (each minute, and at a start before the check).
+function putBackRetry() {
+  if (!SECRETS_FILE) return true;
+  let pending;
+  try { pending = putBackUnnotedRead(); } catch { return false; }
+  if (!pending.length) { putBackUnnoted.why = null; return true; }
+  try {
+    putBackNoteWrite(pending, putBackSerial());
+    putBackUnnotedSave([]);
+    putBackUnnoted.why = null;
+    console.error(`What was removed is noted outside the state now (${pending.length} removal${pending.length === 1 ? '' : 's'}).`);
+    return true;
+  } catch (e) { putBackUnnoted.why = e.message; return false; }
+}
+setInterval(() => { try { putBackRetry(); } catch {} }, PUTBACK_RETRY_MS).unref?.();
 
 // A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
 // (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. Either number
@@ -25632,6 +25717,9 @@ function putBackSeed() {
 function putBackAtStart() {
   if (!SECRETS_FILE) return;
   try {
+    // (removals the last run couldn't note outside the state are noted now, before anything is judged: a number levelled
+    // since never forgets what went, and what an older copy brought back is removed again)
+    if (!putBackRetry()) console.error(`Removals still not noted outside the state: ${putBackUnnoted.why}`);
     const s = secretsRead();
     if (s === null) { console.error('The secrets file can’t be read, so whether the state was put back from a copy can’t be told.'); return; }
     const a = s.auth && typeof s.auth === 'object' && !Array.isArray(s.auth) ? s.auth : {}, t = putBackSerial();
@@ -25691,18 +25779,20 @@ function putBackAtStart() {
     } catch (e) { console.error(`The tasks after a put-back: ${e.message}`); }
     if (!first) return;
     try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
-    const since = new Date().toISOString();
-    secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
+    const since = new Date().toISOString(), hold = { since, state: t, again: again.slice(0, 50), signedOut, parked };
+    // (a hold that can't be written is held in memory all the same, until the next start, and said)
+    let kept = true;
+    try { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold } })); } catch (e) { kept = false; putBackMemHold = { ...hold, unsaved: e.message }; console.error(`The hold couldn’t be saved, so it holds only until Spark Console next starts: ${e.message}`); }
     putBackSeen.at = 0;
     audit({ via: 'start', actor: 'Spark Console', action: 'state-put-back', args: { state: t, secrets: n || null, removedAgain: again.length, signedOut, parked }, ok: true });
     // (names typed by whoever set each one up: masked, as every notice that names what someone typed)
-    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.`) });
+    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.${kept ? '' : ' The hold couldn’t be saved in the secrets file, so it lasts only until Spark Console next starts.'}`) });
   } catch (e) { console.error(`Looking for a state put back from a copy: ${e.message}`); }
 }
 
 // The list on the sign-in page, and "Keep these" (the owner on the tailnet: the handler's /auth/ routes are the owner's).
 function putBackList() {
-  const a = putBackAuth(), h = a.hold && typeof a.hold === 'object' ? a.hold : null;
+  const h0 = putBackHold(), h = h0 && typeof h0 === 'object' ? h0 : null;
   return {
     held: Boolean(h), ...(h ? { since: h.since || null, removedAgain: Array.isArray(h.again) ? h.again : [], signedOut: h.signedOut || 0, parked: h.parked || 0 } : {}),
     passkeys: passkeys().map(k => ({ id: k.id, name: k.name, addedAt: k.createdAt || null, lastUsedAt: k.lastUsedAt || null })),
@@ -25722,6 +25812,7 @@ async function putBackRoute(req, res, path, viewer) {
   const n = Math.max(putBackSerial(), Number.isInteger(putBackAuth().serial) ? putBackAuth().serial : 0);
   putBackSerialWrite(n);
   secretsWrite(x => { const b = { ...(x.auth || {}), serial: n }; delete b.hold; return { ...x, auth: b }; });
+  putBackMemHold = null;
   putBackSeen.at = 0;
   audit({ via: 'page', actor: 'owner', action: 'state-put-back-kept', args: { serial: n }, ok: true });
   fleetEvent({ type: 'notice', text: 'You looked at what came back with the copy and kept it. Sign-in from the internet and agents work again.' });
@@ -25729,8 +25820,12 @@ async function putBackRoute(req, res, path, viewer) {
 }
 // The needs-you line while it holds (20-needs.mjs).
 function putBackNeeds(add) {
-  const h = putBackAuth().hold;
-  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.`);
+  const h = putBackHold();
+  if (h) add('putback', `Spark Console’s state was put back from a copy${h.since ? ` (${String(h.since).slice(0, 10)})` : ''}. Open Spark Console once on your tailnet and look at what came back; until you press “Keep these” there, sign-in from the internet is refused and agents can’t change anything.${putBackMemHold && h === putBackMemHold ? ' The hold couldn’t be saved, so it lasts only until Spark Console next starts.' : ''}`);
+  // (removals not yet noted outside the state: said until the retry writes them)
+  let waiting = [];
+  try { waiting = putBackUnnotedRead(); } catch {}
+  if (waiting.length) add('putback-unnoted', `${waiting.length === 1 ? 'A removal' : `${waiting.length} removals`} (${[...new Set(waiting.map(x => x.kind))].join(', ')}) couldn’t be noted outside the state yet${putBackUnnoted.why ? ` (${String(putBackUnnoted.why).slice(0, 120)})` : ''}. ${waiting.length === 1 ? 'It is' : 'They are'} done; Spark Console tries the note again every minute. Until it is written, an older copy of the state put back by hand could bring ${waiting.length === 1 ? 'it' : 'them'} back.`);
 }
 /* ───────── signing in without Tailscale (docs/contract.md 4.10) ───────── */
 // Area: ways in        Rules: R31, R33, R40        Tests: internet.test.mjs, app-door.test.mjs
@@ -25978,9 +26073,9 @@ async function signinRoute(req, res, path, viewer) {
   if (path === '/auth/signout') {
     const s = sessionFor(req);
     if (s) {
-      saveSessions(sessionList().filter(x => x.id !== s.id));
+      // (its note outside the state first, then the save: 22-putback.mjs)
+      putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(sessionList().filter(x => x.id !== s.id)));
       endSession(s.id);
-      putBackRemoved('session', s.id, s.name);
       audit({ via: 'internet', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
     }
     clearSessionCookie(res);
@@ -26085,12 +26180,11 @@ async function sessionRoute(req, res, path, viewer) {
   if (req.method === 'DELETE' && one) {
     const list = sessionList(), s = list.find(x => x.id === one[1]);
     if (!s) throw new HttpError(404, 'That device was already signed out.');
-    saveSessions(list.filter(x => x !== s));
+    const unnoted = putBackRemoval({ kind: 'session', id: s.id, name: s.name }, () => saveSessions(list.filter(x => x !== s)));
     if (s.id === viewer.session?.id) clearSessionCookie(res);
     endSession(s.id);
-    putBackRemoved('session', s.id, s.name);
     audit({ via: viewer.session ? 'internet' : 'page', actor: 'owner', action: 'signed-out', args: { device: s.name }, ok: true });
-    return send(res, 200, { ok: true });
+    return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
   }
   return false;
 }
@@ -26438,11 +26532,11 @@ const handler = async (req, res) => {
       if (req.method === 'DELETE' && gone) {
         const keys = passkeys(), k = keys.find(x => x.id === gone[1]);
         if (!k) throw new HttpError(404, 'That passkey was already removed.');
-        savePasskeys(keys.filter(x => x !== k));
-        putBackRemoved('passkey', k.id, k.name);
+        // (its note outside the state first, then the save: 22-putback.mjs; a note that waits is said)
+        const unnoted = putBackRemoval({ kind: 'passkey', id: k.id, name: k.name }, () => savePasskeys(keys.filter(x => x !== k)));
         for (const [cid, c] of challenges) if (c.purpose === 'register') challenges.delete(cid);
         audit({ via: 'page', actor: 'owner', action: 'passkey-removed', args: { name: k.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }
@@ -26472,13 +26566,13 @@ const handler = async (req, res) => {
         for (const k of ['halted', 'selfHeal']) if (body[k] !== undefined) { if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} should be true or false.`); change[k] = body[k]; }
         // The owner's own pause or resume replaces an automatic one.
         if (change.halted !== undefined) change.autoPaused = false;
-        const next = setAgentSettings(change);
-        if (change.halted !== undefined) putBackRemoved(change.halted ? 'paused' : 'resumed');
+        let next;
+        const unnoted = change.halted !== undefined ? putBackRemoval({ kind: change.halted ? 'paused' : 'resumed' }, () => { next = setAgentSettings(change); }) : ((next = setAgentSettings(change)), null);
         audit({ via: 'page', actor: 'owner', action: 'agent-settings', args: change, ok: true });
         // Resuming starts the hour's count again, so agents aren't paused again by the changes that paused them.
         if (change.halted === false) { agentChanges.length = 0; agentFailuresInARow = []; }
         if (change.halted !== undefined) fleetEvent({ type: 'operation', operation: change.halted ? 'agents paused' : 'agents resumed', status: 'completed', by: 'owner' });
-        return send(res, 200, { settings: next });
+        return send(res, 200, { settings: next, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       if (req.method === 'POST' && path === '/agents') {
         const name = clean((await readBody(req, 4000)).name, 60);
@@ -26506,13 +26600,13 @@ const handler = async (req, res) => {
         const could = { act: (key.scopes || []).includes('fleet:act'), internet: key.internet !== false };
         if (act !== undefined) key.scopes = act ? ['fleet:read', 'fleet:act'] : ['fleet:read'];
         if (internet !== undefined) key.internet = internet;
-        writePrivate(AGENTS_FILE, { keys });
         // A right taken away counts as a removal (R23): a state put back from before takes it away again.
         const took = { ...(could.act && act === false ? { act: false } : {}), ...(could.internet && internet === false ? { internet: false } : {}) };
-        if (Object.keys(took).length) putBackRemoved('narrowed', key.id, key.name, took);
+        const unnoted = Object.keys(took).length ? putBackRemoval({ kind: 'narrowed', id: key.id, name: key.name, extra: took }, () => writePrivate(AGENTS_FILE, { keys }))
+          : (writePrivate(AGENTS_FILE, { keys }), null);
         if (act !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-can-change', args: { agent: key.name, act }, ok: true });
         if (internet !== undefined) audit({ via: 'page', actor: 'owner', action: 'agent-from-anywhere', args: { agent: key.name, internet }, ok: true });
-        return send(res, 200, agentView(key));
+        return send(res, 200, { ...agentView(key), ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       // Removing an agent (or making it look-only, above) cancels nothing already running: its operations, the rest of a
       // saved workflow it started and an undo it asked for keep running and post their results, as after /stop (R34); the
@@ -26522,11 +26616,10 @@ const handler = async (req, res) => {
         const keys = agentKeys();
         const gone = keys.find(k => k.id === agentId);
         if (!gone) throw new HttpError(404, 'That agent was already removed.');
-        writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) });
-        putBackRemoved('agent', gone.id, gone.name);
+        const unnoted = putBackRemoval({ kind: 'agent', id: gone.id, name: gone.name }, () => writePrivate(AGENTS_FILE, { keys: keys.filter(k => k.id !== agentId) }));
         agentUse.delete(agentId);
         audit({ via: 'page', actor: 'owner', action: 'agent-removed', args: { agent: gone.name }, ok: true });
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, ...(unnoted ? { noted: false, note: unnoted } : {}) });
       }
       throw new HttpError(404, 'Not found.');
     }
