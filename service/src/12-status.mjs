@@ -129,7 +129,7 @@ async function statusFor(viewer, fresh) {
   // or Spark 2's read-only mark taken away, shows at once, R41)
   const nodes = value.nodes.map(n => {
     const off = powerMark(n.id), w = wallFor(n.id), { wall: _cached, ...rest } = n;
-    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' } : {}) };
+    return { ...rest, ...(w ? { wall: w } : {}), ...(off ? { poweredOff: off, asleep: rest.state !== 'online' && !off.problem } : {}) };
   });
   // (the owner's tasks under way, with their counts so far: no words of a request, 14-tasks.mjs, E7)
   let tasks = [];

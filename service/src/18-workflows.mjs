@@ -183,11 +183,13 @@ async function rehearse(name, inputs) {
 const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
-// (self_test: a whole operation of its own, which runs and waits on its own steps)
+// (self_test: a whole operation of its own, which runs and waits on its own steps; install_update: a dangerous ask,
+// answered only by the owner's yes to it)
 const NOT_A_STEP = new Set([
   'compare_models',
   'forget_memory',
   'forget_workflow',
+  'install_update',
   'power_settings',
   'remember',
   'run',
