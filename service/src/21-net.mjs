@@ -207,11 +207,11 @@ function netAsks(node, text) {
   for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
     if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
-    const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
+    const opened = NET_PLEASE.exec(s), lead = opened ? opened[0].length : 0, body = s.slice(lead);
     if (NET_QUESTION.test(body) || (!opened && /\?$/.test(s)) || INFO_START.test(body.replace(new RegExp(NET_LEAD, 'i'), ''))) continue;
     for (const m of body.matchAll(NET_ASK)) {
       const pre = body.slice(Math.max(0, m.index - 120), m.index);
-      if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
+      if (NET_STATE.test(pre) || NET_IF.test(pre) || !netOrderAt(s, lead + m.index)) continue;
       const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
       const what = `${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`;
       for (const w of what.matchAll(new RegExp(NET_WHAT.source, 'gi'))) if (!NET_NAMED.test(what.slice(w.index + w[0].length).replace(/^[\s-]+/, ''))) return true;
@@ -219,6 +219,12 @@ function netAsks(node, text) {
   }
   return false;
 }
+// The seam for the intent sorter's order rule (A-18, round two with the outside reviewer): whether the change word that
+// starts at index `at` of the owner's sentence `s` gives an order, being the sentence's first word or after one of a
+// short closed list of openers, and not narration ("I used to restart tailscale …") or reported speech ("my colleague
+// says to turn the firewall off …"), which ask for nothing. The intent builder names that function and it is called
+// here; until it lands, every change word the checks above let through counts, as before.
+function netOrderAt(s, at) { return typeof s === 'string' && at >= 0; }
 function netWhose(node, viewer, ctx) {
   if (ctx.via === 'workflow') return 'a saved workflow’s step';
   if (ctx.via === 'watcher') return 'a healing fix';

@@ -535,17 +535,17 @@ test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with 
 
 // The owner's words for a lock-out change (netWhose, netAsks; R71), as code: built from the parts as the service has them,
 // with a stand-in chat. Only the newest message the owner typed counts: not the one before, not a carry-on turn's (its
-// newest message is marked auto), not "carry on".
-const wordsTest = () => {
+// newest message is marked auto), not "carry on". swap: a function to stand in for one of the net's own (by name).
+const wordsTest = (swap = {}) => {
   const acts = readFileSync(join(REPO, 'service', 'src', '16-actions.mjs'), 'utf8'), net = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
   const grab = (src, name) => { const m = new RegExp(`^const ${name} = [\\s\\S]*?;\\n(?=\\S)`, 'm').exec(src); assert.ok(m, name); return m[0]; };
-  const fn = name => { const m = new RegExp(`^function ${name}\\([\\s\\S]*?\\n\\}$`, 'm').exec(net); assert.ok(m, name); return m[0]; };
+  const fn = name => { if (swap[name]) return `const ${name} = __swap.${name};`; const m = new RegExp(`^function ${name}\\([\\s\\S]*?\\n\\}$`, 'm').exec(net); assert.ok(m, name); return m[0]; };
   const consts = net.match(/^const NET_[A-Z_]+ = /gm).map(x => x.slice(6, -3)).filter(n => !['NET_ON', 'NET_FILE', 'NET_AFTER_S', 'NET_PROBES', 'NET_LIVE', 'NET_OPEN'].includes(n) && !/^NET_(?:SLACK|KEPT|LATE)/.test(n));
   const chats = { conversations: [] };
   const own = /^function ownSentences\([\s\S]*?\n\}$/m.exec(acts)?.[0] || 'function ownSentences(t) { return t; }';
   const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START', 'OWN_QUOTE_WORDS', 'OWN_PASTED'].map(n => grab(acts, n)).join('') + own
-    + consts.map(n => grab(net, n)).join('') + ['netAsks', 'netWhose', 'netNowSaid'].map(fn).join('\n') + '\nreturn { netAsks, netWhose };';
-  return { chats, ...new Function('NODES', 'chatData', 'sparkName', code)([{ id: 'spark3' }, { id: 'spark4' }], () => chats, n => `Spark ${n.id.slice(5)}`) };
+    + consts.map(n => grab(net, n)).join('') + ['netAsks', 'netOrderAt', 'netWhose', 'netNowSaid'].map(fn).join('\n') + '\nreturn { netAsks, netWhose };';
+  return { chats, ...new Function('NODES', 'chatData', 'sparkName', '__swap', code)([{ id: 'spark3' }, { id: 'spark4' }], () => chats, n => `Spark ${n.id.slice(5)}`, swap) };
 };
 
 test('only the owner’s current message asks for a lock-out change: the message before, a carry-on turn’s and “carry on” never do', () => {
@@ -567,6 +567,20 @@ test('a way-in word counts only as what the verb changes: not after a place word
   for (const s of ['open port 8022 on spark 3', 'allow user bob to sign in on spark 3', 'turn off Tailscale SSH on spark 3', 'can you add my laptop’s ssh key on spark 3?',
     'Please add a key for my laptop to authorized_keys on Spark 3.', 'restart sshd on spark 3', 'I can’t log in to spark 3, reset my password',
     'add bob to the sudo group on spark 3', 'add an alias to my .bashrc on spark 3', 'change the firewall rules on spark 3', 'change the password of bob on spark 3']) assert.equal(netAsks(node, s), true, s);
+});
+
+// Round two with the outside reviewer (A-18, the net's half): a change word in narration ("I used to restart tailscale on
+// spark 3 every week.") or in reported speech ("My colleague says to turn the firewall off on spark 3.") counted as the
+// owner's order. netAsks puts each change word to the intent sorter's order rule; its seam is netOrderAt until the intent
+// builder names that function, and then the two sentences are tested here as no order.
+test('each change word the checks let through is put to the order rule (its seam, netOrderAt), and one it calls no order asks for nothing', () => {
+  const node = { id: 'spark3' }, seen = [];
+  const { netAsks } = wordsTest({ netOrderAt: (s, at) => { seen.push(s.slice(at).split(/\s/)[0]); return false; } });
+  for (const s of ['restart tailscale on spark 3', 'please add my key on spark 3', 'can you turn off Tailscale SSH on spark 3?']) assert.equal(netAsks(node, s), false, s);
+  assert.deepEqual(seen, ['restart', 'add', 'turn']);
+  // (the seam as it stands: every change word the checks let through counts, as before)
+  const { netAsks: today } = wordsTest();
+  for (const s of ['restart tailscale on spark 3', 'please add my key on spark 3', 'can you turn off Tailscale SSH on spark 3?']) assert.equal(today(node, s), true, s);
 });
 
 // The final read's ssh-probe: with the console's SSH shared (a ControlMaster in its ssh settings), the check after a change
