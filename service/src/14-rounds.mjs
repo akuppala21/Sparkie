@@ -256,7 +256,8 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
   out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
-  const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
+  // (run with minutes started an operation, as a change does: its result wakes the request's carry-on, 21-long.mjs)
+  const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read') || (c.name === 'run' && outcome === 'started'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
   steps[i] = step;
   emit({ type: 'tool', ...step });

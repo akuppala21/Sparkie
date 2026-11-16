@@ -151,7 +151,9 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, w
   for (const n of names) if (!Object.entries(sums).some(([p, h]) => h && (p === n || p.endsWith(`/${n.replace(/^(?:\.\/)+/, '')}`)))) lines.push(`It runs ${n}, which isn’t a plain file in ${bases.join(' or ')} now.`);
   if (odd.length) lines.push(`It changes folder (cd ${odd[0].slice(0, 60)}) in a way that isn’t read here: a script it runs there isn’t hashed.`);
   const outside = runnerOutside(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen);
+  const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
   return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
+    ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(outside.length ? [`Runs outside the plain wall: ${outside.join('; ')}.`, RUNNER_OPEN_HOLDS] : [wide.fleet && RUNNER_WIDE.fleet, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean)),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...lines].join('\n');
@@ -162,7 +164,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const scripts = await workScripts(node, sorted.scripts, dir, command);
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
-  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
+    ...(ctx.long ? { minutes: ctx.long.minutes } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   if (dangerous.length) {
     return dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,

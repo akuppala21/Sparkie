@@ -165,7 +165,9 @@ if unit.startswith(('sw-look-', 'sw-run-')) and cmd:
     # While it runs, <rehearsal>/standin/live/<unit> is there (the stand-in systemctl's is-active reads it).
     live = os.path.join(R, 'standin', 'live', unit)
     os.makedirs(os.path.dirname(live), exist_ok=True)
-    open(live, 'w').close()
+    # (it holds this stand-in's own pid: the stand-in systemctl's stop ends the unit through it, as systemd would)
+    with open(live, 'w') as f:
+        f.write(str(os.getpid()))
     # (its own session, so it can be ended whole; a signal to this stand-in, a caller's timeout say, ends it whole too)
     held = []
     def end(sig, _):

@@ -130,6 +130,7 @@ named by the function it calls. What each part may wake is its own line: a Spark
 | `watchHeld` | `20-desired` | every 60 s; its first round seeds desired.json |
 | `healPass` | `20-heal` | every 60 s |
 | `agentUseDirty` | `20-mcp` | every 60 s: agents’ last use, saved when it changed |
+| `tryStop` | `21-long` | every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed |
 | `powerTick` | `21-power` | every 60 s, first 5 minutes after start |
 | `holdTick` | `21-runner` | every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end |
 | `selfTestRecover` | `21-selftest` | 5 s after start, then each minute while the Spark doesn’t answer |
@@ -181,6 +182,7 @@ An event is a line in the fleet’s record (`fleetEvent`); its type must be in `
 | `power-off` | `power_off` (21-power) |
 | `power-on` | `power_on` (21-power), `powerThen` (21-power) |
 | `restart` | `restartJob` (17-changes), `keep_running` (21-apps) |
+| `run` | `longStart` (21-long) |
 | `self-test` | `self_test` (21-selftest) |
 | `start-model` | `startModel` (17-changes) |
 | `stop` | `stop_model` (17-changes), `keep_running` (21-apps), `handler` (24-handler) |

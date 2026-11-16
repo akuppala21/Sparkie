@@ -13,8 +13,8 @@
 # writes as <rehearsal>/standin/units/<unit> ("<active> <file>", as "active enabled") is shown by show
 # --property=ActiveState,UnitFileState,LoadState, and start, stop, restart, enable, disable, mask and unmask change it
 # (--no-block too); one with no such file is not-found.
-# A look's or a change's unit (sw-look-, sw-run-) is active
-# while the stand-in systemd-run runs it. Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it
+# A look's or a change's unit (sw-look-, sw-run-) is active (is-active, show ActiveState)
+# while the stand-in systemd-run runs it, and stop ends it there. Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it
 # answers from that one.
 import json, os, sys
 
@@ -49,6 +49,27 @@ def set_unit(name, active=None, file=None):
 timers, running = os.path.join(R, 'standin', 'timers'), os.path.join(R, 'standin', 'active')
 
 
+live = os.path.join(R, 'standin', 'live')
+
+
+def stop_live(name):
+    # A look's or a change's unit the stand-in systemd-run runs now: ended with everything it started (its stand-in gets
+    # SIGTERM), waited for until it is gone, as systemctl stop waits.
+    f = os.path.join(live, name.removesuffix('.service'))
+    if not name.startswith(('sw-run-', 'sw-look-')) or not os.path.exists(f):
+        return
+    import signal, time
+    try:
+        with open(f) as h:
+            os.kill(int(h.read().strip()), signal.SIGTERM)
+    except (OSError, ValueError):
+        return
+    for _ in range(100):
+        if not os.path.exists(f):
+            return
+        time.sleep(0.1)
+
+
 def ended(unit):
     try:
         os.unlink(os.path.join(running, unit))
@@ -72,6 +93,7 @@ elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and 
     print(f'ActiveState={u[0]}\nUnitFileState={u[1]}\nLoadState=loaded' if u else 'ActiveState=inactive\nUnitFileState=\nLoadState=not-found')
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4:
     print('active' if os.path.exists(os.path.join(timers, args[3])) or os.path.exists(os.path.join(running, args[3]))
+          or (args[3].startswith(('sw-run-', 'sw-look-')) and os.path.exists(os.path.join(live, args[3].removesuffix('.service'))))
           or (unit(args[3]) or ['inactive'])[0] == 'active' else 'inactive')
 elif args[:1] in (['start'], ['restart']) and len(args) == 2 and unit(args[1]):
     set_unit(args[1], active='active')
@@ -88,6 +110,7 @@ elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-')
 elif args[:1] == ['stop'] and len(args) == 2:
     ended(args[1])
     set_unit(args[1], active='inactive')
+    stop_live(args[1])
     if args[1].startswith('sw-run-'):   # (a command can see it was ended: <rehearsal>/standin/stopped/<unit>)
         os.makedirs(os.path.join(R, 'standin', 'stopped'), exist_ok=True)
         open(os.path.join(R, 'standin', 'stopped', args[1]), 'w').close()

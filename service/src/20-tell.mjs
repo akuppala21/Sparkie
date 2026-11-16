@@ -92,6 +92,7 @@ const TELL_OPS = {
   'power-on': 'Turning on',
   restart: 'Restarting',
   'restart-model': 'Restarting',
+  run: 'The command',
   'self-test': 'The self-test with',
   'start-model': 'Starting',
   stop: 'Stopping',
@@ -107,7 +108,8 @@ function tellWhat(job) {
 }
 function tellResultLine(job) {
   const what = tellWhat(job);
-  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.`;
+  // (a long command's exit code, a number: an exit other than 0 is a result, told as one, 21-long.mjs)
+  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished${job.type === 'run' && Number.isInteger(job.exit) ? ` with exit code ${job.exit}` : ''}.`;
   if (job.status === 'cancelled') return `${what} was cancelled.`;
   return `${what} didn’t work. The details are in Spark Console.`;
 }

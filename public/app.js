@@ -2108,6 +2108,8 @@ const SVC_LABEL = {
   'power-off': j => `Power off ${(j.nodes || [j.node]).map(nodeName).join(' + ')}`,
   'power-on': j => `Turn on ${(j.nodes || [j.node]).map(nodeName).join(' + ')}${j.model ? ` for ${titleOf(j.model)}` : ''}`,
   'self-test': j => `Self-test on ${nodeName(j.node)}`,
+  // (run with minutes: a long command, by its Spark alone)
+  run: j => `A command on ${nodeName(j.node)}`,
 };
 const jobPercent = j => (j.progress?.total ? Math.min(99, Math.round((j.progress.done / j.progress.total) * 100)) : null);
 

@@ -30,6 +30,9 @@ setTimeout(() => {
     if (selfTestCutOff(e)) continue;
     // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
     if (savedRunCutOff(e)) continue;
+    // (a long command, run with minutes: the journal's own cut-off notice, in the chat that asked, says what became of
+    // it; it is never started again, 21-long.mjs)
+    if (e.operation === 'run') continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
   savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
