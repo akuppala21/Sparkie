@@ -14,8 +14,9 @@ at a switch. A newer brain needs its setup, never an edit to the chat loop (R50)
 - What the new brain needs that the first one didn't, in the same place: `mergeRoles` when its chat template refuses
   two user messages in a row; `thinkTags` when its server leaves its thinking in the text between other tags;
   `tokenBudget` when its context is small (its own count of tokens ends the tool rounds there).
-- Its limits beside the block, never in it: `toolRounds`, `maxChanges`, `toolCap` (R46); `workSteps` and
-  `contextTokens`, the loop's budgets (R50).
+- Its limits beside the block, never in it: `toolRounds` (at most 40), `maxChanges` (at most 12), `toolCap` (R46);
+  `workSteps` and `contextTokens`, the loop's budgets (R50). They hold only once the brain is checked; until then a
+  turn gets at most 8 rounds and 16 commands (R52).
 - What it can do for a workload's job, `can` (`["chat"]` when not said): a job is handed the brain only when it can chat and
   answers at least 2 calls at once (R57).
 - After the switch: `POST /main/check` (the brain check) and the brain eval (`docs/how/run-the-brain-eval.md`). A setup

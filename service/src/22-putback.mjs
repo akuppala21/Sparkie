@@ -94,7 +94,8 @@ function putBackSeed() {
 
 // At start, before the sockets open (25-backup-and-start.mjs). Never throws. While it holds, each start removes again
 // what the owner removed and signs every device out again (a second put-back under the hold can bring either back);
-// only the first one parks tasks, brings back the owner's pause and says so.
+// each one ends the tasks the state holds, with a line in each chat; only the first brings back the owner's pause and
+// says so.
 function putBackAtStart() {
   if (!SECRETS_FILE) return;
   try {
@@ -131,8 +132,8 @@ function putBackAtStart() {
     } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }
     let signedOut = 0;
     try { signedOut = sessionList().length; if (signedOut || existsSync(SESSIONS_FILE)) saveSessions([]); } catch (e) { console.error(`The devices after a put-back: ${e.message}`); }
-    if (!first) return;
-    try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
+    // Every task in the state ends, with a line in its chat: also at a second put-back under the hold, so a copy never
+    // brings back a request that would run by itself after the start (14-tasks.mjs).
     let parked = 0;
     try {
       const at = new Date().toISOString();
@@ -145,6 +146,8 @@ function putBackAtStart() {
       }
       if (parked) saveChats();
     } catch (e) { console.error(`The tasks after a put-back: ${e.message}`); }
+    if (!first) return;
+    try { if (typeof a.halted === 'boolean' && agentSettings().halted !== a.halted) setAgentSettings({ halted: a.halted, autoPaused: false }); } catch (e) { console.error(`The agents’ pause after a put-back: ${e.message}`); }
     const since = new Date().toISOString();
     secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
     putBackSeen.at = 0;
