@@ -5,11 +5,11 @@
 // run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The
 // sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42;
 // design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account
-// with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a
-// change on a compute Spark at once or asked, through the runner's run wall with the copy first; a change on Spark 2
-// (21-hub.mjs) and the lock-out class (21-net.mjs) are asked and run inside the lock-out net, and root: true goes to
-// rootChange (21-root.mjs). helperCall is the one
-// way the console calls the helper: one script over ssh (local bash on Spark 2) that first checks the Spark's helper is
+// with root's read rights, so it can change and send nothing (nine exact forms, LOOK_FORMS, run as code's own fixed
+// text outside it). Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked,
+// through the runner's run wall with the copy first; a change on Spark 2 (21-hub.mjs) is asked and runs inside the
+// lock-out net; the lock-out class is done only as root (21-net.mjs); root: true goes to rootChange (21-root.mjs).
+// helperCall is the console's call for all but the net (the net's are guardCall's, 21-guard.mjs): one script over ssh (local bash on Spark 2) that first checks the Spark's helper is
 // the one this build ships, then the command's key names, then calls the helper through sudo -n with a fresh id, the
 // command's SHA-256 and its seconds. Spark 2's console unit forbids new privileges, so there the call goes through the
 // owner's service manager. Before the owner's one-time command has run on a Spark (deploy/root-for-sparkie.sh), with a

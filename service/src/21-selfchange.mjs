@@ -1,7 +1,7 @@
 /* ───────── Sparkie's own code: a proposal, as a pull request (design C 2.5, step 8; the build map's C8c) ───────── */
 // Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs
 // Owns: tmp (writers: selfTree; a folder: each send's work, removed on every exit)        Timers: none        Wakes: none
-// propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
+// propose_update {do: start|send|drop|install, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
 // as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and
 // notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by
 // entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files

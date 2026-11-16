@@ -9,7 +9,7 @@
 // instruction counts: a clause that opens with a verb of working on it or carrying on, with nothing ruling it out before
 // those words; never words about something else ("it crashed overnight"), a question, or text in quotes, backticks or
 // after a line ending in ":" (a pasted log). Every task also stops at 120 work steps in all (design A 2.10: the `run`
-// calls of all its turns). At any limit no new turn starts. A task keeps the guards of the turns that made it
+// and `write_file` calls of all its turns). At any limit no new turn starts. A task keeps the guards of the turns that made it
 // (`noStops`, `readOutside`) and where it came from (its channel and which Telegram pairing, the device's session), all
 // on disk. A carry-on turn that ends owing nothing (keepTask, 14-chats.mjs) takes its task off the record. After a
 // restart each task that was on disk at the start and is owed something carries on as it was: one whose way in is gone

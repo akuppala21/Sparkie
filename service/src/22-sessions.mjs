@@ -71,7 +71,7 @@ function sessionFor(req) {
   }
   return null;
 }
-// The owner, signed in on this device. Only the owner signs in this way (members use Tailscale).
+// The owner, signed in on this device. Only the owner signs in this way (an agent uses its key).
 function sessionViewer(req) { return ownerSessionView(sessionFor(req)); }
 // A signed-in device's session as a viewer: only the owner's (the app door reads its ticket's session with it, R40).
 function ownerSessionView(s) {

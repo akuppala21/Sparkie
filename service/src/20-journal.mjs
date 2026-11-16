@@ -130,7 +130,7 @@ function journal(kind, fields = {}, body = null) {
 
 /* What each part records (B 2.1's table). None of these throws. */
 // A change written down first: a file written on a Spark, or a container started from an image the caller named. Stop,
-// pause, cancel and put-back never wait on the journal. The runner (run, write_file) will use the same start line.
+// pause, cancel and put-back never wait on the journal. The runner, the net and the box write their own start line (kind cmd).
 const journalFirstFor = (name, input) => name === 'save_file' || (name === 'keep_running' && Boolean(input?.image));
 // (task: the request's id, which its task keeps, so a task's report counts its own lines: E7, 14-tasks.mjs)
 const jCall = (name, input, args, ctx) => ({ act: name, args, via: ctx.via || null, actor: ctx.actor || null, key: ctx.agentId || null, chat: ctx.chat || null,

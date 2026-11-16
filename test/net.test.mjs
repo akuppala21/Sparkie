@@ -1,5 +1,5 @@
-// Covers: the lock-out net's console half (21-net.mjs; R71, R60, R54, R61, R13, R43; design A 2.8, step A13b), switched on
-// for this fleet (SPARK_CONSOLE_NET=1; off, a lock-out change waits for the net: ladder.test.mjs): a lock-out change on
+// Covers: the lock-out net's console half (21-net.mjs; R71, R60, R54, R61, R13, R43; design A 2.8, step A13b), on as in
+// the build (only SPARK_CONSOLE_NET=0 turns it off; off, a lock-out change waits for the net: ladder.test.mjs): a lock-out change on
 // a compute Spark is done only as root (as the owner it is answered "set root"), and as root it is the dangerous ask, with what goes back and why it can lock the owner out, and nothing runs before the press; the
 // press arms the Spark's own timer first (the command's time limit plus 600 s), runs the change and checks the ways in
 // from outside: all still work, so code keeps it; one stopped working, so it is put back at once (and, still not

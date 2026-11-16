@@ -1,4 +1,4 @@
-/* ───────── the box: a throw-away container on a compute Spark (A2; commands in it come with A4) ───────── */
+/* ───────── the box: a throw-away container on a compute Spark (A2; a command in it: boxRun, A4) ───────── */
 // Area: features        Rules: R62, R52, R1, R43, R23        Tests: box.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none

@@ -12,8 +12,8 @@
 // pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
 // minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
 // close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5),
-// and run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c); the rest come
-// with A12, A13 and D12; on the stand-in fleet a test raises one through dangerForTest.
+// and so do run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c), a delete on
+// Spark 2 (21-hub.mjs, A11) and a command as root (21-root.mjs, A12: the lock-out class too); on the stand-in fleet a test raises one through dangerForTest.
 const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
 // Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
 const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
@@ -322,7 +322,7 @@ async function dangerPress(id, c, by) {
 
 // On the stand-in fleet only: a test raises a dangerous ask through the next owner-only question (question(),
 // 17-changes.mjs), from STATE_DIR/.test-danger.json ({kinds, where, facts, shown, reads}; shown.file: a script on this
-// machine, read again at the press). Never on a real console, where nothing raises one yet.
+// machine, read again at the press). Never on a real console: this hook is off there (ALL_LOCAL).
 function dangerForTest(viewer, ctx, choices) {
   if (!ALL_LOCAL) return null;
   const f = `${STATE_DIR}/.test-danger.json`;

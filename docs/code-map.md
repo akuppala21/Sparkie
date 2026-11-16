@@ -260,7 +260,7 @@ What one model needs is said by its brain setup, never by the chat loop (contrac
 
 ### `13-main-model.mjs`: Sparkie's main model
 
-Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after reboots until someone stops it here, and it's labeled protected, so deploys never stop it. Setups come from config.json (`main`, or `main.presets`) plus any made from Library models in the console; the one in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its brain is asked and read (13-ask.mjs, R50); …
+Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after reboots until someone stops it here, and it's labeled protected, so deploys never stop it. Setups come from config.json (`main`, or `main.presets`) plus any made from a model the Sparks hold (setupFromLibrary); the one in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its brain is asked and read …
 
 - **Area:** brain. **Rules:** R2, R8, R14, R15, R17, R19, R20, R22, R27, R34. **Tests:** brain.test.mjs, agent-setup.test.mjs
 - **Lines:** 309
@@ -773,7 +773,7 @@ The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). I
 
 ### `20-sort.mjs`: the sorter: what one command on a Spark is (design A 2.8)
 
-sortCommand(command, {at, root, dir, home, hosts, brain, written, protect}) says what one command for run is before anything runs, from its text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything JSON can carry (a getter or a toString that throws is caught too). Five classes, in their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes). The careful answer is the default: …
+sortCommand(command, {at, root, dir, home, hosts, brain, written, protect}) says what one command for run is before anything runs, from its text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything JSON can carry (a getter or a toString that throws is caught too). Five classes, in their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's ladder), risky (always asked), lockout (only as root: asked, inside the net), notdone (never, and not for want of a yes). The careful answer is …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
 - **Lines:** 395
@@ -915,7 +915,7 @@ On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and d
 - **Uses:** `01-setup` (`CONFIG`, `q`, `HttpError`, `sleep`, `nodeById`, `isProtected`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`accessList`, `mustUse`), `05-library` (`memNow`, `KEEP_FREE`, `inventory`), `07-jobs` (`step`, `note`, `claimed`, `newJob`, `runJob`, `stopContainer`), `09-verified` (`answers`), `11-setups` (`squash`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`, `wakeWork`), `16-actions` (`recent`, `tokensOf`, `sparkNames`, `normQuotes`, `runAction`, `action`, `sparkArg`, `sparkOf`), `17-changes` (`notBrainsSpark`, `changeLabel`, `question`, `pausedCheck`, `stoppedForSure`), `18-step-jobs` (`sleepUnless`), `18-workflows` (`consoleStopped`), `19-watcher` (`MODEL_IMAGES`, `fleetEvent`, `knowledge`, `events`, `sparkOff`), `20-desired` (`cancelCheck`, `keyOf`, `desired`, `forgetApp`, `keepApp`), `20-heal` (`skippedOnce`, `healSkip`, `cameBack`, `healCount`, `HEAL_WINDOW`, `HEAL_SETTLE_MS`, `healMark`, `healOwner`, `HEAL_OFFLINE_MS`), `20-mcp` (`SECRET_FLAG`, `maskSecrets`), `20-tell` (`tell`), `21-box` (`notBoxName`), `21-door` (`appLinks`, `linkWords`), `21-power` (`power`, `powerThenKeep`)
 - **Used by:** `16-actions`, `17-changes`, `18-job-model`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-desired`, `20-heal`, `21-compare`, `21-selftest`
 
-### `21-box-fill.mjs`: the box filled from an exact tree, and read back as data (C8b; called by nothing yet)
+### `21-box-fill.mjs`: the box filled from an exact tree, and read back as data (C8b; called by propose_update, C8c)
 
 Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any of it goes into the chat's box, as files under one …
 
@@ -928,7 +928,7 @@ Design C 2.5 needs a box that Spark Console's code, never the brain, fills with 
 - **Uses:** `01-setup` (`HttpError`, `NODES`, `nodeById`, `q`), `02-ssh` (`knownOffline`, `spawnOn`, `fields`), `12-status` (`sparkName`), `17-changes` (`agentSettings`, `propose`), `20-journal` (`journal`, `journalId`, `jErr`, `jSub`), `20-mcp` (`maskSecrets`), `21-box` (`boxBy`, `boxBarred`, `boxKey`, `boxOpening`, `boxOpen`, `boxName`, `boxes`), `21-brain-rail` (`brainRail`), `21-work` (`whoMayLook`), `22-putback` (`putBackHeld`, `PUTBACK_AGENTS`)
 - **Used by:** `21-selfchange`, `21-work`
 
-### `21-box.mjs`: the box: a throw-away container on a compute Spark (A2; commands in it come with A4)
+### `21-box.mjs`: the box: a throw-away container on a compute Spark (A2; a command in it: boxRun, A4)
 
 run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its own folder, …
 
@@ -1075,7 +1075,7 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 
 ### `21-hub.mjs`: a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11)
 
-Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or changes the …
+Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (it is kept only by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts, removes or …
 
 - **Area:** features. **Rules:** R1, R60, R71, R61. **Tests:** hub-change.test.mjs
 - **Lines:** 219
@@ -1088,7 +1088,7 @@ Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, ste
 
 ### `21-ladder.mjs`: the ladder: a change on a Spark at once, asked first, or not done (A7c)
 
-run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root": root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside the net) and the lock-out class to netChange (21-net.mjs: the dangerous ask, inside the net); a write_file or a command given a key …
+run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root": root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside the net) and the lock-out class to netChange (21-net.mjs: done only as root, so answered "set root"); a write_file or a command given …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
 - **Lines:** 388
@@ -1206,7 +1206,7 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 
 ### `21-selfchange.mjs`: Sparkie's own code: a proposal, as a pull request (design C 2.5, step 8; the build map's C8c)
 
-propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
+propose_update {do: start|send|drop|install, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
 - **Lines:** 521
@@ -1288,7 +1288,7 @@ The chat's `tool` event for a command Sparkie ran on a Spark (design A 2.10, ste
 
 ### `21-work.mjs`: run: a command on a Spark, through the root helper (a look in its look wall; a change through the ladder)
 
-run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the runner's run wall with the copy first; a change on Spark 2 (21-hub.mjs) …
+run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42; design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account with root's read rights, so it can change and send nothing (nine exact forms, LOOK_FORMS, run as code's own fixed text outside it). Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked, through the …
 
 - **Area:** features. **Rules:** R42, R43, R61. **Tests:** work.test.mjs, ladder.test.mjs
 - **Lines:** 448
