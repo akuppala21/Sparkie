@@ -17989,7 +17989,8 @@ const NET_LIVE = 'the net puts back files and units, not live network or firewal
 const netRestart = at => `Restarting ${at} is the way back: switch its plug off and on (Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer).`;
 async function netStillLost(node, g) {
   const now = await netProbe(node);
-  return (g.ways || ['ssh', 'helper']).filter(p => now[p] !== true);
+  // (only a way seen not working: one that can't be told now, Tailscale's status unread, is not said to be down)
+  return (g.ways || ['ssh', 'helper']).filter(p => now[p] === false);
 }
 const netStillWords = (at, lost) => `But even after the put-back, ${lost.map(p => NET_PROBES[p]).join(', ')} still ${lost.length > 1 ? 'don’t' : 'doesn’t'} work: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
 const netGoneWords = (which, at, g) => `${which} was to go back by ${at}’s own timer at ${netHhmm(g.goesBackAt)}, but ${at} still doesn’t answer: ${NET_LIVE}, and that most likely still cuts ${at} off. ${netRestart(at)}`;
