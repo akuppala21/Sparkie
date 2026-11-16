@@ -1357,6 +1357,25 @@ describe('the lock-out net (R60)', () => {
     assert.match(result[0], /: 0 went back, 1 did not$/);
   });
 
+  test('a change to /etc/ssh that sshd -t refuses goes back at once, saying why (a refused reload bites only at the next start)', () => {
+    const s = netted();
+    s.put('standin/sshd-refuses', '/etc/ssh/sshd_config line 1: Bad configuration option: Prot\n');
+    const r = net(s, 'printf "Prot 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.match(r.stdout, new RegExp(`\\n${r.id} net: sshd -t refuses the changed /etc/ssh \\(/etc/ssh/sshd_config line 1: Bad configuration option: Prot\\), `
+      + `so what differs goes back now\\n${r.id} net put back at \\S+: 1 went back, 0 did not\\n${r.id} end 0\\n$`), r.stdout);
+    assert.equal(readFileSync(join(s.R, SSHD), 'utf8'), 'Port 22\n');
+    assert.ok(!timerWaits(s, r.id), 'its timer is stopped: nothing is left for it');
+    // sshd takes it: the net stays open as before, and only a change under /etc/ssh is checked.
+    const t = netted();
+    const q = net(t, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
+    assert.match(q.stdout, new RegExp(`\\n${q.id} net open: 1 of the ways in differs \\(/etc/ssh\\)`), q.stdout);
+    assert.ok(calls(t).some(c => c[0] === 'sshd'));
+    const u = netted();
+    u.put('standin/sshd-refuses', 'never asked\n');
+    const v = net(u, 'true');
+    assert.ok(!calls(u).some(c => c[0] === 'sshd') && / net open: nothing differs now/.test(v.stdout), v.stdout);
+  });
+
   test('a moved ssh port behind ssh.socket: after sshd_config goes back, systemd is told and the socket restarted', () => {
     const s = netted();
     s.put('standin/units/ssh.socket', 'active enabled\n');

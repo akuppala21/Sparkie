@@ -1134,15 +1134,23 @@ net_words() {   # $1 what guard.py's differs said, $2 when the timer fires: what
 }
 net_after() {   # after the command: what differs, and when it goes back. It disarms only on the console's word (keep,
   # after the console's check from outside), never by itself; a timer stopped while the command ran puts back now.
-  local out state
+  local out state bad=''
   exec 8> "$G/lock" && flock -w 120 8 || { say "net open: the ways in go back at $(guard_at "$G") unless they are kept"; return; }
   if [ -e "$G/result" ]; then guard_done "$G"; say "net: already put back"; exec 8>&-; return; fi
   out=$("$PY" -I -S "$G/guard.py" differs 2>/dev/null) || out='? the ways in could not be compared'
   state=$(systemctl show --property=ActiveState --value "sw-guard-$ID.timer" 2>/dev/null) || state=''
   exec 8>&-
-  if [ "$state" != active ]; then
-    say "net: its timer is not waiting (${state:-gone}), so what differs goes back now"
+  # (a change to /etc/ssh that sshd itself refuses bites only at its next start: a reload refused it, the old sshd runs
+  # on and every check from outside passes. sshd -t says so now, and it goes back at once.)
+  if printf '%s\n' "$out" | grep -q '^D /etc/ssh\(/\|$\)' && command -v sshd > /dev/null 2>&1; then
+    bad=$(sshd -t < /dev/null 2>&1) && bad='' || bad=${bad:-it says nothing}
+  fi
+  if [ -n "$bad" ] || [ "$state" != active ]; then
+    if [ -n "$bad" ]; then say "net: sshd -t refuses the changed /etc/ssh ($(printf '%s' "$bad" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-160)), so what differs goes back now"
+    else say "net: its timer is not waiting (${state:-gone}), so what differs goes back now"; fi
     "$BASH_BIN" "$G/restore.sh" asked > /dev/null 2>&1
+    # (put back: its timer has nothing left to do)
+    if [ -e "$G/result" ] && [ -n "$bad" ]; then systemctl stop "sw-guard-$ID.timer" > /dev/null 2>&1; fi
     if [ -e "$G/result" ]; then say "net put back at $(sed -n '1s/^put back at //p' -- "$G/result")"
     else say "net: the put-back failed: $(tail -n 1 -- "$G/failures" 2>/dev/null | cut -c1-200)"; fi
   elif [ -z "$out" ]; then say "net open: nothing differs now; it is kept on the console's word, else at $(guard_at "$G") what differs then goes back"
