@@ -19319,13 +19319,26 @@ async function netAfterTime(id) {
   netTell(g, `${which} went back by ${at}’s own timer (put back at ${p.putBackAt})${lost.length ? `. ${netStillWords(at, lost)}` : `, and ${at} answers every way it did before.`}`);
 }
 
-// What the command printed: between the net's "armed" line and its own lines at the end.
+// What the command printed: between the helper's own lines, exactly as it writes them (deploy/spark-console-root:
+// do_unit's "as root", net_arm's "armed", net_after's result and the line before a put-back, the run's end), so a line
+// the command printed that begins with the call's id stays in what it printed (it can read its id from its own path).
+// With no end line (the answer was cut off) nothing at the end is taken for the helper's.
+const NET_OWN_END = /^end (?:\d{1,3}|time)$/, NET_OWN_RESULT = /^net (?:open: |put back at )|^net: (?:already put back$|the put-back failed: )/;
 function netOutput(id, out) {
   const lines = String(out).split('\n');
   if (lines.at(-1) === '') lines.pop();
-  // (the net's "armed" line, and root's "as root" line after it, R70)
-  while (lines.length && String(lines[0]).startsWith(`${id} `)) lines.shift();
-  while (lines.length && String(lines.at(-1)).startsWith(`${id} `)) lines.pop();
+  const own = (l, re) => typeof l === 'string' && l.startsWith(`${id} `) && re.test(l.slice(id.length + 1));
+  // (before the command: the net's "armed" line and root's "as root" line, R70)
+  for (let k = 0; k < 2; k++) if (own(lines[0], /^(?:net armed|as root): /)) lines.shift();
+  // (after it: its end, the net's result, and before a put-back the line that says why)
+  if (own(lines.at(-1), NET_OWN_END)) {
+    lines.pop();
+    const result = lines.at(-1);
+    if (own(result, NET_OWN_RESULT)) {
+      lines.pop();
+      if (own(result, /^net put back at |^net: the put-back failed: /) && own(lines.at(-1), /^net: (?:sshd -t refuses |its timer is not waiting )/)) lines.pop();
+    }
+  }
   if (lines.length && lines.at(-1) === '') lines.pop();
   return lines.join('\n');
 }

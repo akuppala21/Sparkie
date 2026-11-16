@@ -474,3 +474,18 @@ test('/putback puts back the newest guard still open, never stopping at a newer 
   assert.match(said, /^Put back: the newest change made inside the lock-out net, on Spark 3 \(record j_3\)/);
   assert.deepEqual(marks, [['g3', 'put back']]);
 });
+
+// The final read's net-output: every leading and trailing line that began with the call's id was dropped, and a command
+// can read its id from its own path, so it could keep lines out of the journal and the brain's view.
+test('what a command inside the net printed keeps its own lines that begin with the call’s id; only the helper’s own lines come out', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
+  const part = name => new RegExp(`^(?:const ${name} = .*;|function ${name}\\([\\s\\S]*?\\n\\})$`, 'm').exec(src)?.[0];
+  const netOutput = new Function(`${part('NET_OWN_END')}\n${part('netOutput')}\nreturn netOutput;`)();
+  const id = 'abcdef0123456789abcdef01', L = (...xs) => `${xs.join('\n')}\n`;
+  assert.equal(netOutput(id, L(`${id} net armed: the ways in go back at 2026-11-15T22:11:00Z unless they are kept`, `${id} as root: sw-root-${id} runs the command whose SHA-256 is 00, inside the net`,
+    'hello', `${id} net open: made up by the command`, `${id} end 0`, `${id} net open: nothing differs now; it is kept on the console's word, else at 22:11 what differs then goes back`, `${id} end 0`)),
+  ['hello', `${id} net open: made up by the command`, `${id} end 0`].join('\n'));
+  assert.equal(netOutput(id, L(`${id} net armed: x unless they are kept`, 'out', `${id} net: sshd -t refuses the changed /etc/ssh (bad), so what differs goes back now`, `${id} net put back at 2026-11-15T22:00:00Z: 1 went back, 0 did not`, `${id} end 0`)), 'out');
+  // (cut off, no end line: nothing at the end is taken for the helper's)
+  assert.equal(netOutput(id, L(`${id} net armed: x unless they are kept`, 'out', `${id} net open: y`)), ['out', `${id} net open: y`].join('\n'));
+});
