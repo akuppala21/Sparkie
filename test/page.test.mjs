@@ -1,5 +1,5 @@
 // Covers: The page is chat, sign-in and status (the one page, milestone 4; E10b). Home, Models, Files and Access are
-// off it, with the page code only they used; the service's routes behind them stay. File reads only, like
+// off it, with the page code only they used; only Home's and Models' routes stay in the service. File reads only, like
 // install.test.mjs's reads of the installer: no server, no browser. The page's files still parse, and every file the
 // installer ships (UI_FILES) is still there.
 import { test } from 'node:test';

@@ -6,7 +6,7 @@
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root":
 // root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside
-// the net) and the lock-out class to netChange (21-net.mjs: the dangerous ask, inside the net); a write_file or a
+// the net) and the lock-out class to netChange (21-net.mjs: done only as root, so answered "set root"); a write_file or a
 // command given a key is refused in both.
 // At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change

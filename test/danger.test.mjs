@@ -736,9 +736,9 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
       '20-danger.mjs',
       '21-updates.mjs', // install_update (C5)
       '21-ladder.mjs', // a risky change of a dangerous kind (A7c)
-      '21-net.mjs', // a lock-out change, before the net runs it (A13b, read before it lands)
-      '21-root.mjs', // a command as root, before the net runs it (A12)
-      '21-hub.mjs', // a delete on Spark 2 it cannot see, before the net runs it (A11, read before it lands)
+      '21-root.mjs', // a command as root, the lock-out class too, before the net runs it (A12)
+      '21-hub.mjs', // a delete on Spark 2 it cannot see, before the net runs it (A11)
+      // (21-net.mjs raises none: as the owner a lock-out change is answered "set root", and as root it is 21-root.mjs's ask)
     ];
     const src = join(REPO, 'service', 'src');
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {

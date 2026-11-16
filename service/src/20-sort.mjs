@@ -6,7 +6,7 @@
 // text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything
 // JSON can carry (a getter or a toString that throws is caught too). Five classes, in
 // their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's
-// ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes).
+// ladder), risky (always asked), lockout (only as root: asked, inside the net), notdone (never, and not for want of a yes).
 // The careful answer is the default: a command is a change only when the sorter can show it is one, a program it knows,
 // called by a name or path it resolves to that program, with every word that decides what it does in view, touching
 // only places it can place (20-places.mjs). Anything else is risky: an unknown program, option or sub-command (each

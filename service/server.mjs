@@ -3205,7 +3205,7 @@ function answerReader(setup) {
 // Sparkie is the one main LLM; which model runs behind it is the owner's choice. This service runs it on its own Spark
 // so chats and agents can reach it at 127.0.0.1. It starts with --restart unless-stopped, so it comes back after
 // reboots until someone stops it here, and it's labeled protected, so deploys never stop it.
-// Setups come from config.json (`main`, or `main.presets`) plus any made from Library models in the console; the one
+// Setups come from config.json (`main`, or `main.presets`) plus any made from a model the Sparks hold (setupFromLibrary); the one
 // in use is saved in main.json next to the chats, so it survives restarts and installs. A setup's `ask` block says how its
 // brain is asked and read (13-ask.mjs, R50); its fields go over the same names beside it.
 const MAIN_FILE = `${STATE_DIR}/main.json`;
@@ -4609,7 +4609,7 @@ async function runOne(turn, { round, calls, steps, outside = [], away = false, p
 // instruction counts: a clause that opens with a verb of working on it or carrying on, with nothing ruling it out before
 // those words; never words about something else ("it crashed overnight"), a question, or text in quotes, backticks or
 // after a line ending in ":" (a pasted log). Every task also stops at 120 work steps in all (design A 2.10: the `run`
-// calls of all its turns). At any limit no new turn starts. A task keeps the guards of the turns that made it
+// and `write_file` calls of all its turns). At any limit no new turn starts. A task keeps the guards of the turns that made it
 // (`noStops`, `readOutside`) and where it came from (its channel and which Telegram pairing, the device's session), all
 // on disk. A carry-on turn that ends owing nothing (keepTask, 14-chats.mjs) takes its task off the record. After a
 // restart each task that was on disk at the start and is owed something carries on as it was: one whose way in is gone
@@ -5453,8 +5453,8 @@ function changeIntent(text) {
 // Never run from a channel (Telegram, R32): going back a build, Sparkie's memory and saved workflows outlive a stolen
 // phone, so they wait as an owner-only button pressed in Spark Console with the passkey. Memory's one exception is the
 // owner's own words in the paired chat (tgOwnMemory, 20-memory-tg.mjs; R25). The saved-workflow two aren't even offered
-// to Sparkie there. Every later action that changes Sparkie's own code, skills, settings, secrets or connectors, or
-// installs, joins this list.
+// to Sparkie there. Keeping an eval or trial result and propose_update are here too. install_update is not: it is the
+// dangerous ask, which the owner may answer on the page or in the paired chat (R54).
 // (One a line: PAGE_ONLY in this order, the one abilities says them in; PAGE_ONLY_TOOLS in name order.)
 const PAGE_ONLY = new Set([
   'undo_update',
@@ -7486,7 +7486,7 @@ action({
 // whether its step names its image or not, and the run says so and which model it was made to ask (the workloads
 // review, C1). Nothing here touches what a save's yes covers (D6c binds the image and the saved steps, not these
 // run-time settings).
-// Real use waits on the self-test's fifth line passing on the real Sparks: a container reaches the one address (R57's
+// Real use waits on the self-test's sixth line passing on the real Sparks: a container reaches the one address (R57's
 // Today).
 const JOB_MODEL_PARALLEL = 4;
 const JOB_MODEL_KEYS = ['SPARK_MODEL_URL', 'SPARK_MODEL_NAME', 'SPARK_MODEL_PARALLEL'];
@@ -9316,8 +9316,8 @@ function dangerReadsLoaded(reads) {
 // pair; in the paired Telegram chat the press is answered and the owner's next message there is compared. No, 15
 // minutes, the third wrong pair, a restart, a new pairing, /stop in its chat, /pause and a change in what it would run
 // close it; /lock and the switch going off close its Telegram side. install_update raises one (21-updates.mjs, C5),
-// and run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c); the rest come
-// with A12, A13 and D12; on the stand-in fleet a test raises one through dangerForTest.
+// and so do run's ladder for a risky delete and for the brain's names on a compute Spark (21-ladder.mjs, A7c), a delete on
+// Spark 2 (21-hub.mjs, A11) and a command as root (21-root.mjs, A12: the lock-out class too); on the stand-in fleet a test raises one through dangerForTest.
 const DANGER_KINDS = ['root', 'lockout', 'delete', 'brain', 'install'];
 // Each kind's words for line 1, and how it names the place ("on Spark 3", "of Spark 3").
 const DANGER_HEAD = { root: ['ROOT', 'on'], lockout: ['CAN LOCK YOU OUT', 'of'], delete: ['DELETES FOR GOOD', 'on'], brain: ['THE BRAIN', 'on'], install: ['INSTALLS SPARK CONSOLE', 'on'] };
@@ -9626,7 +9626,7 @@ async function dangerPress(id, c, by) {
 
 // On the stand-in fleet only: a test raises a dangerous ask through the next owner-only question (question(),
 // 17-changes.mjs), from STATE_DIR/.test-danger.json ({kinds, where, facts, shown, reads}; shown.file: a script on this
-// machine, read again at the press). Never on a real console, where nothing raises one yet.
+// machine, read again at the press). Never on a real console: this hook is off there (ALL_LOCAL).
 function dangerForTest(viewer, ctx, choices) {
   if (!ALL_LOCAL) return null;
   const f = `${STATE_DIR}/.test-danger.json`;
@@ -10519,7 +10519,7 @@ function journal(kind, fields = {}, body = null) {
 
 /* What each part records (B 2.1's table). None of these throws. */
 // A change written down first: a file written on a Spark, or a container started from an image the caller named. Stop,
-// pause, cancel and put-back never wait on the journal. The runner (run, write_file) will use the same start line.
+// pause, cancel and put-back never wait on the journal. The runner, the net and the box write their own start line (kind cmd).
 const journalFirstFor = (name, input) => name === 'save_file' || (name === 'keep_running' && Boolean(input?.image));
 // (task: the request's id, which its task keeps, so a task's report counts its own lines: E7, 14-tasks.mjs)
 const jCall = (name, input, args, ctx) => ({ act: name, args, via: ctx.via || null, actor: ctx.actor || null, key: ctx.agentId || null, chat: ctx.chat || null,
@@ -10779,7 +10779,7 @@ function journalNeeds(add, here) {
 // as PUT /heartbeat saves it, and the beat starts). Any other NAME goes in the secrets file's `keys`, 30 at most. Such a
 // message is answered by code, never by the brain: the chat keeps the words with the value replaced by what became of
 // it, then the answer as a notice. On Telegram the message that held it is deleted, and if that fails the owner is told
-// to delete it. Nobody else gives a key: a member's, an agent's or a carry-on turn's words go to sparkieTurn, whose first
+// to delete it. Nobody else gives a key: an agent's or a carry-on turn's words go to sparkieTurn, whose first
 // line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R51.md)
 const KEY_NAME_RE = /^[A-Z][A-Z0-9_]{1,40}$/, KEYS_MAX = 30, KEY_BYTES = 4096, KEY_MIN = 8;
 // "/key" at the start of the words (Telegram may add the bot's name: /key@bot).
@@ -13834,7 +13834,7 @@ function sortSedSafe(s) {
 // text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything
 // JSON can carry (a getter or a toString that throws is caught too). Five classes, in
 // their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's
-// ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes).
+// ladder), risky (always asked), lockout (only as root: asked, inside the net), notdone (never, and not for want of a yes).
 // The careful answer is the default: a command is a change only when the sorter can show it is one, a program it knows,
 // called by a name or path it resolves to that program, with every word that decides what it does in view, touching
 // only places it can place (20-places.mjs). Anything else is risky: an unknown program, option or sub-command (each
@@ -16370,7 +16370,7 @@ action({
       ...(open ? { note: DEV_BOX_WORDS } : {}), next: next(job.id) };
   },
 });
-/* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
+/* ───────── the box filled from an exact tree, and read back as data (C8b; called by propose_update, C8c) ───────── */
 // Area: features        Rules: R62, R52, R43, R23, R47        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -16385,8 +16385,8 @@ action({
 // back is the paths that differ from the tree filled, with their new blob ids; each new blob goes into the bare copy
 // by `git hash-object -w --no-filters --stdin` (bytes only, no index, no checkout, nothing run). Both are a change:
 // Sparkie's and an agent's call meet the pause, Sparkie's the rail (R52), as opening the box does. The tree each box
-// was filled from lives only in memory. Nothing calls them yet but run's test door on the stand-in fleet
-// (BOX_FILL_DOOR, 21-work.mjs); design C's propose_update (C8c) is the first caller.
+// was filled from lives only in memory. Their callers: propose_update (21-selfchange.mjs, C8c; off while
+// SELF_CHANGE_ON is false) and run's test door on the stand-in fleet (BOX_FILL_DOOR, 21-work.mjs).
 const FILL_FOLDER = 'spark-console';
 // The bounds, for a fill and a read back alike: entries (files and folders), one file, all files, one path (bytes).
 const FILL_MAX_ENTRIES = 5000, FILL_MAX_FILE = 8 * 2 ** 20, FILL_MAX_BYTES = 64 * 2 ** 20, FILL_MAX_PATH = 255, FILL_MS = 120000;
@@ -16684,7 +16684,7 @@ async function boxFillDoor(input, viewer, ctx) {
     throw e;
   }
 }
-/* ───────── the box: a throw-away container on a compute Spark (A2; commands in it come with A4) ───────── */
+/* ───────── the box: a throw-away container on a compute Spark (A2; a command in it: boxRun, A4) ───────── */
 // Area: features        Rules: R62, R52, R1, R43, R23        Tests: box.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
@@ -19220,7 +19220,7 @@ action({
 // Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
 // (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's
 // words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the
-// sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only
+// sorter calls not done; root (21-root.mjs: never on Spark 2) and the root helper's own line; a pause; the lock-out class (it is kept only
 // by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
 // removes or changes the brain's container or its model files; nothing that starts a model, a job or any other workload
 // there; nothing that touches Spark Console's own unit, state, secrets or repository copy (only its installer changes
@@ -19440,7 +19440,7 @@ const HUB_WAYS = {
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
 // said: what the sorter calls not done; a change on a Spark holding the brain; sudo in a command (answered "set root":
 // root is run's root: true, 21-root.mjs). Handed on: a change on Spark 2 to hubChange (21-hub.mjs: always asked, inside
-// the net) and the lock-out class to netChange (21-net.mjs: the dangerous ask, inside the net); a write_file or a
+// the net) and the lock-out class to netChange (21-net.mjs: done only as root, so answered "set root"); a write_file or a
 // command given a key is refused in both.
 // At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
@@ -19840,8 +19840,8 @@ const workGoneLines = gone => (Array.isArray(gone) && gone.length ? [...gone.sli
 // owner's yes 120. A change that runs at once has 10 at most, and one asked for more is asked first (the ladder), so
 // the owner's press gives it the time: the wall's analysis keeps an at-once change's time limit short (it is what bounds
 // what a wrongly sorted change could do with the processors, the disk's traffic and a port), and 10 is the design's own
-// smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
-// the lock-out class (10) come with their own steps: the ladder runs none of them yet.
+// smallest bound for an operation (Spark 2, the lock-out class). Root, Spark 2 and the lock-out class take no minutes:
+// each is refused (21-root.mjs, 21-work.mjs, 21-net.mjs); root's own limit is the helper's (30 minutes, 10 in the lock-out class).
 const LONG_MOST = { look: 1, atOnce: 10, asked: 120 };
 const LONG_WHY = { look: 'a look runs for one minute at most', atOnce: 'a change that runs without your yes is kept short (asked first, it may have up to 120)', asked: 'a command runs for 120 minutes at most' };
 // Seconds in a minute (the stand-in fleet may shorten it, so a test's limit passes in seconds).
@@ -21965,7 +21965,7 @@ async function runKeyed(node, command, input, viewer, ctx) {
 // again, and when a way in differs the set is put back, Sparkie's and agents' changes pause (tripBreaker) and the owner
 // is told what differed; then the end line. A command whose end is unknown (the Spark stopped answering, or the console
 // was cut off) is never run again by itself: the owner is told, once (here, or by journalAfterRestart at the next
-// start). It never runs on Spark 2 or on a Spark holding the brain, never as root (the net doesn't exist yet), and
+// start). It never runs on Spark 2 or on a Spark holding the brain, never as root (root is 21-root.mjs's, inside the net), and
 // never while changes are paused, whatever its caller says. Its one caller is run's ladder (21-ladder.mjs, A7c): at
 // once behind hostClear, or after the owner's yes (asked: a risky change too). An end it can't know holds the Spark's
 // claim until systemd says the unit is gone or its time limit has passed (here, and runnerHold after a console
@@ -22493,7 +22493,7 @@ async function runnerUndo(viewer, ctx, since = '') {
 /* ───────── Sparkie's own code: a proposal, as a pull request (design C 2.5, step 8; the build map's C8c) ───────── */
 // Area: features        Rules: R69, R58, R54        Tests: selfchange.test.mjs, check-update.test.mjs
 // Owns: tmp (writers: selfTree; a folder: each send's work, removed on every exit)        Timers: none        Wakes: none
-// propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
+// propose_update {do: start|send|drop|install, title, why} (group updates): Sparkie proposes a change to Spark Console's own code
 // as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and
 // notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by
 // entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files
@@ -24582,11 +24582,11 @@ function commandShown(c, ok, out) {
 // run (the one page's tool, design A's host_look) runs one command Sparkie writes on any Spark, Spark 2 included. The
 // sorter sorts it (20-sort.mjs, A7c): a look runs inside the root helper's look wall (deploy/spark-console-root, R42;
 // design A 2.3 and 2.13): the whole disk read-only, no network, no socket or device, keys hidden, as a throw-away account
-// with root's read rights, so it can change and send nothing. Anything else goes to the ladder (21-ladder.mjs, R61): a
-// change on a compute Spark at once or asked, through the runner's run wall with the copy first; a change on Spark 2
-// (21-hub.mjs) and the lock-out class (21-net.mjs) are asked and run inside the lock-out net, and root: true goes to
-// rootChange (21-root.mjs). helperCall is the one
-// way the console calls the helper: one script over ssh (local bash on Spark 2) that first checks the Spark's helper is
+// with root's read rights, so it can change and send nothing (nine exact forms, LOOK_FORMS, run as code's own fixed
+// text outside it). Anything else goes to the ladder (21-ladder.mjs, R61): a change on a compute Spark at once or asked,
+// through the runner's run wall with the copy first; a change on Spark 2 (21-hub.mjs) is asked and runs inside the
+// lock-out net; the lock-out class is done only as root (21-net.mjs); root: true goes to rootChange (21-root.mjs).
+// helperCall is the console's call for all but the net (the net's are guardCall's, 21-guard.mjs): one script over ssh (local bash on Spark 2) that first checks the Spark's helper is
 // the one this build ships, then the command's key names, then calls the helper through sudo -n with a fresh id, the
 // command's SHA-256 and its seconds. Spark 2's console unit forbids new privileges, so there the call goes through the
 // owner's service manager. Before the owner's one-time command has run on a Spark (deploy/root-for-sparkie.sh), with a
@@ -25685,7 +25685,7 @@ function sessionFor(req) {
   }
   return null;
 }
-// The owner, signed in on this device. Only the owner signs in this way (members use Tailscale).
+// The owner, signed in on this device. Only the owner signs in this way (an agent uses its key).
 function sessionViewer(req) { return ownerSessionView(sessionFor(req)); }
 // A signed-in device's session as a viewer: only the owner's (the app door reads its ticket's session with it, R40).
 function ownerSessionView(s) {

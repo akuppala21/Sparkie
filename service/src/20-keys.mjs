@@ -12,7 +12,7 @@
 // as PUT /heartbeat saves it, and the beat starts). Any other NAME goes in the secrets file's `keys`, 30 at most. Such a
 // message is answered by code, never by the brain: the chat keeps the words with the value replaced by what became of
 // it, then the answer as a notice. On Telegram the message that held it is deleted, and if that fails the owner is told
-// to delete it. Nobody else gives a key: a member's, an agent's or a carry-on turn's words go to sparkieTurn, whose first
+// to delete it. Nobody else gives a key: an agent's or a carry-on turn's words go to sparkieTurn, whose first
 // line (keysHidden) hides a /key form, a heartbeat's address and every kept value, and keeps nothing. (docs/rules/R51.md)
 const KEY_NAME_RE = /^[A-Z][A-Z0-9_]{1,40}$/, KEYS_MAX = 30, KEY_BYTES = 4096, KEY_MIN = 8;
 // "/key" at the start of the words (Telegram may add the bot's name: /key@bot).
