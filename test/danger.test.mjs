@@ -6,13 +6,14 @@
 // agent's ask and an agent's own call; who may approve, long and over 3,500 characters, forged lines and invisible
 // characters, a path its one line would change; the pair typed in the page's own chat box; what "came from" looks for
 // (a package's name blanked at its own place only, a host after "@", in one pass) and its bounds (64 things, 64 Mi
-// characters looked through); no action on main reaches it; a task parked at one is not carried on by the loop's
+// characters looked through); only the named raisers reach it; a task parked at one is not carried on by the loop's
 // budgets.
 //
-// The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). Nothing on main raises one, so these tests do: with
-// STATE_DIR/.test-danger.json present (stand-in fleet only), the next owner-only question becomes a dangerous ask with
-// the kinds, place, facts, bytes and reads the file names, and its yes runs that question's call. The question used is
-// a stop of a model that answers Sparkie's agents (routed there first), which asks the owner whoever asks.
+// The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). These tests raise one through the stand-in hook;
+// the named raisers have their own tests. With STATE_DIR/.test-danger.json present (stand-in fleet only), the next
+// owner-only question becomes a dangerous ask with the kinds, place, facts, bytes and reads the file names, and its yes
+// runs that question's call. The question used is a stop of a model that answers Sparkie's agents (routed there first),
+// which asks the owner whoever asks.
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
@@ -710,11 +711,16 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(!/innerHTML/.test(app), 'no HTML from text');
   });
 
-  test('no action on main reaches it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+  test('only the named raisers reach it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+    // the parts that may raise a dangerous ask, each a step that was read as one
+    const RAISERS = [
+      '20-danger.mjs',
+      '21-updates.mjs', // install_update (C5)
+    ];
     const src = join(REPO, 'service', 'src');
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {
       const text = readFileSync(join(src, f), 'utf8');
-      if (f !== '20-danger.mjs') assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
+      if (!RAISERS.includes(f)) assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
     }
     assert.match(readFileSync(join(src, '20-danger.mjs'), 'utf8'), /function dangerForTest\(viewer, ctx, choices\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
     const chat = await newChat(), r = await say(chat, WORDS);
