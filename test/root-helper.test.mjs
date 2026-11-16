@@ -2243,10 +2243,13 @@ describe('what bounds a plain change (R63)', () => {
     });
     for (const t0 = Date.now(); !(existsSync(join(s.R, 'ran')) && readFileSync(join(s.R, 'ran'), 'utf8').includes('first')); await new Promise(res => setTimeout(res, 200)))
       assert.ok(Date.now() - t0 < 30000, 'the script began');
-    appendFileSync(file, 'echo added >> "$SPARK_CONSOLE_REHEARSAL/ran"\n');   // (a writer outside the unit, while it runs)
+    // (a writer outside the unit, while it runs: on a Spark it writes the real file, which the unit never sees; the
+    // stand-in has no mount namespace, so its copy stands at the path, read-only, and the write is refused)
+    try { appendFileSync(file, 'echo added >> "$SPARK_CONSOLE_REHEARSAL/ran"\n'); } catch (e) { assert.equal(e.code, 'EACCES'); }
     const r = await call;
     assert.equal(r.status, 0, r.stdout);
     assert.equal(readFileSync(join(s.R, 'ran'), 'utf8'), 'first\nlast\n', 'the line added after the hash never ran');
+    assert.equal(readFileSync(file, 'utf8'), SCRIPT, 'the file under it is back once the unit ended');
     assert.ok(unitCall(s, `sw-run-${id}`).includes(`BindReadOnlyPaths=/run/spark-console/${id}/script-1:/home/owner/proj/s.sh`));
     assert.equal(readFileSync(join(s.R, 'standin/ran', `sw-run-${id}`, 'script-1'), 'utf8'), SCRIPT, 'the copy holds the bytes hashed');
     assert.ok(calls(s).some(c => c[0] === 'setpriv' && c[1] === '--reuid=1000' && c.at(-1) === file), 'read as the owner');
@@ -2285,6 +2288,14 @@ describe('what bounds a plain change (R63)', () => {
     ]) refused(change(s, 'true', { extra: scripts.flatMap(x => ['--script', x]) }), why);
     refused(look(s, 'true', { extra: ['--script', `${h}:~/proj/s.sh`] }), '--script is for run');
     assert.equal(started(s).length, 0, 'nothing ran');
+    // Two, run end to end by their paths from the change's own folder: each bound over its path, each read as hashed.
+    s.put('home/owner/proj/t.sh', 'echo two >> "$SPARK_CONSOLE_REHEARSAL/ran2"\n');
+    s.put('home/owner/proj/u.sh', 'echo one >> "$SPARK_CONSOLE_REHEARSAL/ran2"\n');
+    const both = change(s, 'bash u.sh && bash t.sh', { dir: join(home, 'proj'), extra: ['--script', `${sha('echo two >> "$SPARK_CONSOLE_REHEARSAL/ran2"\n')}:~/proj/t.sh`,
+      '--script', `${sha('echo one >> "$SPARK_CONSOLE_REHEARSAL/ran2"\n')}:/home/owner/proj/u.sh`] });
+    assert.equal(both.status, 0, both.stdout + both.stderr);
+    assert.equal(readFileSync(join(s.R, 'ran2'), 'utf8'), 'one\ntwo\n');
+    for (const [n, f] of [[1, 't.sh'], [2, 'u.sh']]) assert.ok(unitCall(s, `sw-run-${both.id}`).includes(`BindReadOnlyPaths=/run/spark-console/${both.id}/script-${n}:/home/owner/proj/${f}`), f);
     // Eight, each a plain file there: it runs, each bound over its own path.
     for (let i = 0; i < 8; i++) s.put(`home/owner/proj/s${i}.sh`, SCRIPT);
     const ok = change(s, 'true', { extra: Array.from({ length: 8 }, (_, i) => ['--script', `${h}:~/proj/s${i}.sh`]).flat() });

@@ -910,17 +910,18 @@ do_check() {
 # copy, and the unit gets the copy read-only over the path for its whole run. The copy goes with the held folder.
 SCRIPT_GIVEN=() SCRIPT_SHAS=() SCRIPT_PATHS=()
 script_form() {   # each --script's form: <sha256>:<path>, ~/ and a file or a whole path in the owner's home, each once
-  local s p q
+  local s p q hash given
   [ ${#SCRIPTS[@]} -le $SCRIPTS_MAX ] || refuse "at most $SCRIPTS_MAX --script"
   for s in "${SCRIPTS[@]}"; do
     [[ $s =~ ^([0-9a-f]{64}):(.+)$ ]] \
       || refuse "--script takes <sha256>:<path>: 64 hex digits, a colon, and ~/ and a file, or a whole path, in the owner's home"
-    p=${BASH_REMATCH[2]}
+    hash=${BASH_REMATCH[1]} given=${BASH_REMATCH[2]}   # (taken at once: safe_path's own match resets BASH_REMATCH)
+    p=$given
     case "$p" in '~/'?*) p="$OWNER_HOME/${p#'~/'}" ;; esac
     safe_path "$p" && in_home "$p" \
       || refuse "--script takes <sha256>:<path>: 64 hex digits, a colon, and ~/ and a file, or a whole path, in the owner's home"
-    for q in "${SCRIPT_PATHS[@]}"; do [ "$q" != "$p" ] || refuse "--script names ${BASH_REMATCH[2]} twice"; done
-    SCRIPT_GIVEN+=("${BASH_REMATCH[2]}") SCRIPT_SHAS+=("${BASH_REMATCH[1]}") SCRIPT_PATHS+=("$p")
+    for q in "${SCRIPT_PATHS[@]}"; do [ "$q" != "$p" ] || refuse "--script names $given twice"; done
+    SCRIPT_GIVEN+=("$given") SCRIPT_SHAS+=("$hash") SCRIPT_PATHS+=("$p")
   done
 }
 script_files() {   # each a plain file that is there, with no link in its path, and not where the wall hides or puts back
