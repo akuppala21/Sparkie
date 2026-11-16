@@ -18352,6 +18352,16 @@ async function doorUpgrade(req, socket, head) {
 // at once with `putback`. Only the console's half calls these (21-net.mjs, A13b): guardScript
 // builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
 // ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
+// The folders given read-only to a change (--protect), as one shell line that fills p: a real folder there now as ~/…; one
+// that is a link, or has a link in its path (a model store on another disk), as the folder it leads to, which the helper
+// takes as a whole path; one not there, left out; one that is there and leads nowhere that can be read, never left out
+// quietly: said "protect ~/…" (said(), the call's own line), and nothing runs. helperScript (21-work.mjs) can share it.
+function protectShell(folders) {
+  return `p=(); ${folders.map(d => {
+    const x = `"$HOME"${q(d.slice(1))}`;
+    return `if [ -e ${x} ] || [ -L ${x} ]; then r=$(realpath -e -- ${x} 2>/dev/null) || r=''; if [ "$r" = "$HOME"${q(d.slice(1))} ] && [ -d "$r" ]; then p+=(--protect ${q(d)}); elif [ -n "$r" ] && [ -d "$r" ]; then p+=(--protect "$r"); else said ${q(`protect ${d}`)}; fi; fi`;
+  }).join('; ')}`;
+}
 function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false }) {
   // (the id goes into a shell line: only the shape every helper call has)
   if (!/^[a-z0-9]{8,40}$/.test(String(id))) throw new Error('A guard id is 8 to 40 of a-z and 0-9.');
@@ -18359,7 +18369,7 @@ function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', me
   if (!/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new Error('A guard’s folder is ~ or a folder under it.');
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   // (a folder given read-only, as helperScript gives a change's: each only when it is a real folder there now, A11)
-  const under = d => `"$HOME"${q(d.slice(1))}`, pr = verb === 'run' ? (protect || []).filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
+  const pr = verb === 'run' ? (protect || []).filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   const call = verb === 'run'
     ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`}${pr.length ? ' "${p[@]}"' : ''}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''} -- ${q(command)}`
     // (root, R70: as root, only inside the net armed in the same call; --lockout holds a lock-out change to 10 minutes)
@@ -18371,7 +18381,7 @@ function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', me
     '[ -f "$h" ] || said none',
     's=$(sha256sum -- "$h" 2>/dev/null) || said none; s=${s%% *}',
     `[ "$s" = ${HELPER_SHA256} ] || said "unknown $s"`,
-    ...(pr.length ? [`p=(); ${pr.map(d => `[ -d ${under(d)} ] && [ "$(realpath -e -- ${under(d)} 2>/dev/null)" = ${under(d)} ] && p+=(--protect ${q(d)})`).join('; ')}`] : []),
+    ...(pr.length ? [protectShell(pr)] : []),
     `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
@@ -19553,6 +19563,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
+      if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
     }
     const back = a.goesBackAt || new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString(), output = lookClean(netOutput(id, called.out));

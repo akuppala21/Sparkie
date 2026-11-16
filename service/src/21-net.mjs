@@ -338,6 +338,8 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
+      if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
     }
     const back = a.goesBackAt || new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString(), output = lookClean(netOutput(id, called.out));

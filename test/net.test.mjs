@@ -621,3 +621,23 @@ test('a put-back the helper says failed is told as that, after its time and at s
   }
   assert.ok(!told.some(t => /RESTART|LIVE|doesn’t answer|didn’t answer/.test(t)), told.join('\n'));
 });
+
+// From the helper's reviewer, protect-link (the console's half): a model store that is a link (on another disk) was
+// left out of --protect without a word, so it was writable in a change inside the net.
+test('a folder kept read-only that is a link is passed as where it leads; one that leads nowhere is never quietly left out', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, realpathSync } = await import('node:fs'), { tmpdir } = await import('node:os');
+  const src = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8'), fn = /^function protectShell\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'protectShell');
+  const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`, protectShell = new Function('q', `${fn}\nreturn protectShell;`)(q);
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'protect-'))), store = join(home, 'disk2', 'models');
+  mkdirSync(store, { recursive: true });
+  mkdirSync(join(home, '.cache', 'huggingface'), { recursive: true });
+  symlinkSync(store, join(home, 'models'));
+  symlinkSync(join(home, 'nowhere'), join(home, 'gone'));
+  const lineFor = folders => spawnSync('bash', ['-c', `said() { printf 'said %s\\n' "$1"; exit 0; }\n${protectShell(folders)}\nprintf '%s\\n' "\${p[@]}"`], { env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 10000 }).stdout;
+  try {
+    assert.equal(lineFor(['~/models', '~/.cache/huggingface', '~/notthere']), `--protect\n${store}\n--protect\n~/.cache/huggingface\n`);
+    assert.equal(lineFor(['~/models', '~/gone']), 'said protect ~/gone\n');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
