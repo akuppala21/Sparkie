@@ -209,10 +209,12 @@ describe('no check that lived in member code lets anyone else through, and the o
 });
 
 describe('no answer, notice or page names a view the page no longer has', () => {
-  const GONE = /Access →|Access ->|→ People|→ Agents(?! and Telegram)|\bon Models\b|Models →|Clusters →|Preview as a member|Request access|\b(?:Home|Files|Models|Access|People) (?:page|view|tab)\b/;
-  // In runAction, which the rail's builder holds: known, and nothing else.
+  const GONE = /Access →|Access ->|→ People|→ Agents(?! and Telegram)|\bon Models\b|\bfrom Models\b|Models →|Clusters →|\bon Clusters\b|\b(?:from|in|on|open|Open)\s+(?:Spark Console’s\s+)?Deploy\b|Deploy →|Preview as a member|Request access|\b(?:Home|Files|Models|Access|People|Deploy|Clusters) (?:page|view|tab)\b/;
+  // Known, in parts other builders hold tonight (TR-5): each goes from this list when its sentence is fixed.
   const KNOWN = [
-    'The owner can resume them in Access → Agents.',
+    'Test it on Clusters first.',
+    'Test the cable again on Clusters.',
+    'start one across Spark 3 and Spark 4 from Deploy when both are free.',
   ];
 
   test('the service: nothing but the one known line', () => {

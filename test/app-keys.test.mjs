@@ -21,7 +21,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, copyFileSync, chmodSync, rmSync, readdirSync, lstatSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { T, REPO, MEMBER, useFleet, api, call, createKey, newChat, say, chatMessages, waitFor, sleep, auditLines, SLOW } from './lib.mjs';
+import { T, REPO, OWNER, MEMBER, useFleet, api, call, createKey, newChat, say, chatMessages, waitFor, sleep, auditLines, SLOW } from './lib.mjs';
 import { startMock, MOCK } from './start-mock.mjs';
 
 // Made-up keys, new each run, of no shape the mask knows: only their kept value can hide them.
@@ -285,6 +285,46 @@ describe('keys given once', { concurrency: 1 }, () => {
     await tgSay(`/key TG_EARLY ${E.tg}`);
     assert.match((await sentAfter(from)).body.text, /\nIt was in your earlier words too: hidden in the chats now, but the journal \(never rewritten\) and your earlier Telegram message still hold it; delete that message yourself\.\n/);
     assert.ok(!readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8').includes(E.tg), 'the chat file');
+  });
+
+  // The final read, K3: a value typed in plain words reaches more of a stored chat than its words. A chat as a turn and a
+  // task leave it on disk (a step's line and last lines, an ask's text, a button's label, an error, the page's snapshot,
+  // a report owed, a field a later build adds), on a console of its own; after /key none of them holds it, in memory
+  // (GET /chats/:id), on disk (chats.json) and in the next daily copy's source.
+  test('a value typed before /key is hidden in every part of a stored chat: step lines, asks, buttons, an error, the snapshot and a report', { timeout: 180000 * SLOW }, async () => {
+    const X = made('kx'), at = new Date(Date.now() - 600000).toISOString(), id = 'sc_00000000000000c3';
+    const conv = { id, login: OWNER, title: `log in with ${X}`, spark: null, createdAt: at, updatedAt: at,
+      messages: [
+        { role: 'user', content: `log in to the registry on spark 3 with ${X}`, context: { page: `Spark 3, registry ${X}` }, createdAt: at },
+        { role: 'assistant', content: 'I asked before logging in.', createdAt: at, error: `The registry refused ${X}.`,
+          tools: [{ name: 'run', outcome: 'needs-ok', where: 'Spark 3', line: `docker login -u me -p ${X} registry.example`, tail: `Error: ${X} refused\nexit 1` }],
+          asks: [{ group: '0a1b2c3d', text: `Run this on Spark 3?\n$ docker login -u me -p ${X} registry.example\nAsked because your words don’t name it.` }],
+          choices: [{ id: '0a1b2c3d4e', label: `Log in with ${X}`, state: 'gone', group: '0a1b2c3d' }], later: { notes: [`kept ${X}`] } },
+      ],
+      reports: [{ task: 't_0000k3', how: 'done', request: `log in to the registry with ${X}`, since: at, end: at, hours: 2, turns: 8, tg: false, jobs: [] }] };
+    const B = await startMock({ watchMs: 60000, env: { SPARK_CONSOLE_TASKS_AFTER_MS: '600000' },
+      prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'chats.json'), JSON.stringify({ conversations: [conv] }), { mode: 0o600 }) });
+    const was = { fleet: T.fleet, base: T.base, mcp: T.mcp, origin: T.origin };
+    Object.assign(T, { fleet: B, base: B.base, mcp: B.mcp, origin: B.origin });
+    try {
+      const before = (await api(`/chats/${id}`)).json;
+      assert.ok(JSON.stringify(before.messages).includes(`-p ${X} registry`), 'the chat holds it before');
+      const r = await say(id, `/key REGISTRY_KEY ${X}`);
+      assert.match(r.text, /^Kept your key REGISTRY_KEY\./);
+      assert.match(r.text, /\nIt was in your earlier words too: hidden in the chats now, but the journal \(never rewritten\) still holds it\.$/);
+      const got = (await api(`/chats/${id}`)).json, [said, step] = got.messages;
+      assert.ok(!JSON.stringify(got).includes(X), JSON.stringify(got).slice(0, 2000));
+      assert.equal(got.title, 'log in with [hidden]');
+      assert.deepEqual([said.content, said.context, step.error, step.tools[0].line, step.tools[0].tail, step.asks[0].text.split('\n')[1], step.choices[0].label, step.later.notes[0]],
+        ['log in to the registry on spark 3 with [hidden]', { page: 'Spark 3, registry [hidden]' }, 'The registry refused [hidden].', 'docker login -u me -p [hidden] registry.example',
+          'Error: [hidden] refused\nexit 1', '$ docker login -u me -p [hidden] registry.example', 'Log in with [hidden]', 'kept [hidden]']);
+      const disk = readFileSync(join(B.stateDir, 'chats.json'), 'utf8'), saved = JSON.parse(disk).conversations.find(c => c.id === id);
+      assert.ok(!disk.includes(X), 'chats.json');
+      assert.equal(saved.reports[0].request, 'log in to the registry with [hidden]');
+      assert.deepEqual([saved.id, saved.login, saved.messages[1].choices[0].id], [id, OWNER, '0a1b2c3d4e'], 'whose it is and its ids are as they were');
+      // (only the secrets file holds it now, and the journal's record of the turn it was typed in: none was made here)
+      nowhere(X, { fleet: B, allowed: [B.secretsFile] });
+    } finally { Object.assign(T, was); await B.stop(); }
   });
 
   test('a kept key that reached the secrets file another way (pull.sh setup in a terminal, or by hand) goes to the brain hidden in an earlier message\'s history', async () => {

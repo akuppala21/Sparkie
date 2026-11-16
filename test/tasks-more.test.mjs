@@ -8,7 +8,9 @@
 // between don't. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
 // stop, one needs-you line; a press that runs the button wakes it with that time given back. The brain here has a
 // context of 1,000 tokens, so one long lookup ends a reply at the output budget and a task carries on in a fresh turn
-// 1.5 seconds later.
+// 1.5 seconds later. The round limit is a budget as the steps and the output are (R50): a task's carry-on turn the
+// rounds end at its own limit of turns stops with the mark (a fleet of its own, the task seeded one turn from it); so
+// does one the brain's token budget ends (a setup with a tokenBudget, the stand-in brain counting more).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
@@ -208,4 +210,54 @@ test('from Telegram, a task’s last reply and its stop reach the phone past six
     const got = await waitFor(() => { const s = tgSent().slice(from); return s.some(x => STOPPED.test(x)) && s.some(x => /Say “go on” to carry on/.test(x)) && s; }, { timeout: 300000 * SLOW, what: 'the last reply and the stop on Telegram' });
     assert.ok(got.filter(x => /Carrying on with your request in a fresh turn/.test(x)).length <= 1, `the replies in between stay in Spark Console: ${JSON.stringify(got.map(x => x.slice(-80)))}`);
   } finally { noScript(); }
+});
+
+// R50 (the rounds' follow-up of the final read): a carry-on turn the round limit ends, at its task's own limit of turns,
+// stops the task with the mark on its reply, as the steps and the output do; it is not taken as done.
+test('a task the round limit ends at its own limit of turns stops with the mark on its reply, and is not taken as done', { timeout: 240000 * SLOW }, async () => {
+  const words = 'look around the fleet, then tell me what you found', chat = 'sc_50500000000000a1', id = 'j_505000000001', at = new Date(Date.now() - 60000).toISOString();
+  // (eight rounds of lookups scripted: as many as a brain not checked may take; a checked one's six end it sooner)
+  const F = await startMock({ watchMs: 60000, env: { SPARK_CONSOLE_CONTINUE_MS: '300', SPARK_CONSOLE_TASKS_AFTER_MS: '1000', SPARK_CONSOLE_TASK_RETRY_MS: '2000' }, prepare: ({ dir, root, stateDir }) => {
+    writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60));
+    writeFileSync(join(stateDir, 'chats.json'), JSON.stringify({ conversations: [{ id: chat, login: 'owner@test', title: 'rounds', spark: null, createdAt: at, updatedAt: at,
+      messages: [{ role: 'user', content: words, createdAt: at }, { role: 'assistant', content: 'Looked at some of it.\nCarrying on with your request in a fresh turn.', createdAt: at }],
+      task: { id, since: at, request: words, at, continuations: 7, hours: 2, turns: 8, carry: true } }] }), { mode: 0o600 });
+    writeFileSync(join(dir, 'model-script.json'), JSON.stringify([{ match: CARRIED, rounds: Array(8).fill([{ name: 'guide', arguments: { tools: 'past' } }]) }]));
+  } });
+  try {
+    const messages = async () => (await (await fetch(`${F.base}/chats/${chat}`)).json()).messages;
+    const m = await waitFor(async () => { const x = await messages(), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 120000, what: 'the carry-on turn' });
+    const reply = m[m.findIndex(y => y.auto) + 1];
+    assert.match(reply.content, /Stopped here: one message may take \d+ rounds of tools, and this one has\./, reply.content.slice(-400));
+    assert.equal(reply.stopped, 'turns', reply.content.slice(-400));
+    const t = JSON.parse(readFileSync(join(F.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat)?.task;
+    assert.equal(t?.stopped, 'turns', JSON.stringify(t));
+  } finally { await F.stop(); }
+});
+
+// R50 (the tokens' follow-up): a carry-on turn the brain's token budget ends, at its task's own limit of turns, stops the
+// task with the mark on its reply, as the other budgets do. The setup's budget is 4,000 tokens, and the stand-in brain
+// counts 5,000 for each answer (model-habits.json usage): one round of tools, then the last.
+test('a task the token budget ends at its own limit of turns stops with the mark on its reply, and is not taken as done', { timeout: 240000 * SLOW }, async () => {
+  const words = 'look over the fleet, then tell me what you found', chat = 'sc_50500000000000b1', id = 'j_505000000002', at = new Date(Date.now() - 60000).toISOString();
+  const F = await startMock({ watchMs: 60000, env: { SPARK_CONSOLE_CONTINUE_MS: '300', SPARK_CONSOLE_TASKS_AFTER_MS: '1000', SPARK_CONSOLE_TASK_RETRY_MS: '2000' }, prepare: ({ dir, root, stateDir }) => {
+    writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60));
+    const f = join(stateDir, 'main.json'), main = JSON.parse(readFileSync(f, 'utf8'));
+    main.presets[main.current] = { ...main.presets[main.current], tokenBudget: 4000 };
+    writeFileSync(f, JSON.stringify(main), { mode: 0o600 });
+    writeFileSync(join(dir, 'model-habits.json'), JSON.stringify({ usage: 5000 }));
+    writeFileSync(join(stateDir, 'chats.json'), JSON.stringify({ conversations: [{ id: chat, login: 'owner@test', title: 'tokens', spark: null, createdAt: at, updatedAt: at,
+      messages: [{ role: 'user', content: words, createdAt: at }, { role: 'assistant', content: 'Looked at some of it.\nCarrying on with your request in a fresh turn.', createdAt: at }],
+      task: { id, since: at, request: words, at, continuations: 7, hours: 2, turns: 8, carry: true } }] }), { mode: 0o600 });
+    writeFileSync(join(dir, 'model-script.json'), JSON.stringify([{ match: CARRIED, rounds: Array(3).fill([{ name: 'guide', arguments: { tools: 'past' } }]) }]));
+  } });
+  try {
+    const messages = async () => (await (await fetch(`${F.base}/chats/${chat}`)).json()).messages;
+    const m = await waitFor(async () => { const x = await messages(), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 120000, what: 'the carry-on turn' });
+    const reply = m[m.findIndex(y => y.auto) + 1];
+    assert.match(reply.content, /Stopped here: one message may use 4,000 of the brain’s tokens \(what it reads and writes\), and this one has\./, reply.content.slice(-400));
+    assert.equal(reply.stopped, 'turns', reply.content.slice(-400));
+    const t = JSON.parse(readFileSync(join(F.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat)?.task;
+    assert.equal(t?.stopped, 'turns', JSON.stringify(t));
+  } finally { await F.stop(); }
 });

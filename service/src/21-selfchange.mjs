@@ -20,6 +20,9 @@ const SELF_CHANGE_ON = false;
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 // (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
 const SELF_REFUSED = /^\.github\//i;
+// (and what a test run writes for the build it tested, which git keeps neither of: the lock the installer takes as
+// "tested" and the map of which tests run; a proposal's tests are GitHub's run)
+const SELF_TEST_RUN = /^(?:service\/workflows\.lock\.json|test\/affected-map\.json)$/i;
 // What Sparkie may never change on its own word (design C 2.5): the paths that always run the whole suite
 // (tools/affected.mjs: ALWAYS and ALWAYS_PARTS; all of tools/, whose installed copy is what runs on a proposal), and the
 // three documents. selfchange.test.mjs checks this list against tools/affected.mjs.
@@ -28,10 +31,24 @@ const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/i, /^service\/worker\.py$
   /^AGENTS\.md$/i, /^docs\/architecture\.md$/i, /^docs\/contract\.md$/i,
   // (and the page, and the test helpers every test leans on)
   /^public\//i, /^test\/authenticator\.mjs$/i, /^test\/eval\.mjs$/i, /^test\/eval\/cases\.json$/i];
+// (selfchange.test.mjs holds every part whose Area is safety or ways in, or that raises an ask or calls a gate, on it)
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
   '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start',
   // (the parts that hold the gates: this one, the dangerous ask, the brain's rail, the install, the guard, the runner)
-  '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner'].map(p => `service/src/${p}.mjs`);
+  '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner',
+  // (what decides whether a change on a Spark runs at once, is asked or isn't done: the ladder, the go-ahead, the sorter)
+  '21-ladder', '21-ahead', '20-sort', '20-shell', '20-shape', '20-options', '20-programs', '20-tools', '20-places', '20-remote', '20-tables', '20-uses',
+  // (what runs a command or writes a file on a Spark: run, write_file, a kept key in a change, root, a long command)
+  '21-work', '21-write', '21-run-keys', '21-root', '21-long',
+  // (the lock-out net, and a change on the hub)
+  '21-net', '21-hub',
+  // (the box and what fills it; the trial, the eval and the brain check, which this piece and the rail read)
+  '21-box', '21-box-fill', '21-brain-trial', '21-brain-eval', '21-brain-check',
+  // (the asks: where an ask's command came from, a yes from Telegram, and every part that raises one)
+  '20-came-from', '20-tg-approve', '20-tell', '20-lessons', '20-memory', '21-apps', '21-compare', '21-power', '21-selftest',
+  // (keys, the owner's words and the pause, the state put back, the doors, and the rest of the safety parts)
+  '20-keys', '20-words', '20-memory-said', '20-memory-tg', '22-putback', '23-http', '20-beat', '20-heal', '20-needs', '20-state-copy', '20-ways-in',
+].map(p => `service/src/${p}.mjs`);
 // (where a send unpacks the proposal for the generator: an empty folder of its own for each, 0700)
 const SELF_TMP = `${STATE_DIR}/tmp`;
 const SELF_ID = /^[0-9a-f]{8}$/, SELF_CHAT = /^sc_[0-9a-f]{16}$/, SELF_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/+@-]{1,400}$/;
@@ -353,6 +370,8 @@ async function selfSend(viewer, ctx, input) {
   if (bad.length) throw new HttpError(409, `The box read back entries that can’t be proposed (${bad.slice(0, 3).map(e => clean(e?.path, 80)).join(', ')}), so nothing was sent.`);
   const github = entries.filter(e => SELF_REFUSED.test(e.path)).map(e => e.path);
   if (github.length) throw new HttpError(409, `A proposal never changes .github/ (${github.slice(0, 5).join(', ')}): take that out of the box. Nothing was sent.`);
+  const ran = entries.filter(e => SELF_TEST_RUN.test(e.path)).map(e => e.path);
+  if (ran.length) throw new HttpError(409, `A proposal never holds what a test run writes for the build it tested (${ran.join(', ')}): git keeps neither file. Take that out of the box. Nothing was sent.`);
   const attrs = entries.filter(e => /(?:^|\/)\.gitattributes$/i.test(e.path)).map(e => e.path);
   if (attrs.length) throw new HttpError(409, `A proposal never holds a .gitattributes file (${attrs.slice(0, 5).join(', ')}): git archive and git diff would obey it. Take it out of the box. Nothing was sent.`);
   const spellings = selfSpellings((await selfGit(['ls-tree', '-r', '-z', '--name-only', baseTree], { raw: true })).toString('utf8').split('\0').filter(Boolean), entries);

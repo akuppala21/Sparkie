@@ -167,3 +167,17 @@ test('an ask\'s own lines are shown with its buttons, as plain text', () => {
   assert.match(APP, /!mine && !m\.streaming \? askLines\(m\) : null,\n\s*!mine && !m\.streaming \? choiceRow\(m\) : null,/);
   assert.match(CSS, /\.ask-lines pre \{[^}]*white-space: pre-wrap;/);
 });
+
+test('a change\'s line under the reply says what its own outcome says: "Started" only for one that started (C-10)', () => {
+  const { toolLines } = pageFunctions('commandRow', 'toolLines');
+  const step = (outcome, ok = true) => ({ name: 'start_model', title: 'Start a model', ok, change: true, ...(outcome ? { outcome } : {}) });
+  const said = outcome => textOf(toolLines([step(outcome)]).kids[0]);
+  assert.equal(said('started'), 'Started: Start a model');
+  assert.equal(said('already'), 'Nothing to do: Start a model');
+  assert.equal(said('already-starting'), 'Already starting: Start a model');
+  assert.equal(said('waiting'), 'Waiting: Start a model');
+  assert.equal(said('cancelling'), 'Cancelling: Start a model');
+  assert.equal(said('saved'), 'Done: Start a model');
+  assert.equal(said('needs-ok'), 'Start a model: asked for your OK');
+  assert.equal(textOf(toolLines([step('started', false)]).kids[0]), 'Couldn’t: Start a model');
+});

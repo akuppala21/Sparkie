@@ -1,5 +1,5 @@
 /* ───────── Telegram: the owner talks to Sparkie from any phone or laptop ───────── */
-// Area: features        Rules: R32, R34        Tests: telegram.test.mjs
+// Area: features        Rules: R32, R34        Tests: telegram.test.mjs, pressed.test.mjs
 // Owns: telegram.json (writers: tgSave)
 // Timers: tgLoop (the long poll, one at a time, with a pause after a failure), tgTyping (“typing…” every 4.5 s while
 //   Sparkie answers, 5 minutes at most)
@@ -21,6 +21,8 @@ const TG_RETRY_MS = Number(process.env.SPARK_CONSOLE_TELEGRAM_RETRY_MS || 2000);
 const TG_TOKEN_RE = /^\d{6,12}:[A-Za-z0-9_-]{30,64}$/, TG_TOKEN_IN = /\b\d{6,12}:[A-Za-z0-9_-]{30,64}\b/;
 const TG_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const TG_BRAIN_DOWN = 'Sparkie’s model isn’t answering. /status shows where things stand, and /restart sparkie restarts it from here.';
+// Code's own line after a reply that broke off before it ended (the model cut off, a time-out after tools ran).
+const TG_BROKE_OFF = 'This answer broke off before it ended. The details are in Spark Console.';
 // The pairing line, also the answer to /start and /help.
 const TG_HELLO = 'Paired with Spark Console. Say what you need, as you would in the chat there. /new starts a new chat, /status says where things stand, /pause pauses agents’ changes, /restart sparkie restarts Sparkie’s model, /stop ends Sparkie’s answer here, /lock stops approvals from here, /unpair disconnects this chat.';
 
@@ -195,14 +197,15 @@ async function tgUpdate(u) {
   // /lock only ever turns approvals off, so it counts however late it is read and however full the minute is: neither
   // rule below may drop it while approvals are on (20-tg-approve.mjs).
   if (m && tgApproveOn() && typeof m.text === 'string' && /^\/lock(?:@\w+)?(?:\s|$)/i.test(m.text.trim())) return tell('system', tgLock());
+  // A key in the owner's words is taken out first, an old message's too and one past the minute's limit: it is kept and
+  // the message deleted, never left in the chat (20-keys.mjs, R51).
+  if (m && await tgKeys(m)) return;
   // At most 20 messages a minute from the owner's chat; then one line and silence until the minute frees.
   tg.inHits = tg.inHits.filter(t => Date.now() - t < 60000);
   if (tg.inHits.length >= TELL_LIMITS.in) { if (!tg.toldTooMany) { tg.toldTooMany = true; await tell('system', 'Too many messages. Wait a minute.'); } return; }
   tg.inHits.push(Date.now());
   tg.toldTooMany = false;
   if (cq) return tgPress(cq);
-  // A key in the owner's words is taken out first, an old message's too: the message is deleted (20-keys.mjs, R51).
-  if (await tgKeys(m)) return;
   if (Date.now() - Number(m.date) * 1000 > TG_STALE_MS) return tell('system', 'I was away when you sent that. Say it again if you still want it.');
   // Someone else's words (forwarded, or sent through another bot) never count as the owner's.
   if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_date || m.via_bot) return tell('system', 'Type it in your own words: forwarded messages aren’t read here.');
@@ -321,7 +324,8 @@ async function tgTurn(text) {
     // (stopped with /stop: its line was the answer)
     if (message.error === TURN_STOPPED) return;
     if (message.error && !String(message.content || '').trim()) return await tell('reply', TG_BRAIN_DOWN);
-    await tell('reply', tellReplyText(message), { buttons: tellButtons(message) });
+    // (a reply that broke off part-way says so, as the page shows its error under it, C-9)
+    await tell('reply', `${tellReplyText(message)}${message.error ? `\n\n${TG_BROKE_OFF}` : ''}`, { buttons: tellButtons(message) });
   } finally {
     typing.stop();
     tg.busy = false;
@@ -351,15 +355,40 @@ async function tgRun(conv, choice, ask) {
     const r = await runChoice(tgOwner(), conv, choice, { via: 'telegram', actor: 'owner on Telegram', ...(ask ? { approved: true } : {}) });
     if (ask) tgApproved(ask, conv, r);
     // (a question that went here as its own ask isn't said again)
-    if (r.outcome === 'question' || r.outcome === 'needs-ok') return tgAskedThere(r.message) || await tell('reply', tellReplyText(r.message), { buttons: tellButtons(r.message) });
+    if (r.outcome === 'question' || r.outcome === 'needs-ok') { if (tgAskedThere(r.message)) return true; const f = tgFollowUp(conv, r.message); return await tell('reply', f.text, { buttons: f.buttons }); }
     if (r.outcome === 'declined') return await tell('system', 'Okay, left as it is.');
     if (r.outcome === 'error') return await tell('system', /paused/i.test(r.error || '') ? 'Changes are paused in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
     if (r.operation) return await tell('system', 'Under way. I’ll tell you here when it’s done.');
-    return await tell('system', 'Done.');
+    // (still running at the press's time: its end is told here when it comes, pressLate in 14-chats.mjs)
+    if (r.outcome === 'running') return await tell('system', 'It is still running. I’ll tell you here when it ends.');
+    return await tell('system', tgRanLine(r));
   } catch (e) {
     // (a dangerous ask's refusals are fixed lines of code's own: 20-danger.mjs)
     return tell('system', e.danger ? e.message : e.status === 409 ? 'That button has expired. Ask again.' : e.status === 403 ? 'That one waits for you in Spark Console.' : 'That didn’t work. The details are in Spark Console.');
   } finally { tg.busy = false; }
+}
+// A question that came back from a press here (a follow-up): its words, and its plain buttons only for a chat of this
+// one's; a page chat's are pressed on the page (tgPress finds only Telegram chats' plain buttons), so it says where (C-15).
+function tgFollowUp(conv, message) {
+  const words = tellReplyText(message);
+  if (conv?.channel === 'telegram') return { text: words, buttons: tellButtons(message) };
+  return { text: /That one waits for you in Spark Console\.$/.test(words) ? words : `${words}\n\nAnswer it in Spark Console.`, buttons: [] };
+}
+// What a press that ran answers here, from its result's own fields (K2, as the page's line, pressRan in 14-chats.mjs):
+// "Done." only for a command that ran and ended with exit 0, and for a result that is no command's, as before. Fixed
+// lines with no output, error or address (R32): the page's line in that chat says the rest, the one-time command too.
+function tgRanLine(r) {
+  const more = 'The details are in Spark Console.', node = nodeById(String(r?.spark || '')), at = node ? sparkName(node) : 'that Spark';
+  if (r?.net) {
+    if (r.net.outcome === 'put back') return `It ran inside the lock-out net and was put back. ${more}`;
+    if (r.net.outcome !== 'kept') return `It wasn’t kept: if it ran, ${at}’s own timer puts it back. ${more}`;
+    return r.exit === 0 ? 'Done: it ran inside the lock-out net and is kept.' : `It ran inside the lock-out net and is kept, but the command itself ${Number.isInteger(r.exit) ? `ended with exit code ${r.exit}` : 'was ended before it finished'}. ${more}`;
+  }
+  if (r?.ran === false) return r.ownerCommand ? `Nothing ran: ${at} needs your one-time set-up command first. It is in your chat in Spark Console.` : `Nothing ran. ${more}`;
+  if (r?.notWritten) return r.exit === null ? `Whether it was written isn’t known: it was ended before it finished. ${more}` : `Nothing was written. ${more}`;
+  if (!r || !['ran', 'exit', 'wrote'].some(k => Object.hasOwn(r, k)) || r.exit === 0 || (r.wrote && r.exit === undefined)) return 'Done.';
+  if (Number.isInteger(r.exit)) return `It ran and failed, with exit code ${r.exit}. ${more}`;
+  return `${r.ended || r.cut || 'Whether it finished isn’t known.'} ${more}`;
 }
 // /status: from Spark Console's own record, no brain.
 async function tgStatusText() { return `${await statusText()}\n${tgApprovalsLine()}`; }

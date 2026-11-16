@@ -192,6 +192,8 @@ function sortPlace(p, glob0, ctx, r, wide, touched = false) {
   if (LOCK_PATHS.some(hits) || WAYS_FILE.test(p) || (glob && /\/systemd\//.test(p) && p.split('/').some(g => /[*?[]/.test(g) && WAYS_UNITS.some(u => ['service', 'socket', 'timer'].some(x => sortSeg(g, `${u}.${x}`) || sortSeg(g, `${u}.${x}.d`))))) || (glob ? (base.startsWith('.') || base.replace(/[*?]|\[[^\]]*\]/g, '').length > 2) && [...LOCK_NAMES].some(n => sortGlob(base).test(n)) : LOCK_NAMES.has(base))) raise(r, 'lockout', `It names ${sortQ(p)}, one of the ways in (SSH, users and sudo, shell start files, the network, the firewall, Tailscale, or Spark Console’s sign-in).`);
   for (const [x, what, del, at] of RISKY_PATHS) if (x.test(p) || (wide && p === '/') || ((glob || wide) && at.some(hits))) { if (del) ctx.kinds.add('delete'); raise(r, 'risky', `It names ${sortQ(p)}: ${what}.`); }
   if (!touched) return;
+  // (a schedule, a unit or an autostart entry written: what it will run later is read from the command's words)
+  if (touched === true && (RISKY_PATHS[2][0].test(p) || /(?:^|\/)systemd\/|^~\/\.config\/autostart(?:\/|$)|\.(?:service|timer|path|socket)$/.test(p))) sortLaterWords(ctx, r, 'a schedule or a unit written');
   if (touched === true && /^\/home(?:\/|$)/.test(p)) raise(r, 'risky', `It changes ${sortQ(p)}, under /home but outside the owner’s home.`);
   if (LATER_PATHS.some(hits) || (touched === true && (/^~\/[^/]+\.(?:py|pyc|pth|so)$|^~\/[^/]+\/__init__\.py$/.test(p) || sortGitSet(p)))) raise(r, 'risky', `It changes ${sortQ(p)}: a program or a setting that something outside the wall later runs or reads.`);
   if (ctx.root && touched !== 'bare' && !(touched === 'seen' && /^\/dev\/(?:null|zero|u?random|std(?:in|out|err))$/.test(p)) && !ROOT_OK.test(glob ? `${p.slice(0, p.search(/[*?[]/)).replace(/\/[^/]*$/, '') || '/'}/x` : p)) raise(r, 'risky', `As root it changes ${sortQ(p)}, outside the folders a root command may change at once.`);
@@ -250,12 +252,23 @@ function sortScan(text, ctx, r, progs, touched = false) {
   for (const s of text.replace(/\$\{HOME\}|\$HOME\b/g, '~').split(/[\s;&|()<>`'"=,{}]+/)) {
     if (!s || (s.length > SORT_PATH && !touched)) continue;
     for (const p of sortCands(s)) {
-      if (/^[~/.]/.test(p) || (p.includes('/') && !p.includes('://'))) for (const q of sortPaths(p, ctx, r)) sortPlace(q, /[*?[]/.test(p), ctx, r, false, touched);
+      // (in text a program reads, .* .+ .? and a backslash are a regular expression, not a pattern bash expands: s/.*// and
+      // r'/.*' name no dot file; a home's pattern, ~/.*, still counts)
+      const re = touched === 'seen' && /\.[*+?]|\\/.test(p) && !/^~/.test(p);
+      if (/^[~/.]/.test(p) || (p.includes('/') && !p.includes('://'))) for (const q of sortPaths(p, ctx, r)) sortPlace(q, !re && /[*?[]/.test(p), ctx, r, false, touched);
       else sortNames(p, ctx, r);
     }
     if (LOCK_NAMES.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)}, one of the ways in.`);
     const g = progs && SORT_PROGS[s];
     if (g) raise(r, { delete: 'risky', open: 'risky', device: 'change' }[g.cls] ?? g.cls, `It names ${sortQ(s)} inside text it runs: ${g.why}.`);
+    if (progs && SORT_LOCK_HANDLERS.has(s.split('/').pop())) raise(r, 'lockout', `It names ${sortQ(s)} inside text it runs, a program that changes a way in.`);
+  }
+  // (text it runs that names a program whose worst can't be put back: sorted by that worst, since the text isn't read)
+  if (progs) {
+    const w = text.split(/[\s;&|()<>`'"=,{}[\]]+/).map(s => s.split('/').pop());
+    if (w.includes('tailscale')) r.lasting ??= 'Code it runs names tailscale, and what that code does is never read: a Tailscale sign-out or sign-in as another key can’t be put back by the net.';
+    if (w.some(s => /^(?:userdel|deluser)$/.test(s))) r.lasting ??= 'Code it runs names userdel, and what that code does is never read: a deleted user’s home can’t be put back.';
+    if (w.some(s => /^(?:apt|apt-get|aptitude|dpkg|snap)$/.test(s)) && w.some(s => SORT_WAY_PKGS.test(s) || /^(?:remove|purge|autoremove|autopurge|-r|-P|--remove|--purge)$/.test(s))) { raise(r, 'lockout', 'Code it runs names a package tool beside a package the ways in depend on, or a removal.'); r.lasting ??= 'Code it runs may remove a package the ways in depend on, and what that code does is never read: the net doesn’t put a package back.'; }
   }
 }
 // Every word of a command that is not a look, as a place it may change (relative ones from where a cd may have left it).

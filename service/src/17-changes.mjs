@@ -41,9 +41,11 @@ function setAgentSettings(change) {
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
   : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
     : 'and the owner said not to stop anything');
+// (the owner's own /undo, typed on the page or in the paired Telegram chat, runs its steps while paused, as runAction
+// lets it through: R34, R1-01)
 const pausedCheck = ctx => {
   const s = agentSettings();
-  if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
+  if (ctx?.via && ctx.via !== 'page' && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
 };
 
 // Questions and their choices. Each choice's arguments stay here; the caller only gets an id to answer with.
@@ -107,8 +109,9 @@ function changeLabel(name, input) {
   // A saved workflow's button names it, and lists the steps it would save (16-actions.mjs pageOnlyLabel, F20).
   if (name === 'save_workflow' || name === 'forget_workflow') return pageOnlyLabel(name, input);
   // A memory button says the line it would keep or drop. (Labels are saved in chats.json: a key in the line, or in a saved
-  // workflow's value, is hidden before the cut, A-5, 2026-11-14.)
-  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || '')).slice(0, 200)}”${input.until ? ` (until ${input.until})` : ''}`;
+  // workflow's value, is hidden before the cut, A-5, 2026-11-14.) The line it would keep is shown whole: remember's text
+  // is 300 characters at most, and the press keeps all of it as the owner's (C-11).
+  if (name === 'remember') return `Remember: “${maskSecrets(String(input.text || ''))}”${input.until ? ` (until ${input.until})` : ''}`;
   if (name === 'forget_memory') return `${input.erase ? 'Erase for good' : 'Forget'}: “${String(memoryText(input.id) || 'that line').slice(0, 200)}”`;
   if (name === 'compare_models') {
     const w = String(findSaved(String(input.workflow || ''))?.title || input.workflow || '').slice(0, 80);
@@ -199,16 +202,16 @@ const inRecipes = m => recipeCatalog().models.some(r => r.variants.some(v => onD
 function agentSafeSetup(m) {
   const args = Array.isArray(m.manifest?.args) ? m.manifest.args.map(String) : [];
   const own = args.filter(a => a.startsWith('-') && dig.OWN.has(dig.flagKey(a.split('=')[0])));
-  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it from Deploy`;
-  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, from Spark Console’s Deploy`;
+  if (own.length) return `its spark.json sets flags Spark Console sets itself (${[...new Set(own.map(a => a.split('=')[0].slice(0, 40)))].join(', ')}); the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
+  if (dig.remoteCode(args)) return `it needs to run its own code, which only the owner can allow, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const flags = dig.cleanFlags(args, m.repo || m.name);
-  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it from Deploy`;
+  if (flags.problems.length) return `its spark.json ${String(flags.problems[0]).slice(0, 120)}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const env = { ...(m.manifest?.env || {}), ...(m.manifest?.cluster?.env || {}) }, cleaned = dig.cleanEnv(env);
   const dropped = Object.keys(env).filter(k => !(k in cleaned)), named = dropped.filter(k => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k));
-  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it from Deploy`;
+  if (dropped.length) return `its spark.json sets ${[...named, ...(named.length < dropped.length ? ['a setting whose name isn’t a plain name'] : [])].join(', ')}; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   const image = m.manifest?.image;
   if (image && !(String(image).includes('@sha256:') && (CONFIG.imageSources || []).some(p => String(image).startsWith(p)))) {
-    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it from Deploy`;
+    return `its spark.json names its own image${/^[A-Za-z0-9._/:@-]{1,200}$/.test(String(image)) ? ` (${image})` : ' (not shaped like an image name)'}, which isn’t from a trusted source pinned by digest; the owner can start it with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent`;
   }
   return null;
 }
@@ -623,7 +626,7 @@ async function startModel(args, viewer, ctx) {
     const how = best.how, asked = best.only && passedOverAsk(viewer, ctx, args, m, placed, best), passedOver = passedOverLines(best, args);
     if (asked) return asked;
     if (!setup && m.repo) refreshSetups(viewer, m.repo).catch(() => null);
-    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, from Spark Console’s Deploy.');
+    if (how && dig.remoteCode(how.args)) throw new HttpError(403, 'That setup lets the model run its own code; only the owner can allow it, with Spark Console’s own deploy call (POST /deploy), not through Sparkie or an agent.');
     const job = launch(viewer, ctx, m, placed, how);
     if (how?.fromBrain) note(job, `Using the brain’s proven setup for this model${placed.two ? ', split across both Sparks,' : ''} without its draft model and stretched context (those are Spark 2’s)`);
     for (const line of passedOver) note(job, line);
@@ -659,7 +662,7 @@ async function startModel(args, viewer, ctx) {
     job.progress = null;
     pausedCheck(ctx);
     const fresh = await inventory(null), m = libraryModel(fresh, v.repo);
-    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Start it from Models in a minute.`);
+    if (!m) throw new Error(`Downloaded ${v.repo}, but the library doesn’t show it yet. Ask Sparkie to start it again in a minute.`);
     // A model started by its full Hugging Face name joins Recipes once its download worked (A9). If Hugging Face
     // doesn't answer, it starts as before.
     if (found.outsideRecipes) {

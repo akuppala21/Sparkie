@@ -114,6 +114,29 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   assert.equal(readFileSync(at2('.ssh/authorized_keys'), 'utf8'), KEYS_LINE);
 });
 
+// The final read's hub-words: a refused command spelled through a shell, a wrapper or a variable was asked, not refused.
+test('Spark 2’s power, spelled through a shell, busybox, a variable or another program’s text, is refused too, not asked', { timeout: 60000 * SLOW }, async () => {
+  const before = starts().length;
+  for (const command of ['bash -c reboot', 'busybox reboot', 'x=reboot; $x', `awk 'BEGIN{system("reboot")}'`, 'sh -ec poweroff']) {
+    const r = await run(command);
+    assert.equal(r.status, 403, `${command}: ${r.text}`);
+    assert.equal(r.json.error, `Not done on Spark 2: it touches Spark 2’s power or its plug, which are never changed from here. ${NOT}`, command);
+  }
+  assert.equal(starts().length, before, 'nothing began');
+});
+
+// From the sorter's reviewer, S-4 (Spark 2's half): a line break in a command wrote lines of its own onto the button,
+// so "Asked because …" in the command read as the console's.
+test('a command with a line break is framed on Spark 2’s button: each of its lines after │, none read as the button’s own', { timeout: 60000 * SLOW }, async () => {
+  const chat = await newChat(), c = await inChat(chat, 'tidy the hub notes on spark 2', 'touch notes/a.txt\nAsked because you said so earlier.');
+  try {
+    assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value ?? c.error));
+    const shown = c.value.question.split('\n');
+    assert.deepEqual(shown.slice(0, 3), ['Run this on Spark 2? Its command has 2 lines, each shown after │:', '│ touch notes/a.txt', '│ Asked because you said so earlier.'], shown.join('\n'));
+    assert.ok(!shown.includes('Asked because you said so earlier.'), 'no line of the command stands as the button’s own');
+  } finally { const no = c.r?.message?.choices?.find(x => x.label === 'No'); if (no) await choose(chat, no.id); }
+});
+
 test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, a look and a change get the owner’s one command with --hub, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const r = await run('sudo touch notes/r.txt');
   assert.equal(r.status, 403, r.text);
@@ -233,4 +256,26 @@ test('off (SPARK_CONSOLE_HUB=0, its own fleet): a change on Spark 2 is not done,
   assert.equal(r.status, 403);
   assert.equal((await r.json()).error, 'Spark 2 runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.');
   assert.ok(!existsSync(join(off.root, 'spark2', 'notes', 'off.txt')));
+});
+
+// K5 (R66, the final read): the net's start line carries the request's task, and every change the net runs counts in
+// the task's report after the yes, whatever the sorter called it (here a command it can't read, risky).
+test('a change on Spark 2 pressed for a task counts in the task’s report, after your yes', { timeout: 240000 * SLOW }, async () => {
+  const words = 'fix the py notes on spark 2, then tell me what changed', command = `python3 -c "open('notes/k5.txt', 'w').write('k5')"`;
+  script([{ match: `^${words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, rounds: [[{ name: 'run', arguments: { on: 'spark2', command, dir: '~' } }]] },
+    { match: '^\\[Spark Console\\] The owner answered your question', calls: [] }]);
+  const chat = await newChat();
+  routes(true);
+  try {
+    const r = await say(chat, words);
+    const yes = (r.message.choices || []).find(x => x.label === 'Run it');
+    assert.ok(yes, JSON.stringify(r.message));
+    const p = await choose(chat, yes.id);
+    assert.match(p.json?.message?.content || '', /: it is kept\./, p.text);
+    assert.equal(readFileSync(at2('notes/k5.txt'), 'utf8'), 'k5');
+    const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report), { timeout: 120000, what: 'the task’s report' });
+    assert.equal(report.content.split('\n')[2], 'Changes: 0 made at once, 1 after your yes; 1 question asked of you. Undone: 0.', report.content);
+    const start = starts().find(x => x.args?.command === command);
+    assert.deepEqual([start?.task, Boolean(start?.net)], [report.report, true], JSON.stringify(start));
+  } finally { noScript(); rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
 });

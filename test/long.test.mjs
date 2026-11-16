@@ -12,7 +12,7 @@
 // Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, cpSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, cpSync, symlinkSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
@@ -46,6 +46,17 @@ const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n')
 const records = (dir = T.fleet.journalDir) => (existsSync(dir) ? readdirSync(dir).filter(f => f.endsWith('.jsonl')).sort() : []).flatMap(f => lines(join(dir, f))).filter(r => r.k === 'cmd');
 const startOf = (command, dir) => records(dir).filter(r => r.start && r.act === 'run' && r.args?.command === command).at(-1);
 const endOf = (r, dir) => records(dir).find(x => x.end && x.id === r.id);
+// A record's long text (its end line's, in this month's .out), as run-keys.test.mjs reads it.
+function recordText(id) {
+  for (const f of readdirSync(T.fleet.journalDir).filter(x => x.endsWith('.jsonl'))) {
+    const end = lines(join(T.fleet.journalDir, f)).find(x => x.id === id && x.end && Array.isArray(x.o));
+    if (end) return readFileSync(join(T.fleet.journalDir, f.replace(/\.jsonl$/, '.out'))).subarray(end.o[0], end.o[0] + end.o[1]).toString();
+  }
+  return '';
+}
+// Waits until `seconds` after a file the command touched first was made (when the command began), plus 2 s: past the
+// moment a command that lived on would have done its next thing.
+const pastIts = async (file, seconds) => { const until = statSync(at3(file)).mtimeMs + (seconds + 2) * 1000; if (until > Date.now()) await sleep(until - Date.now()); };
 // The units the helper asked systemd for (the rehearsal's own record), and the systemctl calls.
 const calls = () => lines(join(H3(), '.rehearsal', 'calls.log'));
 const unitProps = unit => calls().find(c => c[0] === 'systemd-run' && c.includes(`--unit=${unit}`)) || [];
@@ -79,6 +90,8 @@ test('with minutes a change is an operation: the call answers at once, exit code
   assert.deepEqual([start.class, start.minutes, start.seconds, start.op], ['change', 5, 5 * MINUTE, r.json.operation]);
   assert.deepEqual([end.ok, end.outcome, end.exit], [true, 'ran', 3]);
   assert.equal(j.cleanUp.match(/record (j_[0-9a-f]{12})/)[1], start.id);
+  // (its record keeps what it printed: the line after the command's own)
+  assert.match(recordText(start.id), /\nLONG-OUTPUT-WORD(?:\n|$)/, JSON.stringify(recordText(start.id)));
   assert.ok(unitProps(start.unit).includes(`RuntimeMaxSec=${5 * MINUTE}`), JSON.stringify(unitProps(start.unit)));
   // More than 10 minutes is asked first (from the API, with no button to show, not run: chat test below).
   const more = await run({ command: 'echo more > notes/c.txt', minutes: 30 });
@@ -115,7 +128,8 @@ test('a look with minutes is held to 1 and says so; it has a start and an end li
 });
 
 test('at its limit a long command is stopped with everything it started, a result too; without minutes the turn\'s own limit stops it', { timeout: 120000 * SLOW }, async () => {
-  const command = 'touch notes/lim-start; sleep 30; touch notes/lim-end';
+  // (left alone it would touch lim-end 9 seconds in; its limit is 2 minutes, 6 seconds here)
+  const command = 'touch notes/lim-start; sleep 9; touch notes/lim-end';
   const r = await run({ command, minutes: 2 });
   assert.equal(r.status, 200, r.text);
   const j = await ended(r.json.operation);
@@ -123,15 +137,20 @@ test('at its limit a long command is stopped with everything it started, a resul
   assert.match(j.cleanUp, /^It was stopped at its limit of 2 minutes, with everything it started\. What it printed is record j_[0-9a-f]{12} \(recall reads it\)\./, j.cleanUp);
   assert.ok(existsSync(at3('notes/lim-start')) && !existsSync(at3('notes/lim-end')));
   assert.equal(endOf(startOf(command)).outcome, 'ended');
+  await pastIts('notes/lim-start', 9);
+  assert.ok(!existsSync(at3('notes/lim-end')), 'nothing it started went on past its limit');
   // Without minutes: the call waits, and the command is ended at the runner's own limit.
-  const t0 = Date.now(), short = await run({ command: 'sleep 30; touch notes/short-end' });
+  const t0 = Date.now(), short = await run({ command: 'touch notes/short-start; sleep 8; touch notes/short-end' });
   assert.equal(short.status, 200, short.text);
   assert.match(short.json.ended || '', new RegExp(`^It ran past its ${SECONDS} seconds and was ended`), short.text);
   assert.ok(Date.now() - t0 < 20000 * SLOW && !existsSync(at3('notes/short-end')));
+  await pastIts('notes/short-start', 8);
+  assert.ok(!existsSync(at3('notes/short-end')), 'nothing it started went on past the runner\'s limit');
 });
 
 test('one long command a Spark at a time; cancel_operation stops its unit by id, says so, and lets the Spark go', { timeout: 120000 * SLOW }, async () => {
-  const command = 'touch notes/c-start; sleep 20; touch notes/c-end';
+  // (left alone it would touch c-end 8 seconds in)
+  const command = 'touch notes/c-start; sleep 8; touch notes/c-end';
   const r = await run({ command, minutes: 5 });
   assert.equal(r.status, 200, r.text);
   await waitFor(() => existsSync(at3('notes/c-start')), { every: 100, what: 'the command to start' });
@@ -142,12 +161,13 @@ test('one long command a Spark at a time; cancel_operation stops its unit by id,
   assert.equal(c.status, 200, c.text);
   assert.equal(c.json.outcome, 'cancelled', c.text);
   assert.ok(Date.now() - t0 < 15000 * SLOW, 'it did not wait for the command to end by itself');
+  assert.ok(t0 < statSync(at3('notes/c-start')).mtimeMs + 6000, 'the cancel was asked well before the command would have ended by itself');
   const j = await job(r.json.operation);
   assert.equal(j.status, 'cancelled');
   assert.match(j.cleanUp, /^It was stopped on Spark 3 after \d+ seconds?, with everything it started\. What it printed is record j_[0-9a-f]{12} \(recall reads it\)\./, j.cleanUp);
   const start = startOf(command);
   assert.ok(calls().some(x => x[0] === 'systemctl' && x[1] === 'stop' && x[2] === `${start.unit}.service`), 'its unit, stopped by name');
-  await sleep(2000);
+  await pastIts('notes/c-start', 8);
   assert.ok(!existsSync(at3('notes/c-end')), 'nothing it started went on');
   // The Spark is free again: a change runs.
   const next = await run({ command: 'echo next > notes/c.txt' });
@@ -205,7 +225,7 @@ test('a plain change the owner\'s words ask for, given more than 10 minutes, is 
   assert.ok(unitProps(startOf(command).unit).includes(`RuntimeMaxSec=${40 * MINUTE}`), 'all 40 minutes, from the press');
 });
 
-test('the dangerous ask says how long it may run: one line among its own facts, the lines the paired Telegram chat is sent too', { timeout: 120000 * SLOW }, async () => {
+test('the dangerous ask says how long it may run: one line among its own facts', { timeout: 120000 * SLOW }, async () => {
   const chat = await newChat(), words = 'clean up the tmp files on spark 3';
   script([{ match: `^${words}$`, rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'cat notes/todo.txt', dir: '~' } }],
     [{ name: 'run', arguments: { on: 'spark3', command: 'rm ~/notes/*.tmp', dir: '~', minutes: 30 } }]] }]);
