@@ -155,6 +155,7 @@ async function stopWhatRan(ran, viewer, ctx, title) {
       const out = x.kind === 'model' ? await runAction('stop_model', viewer, { spark: x.spark, container: x.container }, cx)
         : await stopAppStarted(viewer, x, cx);
       if (out?.outcome === 'question') throw new Error('it needs the owner’s answer first');
+      if (out?.left) { left.push(name); continue; }
       if (out?.operation) {
         const done = await waitJob(out.operation, 10 * 60000);
         if (done?.status !== 'completed') throw new Error(String(done?.error || done?.status || 'its stop didn’t finish').split('\n')[0]);
@@ -178,6 +179,9 @@ async function stopAppStarted(viewer, x, c) {
     if (!/isn’t an app Spark Console keeps running/.test(String(e?.message))) throw e;
     const r = await run(nodeById(x.spark), `docker inspect -f '{{.State.Status}}' ${q(x.container)} 2>/dev/null`, { timeout: 20000 });
     if (!(r.code === 0 && r.out.trim() === 'running')) return { outcome: 'already' };
+    // (one with a receipt that is off the list and running was started again by someone else: left, and never kept first)
+    const why = c.onlyIf ? await startedStill(x.spark, x.container, c.onlyIf) : null;
+    if (why) return { outcome: 'left', left: why };
     await runAction('keep_running', viewer, { spark: x.spark, container: x.container }, c);
     return runAction('keep_running', viewer, { spark: x.spark, container: x.container, do: 'stop' }, c);
   }
