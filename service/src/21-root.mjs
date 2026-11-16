@@ -56,6 +56,41 @@ function rootMounts(command, depth = 0) {
   };
   return walk(items);
 }
+// An interpreter given a program inline or on its input, by the sorter's own reading of the command (shellLex and
+// shellParse, 20-shell.mjs; past wrappers, into $( … ) and sh -c '…'): { prog, how }, or null. As root it is refused
+// unless every word of its program is on ROOT_INLINE_OK, which holds none today: the program's own words can load a
+// file (exec(open(…).read()), runpy.run_path, require, do, load) whose text the button never shows (A-16). awk is one
+// too (system, getline). A program file named as a word is the sorter's scripts (rootUnseen).
+const ROOT_INTERPRETERS = /^(?:python[\d.]*|pypy[\d.]*|perl[\d.]*|ruby[\d.]*|node(?:js)?|deno|bun|php[\d.]*|lua(?:jit)?[\d.]*|Rscript|julia|tclsh[\d.]*|g?awk|mawk|nawk)$/;
+const ROOT_INLINE_FLAGS = /^(?:-m|--eval|--print|--require|--import|--module|--command)(?:=|$)|^-[A-Za-z]*[ceEmpr][A-Za-z]*$|^-[ceEr]\S/;
+const ROOT_INLINE_OK = new Set();
+function rootInline(command, depth = 0) {
+  let items;
+  // (a command the reader can't read whole, a here-document into a program among them: as root it isn't run)
+  try { items = shellParse(shellLex(String(command)).toks); } catch (e) { return { doubt: String(e?.message || 'it can’t be read whole').replace(/\.$/, '').slice(0, 200) }; }
+  const walk = list => {
+    for (const pipe of list) for (const [n, cmd] of pipe.entries()) {
+      if (cmd.group) { const g = walk(cmd.group); if (g) return g; continue; }
+      for (const w of [...cmd.words, ...cmd.redirs.map(r => r.w)]) for (const sub of w?.subs || []) { const g = walk(sub); if (g) return g; }
+      const words = cmd.words.map(w => w.text);
+      let k = 0;
+      while (k < words.length && ROOT_WRAPS.has(words[k].split('/').pop())) { k++; while (k < words.length && /^-|^\d|^[A-Za-z_]\w*=/.test(words[k])) k++; }
+      const prog = (words[k] || '').split('/').pop(), rest = words.slice(k + 1);
+      if (ROOT_INTERPRETERS.test(prog)) {
+        const flag = rest.findIndex(x => ROOT_INLINE_FLAGS.test(x));
+        const fed = n > 0 || cmd.redirs.some(r => /^<(?:<-?|<<)?$/.test(r.op) && (r.fd == null || String(r.fd) === '0'));
+        const named = rest.some(x => !x.startsWith('-')), awk = /awk$/.test(prog);
+        const program = flag >= 0 ? (rest[flag].includes('=') ? rest[flag].slice(rest[flag].indexOf('=') + 1) : /^-[ceEr]\S/.test(rest[flag]) && !/^-[A-Za-z]+$/.test(rest[flag]) ? rest[flag].slice(2) : rest[flag + 1] ?? '') : awk && !rest.includes('-f') ? rest.find(x => !x.startsWith('-')) ?? '' : null;
+        if (program != null && !String(program).split(/\s+/).filter(Boolean).every(x => ROOT_INLINE_OK.has(x))) return { prog, how: flag >= 0 ? `it is given its program inline, with ${rest[flag].startsWith('--') ? rest[flag].split('=')[0].slice(0, 20) : /^-[ceEr]\S/.test(rest[flag]) && !/^-[A-Za-z]+$/.test(rest[flag]) ? rest[flag].slice(0, 2) : rest[flag].slice(0, 12)}` : 'its program is written in the command' };
+        if (fed && (!named || rest.includes('-'))) return { prog, how: n > 0 ? 'its program comes in through a pipe' : 'its program comes in on its input' };
+      }
+      // (a shell given its command as a word: read that word too, twice deep)
+      if (depth < 2 && /^(?:ba|da|z|k|a)?sh$/.test(prog)) { const c = rest.findIndex(x => /^-\w*c$/.test(x)); if (c >= 0 && rest[c + 1] != null) { const g = rootInline(rest[c + 1], depth + 1); if (g) return g; } }
+    }
+    return null;
+  };
+  return walk(items);
+}
 async function rootChange(input, viewer, ctx = {}) {
   if (!ROOT_ON) throw new HttpError(400, 'root isn’t on in this build: a command runs as the owner. Nothing ran.');
   if (input.on === 'box') throw new HttpError(400, 'root is for a compute Spark, not the box. Nothing ran.');
@@ -76,6 +111,11 @@ async function rootChange(input, viewer, ctx = {}) {
   // (code it runs that isn't on the button: never as root)
   const unseen = rootUnseen(sorted);
   if (unseen) throw new HttpError(403, unseen);
+  // (an interpreter given its program inline, or on its input: the program can load code from a file that isn't on the
+  // button, so as root it isn't run, A-16)
+  const inline = rootInline(command);
+  if (inline?.doubt) throw new HttpError(403, `Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t (${inline.doubt}). Give it in plainer words: one command after another, with no here-document, loop or arithmetic.`);
+  if (inline) throw new HttpError(403, `Nothing was asked or run: as root, give the commands themselves, not a program for ${inline.prog} to run (${inline.how}). Such a program can load code from a file that isn’t on the button. Run its steps as plain commands instead.`);
   // (a mount or swap made inside root's own unit never reaches the Spark: said, and how to do it instead)
   const mounts = rootMounts(command);
   if (mounts) throw new HttpError(403, `Nothing was asked or run: a root command runs with its own view of the disks, so a ${mounts} in it never reaches ${at} (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.`);

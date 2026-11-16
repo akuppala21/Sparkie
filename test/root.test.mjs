@@ -272,3 +272,29 @@ test('as root, a mount, unmount or swap is refused with how to do it instead: re
   assert.equal(r.status, 403, r.text);
   assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.');
 });
+
+// Round two with the outside reviewer (A-16, root's own half): an interpreter given its program inline carried no unshown
+// mark, so root accepted programs that load a file the button never shows.
+test('as root, an interpreter given its program inline or on its input is refused (none is allowed today), and so is a command the reader can’t read whole', async () => {
+  const shell = readFileSync(join(REPO, 'service', 'src', '20-shell.mjs'), 'utf8'), src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8');
+  const grab = re => re.exec(src)?.[0];
+  assert.ok(grab(/^function rootInline\([\s\S]*?\n\}$/m), 'rootInline');
+  const rootInline = new Function(`${shell}\n${['ROOT_WRAPS', 'ROOT_INTERPRETERS', 'ROOT_INLINE_FLAGS', 'ROOT_INLINE_OK'].map(n => grab(new RegExp(`^const ${n} = .*;$`, 'm'))).join('\n')}\n${grab(/^function rootInline\([\s\S]*?\n\}$/m)}\nreturn rootInline;`)();
+  for (const [c, prog, how] of [[`python3 -c "exec(open('/tmp/repair.py').read())"`, 'python3', /inline, with -c$/], [`python3 -c "import runpy; runpy.run_path('/tmp/repair.py')"`, 'python3', /with -c$/],
+    [`node -e "require('/tmp/repair.js')"`, 'node', /with -e$/], ['node --eval=1', 'node', /with --eval$/], [`perl -e 'do "/tmp/x.pl"'`, 'perl', /with -e$/], ["perl -ne 'print' /etc/hosts", 'perl', /with -ne$/],
+    ['python3 -m fix', 'python3', /with -m$/], ['node -r ./hook.js -e 1', 'node', /with -r$/], [`ruby -e 'load "/tmp/x.rb"'`, 'ruby', /with -e$/], [`awk 'BEGIN{system("id")}'`, 'awk', /written in the command$/],
+    ['cat /tmp/repair.py | python3', 'python3', /through a pipe$/], ['python3 < /tmp/repair.py', 'python3', /on its input$/], ['python3 - <<EOF\nprint(1)\nEOF', 'python3', /on its input$/],
+    ["env FOO=1 python3 -c 'print(1)'", 'python3', /with -c$/], [`bash -c "python3 -c 'print(1)'"`, 'python3', /with -c$/], ['echo $(python3 -c 1)', 'python3', /with -c$/]]) {
+    const r = rootInline(c);
+    assert.equal(r?.prog, prog, c);
+    assert.match(r.how, how, c);
+  }
+  for (const c of ['python3 --version', 'apt-get install -y python3', 'echo python3 -c', 'chmod 600 /etc/x', 'ufw allow 8002', 'printf root > rooted.txt', 'find old -delete']) assert.equal(rootInline(c), null, c);
+  assert.match(rootInline('for f in a b; do echo $f; done')?.doubt || '', /loop/);
+  // (end to end, the owner's own call: refused before anything is asked)
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: `python3 -c "exec(open('/tmp/repair.py').read())"`, root: true } });
+  assert.deepEqual([r.status, r.json?.error], [403, 'Nothing was asked or run: as root, give the commands themselves, not a program for python3 to run (it is given its program inline, with -c). Such a program can load code from a file that isn’t on the button. Run its steps as plain commands instead.'], r.text);
+  const loop = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'for f in a b; do touch $f; done', root: true } });
+  assert.equal(loop.status, 403, loop.text);
+  assert.match(loop.json.error, /^Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t \(/);
+});
