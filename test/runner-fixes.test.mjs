@@ -384,7 +384,6 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
   const looks = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length;
   const live = () => { const d = join(H3(), '.rehearsal', 'standin', 'live'); return existsSync(d) ? readdirSync(d).filter(u => u.startsWith('sw-run-')) : []; };
   const chat = await newChat(), t = await turn(chat, 'run the s6a script', [[RUN('bash notes/s6a.sh')]]);
-  assert.match(sentBack('run the s6a script')[0]?.question || '', /\nEach script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again\./);
   // Another change holds Spark 3: the press is refused before it reads anything there.
   const slow = await run('bash notes/slow6.sh', '~', { minutes: 1 });
   assert.equal(slow.json?.outcome, 'started', slow.text);
@@ -403,6 +402,8 @@ test('R1-03: the press takes the Spark\'s claim before it reads the scripts agai
   assert.ok(held.includes(`s=$(sha256sum < 'notes/s6a.sh' 2>/dev/null) && [ "\${s%% *}" = ${createHash('sha256').update('echo s6a ran\n').digest('hex')} ]`), held);
   assert.ok(held.endsWith('\nbash notes/s6a.sh'), held);
   assert.equal(recordText(end), '$ bash notes/s6a.sh\ns6a ran\n');
+  // (and its button says what the press checks)
+  assert.match(sentBack('run the s6a script again')[0]?.question || '', /\nEach script runs by its path: at your press its hash is read again, and once more by the change’s own first lines just before the command; if it changed, nothing runs and you are asked again\./);
 });
 
 // S-12 (the final sorter read): during the hold after Spark Console's state was put back from a copy, every agent change
@@ -460,31 +461,36 @@ test('S-13: a long command\'s operation carries its request\'s task, so its end 
 // R1-10 (round 1; P-2): with the journal unwritable a changing run must run nothing. Three refusals held that and could
 // be taken out with no test failing: the runner's start line (21-runner.mjs), undo's start line (the same part), and a
 // long look's start line (21-work.mjs).
-test('R1-10: with the journal\'s disk full, a changing run, an undo and a long look run nothing, each saying the record couldn\'t be written', { timeout: 180000 * SLOW }, async () => {
+const diskFull = async fn => { const flag = join(T.fleet.dir, 'disk-full'); writeFileSync(flag, ''); try { return await fn(); } finally { rmSync(flag, { force: true }); } };
+const lookUnits = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length;
+test('R1-10: with the journal\'s disk full, a changing run runs nothing (no unit, its copies gone) and says the record couldn\'t be written', { timeout: 60000 * SLOW }, async () => {
+  const units = runUnits().length, before = sets();
+  const r = await diskFull(() => run('echo full > notes/full.txt'));
+  assert.equal(r.status, 507, r.text);
+  assert.match(r.json.error, /^Couldn’t write the record of this change on Spark 2/);
+  assert.ok(!existsSync(at3('notes/full.txt')), 'nothing written');
+  assert.equal(runUnits().length, units, 'no unit');
+  assert.deepEqual(sets(), before, 'its copies went');
+});
+test('R1-10: with the journal\'s disk full, /undo puts nothing back and says the record couldn\'t be written', { timeout: 120000 * SLOW }, async () => {
   writeFileSync(at3('notes/u10.txt'), 'u10 before\n');
   const chat = await newChat();
   await turn(chat, 'change u10 on spark 3', [[RUN('echo after > notes/u10.txt')]]);
   assert.equal(text('notes/u10.txt'), 'after\n');
-  const flag = join(T.fleet.dir, 'disk-full'), units = runUnits().length, before = sets();
-  const lookUnits = () => calls().filter(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-look-/.test(a))).length;
-  writeFileSync(flag, '');
-  try {
-    const r = await run('echo full > notes/full.txt');
-    assert.equal(r.status, 507, r.text);
-    assert.match(r.json.error, /^Couldn’t write the record of this change on Spark 2/);
-    assert.ok(!existsSync(at3('notes/full.txt')), 'nothing written');
-    assert.equal(runUnits().length, units, 'no unit');
-    assert.deepEqual(sets(), before, 'its copies went');
-    const u = await say(chat, '/undo');
-    assert.match(u.text, /Couldn’t write the record of this change on Spark 2/, u.text);
-    assert.equal(text('notes/u10.txt'), 'after\n', 'nothing put back');
-    const looks = lookUnits(), l = await run('cat notes/a.txt', '~', { minutes: 1 });
+  const u = await diskFull(() => say(chat, '/undo'));
+  assert.match(u.text, /Couldn’t write the record of this change on Spark 2/, u.text);
+  assert.equal(text('notes/u10.txt'), 'after\n', 'nothing put back');
+});
+test('R1-10: with the journal\'s disk full, a long look\'s operation fails before its look runs, saying the record couldn\'t be written', { timeout: 120000 * SLOW }, async () => {
+  const looks = lookUnits();
+  const j = await diskFull(async () => {
+    const l = await run('cat notes/a.txt', '~', { minutes: 1 });
     assert.equal(l.json?.outcome, 'started', l.text);
-    const j = await ended(l.json.operation);
-    assert.equal(j.status, 'failed', JSON.stringify(j));
-    assert.match(JSON.stringify(j), /Couldn’t write the record of this change on Spark 2/);
-    assert.equal(lookUnits(), looks, 'no look ran');
-  } finally { rmSync(flag, { force: true }); }
+    return ended(l.json.operation);
+  });
+  assert.equal(j.status, 'failed', JSON.stringify(j));
+  assert.match(JSON.stringify(j), /Couldn’t write the record of this change on Spark 2/);
+  assert.equal(lookUnits(), looks, 'no look ran');
 });
 
 // S-17 (the final sorter read): ladder.test's "an agent's change is a button for the owner" checks an agent's own call,
