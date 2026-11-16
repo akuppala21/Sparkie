@@ -682,8 +682,12 @@ function ggufOnDisk(b64) {
   return files.length ? { format: 'gguf', ggufQuants: dig.ggufFiles(files).quants.map(x => x.file), architecture: 'GGUF' } : {};
 }
 // Text from a model's own files (config.json, spark.json) is kept only when it is short and plain: a change on a Spark
-// can write those files, and what is kept reaches the brain as the console's own reading (models_on_disk, R53).
+// can write those files. It is still text from outside (a sentence fits): models_on_disk, which hands it to the brain, is
+// an outside read (R26, R53), and nothing the brain reads as the console's own carries it.
 const plainText = v => (typeof v === 'string' && /^[A-Za-z0-9 ._+/()-]{1,80}$/.test(v) ? v : null);
+// A name from a Spark (a container, a model, a link) as an inside read or the record ahead of the owner's words may carry
+// it (R26, A-17): one word of letters, digits and ._-/:@+, at most 100 signs, no space; anything else is no name (null).
+const bareName = v => (typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._\-/:@+]{0,99}$/.test(v) ? v : null);
 // The same for spark.json's image and setting names: a setting name not shaped like one is left out; an image not
 // shaped like an image reference is never shown (plainImage: the plans' steps), though a start still tries it as named
 // and fails there. True when either was found; the plans say so (PLAIN_NOTE), never what it was.
@@ -3616,21 +3620,7 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
 // core and this request's groups (21-guide.mjs, R46). Operations post their result in the conversation when they
 // finish, so it never waits on them.
 const sparkieToolNames = () => [...ACTIONS.keys()];
-// Lookups whose results are the console's own numbers and names, or the owner's own lines: not text from outside.
-const INSIDE_READS = new Set([
-  'cluster_plan',
-  'deploy_plan',
-  'fleet_status',
-  'guide',
-  'linked_sparks',
-  'memory',
-  'models_on_disk',
-  'running_models',
-  'should_be_running',
-  'sparkie_setup',
-  'where_it_fits',
-  'workflows',
-]);
+// (Which lookups are inside reads is said by each action itself, `inside`: readInside, 14-rounds.mjs, R26.)
 const sparkieTools = () => sparkieToolNames().map(n => ACTIONS.get(n)).filter(Boolean)
   .map(a => ({ type: 'function', function: { name: a.name, description: a.description, parameters: liveSchema(a.input) } }));
 // Each Spark Console model call at a time: helpers (search terms) step aside while Sparkie answers someone.
@@ -4486,15 +4476,25 @@ async function turnRounds(turn) {
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
 const ROUND_CALLS = 4;              // limit: calls run in one round (each past them is answered "not run")
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
-// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
-// (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
+// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup its action doesn't mark
+// inside (readInside: outside is the default, A-17) once handed over, its error too (it can quote what it
 // read); run and write_file only once something ran there: a command that ran (one that failed too, its error output
 // is in its result), one started with minutes, write_file's ask (it shows the file's old lines), or a failure on the
 // far side (a 5xx can quote the command's own first line). Never a call refused, asked or answered "nothing ran"
 // before anything ran (final read of the net, 5: "Leave out sudo and set root" was followed by "this came from text
 // Sparkie read first", though nothing had run or been read).
+// An inside read (R26, A-17): only an action that says so itself, `inside: true` or, for some of its arguments, a function
+// of them (sparkie_setup with about "abilities"), where every field it returns is the console's own words or a bare name
+// (bareName, 05-library.mjs). Every other lookup, a new one too, is outside text.
+function readInside(a, args) {
+  if (a?.inside === true) return true;
+  if (typeof a?.inside !== 'function') return false;
+  let x = {};
+  try { x = JSON.parse(args || '{}'); } catch { return false; }
+  try { return a.inside(x && typeof x === 'object' ? x : {}) === true; } catch { return false; }
+}
 function readOutsideBy(c, a, { handed, ok, value, status }) {
-  if (!handed || a?.kind !== 'read' || (INSIDE_READS.has(c.name) && !(c.name === 'running_models' && /"detail"/.test(c.args || '')))) return false;
+  if (!handed || a?.kind !== 'read' || readInside(a, c.args)) return false;
   if (!WORK_TOOLS.has(c.name)) return true;
   if (!ok) return !(status >= 400 && status < 500);
   return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
@@ -5989,6 +5989,8 @@ const pairView = p => (p.error ? { sparks: p.nodes, canRun: false, fitsNow: fals
 
 action({
   name: 'fleet_status', title: 'Fleet status', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (an inside read, R26: the console's own numbers and words, names bare, bareName; needsOwner is code's lines, R21)
+  inside: true,
   description: 'Use first for “is everything OK / does anything need me / how busy is it?”. needsOwner: what is waiting on the owner right now, in Spark Console’s own words, each with what to do about it; an empty list means nothing is. For “anything need me?”, say those lines as they are, or say nothing needs them. A Spark Spark Console powered off on purpose has state "off" and offOnPurpose (when, why, parked models, how to turn it on): not a fault unless it carries a problem; say it as it is. power: the idle power-off setting. Each Spark: online or not, GPU use, memory (shared by CPU and GPU) and disk in GB, temperatures (temperatureC is the GPU’s; hottestC is the hottest sensor on the board, nvmeC the drive’s), power, uptime, running containers and issues. Power: gpuPowerWatts is the GPU alone; wall is the whole Spark at the socket, from its smart plug (plugOn, watts, volts, amps), and null where a Spark has no plug connected (Spark Console’s own Spark is read only: its plug can’t be switched from here); say which one you mean. An offline Spark has its last reading before it went dark, and powerWords says what its plug shows (off, shut down, or powered but not answering). wallEnergyKWh is measured at the plugs; gpuEnergyKWh counts the GPU alone. Next: workloads for what each container is, spark_detail for one Spark, spark_diagnostics if something looks wrong or went dark, fleet_events for what changed.',
   input: { type: 'object', properties: {}, additionalProperties: false },
   run: async (_, viewer) => {
@@ -5996,13 +5998,13 @@ action({
     return {
       // (always there, second: [] means nothing is waiting; a failure to build it fails the action, never reads as [])
       observedAt: s.updatedAt, needsOwner: needsLines(),
-      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: n.poweredOff, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
+      sparks: s.nodes.map(n => (n.state !== 'online' && n.poweredOff ? { id: n.id, name: n.name, state: 'off', offOnPurpose: { ...n.poweredOff, parkedModels: (n.poweredOff.parkedModels || []).map(bareName).filter(Boolean) }, lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null, wall: wallView(n.wall) }
         : n.state !== 'online' ? { id: n.id, name: n.name, state: n.state, problem: 'Not answering over SSH right now.', lastSeenAt: knowledge.sparks[n.id]?.lastSeenAt || null,
         ...darkNow(n.id), wall: wallView(n.wall), powerWords: wallWords(n.wall) } : {
         id: n.id, name: n.name, state: 'online', gpuUtilizationPercent: n.gpuUtilization ?? null, temperatureC: n.temperature ?? null, gpuPowerWatts: n.gpuPowerWatts ?? null, wall: wallView(n.wall),
         hottestC: lastReading(knowledge.sparks[n.id])?.hottestC ?? null, nvmeC: lastReading(knowledge.sparks[n.id])?.nvmeC ?? null,
         memoryTotalGB: gbOfGiB(n.memoryTotalGiB), memoryFreeGB: gbOfGiB(n.memoryFreeGiB), diskFreeGB: gbOfGiB(n.diskFreeGiB),
-        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: n.runningContainers || [], issues: n.issues || [],
+        uptimeHours: n.uptimeSeconds ? Math.round(n.uptimeSeconds / 360) / 10 : null, load1Minute: n.load1Minute ?? null, runningContainers: (n.runningContainers || []).map(bareName).filter(Boolean), issues: n.issues || [],
       })),
       gpuEnergyKWh: s.energy ? { since: s.energy.since, bySpark: Object.fromEntries(Object.entries(s.energy.nodes).map(([id, e]) => [id, Math.round(e.kWh * 100) / 100])) } : null,
       wallEnergyKWh: s.energy ? Object.fromEntries(Object.entries(s.energy.nodes).filter(([, e]) => e.wallSince).map(([id, e]) => [id, { kWh: Math.round(e.wallKWh * 100) / 100, since: e.wallSince }])) : null,
@@ -6318,6 +6320,7 @@ action({
 const LINK_WHY = { full: 'every cable between them passed at full size', partial: 'some cables fail or only pass small packets', fail: 'no cable answered', 'no-shared-subnet': 'no cable between them' };
 action({
   name: 'linked_sparks', title: 'Linked Sparks', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'sparks',
+  inside: true,
   description: 'Use before running one model across two Sparks. Which pairs are cabled together and whether each can run a model together (the last connection test). Pass detail for each Spark’s ConnectX links (speed, MTU, addresses).',
   input: { type: 'object', properties: { detail: { type: 'boolean', description: 'Include each Spark’s network links.' } }, additionalProperties: false },
   run: async ({ detail = false }) => {
@@ -6325,7 +6328,7 @@ action({
     return {
       observedAt: f.checkedAt, testedAt: f.checkedAt,
       pairs: f.pairs.map(p => ({ sparks: [p.a, p.b], link: p.fastLink, canRunTogether: p.fastLink === 'full', why: LINK_WHY[p.fastLink] || null })),
-      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: l.name, up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: l.ipv4 })) })) } : {}),
+      ...(detail ? { sparks: f.sparks.map(sp => ({ spark: sp.id, online: sp.online, links: sp.links.map(l => ({ name: bareName(l.name), up: l.up, speedGbps: l.speedGbps, mtu: l.mtu, addresses: (Array.isArray(l.ipv4) ? l.ipv4 : [l.ipv4]).map(bareName).filter(Boolean) })) })) } : {}),
     };
   },
 });
@@ -6483,6 +6486,8 @@ function abilities() {
 }
 action({
   name: 'sparkie_setup', title: 'Sparkie’s setup', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  // (inside only with about "abilities", code's own list; the rest carries the brain's last line, faults, install notes)
+  inside: ({ about } = {}) => about === 'abilities',
   description: 'Use for “what can you do?” (pass about: "abilities"), “what is Sparkie running on?” and “which build of Spark Console is running?” and “what changed in Spark Console, and was anything undone?” and “did Spark Console crash, or is something in it failing?” and “why do you ask before every change?” (changes, and brainCheck), and, when the owner asks, “who is signed in?” and “how many recovery codes are left?”. With about "abilities": only what Sparkie can look up and change today, from Spark Console’s own action list, and its limits. Otherwise: Sparkie, the fleet’s own assistant: its model, Spark, state and health, which model answers chats and which answers apps at the /v1 address, the saved setups it can switch to, Spark Console’s own build and its last five updates (which build replaced which, when, the note given at install, and whether it went back a build), its own recent errors, its last crash and the watchdog’s restarts, and whether Telegram works. For the owner only, never an agent: access, with the devices signed in without Tailscale, the passkeys by name and the recovery codes left (names, times and counts; no addresses).',
   input: { type: 'object', properties: {
     about: { type: 'string', enum: ['abilities'], description: '"abilities" for what Sparkie can look up and change, and its limits. Only that comes back.' },
@@ -19247,6 +19252,7 @@ const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([
 
 action({
   name: 'guide', title: 'Guide to the tools', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  inside: true,   // (the tools' own names and titles, code's words: an inside read, R26)
   description: `Use when you need a tool you weren’t offered. Each round offers the core tools and the groups this request opened; every other tool is in one of these groups: ${GROUP_WORDS.map(([group, about]) => `${group} (${about})`).join('; ')}. guide with tools set to a group lists its tools and offers them from your next round.`,
   input: { type: 'object', properties: {
     tools: { type: 'string', enum: [...TOOL_GROUPS], description: 'A group, by its name.' },

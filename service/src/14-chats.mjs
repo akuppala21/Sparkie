@@ -101,21 +101,7 @@ function systemPrompt(context, tools = false, agent = null, channel = null, offe
 // core and this request's groups (21-guide.mjs, R46). Operations post their result in the conversation when they
 // finish, so it never waits on them.
 const sparkieToolNames = () => [...ACTIONS.keys()];
-// Lookups whose results are the console's own numbers and names, or the owner's own lines: not text from outside.
-const INSIDE_READS = new Set([
-  'cluster_plan',
-  'deploy_plan',
-  'fleet_status',
-  'guide',
-  'linked_sparks',
-  'memory',
-  'models_on_disk',
-  'running_models',
-  'should_be_running',
-  'sparkie_setup',
-  'where_it_fits',
-  'workflows',
-]);
+// (Which lookups are inside reads is said by each action itself, `inside`: readInside, 14-rounds.mjs, R26.)
 const sparkieTools = () => sparkieToolNames().map(n => ACTIONS.get(n)).filter(Boolean)
   .map(a => ({ type: 'function', function: { name: a.name, description: a.description, parameters: liveSchema(a.input) } }));
 // Each Spark Console model call at a time: helpers (search terms) step aside while Sparkie answers someone.

@@ -108,6 +108,7 @@ const brainWords = () => Object.fromEntries(Object.entries(BRAIN_WORDS()).map(([
 
 action({
   name: 'guide', title: 'Guide to the tools', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  inside: true,   // (the tools' own names and titles, code's words: an inside read, R26)
   description: `Use when you need a tool you weren’t offered. Each round offers the core tools and the groups this request opened; every other tool is in one of these groups: ${GROUP_WORDS.map(([group, about]) => `${group} (${about})`).join('; ')}. guide with tools set to a group lists its tools and offers them from your next round.`,
   input: { type: 'object', properties: {
     tools: { type: 'string', enum: [...TOOL_GROUPS], description: 'A group, by its name.' },

@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27008 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (27014 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -135,11 +135,11 @@ One long-running reader per Spark, only while someone has the page open; stopped
 ### `05-library.mjs`: model library and deployments
 
 - **Area:** ground. **Rules:** R2, R8, R17, R21, R38. **Tests:** change.test.mjs, across.test.mjs
-- **Lines:** 426
+- **Lines:** 430
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `ggufOnDisk`, `plainText`, `plainImage`, `plainManifest`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
+- **Functions:** `ggufOnDisk`, `plainText`, `bareName`, `plainImage`, `plainManifest`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
 - **Uses:** `01-setup` (`MODELS`, `HF_HUB`, `hfSnap`, `NODES`, `NAME_RE`, `CONFIG`, `q`, `HttpError`, `nodeById`, `isProtected`, `hfMounts`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`canUse`), `06-links` (`lastCheck`), `08-cluster` (`clusterPlan`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `21-web` (`readable`)
 - **Used by:** `07-jobs`, `08-cluster`, `09-verified`, `11-setups`, `13-main-model`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-step-jobs`, `18-workflows`, `20-lessons`, `21-apps`, `21-box`, `21-compare`, `21-net`, `21-power-pair`, `21-power`, `21-runner`, `21-selftest`, `24-handler`
 
@@ -276,7 +276,7 @@ Sparkie is the one main LLM; which model runs behind it is the owner's choice. T
 Sparkie's chats live here: one owner-only JSON file on this Spark. Each person sees only their own chats. Replies keep going (and are saved) if the page closes.
 
 - **Area:** brain. **Rules:** R3, R7, R9, R20, R25, R26, R31, R32, R34, R36, R38, R39, R46. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, state.test.mjs, tools.test.mjs, pressed.test.mjs, agent-words.test.mjs
-- **Lines:** 718
+- **Lines:** 704
 - **Owns:** chats.json (writers: saveChats, chatData; chatData sets an unreadable one aside)
 - **Timers:** none
 - **Wakes:** none
@@ -289,12 +289,12 @@ Sparkie's chats live here: one owner-only JSON file on this Spark. Each person s
 The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and how much it may do, the tools each round offers, one streamed model call, the loop of rounds, one round’s tool calls, and one tool call. They share the turn’s state in one object, `turn`.
 
 - **Area:** brain. **Rules:** R7, R26, R34, R36, R43, R46, R50. **Tests:** sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs, rounds.test.mjs
-- **Lines:** 375
+- **Lines:** 385
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `howAsked`, `budgetsSet`, `setupLimits`, `taskStepsDone`, `taskStepsLeft`, `turnBudgets`, `taskStepsKept`, `budgetContext`, `budgetCarries`, `budgetsOf`, `workStep`, `budgetsAfter`, `budgetCut`, `budgetReport`, `turnGroups`, `roundTools`, `modelStep`, `toolsAway`, `turnRounds`, `roundTogether`, `readOutsideBy`, `roundCalls`, `roundCallName`, `roundDropped`, `runOne`
-- **Uses:** `01-setup` (`HttpError`, `sleep`), `03-identity` (`overLimit`), `05-library` (`plan`), `07-jobs` (`jobs`, `step`), `13-ask` (`usageAsked`, `askOf`, `answerReader`, `overBudget`), `14-chats` (`multiStep`, `systemPrompt`, `modelInUse`, `TURN_STOPPED`, `INSIDE_READS`), `14-tasks` (`taskOver`), `16-actions` (`ACTIONS`, `runAction`), `17-changes` (`agentSettings`), `20-danger` (`dangerParked`), `20-digest` (`DIGEST_AT`, `digestOut`), `20-journal` (`jOwnCall`, `journalTool`), `20-mcp` (`agentWorld`, `maskDeep`, `maskSecrets`), `20-memory-names` (`contextFlag`), `20-memory-time` (`memoryOffFor`), `21-guide` (`requestGroups`, `toolCap`, `wordGroups`, `openGroup`, `stateGroups`, `offeredNames`), `21-ladder` (`workRead`), `21-work-shown` (`commandShown`)
+- **Functions:** `howAsked`, `budgetsSet`, `setupLimits`, `taskStepsDone`, `taskStepsLeft`, `turnBudgets`, `taskStepsKept`, `budgetContext`, `budgetCarries`, `budgetsOf`, `workStep`, `budgetsAfter`, `budgetCut`, `budgetReport`, `turnGroups`, `roundTools`, `modelStep`, `toolsAway`, `turnRounds`, `roundTogether`, `readInside`, `readOutsideBy`, `roundCalls`, `roundCallName`, `roundDropped`, `runOne`
+- **Uses:** `01-setup` (`HttpError`, `sleep`), `03-identity` (`overLimit`), `05-library` (`plan`), `07-jobs` (`jobs`, `step`), `13-ask` (`usageAsked`, `askOf`, `answerReader`, `overBudget`), `14-chats` (`multiStep`, `systemPrompt`, `modelInUse`, `TURN_STOPPED`), `14-tasks` (`taskOver`), `16-actions` (`ACTIONS`, `runAction`), `17-changes` (`agentSettings`), `20-danger` (`dangerParked`), `20-digest` (`DIGEST_AT`, `digestOut`), `20-journal` (`jOwnCall`, `journalTool`), `20-mcp` (`agentWorld`, `maskDeep`, `maskSecrets`), `20-memory-names` (`contextFlag`), `20-memory-time` (`memoryOffFor`), `21-guide` (`requestGroups`, `toolCap`, `wordGroups`, `openGroup`, `stateGroups`, `offeredNames`), `21-ladder` (`workRead`), `21-work-shown` (`commandShown`)
 - **Used by:** `14-chats`, `14-tasks`, `21-brain-check`, `21-brain-rail`, `21-guide`
 
 ### `14-tasks.mjs`: long tasks: the carry-on made to last (E6)
@@ -341,13 +341,13 @@ Every workflow is a named action with typed inputs, so a model can pick up which
 Every action here only looks (kind 'read'), so runAction runs it straight away and it changes nothing. The registry (action), the input checks, the gate and runAction are in 16-actions.mjs, which loads first; a helper a lookup shares with a change or with another part stays there too. Moved here whole from 16-actions.mjs (F6, 2026-11-14).
 
 - **Area:** core. **Rules:** R3, R7, R23, R26, R33, R36, R37, R41. **Tests:** door.test.mjs, abilities.test.mjs, detail.test.mjs, dark.test.mjs, files.test.mjs, paste.test.mjs
-- **Lines:** 626
+- **Lines:** 631
 - **Actions:** `fleet_status`, `running_models`, `models_on_disk`, `find_recipes`, `recipe_detail`, `search_huggingface`, `where_it_fits`, `deploy_plan`, `cluster_plan`, `linked_sparks`, `spark_detail`, `recent_operations`, `operation_log`, `container_logs`, `spark_diagnostics`, `service_logs`, `files`, `sparkie_setup`, `workloads`, `fleet_events`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `gbOf`, `recentWorkloads`, `didYouMean`, `mustLibraryModel`, `planSteps`, `fitView`, `pairView`, `flagsKey`, `sameFlags`, `runningDetail`, `darkNow`, `pasteCard`, `estimateFit`, `abilities`
-- **Uses:** `01-setup` (`HttpError`, `API_MOUNT`, `nodeById`, `q`, `CONFIG`, `isProtected`, `BUILD`, `STARTED_AT`), `02-ssh` (`run`, `b64json`), `03-identity` (`accessList`), `05-library` (`plainImage`, `withoutShare`, `ENGINES`, `shareIn`, `metricsFlags`, `memoryShare`, `plansFor`, `plan`, `fitOf`, `PLAIN_NOTE`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`note`, `jobs`, `step`), `08-cluster` (`clusterPlan`), `09-verified` (`verifiedList`, `verifiedView`, `answers`), `10-recipes` (`recipeCatalog`, `searchModels`), `11-setups` (`squash`, `catalogSetup`, `recipes`, `sameRepo`, `lookedUp`), `12-plugs` (`wallView`, `wallWords`), `12-status` (`workerCall`, `statusFor`, `sparkName`, `LOG_SERVICES`), `13-main-model` (`MAIN`, `agentTarget`, `mainNode`, `ROUTES`, `mainPresets`, `repoOf`), `14-chats` (`NEVER_CHANGES`, `CHANGES_ASKED`, `chatData`), `15-routes` (`servedModel`, `SPARKIE_ID`, `routeView`), `16-actions` (`recent`, `action`, `recentInventory`, `libraryModel`, `gbOfGiB`, `recentMain`, `mainArg`, `wordStart`, `onDiskAs`, `CREDIBILITY`, `modelArg`, `sparkArg`, `sparkOf`, `sparksArg`, `filePathArg`, `filePath`, `sharedFolder`, `FILE_LIST`, `FILE_SHOW`, `ACTIONS`, `PAGE_ONLY`), `18-workflows` (`WORKFLOW_LOCK`, `lastUpdates`), `19-watcher` (`knowledge`, `lastReading`, `learnedFrom`, `ENGINE_OF_IMAGE`, `darkPeriods`, `readingWords`, `sparkOff`, `WATCH_EVERY`, `events`), `20-mcp` (`consoleOrigin`, `maskDeep`, `hideKeys`), `20-needs` (`needsLines`), `20-tg-approve` (`tgApprovalsLine`), `21-brain-check` (`brainCheck`, `brainCheckView`), `21-brain-rail` (`railWords`), `21-power` (`power`, `powerView`, `setupWords`, `asleepView`), `21-telegram` (`telegramView`), `21-work` (`needsOwner`), `22-sessions` (`accessView`), `23-http` (`faultView`)
+- **Uses:** `01-setup` (`HttpError`, `API_MOUNT`, `nodeById`, `q`, `CONFIG`, `isProtected`, `BUILD`, `STARTED_AT`), `02-ssh` (`run`, `b64json`), `03-identity` (`accessList`), `05-library` (`plainImage`, `bareName`, `withoutShare`, `ENGINES`, `shareIn`, `metricsFlags`, `memoryShare`, `plansFor`, `plan`, `fitOf`, `PLAIN_NOTE`), `06-links` (`lastCheck`, `fabric`), `07-jobs` (`note`, `jobs`, `step`), `08-cluster` (`clusterPlan`), `09-verified` (`verifiedList`, `verifiedView`, `answers`), `10-recipes` (`recipeCatalog`, `searchModels`), `11-setups` (`squash`, `catalogSetup`, `recipes`, `sameRepo`, `lookedUp`), `12-plugs` (`wallView`, `wallWords`), `12-status` (`workerCall`, `statusFor`, `sparkName`, `LOG_SERVICES`), `13-main-model` (`MAIN`, `agentTarget`, `mainNode`, `ROUTES`, `mainPresets`, `repoOf`), `14-chats` (`NEVER_CHANGES`, `CHANGES_ASKED`, `chatData`), `15-routes` (`servedModel`, `SPARKIE_ID`, `routeView`), `16-actions` (`recent`, `action`, `recentInventory`, `libraryModel`, `gbOfGiB`, `recentMain`, `mainArg`, `wordStart`, `onDiskAs`, `CREDIBILITY`, `modelArg`, `sparkArg`, `sparkOf`, `sparksArg`, `filePathArg`, `filePath`, `sharedFolder`, `FILE_LIST`, `FILE_SHOW`, `ACTIONS`, `PAGE_ONLY`), `18-workflows` (`WORKFLOW_LOCK`, `lastUpdates`), `19-watcher` (`knowledge`, `lastReading`, `learnedFrom`, `ENGINE_OF_IMAGE`, `darkPeriods`, `readingWords`, `sparkOff`, `WATCH_EVERY`, `events`), `20-mcp` (`consoleOrigin`, `maskDeep`, `hideKeys`), `20-needs` (`needsLines`), `20-tg-approve` (`tgApprovalsLine`), `21-brain-check` (`brainCheck`, `brainCheckView`), `21-brain-rail` (`railWords`), `21-power` (`power`, `powerView`, `setupWords`, `asleepView`), `21-telegram` (`telegramView`), `21-work` (`needsOwner`), `22-sessions` (`accessView`), `23-http` (`faultView`)
 - **Used by:** `21-power`
 
 ### `17-changes.mjs`: actions that change things: say it, and it's done (checked inside)
@@ -1064,7 +1064,7 @@ The lock-out net (R60; design A 2.8, steps A13a and A13b). The root helper's `ru
 Each round Sparkie's brain is offered the core (every action whose group is core) and the groups this request opened, at most TOOL_CAP tools (R46). The owner's words open groups (GROUP_WORDS, 16-actions.mjs), and so does state: an operation of this chat running opens control, the chat's last operation failing opens dig, and a search_web call opens reading. A call to an action that wasn't offered runs through runAction like any other call, and opens its group; so does guide {tools: "<group>"}. With more groups than fit, the newest one the words opened gives way, so a request keeps the groups …
 
 - **Area:** features. **Rules:** R46. **Tests:** tools.test.mjs
-- **Lines:** 126
+- **Lines:** 127
 - **Actions:** `guide`
 - **Owns:** none
 - **Timers:** none
