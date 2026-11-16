@@ -348,6 +348,14 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       if (/^unknown /.test(a.said || '')) return needsOwner(node, 'unknown', `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
       // (root's switch off there, R70: the owner's one command with --with-root)
       if (/^root is off on this Spark: /.test(a.refused || '')) return needsOwner(node, 'root off', `Root is off on ${at}: ${String(a.refused).slice('root is off on this Spark: '.length, 300)}`);
+      // (refused after the net was armed: its unit never started, so nothing ran. The guard is taken away at once, by the
+      // helper's own putback, which finds nothing that differs; never left armed to block the next change there until
+      // its timer)
+      if (a.goesBackAt && a.refused != null) {
+        const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
+        const freed = Boolean(p.putBackAt) || /^there is no guard /.test(p.refused || '');
+        throw new HttpError(409, `Nothing ran on ${at}: ${String(a.refused).replace(/\.$/, '').slice(0, 300)}. ${freed ? `The net it had armed there was taken away again, so ${at} is free for the next change.` : `The net it had armed there goes away by itself at ${netHhmm(a.goesBackAt)}.`}`);
+      }
       // (a folder kept read-only, guardScript's protectShell: one that leads nowhere that can be read, never run without it)
       if (/^protect ~\//.test(a.said || '')) throw new HttpError(409, `Nothing ran: ${String(a.said).slice(8, 200)} on ${at} is a link that leads to no folder that can be read, so it couldn’t be kept read-only, and nothing runs without that.`);
       throw new HttpError(409, `The root helper on ${at} refused it: ${String(a.refused ?? 'it gave no answer the net knows').slice(0, 300)}. Nothing ran.`);
