@@ -90,7 +90,7 @@ const WORKFLOWS = [
     takes: 'A few minutes while it loads.',
     failures: [{ id: 'no-room', title: 'there isn’t room for it now', advice: 'Use start_model instead: it can make room.' },
       { id: 'no-answer', title: 'it loaded but didn’t answer a test prompt', advice: 'Its log (container_logs) usually says why.' }],
-    code: () => [restartChecked, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
+    code: () => [restartChecked, restartRoom, notBrainsSpark, restartJob, cancelCheck, plan, answerTest, answers, httpJson, shareIn] },
 ];
 const workflowById = id => WORKFLOWS.find(w => w.id === id) || null;
 // Which workflow a change is: a start with two Sparks is the across-Sparks one.
@@ -184,7 +184,8 @@ const SAVED_FILE = `${STATE_DIR}/saved-workflows.json`;
 const savedWorkflows = () => { const f = readKept(SAVED_FILE); return Array.isArray(f?.workflows) ? f.workflows : []; };
 const workflowSlug = t => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 // (self_test: a whole operation of its own, which runs and waits on its own steps; install_update: a dangerous ask,
-// answered only by the owner's yes to it; propose_update: only in the owner's own chat)
+// answered only by the owner's yes to it; propose_update: only in the owner's own chat; run and write_file, the reads
+// that change: whoMayLook refuses them as a step, 21-work.mjs, so they are refused at the save, never mid-run)
 const NOT_A_STEP = new Set([
   'compare_models',
   'forget_memory',
@@ -198,6 +199,7 @@ const NOT_A_STEP = new Set([
   'save_file',
   'save_workflow',
   'self_test',
+  'write_file',
 ]);
 function fillIn(v, inputs) {
   if (typeof v === 'string') return v.replace(/\{(\w+)\}/g, (m, k) => (k in inputs ? String(inputs[k]) : m));
@@ -617,7 +619,7 @@ async function validateChanged(viewer, job) {
     }
   }
   void started;
-  if (want.includes('start_model_across')) note(job, '“Start one model across two Sparks” still needs its first run: start one across Spark 3 and Spark 4 from Deploy when both are free.');
+  if (want.includes('start_model_across')) note(job, '“Start one model across two Sparks” still needs its first run: when Spark 3 and Spark 4 are both free, ask Sparkie to start one model across them.');
 }
 // The last good build (the installer's snapshot before this one), to roll back to with one click.
 const RELEASES = (ALL_LOCAL && process.env.SPARK_CONSOLE_RELEASES) || `${homedir()}/.local/share/spark-console/releases`;

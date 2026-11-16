@@ -1,7 +1,6 @@
 # Add a saved workflow
 
-No code: a saved workflow is the owner's ordered action calls on named Sparks, kept in `saved-workflows.json`. From
-the map's "Where new things go", row "A saved workflow".
+No code: a saved workflow is the owner's ordered action calls on named Sparks, kept in `saved-workflows.json`.
 
 ## Touch
 

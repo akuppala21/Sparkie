@@ -170,6 +170,9 @@ function allowedWord(word, via) {
     const gone = off === 'all' ? list : list[Number(off) - 1] ? [list[Number(off) - 1]] : [];
     if (!gone.length) return list.length ? `There is no ${off} in the list (${list.length} kept). /allowed lists them.` : 'Nothing is always allowed.';
     setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) });
+    // (a removal that raises the put-back number, as a passkey's or a key's does: a copy from before it put back by
+    // hand holds, and the entry is taken away again, 22-putback.mjs)
+    for (const e of gone) putBackRemoved('allowed', e.id, allowedWords(e));
     audit({ via, actor: via === 'telegram' ? 'owner on Telegram' : 'owner', action: 'always-removed', args: { ids: gone.map(e => e.id) }, ok: true });
     return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.`;
   }

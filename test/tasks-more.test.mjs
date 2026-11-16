@@ -4,8 +4,8 @@
 // the mark, and it stands as one needs-you line until the owner writes there; "go on", as that reply says, gives it a
 // fresh budget of the same size. A carry-on turn the brain never answers, or one that can't start while four answers
 // are coming, isn't counted and is tried again (the failed try's lines give way to the next one's). Started on
-// Telegram, its last reply and the stop line reach the phone even past the six results an hour, and the replies in
-// between don't. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
+// Telegram, its last reply and the stop line reach the phone even past the hour's limit of results (lowered to one here),
+// and the replies in between don't. With no eval on record, a carry-on turn's own change is a button too. A reply that offered a button parks its task (contract 4.8): no carry-on turn by itself, its hours
 // stop, one needs-you line; a press that runs the button wakes it with that time given back. The brain here has a
 // context of 1,000 tokens, so one long lookup ends a reply at the output budget and a task carries on in a fresh turn
 // 1.5 seconds later. The round limit is a budget as the steps and the output are (R50): a task's carry-on turn the
@@ -19,8 +19,9 @@ import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, S
 import { startMock } from './start-mock.mjs';
 
 const TG_TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
-// (Telegram paired, with its usual limits: six results and carry-on lines an hour)
-useFleet({ telegram: true, watchMs: 3000, env: { SPARK_CONSOLE_CONTINUE_MS: '1500', SPARK_CONSOLE_TASK_RETRY_MS: '3000' }, prepare: ({ dir, stateDir }) => {
+// (Telegram paired, its hourly limit of results and carry-on lines lowered to one, so a Telegram test here reaches it: the
+// stop line uses the hour up, and the last reply comes only because it is a request's last; final read TE-06)
+useFleet({ telegram: true, watchMs: 3000, env: { SPARK_CONSOLE_CONTINUE_MS: '1500', SPARK_CONSOLE_TASK_RETRY_MS: '3000', SPARK_CONSOLE_TELEGRAM_LIMITS: '20,20,1' }, prepare: ({ dir, stateDir }) => {
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TG_TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: new Date().toISOString() } }), { mode: 0o600 });
   const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
@@ -193,6 +194,34 @@ test('with no eval on record, a request with a next step whose first change is a
     assert.deepEqual(m[at + 1].tools ?? [], [], 'the report changed nothing');
     assert.equal((await ops()).length, 1, `one change, the one pressed: ${JSON.stringify((await ops()).map(o => o.type))}`);
     await waitFor(() => taskIn(chat) === null, { timeout: 15000 * SLOW, what: 'the done request off the record' });
+  } finally { await F.stop(); }
+});
+
+// (final read TE-12: the carry-on turn after the press asks for a change the owner's words make clear, "everything on spark
+// 3", which a checked brain would run at once; with no eval on record it is a button too, and nothing more runs)
+test('with no eval on record, a carry-on turn’s own change is a button too: after the pressed stop, the second stop the words make clear waits for its own press', { timeout: 300000 * SLOW }, async () => {
+  const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4', GGUF = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', words = `stop ${RADIX} on spark 4, then stop everything on spark 3`;
+  const F = await startMock({ watchMs: 60000, evalOnRecord: false, env: { SPARK_CONSOLE_CONTINUE_MS: '1500' }, prepare: ({ root }) => writeFileSync(join(root, 'spark2', '.mock', 'up-sparkie-main'), String(Math.floor(Date.now() / 1000) - 60)) });
+  try {
+    writeFileSync(join(F.dir, 'model-script.json'), JSON.stringify([{ match: `^${esc(words)}$`, calls: [{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }] },
+      { match: FINISHED, calls: [{ name: 'stop_model', arguments: { spark: 'spark3', container: GGUF } }] }]));
+    const post = async (path, body) => { const r = await fetch(`${F.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-spark-console': '1', origin: F.origin }, body: JSON.stringify(body) }); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {} return { status: r.status, text, json }; };
+    const messages = async id => (await (await fetch(`${F.base}/chats/${id}`)).json()).messages;
+    const ops = async () => (await post('/actions/recent_operations', { limit: 50 })).json.operations;
+    const taskIn = id => JSON.parse(readFileSync(join(F.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === id)?.task ?? null;
+    const state = (spark, name) => readFileSync(join(F.root, spark, '.mock', 'containers'), 'utf8').split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+    const chat = (await post('/chats', {})).json.id;
+    const asked = await post(`/chats/${chat}/messages`, { text: words });
+    const done = asked.text.split('\n\n').map(x => x.trim()).filter(x => x.startsWith('data:')).map(x => JSON.parse(x.slice(5))).find(e => e.type === 'done').message;
+    assert.deepEqual(done.tools.map(t => [t.name, t.outcome]), [['stop_model', 'needs-ok']], done.content);
+    const pressed = await post(`/chats/${chat}/choose`, { choice: done.choices.find(c => c.label !== 'No').id });
+    assert.equal(pressed.json?.outcome, 'started', pressed.text);
+    const m = await waitFor(async () => { const x = await messages(chat), i = x.findIndex(y => y.auto); return i > 0 && x[i + 1]?.role === 'assistant' && x; }, { timeout: 180000 * SLOW, what: 'the carry-on turn after the stop' });
+    const reply = m[m.findIndex(y => y.auto) + 1];
+    assert.deepEqual((reply.tools ?? []).map(t => [t.name, t.outcome]), [['stop_model', 'needs-ok']], reply.content);
+    assert.equal((await ops()).length, 1, `only the change pressed ran: ${JSON.stringify((await ops()).map(o => o.type))}`);
+    assert.equal(state('spark3', GGUF), 'running', 'the second model still runs');
+    assert.equal(Boolean(taskIn(chat)?.parked), true, 'the task waits at its new button');
   } finally { await F.stop(); }
 });
 

@@ -246,7 +246,7 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
   });
 
   // The review's Later 2: the owner asked for the compare in their own chat, so its candidate runs are the owner's own.
-  test('three candidate runs that fail, in a compare the owner asked Sparkie for, don’t pause agents’ changes', { timeout: 420000 * SLOW }, async () => {
+  test('three candidate runs that fail, in a compare the owner asked Sparkie for, don’t pause agents’ changes', { timeout: 420000 * SLOW }, async t => {
     const MODELS = [GPT, 'gemma-3-12b-it', 'NVIDIA-Nemotron-Nano-9B-v2'];
     await ownerSaves('bad work', [{ action: 'start_model', args: { model: '{model}', spark: 'spark3' } },
       { action: 'keep_running', args: { spark: 'spark3', container: 'bad', image: IMAGE, once: true, command: ['sh', '-c', 'echo going badly; exit 3'] } }]);
@@ -258,7 +258,14 @@ describe('compare_models (D8)', { concurrency: 1 }, () => {
       const op = await waitFor(async () => (await act('recent_operations', { limit: 50 })).json.operations.find(o => o.type === 'compare' && o.model === 'bad work' && o.status !== 'running') || null, { timeout: 360000, what: 'the compare of bad work', every: 1000 });
       const done = await opNow(op.id);
       assert.equal(done.report.length, MODELS.length + 1, done.report.join('\n'));
-      MODELS.forEach((m, i) => assert.match(done.report[i], new RegExp(`^${esc(m)}: failed: Step [12] `)));
+      t.diagnostic(`the reports: ${done.report.join(' | ')}`);
+      // Which step each candidate's run ends at, and why (TR-L2; seen the same in three runs on the Sparks): gpt-oss-20b
+      // starts and its job exits 3 at step 2; gemma's engine exits as soon as it starts on the stand-in fleet, so its
+      // start fails while loading; Nemotron's setup runs its own code, which start_model never starts (only POST /deploy).
+      const AT = { [GPT]: 'Step 2 \\(keep_running\\) failed: bad-[0-9a-f]+ on Spark 3 ended with an error \\(exit 3\\)\\.',
+        'gemma-3-12b-it': 'Step 1 \\(start_model\\) didn’t finish: The model server stopped while loading\\.',
+        'NVIDIA-Nemotron-Nano-9B-v2': 'Step 1 \\(start_model\\) failed: NVIDIA-Nemotron-Nano-9B-v2 can’t be started by an agent: it needs to run its own code' };
+      MODELS.forEach((m, i) => assert.match(done.report[i], new RegExp(`^${esc(m)}: failed: ${AT[m]}`), done.report.join('\n')));
       assert.equal((await api('/agents')).json.settings.halted, false, 'agents’ changes are not paused');
     } finally { noScript(); await agentSettings({ halted: false }); }
   });

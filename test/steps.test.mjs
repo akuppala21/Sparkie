@@ -12,7 +12,8 @@
 // job's end before the next step (D6b): a model, a job, then a job that reads the first's file, which it starts only
 // after the first ended; a job that exits 3 ends the run, naming the step, with its last lines masked and cut; one that
 // never ends is given up on at the limit and stopped, as the run started it (D6d); cancelling the run ends the wait at
-// once and stops the job it started.
+// once and stops the job it started. `run` and `write_file`, refused as a step when it runs, are refused at the save,
+// and every tool that changes through that check is on the save's list (TR-2).
 //
 // A saved workflow's steps checked before step 1 (service/src/18-workflows.mjs checkSteps; round two, item 3). One look
 // at the Sparks, changing nothing: a run that can't work is refused with its step number and nothing changed (before,
@@ -24,7 +25,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, createActKey, newChat, say, waitFor, sleep, REPO, SLOW } from './lib.mjs';
 
 const keys = {};
 useFleet({ watchMs: 60000, env: { SPARK_CONSOLE_STEP_JOB_MS: '30000' } }, async () => { keys.act = await createActKey('steps-act'); keys.look = await createKey('steps-look'); });
@@ -48,6 +49,12 @@ describe('checking a saved workflow\'s steps', { concurrency: 1 }, () => {
       const r = await save({ title: 'bad one', steps: [{ action: 'find_setups', args: { model: 'gemma-3-12b-it' } }, { action: 'stop_model', args }] });
       assert.equal(r.isError, true, JSON.stringify(args));
       assert.match(r.text, re);
+    }
+    // (run and write_file are refused as a step at run time, whoMayLook: so they are refused at the save, TR-2)
+    for (const action of ['run', 'write_file']) {
+      const r = await save({ title: 'bad one', steps: [{ action: 'find_setups', args: { model: 'gemma-3-12b-it' } }, { action, args: { on: 'spark4', path: '~/notes/a.txt', text: 'hi', command: 'ls' } }] });
+      assert.equal(r.isError, true, action);
+      assert.match(r.text, new RegExp(`Step 2: ${action} can’t be a step in a saved workflow\\.`));
     }
     const ok = await save({ title: 'later checked', inputs: { where: 'a Spark' }, steps: [{ action: 'stop_model', args: { spark: '{where}', container: RADIX } }] });
     assert.equal(ok.isError, false, ok.text);
@@ -440,4 +447,16 @@ describe('a saved workflow\'s job steps wait for the job\'s end (D6b)', { concur
       await forget('cancel me');
     }
   });
+});
+
+// TR-2: the tools refused as a saved step at run time (a call that changes through whoMayLook, `changes: true`: run and
+// write_file) are all in NOT_A_STEP, so a save refuses them before any step runs. Read from the built service.
+test('every tool that refuses to run as a saved step is refused at the save (NOT_A_STEP holds each one)', () => {
+  const src = readFileSync(join(REPO, 'service', 'server.mjs'), 'utf8');
+  const changing = [...src.matchAll(/name: '([a-z_]+)'[^\n]*\bchanges: true\b/g)].map(m => m[1]).sort();
+  assert.deepEqual(changing, ['run', 'write_file'], 'the reads that change');
+  assert.match(src, /function whoMayLook\(viewer, ctx\) \{\n  if \(ctx\.via === 'workflow'\) throw/, 'whoMayLook refuses a step');
+  const list = /const NOT_A_STEP = new Set\(\[([^\]]*)\]\)/.exec(src)?.[1] || '';
+  const notStep = [...list.matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+  for (const name of changing) assert.ok(notStep.includes(name), `${name} is not in NOT_A_STEP`);
 });

@@ -6,8 +6,11 @@
 // so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state
 // that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at
 // each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only,
-// tailnet-only), agents' changes paused. The secrets file also notes what was removed (kind and id; for a narrowing, the
-// right it took). Nothing else writes either number; restore.sh --with-state removes the state's.
+// tailnet-only), agents' changes paused, an "always allowed" kind taken away (/allowed off, 21-ahead.mjs). The secrets
+// file also notes what was removed (kind and id; for a narrowing, the right it took). Nothing else writes either number;
+// restore.sh --with-state removes the state's. (Grants that never travel with a state copy need none: the go-ahead and
+// open asks live in memory; the Telegram pairing, its approvals switch and recovery codes in the secrets file; root's
+// switch on its Spark, read there at each command. Not covered: a saved workflow's yes to its images, R23's Today.)
 // At start (putBackAtStart, before the sockets open), the state was put back (by restore.sh --with-state, or by hand from
 // a copy) when something the secrets file notes as removed is in the state again, whatever the numbers say; or when the
 // state's number is below the secrets file's (a state with no number is one when the secrets file has a number); or when
@@ -57,8 +60,8 @@ const putBackRemovedList = a => (Array.isArray(a.removed) ? a.removed.filter(r =
 
 // A removal by the owner: the number goes up in the state first, then in the secrets file, with what went. (A stop
 // between the two leaves the state ahead, which only brings the two level at the next start, never a hold.) kind:
-// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused;
-// resumed notes the owner's resume and changes no number.
+// session, passkey, agent, narrowed (with the right it took: extra { act: false } or { internet: false }, or both), paused,
+// allowed (an "always allowed" kind, by its id); resumed notes the owner's resume and changes no number.
 function putBackRemoved(kind, id = null, name = null, extra = {}) {
   if (!SECRETS_FILE) return;
   try {
@@ -79,16 +82,22 @@ function putBackRemoved(kind, id = null, name = null, extra = {}) {
 }
 
 // A state that holds a passkey or an agent key and no number, with none in the secrets file either, is given 1 in both
-// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. The secrets file
-// first: if writing it fails, neither has a number and nothing holds.
+// (at start, and after a passkey or a key is added), so every copy and snapshot made of it carries one. Either number
+// alone reads as a put-back at the next start (the secrets file's alone, an older copy; the state's alone, a new disk),
+// so a failed write leaves neither: the secrets file first (if that fails, nothing was written), then the state; if the
+// state's write fails, the secrets file's number is taken out again. (Only a stop between the two writes, or both
+// writes to the secrets file failing, leaves the secrets file's alone: a hold, which the owner's "Keep these" ends.)
 function putBackSeed() {
   if (!SECRETS_FILE) return;
   try {
     const s = secretsRead();
     if (s === null || putBackSerial() || (Number.isInteger(s.auth?.serial) && s.auth.serial > 0) || !(passkeys().length || agentKeys().length)) return;
+    const had = s.auth;
     secretsWrite(x => ({ ...x, auth: { ...(x.auth && typeof x.auth === 'object' && !Array.isArray(x.auth) ? x.auth : {}), serial: 1 } }));
-    putBackSerialWrite(1);
-    putBackSeen.at = 0;
+    try { putBackSerialWrite(1); } catch (e) {
+      try { secretsWrite(x => { const y = { ...x }; if (had === undefined) delete y.auth; else y.auth = had; return y; }); } catch (e2) { console.error(`The secrets file’s number couldn’t be taken out again: ${e2.message}`); }
+      throw e;
+    } finally { putBackSeen.at = 0; }
   } catch (e) { console.error(`The state’s number couldn’t be started: ${e.message}`); }
 }
 
@@ -108,8 +117,9 @@ function putBackAtStart() {
     // put back over a state with one, by an older snapshot's restore.sh or by hand).
     let back = false;
     try {
-      const [p, k, d] = [gone('passkey'), gone('agent'), gone('session')];
-      back = passkeys().some(x => p.has(String(x.id))) || agentKeys().some(x => k.has(String(x.id))) || sessionList().some(x => d.has(String(x.id)));
+      const [p, k, d, w] = [gone('passkey'), gone('agent'), gone('session'), gone('allowed')];
+      back = passkeys().some(x => p.has(String(x.id))) || agentKeys().some(x => k.has(String(x.id))) || sessionList().some(x => d.has(String(x.id)))
+        || allowedList().some(x => w.has(String(x.id)));
     } catch {}
     if (first && !back && n && t > n) { secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), serial: t } })); return; }
     if (first && !back && (n ? t >= n : !t)) { putBackSeed(); return; }
@@ -130,6 +140,14 @@ function putBackAtStart() {
       }
       if (changed) writePrivate(AGENTS_FILE, { keys: kept });
     } catch (e) { console.error(`The agent keys after a put-back: ${e.message}`); }
+    // An "always allowed" kind the owner took away (/allowed off): taken away again.
+    try {
+      const list = allowedList(), drop = gone('allowed'), back2 = list.filter(e => drop.has(String(e.id)));
+      if (back2.length) {
+        setAgentSettings({ allowed: list.filter(e => !drop.has(String(e.id))) });
+        again.push(...back2.map(e => ({ kind: 'always-allowed command', name: clean(`${e.program} in ${e.under} on ${sparkName(nodeById(e.spark) || { id: e.spark })}`, 60) })));
+      }
+    } catch (e) { console.error(`The always-allowed list after a put-back: ${e.message}`); }
     let signedOut = 0;
     try { signedOut = sessionList().length; if (signedOut || existsSync(SESSIONS_FILE)) saveSessions([]); } catch (e) { console.error(`The devices after a put-back: ${e.message}`); }
     // Every task in the state ends, with a line in its chat: also at a second put-back under the hold, so a copy never
@@ -153,7 +171,8 @@ function putBackAtStart() {
     secretsWrite(x => ({ ...x, auth: { ...(x.auth || {}), hold: { since, state: t, again: again.slice(0, 50), signedOut, parked } } }));
     putBackSeen.at = 0;
     audit({ via: 'start', actor: 'Spark Console', action: 'state-put-back', args: { state: t, secrets: n || null, removedAgain: again.length, signedOut, parked }, ok: true });
-    fleetEvent({ type: 'notice', text: `Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.` });
+    // (names typed by whoever set each one up: masked, as every notice that names what someone typed)
+    fleetEvent({ type: 'notice', text: maskSecrets(`Spark Console’s state was put back from a copy. ${again.length ? `What you had removed since came back and was removed again (${again.map(x => `${x.kind} “${x.name}”`).join(', ')}). ` : ''}Every device signs in again${parked ? `, and ${parked === 1 ? 'a task was' : `${parked} tasks were`} parked` : ''}. Open Spark Console once on your tailnet and look at what came back; until you keep it, sign-in from the internet is refused and agents can’t change anything.`) });
   } catch (e) { console.error(`Looking for a state put back from a copy: ${e.message}`); }
 }
 

@@ -67,11 +67,12 @@ async function stepOpEnd(j, id) {
 }
 // Who a saved step is, as the gates see it: a run an agent asked for (its key, its own call through the door, or its chat
 // with Sparkie) is that agent's in each of its steps too, so every rule that asks an agent (a job run again, a GPU app
-// started again, a power-off) asks in the step as in the agent's own call, and a key removed during the run stops its
-// next step (runAction reads the key again). The owner's run stays the owner's.
+// started again, a power-off) asks in the step as in the agent's own call. The owner's run stays the owner's.
+// The key itself was read when the run was asked for (runAction, for run_workflow); a step carries no key id, so
+// removing the agent or making it look-only during the run refuses none of its steps (R9: the rest of a saved workflow
+// it started keeps running, with the authority it started with), and the agent starts nothing new with that key.
 function savedStepAgent(viewer, ctx) {
-  const agentId = ctx.agentId || viewer?.agentKey?.id || null;
-  return viewer?.agentKey || ctx.agent || agentId || ctx.via === 'agent' ? { agent: true, ...(agentId ? { agentId } : {}) } : {};
+  return viewer?.agentKey || ctx.agent || ctx.agentId || ctx.via === 'agent' ? { agent: true } : {};
 }
 // What a finished step started, from its answer `started` and its own operation: [{ kind, spark, container }]. A start's
 // models are what its operation ran (ranHere) and every operation it handed over to, in turn (a power-on, a second

@@ -1,7 +1,6 @@
 # Add a check of the real hardware
 
-A line of the self-test (`self_test`): one more thing it proves on a compute Spark, leaving the fleet as it was. From
-the self-test's map notes (D2, 2026-11-14), row "A check of the real hardware".
+A line of the self-test (`self_test`): one more thing it proves on a compute Spark, leaving the fleet as it was.
 
 ## Touch
 
@@ -25,8 +24,10 @@ the self-test's map notes (D2, 2026-11-14), row "A check of the real hardware".
 
 ## Rules
 
-- R1: compute Sparks only, checked again by each step.
-- R11: every step through `runAction`; the drill's kill and the fixed reads are the only direct `run` calls.
+- R1: its model, app and job on a compute Spark only, checked again by each step. The Walls line alone reaches every
+  Spark, Spark 2 too: the root helper's `prove` (`selfTestWalls`, `21-work.mjs`, R42).
+- R11: every step through `runAction`; outside it are only the drill's kill and the fixed reads (direct `run` calls)
+  and the Walls line's `helperCall`.
 - R13: the self-test job takes no claim; its steps do.
 - R19: the drill asks healing's own rules before it kills.
 - R22: the self-test's own model never joins the list of what should be running.

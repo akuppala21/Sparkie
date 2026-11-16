@@ -4,7 +4,8 @@
 // from a copy onto a fresh Spark Console signs no device in (the old cookie gets 401) while the owner's access and
 // passkey are as the copy had them (the passkey signs in from the internet again once the owner, on the tailnet, has
 // kept what came back: E2c, the copy has a number and the new disk none); `restore.sh --with-state` puts an
-// install snapshot's state back but never its `sessions.json`, also when the snapshot holds one.
+// install snapshot's state back but never its `sessions.json`, also when the snapshot holds one. The registry's "Copied
+// daily" column agrees with what a real copy holds, for each state file there (TR-6).
 //
 // One stand-in fleet looks every 3 s (the hourly look, made short), with Sparks 3 and 4 on; a second starts from the
 // first one's copy. restore.sh is the text deploy/host-on-portal.sh writes into each snapshot, run in a made-up home
@@ -89,7 +90,7 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
   });
 
   test('a copy holds no saved-runs.json (a saved workflow’s run under way when it was made)', { timeout: 300000 * SLOW }, async () => {
-    const r0 = await quiet(F), runs = join(F.stateDir, 'saved-runs.json');
+    const r0 = await quiet(F), runs = join(F.stateDir, 'saved-runs.json'), present = new Set(readdirSync(F.stateDir));
     // (written while the service runs: it reads the record only at its start)
     writeFileSync(runs, JSON.stringify({ runs: { 'op-copy-test': { operation: 'op-copy-test', since: new Date().toISOString(), title: 'a run under way', steps: 2, step: 1,
       started: [{ kind: 'model', spark: 'spark4', container: 'sc-RadixArk--Qwen3.8-27B-NVFP4' }] } } }), { mode: 0o600 });
@@ -99,6 +100,10 @@ describe('no sign-in travels with the state', { concurrency: 1 }, () => {
       const names = listed(copyFile(F, c));
       assert.ok(names.includes('./test-change-2.json'), names.join(' '));
       assert.ok(!names.some(n => /(^|\/)saved-runs\.json$/.test(n)), `no saved-runs.json in the copy: ${names.join(' ')}`);
+      // (docs/registry.md's "Copied daily" says what this copy did, for each state file that was there before it, TR-6)
+      const rows = readFileSync(join(REPO, 'docs', 'registry.md'), 'utf8').split('\n').map(l => /^\| `([\w.-]+)` \| `[\w-]+` \| .* \| (yes|no) \| (?:yes|no) \|$/.exec(l)).filter(Boolean);
+      assert.deepEqual(['saved-runs.json', 'sessions.json'].map(f => rows.find(r => r[1] === f)?.[2]), ['no', 'no'], 'the registry lists both as not copied');
+      for (const [, file, copied] of rows.filter(r => present.has(r[1]) || r[1] === 'saved-runs.json')) assert.equal(names.includes(`./${file}`) ? 'yes' : 'no', copied, `${file}: the registry says “Copied daily: ${copied}”`);
     } finally { rmSync(runs, { force: true }); }
   });
 

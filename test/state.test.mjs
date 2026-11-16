@@ -1,7 +1,8 @@
 // Covers: Operations on the record (`events.jsonl`) when they start and end, under one id; one cut off by a restart
 // reported as `interrupted` with a notice (a bad line skipped); SIGTERM: new operations get 503, a running one
 // finishes, then the service exits 0; a second copy on a used port exits 1 and the first keeps its socket; the daily
-// copy of the state (`state-YYYY-MM-DD.tgz` on Spark 3, no sockets; `/health` `lastBackup`); `/health` `agentsPaused`,
+// copy of the state (`state-YYYY-MM-DD.tgz` on Spark 3, no sockets; `/health` `lastBackup`; its far command holds no
+// pattern a login shell would expand, checked always, and run under zsh where zsh is there); `/health` `agentsPaused`,
 // `sparksOnline`; unreadable `verified.json`, `added-models.json`, `main.json` set aside as `<file>.unreadable-<time>`
 // with a notice, one that can't be read at all → 503 and left alone; a Spark that freezes (`.mock/stall`): two
 // timed-out commands mark it offline for a minute, a slow read → `[still_running]`. The chat keeps answering when
@@ -148,6 +149,19 @@ describe('the main service', { concurrency: 1 }, () => {
       r = zsh();
       assert.equal(r.status, 0, String(r.stderr));
       assert.deepEqual(readdirSync(there), [`${name}.part`], 'the stale .part is gone');
+    });
+    // The same fix, held where zsh isn't there to run it (TR-7): the stale .part's pattern is quoted and handed to find,
+    // and nothing in the command is a file pattern its shell would expand (a pattern that matches nothing fails under zsh).
+    test('its first command on the far Spark holds no pattern the login shell would expand: find gets the .part\'s quoted', { timeout: 30000 * SLOW }, async () => {
+      const name = `state-${DAY}.tgz`, from = join(T.fleet.root, 'spark3', '.mock', 'gzip-from');
+      const copy = join(T.fleet.root, 'spark3', '.local', 'share', 'spark-console', 'backups', name);
+      await waitFor(() => existsSync(copy) && existsSync(from), { timeout: 20000, what: 'the first copy' });
+      const sent = readFileSync(from, 'utf8').trim();
+      assert.match(sent, / && find "\$HOME\/\.local\/share\/spark-console\/backups" -maxdepth 1 -name 'state-\*\.tgz\.part' -delete && /, sent);
+      // (quoted text and the shell's own $? left out; a bracket pattern is [abc] with no space in it, `[ $g = 0 ]` is the
+      // test command)
+      const bare = sent.replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/\$[?*#@!$-]/g, '');
+      assert.doesNotMatch(bare, /[*?]|\[[^\s\]]+\]/, `a pattern its shell would expand: ${bare}`);
     });
   });
 

@@ -22,7 +22,8 @@
 // and said so while its Spark doesn't answer, removed once it does), at "/stop" from whoever opened it (the API, an
 // agent key), and at "/stop <name>" from the owner's own call (not another agent's). The watcher and workloads leave
 // out only a box the console knows (a container named and labelled like one, unknown to it, is listed); keep_running
-// refuses a box's name. changeLabel names it, keys masked.
+// refuses a box's name. changeLabel names it, keys masked. /stop is never paused, for an agent or Sparkie; a command's
+// end line counts only at the very end of what came back.
 // The stand-in docker (test/mock/bin/docker) answers the check from the box's own run flags, and switch files open a
 // wall, take a tool away or stop the daemon; what a real Spark's Docker grants is that Spark's own first check. Starts
 // stand-in fleets: run it on a Spark.
@@ -307,6 +308,11 @@ test('the pause: Sparkie’s and an agent’s call open no box while changes are
     const write = await call(key.token, 'write_file', { on: 'box', path: 'a.txt', text: 'x' });
     assert.ok(write.isError, write.raw);
     assert.match(write.text, new RegExp(PAUSED.replace(/[()]/g, '\\$&')));
+    // (and /stop, which is never paused, from the agent and from Sparkie: final read TD-06)
+    const stopped = await call(key.token, 'run', { on: 'box', command: '/stop' });
+    assert.deepEqual([stopped.isError, stopped.value?.box], [false, 'none'], stopped.raw);
+    const { sent: stopSent } = await inChat(chat, 'remove the box while paused', { on: 'box', command: '/stop' });
+    assert.ok(!stopSent.startsWith('[error] ') && JSON.parse(stopSent).box === 'none', stopSent);
     const own = await act('run', { on: 'box', command: 'true' });
     assert.deepEqual([own.status, own.json.box], [200, 'open'], own.text);
     assert.ok(journal().filter(j => j.where === 'box' && j.outcome === 'refused' && /are paused/.test(j.err || '')).length >= 2);
@@ -392,6 +398,9 @@ test('with Sparkie’s model on Spark 3, the box opens on Spark 4 and never on S
   assert.equal(none.status, 503, none.text);
   assert.equal(none.json.error, 'No compute Spark is on to hold a box: Spark 1 and Spark 4 are off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.');
   for (const spark of ['spark2', 'spark3']) assert.deepEqual([boxLines(spark, F), boxRuns(spark, F)], [[], []], spark);
+  // (and nothing runs as root on the brain's Spark: refused in its own words, the final read of the tests, TD-04)
+  const rooted = await act('run', { on: 'spark3', command: 'touch r3.txt', root: true }, F);
+  assert.deepEqual([rooted.status, rooted.json?.error], [403, 'Spark 3 holds the brain, so nothing runs there as root.'], rooted.text);
   await F.stop();
 });
 
@@ -457,7 +466,24 @@ test('the check itself, run on this machine (no walls here): each of the eleven 
     const b = runIt(some);
     assert.deepEqual(b.out.map(l => l.split(' ').slice(0, 3).join(' ')), [...NAMES.map(w => `c0ffee wall ${w}`), 'c0ffee walls end'], b.all);
     assert.deepEqual([b.out[0], b.out[7], b.out[9]], ['c0ffee wall root open can\'t tell: id is missing', 'c0ffee wall sockets open can\'t tell: find is missing', 'c0ffee wall network open can\'t tell: timeout is missing']);
+    // (the open side of three probes, which said only "ok" above: a key in the environment, a home that is there, a
+    // socket find finds; the final read of the tests, TD-11)
+    writeFileSync(join(all, 'find'), '#!/bin/sh\necho /tmp/box-check-fake.sock\n', { mode: 0o755 });
+    const c = spawnSync(join(all, 'bash'), ['-c', check, 'box-check', 'c0ffee', all, '127.0.0.1', '9'], { encoding: 'utf8', timeout: 30000 * SLOW, env: { PATH: all, HOME: all, HF_TOKEN: 'x' } }).stdout.trim().split('\n');
+    assert.equal(c[6], 'c0ffee wall home open', c.join('\n'));
+    assert.match(c[7], /^c0ffee wall sockets open \/tmp\/box-check-fake\.sock/, c.join('\n'));
+    assert.match(c[8], /^c0ffee wall secrets open HF_TOKEN/, c.join('\n'));
   } finally { rmSync(all, { recursive: true, force: true }); rmSync(some, { recursive: true, force: true }); }
+});
+
+// (final read TD-10: the end line is read only at the very end of what came back; the same id's line earlier is output)
+test('a command’s end line counts only at the very end: a line of the same fresh id earlier in what came back is output', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-box.mjs'), 'utf8'), from = src.indexOf('async function boxExec(');
+  const fn = src.slice(from, src.indexOf('\n}\n', from) + 2), ID = 'ab'.repeat(12);
+  const boxExec = new Function('randomBytes', 'nodeById', 'run', 'boxExecScript', 'boxes', 'maskSecrets', 'BOX_OUT_MAX', `${fn}\nreturn boxExec;`)(
+    () => Buffer.from(ID, 'hex'), () => ({ id: 'spark3' }), async () => ({ code: 0, out: `hello\n${ID} end 0\nmore\n${ID} end 7\n` }), () => '', new Map(), x => x, 2 ** 20);
+  const x = await boxExec('k', { spark: 'spark3' }, 'true', 30);
+  assert.deepEqual([x.kind, x.exit, x.output], ['ran', 7, `hello\n${ID} end 0\nmore`]);
 });
 
 test('changeLabel names the box, the command whole and keys masked', async () => {

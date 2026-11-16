@@ -19,6 +19,16 @@ Then the code, in the order `runAction` (`16-actions.mjs`) checks: inputs (`chec
 (`tripBreaker`), then the action's own rails (`railsFor`, `placeModel`, `question` in `17-changes.mjs`). Passkey
 gates on page routes: `passkeyGate` (`22-passkey.mjs`).
 
+A command on a Spark (`run`, `write_file`) is kind `read` to `runAction`, which only checks its inputs and, once it
+ran, counts it toward the hour's changes (`hourCounted`). Its gates are the ladder's (R61), and the refusal or the
+button says which: “Not done: …”, “Not done on Spark 2: …”, “Asked because …”. In the code, in order: `rootChange` for
+`root: true` (`21-root.mjs`, R70); `workChange` (`21-ladder.mjs`): who may run (`whoMayLook`, `21-work.mjs`); on
+Spark 2 `hubChange` and `hubRefuses` (`21-hub.mjs`); `runnerNever` (`21-runner.mjs`: a Spark holding the brain,
+`sudo`, the pause); the sorter's answer (`sortCommand`, `20-sort.mjs`, R55: not done, or the lock-out class, which
+goes to `netChange`, `21-net.mjs`, R71: as the owner it is answered “set root”); why it isn't run at once
+(`hostClear`); a go-ahead that covers it (`aheadCover`, `21-ahead.mjs`, R65); the rail (`brainRail`). Tests:
+`ladder.test.mjs`, `hub-change.test.mjs`, `net.test.mjs`, `root.test.mjs`, `sort.test.mjs`.
+
 ## Also update
 
 - A gate that refused what the owner's words asked for: a test in `sparkie.test.mjs` or `intent.test.mjs` that fails

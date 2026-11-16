@@ -6,7 +6,7 @@
 // and never wakes the owner's task waiting there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, createActKey, call, SLOW } from './lib.mjs';
 
@@ -102,6 +102,10 @@ test('an agent’s press in its own conversation runs its change and never wakes
     // The agent presses it.
     const pressed = await call(act.token, 'ask_sparkie', { conversation: chat, choice: yesOf(r.message)[0].id });
     assert.ok(!pressed.isError, `set-up: the agent’s press: ${pressed.raw}`);
+    // (and it ran: the saved workflow's call, from that press, ended well; final read TE-13)
+    const ran = () => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).flatMap(f => readFileSync(join(T.fleet.journalDir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)))
+      .filter(j => j.k === 'call' && j.act === 'run_workflow' && j.chat === chat && j.ok === true && !['needs-ok', 'question', 'refused'].includes(j.outcome));
+    await waitFor(() => ran().length > 0, { timeout: 30000 * SLOW, what: 'the agent’s press to run the saved workflow' });
     await sleep(10000 * SLOW);
     const m = await chatMessages(chat), t = taskOf(chat);
     assert.equal(m.filter(x => x.auto).length, 0, `an agent pressed; the owner’s task now: ${JSON.stringify(t)}. Chat: ${shown(m)}`);

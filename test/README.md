@@ -12,7 +12,8 @@ From `spark-console/`:
 SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 ```
 
-- Node 20 or newer (tested on 26), Python 3, bash, tar. No `npm install`: only `node:test` and `fetch`.
+- Node 22 or newer (run on 26; the service needs Node's built-in WebSocket client, as the installer checks), Python 3,
+  bash, tar, git, curl. No `npm install`: only `node:test` and `fetch`.
 - Quote the glob: `node --test test/` fails on recent Node (a folder isn't a pattern), and a bare `node --test`
   also loads the helpers and stand-ins in `test/` (they do nothing then).
 - It binds to `127.0.0.1` on free ports; a sandbox that blocks local listening has to allow it.
@@ -23,11 +24,12 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
   fleet starts, so one look at the fleet takes about 20 s, and `SPARK_TEST_SLOW=3 node test/lock.mjs` is what passes
   there. `SPARK_TEST_CONCURRENCY=n` changes how many files `lock.mjs` runs at once.
 - A test that times out keeps running in the background, and its `finally` can undo a stand-in setting the next test
-  just made: after one timeout and odd failures in the same file, fix the timeout first. The long poles wait on
+  just made: after one timeout and odd failures in the same file, fix the timeout first. Some files wait on
   purpose: `state.test.mjs` freezes a stand-in Spark until commands time out (20–45 s each), `ask.test.mjs` waits out
   a 45 s answer, `change.test.mjs` follows real deploys on the stand-ins (the service checks a new model 5 s after
   starting it), `pause.test.mjs` runs a dozen operations, `heal.test.mjs` / `fleet.test.mjs` wait for the watcher
-  (its first look is 15 s in).
+  (its first look is 15 s in). The longest files today are others (`root-helper`, `power`, `apps` and `pull`: 8 to 11
+  minutes each on a Spark); the end of the suite's log lists every file's seconds.
 - Smoke (the agent door, the CLI, passkeys, Sparkie's chats and the fuzzer; about a minute, the chats the longest):
 
   ```bash
@@ -46,12 +48,14 @@ SPARK_TEST_STRICT=1 node --test --test-concurrency=4 'test/*.test.mjs'
 ## Where the full run happens
 
 - **A compute Spark** (the fast way, before an install): `tools/test-on-spark.sh akuppala@<spark>` copies this folder
-  there and runs `node test/lock.mjs` in a container with no network: about 13 minutes on Spark 3. The lock comes
+  there and runs `node test/lock.mjs` in a container with no network: about 46 minutes on a compute Spark (2026-11-15: 2,353 tests, the map
+  recorded). The lock comes
   back to `../spark-test-runs/`. Never on Spark 2.
 - **GitHub, on every push to `main` and every pull request** (`.github/workflows/full-run.yml`): one job runs the build
   check and `node test/lock.mjs` two files at a time (`SPARK_TEST_SLOW=2`; the runner has 2 cores) and can only read.
   On `main` a second job, which runs none of this folder's code, checks the lock names that commit, tree, run and build,
-  and pushes it on top of the tested commit as the tag `tested/<first 12 hex of the tree>`. The lock is no longer kept
+  and pushes it on top of the tested commit as the tag `tested/<first 12 hex of the tree>`. Today it refuses every lock
+  `lock.mjs` writes (the lock has `evalSet`, the job's list of keys does not), so it pushes no tag. The lock is no longer kept
   on `main`. Its minutes are not measured yet: the end of the suite's log lists the seconds each file took. If the job
   is over 30 minutes, split it into jobs side by side.
 - **A step onto `main`**: `node tools/land.mjs <branch>` runs only the files its change needs (R29). Recording the
@@ -88,5 +92,6 @@ What only a real Spark proves (R63's Today has the lines to run there):
 
 ## How it's put together
 
-The harness (`startMock`, `useFleet`, `request`), the stand-in fleet, every stand-in command and model, and the
-`.mock/` files a test sets to change what they do: `test/stand-in-fleet.md`.
+The harness (`startMock`, `useFleet`, `request`), the stand-in fleet, the stand-in commands and models, and the main
+`.mock/` files a test sets to change what they do: `test/stand-in-fleet.md`. The others are in each stand-in's own
+comments.

@@ -582,6 +582,12 @@ export function registry(root = ROOT, tree = readParts(root)) {
   const actions = parts.flatMap(p => p.actions);
   const kinds = table(tree, 'ACTION_KIND'), pageOnly = table(tree, 'PAGE_ONLY'), notStep = table(tree, 'NOT_A_STEP'), inside = table(tree, 'INSIDE_READS');
   const files = [...new Map([...tree.state.values()].map(s => [s.file, s])).values()].sort((a, b) => a.file.localeCompare(b.file));
+  // What the daily copy leaves out of the state folder: the names its tar is told to exclude in sendCopy
+  // (25-backup-and-start.mjs), so the column says what the copy does, not only where the file lives (TR-6).
+  const copyOut = new Set(parts.flatMap(p => {
+    const at = p.text.indexOf('function sendCopy('), end = at < 0 ? -1 : p.text.indexOf('\n}\n', at);
+    return at < 0 ? [] : [...p.text.slice(at, end < 0 ? undefined : end).matchAll(/'--exclude=\.\/([\w.-]+)'/g)].map(m => m[1]);
+  }));
   const kept = new Set(parts.flatMap(p => [...p.code.matchAll(/(?<![\w$.])readKept\s*\(/g)].flatMap(m => {
     const a = args(p.code, p.close, m.index + m[0].length - 1)[0];
     return a ? [...resolve(tree, p, m.index, a).files] : [];
@@ -612,7 +618,7 @@ export function registry(root = ROOT, tree = readParts(root)) {
     '## State files and their writers',
     '',
     'Each file is owned by the part that names it; its writers are found in the code and must be the ones its owner’s',
-    'header declares. Copied daily: in the state folder, so in the daily copy and every install snapshot. Read kept: read',
+    'header declares. Copied daily: in the state folder and not one the daily copy leaves out (`sendCopy`’s excludes). Read kept: read',
     'with `readKept`, which sets an unreadable file aside and keeps one earlier copy (R20).',
     '',
     '| File | Owner | Writers | Copied daily | Read kept |',
@@ -626,7 +632,7 @@ export function registry(root = ROOT, tree = readParts(root)) {
         return c.length && c.length <= 4 ? `\`${x}\` is called by ${list(c)}` : '';
       }).filter(Boolean);
       const writers = [by(w, s.part) || 'none', o?.note, ...through].filter(Boolean).join('; ');
-      return `| \`${s.file}\` | \`${s.part.slice(0, -4)}\` | ${cell(writers)} | ${s.inState ? 'yes' : 'no'} | ${kept.has(s.file) ? 'yes' : 'no'} |`;
+      return `| \`${s.file}\` | \`${s.part.slice(0, -4)}\` | ${cell(writers)} | ${s.inState && !copyOut.has(s.file) ? 'yes' : 'no'} | ${kept.has(s.file) ? 'yes' : 'no'} |`;
     }),
     '',
     '## Timers, and what may wake',

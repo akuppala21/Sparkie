@@ -349,6 +349,8 @@ describe('once a passkey is set up, changes to who has access need it', () => {
       ['another agent', ['PUT', `/agents/${agent}`, { act: true }], ['PUT', `/agents/${other}`, { act: true }]],
       ['act false → true', ['PUT', `/agents/${agent}`, { act: false }], ['PUT', `/agents/${agent}`, { act: true }]],
       ['pausing → resuming', ['PUT', '/agents/settings', { halted: true }], ['PUT', '/agents/settings', { halted: false }]],
+      // (a yes for one route used on another route: the case that went with members, now with two of the owner's routes)
+      ['removing a passkey → adding an agent', ['DELETE', `/auth/passkeys/${KEY1.id}`, undefined], ['POST', '/agents', { name: 'sent-on-another-route' }]],
       ['another model running its own code', ['POST', '/deploy', { model: 'a/one', node: 'spark3', allowRemoteCode: true }], ['POST', '/deploy', { model: 'a/two', node: 'spark3', allowRemoteCode: true }]],
       ['another pair of Sparks running its own code', ['POST', '/deploy/cluster', { model: 'a/one', nodes: ['spark3', 'spark4'], allowRemoteCode: true }], ['POST', '/deploy/cluster', { model: 'a/one', nodes: ['spark2', 'spark4'], allowRemoteCode: true }]],
     ];
