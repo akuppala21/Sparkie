@@ -5563,6 +5563,9 @@ function tracesToRequest(name, input, saidText, request = saidText) {
   for (const id of [input.spark, ...(input.sparks || [])].filter(Boolean)) {
     if (name === 'start_model' ? !said.has(id) : namedSparks.length && !namedSparks.includes(id)) return false;
   }
+  // (no Spark named: the container the words point to must be on the call's Spark alone, so the call's Spark never
+  // picks between two, A-20)
+  if (!namedSparks.length && input.container && input.spark && NODES.some(n => n.id !== input.spark && pickContainer(name, n.id, saidText))) return false;
   return true;
 }
 // A change's plan (docs/contract.md 7.3): its workflow and version, and each input with where it came from: the words
@@ -5637,9 +5640,14 @@ async function sparkieCheck(name, input, ctx) {
   const asked = kinds.some(k => intent.asked.includes(k)) && !kinds.some(k => intent.negated.includes(k) || intent.mixed.includes(k));
   const saidText = ctx.said || ctx.request || '', said = tokensOf(saidText), out = { ...input };
   if (name === 'start_model') {
-    if (out.spark && !said.has(out.spark)) delete out.spark;
+    // Where it lands is the owner's to say (A-20): one Spark named is where it starts, whatever the call says; with
+    // more named, the call has to pick one of them, else it is a button; with none named, Spark Console places it.
+    const named = [...said].filter(t => /^spark\d+$/.test(t));
     if (out.sparks && !out.sparks.every(id => said.has(id))) delete out.sparks;
-    return { clear: asked && await namesModel(out, saidText), input: out };
+    if (!out.sparks && named.length === 1) out.spark = named[0];
+    else if (out.spark && !said.has(out.spark)) delete out.spark;
+    const settled = out.sparks || out.spark || named.length < 2;
+    return { clear: asked && Boolean(settled) && await namesModel(out, saidText), input: out };
   }
   // Memory: the owner's own statement is enough (20-memory.mjs memoryClear).
   if (name === 'remember' || name === 'forget_memory') return { clear: memoryClear(name, out, ctx, asked), input: out };
@@ -5889,7 +5897,9 @@ async function runAction(name, viewer, args, ctx = {}) {
       ? { ...ctx.plan, workflow: out.workflow, title: workflowById(out.workflow).title, version: out.workflowVersion || ctx.plan.version,
         inputs: ctx.plan.inputs.map(i => (i.source === 'chosen' && i.name === 'spark' && Array.isArray(out.sparks) ? { name: 'sparks', value: out.sparks.join(' + '), source: 'chosen' } : i)) }
       : ctx.plan;
-    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started,
+    // (where it truly ran, beside the call's arguments as given: the result's Sparks, else the checked input's, A-20)
+    const ranOn = Array.isArray(out?.sparks) ? out.sparks : input.sparks || (input.spark ? [input.spark] : null);
+    audit({ via: ctx.via || null, actor: ctx.actor || null, ...(ctx.channel ? { channel: ctx.channel } : {}), ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: out?.outcome || null, operation: out?.operation || null, ms: Date.now() - started, ...(ranOn ? { ranOn } : {}),
       ...(plan ? { plan } : {}) });
     journalCalled(jid, name, input, args, ctx, { out, ms: Date.now() - started });
     if (plan && out && typeof out === 'object' && !Array.isArray(out)) return { ...out, plan };

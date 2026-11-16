@@ -5,14 +5,14 @@
 // after a change it can't put back (a file saved, a change inside the lock-out net) says so and puts nothing older back
 // (C-16); an undo that put nothing back leaves its change the chat's last, so the next /undo is that change again
 // (R1-01); an agent's new conversation never drops one holding the owner's words, and is refused when none can go
-// (C-18); a habit told in passing ("I used to free up spark 4 every night.") stops nothing (A-18). Linux only: run it
-// on a Spark with tools/test-on-spark.sh.
+// (C-18); a habit told in passing ("I used to free up spark 4 every night.") stops nothing (A-18); a start lands on
+// the Spark the owner named, whatever Spark the call says (A-20). Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { T, useFleet, api, call, createKey, newChat, say, choose, chatMessages, waitFor, sleep, ASK, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createKey, newChat, say, choose, chatMessages, waitFor, sleep, auditLines, ASK, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 useFleet({ env: { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_DANGER_LATE_MS: '0',
@@ -177,6 +177,35 @@ test('R1-01: an undo that put nothing back leaves its change this chat\'s last: 
     assert.equal(now.find(r => r.revision === d.revision)?.undone, undefined, 'not marked undone');
     assert.equal(now.find(r => r.revision === d.revision - 1)?.undone, undefined, 'the one before it untouched');
   }
+});
+
+test('A-20: the owner says Spark 4; the call says Spark 3, or no Spark: it starts on Spark 4 and Spark 3\'s model keeps running; with two Sparks named and the call settling neither, a button', { timeout: 600000 * SLOW }, async () => {
+  const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', at = spark => readFileSync(join(T.fleet.root, spark, '.mock', 'containers'), 'utf8');
+  const stateOf = (spark, name) => at(spark).split('\n').find(l => l.startsWith(`${name}|`))?.split('|')[1];
+  assert.equal(stateOf('spark3', TESTORG), 'running', 'Spark 3’s model runs before');
+  const words = 'start gpt-oss-20b on spark 4';
+  for (const args of [{ model: 'gpt-oss-20b', spark: 'spark3' }, { model: 'gpt-oss-20b' }]) {
+    const r = await turn(await newChat(), words, [[{ name: 'start_model', arguments: args }]]);
+    assert.equal(r.tools[0]?.outcome, 'started', shown(r.tools));
+    const line = await waitFor(() => auditLines().findLast(l => l.via === 'sparkie' && l.action === 'start_model' && l.ok && l.request === words && JSON.stringify(l.args) === JSON.stringify(args)), { what: 'the start’s audit line' });
+    const job = await waitFor(async () => { const j = (await api(`/jobs/${line.operation}`)).json; return j && j.status !== 'running' && j; }, { timeout: 240000, every: 500, what: 'the start to end' });
+    assert.equal(job.status, 'completed', JSON.stringify(job.error || job.log?.slice(-3)));
+    assert.ok(/^sc-gpt-oss-20b\|running/m.test(at('spark4')), 'it runs on Spark 4');
+    assert.equal(stateOf('spark3', TESTORG), 'running', `Spark 3’s model still runs (${JSON.stringify(args)})`);
+    assert.ok(!/^sc-gpt-oss-20b\|running/m.test(at('spark3')), 'nothing of it started on Spark 3 (where it is on disk, so where Spark Console would place it)');
+    // (the record keeps the call's arguments as given, and where it truly ran)
+    assert.deepEqual(line.ranOn, ['spark4'], JSON.stringify(line));
+    // (stopped again, so the next way of calling starts it anew)
+    const stop = await api('/actions/stop_model', { method: 'POST', body: { spark: 'spark4', container: 'sc-gpt-oss-20b' } });
+    assert.equal(stop.status, 200, stop.text);
+    if (stop.json?.operation) await waitFor(async () => { const j = (await api(`/jobs/${stop.json.operation}`)).json; return j && j.status !== 'running' && j; }, { timeout: 120000, every: 500, what: 'the stop to end' });
+  }
+  // Two Sparks named, and the call doesn't pick one of them: a button, and nothing starts.
+  const two = 'start gpt-oss-20b on spark 3 or spark 4';
+  const b = await turn(await newChat(), two, [[{ name: 'start_model', arguments: { model: 'gpt-oss-20b' } }]]);
+  assert.ok(['needs-ok', 'question'].includes(b.tools[0]?.outcome), shown(b.tools));
+  assert.ok(b.choices.length > 0, 'a button');
+  assert.equal(stateOf('spark3', TESTORG), 'running');
 });
 
 // (last: a change inside the lock-out net)
