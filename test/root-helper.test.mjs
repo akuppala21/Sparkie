@@ -2001,7 +2001,9 @@ describe('what bounds a plain change (R63)', () => {
     assert.ok(Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
   });
 
-  test('the disk floor: under 50 GB free a change does not start; one whose disk falls under it is ended, and says so', () => {
+  // (the stand-in systemctl only marks a stop: the command ends itself, with 9, when it sees the mark. So this shows the
+  // helper asks systemd to stop the change and says so; that systemd ends it is a Spark's)
+  test('the disk floor: under 50 GB free a change does not start; for one whose disk falls under it the helper asks systemd to stop it, and says so', () => {
     const s = proven(), bin = join(s.R, 'standin', 'bin');
     mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, 'df'), '#!/bin/bash\necho Avail\ncat "$SPARK_CONSOLE_REHEARSAL/standin/free"\n', { mode: 0o755 });
@@ -2020,6 +2022,7 @@ describe('what bounds a plain change (R63)', () => {
     const cmd = 'printf "40000000000\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; for i in $(seq 60); do sleep 0.5; ls "$SPARK_CONSOLE_REHEARSAL"/standin/stopped/sw-run-* > /dev/null 2>&1 && exit 9; done';
     const r = go(cmd);
     assert.match(r.stdout, new RegExp(`\\n${r.id} stopped: the disk's free space fell under 50 GB\\n${r.id} end 9\\n$`), r.stdout);
+    assert.ok(calls(s).some(c => c.join(' ') === `systemctl stop sw-run-${r.id}.service`), 'the helper asked systemd to stop it');
   });
 
   test('--asked (the owner pressed): no start floor, but the watch ends it under 5 GB; --home is watched the same; one started under 5 GB, 100 MB under its start', { timeout: 200000 }, () => {
