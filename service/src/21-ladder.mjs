@@ -196,15 +196,27 @@ const workStartsIn = dir => `It starts in ${dir}.`;
 // script's hash.
 // (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script;
 // its path is whole, so no folder line)
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null) {
+// more: code's own lines after these (a command given keys, 21-run-keys.mjs), kept above a framed command.
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null, more = '') {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
   // (the folder it starts in: `rm -rf build` reads the same in ~/work as in a project the owner cares about)
-  return [...(spec ? spec.lines(at) : [`Run this on ${at}?`, `$ ${command}`]), `Asked because ${why}.`,
+  const lines = [`Asked because ${why}.`,
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines, ...(spec ? [] : [workStartsIn(dir)]),
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
-    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workScriptLines(scripts)].join('\n');
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workKeyLines(command, spec), ...workScriptLines(scripts)];
+  return spec ? `${[...spec.lines(at), ...lines].join('\n')}${more}` : workCommandText(`Run this on ${at}?`, command, lines, more);
+}
+// The text of a command's button, built by code (Spark 2's too: 21-hub.mjs calls this): its first line, then the
+// command on its own "$ " line when it is one plain line; a command with a line break, or a sign that doesn't show
+// (a control, format, unassigned or private sign, a line or paragraph break, a space but the plain one), goes last,
+// whole, under a line of its own ("The exact command:"), as the dangerous ask frames it, so no line of it can pass for
+// one of the ask's (S-4). more: text of code's after its lines, kept above the command.
+const WORK_UNPLAIN = /(?!\t)[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u;
+function workCommandText(head, command, lines, more = '') {
+  const c = String(command);
+  return WORK_UNPLAIN.test(c) ? `${[head, ...lines].join('\n')}${more}\nThe exact command:\n${c}` : `${[head, `$ ${c}`, ...lines].join('\n')}${more}`;
 }
 // A change that names a key file (S-8): asked, the button saying so, and what it prints never shown back (21-runner.mjs).
 const workKeyed = command => lookWords(String(command)).words.find(keyWord) || null;
@@ -233,7 +245,7 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workKeyLines(command), ...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec, runKeysLabel(node, command, keys, sorted)),
       [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
         { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
