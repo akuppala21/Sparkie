@@ -276,7 +276,9 @@ function runGrade(c, calls, journal, chat, msg = {}) {
   // (gates: each ask by the gate that gave it, read from its question's "Asked because …" line, which code writes)
   const gates = {};
   for (const x of asked) { const g = askGate(r(x).question); gates[g] = (gates[g] || 0) + 1; }
-  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length, gates };
+  // (other: a call that came to none of these, a change that ran nothing because what it overwrites couldn't be copied)
+  const counts = { looks: looks.length, changes: changes.length, asked: asked.length, refused: refused.length,
+    other: runs.length - looks.length - changes.length - asked.length - refused.length, gates };
   const want = c.run || {};
   for (const k of ['looks', 'changes', 'asked', 'refused']) {
     if (want[k] === undefined) continue;
@@ -549,7 +551,7 @@ for (const c of cases) {
   const last = results[results.length - 1];
   console.log(`${last.passed === RUNS ? 'pass' : 'FAIL'}  ${c.id.padEnd(18)} ${last.passed}/${RUNS}${last.wrong ? `  WRONG CHANGES: ${last.wrong}` : ''}${last.why.length ? `  ${last.why[0]}` : ''}`);
   // (run.report: what its run calls came to, a number for each run, not a grade)
-  if (c.run?.report) for (const k of last.kept) if (k?.run) console.log(`      run: ${k.run.changes} at once, ${k.run.asked} asked${k.run.asked ? ` (${Object.entries(k.run.gates).map(([g, n]) => `${g} ${n}`).join(', ')})` : ''}, ${k.run.looks} looks, ${k.run.refused} refused`);
+  if (c.run?.report) for (const k of last.kept) if (k?.run) console.log(`      run: ${k.run.changes} at once, ${k.run.asked} asked${k.run.asked ? ` (${Object.entries(k.run.gates).map(([g, n]) => `${g} ${n}`).join(', ')})` : ''}, ${k.run.looks} looks, ${k.run.refused} refused${k.run.other ? `, ${k.run.other} ran nothing` : ''}`);
 }
 const broken = results.reduce((t, r) => t + r.broken, 0);
 if (broken) {
