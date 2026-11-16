@@ -138,8 +138,12 @@ echo "$*" >> "$HOME/systemctl.log"
 verb=''; unit=''
 for a in "$@"; do case "$a" in --user) ;; -*) ;; *) if [ -z "$verb" ]; then verb="$a"; else unit="$a"; fi ;; esac; done
 # The update guard's timer: started, it runs its service's ExecStart once OnActiveSec has passed (and is then done);
-# enabled, the test's reboot starts it again; $HOME/fail-guard makes it fail to start.
+# enabled, the test's reboot starts it again; $HOME/fail-guard makes it fail to start. ($HOME/guard-hold: asked whether
+# it is active, it waits while that is there, after writing its process group to $HOME/guard-held.)
 if [ "$unit" = spark-console-update-guard.timer ]; then
+  if [ "$verb" = is-active ] && [ -e "$HOME/guard-hold" ]; then
+    ps -o pgid= -p $$ | tr -d ' ' > "$HOME/guard-held"; while [ -e "$HOME/guard-hold" ]; do sleep 0.2; done
+  fi
   tf="$HOME/.config/systemd/user/spark-console-update-guard.timer"; sf="$HOME/.config/systemd/user/spark-console-update-guard.service"
   tp="$HOME/guard-timer.pid"
   talive() { [ -f "$tp" ] && kill -0 "$(cat "$tp")" 2>/dev/null; }
@@ -1244,6 +1248,28 @@ describe('the way back for an update from GitHub, armed by the build installed n
       assert.equal(r.code, 130, r.out);
       assert.match(r.out, /The install was stopped before it changed anything\./);
       assert.deepEqual([resultOf(home).tree, resultOf(home).result, resultOf(home).why], [g.t12, 'refused', 'the install was stopped before it changed anything']);
+      await fromBefore(r, mk);
+    } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
+  });
+
+  // (the eighth read of C5, Later 1: a stop that lands while the way back is being armed)
+  test('stopped while the way back is being armed (its timer already on): this install’s way back is taken back, nothing left armed, nothing changed', CASE, async () => {
+    needs('kept');
+    const g = push(treeFiles(79), 'Stopped while arming');
+    mark(g);
+    const mk = mark0(), hold = join(home, 'guard-hold'), held = join(home, 'guard-held');
+    writeFileSync(hold, '');
+    rmSync(held, { force: true });
+    try {
+      const run = pull(home, ['install', g.t12], { detached: true });
+      await waitFor(() => existsSync(held) && /^\d+$/.test(read(held).trim()), { timeout: 60000 * SLOW, what: 'the way back being armed, its timer on' });
+      assert.ok(existsSync(join(home, 'guard-enabled')), 'the timer was on when the stop came');
+      // (as systemd stops a unit: every process in it gets SIGTERM)
+      process.kill(-Number(read(held).trim()), 'SIGTERM');
+      const r = await run;
+      assert.equal(r.code, 130, r.out);
+      assert.match(r.out, /The install was stopped before it changed anything\./);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
       await fromBefore(r, mk);
     } finally { rmSync(hold, { force: true }); rmSync(held, { force: true }); }
   });
