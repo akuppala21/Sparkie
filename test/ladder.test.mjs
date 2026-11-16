@@ -656,8 +656,11 @@ test('a plain change that ends with the signs of no GPU says so: the GPU isn\'t 
 test('the root helper\'s own last lines (the disk floor ended it, the home put back) come apart from what the command printed, said plainly', () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-work.mjs'), 'utf8'), rsrc = readFileSync(join(REPO, 'service', 'src', '21-runner.mjs'), 'utf8');
   const fn = /^function helperAnswer\([^)]*\) \{[\s\S]*?\n\}$/m.exec(src)?.[0], note = /^const runnerNote = .*$/m.exec(rsrc)?.[0];
-  assert.ok(fn && note);
-  const helperAnswer = new Function('maskSecrets', `${fn}\nreturn helperAnswer;`)(String), runnerNote = new Function(`${note}\nreturn runnerNote;`)();
+  // (the helper's sentences the console reads, one table both use: 21-work.mjs)
+  const says = /^const HELPER_SAYS = \{[\s\S]*?\n\};$/m.exec(src)?.[0];
+  assert.ok(fn && note && says);
+  const HELPER_SAYS = new Function(`${says}\nreturn HELPER_SAYS;`)();
+  const helperAnswer = new Function('maskSecrets', 'HELPER_SAYS', `${fn}\nreturn helperAnswer;`)(String, HELPER_SAYS), runnerNote = new Function('HELPER_SAYS', `${note}\nreturn runnerNote;`)(HELPER_SAYS);
   const id = 'abcdefgh1234';
   const a = helperAnswer({ id, code: 0, out: `hello\n\n${id} the home's mode and owner were put back (700, not 777)\n${id} end 0\n` });
   assert.deepEqual([a.kind, a.output, a.exit, a.notes], ['ran', 'hello\n', 0, ["the home's mode and owner were put back (700, not 777)"]]);
