@@ -18327,7 +18327,11 @@ async function selfSend(viewer, ctx, input) {
   return { ok: true, outcome: 'sent', proposal: open.id, branch: open.branch, commit: commit.slice(0, 12), pushes: pushes + 1, pullRequest: pr?.number ?? null,
     files: paths.slice(0, 200), generated: t.generated, protected: protectedPaths, testLines: testLines.slice(0, 100),
     title: { note: 'Sparkie’s words.', text: title },
-    note: `Sent: ${open.branch} (commit ${commit.slice(0, 12)}, push ${pushes + 1} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}. GitHub runs its tests; check_update says how it is doing.` };
+    note: [`Sent: ${open.branch} (commit ${commit.slice(0, 12)}, push ${pushes + 1} of ${SELF_PUSHES})${pr?.number ? `, pull request #${pr.number}` : ''}: ${paths.length} file${paths.length === 1 ? '' : 's'} changed.`,
+      t.generated.length ? `Rebuilt by the installed build’s own generator: ${t.generated.join(', ')}.` : '',
+      protectedPaths.length ? `Protected paths (your passkey, on the page): ${protectedPaths.slice(0, 20).join(', ')}${protectedPaths.length > 20 ? ` and ${protectedPaths.length - 20} more` : ''}.` : 'No protected path.',
+      testLines.length ? `Removed or edited lines in existing tests: ${testLines.slice(0, 5).map(l => `${l.file}:${l.line} “${l.was.slice(0, 80)}”`).join('; ')}${testLines.length > 5 ? ` and ${testLines.length - 5} more` : ''}.` : 'No line of an existing test removed or edited.',
+      'GitHub runs its tests; check_update says how it is doing.'].filter(Boolean).join(' ') };
 }
 async function selfDrop(viewer, ctx) {
   const open = await selfOpen();

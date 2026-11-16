@@ -88,6 +88,8 @@ async function pressed(chat, words) {
 const refs = () => spawnSync(REAL_GIT, ['-C', COPY, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/sparkie/', 'refs/sparkie-base/', 'refs/sparkie-chat/'], { encoding: 'utf8', env: GIT_ENV }).stdout.trim();
 const ghBranches = () => spawnSync(REAL_GIT, ['-C', GH, 'for-each-ref', '--format=%(refname)', 'refs/heads/sparkie/'], { encoding: 'utf8', env: GIT_ENV }).stdout.trim().split('\n').filter(Boolean);
 const atMain = path => readFileSync(join(SRC, path), 'utf8');
+// (the open proposal's id, from the copy's refs: the press answers with its note only)
+const openId = () => /^refs\/sparkie\/([0-9a-f]{8}) /m.exec(refs())?.[1] || null;
 const box = files => control({ ...ON, box: { files } });
 // Hostile files write here if anything ever runs them.
 const MARK = temp('sct-self-mark-');
@@ -156,7 +158,8 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(s.q.choices[0].label, /^Put main’s code in this chat’s box/);
     assert.equal(s.p.json.outcome, 'started', s.says);
     assert.match(s.says, new RegExp(`main’s tree \\(commit ${MAIN.slice(0, 12)}\\)`));
-    const id = s.p.json.proposal;
+    const id = openId();
+    assert.ok(id, refs());
     assert.match(refs(), new RegExp(`refs/sparkie/${id} ${MAIN}`));
     assert.match(refs(), new RegExp(`refs/sparkie-base/${id} ${MAIN}`));
     assert.equal(git(COPY, ['cat-file', 'blob', `refs/sparkie-chat/${id}`]), chat);
@@ -176,15 +179,16 @@ describe('propose_update', { concurrency: 1 }, () => {
     const s = await pressed(selfChat, 'send your code proposal');
     assert.match(s.q.choices[0].label, /^Send the proposal “A calmer page” \(Sparkie’s words\) as a pull request/);
     assert.equal(s.p.json.outcome, 'sent', s.says);
-    const out = s.p.json, branch = `refs/heads/sparkie/${selfId}`;
+    const branch = `refs/heads/sparkie/${selfId}`;
     assert.deepEqual(ghBranches(), [branch]);
     const head = git(GH, ['rev-parse', branch]);
     assert.equal(git(GH, ['rev-parse', `${head}^`]), MAIN, 'one commit on the noted commit');
     assert.equal(git(GH, ['show', `${head}:service/src/21-web.mjs`]), `${part}// A proposal’s comment, from the box.`.trimEnd());
     assert.match(git(GH, ['show', `${head}:service/server.mjs`]), /\/\/ A proposal’s comment, from the box\./, 'server.mjs rebuilt from the proposal’s parts');
-    assert.ok(out.generated.includes('service/server.mjs'), JSON.stringify(out.generated));
-    assert.deepEqual(out.protected, ['tools/affected.mjs']);
-    assert.deepEqual(out.testLines, [{ file: 'test/abilities.test.mjs', line: 1, was: lines[0].replace(/\s+/g, ' ').trim().slice(0, 200) }]);
+    assert.match(s.says, new RegExp(`Sent: sparkie/${selfId} \\(commit ${head.slice(0, 12)}, push 1 of 6\\), pull request #1: \\d+ files changed\\.`));
+    assert.match(s.says, /Rebuilt by the installed build’s own generator: [^.]*service\/server\.mjs/);
+    assert.match(s.says, /Protected paths \(your passkey, on the page\): tools\/affected\.mjs\./);
+    assert.ok(s.says.includes(`Removed or edited lines in existing tests: test/abilities.test.mjs:1 “${lines[0].replace(/\s+/g, ' ').trim().slice(0, 80)}”.`), s.says);
     assert.match(git(GH, ['log', '-1', '--format=%B', head]), new RegExp(`^${TITLE}\\n\\n${WHY}\\n\\nProposed by Sparkie in the owner’s chat`));
     const prs = GHAPI.state.pulls;
     assert.equal(prs.length, 1);
@@ -202,7 +206,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     box({ 'service/src/21-web.mjs': `${part}// A proposal’s comment, from the box.\n// And a second one.\n` });
     const s = await pressed(selfChat, 'send your code proposal');
     assert.equal(s.p.json.outcome, 'sent', s.says);
-    assert.equal(s.p.json.pushes, 2);
+    assert.match(s.says, /, push 2 of 6\), pull request #1:/);
     const head = git(GH, ['rev-parse', `refs/heads/sparkie/${selfId}`]);
     assert.equal(git(GH, ['rev-parse', `${head}^`]), selfHead, 'on the first send, never by force');
     assert.equal(GHAPI.state.pulls.length, 1, 'the same pull request');
@@ -276,8 +280,9 @@ describe('propose_update', { concurrency: 1 }, () => {
     const s = await pressed(chat, 'send your code proposal');
     assert.equal(s.p.json.outcome, 'sent', s.says);
     assert.deepEqual(marks(), [], 'nothing of the proposal ran');
-    for (const p of ['tools/make.mjs', 'tools/parts.mjs', 'tools/build-server.mjs']) assert.ok(s.p.json.protected.includes(p), `${p} is protected`);
-    const head = git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.proposal}`]);
+    const prot = /Protected paths \(your passkey, on the page\): ([^.]*(?:\.[a-z]+[^.]*)*)\./.exec(s.says)?.[1] || '';
+    for (const p of ['tools/make.mjs', 'tools/parts.mjs', 'tools/build-server.mjs']) assert.ok(prot.split(', ').includes(p), `${p} is protected: ${s.says}`);
+    const id = openId(), head = git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]);
     assert.equal(git(GH, ['show', `${head}:docs/-n.md`]), 'a leading dash', 'a leading dash is a name, as data');
     assert.match(git(GH, ['show', `${head}:service/server.mjs`]), /a part that writes a marker if it is ever run/, 'joined as text by the installed generator');
     // (a name with a newline, or shell signs: refused, nothing pushed)
@@ -286,7 +291,7 @@ describe('propose_update', { concurrency: 1 }, () => {
       const r = await pressed(chat, 'send your code proposal');
       assert.match(r.says, /The box read back entries that can’t be proposed .*so nothing was sent\./, JSON.stringify(bad));
     }
-    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${s.p.json.proposal}`]), head, 'nothing pushed');
+    assert.equal(git(GH, ['rev-parse', `refs/heads/sparkie/${id}`]), head, 'nothing pushed');
     assert.deepEqual(marks(), []);
     await pressed(chat, 'drop your code proposal');
     assert.equal(refs(), '');
