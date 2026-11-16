@@ -16,7 +16,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync, accessSync, constants as fsConstants } from 'node:fs';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -169,7 +169,7 @@ function runCall(s, id, hash, secs, { protect = [], pins = PINS, rw = HOME_RW, h
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', `IPAddressDeny=localhost ${LAN}`,
     '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm:mode=1777,nosuid',
-    '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'PrivateDevices=yes',
+    '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'ProtectControlGroups=yes', '-p', 'PrivateDevices=yes',
     ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
     ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]), '-p', 'ReadOnlyPaths=/home/owner',
     ...rw.flatMap(p => ['-p', `ReadWritePaths=${p}`]),
@@ -580,9 +580,9 @@ describe('the proof of the walls', () => {
     "a connection to this Spark's own address or the tailnet", 'a file or segment left in /dev/shm or IPC', "the home's own mode",
     "the owner's start files", 'a name made at the top of the home or in a dot folder',
     'a write where a change may write, refused (~/.cache, /dev/shm)', 'with --home, a name at the top of the home or in ~/.local/bin, refused',
-    'a write in ~/.ssh', 'a terminal of this Spark (/dev/pts)'];
+    'a write in ~/.ssh', 'a terminal of this Spark (/dev/pts)', "writing a control group of the owner's (/sys/fs/cgroup)"];
   const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26, 30];
-  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30];
+  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30, 31];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -618,11 +618,11 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26, 30].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26, 30, 31].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
-      '-p', 'RuntimeMaxSec=300', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'target']);
+      '-p', 'RuntimeMaxSec=300', '-p', 'TimeoutStopSec=5', '-p', 'Delegate=yes', '--', py, '-I', '-S', proof, 'target']);
     assert.ok(!existsSync(join(s.R, 'run/spark-console', p.id)), 'the held folder is gone afterwards');
   });
 
@@ -680,6 +680,17 @@ describe('the proof of the walls', () => {
     const p = prove(s);
     noMark(s, p);
     assert.match(p.stdout, FAILED(`attempt 30 (${NAMES[30]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
+  });
+  test('attempt 31 not seen working outside the walls (its own program\'s control group, handed to the owner): no mark; and --home is tried too', () => {
+    const s = proven();
+    s.put('standin/outside', '31 not-there stand-in\n');
+    const p = prove(s);
+    noMark(s, p);
+    assert.match(p.stdout, FAILED(`attempt 31 (${NAMES[31]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
+    const t = spark({ knobs: { 'let-through': '31 home direct\n' } });
+    const q = prove(t);
+    assert.equal(q.status, 1, q.stdout);
+    assert.ok(q.stdout.includes(`${q.id} proof home 31 got through: ${NAMES[31]} (stand-in, directly)\n`), q.stdout);
   });
   test('attempt 2 that reaches other things outside but not its own program on the loopback: no mark', () => {
     const s = proven();
@@ -1708,6 +1719,21 @@ describe('what bounds a plain change (R63)', () => {
     assert.ok(!unitCall(s, `sw-run-${o.id}`).includes(PTS), '--open (asked) drops the device bounds, as R63 says');
   });
 
+  // The final read's "cgroup": the owner's service manager makes its groups as the owner, so without this a change could
+  // write cgroup.freeze of the console's unit (on Spark 2) and it would stay frozen past the change. A look has it already.
+  // The proof's attempt 31, on a Spark, shows it holds.
+  test('the control groups are read-only in every change but --open (with --gpu, --fleet and --home too), as in a look', () => {
+    const s = proven();
+    const CG = 'ProtectControlGroups=yes';
+    for (const [wall, r] of [['look', look(s, 'true')], ['run', change(s, 'true')], ['run', change(s, 'true', { extra: ['--gpu'] })],
+      ['run', change(s, 'true', { extra: ['--fleet'] })], ['run', change(s, 'true', { extra: ['--home'] })]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(unitCall(s, `sw-${wall}-${r.id}`).includes(CG), `${wall} ${r.id}`);
+    }
+    const o = change(s, 'true', { extra: ['--open'] });
+    assert.ok(!unitCall(s, `sw-run-${o.id}`).includes(CG), '--open is asked, outside the plain wall');
+  });
+
   test('--protect takes ~/ and a folder in the owner\'s home; ~user/, ~/../x, a bare ~ and a link under ~ are refused; up to 8', () => {
     const s = proven();
     for (const d of ['.cache/huggingface', '.local/share/spark-portal/workspaces/shared']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
@@ -2332,6 +2358,29 @@ describe("the proof's own attempts", () => {
       const mine = /\/dev\/pts\/\d+/.exec(outside.join('\n'))[0];
       const inside = lines(P.py('run', 30));
       for (const how of ['direct', 'child']) assert.ok(inside.some(l => l.startsWith(`P 30 ${how} through `) && l.includes(mine)), inside.join('\n'));
+    } finally {
+      target.kill('SIGKILL');
+    }
+  });
+
+  test('with no wall, attempt 31 asks the kernel whether the owner\'s control groups may be written, and writes nothing: it finds what this machine allows', async t => {
+    const P = realProof('proofrunhere31');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    const target = spawn('python3', ['-I', '-S', join(P.held, 'proof.py'), 'target'], { env: { PATH: '/usr/bin:/bin', SPARK_PROOF_MARK: 'proofrunhere31' }, cwd: P.H, stdio: 'ignore' });
+    try {
+      writeFileSync(join(P.held, 'target'), String(target.pid));
+      const outside = lines(P.py('outside', 31));
+      // (the program outside wrote down its own group, as the proof's control on a Spark is that group, handed to the owner)
+      const own = readFileSync(join(P.home, '.cache/.sparkie-proof-proofrunhere31/cgroup'), 'utf8').trim();
+      assert.match(own, /^\/\S*$/);
+      const writable = p => { try { accessSync(p, fsConstants.W_OK); return true; } catch { return false; } };
+      const mgr = `/sys/fs/cgroup/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service`;
+      const freeze = existsSync(mgr) ? readdirSync(mgr).map(d => `${mgr}/${d}/cgroup.freeze`).filter(existsSync) : [];
+      const ownW = writable(`/sys/fs/cgroup${own}/cgroup.procs`), anyW = ownW || writable(`${mgr}/cgroup.procs`) || freeze.some(writable);
+      assert.ok(outside.some(l => l.startsWith(`P 31 outside ${ownW ? 'works' : 'not-there'} `)), `${ownW} ${outside.join('\n')}`);
+      const inside = lines(P.py('run', 31));
+      for (const how of ['direct', 'child']) assert.ok(inside.some(l => l.startsWith(`P 31 ${how} ${anyW ? 'through' : 'blocked'} `)), `${anyW} ${inside.join('\n')}`);
     } finally {
       target.kill('SIGKILL');
     }
