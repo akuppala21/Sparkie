@@ -168,7 +168,7 @@ function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/sp
 function runCall(s, id, hash, secs, { protect = [], pins = PINS, rw = HOME_RW, hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'], memory = '8G' } = {}) {
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', `IPAddressDeny=localhost ${LAN}`,
-    '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm', '-p', 'PrivateDevices=yes',
+    '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm:mode=1777,nosuid', '-p', 'PrivateDevices=yes',
     ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
     ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]), '-p', 'ReadOnlyPaths=/home/owner',
     ...rw.flatMap(p => ['-p', `ReadWritePaths=${p}`]),
@@ -321,7 +321,7 @@ describe('the walls asked for', () => {
     const before = calls(s).length;
     const r = run(s, ['root', '--id', newId(), '--sha256', sha('id'), '--seconds', '5', '--dir', s.work, '--', 'id']);
     assert.equal(r.status, 125);
-    assert.match(r.stdout, /^call\d+ refused: root needs the put-back net, which is not built yet: root is refused on every Spark\n$/);
+    assert.match(r.stdout, /^call\d+ refused: root is not turned on yet: it is refused on every Spark\n$/);
     assert.equal(calls(s).length, before, 'nothing was asked of systemd');
   });
 
@@ -332,7 +332,7 @@ describe('the walls asked for', () => {
     assert.equal(r.stdout, [
       `helper ${sha(readFileSync(HELPER_SRC))}`, 'systemd 255.4-1ubuntu8.4 ok', 'first-process ok', 'cgroup2 ok', 'unshare ok',
       'setpriv ok', 'python3 ok', 'files ok', 'kernel 6.11.0-1016-nvidia', 'proof current', 'look ready', 'run ready',
-      'root refuses: the put-back net is not built yet'].map(l => `${id} ${l}\n`).join(''));
+      'root refuses: root is not turned on yet'].map(l => `${id} ${l}\n`).join(''));
   });
 });
 
@@ -577,9 +577,11 @@ describe('the proof of the walls', () => {
     "writing the net's copies or restore.sh", "taking away the net's pending mark", 'making keep count',
     "swapping a job's own output folder for a link", 'ending a unit through the helper', 'more memory, swap or share than the change was given',
     "a connection to this Spark's own address or the tailnet", 'a file or segment left in /dev/shm or IPC', "the home's own mode",
-    "the owner's start files", 'a name made at the top of the home or in a dot folder'];
+    "the owner's start files", 'a name made at the top of the home or in a dot folder',
+    'a write where a change may write, refused (~/.cache, /dev/shm)', 'with --home, a name at the top of the home or in ~/.local/bin, refused',
+    'a write in ~/.ssh'];
   const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26];
-  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26];
+  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -597,7 +599,7 @@ describe('the proof of the walls', () => {
     // (and, after the program outside, a guard of the net for each wall to try: 15 to 18; stopped after the check)
     const g = p.id.slice(0, 38);
     assert.deepEqual(units, [...['prep', 'setup', 'target'].map(u => `sw-prove-${u}-${p.id}`), `sw-guard-${g}nl`, `sw-guard-${g}nr`,
-      ...['outside', 'look', 'run', 'post', 'after'].map(u => `sw-prove-${u}-${p.id}`)]);
+      ...['outside', 'look', 'run', 'home', 'post', 'after'].map(u => `sw-prove-${u}-${p.id}`)]);
     assert.deepEqual(calls(s).filter(c => c[0] === 'systemctl' && c[1] !== 'show' && c[1] !== '--version'),
       [['systemctl', 'stop', `sw-guard-${g}nl.timer`], ['systemctl', 'stop', `sw-guard-${g}nr.timer`],
         ['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
@@ -608,9 +610,9 @@ describe('the proof of the walls', () => {
     const lookUnit = lookCall(s, p.id, 'x', 120, hidden);
     assert.deepEqual(unitCall(s, `sw-prove-look-${p.id}`), [...lookUnit.slice(0, 1), `--unit=sw-prove-look-${p.id}`,
       `--description=Spark Console wall proof look ${p.id}`, ...lookUnit.slice(3, lookUnit.indexOf('--') + 1), py, '-I', '-S', proof, 'look', ...LOOK.map(String)]);
-    const ro = `/home/owner/.sparkie-proof-${p.id}/held/ro`;
+    const ro = `/home/owner/.cache/.sparkie-proof-${p.id}/held/ro`;
     const runUnit = runCall(s, p.id, 'x', 120, { protect: [ro], hiddenExtra: hidden,
-      memory: '2G' });   // (its folder at the top of the home is read-only with the rest of the top: nothing there is pinned)
+      memory: '2G', pins: [...PINS, `/home/owner/.cache/.sparkie-proof-${p.id}`, `/home/owner/.cache/.sparkie-proof-${p.id}/held`] });   // (its folder is in ~/.cache, where pins are real)
     assert.deepEqual(unitCall(s, `sw-prove-run-${p.id}`), [...runUnit.slice(0, 1), `--unit=sw-prove-run-${p.id}`,
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
@@ -1259,6 +1261,83 @@ describe('the lock-out net (R60)', () => {
     assert.ok(queued.includes('unmask ssh.service') && queued.includes('--no-block start ssh.service'), queued.join(' | '));
   });
 
+  test('a unit caught passing at the copy (reloading, activating) is never stopped for it: only on to off or off to on counts, and the result says it was left', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'reloading enabled\n');
+    const r = net(s, SSH_CHANGE);
+    writeFileSync(join(s.R, 'standin/units/ssh.service'), 'active enabled\n');
+    const before = calls(s).length;
+    assert.equal(fire(s, r.id).status, 0);
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.ok(!asked.includes('stop ssh.service'), asked.join(' | '));
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active enabled');
+    // After a restart: units start by themselves; none is queued or counted for its running state alone.
+    const t = netted();
+    t.put('standin/units/ssh.service', 'active enabled\n');
+    const q = net(t, 'true');
+    writeFileSync(join(t.R, 'standin/units/ssh.service'), 'inactive enabled\n');   // (the restart: not started yet)
+    const b0 = calls(t).length;
+    assert.equal(fire(t, q.id, 'boot').status, 0);
+    assert.ok(!calls(t).slice(b0).some(c => c[0] === 'systemctl' && c.includes('start')), 'nothing queued');
+    assert.match(readFileSync(join(G(t, q.id), 'result'), 'utf8').split('\n')[0], /: nothing differed$/);
+  });
+
+  test('putback that fails leaves the timer to try again', { timeout: 120000 }, () => {
+    const s = netted();
+    const r = net(s, SSH_CHANGE);
+    writeFileSync(join(G(s, r.id), 'manifest.json'), 'not json');
+    const p = run(s, ['putback', '--id', r.id]);
+    refused({ ...p, id: r.id }, 'the put-back failed');
+    assert.ok(timerWaits(s, r.id), 'its timer still waits');
+  });
+
+  test('a later try starts what an earlier try stopped and reloads what it put back (the review\'s S4)', () => {
+    const s = netted();
+    const r = net(s, 'true');
+    writeFileSync(join(G(s, r.id), 'stopped'), 'console tailscaled');
+    writeFileSync(join(G(s, r.id), 'put'), '/etc/ssh/sshd_config\n');
+    assert.equal(fire(s, r.id).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    for (const l of ['reload systemctl start tailscaled.service: ok', 'reload systemctl --machine=owner@.host --user start spark-console-api.service: ok',
+      'reload systemctl try-reload-or-restart ssh.service: ok']) assert.ok(result.includes(l), `${l}\n${result.join('\n')}`);
+    for (const f of ['stopped', 'put']) assert.ok(!existsSync(join(G(s, r.id), f)), `${f} is gone once the put-back is done`);
+  });
+
+  test('ufw is not turned on again while a file of its own could not be put back (S5)', () => {
+    const s = netted();
+    s.put('etc/ufw/user.rules', 'rules\n');
+    s.put('standin/ufw', 'active\n');
+    const env = binOf(s, { ufw: UFW });
+    const r = netIn(s, env, 'ufw disable; printf "changed\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ufw/user.rules"');
+    rmSync(join(G(s, r.id), 'files/etc/ufw/user.rules'));   // (its copy gone: that file cannot go back)
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.some(l => l.startsWith('not put back /etc/ufw/user.rules: ')), result.join('\n'));
+    assert.ok(!result.includes('put back ufw'), result.join('\n'));
+    assert.equal(readFileSync(join(s.R, 'standin/ufw'), 'utf8').trim(), 'inactive', 'off, rather than on with the change\'s rules');
+  });
+
+  test('a unit masked and stopped at the copy, unmasked and started in the window, is masked and stopped again (S6)', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'inactive masked\n');
+    const r = net(s, 'systemctl unmask ssh.service; systemctl start ssh.service');
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'active disabled');
+    assert.equal(fire(s, r.id).status, 0);
+    assert.equal(readFileSync(join(s.R, 'standin/units/ssh.service'), 'utf8').trim(), 'inactive masked');
+  });
+
+  test('a unit counts as put back only when systemd said ok to each call (S9)', () => {
+    const s = netted();
+    s.put('standin/units/ssh.service', 'active enabled\n');
+    const r = net(s, 'systemctl stop ssh.service');
+    const env = binOf(s, { systemctl: `[ "$*" = "start ssh.service" ] && { echo "Job failed" >&2; exit 1; }; exec "${join(MOCKBIN, 'systemctl')}" "$@"` });
+    assert.equal(fire(s, r.id, 'timer', env).status, 0);
+    const result = readFileSync(join(G(s, r.id), 'result'), 'utf8').split('\n');
+    assert.ok(result.includes('not put back the unit ssh.service: systemctl said exit 1'), result.join('\n'));
+    assert.ok(!result.includes('put back the unit ssh.service'), result.join('\n'));
+    assert.match(result[0], /: 0 went back, 1 did not$/);
+  });
+
   test('a moved ssh port behind ssh.socket: after sshd_config goes back, systemd is told and the socket restarted', () => {
     const s = netted();
     s.put('standin/units/ssh.socket', 'active enabled\n');
@@ -1536,11 +1615,11 @@ describe('what bounds a plain change (R63)', () => {
 
   test("the tools' key folders are hidden in both walls", () => {
     const s = proven();
-    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
     s.put('home/owner/.claude.json', '{}');
     const r = change(s, 'true'), l = look(s, 'true');
     for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.ollama', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
+      for (const d of ['.kaggle', '.config/rclone', '.config/gcloud', '.codex']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
       assert.ok(c.includes('InaccessiblePaths=/home/owner/.claude.json'));
     }
   });
@@ -1563,7 +1642,7 @@ describe('what bounds a plain change (R63)', () => {
     const r = change(s, 'true', { extra: ['--fleet', '--gpu'] });
     const c = unitCall(s, `sw-run-${r.id}`);
     assert.ok(c.includes('IPAddressDeny=localhost') && !c.some(a => a.startsWith('IPAddressDeny=localhost ')));
-    assert.ok(!c.includes('PrivateDevices=yes') && c.includes('TemporaryFileSystem=/dev/shm') && c.includes('PrivateIPC=yes'));
+    assert.ok(!c.includes('PrivateDevices=yes') && c.includes('TemporaryFileSystem=/dev/shm:mode=1777,nosuid') && c.includes('PrivateIPC=yes'));
     refused(look(s, 'true', { extra: ['--fleet'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
     refused(look(s, 'true', { extra: ['--gpu'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
   });
@@ -1611,6 +1690,67 @@ describe('what bounds a plain change (R63)', () => {
     assert.equal(st(nid), `${nid} state never: it never started, and its call has ended, so it cannot start now\n`);
   });
 
+  test('state --id after the call died once its unit was handed over: each unit\'s state read whole ("inactive" is not running)', () => {
+    const s = proven();
+    const st = id => run(s, ['state', '--id', id]).stdout;
+    const handed = () => { const id = newId(); s.put(`run/spark-console/.calls/${id}`, 'handed 999999 1\n'); return id; };
+    // Both units inactive, the call's process gone (an out-of-memory kill, a kill -9): ended, never "running" for good.
+    const a = handed();
+    assert.equal(st(a), `${a} state ended: its call is gone and nothing of it runs\n`);
+    // The change's unit still active: running.
+    const b = handed();
+    s.put(`standin/active/sw-run-${b}.service`, '');
+    assert.equal(st(b), `${b} state running: it runs, or may still start\n`);
+    // "inactive" for one, no answer at all for the other: ended.
+    const c = handed();
+    s.put(`standin/silent/sw-look-${c}.service`, '');
+    assert.equal(st(c), `${c} state ended: its call is gone and nothing of it runs\n`);
+    // No answer for either (systemd not answering): it may still run, so never "ended" on that.
+    const d = handed();
+    s.put(`standin/silent/sw-run-${d}.service`, '');
+    s.put(`standin/silent/sw-look-${d}.service`, '');
+    assert.equal(st(d), `${d} state running: it runs, or may still start\n`);
+  });
+
+  test('--home: the plain wall with the top of the home, ~/.local, ~/bin and ~/.cargo/bin writable; never with --open, never a look', () => {
+    const s = proven();
+    for (const d of ['bin', '.cargo/bin', '.local/bin', 'work']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    const r = change(s, 'true', { extra: ['--home'] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const c = unitCall(s, `sw-run-${r.id}`);
+    assert.ok(!c.includes('ReadOnlyPaths=/home/owner'), 'the top itself is writable');
+    const rw = c.filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));
+    for (const p of ['/home/owner/bin', '/home/owner/.local', '/home/owner/.cargo/bin', '/home/owner/.cache', '/home/owner/work']) assert.ok(rw.includes(p), `${p} in ${rw}`);
+    assert.ok(c.includes('ReadOnlyPaths=/home/owner/.config') && !rw.includes('/home/owner/.config'), 'other dot names stay read-only');
+    for (const x of ['IPAddressAllow=127.0.0.53', 'PrivateDevices=yes', 'PrivateIPC=yes', 'TemporaryFileSystem=/home/owner/.ssh:ro', 'InaccessiblePaths=/home/owner/.bashrc', 'MemorySwapMax=0']) assert.ok(c.includes(x), x);
+    assert.ok(c.includes('--groups=1000,44,992'), 'its groups as a plain change');
+    for (const p of SHARED_PINS) assert.ok(c.includes(`BindPaths=${p}`), `${p}: held in place again, ~/.local being writable`);
+    refused(change(s, 'true', { extra: ['--home', '--open'] }), '--home is the plain wall with the top of the home writable: never with --open');
+    refused(look(s, 'true', { extra: ['--home'] }), '--home is for run: a look writes nothing');
+  });
+
+  test('the hidden list keeps the listeners\' tokens, browsers, more tool keys and only ollama\'s key; more download caches are writable', () => {
+    const s = proven();
+    for (const d of ['.local/share/jupyter/runtime', '.jupyter', '.mozilla', '.config/sops', '.ollama/models', '.m2', '.gradle']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
+    for (const f of ['.ollama/id_ed25519', '.env', '.cargo/credentials.toml']) s.put(`home/owner/${f}`, 'k');
+    const r = change(s, 'true'), l = look(s, 'true');
+    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      for (const d of ['.local/share/jupyter', '.jupyter', '.mozilla', '.config/sops']) assert.ok(c.includes(`TemporaryFileSystem=/home/owner/${d}:ro`), d);
+      for (const f of ['.ollama/id_ed25519', '.env', '.cargo/credentials.toml']) assert.ok(c.includes(`InaccessiblePaths=/home/owner/${f}`), f);
+      assert.ok(!c.some(a => a.endsWith('/home/owner/.ollama:ro')), "ollama's models stay in view");
+    }
+    const rw = unitCall(s, `sw-run-${r.id}`).filter(a => a.startsWith('ReadWritePaths=')).map(a => a.slice(15));
+    for (const p of ['/home/owner/.m2', '/home/owner/.gradle']) assert.ok(rw.includes(p), p);
+  });
+
+  test('a plain change answers at once: the disk watch holds none of the caller\'s pipes', () => {
+    const s = proven();
+    const t0 = Date.now();
+    const r = change(s, 'true');
+    assert.equal(r.status, 0);
+    assert.ok(Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
+  });
+
   test('the disk floor: under 50 GB free a change does not start; one whose disk falls under it is ended, and says so', () => {
     const s = proven(), bin = join(s.R, 'standin', 'bin');
     mkdirSync(bin, { recursive: true });
@@ -1619,12 +1759,30 @@ describe('what bounds a plain change (R63)', () => {
     const go = cmd => { const id = newId(); return { ...run(s, ['run', '--id', id, '--sha256', sha(cmd), '--seconds', '120', '--dir', s.work, '--', cmd], { env }), id }; };
     s.put('standin/free', '49000000000\n');
     const before = started(s).length;
-    refused(go('true'), 'the disk has 49 GB free; a change needs 50 GB free');
+    refused(go('true'), 'the disk has 49 GB free; a plain change needs 50 GB free: free space first, by a change the owner asks for (it may run under the floor)');
     assert.equal(started(s).length, before);
+    for (const asked of [['--open'], ['--home']]) {   // (an asked change may free space: no floor, no watch)
+      const id = newId();
+      const a = run(s, ['run', '--id', id, '--sha256', sha('true'), '--seconds', '120', '--dir', s.work, ...asked, '--', 'true'], { env });
+      assert.equal(a.status, 0, `${asked}: ${a.stdout}${a.stderr}`);
+    }
     s.put('standin/free', '60000000000\n');
     const cmd = 'printf "40000000000\\n" > "$SPARK_CONSOLE_REHEARSAL/standin/free"; for i in $(seq 60); do sleep 0.5; ls "$SPARK_CONSOLE_REHEARSAL"/standin/stopped/sw-run-* > /dev/null 2>&1 && exit 9; done';
     const r = go(cmd);
     assert.match(r.stdout, new RegExp(`\\n${r.id} stopped: the disk's free space fell under 50 GB\\n${r.id} end 9\\n$`), r.stdout);
+  });
+
+  test('the proof shows a change can write where it may (27), that --home writes the top (28) and still keeps ~/.ssh shut (29); one that fails, fails the proof', () => {
+    for (const [n, wall, what] of [[27, 'run', 'a write where a change may write, refused (~/.cache, /dev/shm)'],
+      [28, 'home', 'with --home, a name at the top of the home or in ~/.local/bin, refused'], [29, 'home', 'a write in ~/.ssh'], [14, 'home', 'moving a folder above a held one, and making a new one in its place']]) {
+      const t = spark({ knobs: { 'let-through': `${n} ${wall} direct\n` } });
+      const q = prove(t);
+      assert.equal(q.status, 1, `${n}: ${q.stdout}`);
+      assert.ok(q.stdout.includes(`${q.id} proof ${wall} ${n} got through: ${what} (stand-in, directly)\n`), `${n}: ${q.stdout}`);
+    }
+    const ok = prove(spark());
+    for (const n of [3, 10, 14, 19, 25, 27, 28, 29]) assert.ok(ok.stdout.includes(` proof home ${n} blocked: `), `home ${n}`);
+    assert.ok(ok.stdout.includes(' proof home passed\n'));
   });
 
   test('the proof tries each: the network, /dev/shm and IPC, the home\'s mode, the start files, the top of the home, the devices; one that gets through fails the proof', () => {
@@ -1762,7 +1920,7 @@ describe("the owner's one-time command", () => {
       } else {
         assert.match(r.stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): there, this build's\n/);
         assert.match(r.stdout, /its sudo line .*: works/);
-        assert.match(r.stdout, / {4}proof current\n {4}look ready\n {4}run ready\n {4}root refuses: the put-back net is not built yet\n$/);
+        assert.match(r.stdout, / {4}proof current\n {4}look ready\n {4}run ready\n {4}root refuses: root is not turned on yet\n$/);
       }
     }
   });

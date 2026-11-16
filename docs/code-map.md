@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22003 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (22033 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -670,7 +670,7 @@ When an operation ends, its journal end line (journalOp) says how much electrici
 One reader for every program's options, and each program's options from its manual. sortOpts(spec, args) reads a program's options as getopt does: -abc is three letters; a letter that takes a value takes the rest of its word or the next word (-o.bash_profile, -fsSLo x); --name=value or --name value; a long name may be cut short to any beginning only it has; -- ends the options; plain words are the rest (with first, the first plain word ends the options too, and so does each option named in first, after its value). An option not in the spec is returned as unknown, and so is a word from a $ or …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 166
+- **Lines:** 167
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -683,11 +683,11 @@ One reader for every program's options, and each program's options from its manu
 What a path a command names is, for the sorter (20-sort.mjs): one of the ways in (lockout), the root helper or its sudo line (not done), a risky place (a disk or device, the kernel, a schedule, Docker's settings), a program or setting that something outside the wall later runs or reads (risky when written), Spark Console's own files or the brain's (risky). A path is placed as ~/… (any home) or /…, from each folder a cd may have left the command in, with /proc/<id>/root taken off the front. "Wide" is a command that reaches everything under a folder it names (rm -r, chmod, a folder an archive …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 268
+- **Lines:** 270
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `sortQ`, `sortNorm`, `sortAtHome`, `sortPaths`, `sortCd`, `sortGlob`, `sortSeg`, `sortClass`, `sortUp`, `sortNested`, `sortBraces`, `sortReach`, `sortNames`, `sortPlace`, `sortGitSet`, `sortTails`, `sortCands`, `sortTouch`, `sortWrote`, `sortBefore`, `sortScan`, `sortSee`
+- **Functions:** `sortQ`, `sortNorm`, `sortAtHome`, `sortPaths`, `sortCd`, `sortGlob`, `sortSeg`, `sortClass`, `sortUp`, `sortNested`, `sortBraces`, `sortReach`, `sortNames`, `sortPlace`, `sortGitSet`, `sortTails`, `sortCands`, `sortCandsOf`, `sortTouch`, `sortWrote`, `sortBefore`, `sortScan`, `sortSee`
 - **Uses:** `01-setup` (`q`), `02-ssh` (`run`), `20-shell` (`unsure`), `20-sort` (`raise`), `20-tables` (`SORT_PROGS`)
 - **Used by:** `20-programs`, `20-remote`, `20-shape`, `20-sort`, `20-tables`, `20-tools`, `20-uses`
 
@@ -761,12 +761,12 @@ The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). I
 sortCommand(command, {at, root, dir, home, hosts, brain, written}) says what one command for run is before anything runs, from its text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything JSON can carry (a getter or a toString that throws is caught too). Five classes, in their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes). The careful answer is the default: a …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 347
+- **Lines:** 348
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `raise`, `sortFresh`, `sortMerge`, `sortAssign`, `sortIsCd`, `sortOneCd`, `sortList`, `sortKeep`, `sortCmd`, `sortWroteIn`, `sortRuns`, `sortGone`, `sortOpen`, `sortInline`, `sortKnown`, `sortProgram`, `sortReads`, `sortSetuid`, `sortFile`, `sortAt`, `sortCommand`
-- **Uses:** `01-setup` (`CONFIG`), `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortNested`, `sortTouch`, `sortUp`, `sortBefore`, `sortPaths`, `sortWrote`, `sortCands`, `sortNames`, `sortBraces`, `SORT_PLACED`, `SORT_PATH`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shape` (`sortShape`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `20-tables` (`SORT_WRAP`, `SORT_READS`, `SORT_FILES`, `SORT_PROGS`, `sortWrap`, `SORT_LOCK_READS`), `20-uses` (`sortInstall`, `sortUses`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
+- **Uses:** `01-setup` (`CONFIG`), `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortNested`, `sortTouch`, `sortUp`, `sortBefore`, `sortPaths`, `sortWrote`, `sortCandsOf`, `sortNames`, `sortBraces`, `SORT_PLACED`, `SORT_PATH`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shape` (`sortShape`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `20-tables` (`SORT_WRAP`, `SORT_READS`, `SORT_FILES`, `SORT_PROGS`, `sortWrap`, `SORT_LOCK_READS`), `20-uses` (`sortInstall`, `sortUses`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
 - **Used by:** `20-places`, `20-programs`, `20-remote`, `20-shape`, `20-tables`, `20-tools`, `21-runner`, `21-work`
 
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
@@ -1011,12 +1011,12 @@ Each round Sparkie's brain is offered the core (every action whose group is core
 run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the brain (asked first, a later build); the lock-out class (it waits for the lock-out net, which can put it back). At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when hostClear holds, which …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
-- **Lines:** 210
+- **Lines:** 218
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workKey`, `workLabel`, `workAsk`, `workChange`
-- **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`question`), `20-danger` (`dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-brain-rail` (`brainRail`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerOutside`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`), `21-work` (`whoMayLook`)
+- **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`question`), `20-danger` (`dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-brain-rail` (`brainRail`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`whoMayLook`)
 - **Used by:** `14-chats`, `14-rounds`, `21-runner`, `21-work`
 
 ### `21-power-pair.mjs`: a start wakes both Sparks a model across two needs (R56)
@@ -1051,11 +1051,11 @@ The owner, 2026-11-13: "shut down sparks when not in use (not spark 2), when idl
 runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) and runs it, only when that is a plain change, on a compute Spark, in the root helper's run wall (R42). In this order, and holding that Spark's claim (R13) for all of it, released at every end: the room for the run wall's memory cap (R2); the copies of every file the sorter placed (21-copies.mjs) and the fingerprints of the ways in (a command that removes or overwrites files stops here, with nothing run, when one was not kept); the journal's start line, synced to disk, which names the set and the manifest's SHA-256 …
 
 - **Area:** features. **Rules:** R61, R13, R43. **Tests:** runner.test.mjs
-- **Lines:** 396
+- **Lines:** 414
 - **Owns:** none
 - **Timers:** holdTick (every 2 s, 30 s after two minutes, only while a Spark is held past a change's unknown end)
 - **Wakes:** none
-- **Functions:** `runnerSortOpts`, `runnerRefuses`, `runnerNever`, `runnerWaysDiff`, `runnerWiden`, `runnerNote`, `runnerProtected`, `runnerOutside`, `runnerMemoryCap`, `runnerTopDirs`, `runChange`, `runnerHoldClaim`, `runnerRunState`, `runnerHold`, `runnerScan`, `runnerLatest`, `runnerFinished`, `runnerKeep`, `runnerPruned`, `runnerSparkOf`, `runnerUndo`
+- **Functions:** `runnerSortOpts`, `runnerRefuses`, `runnerNever`, `runnerWaysDiff`, `runnerWiden`, `runnerNote`, `runnerProtected`, `runnerWalls`, `runnerOutside`, `runnerMemoryCap`, `runnerTopDirs`, `runChange`, `runnerHoldClaim`, `runnerRunState`, `runnerHold`, `runnerScan`, `runnerLatest`, `runnerFinished`, `runnerKeep`, `runnerPruned`, `runnerSparkOf`, `runnerUndo`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `NODES`, `HttpError`, `q`, `nodeById`), `02-ssh` (`run`, `fields`), `05-library` (`KEEP_FREE`, `memNow`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `16-actions` (`tripBreaker`, `sizeWords`), `17-changes` (`brainSparks`, `agentSettings`, `putBack`), `19-watcher` (`fleetEvent`), `20-desired` (`desired`, `undoSince`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `J_MAX`, `jErr`, `journalFiles`, `jLinesOf`, `jParse`), `20-mcp` (`maskSecrets`), `20-sort` (`sortCommand`), `21-copies-prune` (`COPIES_DAYS`, `COPIES_SETS`, `COPIES_BYTES`, `COPIES_PRUNE_MOST`, `COPIES_MARK_DAYS`), `21-copies` (`copiesSetName`, `copiesOn`), `21-ladder` (`workWrote`), `21-work` (`helperCall`, `helperAnswer`, `needsOwner`, `wallsFailed`, `lookClean`, `forBrain`, `LOOK_SLACK`)
 - **Used by:** `20-desired`, `20-journal`, `21-ladder`, `21-work`
 

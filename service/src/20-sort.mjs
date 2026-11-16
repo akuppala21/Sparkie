@@ -118,6 +118,7 @@ function sortCmd(cmd, ctx, r, inPipe) {
         continue;
       }
       if (/^[<>]&$/.test(d.op) && /^(?:\d+-?|-)$/.test(d.w.text) && !d.w.unknown) continue;
+      d.w.literal = true;
       if (d.op === '<') { if (!d.w.unknown) ctx.seen.push(d.w.text); stdin = false; continue; }
       if (!d.w.unknown && !d.w.glob && /^\/dev\/(?:null|stdout|stderr|fd\/[12])$/.test(d.w.text)) continue;
       raise(c, 'change', `It writes ${sortQ(d.w.text || 'a file')} (a redirection).`);
@@ -152,7 +153,7 @@ function sortRuns(file, ctx, r, why, dir = null) {
   for (const w of ctx.cmd ?? []) {
     if (w.unknown) continue;
     if (w.text.includes('://')) raise(r, 'risky', `${why} It is handed an address, ${sortQ(w.text)}: what code there does is never shown.`);
-    else if (sortCands(w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
+    else if (sortCandsOf(w, w.text).some(c => sortPaths(c, ctx).some(p => sortWrote(p, ctx) || sortWroteIn(p, ctx)))) raise(r, 'risky', `${why} Its word ${sortQ(w.text)} names a file this same command wrote, or a folder it wrote into, whose text the sorter never read.`);
   }
   if (dir?.unknown) unsure('It runs code in a folder named by a $ or a command.');
   if (!file) for (const d of dir ? sortPaths(dir.text, ctx) : ctx.cwds) if (d != null && sortWroteIn(d, ctx)) raise(r, 'risky', `${why} It runs from ${sortQ(d)}, where this same command wrote first.`);
