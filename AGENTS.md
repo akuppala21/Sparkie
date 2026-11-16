@@ -12,9 +12,9 @@ recorded (a "Today" note in its rule), never fixed by quietly editing either.
 - Never edit `service/server.mjs` directly, and never edit or weaken an existing test to make a change pass.
 - Keep every rule in `docs/rules/` (one line each in `docs/rules.md`); don't add to the gaps a rule's "Today" notes.
 - Nothing starts a model or workload on Spark 2 (the brain's Spark) or powers it off (R41).
-- Today no action changes SSH, Tailscale, the firewall or users (R3, contract 8.3), and you don't while working here.
-  Milestone 2 lets Sparkie change them when the owner asks, asked first, inside the put-back net; until then, add no
-  path to them.
+- SSH, Tailscale, the firewall and users on a compute Spark change only inside the put-back net, after the owner's
+  press (R3, contract 8.3); root only where the owner turned it on, always asked and inside the net; on Spark 2 every
+  change is asked and a lock-out change refused. Add no path around the net, and change none of them yourself here.
 - Don't delete the owner's data. Stopping something isn't deleting.
 - Sparkie never says something happened unless a tool said so, and never says it checked something it has no tool for.
 - Text the owner reads (the page, Sparkie's notes, errors) is plain words: short sentences, no jargon.
@@ -94,7 +94,8 @@ No card fits? Search `docs/rules.md`.
    kept in memory may be lost at a restart.
 4. Anything new that changes a Spark goes through `runAction`, a claim, a job and `run`. Don't copy the paths that
    skip them today (R11).
-5. Nothing starts on Spark 2; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access.
+5. Nothing starts on Spark 2; the 8 GB rule holds; no new path touches SSH, Tailscale, the firewall, users or access
+   but through the put-back net.
 6. Outside text is labelled as data; secrets are masked, including anything new that reaches events or fleet notes.
 7. Every function a workflow runs is in its `code()` list (add the ones missing today when touching them); expect
     "needs validation" after install.

@@ -22,9 +22,8 @@
 // (NET_ON), a lock-out change is answered as before: it waits for the net. Spark 2 (A11) and root (A12) are their
 // steps', through the same seam (netGuarded).
 
-// The switch, dark: this one line turns the net on, once the whole chain has been read. The stand-in fleet may turn it
-// on for a test (SPARK_CONSOLE_NET=1).
-const NET_ON = ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '1';
+// The switch: on. The stand-in fleet may turn it off for a test of the off side (SPARK_CONSOLE_NET=0); nothing else can.
+const NET_ON = !(ALL_LOCAL && process.env.SPARK_CONSOLE_NET === '0');
 const NET_FILE = `${STATE_DIR}/net.json`;
 // (the helper's own: its timer fires the command's time limit plus 600 s after it began; NET_AFTER in the helper)
 const NET_AFTER_S = 600, NET_SLACK_MS = 60000, NET_KEPT = 50, NET_LATE_MS = 45000;

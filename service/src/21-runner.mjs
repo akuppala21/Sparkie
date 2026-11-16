@@ -41,13 +41,15 @@ function runnerRefuses(node, sorted, ctx, asked = false) {
   // (a risky change runs only after the owner's yes: asked, from the ladder's press, 21-ladder.mjs)
   if (sorted?.class !== 'change' && !(asked && sorted?.class === 'risky')) throw new HttpError(409, `That is not a plain change (the sorter calls it ${sorted?.class || 'nothing'}), so the runner didn’t run it.`);
 }
+// sudo while root's switch is off in this console (a stand-in fleet's off side; on, ROOT_SET, 21-root.mjs).
+const RUNNER_ROOT_OFF = 'Nothing ran: root is off in this console, so a command runs as the owner. Leave out sudo.';
 // What is never run, asked or not (the ladder asks nothing of these either, 21-ladder.mjs).
 function runnerNever(node, sorted, ctx) {
   const at = sparkName(node);
   if (node.host === 'local') throw new HttpError(403, `${at} runs Spark Console and the brain: a change there is always asked first, and the runner never runs one.`);
   if (brainSparks().includes(node.id)) throw new HttpError(403, `${at} holds the brain, so the runner changes nothing there.`);
   // (sudo, su, or another way to root: with root on, answered "set root", 21-root.mjs; off, as before)
-  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, ROOT_ON ? ROOT_SET : 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, ROOT_ON ? ROOT_SET : RUNNER_ROOT_OFF);
   if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
   if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
 }

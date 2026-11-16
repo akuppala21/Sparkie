@@ -15,7 +15,7 @@
 // the stand-ins in test/mock/bin. Linux only: run it on a Spark with tools/test-on-spark.sh.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, mkdtempSync, realpathSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, sleep, agentSettings, REPO, SLOW } from './lib.mjs';
@@ -112,6 +112,19 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   assert.equal(starts().length, before, 'no start line: nothing began');
   assert.deepEqual(userUnits(), [], 'the helper was never called to run anything');
   assert.equal(readFileSync(at2('.ssh/authorized_keys'), 'utf8'), KEYS_LINE);
+});
+
+test('the pieces on: root is never on Spark 2, said as it is; with no root helper there, the owner’s one command with --hub', { timeout: 60000 * SLOW }, async () => {
+  const r = await run('sudo touch notes/r.txt');
+  assert.equal(r.status, 403, r.text);
+  assert.equal(r.json.error, 'Nothing ran: Spark 2 runs Spark Console and the brain, so nothing runs there as root.');
+  assert.ok(!existsSync(at2('notes/r.txt')));
+  const line = join(H2(), '.rehearsal', 'etc/sudoers.d/spark-console-root');
+  renameSync(line, `${line}.away`);
+  let n;
+  try { n = await api('/actions/run', { method: 'POST', body: { on: 'spark2', command: 'cat notes/a.txt' } }); } finally { renameSync(`${line}.away`, line); }
+  assert.equal(n.json.ran, false, n.text);
+  assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh --hub 2'?$/, n.text);
 });
 
 test('always asked, one command a press, whatever the words; from the API, with no button to show, not run', { timeout: 120000 * SLOW }, async () => {

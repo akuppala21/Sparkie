@@ -1,4 +1,4 @@
-/* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12, dark) ───────── */
+/* ───────── root: a command as root, always the dangerous ask, always inside the lock-out net (A12) ───────── */
 // Area: features        Rules: R70, R60, R54        Tests: root.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
