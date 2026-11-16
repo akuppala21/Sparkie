@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27909 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 102 parts in `service/src/`, joined in name order into `service/server.mjs` (27959 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -111,7 +111,7 @@ The owner and the Spark list live in the console's own owner-only file on this S
 What Spark Console keeps for the owner that must never travel (Telegram's bot token and the chat it's paired with) is in ~/.config/spark-console/secrets.json: folder 0700, file 0600, outside the state folder, so the daily copy and the install snapshots never carry it and no restore brings an old pairing back (docs/architecture.md R32). Telegram's token is typed only on the passkey page; a key the owner gives in their own chat is kept here by name (20-keys.mjs, R51). A file that exists but can't be read is never written over. Under ALL_LOCAL the store is off unless a test names its own file, …
 
 - **Area:** ground. **Rules:** R20, R32, R51. **Tests:** telegram.test.mjs, needs.test.mjs, app-keys.test.mjs
-- **Lines:** 86
+- **Lines:** 102
 - **Owns:** secrets.json (writers: secretsWrite; outside the state folder)
 - **Timers:** none
 - **Wakes:** none
@@ -1345,11 +1345,11 @@ Tailscale, or a device the owner signed in, says the owner is asking, and for th
 Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: in the state folder (auth-serial.json, so every copy and install snapshot carries the number it had then) and in the secrets file (never copied). A state that holds a passkey or an agent key always has one: 1 from the first (putBackSeed, at start too). It goes up by one at each removal by the owner: a device signed out, a passkey, an agent key, a right taken from an agent key (look-only, tailnet-only), agents' changes paused, an "always allowed" kind taken away (/allowed off, 21-ahead.mjs). The secrets file also …
 
 - **Area:** ways in. **Rules:** R23, R33. **Tests:** putback.test.mjs
-- **Lines:** 287
+- **Lines:** 320
 - **Owns:** auth-serial.json (writers: putBackSerialWrite), auth-unnoted.json (writers: putBackUnnotedSave)
 - **Timers:** putBackRetry (every 60 s: a removal's note that couldn't be written yet)
 - **Wakes:** none
-- **Functions:** `putBackSerial`, `putBackSerialWrite`, `putBackAuth`, `putBackHold`, `putBackHeld`, `putBackRemovedList`, `putBackUnnotedRead`, `putBackUnnotedSave`, `putBackNoteWrite`, `putBackRemoval`, `putBackRetry`, `putBackSeed`, `putBackAtStart`, `putBackList`, `putBackRoute`, `putBackNeeds`
+- **Functions:** `putBackSerial`, `putBackSerialWrite`, `putBackAuth`, `putBackHold`, `putBackHeld`, `putBackRemovedList`, `putBackUnnotedRead`, `putBackNoteKey`, `putBackWaiting`, `putBackUnnotedSave`, `putBackKeep`, `putBackWith`, `putBackNoteWrite`, `putBackRemoval`, `putBackRetry`, `putBackSeed`, `putBackAtStart`, `putBackList`, `putBackRoute`, `putBackNeeds`
 - **Uses:** `01-setup` (`STATE_DIR`, `nodeById`, `HttpError`), `03-identity` (`readJson`, `writePrivate`, `clean`), `03-secrets` (`SECRETS_FILE`, `secretsRead`, `secretsWrite`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `14-tasks` (`taskEnded`), `16-actions` (`action`), `17-changes` (`setAgentSettings`, `agentSettings`), `19-watcher` (`fleetEvent`), `20-mcp` (`agentKeys`, `AGENTS_FILE`, `maskSecrets`, `audit`), `21-ahead` (`allowedList`, `allowedWords`), `22-passkey` (`passkeys`, `savePasskeys`), `22-sessions` (`sessionList`, `SESSIONS_FILE`, `saveSessions`), `23-http` (`send`)
 - **Used by:** `16-actions`, `20-mcp`, `20-needs`, `20-tg-approve`, `20-words`, `21-ahead`, `21-box-fill`, `21-box`, `21-ladder`, `22-sessions`, `24-handler`, `25-backup-and-start`
 
@@ -1358,7 +1358,7 @@ Contract 6.25 (design E 2.5, P-3). One number, the auth serial, is kept twice: i
 From the internet (Tailscale Funnel) a request carries no Tailscale identity, so on its own it's a public visitor. The owner signs a browser in with their passkey, or lets a device in by its short code (a terminal, or a phone without the passkey) from a device that's already signed in, confirming with the passkey. Each signed-in device holds a random token: a browser as a cookie only it sends (HttpOnly, Secure, SameSite=Strict, only to /console/api), a terminal as "Authorization: Bearer scs_…". Only a token's hash is kept. On the tailnet, Tailscale's identity wins.
 
 - **Area:** ways in. **Rules:** R31, R33, R40. **Tests:** internet.test.mjs, app-door.test.mjs
-- **Lines:** 361
+- **Lines:** 362
 - **Owns:** sessions.json (writers: saveSessions)
 - **Timers:** none
 - **Wakes:** none

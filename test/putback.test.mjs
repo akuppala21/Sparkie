@@ -22,9 +22,16 @@
 // came back masks the names it gives (an agent named like a key). A removal whose note can't be written at once (the
 // write fails, the file can't be read, a sync fails) is done and said, waits on the needs-you list, is written by the
 // retry or at the next start, and an older copy put back then holds with the key removed again; a hold whose own write
-// fails at a start holds in memory (P-3, round two).
+// fails at a start holds in memory (P-3, round two). Round two's final read (S-1, S-2, S-8, S-9, S-10): the secrets
+// file is replaced only by a whole one (secretsWrite lifted, under a write limit, a short write, a disk that says it took
+// all); every kind of removal, its note written at once or waiting, stays removed (or paused) when an older copy goes
+// over the state folder, and its answer says when the note waits; a start that still can't write a waiting note judges
+// as if it were written; a note kept neither in the secrets file nor in the state folder is said as such, held in memory
+// and written once it can be; a stop between the note and the save, or between keeping the note and the save, leaves
+// the next start holding; a stale note never removes what the owner added again; the page shows a waiting note.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -719,4 +726,299 @@ describe('a removal whose note can’t be written at once', { concurrency: 1 }, 
     assert.ok((await needs(B)).some(l => /^Spark Console’s state was put back from a copy.* The hold couldn’t be saved, so it lasts only until Spark Console next starts\./.test(l)), JSON.stringify(await needs(B)));
     await B.stop();
   });
+
+  // Round two's final read. S-2: a right taken from a key while its note waits; the older copy goes over the state
+  // folder while the secrets file still can't be written (the start's retry fails): judged as if written, so it holds.
+  test('a right taken while its note waits, then the older copy while the note still can’t be written: the start judges as if it were, so it holds and takes the right again', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-still-full');
+    const block = `${A.secretsFile}.${A.servicePid()}.tmp`;
+    let now, secrets;
+    mkdirSync(block);
+    try {
+      const r = await ask(A, `/agents/${key.id}`, { method: 'PUT', body: { internet: false } });
+      is(r, 200, 'taken off the internet');
+      assert.equal(r.json.noted, false, r.text);
+      [now, secrets] = [copyState(A, 'p3-still-full-now'), readFileSync(A.secretsFile, 'utf8')];
+    } finally { rmSync(block, { recursive: true, force: true }); }
+    await A.stop();
+    cpSync(older, now, { recursive: true });
+    const B = await startWith(now, secrets, DISK, dir => writeFileSync(join(dir, 'secrets-full'), ''));
+    assert.equal((await net(B, '/whoami')).json.held, LINE, 'held');
+    assert.equal((parse(readFileSync(join(B.stateDir, 'agents.json'), 'utf8'))?.keys || []).find(k => k.id === key.id)?.internet, false, 'the right taken again');
+    assert.notEqual(await works(B, key.token), 200);
+    await B.stop();
+  });
+
+  // S-8: the note can be written neither in the secrets file nor in the state folder (both temporary names blocked).
+  test('a note that can be kept neither in the secrets file nor in the state folder: done, its answer says exactly that, the needs-you line comes from memory, and both are written once they can be', { timeout: 600000 * SLOW }, async () => {
+    const UNKEPT = 'Done. Its note couldn’t be written, outside the state or in it, so if an older copy of the state folder is put back before the disk is mended, it may come back.';
+    const A = await begin(), { key, older } = await keyAndCopy(A, 'p3-unkept');
+    const pid = A.servicePid(), waitingFile = join(A.stateDir, 'auth-unnoted.json'), blocks = [`${A.secretsFile}.${pid}.tmp`, `${waitingFile}.${pid}.tmp`];
+    const waitingIds = () => (parse(existsSync(waitingFile) ? readFileSync(waitingFile, 'utf8') : '')?.notes || []).map(r => r.id);
+    for (const b of blocks) mkdirSync(b);
+    try {
+      const gone = await ask(A, `/agents/${key.id}`, { method: 'DELETE' });
+      is(gone, 200, 'removed');
+      assert.deepEqual([gone.json.noted, gone.json.note], [false, UNKEPT], gone.text);
+      assert.ok(!agentIds(A).includes(key.id), 'removed at once');
+      assert.ok(!existsSync(waitingFile), 'not kept in the state folder');
+      const line = (await needs(A)).find(l => WAITS.test(l));
+      assert.match(line || '', / It couldn’t be kept in the state folder either, so if Spark Console stops before then, it is forgotten\.$/, JSON.stringify(await needs(A)));
+      // The state folder takes it again: the retry keeps it there from memory, while the secrets file still can't.
+      rmSync(blocks[1], { recursive: true, force: true });
+      await waitFor(() => waitingIds().includes(key.id), { timeout: 30000 * SLOW, what: 'the retry keeping the note in the state folder' });
+      assert.deepEqual(noted(A), [], 'not in the secrets file yet');
+    } finally { for (const b of blocks) rmSync(b, { recursive: true, force: true }); }
+    await waitFor(() => noted(A).includes(key.id) && !existsSync(waitingFile), { timeout: 30000 * SLOW, what: 'the retry writing the note' });
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    await putBackHolds(older, secrets, key);
+  });
+
+  // S-10 and S-8: the service stops between a removal's two writes (the stand-in kills it as it opens the second of the
+  // two, whichever comes first); then the older copy goes over the state folder. Only the right order holds it.
+  async function stoppedBetween(name, files, block) {
+    const A = await begin(DISK), { key, older } = await keyAndCopy(A, name);
+    if (block) mkdirSync(`${A.secretsFile}.${A.servicePid()}.tmp`);
+    writeFileSync(join(A.dir, 'stop-between'), files);
+    await ask(A, `/agents/${key.id}`, { method: 'DELETE' }).catch(() => null);
+    await waitFor(() => A.serviceExit() !== null, { timeout: 30000 * SLOW, what: 'the service stopped between the two writes' });
+    const now = copyState(A, `${name}-now`), secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    cpSync(older, now, { recursive: true });
+    await putBackHolds(now, secrets, key);
+  }
+  test('a stop between the note and the removal’s save, whichever comes first, then the older copy: the note came first, so the next start holds and removes the key again', { timeout: 600000 * SLOW },
+    () => stoppedBetween('p3-stop-noted', 'secrets.json agents.json', false));
+  test('the note can’t be written, and a stop between keeping it in the state folder and the save, whichever comes first, then the older copy: kept first, so the next start holds and removes the key again', { timeout: 600000 * SLOW },
+    () => stoppedBetween('p3-stop-kept', 'auth-unnoted.json agents.json', true));
+
+  // A note written late names what went by its id. What the owner adds again has a new id, so it is never taken.
+  test('a stale note the retry writes never removes what the owner added again: the same name has a new id, and nothing holds at the next start', { timeout: 600000 * SLOW }, async () => {
+    const A = await begin(), { key } = await keyAndCopy(A, 'p3-again');
+    const block = `${A.secretsFile}.${A.servicePid()}.tmp`;
+    let again;
+    mkdirSync(block);
+    try {
+      await removedUnnoted(A, key);
+      again = await ask(A, '/agents', { method: 'POST', body: { name: 'p3-again' } });
+      is(again, 201, 'the same name, added again');
+      is(await ask(A, `/agents/${again.json.id}`, { method: 'PUT', body: { act: true, internet: true } }), 200);
+      assert.notEqual(again.json.id, key.id, 'a new id');
+    } finally { rmSync(block, { recursive: true, force: true }); }
+    await waitFor(() => noted(A).includes(key.id), { timeout: 30000 * SLOW, what: 'the retry writing the old note' });
+    assert.ok(agentIds(A).includes(again.json.id), 'the new key stays');
+    assert.equal(await works(A, again.json.token), 200);
+    const now = copyState(A, 'p3-again-now'), secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop();
+    const B = await startWith(now, secrets);
+    assert.equal((await net(B, '/whoami')).json.held, undefined, 'no hold');
+    assert.ok(agentIds(B).includes(again.json.id), 'still there after a start');
+    assert.equal(await works(B, again.json.token), 200, 'and it works from the internet');
+    await B.stop();
+  });
+});
+
+// Round two's final read, S-2 and S-9: every kind of removal by the owner, its note written at once or waiting (the
+// secrets file's temporary name blocked), then the console stopped and an older copy of the state put over the state
+// folder by hand (files the copy doesn't hold stay), with the same secrets file. Each answer says when the note waits;
+// each start holds, and each removed thing stays removed, each pause stays paused. One fleet makes the removals, one
+// at a time with nothing waiting before each copy; a fleet of its own is started on each put-back.
+describe('every kind of removal, its note written at once or waiting, then an older copy over the state folder', { concurrency: 1 }, () => {
+  const K = new Authenticator(TAILNET, ORIGIN), P = { 'at once': new Authenticator(TAILNET, ORIGIN), waiting: new Authenticator(TAILNET, ORIGIN) };
+  const KINDS = { 'at once': { id: 'c0ffee01', spark: 'spark3', program: 'touch', under: '~/notes', addedAt: '2026-11-14T00:00:00.000Z' },
+    waiting: { id: 'c0ffee02', spark: 'spark3', program: 'mkdir', under: '~/notes', addedAt: '2026-11-14T00:00:00.000Z' } };
+  const WAITS_SAID = /^Done\. Its note outside the state \(in the secrets file\) couldn’t be written just now/;
+  const fleets = [], keys = {};
+  let A, count = 0;
+  after(async () => { for (const F of fleets) await F?.stop().catch(() => {}); });
+  const fileOf = (F, name) => parse(existsSync(join(F.stateDir, name)) ? readFileSync(join(F.stateDir, name), 'utf8') : '') || {};
+  const keyIn = (F, id) => (fileOf(F, 'agents.json').keys || []).find(k => k.id === id);
+  const works = async (F, token) => (await net(F, '/v1/models', { headers: { authorization: `Bearer ${token}` } })).status;
+  async function device(name) {
+    const b = await net(A, '/auth/signin/begin', { method: 'POST', body: {} });
+    is(b, 200, 'sign-in begins');
+    const c = await net(A, '/auth/signin', { method: 'POST', body: { ...K.sign(b.json, { signCount: ++count }), name } });
+    is(c, 200, `${name} signs in from the internet`);
+    const d = { cookie: cookieOf(c), id: (await ask(A, '/auth/sessions')).json.sessions.find(s => s.name === name)?.id };
+    assert.ok(d.cookie && d.id, `${name} is on the list`);
+    return d;
+  }
+  const resume = async () => is(await confirmed(A, 'PUT', '/agents/settings', { halted: false }, K), 200, 'resumed for the next row');
+  const ROWS = {
+    'a passkey': { remove: mode => confirmed(A, 'DELETE', `/auth/passkeys/${P[mode].id}`, undefined, K),
+      stays: (B, mode) => assert.ok(!(fileOf(B, 'passkeys.json').keys || []).some(k => k.id === P[mode].id), 'the passkey stays removed') },
+    'an agent key': { remove: mode => ask(A, `/agents/${keys[`gone ${mode}`].id}`, { method: 'DELETE' }),
+      stays: async (B, mode) => { assert.equal(keyIn(B, keys[`gone ${mode}`].id), undefined, 'the key stays removed'); assert.notEqual(await works(B, keys[`gone ${mode}`].token), 200); } },
+    'a right taken from a key': { remove: mode => confirmed(A, 'PUT', `/agents/${keys[`narrowed ${mode}`].id}`, { internet: false }, K),
+      stays: async (B, mode) => { assert.equal(keyIn(B, keys[`narrowed ${mode}`].id)?.internet, false, 'tailnet-only again'); assert.notEqual(await works(B, keys[`narrowed ${mode}`].token), 200); } },
+    'the pause, from the settings': { remove: () => ask(A, '/agents/settings', { method: 'PUT', body: { halted: true } }), after: resume,
+      stays: B => assert.equal(fileOf(B, 'agent-settings.json').halted, true, 'still paused') },
+    'a device that signs itself out': { before: mode => device(`Self ${mode}`), remove: (mode, d) => net(A, '/auth/signout', { method: 'POST', body: {}, headers: withCookie(d.cookie) }),
+      stays: async (B, mode, d) => { assert.ok(!(fileOf(B, 'sessions.json').sessions || []).some(s => s.id === d.id)); is(await net(B, '/bootstrap', { headers: withCookie(d.cookie) }), 401, 'its cookie'); } },
+    'a device signed out from the list': { before: mode => device(`Listed ${mode}`), remove: (mode, d) => ask(A, `/auth/sessions/${d.id}`, { method: 'DELETE' }),
+      stays: async (B, mode, d) => { assert.ok(!(fileOf(B, 'sessions.json').sessions || []).some(s => s.id === d.id)); is(await net(B, '/bootstrap', { headers: withCookie(d.cookie) }), 401, 'its cookie'); } },
+    '/pause': { chat: true, remove: async () => say(await newChat(), '/pause'), after: resume,
+      stays: B => assert.equal(fileOf(B, 'agent-settings.json').halted, true, 'still paused') },
+    '/allowed off': { chat: true, remove: async mode => say(await newChat(), `/allowed off ${(fileOf(A, 'agent-settings.json').allowed || []).findIndex(e => e.id === KINDS[mode].id) + 1}`),
+      stays: (B, mode) => assert.ok(!(fileOf(B, 'agent-settings.json').allowed || []).some(e => e.id === KINDS[mode].id), 'still taken away') },
+  };
+
+  test('the owner’s state: three passkeys, four agent keys that work from anywhere, two always-allowed kinds, nothing paused', { timeout: 300000 * SLOW }, async () => {
+    A = await startMock({ env: { SPARK_CONSOLE_PUTBACK_RETRY_MS: '1000' }, prepare: ({ stateDir }) => writeFileSync(join(stateDir, 'agent-settings.json'), JSON.stringify({ allowed: Object.values(KINDS) }), { mode: 0o600 }) });
+    fleets.push(A);
+    use(A);
+    is(await ask(A, '/auth/passkey/register', { method: 'POST', body: K.register((await ask(A, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } })).json) }), 201, 'the passkey that confirms');
+    for (const [mode, k] of Object.entries(P)) {
+      const b = await ask(A, '/auth/passkey/begin', { method: 'POST', body: { purpose: 'register' } });
+      is(await confirmed(A, 'POST', '/auth/passkey/register', k.register(b.json, { name: `Lost ${mode}` }), K), 201, `a passkey to remove ${mode}`);
+    }
+    for (const name of ['gone at once', 'gone waiting', 'narrowed at once', 'narrowed waiting']) {
+      const k = await confirmed(A, 'POST', '/agents', { name }, K);
+      is(k, 201, name);
+      is(await confirmed(A, 'PUT', `/agents/${k.json.id}`, { act: true, internet: true }, K), 200, `${name} acts, from anywhere`);
+      keys[name] = k.json;
+      assert.equal(await works(A, k.json.token), 200, `${name} works from the internet`);
+    }
+    assert.deepEqual([(fileOf(A, 'agent-settings.json').allowed || []).map(e => e.id), fileOf(A, 'agent-settings.json').halted], [Object.values(KINDS).map(e => e.id), undefined]);
+  });
+
+  for (const mode of ['at once', 'waiting']) {
+    for (const [what, row] of Object.entries(ROWS)) {
+      test(`${what}, its note ${mode === 'at once' ? 'written at once' : 'waiting'}: the answer says so; the older copy holds, and it stays ${/pause/.test(what) ? 'paused' : 'removed'}`, { timeout: 300000 * SLOW }, async () => {
+        assert.ok(A, 'the owner’s state is set up');
+        use(A);
+        const tag = `kinds-${Object.keys(ROWS).indexOf(what)}-${mode === 'at once' ? 'now' : 'waits'}`;
+        await waitFor(() => !existsSync(join(A.stateDir, 'auth-unnoted.json')), { timeout: 30000 * SLOW, what: 'nothing waiting before the copy' });
+        const x = await row.before?.(mode);
+        const older = copyState(A, `${tag}-older`), block = `${A.secretsFile}.${A.servicePid()}.tmp`;
+        let r, now, secrets;
+        if (mode === 'waiting') mkdirSync(block);
+        try {
+          r = await row.remove(mode, x);
+          [now, secrets] = [copyState(A, `${tag}-now`), readFileSync(A.secretsFile, 'utf8')];
+        } finally { if (mode === 'waiting') rmSync(block, { recursive: true, force: true }); }
+        if (row.chat) assert.equal(/\nDone\. Its note outside the state \(in the secrets file\) couldn’t be written just now/.test(r.text), mode === 'waiting', r.text);
+        else {
+          is(r, 200, what);
+          assert.equal(r.json.noted, mode === 'waiting' ? false : undefined, r.text);
+          if (mode === 'waiting') assert.match(r.json.note, WAITS_SAID);
+        }
+        assert.equal(existsSync(join(now, 'auth-unnoted.json')), mode === 'waiting', 'the note waits in the state folder only when it couldn’t be written');
+        await row.after?.();
+        cpSync(older, now, { recursive: true });
+        const B = await startMock({ evalOnRecord: false, prepare: ({ stateDir, dir }) => {
+          for (const f of readdirSync(stateDir)) rmSync(join(stateDir, f), { recursive: true, force: true });
+          cpSync(now, stateDir, { recursive: true });
+          mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+          writeFileSync(join(dir, 'secrets', 'secrets.json'), secrets, { mode: 0o600 });
+        } });
+        fleets.push(B);
+        try {
+          assert.equal((await net(B, '/whoami')).json.held, LINE, 'held');
+          await row.stays(B, mode, x);
+        } finally { await B.stop(); }
+      });
+    }
+  }
+});
+
+// Round two's final read, S-1: secretsWrite, taken from 03-secrets.mjs as it is and run in a child process of its own
+// (no fleet). Under a write limit (`ulimit -f`, the stand-in for a nearly full disk) only part of the new file fits: the
+// call throws, the secrets file is byte for byte as it was, and nothing is left under the temporary name; with room it
+// writes. A write that comes back short once with room left is written to the end; a disk that says it took every byte
+// and took half is caught by the read-back.
+describe('the secrets file is only ever replaced by a whole one', () => {
+  const SRC = readFileSync(join(REPO, 'service', 'src', '03-secrets.mjs'), 'utf8');
+  const lifted = name => { const m = new RegExp(`^function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}$`, 'm').exec(SRC); assert.ok(m, `${name} is in 03-secrets.mjs`); return m[0]; };
+  const BEFORE = JSON.stringify({ telegram: { bot: 'spark_test_bot' }, auth: { serial: 6 } });
+  const NEXT = { auth: { serial: 7, removed: Array.from({ length: 300 }, (_, i) => ({ kind: 'agent', id: `id${i}`, name: 'x'.repeat(40), at: '2026-11-16T00:00:00.000Z' })) } };
+  // way: '' (the disk as it is), 'short-once' (the first write takes half and says so; the rest fits), 'lies' (each write
+  // takes half and says it took all); limitKb: a write limit, so only part fits.
+  function write(way, limitKb = null) {
+    const d = mkdtempSync(join(COPIES, 'secrets-write-')), folder = join(d, 'secrets'), file = join(folder, 'secrets.json'), script = join(d, 'lift.mjs');
+    mkdirSync(folder, { mode: 0o700 });
+    writeFileSync(file, BEFORE, { mode: 0o600 });
+    writeFileSync(script, ["import * as fs from 'node:fs';",
+      'const { readFileSync, mkdirSync, chmodSync, openSync, fsyncSync, closeSync, renameSync, unlinkSync, statSync } = fs;',
+      'const SECRETS_FILE = process.argv[2], WAY = process.argv[3], keptSeen = {}; let secretsProblem = null, calls = 0;',
+      'class HttpError extends Error {}',
+      'const writeSync = (fd, b, off, len) => {',
+      "  if (typeof b === 'string') b = Buffer.from(b);",
+      '  off ??= 0; len ??= b.length - off; calls++;',
+      "  if (WAY === 'short-once' && calls === 1) return fs.writeSync(fd, b, off, Math.floor(len / 2));",
+      "  if (WAY === 'lies') { fs.writeSync(fd, b, off, Math.floor(len / 2)); return len; }",
+      '  return fs.writeSync(fd, b, off, len);',
+      '};',
+      lifted('secretsRead'), lifted('secretsWrite'),
+      `let threw = null; try { secretsWrite(x => ({ ...x, ...${JSON.stringify(NEXT)} })); } catch (e) { threw = e.code || e.message || String(e); }`,
+      'console.log(JSON.stringify({ threw, calls }));'].join('\n'));
+    const r = spawnSync('bash', ['-c', `trap "" XFSZ; ${limitKb ? `ulimit -f ${limitKb}; ` : ''}exec "$@"`, 'limit', process.execPath, script, file, way], { encoding: 'utf8', timeout: 30000 * SLOW });
+    const out = parse(String(r.stdout || '').trim().split('\n').pop());
+    assert.ok(out, `the lifted secretsWrite ran: ${r.stdout}${r.stderr}${r.error || ''}`);
+    return { ...out, text: readFileSync(file, 'utf8'), left: readdirSync(folder).sort() };
+  }
+
+  test('only part fits (a write limit): it throws, the secrets file is byte for byte as it was, and nothing is left under the temporary name; with room it writes', { timeout: 120000 * SLOW }, () => {
+    const full = write('', 16);
+    assert.ok(full.threw, `it throws: ${JSON.stringify(full)}`);
+    assert.equal(full.text, BEFORE, 'the secrets file as it was');
+    assert.deepEqual(full.left, ['secrets.json'], 'nothing under the temporary name');
+    const room = write('');
+    assert.equal(room.threw, null, JSON.stringify(room));
+    assert.deepEqual(JSON.parse(room.text), { telegram: { bot: 'spark_test_bot' }, ...NEXT }, 'written whole');
+    assert.deepEqual(room.left, ['secrets.json']);
+  });
+
+  test('a write that comes back short once, with room left, is written until every byte is in', { timeout: 120000 * SLOW }, () => {
+    const r = write('short-once');
+    assert.equal(r.threw, null, JSON.stringify(r));
+    assert.ok(r.calls >= 2, `written on after the short write: ${JSON.stringify(r)}`);
+    assert.deepEqual(JSON.parse(r.text), { telegram: { bot: 'spark_test_bot' }, ...NEXT }, 'written whole');
+    assert.deepEqual(r.left, ['secrets.json']);
+  });
+
+  test('a disk that says it took every byte and took half: the read-back catches it, the secrets file is as it was, nothing is left', { timeout: 120000 * SLOW }, () => {
+    const r = write('lies');
+    assert.ok(r.threw, `it throws: ${JSON.stringify(r)}`);
+    assert.equal(r.text, BEFORE, 'the secrets file as it was');
+    assert.deepEqual(r.left, ['secrets.json'], 'nothing under the temporary name');
+  });
+});
+
+// Round two's final read, S-9: the page shows the note a removal's answer carries when it waits (noted: false), in its
+// own words: capi shows it for every route, and a sign-out that reloads the page shows it first. The page's own
+// functions, taken from public/app.js and run here with stand-ins (no test here drives a browser).
+test('the page shows a removal’s waiting note, and a sign-out that reloads the page shows it before the reload', async () => {
+  const APP = readFileSync(join(REPO, 'public', 'app.js'), 'utf8');
+  const src = ['capi', 'removalNote', 'signOutHere', 'signOutDevice', 'signedOutNote'].map(n => {
+    const m = new RegExp(`^(?:async )?function ${n}\\([^)]*\\) \\{\\n[\\s\\S]*?^\\}`, 'm').exec(APP);
+    assert.ok(m, `${n} is in public/app.js`);
+    return m[0];
+  }).join('\n');
+  const NOTE = 'Done. Its note outside the state (in the secrets file) couldn’t be written just now, so an older copy of the state put back by hand could bring it back: Spark Console tries again every minute and says so on the needs-you list until it is written.';
+  let answer;
+  const toasts = [], dialogs = [], seen = [];
+  const page = vm.runInNewContext(`${src}\n({ capi, signOutHere, signOutDevice })`, {
+    CONSOLE_API: '/console/api/', state: { boot: {} },
+    fetch: async () => ({ ok: true, status: 200, json: async () => answer }),
+    toast: (message, o = {}) => { toasts.push({ message, ...o }); seen.push('toast'); },
+    dialog: async o => { dialogs.push(o); seen.push('dialog'); return true; },
+    location: { reload: () => seen.push('reload') },
+    loadSessions: async () => {},
+  });
+  answer = { ok: true, noted: false, note: NOTE };
+  await page.capi('agents/0123456789ab', 'DELETE');
+  assert.deepEqual(toasts.map(t => [t.message, t.timeout]), [[NOTE, 0]], 'shown, and it stays until closed');
+  for (const signOut of [() => page.signOutHere(), () => page.signOutDevice({ id: 'abcdef012345', name: 'Phone', current: true })]) {
+    [dialogs.length, seen.length] = [0, 0];
+    await signOut();
+    assert.equal(dialogs[0]?.description, NOTE, 'said before the page goes');
+    assert.ok(seen.indexOf('dialog') >= 0 && seen.indexOf('dialog') < seen.indexOf('reload'), seen.join(' '));
+  }
+  // Nothing waiting: nothing more is shown.
+  [answer, toasts.length, dialogs.length, seen.length] = [{ ok: true }, 0, 0, 0];
+  await page.capi('agents/0123456789ab', 'DELETE');
+  await page.signOutHere();
+  assert.deepEqual([toasts.length, dialogs.length, seen], [0, 0, ['reload']]);
 });
