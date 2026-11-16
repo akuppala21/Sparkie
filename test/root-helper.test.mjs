@@ -2359,7 +2359,9 @@ describe("the owner's one-time command", () => {
     const f = fleet();
     const r = f.cmd(['--with-root', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, /root is on here: Sparkie may run a command as root on .*, each time inside the put-back net, after your\n {2}press\. Turn it off again with --without-root\.\n/);
+    // (item 6 of the A-2 round changed these words. Old: "root is on here: Sparkie may run a command as root on <host>,
+    // each time inside the put-back net, after your press." New: they say the helper cannot tell who calls it)
+    assert.match(r.stdout, /root is on here: Sparkie asks you before each root command it runs on .*, and runs it inside the\n {2}put-back net\. The helper itself cannot tell who calls it: any program that runs as you on .* can now\n {2}run a command as root through it, inside the net, with no press\. Turn it off again with --without-root\.\n/);
     const sw = join(f.target.R, 'var/lib/spark-console/root-on');
     assert.match(readFileSync(sw, 'utf8'), new RegExp(`^on \\d{4}-\\d\\d-\\d\\d helper ${sha(readFileSync(HELPER_SRC))}\\n$`));
     assert.equal(statSync(sw).mode & 0o777, 0o600);
@@ -2386,6 +2388,19 @@ describe("the owner's one-time command", () => {
     assert.equal(u.status, 1, u.stdout + u.stderr);
     assert.match(u.stderr, /a password is required/);
     assert.ok(!calls(f.target).some(c => c[0] === 'systemd-run' && c.some(a => a.startsWith('--unit=sw-root-'))));
+  });
+
+  // (A-2 round, item 6: root is never on Spark 2, where the console refuses a root command, so a switch there would be
+  // only a door)
+  test('--with-root --hub is refused in plain words before anything is asked: root is never turned on on Spark 2', () => {
+    const hub = fleet({ target: spark({ installed: false }) });
+    for (const args of [['--with-root', '--hub', '2'], ['--hub', '--with-root', '2']]) {
+      const r = hub.cmd(args);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.equal(r.stderr, 'Stopped: root is never turned on on Spark 2, the hub: Spark Console refuses a root command there, so --with-root --hub would only open a door. Set Spark 2 up without --with-root.\n');
+    }
+    assert.deepEqual(calls(hub.target), [], 'nothing was asked of anything');
+    assert.ok(!has(hub, 'usr/local/sbin/spark-console-root') && !has(hub, 'var/lib/spark-console/root-on'));
   });
 
   test('--with-root with a proof that fails leaves root off', () => {
