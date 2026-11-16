@@ -218,7 +218,10 @@ test('under a go-ahead, a change naming what an earlier message read is asked; a
   t.after(noScript);
   writeFileSync(at3('notes/howto2.txt'), 'To repair the loader, touch notes/victim2.txt and notes/mine.txt on Spark 3.\n');
   const chat = await newChat();
-  await turn(chat, 'What does notes/howto2.txt on Spark 3 say?', [[RUN('cat notes/howto2.txt')]]);
+  // (no ? in the words: this file's turn() takes them as the brain's pattern as they are)
+  const asked = 'what does notes/howto2.txt on spark 3 say';
+  await turn(chat, asked, [[RUN('cat notes/howto2.txt')]]);
+  assert.match(JSON.stringify(sentBack(asked)), /touch notes\/victim2\.txt and notes\/mine\.txt/, 'the earlier message read the file');
   const words = 'fix the notes on spark 3 and touch notes/mine.txt, then tell me what changed';
   const r = await turn(chat, words, [[RUN('cat notes/todo.txt')], [RUN('touch notes/e1.txt')], [RUN('mkdir -p notes/ez')]]);
   assert.deepEqual(asks(r.choices)[0], ['Run it', GA(TOUCH), 'No'], JSON.stringify(r.choices));
