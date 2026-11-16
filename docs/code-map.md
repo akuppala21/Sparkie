@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 87 parts in `service/src/`, joined in name order into `service/server.mjs` (21898 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 88 parts in `service/src/`, joined in name order into `service/server.mjs` (21988 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -77,7 +77,7 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 - **Wakes:** none
 - **Functions:** `buildOf`, `readJsonFile`, `offlineNow`, `q`, `sleep`, `nodeById`, `isProtected`, `hfSnap`, `hfMounts`, `hfEachFile`
 - **Uses:** nothing from other parts
-- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-op-energy`, `20-places`, `20-programs`, `20-recall`, `20-sort`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies-prune`, `21-copies`, `21-door`, `21-guard`, `21-guide`, `21-power`, `21-runner`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
+- **Used by:** `02-ssh`, `03-identity`, `03-secrets`, `04-metrics`, `05-library`, `06-links`, `07-jobs`, `08-cluster`, `09-verified`, `10-recipes`, `11-setups`, `12-plugs`, `12-status`, `13-main-model`, `14-chats`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-run-record`, `18-saved-from`, `18-step-jobs`, `18-workflows`, `19-watcher`, `20-beat`, `20-danger`, `20-desired`, `20-digest`, `20-heal`, `20-journal`, `20-keys`, `20-lessons`, `20-mcp`, `20-memory-names`, `20-memory-time`, `20-memory`, `20-needs`, `20-op-energy`, `20-places`, `20-programs`, `20-recall`, `20-sort`, `20-state-copy`, `20-tell`, `20-tg-approve`, `20-uses`, `20-ways-in`, `20-words`, `21-apps`, `21-brain-check`, `21-brain-eval`, `21-brain-rail`, `21-compare`, `21-copies-prune`, `21-copies`, `21-door`, `21-guard`, `21-guide`, `21-power`, `21-runner`, `21-selfchange`, `21-selftest`, `21-telegram`, `21-updates`, `21-web`, `21-work-shown`, `21-work`, `22-passkey`, `22-putback`, `22-sessions`, `23-http`, `24-handler`, `25-backup-and-start`
 
 ### `02-ssh.mjs`: running commands on Sparks
 
@@ -684,20 +684,20 @@ One reader for every program's options, and each program's options from its manu
 What a path a command names is, for the sorter (20-sort.mjs): one of the ways in (lockout), the root helper or its sudo line (not done), a risky place (a disk or device, the kernel, a schedule, Docker's settings), a program or setting that something outside the wall later runs or reads (risky when written), Spark Console's own files or the brain's (risky). A path is placed as ~/… (any home) or /…, from each folder a cd may have left the command in, with /proc/<id>/root taken off the front. "Wide" is a command that reaches everything under a folder it names (rm -r, chmod, a folder an archive …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 265
+- **Lines:** 268
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `sortQ`, `sortNorm`, `sortAtHome`, `sortPaths`, `sortCd`, `sortGlob`, `sortSeg`, `sortClass`, `sortUp`, `sortNested`, `sortBraces`, `sortReach`, `sortNames`, `sortPlace`, `sortGitSet`, `sortTails`, `sortCands`, `sortTouch`, `sortWrote`, `sortBefore`, `sortScan`, `sortSee`
 - **Uses:** `01-setup` (`q`), `02-ssh` (`run`), `20-shell` (`unsure`), `20-sort` (`raise`), `20-tables` (`SORT_PROGS`)
-- **Used by:** `20-programs`, `20-remote`, `20-shape`, `20-sort`, `20-tables`, `20-tools`
+- **Used by:** `20-programs`, `20-remote`, `20-shape`, `20-sort`, `20-tables`, `20-tools`, `20-uses`
 
 ### `20-programs.mjs`: the sorter's programs: what each one it knows does (design A 2.8)
 
 One function a program the sorter (20-sort.mjs) reads past its name: shells and interpreters, editors, the shell's built-ins that set a name, archives, the system's own tools, sudo and su (the package managers, git, the builds and systemd are in 20-tools.mjs; the network's tools and other machines in 20-remote.mjs). A program in no table is unknown, and so risky; an option a handler doesn't know is a doubt, and so risky (each reads its options by its spec in 20-options.mjs, or as written here). A program that unpacks or downloads under names it picks reaches everything under the folder it …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 326
+- **Lines:** 330
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
@@ -723,13 +723,13 @@ recall (its action is in 20-journal.mjs) answers from everything Spark Console k
 The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the network's own tools (ip, arp, ss), the downloaders (curl, wget, aria2c), Tailscale, and ssh, scp, rsync and sftp. On another machine there is no wall and no copy first, so a command that runs or writes there is asked (risky) whatever it is, and still sorted as a command there for lockout or not done; a host that isn't one of the Sparks is risky, a tunnel through one is not done. As root no wall stands in front of the Spark's own ports, so a root download that names a host by number, localhost, a one-word name, a …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 142
+- **Lines:** 149
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `sortHost`, `sortNear`, `sortDns`, `sortFar`
-- **Uses:** `20-options` (`sortOpts`, `SORT_OPTS`), `20-places` (`sortPlace`, `sortNorm`, `sortQ`, `sortTouch`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortOpen`, `sortFresh`, `sortInline`, `sortAt`, `sortMerge`, `sortGone`), `20-tables` (`sortShows`)
-- **Used by:** `20-tools`
+- **Uses:** `20-options` (`sortOpts`, `SORT_OPTS`), `20-places` (`sortPlace`, `sortNorm`, `sortQ`, `sortTouch`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortOpen`, `sortFresh`, `sortInline`, `sortAt`, `sortMerge`, `sortGone`), `20-tables` (`sortShows`), `20-uses` (`usesReach`, `usesHost`)
+- **Used by:** `20-tools`, `20-uses`
 
 ### `20-shape.mjs`: the sorter's plain shape: what a command run at once must look like (R64)
 
@@ -762,12 +762,12 @@ The one tokenizer the sorter reads a command with (design A 2.8; 20-sort.mjs). I
 sortCommand(command, {at, root, dir, home, hosts, brain, written}) says what one command for run is before anything runs, from its text and where it runs alone: no model call, no file read, a bounded amount of work, and never a throw for anything JSON can carry (a getter or a toString that throws is caught too). Five classes, in their order of danger (when two could apply, the later wins): look (only reads: at once), change (design A 2.5's ladder), risky (always asked), lockout (asked, and inside the net), notdone (never, and not for want of a yes). The careful answer is the default: a …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 338
+- **Lines:** 347
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `raise`, `sortFresh`, `sortMerge`, `sortAssign`, `sortIsCd`, `sortOneCd`, `sortList`, `sortKeep`, `sortCmd`, `sortWroteIn`, `sortRuns`, `sortGone`, `sortOpen`, `sortInline`, `sortKnown`, `sortProgram`, `sortReads`, `sortSetuid`, `sortFile`, `sortAt`, `sortCommand`
-- **Uses:** `01-setup` (`CONFIG`), `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortNested`, `sortTouch`, `sortUp`, `sortBefore`, `sortPaths`, `sortWrote`, `sortCands`, `sortNames`, `sortBraces`, `SORT_PLACED`, `SORT_PATH`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shape` (`sortShape`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `20-tables` (`SORT_WRAP`, `SORT_READS`, `SORT_FILES`, `SORT_PROGS`, `sortWrap`, `SORT_LOCK_READS`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
+- **Uses:** `01-setup` (`CONFIG`), `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_MODES`), `20-places` (`sortQ`, `SORT_STEPS`, `sortNested`, `sortTouch`, `sortUp`, `sortBefore`, `sortPaths`, `sortWrote`, `sortCands`, `sortNames`, `sortBraces`, `SORT_PLACED`, `SORT_PATH`, `sortNorm`, `sortSee`, `sortScan`), `20-programs` (`SORT_HANDLERS`, `sortInto`), `20-shape` (`sortShape`), `20-shell` (`unsure`, `shellParse`, `shellLex`, `SortDoubt`), `20-tables` (`SORT_WRAP`, `SORT_READS`, `SORT_FILES`, `SORT_PROGS`, `sortWrap`, `SORT_LOCK_READS`), `20-uses` (`sortInstall`, `sortUses`), `21-work` (`lookForm`, `lookWords`, `keyWord`)
 - **Used by:** `20-places`, `20-programs`, `20-remote`, `20-shape`, `20-tables`, `20-tools`, `21-runner`, `21-work`
 
 ### `20-state-copy.mjs`: when the state's copy goes: only while another Spark is awake anyway
@@ -827,13 +827,26 @@ The owner's yes may come from Telegram (owner decisions 20 and 22; contract 8.7,
 The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the package managers (apt, dpkg, pip, conda, npm, hf), git, Docker, the builds (make and its kin), and systemd (systemctl, service, loginctl). Each knows its sub-commands: one not on its list is a doubt (risky), and so is an option its spec (20-options.mjs) doesn't hold. A sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words are its own, so the options …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 244
+- **Lines:** 256
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `sortPkgs`, `sortElsewhere`, `sortGitOwn`, `sortBuild`
-- **Uses:** `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_NOOPTS`), `20-places` (`sortQ`, `sortPaths`, `sortTouch`, `sortWrote`, `sortGlob`, `WAYS_UNITS`), `20-programs` (`sortInto`, `SORT_HANDLERS`), `20-remote` (`sortNear`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortRuns`, `sortGone`, `sortInline`, `sortWroteIn`, `sortProgram`, `sortOpen`)
+- **Uses:** `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_NOOPTS`), `20-places` (`sortQ`, `sortPaths`, `sortTouch`, `sortWrote`, `sortGlob`, `WAYS_UNITS`), `20-programs` (`sortInto`, `SORT_HANDLERS`), `20-remote` (`sortNear`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortRuns`, `sortGone`, `sortInline`, `sortWroteIn`, `sortProgram`, `sortOpen`), `20-uses` (`usesReach`, `usesHost`)
 - **Used by:** no other part
+
+### `20-uses.mjs`: what a sorted command uses beside the places it changes: reads, installs, the GPU, the network (R64)
+
+Fields of sortCommand's result for the ladder (A7c), never a class: the class stays the tables' and the shape's. reads: places of placed a known program only reads (a copy's source, what tar or zip packs, an archive it unpacks, a name hf fetches by), when nothing in the command writes there and no code the sorter doesn't read runs: placed keeps them for the copy first. installs: where an install puts programs that the plain wall keeps read-only. gpu: true when the command plainly uses the GPU, unset when that can't be told. reach: which of another Spark of this fleet, the home network and the …
+
+- **Area:** safety. **Rules:** R64. **Tests:** sort.test.mjs
+- **Lines:** 55
+- **Owns:** none
+- **Timers:** none
+- **Wakes:** none
+- **Functions:** `usesHost`, `usesReach`, `sortInstall`, `sortUses`
+- **Uses:** `01-setup` (`q`), `20-places` (`sortUp`, `sortGlob`), `20-remote` (`sortHost`, `sortNear`)
+- **Used by:** `20-remote`, `20-sort`, `20-tools`
 
 ### `20-ways-in.mjs`: the ways in, watched ahead: Tailscale's keys, linger, Funnel (ledger 5b, addition 6)
 

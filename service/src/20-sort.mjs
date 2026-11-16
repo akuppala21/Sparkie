@@ -47,8 +47,9 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}͏ᅟᅠ឴឵᠋-᠏⠀ㅤ︀-�
 // the few a look may carry.
 const DANGER_ENV = /^(?:PATH|LD_\w+|BASH_ENV|ENV|BASH_FUNC_\S+|SHELLOPTS|BASHOPTS|IFS|PS4|PROMPT_COMMAND|CDPATH|GLOBIGNORE|HOME|PYTHON(?!UNBUFFERED$)\w*|PERL\w*|RUBY\w*|NODE_\w+|GIT_\w+|SSH_\w+|DOCKER_\w+|SYSTEMD_\w+|DBUS_\w+|XDG_\w+|SUDO_\w+|TMPDIR|\w*PAGER|EDITOR|VISUAL|LESS\w*|TAR_OPTIONS|GCONV_PATH|HOSTALIASES|RES_OPTIONS|LOCALDOMAIN|PIP_\w+|UV_\w+|NPM_CONFIG_\w+|YARN_\w+|CONDA_\w+|APT_CONFIG|CURL_HOME|WGETRC|\w*_PROXY|HF_ENDPOINT|OPENSSL_\w+|SIMPLE_BACKUP_SUFFIX|VERSION_CONTROL|AWKPATH|AWKLIBPATH|MAKEFLAGS|MFLAGS|GNUMAKEFLAGS|MAKEFILES|GZIP|BZIP2?|XZ_OPT|XZ_DEFAULTS)$/i;
 const SAFE_ENV = /^(?:LC_\w+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CUDA_VISIBLE_DEVICES|OMP_NUM_THREADS|PYTHONUNBUFFERED|DEBIAN_FRONTEND)$/;
-function sortAssign(name, ctx, r, prefix) {
+function sortAssign(name, ctx, r, prefix, value = null) {
   ctx.sets?.add(name);
+  ctx.setTo?.set(name, value);
   if (DANGER_ENV.test(name)) raise(r, 'risky', `It sets ${sortQ(name)}, which decides what programs run, what they load or where they fetch from.`);
   else if (prefix && !SAFE_ENV.test(name)) { r.simple = false; raise(r, 'change', `It hands ${sortQ(name)} to the program, which may change what it does.`); }
 }
@@ -123,7 +124,7 @@ function sortCmd(cmd, ctx, r, inPipe) {
       if (/^(?:>|>\||&>)$/.test(d.op)) c.deletes = true;
       later.push(d.w);
     }
-    for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0);
+    for (const a of cmd.assigns) sortAssign(a.lit.split(/\+?=/)[0], ctx, c, cmd.words.length > 0, a.unknown ? null : a.text.replace(/^[^=]*=/, ''));
     try { if (cmd.words.length) sortProgram(cmd.words, ctx, c, { inPipe, stdin, opaque }); } finally { for (const w of later) sortTouch(w, ctx, c); }
     // (after what it does, so the more dangerous answer stands)
     if (odd) unsure(`${sortQ(odd.text)} holds a {…} the sorter does not spell out as bash does (quoted or $ parts, or one inside another).`);
@@ -140,6 +141,7 @@ const sortWroteIn = (d, ctx) => [...ctx.written].some(p => p.startsWith(d === '/
     : ctx.before.some(b => b.startsWith(d === '/' ? '/' : `${d}/`)) || [d, ...sortUp(d)].some(a => ctx.beforePlain.has(a)) || ctx.beforeGlob.some(b => sortBefore(b, d, ctx))));
 function sortRuns(file, ctx, r, why, dir = null) {
   r.simple = false;
+  ctx.unread = true;
   if (file && /[\x00-\x1f\x7f]/.test(file)) unsure('It runs a file with a line break or a control sign in its name.');
   if (file) r.scripts.push(file);
   raise(r, 'change', why);
@@ -187,21 +189,24 @@ function sortProgram(words, ctx, r, x) {
 
   for (const a of args) if (!a.unknown) for (const t of [a.text, /=(.+)$/.exec(a.text)?.[1], /@([~/].*)$/.exec(a.text)?.[1], /^file:\/\/(\/.*)$/.exec(a.text)?.[1]].filter(Boolean)) ctx.seen.push(t, ...[...ctx.cwds].filter(d => d && !/^[~/]/.test(t)).map(d => `${d}/${t}`));
   try {
-    let name = w0.text;
+    // (via: the path it is run by, or, for python -m pip, the interpreter's: where an install lands, R64)
+    let name = w0.text, via = x.module ? x.via ?? null : null;
     if (name.includes('/')) {
       // A file it runs; and, when its last part names a program the sorter knows, that program too.
       const p = sortPaths(name, ctx)[0], base = p.slice(p.lastIndexOf('/') + 1);
+      via = p;
       if (!/^\/(?:usr\/)?(?:local\/)?s?bin\/[^/]+$/.test(p)) { sortNames(p, ctx, r); sortRuns(name, ctx, r, `It runs the file ${sortQ(name)}.`); if (!sortKnown(base.replace(/^(mkfs|fsck)\.\w+$/, '$1'))) return; }
       name = base;
     }
     if (/^(?:mkfs|fsck)\.\w+$/.test(name)) name = name.split('.')[0];
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
+    sortInstall(name, args, ctx, via);
     if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
     // Words it reads from its input (after xargs, in find -exec): only a plain reader stays as it was.
     if (x.unknownArgs && reads !== '') { if (file === 'del') ctx.kinds.add('delete'); raise(r, 'risky', `${sortQ(name)} gets words it reads from its input, which the sorter can't see.`); }
     let own = args.length;
-    if (h) { const n = h(args, ctx, r, x, name); if (typeof n === 'number' && n >= 0) own = n; }
+    if (h) { const n = h(args, ctx, r, { ...x, via, module: false }, name); if (typeof n === 'number' && n >= 0) own = n; }
     else if (reads != null) sortReads(name, reads, args, ctx, r);
     else if (file != null) sortFile(name, file, args, ctx, r, x);
     else if (g.cls === 'open') sortOpen(ctx, r, `${sortQ(name)} ${g.why}, which the run wall hides.`);
@@ -259,7 +264,9 @@ function sortFile(name, kind, args, ctx, r) {
   for (const a of files) {
     if (a === dir) continue;
     const src = !!dir, at = dir?.text.replace(/\/+$/, '');
-    sortTouch(a, ctx, r, kind === 'wide' || (kind === 'del' && rec) || (name === 'mv' && src) || (name === 'ln' && src), writes);
+    // (a copy's source, and what zip packs, are only read: not cp's links, nor zip -m, which moves them in)
+    const read = (src && /^(?:cp|install)$/.test(name) && !o.has('l', 's', 'link', 'symbolic-link')) || (name === 'zip' && a !== plain[0] && !o.has('m', 'move'));
+    sortTouch(a, ctx, r, kind === 'wide' || (kind === 'del' && rec) || (name === 'mv' && src) || (name === 'ln' && src), writes, read);
     if (src) to(a, `${at}/${a.text.replace(/\/+$/, '').split('/').pop()}`);
     if (src && o.has('parents')) to(a, `${at}/${a.text.replace(/^\/+/, '')}`);
   }
@@ -275,7 +282,7 @@ function sortAt(r, ctx) {
 }
 function sortCommand(command, opts) {
   const r = sortFresh(), ctx = { at: 'compute', root: false, hosts: Object.create(null), brain: [], home: null, depth: 0, cwds: new Set(), fetched: false, fetchSeen: false, piped: false,
-    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
+    seen: [], kinds: new Set(), words: [], programs: new Set(), written: new Set(), under: new Set(), before: [], beforePlain: new Set(), beforeGlob: [], cloned: new Set(), touched: new Set(), sets: new Set(), readOnly: new Set(), wrote: new Set(), installs: new Set(), reach: new Set(), setTo: new Map(), changes: new Map(), cmd: [], steps: 0, wraps: 0 };
   let text = '', form = null;
   try {
     const o = opts && typeof opts === 'object' ? opts : {};
@@ -333,6 +340,8 @@ function sortCommand(command, opts) {
   if (ctx.root) ctx.kinds.add('root');
   const kinds = r.class === 'look' ? [] : ['root', 'lockout', 'delete', 'brain'].filter(k => ctx.kinds.has(k)), plain = p => !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(p);
   const why = r.why.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 400), changes = [...ctx.changes].filter(([p]) => plain(p));
+  let uses = { reads: [], installs: [], reach: [] };
+  try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
-    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p) };
+    placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses };
 }
