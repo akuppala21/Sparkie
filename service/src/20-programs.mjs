@@ -54,7 +54,7 @@ function sortInterp(args, ctx, r, x, name) {
   if (codes.length) { sortRuns(null, ctx, r, `It runs a ${sortQ(name)} one-liner, which the sorter does not read.`); if (o.has('i')) for (const w of o.plain) { sortTouch(w, ctx, r); if (bk) sortTouch({ ...w, text: bk.includes('*') ? (bk.includes('/') ? '' : w.text.replace(/[^/]*$/, '')) + bk.replace(/\*/g, w.text.split('/').pop()) : w.text + bk }, ctx, r); } return fin(); }
   for (const f of o.all(...files)) sortRuns(f.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(f.text)}.`);
   const mod = o.all('m')[0], file = o.plain[0];
-  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, x); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
+  if (mod) { if (/^pip3?$/.test(mod.text) && !mod.unknown) sortProgram([mod, ...o.plain], ctx, r, { ...x, module: true }); else sortRuns(null, ctx, r, `It runs the ${sortQ(name)} module ${sortQ(mod.text)}.`); return fin(); }
   if (/^(?:deno|bun)$/.test(key)) { if (/^(?:x|dlx)$/.test(file?.text) || o.plain.some(w => /^(?:npm|jsr):/.test(w.text))) raise(r, 'risky', `${sortQ(name)} downloads a package and runs it: always asked.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code.`); return fin(); }
   if (file?.unknown) { if (file.fetches) ctx.fetched = true; else unsure(`${sortQ(name)}’s words hold a $ or a command, so the sorter can't know what it runs.`); sortRuns(null, ctx, r, `${sortQ(name)} runs code a command makes.`); return fin(); }
   if (file && file.text !== '-') { sortRuns(file.text, ctx, r, `It runs the ${sortQ(name)} file ${sortQ(file.text)}.`); return fin(); }
@@ -71,7 +71,7 @@ function sortSets(names, ctx, r, how) {
   for (const n of names) {
     if (!n || n.unknown || /\[/.test(n.text)) unsure(`${sortQ(how)} sets a name the sorter can't read (an index worked out as arithmetic, or a $).`);
     const m = /^[A-Za-z_]\w*/.exec(n.text)?.[0];
-    if (m) sortAssign(m, ctx, r, false);
+    if (m) sortAssign(m, ctx, r, false, n.unknown || !n.text.includes('=') ? null : n.text.slice(n.text.indexOf('=') + 1));
   }
 }
 const sortDeclare = (a, ctx, r, x, name) => {
@@ -213,6 +213,8 @@ const SORT_HANDLERS = {
     const f = a[0] ?? unsure('source with no file.');
     if (/^\/dev\/(?:stdin|fd\/)|^\/proc\/self\/fd\//.test(f.text)) unsure('It reads shell code from its input, which can’t be shown.');
     if (f.fetches) ctx.fetched = true; else if (f.unknown) unsure('It runs a shell file named by a $ or a command.');
+    // (a Python environment's activate: pip after it installs there, not in ~/.local, R64)
+    if (/(?:^|\/)bin\/activate$/.test(f.text)) ctx.venv = true;
     sortRuns(f.text || '<( … )', ctx, r, `It runs the shell file ${sortQ(f.text || 'a command makes')} in this shell.`);
   },
   set(a) { if (!a.every(w => /^[-+][a-zA-Z]+$|^(?:pipefail|errexit|nounset|xtrace|noglob|noclobber|errtrace|functrace)$/.test(w.text))) unsure('set with these words changes the shell’s own arguments or options.'); },
@@ -263,8 +265,10 @@ const SORT_HANDLERS = {
     if (list && !write) return after();
     raise(r, 'change', 'tar writes files.');
     if (o.has('x', 'extract', 'get') || !write) { r.deletes = true; sortInto(o.has('P', 'absolute-names') ? { text: '/', subs: [] } : o.all('C', 'directory').at(-1) ?? null, ctx, r); }
-    for (const w of o.plain) sortTouch(w, ctx, r, false, false);
-    for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate'));
+    // (what it packs is only read, unless --remove-files takes it away; the archive it unpacks too)
+    const packs = o.has('c', 'r', 'u', 'A', 'create', 'append', 'update', 'concatenate', 'catenate');
+    for (const w of o.plain) sortTouch(w, ctx, r, false, false, packs && !o.has('remove-files'));
+    for (const w of o.all('f', 'file')) sortTouch(w, ctx, r, false, packs, !packs && !o.has('delete') && o.has('x', 'extract', 'get'));
     if (o.has('remove-files')) { r.deletes = true; sortGone(ctx, r, 'tar --remove-files removes what it packs.'); }
     after();
   },
@@ -275,7 +279,7 @@ const SORT_HANDLERS = {
     // (-: and -^ let its members leave the folder: it reaches / then)
     const o = sortOpts(SORT_OPTS.unzip, a);
     sortInto(a.some(w => /^-[^-]*[:^]/.test(w.text)) ? { text: '/', subs: [] } : o.all('d').at(-1) ?? null, ctx, r);
-    for (const w of o.plain) sortTouch(w, ctx, r, false);
+    for (const [i, w] of o.plain.entries()) sortTouch(w, ctx, r, false, true, i === 0);
   },
   '7z'(a, ctx, r) {
     const v = a.find(w => !w.text.startsWith('-'))?.text;
