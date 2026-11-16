@@ -24,6 +24,15 @@ function guardScript(node, verb, { id, command = '', seconds = 60 }) {
     `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
+// The helper's sentences the net reads (what follows "<id> " on its line), kept here so this part stands alone (the
+// tests load it by itself); own-programs.test checks each against deploy/spark-console-root, as it does the look's.
+const GUARD_SAYS = {
+  end: /^end (\d{1,3}|time)$/,
+  netArmed: /^net armed: the ways in go back at (\S+) /,
+  netOpen: /^net open: (.*)$/,
+  kept: /^kept: |^kept already: /,
+  putBack: /^(?:net |already )?put back at (.*)$/,
+};
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
 // so a line the command printed is never read as the helper's. keep and putback print the helper's lines alone.
@@ -32,16 +41,16 @@ function guardAnswer(id, out) {
   if (lines.at(-1) === '') lines.pop();
   const own = l => (String(l).startsWith(`${id} `) ? String(l).slice(id.length + 1) : null);
   const last = own(lines.at(-1)) ?? '', first = own(lines[0]) ?? '';
-  const end = HELPER_SAYS.end.exec(last);
+  const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
-    goesBackAt: HELPER_SAYS.netArmed.exec(first)?.[1] || null,
-    open: after(HELPER_SAYS.netOpen),
-    kept: !end && HELPER_SAYS.kept.test(last),
-    putBackAt: after(HELPER_SAYS.putBack),
+    goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
+    open: after(GUARD_SAYS.netOpen),
+    kept: !end && GUARD_SAYS.kept.test(last),
+    putBackAt: after(GUARD_SAYS.putBack),
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
   };
 }
