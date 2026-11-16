@@ -29,13 +29,17 @@ for (const [cls, names, why] of [
   ['risky', 'modprobe insmod rmmod depmod update-grub grub-install grub-mkconfig update-initramfs mkinitramfs dracut dkms fwupdmgr fwupdtool ubuntu-drivers do-release-upgrade mokutil efibootmgr kexec', 'the kernel, a driver, firmware or a release upgrade'],
   ['delete', 'mkfs mke2fs mkswap fdisk sfdisk gdisk sgdisk cfdisk parted partprobe wipefs blkdiscard hdparm sdparm nvme losetup cryptsetup mdadm pvcreate pvremove vgcreate vgremove vgextend vgreduce lvcreate lvremove lvextend lvresize lvreduce fsck e2fsck tune2fs resize2fs xfs_repair xfs_growfs btrfs zpool zfs debugfs fstrim umount swapoff smartctl', 'a disk'],
   ['risky', 'crontab at batch atrm anacron systemd-run', 'a job or a unit that runs by itself, outside the wall'],
-  ['risky', 'dockerd containerd chroot unshare setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
-  ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice nsenter snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
+  ['risky', 'dockerd containerd setcap capsh mknod nc ncat netcat update-alternatives', 'the system itself, outside what the ladder covers'],
+  ['open', 'ctr crictl busctl dbus-send gdbus machinectl kill pkill killall skill snice renice snap hostnamectl timedatectl localectl', 'needs a socket or another program'],
+  ['lockout', 'nsenter chroot unshare systemd-nspawn runc lxc-attach lxc-execute', 'it enters the host’s own namespaces or root folder, or makes new ones, where SSH, the firewall and users are a command away: a way in'],
   ['device', 'nvidia-smi ss netstat ping ping6 traceroute tracepath mtr dig nslookup host blkid dmidecode lshw iptables-save ip6tables-save', 'a device or the network'],
   ['notdone', 'ngrok cloudflared frpc frps bore chisel sshuttle autossh socat localtunnel lt pagekite inlets rathole zrok tor', 'a relay or tunnel round a network filter is not done'],
   ['risky', 'npx pnpx bunx uvx', 'it downloads a package and runs it'],
   ['lockout', 'useradd adduser userdel deluser usermod passwd chpasswd chage chsh chfn groupadd addgroup groupdel delgroup groupmod gpasswd newusers vipw vigr visudo pwconv pwunconv grpconv grpunconv pam-auth-update faillock ssh-copy-id sshd tailscaled iptables ip6tables iptables-legacy iptables-nft iptables-restore ip6tables-restore ebtables arptables nft ufw firewall-cmd netplan nmcli nmtui ifup ifdown ifconfig route iw iwconfig wpa_cli wpa_supplicant tc resolvectl systemd-resolve ethtool', 'users and passwords, SSH, the firewall or the network settings, ways in'],
 ]) for (const n of names.split(' ')) SORT_PROGS[n] = { cls, why };
+// Programs with a handler of their own that can change a way in (their handler says when): named inside text the sorter
+// does not read as a command (a one-liner, a container's words), each counts as the lock-out class.
+const SORT_LOCK_HANDLERS = new Set('tailscale ip arp systemctl service loginctl userdel deluser sysctl hostname ssh-keygen'.split(' '));
 // The lock-out programs' forms that only read (the object, then nothing or a word that begins show, list or get; no ;).
 const SORT_VERBS = 'add append attach change chg del delete detach flush prepend replace restore save set update up down monitor exec batch'.split(' ');
 const sortShows = (a, from = 0) => {

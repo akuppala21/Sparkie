@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25825 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25865 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -802,13 +802,13 @@ What a copy is, and how it lands, is 25-backup-and-start.mjs's (sendCopy, backup
 Moved out of 20-sort.mjs as it was (2026-11-15, no word changed): the programs that only read (SORT_READS), the file tools (SORT_FILES), the programs past a change by class (SORT_PROGS), the lock-out programs' forms that only read (SORT_VERBS, sortShows, SORT_LOCK_READS), and the wrappers that run the command after their own options (SORT_WRAP, sortWrap). 20-sort.mjs reads a command through them. Programs that only read: the string lists what makes one write or run something (see sortReads).
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 100
+- **Lines:** 104
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `sortShows`, `sortWrap`
 - **Uses:** `20-places` (`sortQ`, `sortTouch`), `20-shell` (`unsure`), `20-sort` (`sortAssign`, `raise`, `sortInline`, `sortProgram`)
-- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-sort`
+- **Used by:** `20-places`, `20-programs`, `20-remote`, `20-sort`, `20-tools`
 
 ### `20-tell.mjs`: telling the owner on Telegram
 
@@ -841,12 +841,12 @@ The owner's yes may come from Telegram (owner decisions 20 and 22; contract 8.7,
 The handlers 20-programs.mjs leaves to this part, added to SORT_HANDLERS: the package managers (apt, dpkg, pip, conda, npm, hf), git, Docker, the builds (make and its kin), and systemd (systemctl, service, loginctl). Each knows its sub-commands: one not on its list is a doubt (risky), and so is an option its spec (20-options.mjs) doesn't hold. A sub-command that runs another program (conda run, npm explore, yarn node, git bisect run, git rebase -x, git submodule foreach, git difftool -x) has that program sorted where it stands; such a handler returns how many words are its own, so the options …
 
 - **Area:** safety. **Rules:** R55. **Tests:** sort.test.mjs
-- **Lines:** 263
+- **Lines:** 299
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `sortPkgs`, `sortElsewhere`, `sortGitOwn`, `sortBuild`
-- **Uses:** `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `SORT_NOOPTS`), `20-places` (`sortQ`, `sortPaths`, `sortTouch`, `sortWrote`, `sortGlob`, `WAYS_UNITS`), `20-programs` (`sortInto`, `SORT_HANDLERS`), `20-remote` (`sortNear`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortRuns`, `sortGone`, `sortInline`, `sortUnshown`, `sortWroteIn`, `sortProgram`, `sortOpen`), `20-uses` (`usesReach`, `usesHost`), `25-backup-and-start` (`local`)
+- **Functions:** `sortPkgs`, `sortElsewhere`, `sortGitOwn`, `sortBuild`, `sortDockerHost`
+- **Uses:** `20-needs` (`tilde`), `20-options` (`SORT_OPTS`, `sortOpts`, `sortSplits`, `SORT_NOOPTS`), `20-places` (`sortQ`, `sortPaths`, `sortTouch`, `sortNorm`, `LOCK_PATHS`, `sortReach`, `sortWrote`, `sortGlob`, `WAYS_UNITS`), `20-programs` (`sortInto`, `SORT_HANDLERS`), `20-remote` (`sortNear`), `20-shell` (`unsure`), `20-sort` (`raise`, `sortRuns`, `sortGone`, `sortInline`, `sortUnshown`, `sortWroteIn`, `sortProgram`, `sortOpen`), `20-tables` (`SORT_PROGS`, `SORT_LOCK_HANDLERS`), `20-uses` (`usesReach`, `usesHost`), `25-backup-and-start` (`local`)
 - **Used by:** `20-sort`
 
 ### `20-uses.mjs`: what a sorted command uses beside the places it changes: reads, installs, the GPU, the network (R64)

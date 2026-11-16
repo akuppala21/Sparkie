@@ -50,6 +50,36 @@ function sortBuild(a, ctx, r, x, name) {
   // (what a compiler writes: -o and the word after it, or -ofile)
   if (/^(?:gcc|g\+\+|cc|c\+\+|clang|clang\+\+|nvcc|go|rustc)$/.test(name)) a.forEach((w, i) => { const t = a[i - 1]?.text === '-o' ? w : /^-o./.test(w.text) && name !== 'go' ? { ...w, text: w.text.slice(2) } : null; if (t) { r.deletes = true; sortTouch(t, ctx, r); } });
 }
+// Docker that reaches the host (the final read `net`, 3): a container given every privilege, a capability, a device, a
+// security option, another container's mounts, or the host's network, processes, IPC, users, host name or control
+// groups (or another container's, which the sorter can't tell), or a mount of a folder at or above a way in or of the
+// system's own (/, /etc, /root, /home, /run, /proc, /sys, /dev, /boot, Docker's socket), can change SSH, the firewall
+// or users on the Spark itself: the lock-out class. So does a lock-out program among its words (an exec into a container
+// the sorter can't see into). A mount or a namespace it can't read counts as reaching the host.
+const DOCKER_NS = /^--(?:net|network|pid|ipc|uts|userns|cgroupns)(?:=|$)/;
+const DOCKER_SYS = /^\/(?:$|etc|root|home|run|var\/run|proc|sys|dev|boot|var\/spool|var\/lib\/(?:docker|containerd|tailscale|systemd))(?:\/|$)|(?:^|\/)docker\.sock$/;
+function sortDockerHost(a, ctx, r, name) {
+  const t = a.map(w => w.text), why = s => raise(r, 'lockout', `${sortQ(name)} ${s}: a container that reaches the host can change SSH, the firewall or users on the Spark itself, a way in.`);
+  for (let k = 0; k < a.length; k++) {
+    const w = a[k], s = t[k], val = () => (s.includes('=') ? { ...w, text: s.slice(s.indexOf('=') + 1) } : a[k + 1] ?? { text: '', subs: [] });
+    if (w.unknown && (sortSplits(w) || /^-/.test(w.lit ?? ''))) return why('is given words through a $ or a command, which may be options that reach the host');
+    if (/^--privileged(?:=(?!false$).*)?$/.test(s)) return why('runs a container with every privilege (--privileged)');
+    if (/^--(?:cap-add|device|device-cgroup-rule|volumes-from)(?:=|$)/.test(s)) return why(`gives a container ${sortQ(s.split('=')[0])}, which reaches the host`);
+    if (/^--security-opt(?:=|$)/.test(s) && !/^no-new-privileges(?:[:=]true)?$/.test(val().text)) return why(`loosens a container’s guard (${sortQ(val().text || '$…')})`);
+    if (DOCKER_NS.test(s)) { const v = val(); if (v.unknown || /^(?:host|container:|ns:|\/)/.test(v.text)) return why(`gives a container the host’s ${sortQ(s.slice(2).split('=')[0])} (${sortQ(v.text || '$…')}), or one the sorter can't tell`); }
+    // (a mount: -v source:target[:options], --mount type=bind,source=…)
+    let src = null;
+    if (/^(?:-v|--volume)(?:=|$)|^-v./.test(s)) { const v = /^-v./.test(s) ? { ...w, text: s.slice(2) } : val(); if (v.unknown) return why('mounts a folder named by a $ or a command'); src = v.text.split(':')[0]; }
+    else if (/^--mount(?:=|$)/.test(s)) { const v = val(); if (v.unknown) return why('mounts a folder named by a $ or a command'); src = /(?:^|,)(?:source|src)=([^,]*)/.exec(v.text)?.[1] ?? null; }
+    if (src != null && /^[~/.]/.test(src)) {
+      const p = sortNorm(/^[~/]/.test(src) ? src : `~/${src}`, r, ctx.home);
+      if (DOCKER_SYS.test(p) || LOCK_PATHS.some(sortReach(p, /[*?[]/.test(p), true))) return why(`mounts ${sortQ(src)} into a container, at or above a way in or the system’s own files`);
+    }
+  }
+  // (a lock-out program among its words: what it reaches depends on a container the sorter can't see into)
+  const named = t.flatMap(s => s.split(/[\s;&|()<>`'"=,{}]+/)).map(s => s.split('/').pop()).find(s => SORT_PROGS[s]?.cls === 'lockout' || SORT_LOCK_HANDLERS.has(s));
+  if (named) why(`runs ${sortQ(named)} in a container the sorter can't see into`);
+}
 Object.assign(SORT_HANDLERS, {
   ...Object.fromEntries('make gmake cmake ninja meson cargo go rustc gcc g++ cc c++ clang clang++ nvcc javac mvn gradle bazel'.split(' ').map(n => [n, sortBuild])),
   git(a, ctx, r, x) {
@@ -206,8 +236,14 @@ Object.assign(SORT_HANDLERS, {
     const v = a.filter(w => !w.text.startsWith('-')).map(w => w.text);
     if (/^(?:rmi|rm|prune)$/.test(v[0]) || (/^(?:image|volume|container|system|builder|network|buildx)$/.test(v[0]) && /^(?:rm|remove|prune)$/.test(v[1]))) ctx.kinds.add('delete');
     // (what an image, a container, a Dockerfile or a compose file runs is in none of its words)
-    if (v.some(t => /^(?:run|create|start|exec|build|buildx|compose|up|restart)$/.test(t))) sortUnshown(r, `what the image, container or file ${name} runs holds`);
+    if (v.some(t => /^(?:run|create|start|exec|build|buildx|compose|up|restart)$/.test(t))) sortUnshown(r, `the code the image, the container or the file ${name} is given runs`);
+    sortDockerHost(a, ctx, r, name);
   },
+  // (containerd's and the kubelet's own tools, and machinectl's shells: a container or a shell they start may reach the host)
+  ...Object.fromEntries(['ctr', 'crictl', 'machinectl'].map(n => [n, (a, ctx, r) => {
+    if (a.some(w => w.unknown || /^(?:run|exec|create|start|shell|login|attach|runp|login|enable|start-transient)$/.test(w.text))) raise(r, 'lockout', `${sortQ(n)} starts a container or a shell whose reach the sorter can't read: it may be the host’s own, where SSH, the firewall and users are a command away.`);
+    sortOpen(ctx, r, `${sortQ(n)} needs a socket or another program, which the run wall hides.`);
+  }])),
   hf(a, ctx, r, x, name = 'hf') {
     const o = sortOpts(SORT_OPTS.hf, a), p = o.plain.map(w => w.text);
     if (/^(?:env|version|scan-cache)$/.test(p[0]) || (p[0] === 'cache' && /^(?:ls|scan|list)$/.test(p[1]))) return;

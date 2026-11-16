@@ -64,3 +64,25 @@ test('code a command does not show: unshown says what runs unseen; as root every
   for (const c of ["bash -c 'touch /tmp/x'", "python3 -c 'print(1)'", 'bash <<EOF\ntouch /tmp/x\nEOF', 'ls -la', 'apt install -y htop']) assert.equal(sort(c).unshown, null, c);
   assert.equal(sort('apt install -y htop').simple, true);
 });
+
+// Item 1 (net 3): Docker that reaches the host was one plain button, run with --open, no net, no owner's words.
+test('Docker that reaches the host, and nsenter, chroot and unshare, are the lock-out class; a container that reaches no further stays risky', () => {
+  const HOSTY = ['docker run --rm --privileged --net=host alpine iptables -P INPUT DROP', 'docker run --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sh -c "systemctl stop ssh"',
+    'docker run -v /:/host alpine chroot /host passwd -l bob', 'docker run -v /etc:/mnt alpine sh -c "rm /mnt/ssh/ssh_host_ed25519_key.pub"',
+    'docker run -v /var/lib/tailscale:/t alpine rm -rf /t', 'docker exec -u 0 x iptables -F', 'nsenter -t 1 -m -u -n -i sh', 'chroot /host', 'unshare -r sh',
+    // (and spellings of our own: each flag of the ruling, other ways to name a mount, other programs)
+    'docker run --network host img', 'docker run --net=host img', 'docker run --ipc=host img', 'docker run --pid host img', 'docker run --userns=host img',
+    'docker run --cgroupns=host img', 'docker run --uts=host img', 'docker run --network container:other img', 'docker run --cap-add NET_ADMIN img',
+    'docker run --cap-add=ALL img', 'docker run --device /dev/net/tun img', 'docker run --security-opt seccomp=unconfined img', 'docker run --volumes-from other img',
+    'docker run -v /var/run/docker.sock:/var/run/docker.sock img', 'docker run -v /run:/run img', 'docker run -v /proc:/hp img', 'docker run -v /sys:/s:ro img',
+    'docker run -v /root:/r img', 'docker run -v /home:/h img', 'docker run -v ~:/h img', 'docker run -v ~/.ssh:/k:ro img', 'docker run -v /var:/v img',
+    'docker run --mount type=bind,source=/,target=/h img', 'docker run --mount=type=bind,src=/etc,dst=/e img', 'docker run -v/etc:/e img', 'docker create --privileged img',
+    'docker container run --privileged img', 'podman run --privileged img', 'nerdctl run --net=host img', 'docker run $OPTS img', 'docker run -v "$D":/d img',
+    'docker exec x ufw disable', 'docker exec x tailscale logout', 'ctr run --privileged img x', 'crictl exec -it c sh', 'machinectl shell root@.host',
+    'systemd-nspawn -D /var/lib/machines/x', 'runc exec x sh', 'sudo nsenter -t 1 -a', 'bash -c "chroot / passwd -l bob"'];
+  assert.deepEqual(check(HOSTY.map(c => [c]), r => is(r.class === 'notdone' ? 'notdone' : 'lockout', r)), []);
+  assert.deepEqual(check(HOSTY.filter(c => !/^sudo/.test(c)).map(c => [c, null, ROOT]), r => is('lockout', r)), []);
+  // (one that reaches no further than its own container: risky, as before)
+  assert.deepEqual(check(['docker run -d --name x -p 8000:8000 img', 'docker run --rm -v ~/work:/w --gpus all img', 'docker run -e HF_TOKEN="$T" img',
+    'docker run --security-opt no-new-privileges img', 'docker logs x', 'docker restart my-app', 'docker run -v /data/models:/m:ro img'].map(c => [c]), r => is('risky', r)), []);
+});
