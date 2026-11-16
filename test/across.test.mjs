@@ -9,7 +9,8 @@
 // with room on Spark 4 only if a container started by hand stops (F11): an owner-only question that names it (also when
 // no Sparks were named), asking stops nothing, an agent gets no choice to send back, and the owner's Yes on the page
 // starts it across both Sparks with that stop in the plan. A failed start across two whose part on Spark 4 never stops
-// (A-23): the one-Spark copy set aside there isn't started beside that part, and the error and log say so.
+// (A-23): the one-Spark copy set aside there isn't started beside that part, and the error and log say so; when a
+// part stops while loading and the other's stop never comes back, the error's first line never says both were stopped.
 //
 // One model across two Sparks with the brain's proven setup (docs/contract.md 15, 2026-11-08). The brain runs on one
 // Spark, and its runs aren't repeated as they are (a draft model only Spark 2 has, a stretched context). When the only
@@ -302,6 +303,40 @@ test('a start across two that fails, with the stop of Spark 4\'s part never comi
       if (s.json?.id) await settled(s.json.id).catch(() => {});
     }
     writeFileSync(mock('spark4', 'containers'), readFileSync(mock('spark4', 'containers'), 'utf8').split('\n').filter(l => !l.startsWith(`${HEAD}-before-`) && !l.startsWith(`${HEAD}|`)).join('\n'));
+  }
+});
+
+// A-23: the first part stops while loading and the stop of Spark 4's part never comes back. The error's first line
+// says what the checked stops said: never "so both were stopped", but which part may still be running, and where.
+test('a part stops while loading and the other\'s stop never comes back: the first line never says both were stopped, but which part may still run', { timeout: 900000 * SLOW }, async () => {
+  await waitFor(async () => (await api('/status')).json.nodes.find(n => n.id === 'spark4')?.state === 'online', { timeout: 90000 * SLOW, what: 'Spark 4 online again' });
+  await waitFor(async () => (await api('/models')).json.sparks?.find(s => s.id === 'spark4')?.online, { timeout: 90000, what: 'Spark 4 in a fresh look' });
+  // (Spark 3's part never answers while it loads, so the test can end it there)
+  writeFileSync(mock('spark3', 'serve-down'), '');
+  writeFileSync(mock('spark4', 'stop-hangs'), PART2);
+  let id = null;
+  try {
+    const r = await api('/actions/start_model', { method: 'POST', body: { model: QWEN, sparks: ['spark3', 'spark4'] } });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    id = r.json.operation;
+    // (both parts load: then the first one ends, as an engine that dies while loading does)
+    await waitFor(async () => { if (containers('spark3')[HEAD]?.state === 'running' && containers('spark4')[PART2]?.state === 'running') return true; const o = (await api(`/jobs/${id}`)).json; assert.equal(o.status, 'running', JSON.stringify(o)); return false; },
+      { timeout: 240000 * SLOW, what: 'both parts loading', every: 100 });
+    writeFileSync(mock('spark3', 'containers'), readFileSync(mock('spark3', 'containers'), 'utf8').replace(new RegExp(`^(${HEAD.replace(/\./g, '\\.')})\\|running\\|[^|]*\\|`, 'm'), '$1|exited|Exited (1) just now|'));
+    const w = await waitFor(async () => { const o = (await api(`/jobs/${id}`)).json; return o?.status && o.status !== 'running' ? o : null; }, { timeout: 600000 * SLOW, what: 'the start to end', every: 500 });
+    assert.equal(w.status, 'failed', JSON.stringify(w));
+    const [first] = w.error.split('\n');
+    assert.equal(first, `The part on spark3 stopped while loading; its part on Spark 4 (${PART2}) may still be running: Spark Console couldn’t confirm it stopped.`, w.error);
+    assert.doesNotMatch(first, /both were stopped/);
+    assert.equal(containers('spark4')[PART2]?.state, 'running', 'its stop never came back');
+  } finally {
+    rmSync(mock('spark3', 'serve-down'), { force: true });
+    rmSync(mock('spark4', 'stop-hangs'), { force: true });
+    if (id) await waitFor(async () => (await api(`/jobs/${id}`)).json?.status !== 'running', { timeout: 600000 * SLOW, what: 'the start to end', every: 1000 }).catch(() => {});
+    if (containers('spark4')[PART2]?.state === 'running') {
+      const s = await api('/stop', { method: 'POST', body: { node: 'spark4', container: PART2 } });
+      if (s.json?.id) await settled(s.json.id).catch(() => {});
+    }
   }
 });
 
