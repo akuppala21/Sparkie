@@ -122,7 +122,7 @@ test('a root command in the lock-out class from an agent is refused, never asked
   assert.ok(ag.text.includes('Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from an agent.'), ag.text);
 });
 
-test('a root command in the lock-out class after the owner’s question, or after a change to something else, is refused, never asked, and the refusal says how to ask (the owner’s words, R60)', { timeout: 120000 * SLOW }, async () => {
+test('a root command in the lock-out class after the owner’s question, or after a change to something else, is refused, never asked, and the refusal says how to ask (the owner’s words, R71)', { timeout: 120000 * SLOW }, async () => {
   const keyAdd = "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAsked asked@net' >> .ssh/authorized_keys";
   for (const words of ['why is ssh open on spark 3 as root', 'as root on spark 3, fix the build']) {
     const chat = await newChat(), a = await ask(chat, words, keyAdd);
@@ -131,6 +131,22 @@ test('a root command in the lock-out class after the owner’s question, or afte
     assert.equal(sentBack(words)[0]?.error, 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal, not your words asking for this on Spark 3. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on Spark 3.”', words);
   }
   assert.ok(!readFileSync(join(T.fleet.root, 'spark3', '.ssh', 'authorized_keys'), 'utf8').includes('asked@net'), 'nothing ran');
+});
+
+// The final read's ask-no-dir: the root ask showed neither the folder the command starts in nor that it deletes.
+test('the root ask shows the folder the command starts in, and says when it deletes for good, as the other asks do', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(join(T.fleet.root, 'spark3', 'notes', 'old'), { recursive: true });
+  const chat = await newChat(), words = 'as root on spark 3, clear the old folder in notes';
+  script([{ match: `^${words}$`, rounds: [[{ name: 'run', arguments: { on: 'spark3', command: 'find old -delete', dir: '~/notes', root: true } }]] }]);
+  try { await say(chat, words); } finally { noScript(); }
+  const m = (await chatMessages(chat)).filter(x => x.danger).at(-1), no = m?.choices.find(c => c.label === 'No');
+  try {
+    assert.ok(m, `the root ask (${JSON.stringify(sentBack(words))})`);
+    assert.equal(m.danger.lines[0], 'ROOT on Spark 3 · DELETES FOR GOOD', m.danger.lines.join('\n'));
+    assert.ok(m.danger.lines.includes('It starts in ~/notes.'), m.danger.lines.join('\n'));
+    assert.ok(m.danger.lines.some(l => l.startsWith('This cannot be put back: find -delete removes files')), m.danger.lines.join('\n'));
+  } finally { if (no) await press(chat, no.id); }
+  assert.ok(existsSync(join(T.fleet.root, 'spark3', 'notes', 'old')), 'nothing ran');
 });
 
 test('the lock-out class as root: ROOT on Spark 3 · CAN LOCK YOU OUT, and the helper is called with --lockout', { timeout: 120000 * SLOW }, async () => {
@@ -190,4 +206,33 @@ test('off: run has no root in its schema, so what the brain reads is as before; 
   const off = (await (await fetch(`${B.base}/actions`)).json()).actions.find(a => a.name === 'run');
   assert.ok(off && !('root' in off.input.properties), JSON.stringify(off?.input.properties));
   assert.deepEqual(Object.keys(off.input.properties), Object.keys(on.input.properties).filter(k => k !== 'root'));
+});
+
+// The final read's root-script: "as root, never a script" held only for a file named as a word. The sorter's next step
+// names what runs unseen in its field `unshown`; root refuses on it, and on scripts as before (stand-in sorted objects).
+test('as root, code the command doesn’t show is never run: a script it names, or what the sorter says runs unseen', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8'), fn = /^function rootUnseen\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'rootUnseen');
+  const rootUnseen = new Function(`${fn}\nreturn rootUnseen;`)();
+  assert.equal(rootUnseen({ class: 'change', scripts: [] }), null);
+  assert.equal(rootUnseen({ class: 'change', scripts: [], unshown: null }), null);
+  assert.match(rootUnseen({ class: 'risky', scripts: ['~/work/fix.sh'] }), /^Nothing was asked or run: as root, give the command itself, not a script \(~\/work\/fix\.sh\)/);
+  assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: 'bash runs what comes in through < or a pipe.' }),
+    'Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (bash runs what comes in through < or a pipe), so that code isn’t on the button and can change before your press.');
+});
+
+// From the helper's reviewer, root-mount: root's unit has its own mount table, so a mount, unmount or swap made in it never
+// reaches the Spark, and was told as done and kept.
+test('as root, a mount, unmount or swap is refused with how to do it instead: read by the sorter’s own reader, past wrappers and into sh -c', async () => {
+  const shell = readFileSync(join(REPO, 'service', 'src', '20-shell.mjs'), 'utf8'), src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8');
+  const grab = re => re.exec(src)?.[0];
+  assert.ok(grab(/^function rootMounts\([\s\S]*?\n\}$/m), 'rootMounts');
+  const rootMounts = new Function(`${shell}\n${grab(/^const ROOT_MOUNTS = .*;$/m)}\n${grab(/^const ROOT_WRAPS = .*;$/m)}\n${grab(/^function rootMounts\([\s\S]*?\n\}$/m)}\nreturn rootMounts;`)();
+  for (const [c, prog] of [['mount /dev/sdb1 /data', 'mount'], ['umount /data', 'umount'], ['env FOO=1 swapon /swapfile', 'swapon'], ['timeout 10 swapoff -a', 'swapoff'],
+    ["bash -c 'umount /data'", 'umount'], ['zfs mount tank/data', 'zfs mount'], ['zpool import tank', 'zpool'], ['echo $(mount -a)', 'mount'], ['cd /mnt && umount -l x', 'umount']]) assert.equal(rootMounts(c), prog, c);
+  for (const c of ['zfs list', 'findmnt', 'cat /etc/fstab', 'systemctl start data.mount', 'echo mount']) assert.equal(rootMounts(c), null, c);
+  // (end to end, the owner's own call: refused before anything is asked)
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'mount /dev/sdb1 /data', root: true } });
+  assert.equal(r.status, 403, r.text);
+  assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.');
 });
