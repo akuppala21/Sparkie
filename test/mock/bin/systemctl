@@ -21,6 +21,8 @@
 # running run unit only leaves <rehearsal>/standin/stopped/<unit>, and root-helper.test's disk-floor test relies on
 # that: its command sees the mark and exits 9 by itself, where on a Spark the helper's stop would end it (no exit 9).
 # Called with no rehearsal named, on a stand-in Spark with ~/.rehearsal, it answers from that one.
+# <rehearsal>/standin/holds/<unit>: a unit marked running (standin/active) that a stop does not end at once: "<n>", the
+# next n answers of its ActiveState say active, then it is gone; "never", SIGKILL does not end it either.
 import json, os, sys
 
 R = os.environ.get('SPARK_CONSOLE_REHEARSAL', '')
@@ -83,6 +85,14 @@ def ended(unit):
         os.unlink(os.path.join(running, unit))
     except FileNotFoundError:
         pass
+
+
+def hold(unit):   # what standin/holds/<unit> says, or None
+    try:
+        with open(os.path.join(R, 'standin', 'holds', unit)) as f:
+            return f.read().strip()
+    except OSError:
+        return None
 try:
     with open(os.path.join(R, 'standin', 'systemd-version')) as f:
         version = f.read().strip()
@@ -103,6 +113,17 @@ elif args[:2] == ['show', '--property=ActiveState,UnitFileState,LoadState'] and 
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4 \
         and os.path.exists(os.path.join(R, 'standin', 'silent', args[3])):
     pass   # (systemd gave no answer for this unit)
+elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4 and hold(args[3]) not in (None, 'never') \
+        and os.path.exists(os.path.join(running, args[3])):
+    n = int(hold(args[3]) or 0)
+    if n > 0:
+        with open(os.path.join(R, 'standin', 'holds', args[3]), 'w') as f:
+            f.write(str(n - 1))
+        print('active')
+    else:
+        os.unlink(os.path.join(R, 'standin', 'holds', args[3]))
+        ended(args[3])
+        print('inactive')
 elif args[:3] == ['show', '--property=ActiveState', '--value'] and len(args) == 4:
     print('active' if os.path.exists(os.path.join(timers, args[3])) or os.path.exists(os.path.join(running, args[3]))
           or (stop_ends and args[3].startswith(('sw-run-', 'sw-look-')) and os.path.exists(os.path.join(live, args[3].removesuffix('.service'))))
@@ -120,14 +141,16 @@ elif args[:1] == ['stop'] and len(args) == 2 and args[1].startswith('sw-guard-')
     except FileNotFoundError:
         pass
 elif args[:1] == ['stop'] and len(args) == 2:
-    ended(args[1])
+    if hold(args[1]) is None:
+        ended(args[1])
     set_unit(args[1], active='inactive')
     stop_live(args[1])
     if args[1].startswith(('sw-run-', 'sw-root-')):   # (a command can see it was ended: <rehearsal>/standin/stopped/<unit>)
         os.makedirs(os.path.join(R, 'standin', 'stopped'), exist_ok=True)
         open(os.path.join(R, 'standin', 'stopped', args[1]), 'w').close()
 elif args[:1] == ['kill']:
-    ended(args[-1])
+    if hold(args[-1]) != 'never':
+        ended(args[-1])
 elif args[:1] and args[0].startswith('--machine=') and 'is-active' in args:
     print('active')   # (the console runs, as the owner's service manager says)
 elif args[:1] in (['start'], ['try-reload-or-restart'], ['restart'], ['daemon-reload'], ['try-restart']) \

@@ -1250,7 +1250,7 @@ do_stop() {
     esac
   done
   if [ -n "$was" ]; then say "stopped $was: it was running, and it is gone"
-  else say "stop: neither sw-run-$ID nor sw-look-$ID was running"; fi
+  else say "stop: none of sw-run-$ID, sw-look-$ID and sw-root-$ID was running"; fi
   exit 0
 }
 do_keep() {   # the owner's yes, through the console: counts only while the timer waits and once it is stopped

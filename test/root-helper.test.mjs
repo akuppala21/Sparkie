@@ -1,22 +1,27 @@
 // Covers: The root helper (R42): deploy/spark-console-root, the proof of its walls, and the owner's one-time command,
 // deploy/root-for-sparkie.sh. The exact settings of the look and run walls for ordinary and hostile commands, with the
-// command's bytes held unchanged; every refusal; what a Spark must have and when the proof's mark is out of date; the
-// proof naming each attempt that gets through, and failing when it could not show an attempt working outside the walls;
-// the one-time command's order, its staging as root, a swapped copy caught, --check, --undo and the hub; and the real
-// proof run with no wall. Rehearsals with stand-ins only: they build no wall, so a Spark's own proof decides the rest.
+// command's bytes held unchanged; the refusals a caller can cause and most a Spark can; what a Spark must have and when
+// the proof's mark is out of date; the proof naming each attempt that gets through, and failing when it could not show
+// an attempt working outside the walls; the one-time command's order, its staging as root, a swapped copy caught,
+// --check, --undo and the hub; and the real proof's attempts a plain account can try, run with no wall. Rehearsals with
+// stand-ins only: no test proves a wall, each shows the helper asked the stand-in for it, so a Spark's own proof decides.
 //
 // Rehearsals only: the helper runs as this user against a made-up Spark in a temporary folder
 // (SPARK_CONSOLE_REHEARSAL), with the stand-ins in test/mock/bin (systemd-run, systemctl, unshare, setpriv, visudo);
 // the one-time command also gets stand-ins of its own here for ssh, sudo and systemd-id128, ahead of the power work's
 // test/mock/bin/sudo on PATH. Nothing in the console calls the helper yet. No fleet starts.
-// What this cannot show: the stand-ins build no wall. These tests show the helper asks for exactly the right walls and
-// acts on the proof's answers; that a Spark grants them is decided by the proof itself, on each real Spark. The last
-// group runs the proof's own attempts with no wall at all, to show each one does get through when nothing stops it.
-// Linux only (GNU coreutils, bash 4 or newer): run it on a Spark with tools/test-on-spark.sh.
+// What this cannot show: the stand-ins build no wall. No test here proves a wall: each shows the helper asked the
+// stand-in for it, and acts on the proof's answers; that a Spark grants them is decided by the proof itself, on each
+// real Spark. The exception is the put-back (restore.sh, guard.py): real code on real files, but for the owner, which
+// only root can change (so "bytes and mode" here; the owner only on a Spark). The last group runs the proof's own
+// attempts with no wall, to show those a plain account can try do get through when nothing stops them: 1 to 12 (8, 9
+// and 11 outside only), 14, 19, 21, 23 to 30, and 31 as far as the machine allows; 13 is the helper's own root verb
+// (its group below); 15 to 18, 20 and 22 need root, sudo or a network and run only in a Spark's proof. The rehearsal never runs as root, so the helper's root-only lines run on a Spark only.
+// Linux only (GNU coreutils, bash 5): on macOS about 200 of these fail. Run it on a Spark with tools/test-on-spark.sh.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync, accessSync, constants as fsConstants } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, realpathSync, symlinkSync, readdirSync, copyFileSync, utimesSync, statSync, renameSync, lstatSync, readlinkSync, accessSync, truncateSync, constants as fsConstants } from 'node:fs';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -324,6 +329,15 @@ describe('the walls asked for', () => {
     assert.equal(started(s).length, before);
   });
 
+  // The final read's TC-4: refusals no test reached.
+  test('more refusals: an option with no value, a switch given twice, input over 16 MB; nothing starts', () => {
+    const before = started(s).length, ok = sha('cat');
+    refused({ ...run(s, ['run', '--id', 'refusal0001', '--sha256', ok, '--seconds']), id: 'refusal0001' }, '--seconds needs a value');
+    refused({ ...run(s, ['run', '--id', 'refusal0002', '--open', '--open', '--sha256', ok, '--seconds', '5', '--dir', s.work, '--', 'cat']), id: 'refusal0002' }, '--open is given twice');
+    refused(change(s, 'cat', { extra: ['--stdin'], input: Buffer.alloc(16 * 2 ** 20 + 1, 97) }), 'the input is over 16 MB');
+    assert.equal(started(s).length, before);
+  });
+
   test('a held folder left by a killed call is removed by a later one once no unit can still use it; a newer one stays', () => {
     const old = join(s.R, 'run/spark-console', 'killed000old'), recent = join(s.R, 'run/spark-console', 'killed000new');
     for (const d of [old, recent]) { mkdirSync(d); writeFileSync(join(d, 'command'), 'x'); }
@@ -577,9 +591,10 @@ describe("the owner's words on Spark 2", () => {
   test('on a compute Spark (no state folder) nothing about it is asked for', () => {
     const s = proven();
     rmSync(join(s.R, 'home/owner/.local/state'), { recursive: true });
-    for (const r of [look(s, 'true'), change(s, 'true')]) {
+    // (each unit read by its own name: the final read's TC-7 found the last call read twice, the look's never)
+    for (const [wall, r] of [['look', look(s, 'true')], ['run', change(s, 'true')]]) {
       assert.equal(r.status, 0, r.stdout + r.stderr);
-      const c = calls(s).filter(x => x[0] === 'systemd-run').at(-1);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
       assert.ok(!c.some(a => a.includes('/.local/state')), c.join(' '));
     }
   });
@@ -595,6 +610,17 @@ describe('what a Spark must have', () => {
     assert.equal(calls(old).filter(c => c[0] === 'systemd-run').length, 0);
     const p = prove(spark({ systemd: '248.3-1ubuntu8' }));
     assert.equal(p.status, 0, p.stdout + p.stderr);
+  });
+  test('systemd that is not the first process, or no cgroup2, is refused by name (the final read\'s TC-4)', () => {
+    const a = spark();
+    a.put('proc/1/comm', 'init\n');
+    assert.match(run(a, ['check', '--id', newId()]).stdout, / first-process no\n/);
+    refused(prove(a), 'systemd is not the first process');
+    const b = spark();
+    rmSync(join(b.R, 'sys/fs/cgroup/cgroup.controllers'));
+    refused(prove(b), 'control groups are not in the one-tree form (cgroup2)');
+    refused(look(b, 'true'), 'control groups are not in the one-tree form (cgroup2)');
+    assert.equal(calls(a).concat(calls(b)).filter(c => c[0] === 'systemd-run').length, 0);
   });
   test('an unshare without --kill-child, or a setpriv without --bounding-set, is refused by name', () => {
     refused(prove(spark({ knobs: { 'unshare-old': '' } })), 'unshare does not know --kill-child');
@@ -682,6 +708,14 @@ describe('the proof of the walls', () => {
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
       '-p', 'RuntimeMaxSec=300', '-p', 'TimeoutStopSec=5', '-p', 'Delegate=yes', '--', py, '-I', '-S', proof, 'target']);
     assert.ok(!existsSync(join(s.R, 'run/spark-console', p.id)), 'the held folder is gone afterwards');
+    // (the final read's TC-6: the third wall, --home's, is its own: the run wall but the top of the home and ~/.local
+    // writable, its dot names read-only one by one and the places pinned again; and its own attempts)
+    const props = c => c.filter((a, i) => c[i - 1] === '-p'), home = unitCall(s, `sw-prove-home-${p.id}`), runP = props(unitCall(s, `sw-prove-run-${p.id}`)), homeP = props(home);
+    assert.deepEqual(runP.filter(x => !homeP.includes(x)), ['ReadOnlyPaths=/home/owner'], 'only the top of the home is not read-only');
+    const more = homeP.filter(x => !runP.includes(x));
+    for (const x of ['ReadWritePaths=/home/owner/.local', 'ReadOnlyPaths=-/home/owner/.config', 'BindPaths=/home/owner/.local/share/spark-portal/workspaces/shared']) assert.ok(more.includes(x), `${x}: ${more.join(' ')}`);
+    for (const x of more) assert.match(x, /^(ReadOnlyPaths=-\/home\/owner\/\.[^/]+|ReadWritePaths=\/home\/owner\/(\.local|\.cargo\/bin|bin)|BindPaths=\/home\/owner\/\.local(\/.+)?)$/);
+    assert.deepEqual(home.slice(home.indexOf(proof) + 1), ['home', '3', '10', '14', '19', '25', '27', '28', '29', '30', '31']);
   });
 
   // The four of step 1 first, then the rest; each in each wall it applies to.
@@ -715,8 +749,9 @@ describe('the proof of the walls', () => {
     assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')), 'no mark');
     refused(look(s, 'true'), 'the wall proof is none on this Spark: prove first');
   };
-  for (const n of [1, 4, 5, 6, 7, 8, 10]) {
-    test(`attempt ${n} not seen working outside the walls (its own program, files or line): no mark, even with every wall holding`, () => {
+  // (19, 20, 25 and 26 too: the final read's TC-5 found the controls for them held by no test)
+  for (const n of [1, 4, 5, 6, 7, 8, 10, 19, 20, 25, 26]) {
+    test(`attempt ${n} not seen working outside the walls (its own program, files, folders or line): no mark, even with every wall holding`, () => {
       const s = proven();
       s.put('standin/outside', `${n} not-there stand-in\n`);
       const p = prove(s);
@@ -932,7 +967,7 @@ describe('the lock-out net (R60)', () => {
     assert.ok(!existsSync(join(G(s, r.id), 'pending')) && !timerWaits(s, r.id));
   });
 
-  test('a change that breaks a way in stays armed and says what; the timer stops the change first, puts back the exact bytes, mode and owner, reloads ssh and leaves a result; once is all', () => {
+  test('a change that breaks a way in stays armed and says what; the timer stops the change first, puts back the exact bytes and mode (the owner: only as root, on a Spark), reloads ssh and leaves a result; once is all', () => {
     const s = netted(), file = join(s.R, SSHD), was = statSync(file);
     const r = net(s, 'printf "Port 2222\\n" >> "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"; chmod 0666 "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
     assert.match(r.stdout, ARMED(r.id));
@@ -1019,6 +1054,21 @@ describe('the lock-out net (R60)', () => {
     refused(net(t, 'true', { secs: 1801 }), 'a change inside the net is held to 30 minutes');
   });
 
+  // The final read's TC-4: the net's own "nothing ran" promises no test reached.
+  test('arming that fails on the copy (over 64 MB) or on a timer systemd took but does not keep leaves nothing and runs nothing', () => {
+    for (const [why, set] of [['the copy of the ways in failed (more than 64 MB to copy', s => { s.put('etc/ssh/big'); truncateSync(join(s.R, 'etc/ssh/big'), 65 * 2 ** 20); }],
+      ['its timer is not waiting, so nothing ran', s => s.put('standin/timer-lost')]]) {
+      const s = netted();
+      set(s);
+      const r = net(s, 'touch "$SPARK_CONSOLE_REHEARSAL/it-ran"');
+      refused(r, `the net could not be armed: ${why}`);
+      assert.match(r.stdout, /, so nothing ran\n$/);
+      assert.ok(!existsSync(G(s, r.id)) && !existsSync(join(s.R, 'it-ran')) && !existsSync(join(s.R, 'run/spark-console', r.id)), why);
+      for (const f of BOOT(s, r.id)) assert.ok(!lstatExists(f), f);
+      assert.ok(!started(s).some(c => c.includes(`--unit=sw-run-${r.id}`)), why);
+    }
+  });
+
   test("stop ends the look or change this helper started for that id, waits until it is gone and says whether it was running; never the net's timer, nor any other unit; a walled command cannot call it", () => {
     const s = netted();
     const r = net(s, 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"');
@@ -1029,7 +1079,8 @@ describe('the lock-out net (R60)', () => {
     assert.equal(st.stdout, `${r.id} stopped sw-run-${r.id}: it was running, and it is gone\n`);
     assert.deepEqual(calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show'), [['systemctl', 'stop', `sw-run-${r.id}.service`]]);
     assert.ok(timerWaits(s, r.id) && existsSync(join(G(s, r.id), 'pending')), "the net's timer is left as it was");
-    assert.equal(run(s, ['stop', '--id', r.id]).stdout, `${r.id} stop: neither sw-run-${r.id} nor sw-look-${r.id} was running\n`);
+    // (old words: "stop: neither sw-run-<id> nor sw-look-<id> was running"; it looks for the root command's unit too)
+    assert.equal(run(s, ['stop', '--id', r.id]).stdout, `${r.id} stop: none of sw-run-${r.id}, sw-look-${r.id} and sw-root-${r.id} was running\n`);
     const id = newId();
     s.put(`standin/active/sw-look-${id}.service`, '');
     assert.equal(run(s, ['stop', '--id', id]).stdout, `${id} stopped sw-look-${id}: it was running, and it is gone\n`);
@@ -1038,6 +1089,36 @@ describe('the lock-out net (R60)', () => {
     const q = prove(t);
     assert.equal(q.status, 1);
     assert.ok(q.stdout.includes(`${q.id} proof look 20 got through: ending a unit through the helper (stand-in, directly)\n`), q.stdout);
+  });
+
+  // The final read's TC-3: the stand-in's stop took the unit away at once, so stop's wait, its SIGKILL and its "still
+  // running" were run by no test. standin/holds keeps a unit running for some answers, or for good.
+  test('stop waits until the unit is gone, asks for SIGKILL when it will not go, and says so plainly when it still runs (exit 1)', { timeout: 200000 }, () => {
+    const s = proven();
+    const a = newId(), ua = `sw-run-${a}.service`;
+    s.put(`standin/active/${ua}`, '');
+    s.put(`standin/holds/${ua}`, '4');
+    const st = run(s, ['stop', '--id', a]);
+    assert.equal(st.stdout, `${a} stopped sw-run-${a}: it was running, and it is gone\n`);
+    assert.ok(!existsSync(join(s.R, 'standin/active', ua)) && !existsSync(join(s.R, 'standin/holds', ua)), 'it answered only once the unit was gone');
+    assert.ok(!calls(s).some(c => c[0] === 'systemctl' && c[1] === 'kill'), 'gone within the wait: no SIGKILL');
+    const b = newId(), ub = `sw-root-${b}.service`;
+    s.put(`standin/active/${ub}`, '');
+    s.put(`standin/holds/${ub}`, 'never');
+    const t0 = Date.now(), sb = run(s, ['stop', '--id', b]);
+    assert.equal(sb.status, 1, sb.stdout + sb.stderr);
+    assert.equal(sb.stdout, `${b} stop: sw-root-${b} is still running\n`);
+    assert.ok(calls(s).some(c => c.join(' ') === `systemctl kill --signal=SIGKILL ${ub}`), 'SIGKILL was asked for');
+    assert.ok(Date.now() - t0 >= 55000, `it waited before and after the SIGKILL (${Date.now() - t0} ms)`);
+  });
+
+  // The final read's TC-11: the restart unit and pending are there before the command runs (seen from inside it).
+  test('the restart unit and pending are there before the change runs, seen by the change itself', () => {
+    const s = netted();
+    const cmd = 'R="$SPARK_CONSOLE_REHEARSAL"; for f in "$R"/etc/systemd/system/sw-guard-boot-*.service "$R"/etc/systemd/system/multi-user.target.wants/sw-guard-boot-*.service "$R"/var/lib/spark-console/guard/*/pending; do [ -e "$f" ] && echo "there ${f#"$R"}"; done; true';
+    const r = net(s, cmd);
+    for (const p of [`/etc/systemd/system/sw-guard-boot-${r.id}.service`, `/etc/systemd/system/multi-user.target.wants/sw-guard-boot-${r.id}.service`,
+      `/var/lib/spark-console/guard/${r.id}/pending`]) assert.ok(r.stdout.includes(`\nthere ${p}\n`), `${p}: ${r.stdout}`);
   });
 
   test('a restart inside the window: the restart unit puts back once, stops nothing and reloads nothing (they have not started yet); the timer after it does nothing', () => {
@@ -1108,7 +1189,7 @@ describe('the lock-out net (R60)', () => {
   });
 
   // Fix 2: the folders above a way in are kept as folders (mode and owner), up to the owner's home.
-  test("the folders above a way in: ~/.ssh removed, swapped for a link or opened to all, and the console's state folder removed, each go back with exact bytes, mode and owner", () => {
+  test("the folders above a way in: ~/.ssh removed, swapped for a link or opened to all, and the console's state folder removed, each go back with exact bytes and mode (the owner: only as root, on a Spark)", () => {
     const cases = [
       ['removed', 'rm -rf "$R/home/owner/.ssh"', ['/home/owner/.ssh/authorized_keys', '/home/owner/.ssh/config', '/home/owner/.ssh'], 3],
       // (authorized_keys2, not there, is now under a link: named as differing; it is not there again once .ssh is)
@@ -1591,7 +1672,9 @@ describe('the lock-out net (R60)', () => {
     const s = netted();
     const r = net(s, SSH_CHANGE);
     writeFileSync(join(G(s, r.id), 'manifest.json'), 'not json');
+    const t0 = Date.now();
     const f = fire(s, r.id);
+    assert.ok(Date.now() - t0 >= 40000, `two waits of 20 s between the three tries (${Date.now() - t0} ms)`);
     assert.equal(f.status, 1);
     assert.equal(readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n').length, 3);
     assert.ok(existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'result')));
@@ -1761,7 +1844,7 @@ describe('the held lists, after the analyst', () => {
 
 // What bounds a plain change (R63; the wall analyst's "what a sorter miss can cost"): each with its try in the proof.
 describe('what bounds a plain change (R63)', () => {
-  test("the home's own mode and owner are put back right after a change, and said", () => {
+  test("the home's own mode is put back right after a change, and said (its owner too: only as root, on a Spark)", () => {
     const s = proven(), home = join(s.R, 'home/owner'), was = statSync(home).mode & 0o7777;
     const r = change(s, 'chmod 777 "$SPARK_CONSOLE_REHEARSAL/home/owner"');
     assert.equal(statSync(home).mode & 0o7777, was);
@@ -2390,7 +2473,8 @@ describe("the owner's one-time command", () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /not there, made when you set up \(a change could make them\): \.bashrc \.profile \.bash_profile \.bash_logout \.bash_aliases \.pam_environment \.ssh \.docker \.config\/environment\.d/);
     assert.match(r.stdout, / {2}links, which the run wall refuses until each is the real file or folder: \.config\/systemd\n/);
-    assert.match(r.stdout, / {2}PAM reads ~\/\.pam_environment: (yes \(.*\); the run wall holds it read-only|no)\n/);
+    // (old words: "...; the run wall holds it read-only", untrue for a plain change, which hides it: the final read's aside)
+    assert.match(r.stdout, / {2}PAM reads ~\/\.pam_environment: (yes \(.*\); a plain change hides it, and --open holds it read-only|no)\n/);
     assert.match(r.stdout, / {2}enabled units of yours that run a program a change could rewrite: editor\.service \(.*\/tools\/editor\)\n/);
     assert.ok(!r.stdout.includes('kept.service'), 'a program on the read-only list is fine');
     assert.match(r.stdout, / {2}Tailscale SSH: off\n/);
@@ -2588,6 +2672,40 @@ describe("the proof's own attempts", () => {
     }
   });
 
+  // The final read's TC-1: attempts 15 to 29 were run by no test. These are the ones a plain account can show with no
+  // wall: each must get through (or, for 27 and 28, which must work in a wall, work, and fail where it cannot write).
+  test('with no wall, what a plain account can try of 19 to 29 gets through: a job folder swapped, no memory cap, the start files, names at the top, /dev/shm and IPC left, the home\'s mode, ~/.ssh; 27 and 28 work, and fail where they cannot write', async t => {
+    const P = realProof('proofrunhere19');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    mkdirSync(join(P.home, '.ssh'), { mode: 0o700 });
+    mkdirSync(join(P.home, '.config'));
+    const mode = statSync(P.home).mode & 0o777;
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    const target = spawn('python3', ['-I', '-S', join(P.held, 'proof.py'), 'target'], { env: { PATH: '/usr/bin:/bin', SPARK_PROOF_MARK: 'proofrunhere19' }, cwd: P.H, stdio: 'ignore' });
+    const S = join(P.home, '.cache/.sparkie-proof-proofrunhere19');
+    try {
+      writeFileSync(join(P.held, 'target'), String(target.pid));
+      writeFileSync(join(P.held, 'home-mode'), mode.toString(8));
+      const through = lines(P.py('run', 19, 21, 25, 26, 29));
+      for (const n of [19, 21, 25, 26, 29]) for (const how of ['direct', 'child']) assert.ok(through.some(l => l.startsWith(`P ${n} ${how} through `)), `${n} ${how}: ${through.join('\n')}`);
+      const left = lines(P.py('run', 23, 24));
+      for (const n of [23, 24]) for (const how of ['direct', 'child']) assert.ok(left.includes(`P ${n} ${how} left -`), `${n} ${how}: ${left.join('\n')}`);
+      const after = lines(P.py('after'));
+      for (const n of [23, 24]) assert.ok(after.some(l => l.startsWith(`V ${n} run through `)), `after ${n}: ${after.join('\n')}`);
+      assert.equal(statSync(P.home).mode & 0o777, mode, "the check afterwards put the home's mode back");
+      const may = lines(P.py('run', 27)).concat(lines(P.py('home', 28)));
+      for (const n of [27, 28]) assert.ok(may.includes(`P ${n} direct blocked -`), `${n}: ${may.join('\n')}`);
+      chmodSync(S, 0o555);
+      chmodSync(P.home, 0o555);
+      const not = lines(P.py('run', 27)).concat(lines(P.py('home', 28)));
+      for (const n of [27, 28]) assert.ok(not.some(l => l.startsWith(`P ${n} direct through `)), `${n}: ${not.join('\n')}`);
+    } finally {
+      chmodSync(P.home, mode);
+      if (existsSync(S)) chmodSync(S, 0o700);
+      target.kill('SIGKILL');
+    }
+  });
+
   test("with its program outside the walls missing, no attempt says 'blocked', and the helper fails the proof on those lines", t => {
     const P = realProof('brokenstart1');
     if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
@@ -2600,6 +2718,8 @@ describe("the proof's own attempts", () => {
     const run = P.py('run', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12);
     for (const r of [look, run]) assert.ok(!/ blocked /.test(r.stdout), r.stdout);
     assert.ok(lines(outside).every(l => / outside not-there /.test(l)), outside.stdout);
+    // (and each call said something for every attempt: the final read's TC-12; an empty answer passed the two above)
+    assert.deepEqual([lines(outside).length, lines(look).length, lines(run).length], [11, 24, 22]);
     P.py('post');
     // The helper, given exactly those lines for its outside, look and run units.
     const s = spark();

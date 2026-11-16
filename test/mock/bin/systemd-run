@@ -16,7 +16,8 @@
 #                               <rehearsal>/standin/play-<part> is printed as that unit's whole output, as it is.
 #   sw-guard-<id>               the lock-out net's timer: armed, never fired here (a test runs restore.sh itself, as the
 #                               timer would); <rehearsal>/standin/timers/<unit> while it waits (systemctl reads it)
-#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would)
+#                               (<rehearsal>/standin/guard-sleep: seconds it takes first, as a slow systemd would;
+#                               <rehearsal>/standin/timer-lost: it answers yes and leaves no timer waiting)
 # <rehearsal>/standin/refuse: systemd refuses the unit and nothing starts (with a unit name prefix in it, only those).
 # <rehearsal>/standin/start-fails: "<unit name prefix> <code>": the unit is made but fails before its command runs, with
 # that code (226: a path one of its settings names is gone by its start, as systemd answers), and nothing of it runs.
@@ -127,8 +128,9 @@ if unit.startswith('sw-guard-'):
     if knob('guard-sleep') is not None:   # (systemd slow to take the timer: a test hangs up the call meanwhile)
         import time
         time.sleep(float(knob('guard-sleep')))
-    os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
-    open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
+    if knob('timer-lost') is None:
+        os.makedirs(os.path.join(R, 'standin', 'timers'), exist_ok=True)
+        open(os.path.join(R, 'standin', 'timers', unit + '.timer'), 'w').close()
     sys.exit(0)
 
 def wall_view():

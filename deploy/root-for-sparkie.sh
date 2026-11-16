@@ -171,7 +171,7 @@ home_lines() {   # what the run wall needs of your home, and what reaches round 
     *) note "your login shell: ${v:-not known}: the run wall refuses changes here until it is bash, sh or dash" ;;
   esac
   files=$(grep -ls 'user_readenv=1' /etc/pam.d/* 2>/dev/null | tr '\n' ' ' || true)
-  if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); the run wall holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
+  if [ -n "$files" ]; then note "PAM reads ~/.pam_environment: yes (${files% }); a plain change hides it, and --open holds it read-only"; else note "PAM reads ~/.pam_environment: no"; fi
   bad=''
   while read -r u _; do
     [ -n "$u" ] || continue

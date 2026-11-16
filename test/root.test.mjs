@@ -168,6 +168,7 @@ test('root off on Spark 3: the owner’s one command with --with-root, and nothi
 
 test('sudo in a plain command is answered “set root”; root with sudo, a key or minutes is refused, and nothing runs', { timeout: 60000 * SLOW }, async () => {
   const run = body => api('/actions/run', { method: 'POST', body: { on: 'spark3', ...body } });
+  const before = calls().length;
   const sudo = await run({ command: 'sudo touch /etc/rooted' });
   assert.equal(sudo.status, 403, sudo.text);
   assert.equal(sudo.json.error, 'Nothing ran: a command becomes root only by setting root (run with root: true), which is always asked as root and runs inside the lock-out net. Leave out sudo and set root.');
@@ -179,7 +180,10 @@ test('sudo in a plain command is answered “set root”; root with sudo, a key 
   assert.equal(key.json.error, 'Nothing ran: a command as root is never given a key.');
   const long = await run({ command: 'ls', root: true, minutes: 5 });
   assert.equal(long.status, 400, long.text);
+  assert.match(long.json.error, /it takes no minutes, fleet or gpu\.$/);
   assert.ok(!existsSync(join(T.fleet.root, 'etc', 'rooted')));
+  // (the final read's TC-8: the file above could not be made even if a command ran; the helper was asked for no unit)
+  assert.ok(!calls().slice(before).some(c => c[0] === 'systemd-run' && c.some(a => /^--unit=sw-(run|root|look)-/.test(a))), JSON.stringify(calls().slice(before)));
 });
 
 test('off: run has no root in its schema, so what the brain reads is as before; on, it has', { timeout: 120000 * SLOW }, async () => {
