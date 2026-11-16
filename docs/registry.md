@@ -69,7 +69,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 ## State files and their writers
 
 Each file is owned by the part that names it; its writers are found in the code and must be the ones its owner’s
-header declares. Copied daily: in the state folder, so in the daily copy and every install snapshot. Read kept: read
+header declares. Copied daily: in the state folder and not one the daily copy leaves out (`sendCopy`’s excludes). Read kept: read
 with `readKept`, which sets an unreadable file aside and keeps one earlier copy (R20).
 
 | File | Owner | Writers | Copied daily | Read kept |
@@ -104,11 +104,11 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `passkeys.json` | `22-passkey` | `savePasskeys`; `savePasskeys` is called by `passkeyGate`, `putBackAtStart`, `signinRoute`, `handler` | yes | no |
 | `plugs.json` | `12-plugs` | none; deploy/plugs.sh writes it | yes | no |
 | `power.json` | `21-power` | `savePower`; `savePower` is called by `offRecord`, `power_settings`, `sayIdleActive` | yes | yes |
-| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `placeStep`, `run_workflow`; `savedRunDone` is called by `run_workflow` | yes | yes |
+| `saved-runs.json` | `18-run-record` | `savedRunKeep`, `savedRunDone`, `savedRunsRecover`; `savedRunKeep` is called by `placeStep`, `run_workflow`; `savedRunDone` is called by `run_workflow` | no | yes |
 | `saved-workflows.json` | `18-workflows` | `writeSaved`; `writeSaved` is called by `save_workflow`, `record`, `forget_workflow`, `compareKeepOn` | yes | yes |
 | `secrets.json` | `03-secrets` | `secretsWrite`; outside the state folder | no | no |
 | `self-test.json` | `21-selftest` | `keep`, `selfTest`, `selfTestRecover`; removed when a run ends; `selfTest` is called by `selfTestCtx`, `self_test` | yes | yes |
-| `sessions.json` | `22-sessions` | `saveSessions` | yes | no |
+| `sessions.json` | `22-sessions` | `saveSessions` | no | no |
 | `telegram.json` | `21-telegram` | `tgSave` | yes | no |
 | `tmp` | `21-selfchange` | `selfTree`; a folder: each send's work, removed on every exit; `selfTree` is called by `selfSend` | yes | no |
 | `update-asked.json` | `21-updates` | `updInstallStart`, `updResultLook`; `updInstallStart` is called by `updInstallRun`; `updResultLook` is called by `updAfterRestart` | yes | no |
