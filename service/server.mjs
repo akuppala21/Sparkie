@@ -3679,14 +3679,33 @@ async function runChoice(viewer, conv, id, by) {
     // (every approval from Telegram is echoed on the page, 20-tg-approve.mjs)
     if (fromTelegram) content = `Approved from Telegram: ${content}`;
   }
-  const message = { role: 'assistant', content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
+  // (an ask with lines its button shows whole, write_file's: the chat file keeps them masked, R7, and the owner's page
+  // gets them whole, from memory, chatWholeShown)
+  const whole = asked?.whole?.length ? content : null;
+  const message = { role: 'assistant', content: whole ? maskSecrets(content) : content, createdAt: new Date().toISOString(), notice: true, ...(asked ? { choices: sparkieMessageChoices(asked) } : {}) };
   conv.messages.push(message);
+  if (whole) chatWhole.set(message, whole);
   conv.updatedAt = message.createdAt;
   saveChats();
   // (a press of the button a parked task waits at, that ran something, wakes it: taskAnswered, 14-tasks.mjs; never an
   // agent's press, nor one of another request's button)
   if (c.action && !asked && !by.agentId) taskAnswered(conv, c.group);
-  return { ...(out || { outcome: 'declined' }), message };
+  return { ...(out || { outcome: 'declined' }), message: whole ? { ...message, content: whole } : message };
+}
+// A press's notice whose ask showed lines whole: its whole text, in memory only (gone at a restart: the page then shows
+// the chat file's masked copy), for the owner's page (24-handler.mjs). A reply's asks too (chatAsks).
+const chatWhole = new WeakMap(), chatAsksWhole = new WeakMap();
+const chatWholeOne = m => ({ ...m, ...(chatWhole.has(m) ? { content: chatWhole.get(m) } : {}), ...(chatAsksWhole.has(m) ? { asks: chatAsksWhole.get(m) } : {}) });
+const chatWholeShown = messages => messages.map(m => (chatWhole.has(m) || chatAsksWhole.has(m) ? chatWholeOne(m) : m));
+// A reply's change asks (run's, write_file's: proposals), each with the lines code built for its button, so the page
+// shows them with the button: the chat file keeps them masked (R7), the page gets the lines shown whole as they are.
+function chatAsks(asked, message) {
+  const list = asked.filter(q => q?.outcome === 'needs-ok' && q.group && typeof q.question === 'string' && q.choices?.length).slice(0, 8);
+  if (!list.length) return message;
+  const whole = list.map(q => ({ group: q.group, text: q.question.slice(0, 8000).split('\n').map(l => ((q.whole || []).includes(l) ? l : maskSecrets(l))).join('\n') }));
+  message.asks = list.map(q => ({ group: q.group, text: maskSecrets(q.question.slice(0, 8000)) }));
+  if (whole.some((a, i) => a.text !== message.asks[i].text)) chatAsksWhole.set(message, whole);
+  return message;
 }
 // Results of operations started from a conversation are posted in it when they finish.
 const OP_WORDS = {
@@ -4063,9 +4082,10 @@ function turnAnswer(turn) {
   const message = { role: 'assistant', content: `${maskSecrets(turn.answer.trim())}${card ? `\n\nPaste card, from Spark Console:\n\`\`\`\n${card}\n\`\`\`` : ''}`, createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), ...(turn.finishReason === 'length' ? { truncated: true } : {}),
     ...(unverified.length ? { unverified } : {}) };
+  chatAsks(asked, message);
   conv.messages.push(message);
   keepTask(turn);
-  emit({ type: 'done', message });
+  emit({ type: 'done', message: chatWholeOne(message) });
   return message;
 }
 // The reply’s end when anything in it threw, the owner’s /stop included: what was written so far is saved with the
@@ -4078,10 +4098,11 @@ function turnFailed(turn, e) {
   const choices = asked.flatMap(sparkieMessageChoices);
   const message = { role: 'assistant', content: maskSecrets(turn.answer), createdAt: new Date().toISOString(), model: target.model, node: target.node,
     ...(used.length ? { tools: used } : {}), ...(choices.length ? { choices } : {}), error: why };
+  chatAsks(asked, message);
   conv.messages.push(message);
   turn.failed = true;
   if (!link.gone) keepTask(turn);
-  emit({ type: 'error', error: why, message });
+  emit({ type: 'error', error: why, message: chatWholeOne(message) });
   return message;
 }
 
@@ -4191,6 +4212,8 @@ function budgetCarries({ spent, agent, task, text, now, conv }) {
 const budgetsOf = turn => (turn.WORK_STEPS ? { steps: turn.WORK_STEPS, output: turn.TOOL_OUTPUT, ...(turn.spent ? { spent: turn.spent, carried: Boolean(turn.carry) } : {}) } : null);
 // One run call is one work step (runOne, before it is handed over): past the message's steps (or what its task has
 // left) it is not run, and the step that reaches them makes the next round the last.
+// The tools that run on a Spark, each a work step (A7d: write_file counts as run does).
+const WORK_TOOLS = new Set(['run', 'write_file']);
 function workStep(turn) {
   if (turn.works >= turn.WORK_STEPS) {
     turn.notRun++;
@@ -4212,7 +4235,7 @@ function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }
-  if (name === 'run' && ok && nothing == null) turn.ran++;
+  if (WORK_TOOLS.has(name) && ok && nothing == null) turn.ran++;
   return budgetCut(turn, out, jid);
 }
 // The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
@@ -4372,7 +4395,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
-    if (c.name === 'run') workStep(turn);
+    if (WORK_TOOLS.has(c.name)) workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
     let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -5015,7 +5038,7 @@ const GROUP_WORDS = [
   ['sparks', 'one Spark in detail, cables and linked Sparks, plans for one Spark or two', /\b(?:cables?|linked|links?\s+between|disk\s+(?:space|usage|is\s+full)|storage|plans?|room\s+(?:for|on)|across|spark\s*\d\s*(?:\+|and)\s*(?:spark\s*)?\d)\b/i],
   ['dig', 'why something failed: operations and their logs, container and service logs, diagnostics', /\b(?:why|fail\w*|crash\w*|errors?|broke\w*|logs?|died|dead|stuck|hung|went\s+wrong|not\s+(?:working|answering|starting)|debug\w*|diagnos\w*|(?:went|gone|is)\s+dark|offline|unreachable)\b/i],
   ['past', 'what happened: the fleet’s events, and the journal of what was said, called and run here', /\b(?:what\s+happened|happen(?:ed|s)\s+(?:to|on|with|last)|what\s+changed|while\s+i\s+was\s+(?:away|out|gone|asleep)|history|events?|yesterday|last\s+(?:night|week|time)|earlier\s+today|(?:have|did)\s+(?:we|you)\s+(?:ever\s+)?(?:try|tried|run|done)|before\s+the\s+restart|recall)\b/i],
-  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
+  ['reading', 'web pages and files: read a page, list or read the shared folder’s files, save a file, write a file on a Spark', new RegExp(String.raw`https?:\/\/|\bwww\.|\b(?:look\s+(?:it|that|this|them)\s+up|search\s+(?:the\s+web|online)|google|web\s*pages?|pages?|articles?|docs|documentation|release\s+notes|files?|folders?|[\w-]+\.(?:${FILE_ENDINGS}|org|com|io|ai|dev|net))\b`, 'i')],
   ['routines', 'saved workflows: list, save, run and forget them, compare models on one', /\b(?:workflows?|routines?|pipelines?|workloads?|compar\w*|whatever\s+is\s+best|keep\s+the\s+winner)\b/i],
   // (both undos are here, so a request is offered both or neither: one alone could be the wrong one, R46)
   ['control', 'operations under way: follow one, cancel it; undo the last change, or Spark Console’s last update; the list of what should be running', /\b(?:should\s+be\s+running|cancel\w*|abort\w*|undo|revert\w*|roll\s*back|put\s+(?:it|that|things|everything)\s+back|go\s+back\s+a\s+build|previous\s+(?:version|build)|wait\s+for|operations?|progress|(?:stop|kill|halt)\b[^.?!\n]{0,30}\b(?:download\w*|start|copy))\b/i],
@@ -6205,7 +6228,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+// whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
+// paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -6230,7 +6255,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
       ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
-  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
+  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
     note: ownerOnly ? 'Only the owner can answer this one, from Spark Console. Tell them what it asks; don’t answer it yourself.'
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };
@@ -10879,7 +10904,9 @@ async function mcpDoor(req, res, viewer) {
       { name: ASK_SPARKIE.name, title: ASK_SPARKIE.title, description: ASK_SPARKIE.description, inputSchema: ASK_SPARKIE.input,
         annotations: { title: ASK_SPARKIE.title, readOnlyHint: false, destructiveHint: (agent.scopes || []).includes('fleet:act'), openWorldHint: false } },
       ...offered.map(a => ({ name: a.name, title: a.title, description: a.description, inputSchema: liveSchema(a.input),
-        annotations: { title: a.title, readOnlyHint: a.kind === 'read', destructiveHint: a.kind === 'destructive' || Boolean(a.destructive), openWorldHint: Boolean(a.openWorld) } }))] } });
+        // (run and write_file are kind read to runAction, their gates being the ladder's, but they can change files: the
+        // door says so, A7d. Nothing else keys off changes.)
+        annotations: { title: a.title, readOnlyHint: a.kind === 'read' && !a.changes, destructiveHint: a.kind === 'destructive' || Boolean(a.destructive) || Boolean(a.changes), openWorldHint: Boolean(a.openWorld) } }))] } });
   }
   if (msg.method === 'tools/call' && msg.params?.name === ASK_SPARKIE.name) {
     const toolError = text => reply(200, { id, result: { content: [{ type: 'text', text }], isError: true } });
@@ -13815,11 +13842,13 @@ function tellParts(text) {
   if (rest) parts[parts.length - 1] = `${parts[parts.length - 1].slice(0, TELL_PART - 40).trimEnd()}\n\n(the rest is in Spark Console)`;
   return parts.filter(Boolean);
 }
-// Secrets hidden, and the bot's own token replaced wherever it appears.
-const tellClean = (text, token) => {
-  let t = maskSecrets(String(text || ''));
-  if (token) t = t.split(token).join('[hidden]');
-  return t;
+// Secrets hidden, and the bot's own token replaced wherever it appears. keep: whole lines code built to be shown as they
+// are (question()'s whole): each one found in the text goes as it is, but for the bot's token.
+const tellClean = (text, token, keep = []) => {
+  const clean = s => { let t = maskSecrets(String(s || '')); if (token) t = t.split(token).join('[hidden]'); return t; };
+  const lines = String(text || '').split('\n'), kept = new Set((Array.isArray(keep) ? keep : []).filter(k => typeof k === 'string' && k && !k.includes('\n')));
+  if (!kept.size) return clean(text);
+  return lines.map(l => (kept.has(l) ? (token ? l.split(token).join('[hidden]') : l) : clean(l))).join('\n');
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
@@ -13829,7 +13858,7 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', last = false } = {}) {
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -13840,7 +13869,7 @@ async function tell(why, text, { buttons = null, to = null, pre = null, tail = '
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   // (a request's last reply is never held back by it: last)
   if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
+  const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);
@@ -14022,7 +14051,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: q.group, conv: conv.id };
     for (const c of shown) tgAsks.set(c.choice, sent);
     const drop = () => { for (const c of shown) if (tgAsks.get(c.choice) === sent) tgAsks.delete(c.choice); };
-    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })) }).then(ok => { if (!ok) drop(); }, drop);
+    // (lines the button shows whole go as they are: question()'s whole, write_file's)
+    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [] }).then(ok => { if (!ok) drop(); }, drop);
     return true;
   } catch (e) { console.error(`Asking on Telegram: ${e.message}`); return false; }
 }
@@ -17986,7 +18016,7 @@ function workWrote(ctx, sorted) {
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
 // fails is the reason the button gives.
-function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null) {
+function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
   if (sorted.class !== 'change') return `it is risky: ${String(sorted.why).replace(/\.$/, '')}`;
@@ -17995,7 +18025,7 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   const walls = runnerWalls(sorted, command, dir, topDirs);
   if (walls.open.length) return `${walls.open[0]}, so it runs outside that wall after your yes`;
   if (walls.home.length) return `${walls.home[0]}, so it runs after your yes with the top of your home writable`;
-  const wide = runnerWiden(node, command, widen, sorted);
+  const wide = runnerWiden(node, file ? '' : command, widen, sorted);
   if (wide.fleet) return 'it reaches another Spark of this fleet';
   if (wide.home) return 'it reaches your home network';
   if (wide.gpu) return 'it uses the GPU';
@@ -18105,8 +18135,9 @@ const WORK_WALLS = { plain: 'in the plain wall', home: 'with the top of your hom
 
 // What both asks show of the wall it runs in after the yes, built by code: outside the plain wall, its stark words; the
 // top of the home writable, what that leaves; and what it widens and reaches. wall: the one it runs in.
-function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topDirs = []) {
-  const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, command, widen, sorted);
+// spec: write_file's (21-write.mjs), whose plain write widens nothing by its words.
+function workWallLines(node, command, sorted, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null) {
+  const walls = runnerWalls(sorted, command, dir, topDirs), wide = runnerWiden(node, spec ? '' : command, widen, sorted);
   const wideLines = [wide.fleet && RUNNER_WIDE.fleet, wide.home && RUNNER_WIDE.home, wide.gpu && RUNNER_WIDE.gpu].filter(Boolean);
   return { walls, wall: walls.open.length ? 'open' : walls.home.length ? 'home' : 'plain',
     outside: walls.open.length ? [...walls.open, ...walls.home].join('; ') : null,
@@ -18122,35 +18153,42 @@ function workScriptLines(scripts) {
 
 // The button's words, built by code: the exact command, the Spark, why it is asked, the wall it runs in after the yes
 // and what that lets it do, what put-back covers, what Sparkie read before proposing it, each script's hash.
-function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir)) {
+// (write_file, A7d: the path and the lines that change, old and new, design A 2.14 row 7; the file's own hash, no script)
+function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir), spec = null) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
-  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
+  return [...(spec ? spec.lines(at) : [`Run this on ${at}?`, `$ ${command}`]), `Asked because ${why}.`,
     ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
     ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
-async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = []) {
-  // (what is shown is what runs: nothing hidden, nothing a mask would hide)
-  if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
-  const scripts = await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs);
-  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
-    ...(ctx.long ? { minutes: ctx.long.minutes } : {}) } };
+async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null) {
+  // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
+  if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
+  // (write_file's: the file's own SHA-256 as it was read for this ask, so a press after it changed is void)
+  const scripts = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs, spec);
+  const call = spec ? { action: 'write_file', args: spec.args }
+    : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
+      ...(ctx.long ? { minutes: ctx.long.minutes } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
-  const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
+  const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts)],
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : workScriptLines(scripts))],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
-    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+    // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
+    : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal',
+      { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
-  workRecord(call.args, { spark: node.id, command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
+  workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
   return out;
 }
 
 // A change on a Spark (run, 21-work.mjs): not done, at once, or asked.
-async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
+// spec (write_file, 21-write.mjs): its own call, key and lines for the button, and what the runner runs in its place
+// (as); command is then the plain write the sorter was handed.
+async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}, spec = null) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
@@ -18166,32 +18204,33 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   if (ctx.button && ctx.ownerConfirmed) {
     const was = workAsks.get(String(ctx.pressed || ''));
     workAsks.delete(String(ctx.pressed || ''));
-    const again = why => workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${why}, so that yes was void`, dir, widen, topDirs);
-    if (!was || was.spark !== node.id || was.command !== command || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
-    const wall = workWallLines(node, command, sorted, dir, widen, topDirs).wall;
+    const again = why => workAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false }, `${why}, so that yes was void`, dir, widen, topDirs, spec);
+    if (!was || was.spark !== node.id || was.command !== (spec?.key ?? command) || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
+    const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
     if (!was.unread && Object.keys(was.sums).length) {
-      const now = await workScripts(node, sorted.scripts, dir, command);
+      // (write_file's: the file as it is read again for this press, 21-write.mjs)
+      const now = spec ? { sums: spec.sums } : await workScripts(node, sorted.scripts, dir, command);
       if (now.unread) throw new HttpError(503, `The scripts it runs couldn’t be read again on ${at} (${now.unread}), so nothing ran.`);
-      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again('a script it runs changed after you were asked');
+      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now.sums)])].some(p => was.sums[p] !== now.sums[p])) return again(spec ? 'the file changed after you were asked' : 'a script it runs changed after you were asked');
     }
-    return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
+    return runChange(node, spec?.run ?? command, viewer, ctx, { asked: true, dir, widen, topDirs, as: spec?.as });
   }
-  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node), Boolean(spec)) || spec?.ask || null;
   // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
   if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
-  if (!why) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+  if (!why) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
   // The owner's own call with no chat to show a button in (the API): nothing is asked there. A change the runner
   // won't run unasked gets its own words; any other reason is said.
   if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) {
-    const w = runnerWiden(node, command, widen, sorted);
-    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, command, viewer, ctx, { dir, widen, topDirs });
+    const w = runnerWiden(node, spec ? '' : command, widen, sorted);
+    if (sorted.class !== 'change' || runnerProtected(sorted, dir).length || runnerOutside(sorted, command, dir, topDirs).length || w.fleet || w.gpu || w.home) return runChange(node, spec?.run ?? command, viewer, ctx, { dir, widen, topDirs, as: spec?.as });
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
-  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
+  return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec);
 }
 /* ───────── a long command: run with minutes, as an operation (A6) ───────── */
 // Area: features        Rules: R23, R13, R61        Tests: long.test.mjs
@@ -19602,9 +19641,11 @@ async function runnerTopDirs(node, sorted) {
   const out = String(r.out).split('\n');
   return r.code === 0 && out.includes('looked') ? out.filter(l => tops.includes(l)) : null;
 }
-async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null } = {}) {
-  // (the sorter's own answer for the very command that runs: no caller hands it one)
-  const sorted = sortCommand(String(command), runnerSortOpts(node, ctx, dir));
+// as (write_file, 21-write.mjs): the plain write the sorter is handed in its place (sortAs), what the journal and the
+// result show (shown), the bytes the unit gets on its input through the helper (stdin), and the result's own fields.
+async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SECONDS, asked = false, dir = RUNNER_DIR, widen = {}, topDirs = null, as = null } = {}) {
+  // (the sorter's own answer for the very command that runs, or for write_file's plain write: no caller hands it one)
+  const sorted = sortCommand(String(as?.sortAs ?? command), runnerSortOpts(node, ctx, dir)), shown = as?.shown ?? command;
   // (what is read-only for it: every protect folder, but, after the owner's yes, those it was asked for)
   const reached = runnerProtected(sorted, dir);
   if (reached.length && !asked) throw new HttpError(409, `It ${reached.some(d => dir === d || dir.startsWith(`${d}/`)) ? 'starts in' : 'changes'} ${reached.join(', ')}, which a change gets only after the owner’s yes, so nothing ran.`);
@@ -19612,7 +19653,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   // (the other Sparks' ranges and the devices, or outside the wall: only after the owner's yes)
   const tops = topDirs ?? await runnerTopDirs(node, sorted);
   if (!tops) throw new HttpError(503, `Which folders at the top of the home it names are there on ${sparkName(node)} couldn’t be read, so nothing ran.`);
-  const wide = runnerWiden(node, command, widen, sorted), walls = runnerWalls(sorted, command, dir, tops), outside = [...walls.open, ...walls.home];
+  const wide = runnerWiden(node, as ? '' : command, widen, sorted), walls = runnerWalls(sorted, as?.sortAs ?? command, dir, tops), outside = [...walls.open, ...walls.home];
   if (outside.length && !asked) throw new HttpError(409, `It would fail inside the plain wall (${outside[0]}), so it runs ${walls.open.length ? 'outside that wall' : 'with the top of the home writable'}, and only after the owner’s yes. Nothing ran.`);
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
@@ -19654,7 +19695,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
     if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: shown.slice(0, 600), dir, ...(as ? { tool: 'write_file', path: as.path } : {}) }, set, sha: copied.sha,
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
@@ -19678,7 +19719,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     };
     // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
     if (ctx.long) Object.assign(ctx.long, { id, record: rid });
-    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
+    const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu, ...(as?.stdin ? { stdin: as.stdin } : {}) });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
@@ -19716,7 +19757,7 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const unknown = a.kind === 'ended', putBack = unknown ? null : await wayCheck();
     if (unknown) fleetEvent({ type: 'notice', spark: node.id, text: `${at} didn’t answer in time while a change ran there (record ${rid}): whether it finished is unknown. It won’t be run again by itself.` });
     ending({ ok: true, outcome: unknown ? 'unknown' : a.cut ? 'cut' : a.ended ? 'ended' : 'ran', exit: a.exit ?? null, copied: mine, notKept: copied.notKept.length, ...(a.notes ? { notes: a.notes.slice(0, 4) } : {}),
-      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${command}\n${text}` });
+      putBack: putBack?.differed?.length ? putBack.differed.slice(0, 8) : null, text: `$ ${shown}\n${text}` });
     const b = forBrain(text), last = text.replace(/\s+$/, '').split('\n').pop();
     return {
       spark: node.id, ran: true, change: true, outcome: 'change', where: at, root: false, observedAt: new Date().toISOString(), exit: a.exit ?? null,
@@ -19728,6 +19769,9 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
       ...(a.notes || (!open && !wide.gpu && RUNNER_NO_DEVICE.test(text)) ? { notes: [...(a.notes || []).map(n => maskSecrets(runnerNote(n)).slice(0, 300)), ...(!open && !wide.gpu && RUNNER_NO_DEVICE.test(text) ? [RUNNER_NO_GPU] : [])] } : {}),
       ...(wide.fleet || wide.gpu ? { widened: [wide.fleet && 'the other Sparks and the home network', wide.gpu && 'the GPU'].filter(Boolean) } : {}),
       memoryCap: `${memory} GB`,
+      // (write_file's own fields: what it wrote only when its program ended well; else what it said)
+      // (after an end the console can't know, or at the time limit, it may have been written)
+      ...(as?.result ? (a.exit === 0 ? as.result : { notWritten: a.exit == null ? `Whether it was written isn’t known: it was ended before it finished${last ? ` (${maskSecrets(last).slice(0, 240)})` : ''}.` : `Nothing was written: ${maskSecrets(last || `exit ${a.exit}`).slice(0, 300)}` }) : {}),
       set, copied: mine, notKept: copied.notKept.slice(0, 50).map(said), ...notCovered,
       ...(putBack ? { putBack } : {}), record: rid, kept: rid,
     };
@@ -21887,6 +21931,8 @@ const SHOWN_SIZE = 200;
 // (a look never does: it runs as a throw-away account with root's read rights, R42).
 const SHOWN_CALLS = {
   run: args => ({ spark: args.on, command: args.command, root: false }),
+  // (write_file, A7d: the path, and the lines it replaces; its bytes go on the record, not the line)
+  write_file: args => ({ spark: args.on, command: typeof args.path === 'string' ? `write_file ${args.path}${Number.isInteger(args.from) ? ` (lines ${args.from} to ${args.to})` : ''}` : null, root: false }),
 };
 const shownText = s => maskSecrets(lookClean(String(s)));
 const shownFirst = (s, n = SHOWN_SIZE) => { const a = Array.from(s); return a.length > n ? `${a.slice(0, n - 1).join('')}…` : s; };
@@ -22068,14 +22114,16 @@ const lookForm = command => { const c = command.trim().replace(/\s+/g, ' '); for
 // key check); otherwise the helper's own.
 // For a change (run, A7c): dir, where it starts (~ or a folder under it, made first by the copies when it is ~/work);
 // protect, the folders under the home given read-only (each passed as ~/… only when it is a real folder there now).
-function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false }) {
+function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, words = [], walks = [], form = null, dir = '~', protect = [], memory = null, open = false, home = false, fleet = false, gpu = false, stdin = null }) {
   // (a change's folder is ~ or one under it, as run's dir takes it: anything else is refused, never quietly ~)
   if (verb === 'run' && !/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `dir isn’t in the right form for a change: ${String(dir).slice(0, 80)}. Nothing ran.`);
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const under = d => (d === '~' ? '"$HOME"' : `"$HOME"${q(d.slice(1))}`), pr = verb === 'run' ? protect.filter(d => /^~\/[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(d) && !/\/\.\.?(?:\/|$)/.test(d)) : [];
   // (a change's own: its memory cap, 1 to 8 GB, and, for an asked one, outside the wall, or only the other Sparks'
   // ranges and the devices, R63)
-  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}` : '';
+  // (write_file's bytes, A7d: on the helper's input, --stdin, from this script's own text as base64, never an argument)
+  const input = verb === 'run' && stdin != null ? Buffer.from(stdin).toString('base64').replace(/.{1,76}/g, '$&\n') : null;
+  const more = verb === 'run' ? `${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''}${open === true ? ' --open' : `${home === true ? ' --home' : ''}${fleet === true ? ' --fleet' : ''}${gpu === true ? ' --gpu' : ''}`}${input != null ? ' --stdin' : ''}` : '';
   const call = ['look', 'run'].includes(verb) ? `${verb} --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${seconds} --dir ${verb === 'run' ? under(dir) : '"$HOME"'}${pr.length ? ' "${p[@]}"' : ''}${more} -- ${q(command)}` : `${verb} --id "$id"`;
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -22091,7 +22139,8 @@ function helperScript(node, verb, { id, command = '', seconds = LOOK_SECONDS, wo
     ...(words.length || walks.length ? [`k=$(timeout 15 bash -c ${q(KEY_SCRIPT)} key "$HOME" ${[...words, '--', ...walks].map(q).join(' ')} </dev/null 2>/dev/null); [ $? = 124 ] && said slow`,
       "k=${k%%$'\\n'*}; [ -z \"$k\" ] || said \"$k\""] : []),
     form ? `o=$(${sudo} "$h" check --id "$id" </dev/null 2>&1); case "$o" in *"$id look ready"*) ;; *) printf '%s\\n' "$o"; exit 0 ;; esac; cd -- "$HOME"; timeout ${seconds} ${form} </dev/null 2>&1; rc=$?; [ $rc = 124 ] && rc=time; printf '\\n%s end %s\\n' "$id" "$rc"`
-      : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
+      : input != null ? `base64 -d <<'SPARKIE_INPUT' | ${sudo} "$h" ${call} 2>&1\n${input}SPARKIE_INPUT\nexit $?`
+        : `exec ${sudo} "$h" ${call} </dev/null 2>&1`,
   ].join('\n');
 }
 // The one way the console calls the root helper on a Spark (R42): verb look (command, seconds, the key check's words and
@@ -22171,6 +22220,17 @@ function helperAnswer({ id, code, out, err, cut, timedOut }) {
   return { kind: /a password is required|a terminal is required|not in the sudoers|may not run sudo/.test(out + err) ? 'nosudo' : 'broken', detail: first };
 }
 
+// A helper that can't run a look there (not set up, no sudo line, not this build's, no current proof): the owner's
+// command (needsOwner); while a proof holds its lock, "being proven". Null when it ran or refused for its own reason.
+function helperNeeds(node, a) {
+  const at = sparkName(node), why = String(a.detail || '').slice(0, 300);
+  if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
+  if (a.kind === 'nosudo') return needsOwner(node, a.kind, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
+  if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
+  if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
+  if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+  return null;
+}
 // The owner's one-time command for a compute Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
 function ownerCommand(node) {
   const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
@@ -22265,11 +22325,8 @@ async function runCommand(input, viewer, ctx = {}) {
     const a = helperAnswer(r), why = String(a.detail || '').slice(0, 300);
     if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     Object.assign(rec, { outcome: a.kind, unit: form ? null : `sw-look-${r.id}`, form });
-    if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
-    if (a.kind === 'nosudo') return needsOwner(node, a.kind, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
-    if (a.kind === 'unknown') return needsOwner(node, a.kind, `${at} has a root helper this build doesn’t know (an older or changed copy), and it isn’t called`);
-    if (a.kind === 'proof') return needsOwner(node, wallsFailed.has(node.id) ? 'failed' : a.kind, wallsFailed.has(node.id) ? `The wall proof failed on ${at}: ${wallsFailed.get(node.id)}` : `The root helper’s proof of its walls on ${at} is ${why.replace(/^the wall proof is (?:none$)?/, '') || 'missing'}, and it runs nothing until they are proven again`);
-    if (a.kind === 'proving') throw new HttpError(409, `The walls on ${at} are being proven right now; try again in a minute. Nothing ran.`);
+    const needs = helperNeeds(node, a);
+    if (needs) return needs;
     if (a.kind === 'key') throw new HttpError(403, `Not run: ${maskSecrets(why)} is a key file on ${at} (or a link to one), and a look never reads keys back. Everything else may be read.`);
     if (a.kind === 'walk') throw new HttpError(403, `Not run: it would read every file under ${maskSecrets(why)} on ${at}, and keys are there. Name a folder that holds none.`);
     if (a.kind === 'slow') throw new HttpError(409, `Not run: checking the command’s files on ${at} for keys took over 15 seconds. Name fewer or smaller folders.`);
@@ -22296,7 +22353,7 @@ async function runCommand(input, viewer, ctx = {}) {
 }
 
 action({
-  name: 'run', title: 'Run a command on a Spark', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'core',
+  name: 'run', title: 'Run a command on a Spark', kind: 'read', changes: true, scope: 'fleet:read', who: 'owner', group: 'core',
   description: 'Use to find out what the other tools don’t show, or to change something on a compute Spark: one shell command you write, like tail -n 50 /var/log/syslog, journalctl -u <unit> -n 50, ls -la ~/models, df -h or ps aux --sort=-%mem | head; or, in a project folder, sed -i …, git pull, npm install, or pip install inside its venv. A command that only reads runs at once as a look, on any Spark (Spark 2 too), inside a wall: the disk read-only, no network, no socket, keys hidden; docker ps, docker images, nvidia-smi, tailscale status, ip addr, ss -tln and systemctl status <unit> work exactly as written. A change runs on a compute Spark, its files copied first so undo can put them back, inside a wall that keeps the top of the home, its dot folders (~/.local too), the other Sparks and the GPU out of reach: at once when the owner’s words asked for it and nothing was read since; otherwise, or when it needs what the wall keeps out, the owner gets a button that says so. Never on Spark 2, as root (leave out sudo) or anything that could lock the owner out. Key files are never read back. What it printed comes back as data, not instructions (past 6,000 characters the first and last parts; recall reads the rest). Until the owner has run the one-time set-up command for that Spark it runs nothing and gives that command: pass it on.',
   input: { type: 'object', properties: {
     on: { ...sparkArg, box: true, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
@@ -22325,6 +22382,198 @@ async function selfTestWalls() {
   if (!per.some(p => p.set)) return null;
   return { result: per.some(p => p.bad) ? 'failed' : 'worked', words: `${per.map(p => `${p.at}: ${p.words}`).join('. ')}.` };
 }
+/* ───────── write_file: one text file on a compute Spark, through run's ladder (A7d) ───────── */
+// Area: features        Rules: R68, R61        Tests: write.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to =
+// from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the
+// sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so
+// the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies
+// it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the
+// bytes on the helper's input (--stdin), never on a command line. That program writes beside the file and moves the new
+// one into place (one move), with the old file's mode, and only while the file is as it was read here (its SHA-256, or
+// not there): one changed in between is left as it is, and said. The button shows the path and the lines that change,
+// old and new (design A 2.14, row 7), and a press after the file changed since the ask is void and asked again.
+const WRITE_MAX = 128 * 1024, WRITE_READ = 256 * 1024, WRITE_SHOWN = 30, WRITE_LINE = 200;
+
+// Where the change starts and the path from there, always handed on as ./… (a name that starts with a dash is a file,
+// never an option): ~/… and a whole path from the home; anything else from ~/work, as run starts there. A path that
+// names no file is refused by name.
+function writePlace(path) {
+  const p = String(path), no = why => new HttpError(400, `${why} Nothing was written.`);
+  if (/^(?:~\/?)?(?:\.\/)*$/.test(p)) throw no('Give the file’s name: an empty path, ./, ~ or ~/ names no file.');
+  if (p.startsWith('~//')) throw no('~// isn’t a path: give ~/ and the file’s path in the home, or a whole path.');
+  if (/\/$|(?:^|\/)\.\.?$/.test(p)) throw no(`${p} names a folder, not a file.`);
+  if (p.startsWith('~/')) return { dir: '~', rel: `./${p.slice(2)}`, look: p.slice(2), shown: p };
+  if (p.startsWith('/')) return { dir: '~', rel: p, look: p, shown: p };
+  const r = p.replace(/^(?:\.\/)+/, '');
+  return { dir: RUNNER_DIR, rel: `./${r}`, look: `${RUNNER_DIR.slice(2)}/${r}`, shown: `${RUNNER_DIR}/${r}` };
+}
+
+// A key in the text, for sure: the exact value of a key the owner gave Sparkie, a private key block, a token of a kind
+// the mask knows by its form. What the mask would hide by its shape alone (a setting named like a key) is written.
+function writeKey(text) {
+  if (keptHidden(text) !== text) return 'the value of a key you gave Sparkie';
+  if (hidePrivateKeys(text) !== text) return 'a private key block';
+  for (const re of SECRET_PATTERNS) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
+    re.lastIndex = 0;
+    if (m) return `a token of a kind Sparkie knows (it begins ${JSON.stringify(Array.from(m[0]).slice(0, 4).join(''))})`;
+  }
+  return null;
+}
+
+// The file as it is now. What is at the name, by code's own look at the name (no content read): a plain file (and
+// whether its owner may write it), a link, something else, nothing. Its text only through the helper's look, the same
+// wall run's looks go through, so its one hidden list decides: a key, or a file that wall hides, is "hidden" and its
+// text is never read. A helper that can't look there: its own answer (helperNeeds).
+async function writeOld(node, place) {
+  const d = place.dir === '~' ? '"$HOME"' : `"$HOME"${q(place.dir.slice(1))}`;
+  const r = await run(node, `cd -- ${d} 2>/dev/null || { echo none; exit 0; }; p=${q(place.rel)}; if [ -L "$p" ]; then echo link; elif [ -f "$p" ]; then if [ -w "$p" ]; then echo file; else echo readonly; fi; elif [ -e "$p" ]; then echo other; else echo none; fi`, { timeout: 20000 });
+  if (r.code !== 0) throw new HttpError(r.code === 255 ? 503 : 502, `${sparkName(node)} couldn’t be asked what is at ${place.shown}, so nothing was asked or written.`);
+  const kind = String(r.out).trim().split('\n')[0];
+  if (kind !== 'file') return { kind: ['link', 'other', 'readonly'].includes(kind) ? kind : 'none' };
+  if (keyWord(place.look)) return { kind: 'hidden' };
+  const command = `p=${q(place.look)}; s=$(sha256sum < "$p" 2>/dev/null | cut -d' ' -f1); if [ -f "$p" ] && [ ! -L "$p" ] && [ -n "$s" ]; then printf 'file %s %s\\n' "$(stat -c %s -- "$p")" "$s"; head -c ${WRITE_READ + 1} -- "$p" | base64 -w0; echo; else echo hidden; fi`;
+  const { words, walks } = lookWords(command);
+  const a = helperAnswer(await helperCall(node, 'look', { command, seconds: LOOK_SECONDS, words, walks }));
+  if (a.kind === 'ran') {
+    const [head = '', b64 = ''] = String(a.output).split('\n'), m = /^file (\d+) ([0-9a-f]{64})$/.exec(head.trim());
+    return m ? { kind: 'file', size: Number(m[1]), sha: m[2], bytes: Number(m[1]) <= WRITE_READ ? Buffer.from(b64.trim(), 'base64') : null } : { kind: 'hidden' };
+  }
+  if (['key', 'walk', 'refused'].includes(a.kind)) return { kind: 'hidden' };
+  return { kind: 'helper', answer: a };
+}
+
+// Code's own program for the unit: the whole new text comes on its input. It writes only while the file is as it was
+// read here and its owner may write it; beside it, then one move into place, with the old permission bits only (0644
+// for a new file); the temporary file never stays behind, the unit ended or not.
+function writeProgram(rel, old) {
+  const same = old.kind === 'file' ? `[ -f "$p" ] && [ ! -L "$p" ] && [ "$(sha256sum < "$p" | cut -d' ' -f1)" = ${old.sha} ]`
+    : old.kind === 'hidden' ? '[ -f "$p" ] && [ ! -L "$p" ]' : '[ ! -e "$p" ] && [ ! -L "$p" ]';
+  return [`p=${q(rel)}; t=`, `trap '[ -n "$t" ] && rm -f -- "$t"' EXIT`, "trap 'exit 143' TERM INT HUP",
+    `${same} || { echo 'write_file: the file changed since it was read here, so nothing was written.' >&2; exit 3; }`,
+    `[ ! -e "$p" ] || [ -w "$p" ] || { echo 'write_file: the file is read-only, so nothing was written.' >&2; exit 3; }`,
+    't=$(mktemp -p "$(dirname -- "$p")" .write_file.XXXXXX) || exit 1',
+    'cat > "$t" || exit 1',
+    `if [ -f "$p" ]; then m=$(stat -c %a -- "$p") && chmod "$(printf '%o' $(( 8#$m & 8#777 )))" -- "$t" || exit 1; else chmod 0644 -- "$t" || exit 1; fi`,
+    'mv -fT -- "$t" "$p" || exit 1', 't='].join('\n');
+}
+
+// A text's lines, without the empty one after its last line break.
+const writeSplit = s => { const l = String(s).split('\n'); if (l.at(-1) === '') l.pop(); return l; };
+// Lines from to to of the old text with the new lines in their place, whole: what is shown is what is written (a new
+// line after a last line with no break starts a line of its own).
+function writeSplice(oldText, text, from, to) {
+  const was = writeSplit(oldText), now = writeSplit(text), out = [...was.slice(0, from - 1), ...now, ...was.slice(to)];
+  const ends = to < was.length ? oldText.endsWith('\n') : true;
+  return out.length ? `${out.join('\n')}${ends ? '\n' : ''}` : '';
+}
+// One line on the button: masked, cut at 200 signs and said so; a line the mask changed is marked, as it is written as
+// given. A hidden part that holds a sign that runs something ($, a backtick, a bracket, |, ;, &, <, >) is shown as
+// written, marked so (a key has none of them, and a kept key's value and the strong shapes were refused before: what is
+// hidden that way could be a command). The records (the brain's result, the journal, the chat file) mask the line again,
+// with the same mark, which then says the hidden part holds such signs; the button (the page, Telegram) shows it.
+const WRITE_WHOLE = ' (shown whole: what would be hidden here holds signs that run something)', WRITE_RUNS = /[$`()|;&<>]/;
+function writeLineShown(sign, l) {
+  let m = maskSecrets(l), whole = false;
+  if (m !== l && m.includes('[hidden]')) {
+    const parts = m.split('[hidden]'), esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const got = new RegExp(`^${parts.map(esc).join('([\\s\\S]*?)')}$`).exec(l);
+    if (got && got.slice(1).some(x => WRITE_RUNS.test(x))) {
+      m = parts.map((x, i) => (i ? `${WRITE_RUNS.test(got[i]) ? got[i] : '[hidden]'}${x}` : x)).join('');
+      whole = true;
+    }
+  }
+  const a = Array.from(m);
+  return `${sign} ${a.length > WRITE_LINE ? `${a.slice(0, WRITE_LINE).join('')}… (${a.length - WRITE_LINE} more signs on this line not shown)` : m}${m !== l ? ' (a value on this line is hidden here; it is written as given)' : ''}${whole ? WRITE_WHOLE : ''}`;
+}
+// The button's first lines: what is written where, and the lines that change, old and new (design A 2.14 row 7).
+function writeShown(at, place, old, text, from, to) {
+  const shown = (sign, list) => [...list.slice(0, WRITE_SHOWN).map(l => writeLineShown(sign, l)), ...(list.length > WRITE_SHOWN ? [`${sign} … and ${list.length - WRITE_SHOWN} more lines`] : [])];
+  const head = `Write this file on ${at}?`, now = writeSplit(text);
+  if (old.kind === 'hidden') return [head, `${place.shown}: its old text is hidden (a key, or a file a look may not read), so only the new text is shown`, ...shown('+', now)];
+  if (old.kind === 'file' && !old.bytes) return [head, `${place.shown} (${sizeWords(old.size)} now: its old text isn’t shown)`, ...shown('+', now)];
+  const oldText = old.kind === 'file' ? old.bytes.toString('utf8') : '', was = writeSplit(oldText), n = `${was.length} line${was.length === 1 ? '' : 's'} now`;
+  if (Number.isInteger(from)) {
+    const gone = was.slice(from - 1, to), add = now;
+    return [head, `${place.shown}: ${gone.length ? `lines ${from} to ${to} replaced` : `new lines before line ${from}`} (${n})`, ...shown('-', gone), ...shown('+', add)];
+  }
+  if (old.kind !== 'file') return [head, `${place.shown}: a new file, ${now.length} line${now.length === 1 ? '' : 's'}`, ...shown('+', now)];
+  let a = 0;
+  while (a < was.length && a < now.length && was[a] === now[a]) a++;
+  let b = 0;
+  while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b]) b++;
+  const gone = was.slice(a, was.length - b), added = now.slice(a, now.length - b);
+  const what = gone.length || added.length ? `from line ${a + 1}, ${gone.length} line${gone.length === 1 ? '' : 's'} out, ${added.length} in`
+    : oldText === text ? 'the same text' : 'only the line break at the end changes';
+  return [head, `${place.shown}: ${what} (${n})`, ...shown('-', gone), ...shown('+', added)];
+}
+
+async function writeFile(input, viewer, ctx = {}) {
+  whoMayLook(viewer, ctx);
+  const node = sparkOf(viewer, input.on), text = String(input.text), { from, to } = input, no = (code, why) => new HttpError(code, `${why} Nothing was written.`);
+  if ((from === undefined) !== (to === undefined)) throw no(400, 'from and to go together: lines from to to are replaced (to = from - 1 puts the text before line from).');
+  if (Number.isInteger(from) && to < from - 1) throw no(400, `to (${to}) is before from - 1: there are no lines to replace there.`);
+  if (Buffer.byteLength(text) > WRITE_MAX) throw no(400, 'The text is over 128 KB, the most write_file writes.');
+  // (what is shown is what is written: a sign that doesn't show, as the dangerous ask refuses it, 20-danger.mjs)
+  if (DANGER_HIDDEN.test(text) || DANGER_HIDDEN.test(String(input.path))) throw no(400, 'It holds a sign that doesn’t show (a control sign, a carriage return, a zero-width or direction mark), so what would be shown isn’t what would be written.');
+  const key = writeKey(text);
+  if (key) throw no(400, `The text holds ${key}, so it isn’t written or shown on a button: give the key by its name.`);
+  const place = writePlace(input.path), sortAs = `cat > ${q(place.rel)}`, sorted = sortCommand(sortAs, runnerSortOpts(node, ctx, place.dir));
+  // (Spark 2, a brain Spark, root, a pause, not done, the lock-out class: refused before anything is read, as for run)
+  runnerNever(node, sorted, ctx);
+  if (['notdone', 'lockout'].includes(sorted.class)) return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
+  const old = await writeOld(node, place);
+  if (old.kind === 'helper') {
+    const needs = helperNeeds(node, old.answer);
+    if (needs) return needs;
+    throw no(502, `${sparkName(node)}’s look at ${place.shown} didn’t answer the way the root helper does (${maskSecrets(String(old.answer.detail || old.answer.kind)).slice(0, 200)}).`);
+  }
+  if (old.kind === 'link') throw no(400, `${place.shown} is a link: write_file never writes through one, nor replaces it.`);
+  if (old.kind === 'other') throw no(400, `${place.shown} isn’t a plain file (a folder, a device or a socket).`);
+  if (old.kind === 'readonly') throw no(400, `${place.shown} is read-only, so write_file doesn’t replace it (a write to it would fail).`);
+  let bytes;
+  if (Number.isInteger(from)) {
+    if (old.kind !== 'file' || !old.bytes) throw no(400, `Lines ${from} to ${to} need ${place.shown} there as a plain text file of at most 256 KB a look may read, and it isn’t.`);
+    // (the lines are put together as text: a file that doesn't come back byte for byte from it would change elsewhere)
+    if (!Buffer.from(old.bytes.toString('utf8')).equals(old.bytes)) throw no(400, `${place.shown} isn’t UTF-8 text, so lines ${from} to ${to} can’t be put in it without changing other bytes: write the whole file.`);
+    const n = writeSplit(old.bytes.toString('utf8')).length;
+    if (to > n) throw no(400, `${place.shown} has ${n} line${n === 1 ? '' : 's'}, so lines ${from} to ${to} aren’t all there.`);
+    bytes = Buffer.from(writeSplice(old.bytes.toString('utf8'), text, from, to));
+  } else bytes = Buffer.from(text);
+  const span = Number.isInteger(from) ? ` (lines ${from} to ${to})` : '';
+  const spec = {
+    key: `write_file\n${place.shown}\n${from ?? ''}-${to ?? ''}\n${createHash('sha256').update(text).digest('hex')}`,
+    args: { on: node.id, path: input.path, text, ...(Number.isInteger(from) ? { from, to } : {}) },
+    sums: { [place.shown]: old.kind === 'file' ? old.sha : old.kind },
+    // (a file whose old text is hidden is asked, never written at once: the owner sees what they can't read here)
+    ...(old.kind === 'hidden' ? { ask: 'its old text is hidden from a look, so you see only the new text' } : {}),
+    lines: at => writeShown(at, place, old, text, from, to),
+    // (the lines the button shows whole, for Telegram's ask and the page's copy: the records keep them masked)
+    whole: at => writeShown(at, place, old, text, from, to).filter(l => l.endsWith(WRITE_WHOLE)),
+    file: { path: place.shown, before: old.kind === 'file' && old.bytes ? old.bytes.toString('utf8') : '', after: bytes.toString('utf8') },
+    run: writeProgram(place.rel, old),
+    as: { sortAs, stdin: bytes, path: place.shown, shown: `write_file ${place.shown}${span}: ${bytes.length} bytes`,
+      result: { wrote: { path: place.shown, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) } } },
+  };
+  return workChange(node, sortAs, sorted, viewer, ctx, place.dir, {}, spec);
+}
+
+action({
+  name: 'write_file', title: 'Write a file on a Spark', kind: 'read', changes: true, scope: 'fleet:read', who: 'owner', group: 'reading',
+  description: 'Use to write one text file on a compute Spark: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from). The path is ~/… or a whole path, or else from ~/work, where run starts. Code decides as it does for run: at once when the owner’s words asked for that work there and nothing was read since; otherwise the owner gets a button with the lines that change, old and new. Never on Spark 2, as root, or into what could lock the owner out. The old file is copied first so undo can put it back, and a file that changed since it was read is left as it is. At most 128 KB; a key is given by its name, never in the text.',
+  input: { type: 'object', properties: {
+    on: { ...sparkArg, description: 'Where: a Spark id, like spark3 ("Spark 3" works too).' },
+    path: { type: 'string', maxLength: 1024, pattern: '^[^\\x00-\\x1f]+$', description: 'The file: ~/…, a whole path, or a path from ~/work.' },
+    text: { type: 'string', maxLength: WRITE_MAX, pattern: '^[^\\x00]*$', description: 'The whole file, or the lines that go in place of from to to.' },
+    from: { type: 'integer', minimum: 1, maximum: 1000000, description: 'The first line replaced; with to.' },
+    to: { type: 'integer', minimum: 0, maximum: 1000000, description: 'The last line replaced; from - 1 to put the text before line from.' },
+  }, required: ['on', 'path', 'text'], additionalProperties: false },
+  run: (input, viewer, ctx) => writeFile(input, viewer, ctx),
+});
 /* ───────── the owner's passkey: confirming changes to who has access ───────── */
 // Area: ways in        Rules: R6, R23, R31, R32, R33        Tests: passkey.test.mjs
 // Owns: passkeys.json (writers: savePasskeys)
@@ -23781,7 +24030,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(chatWholeShown(conv.messages)) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);

@@ -71,7 +71,11 @@ export const TOOLS = [
   'where_it_fits',
   'workflows',
   'workloads',
+  'write_file',
 ];
+// The tools that read to runAction (their gates are run's ladder) but can change files on a Spark: the agent door marks
+// them not read-only (`changes: true` on the action, A7d).
+export const CAN_CHANGE = ['run', 'write_file'];
 export const CHANGE_TOOLS = [
   'cancel_operation',
   'compare_models',

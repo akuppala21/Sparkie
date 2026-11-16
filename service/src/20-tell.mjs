@@ -45,11 +45,13 @@ function tellParts(text) {
   if (rest) parts[parts.length - 1] = `${parts[parts.length - 1].slice(0, TELL_PART - 40).trimEnd()}\n\n(the rest is in Spark Console)`;
   return parts.filter(Boolean);
 }
-// Secrets hidden, and the bot's own token replaced wherever it appears.
-const tellClean = (text, token) => {
-  let t = maskSecrets(String(text || ''));
-  if (token) t = t.split(token).join('[hidden]');
-  return t;
+// Secrets hidden, and the bot's own token replaced wherever it appears. keep: whole lines code built to be shown as they
+// are (question()'s whole): each one found in the text goes as it is, but for the bot's token.
+const tellClean = (text, token, keep = []) => {
+  const clean = s => { let t = maskSecrets(String(s || '')); if (token) t = t.split(token).join('[hidden]'); return t; };
+  const lines = String(text || '').split('\n'), kept = new Set((Array.isArray(keep) ? keep : []).filter(k => typeof k === 'string' && k && !k.includes('\n')));
+  if (!kept.size) return clean(text);
+  return lines.map(l => (kept.has(l) ? (token ? l.split(token).join('[hidden]') : l) : clean(l))).join('\n');
 };
 
 // to: the binding just forgotten, for the one "Disconnected" line (a system line only).
@@ -59,7 +61,7 @@ const tellBlock = (head, code, tail) => {
   const text = `${head.trim()}\n\n${code}${tail.trim() ? `\n\n${tail.trim()}` : ''}`;
   return code && text.length <= TELL_PART ? [{ text, entities: [{ type: 'pre', offset: head.trim().length + 2, length: code.length }] }] : [];
 };
-async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', last = false } = {}) {
+async function tell(why, text, { buttons = null, to = null, pre = null, tail = '', keep = [], last = false } = {}) {
   if (!TELL_WHY.has(why)) throw new Error(`Spark Console doesn’t send “${why}” to Telegram.`);
   const b = why === 'system' && to ? to : tgPaired();
   if (!b) return false;
@@ -70,7 +72,7 @@ async function tell(why, text, { buttons = null, to = null, pre = null, tail = '
   // 6 results and carry-on lines an hour (the rest stay in the page's chat), 20 sends a minute in all.
   // (a request's last reply is never held back by it: last)
   if (later && !last && tellResults.length >= TELL_LIMITS.results) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why }, ok: true }); return false; }
-  const parts = pre === null ? tellParts(tellClean(text, b.token)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
+  const parts = pre === null ? tellParts(tellClean(text, b.token, keep)) : tellBlock(tellClean(text, b.token), tellClean(pre, b.token), tellClean(tail, b.token));
   if (!parts.length) return false;
   if (tellSends.length + parts.length > TELL_LIMITS.out) { audit({ via: 'telegram', actor: 'Spark Console', action: 'telegram-held', args: { why, limit: 'minute' }, ok: true }); return false; }
   if (later) tellResults.push(now);

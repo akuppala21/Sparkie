@@ -2221,6 +2221,13 @@ function commandRow(t) {
   return h('li', {}, btn, shown);
 }
 
+// The asks' own lines, as code built them for the button (write_file's path and its old and new lines, a run's command
+// and why it is asked): plain text with the buttons, so a press never does what wasn't shown here (A7d's read).
+function askLines(m) {
+  const groups = new Set((m.choices || []).map(x => x.group));
+  const list = (m.asks || []).filter(a => a && groups.has(a.group) && typeof a.text === 'string' && a.text);
+  return list.length ? h('div', { class: 'ask-lines' }, list.map(a => h('pre', {}, a.text.slice(0, 8000)))) : null;
+}
 function toolLines(tools, asked = false) {
   const lines = [];
   for (const t of tools) {
@@ -2623,6 +2630,7 @@ PAGES.sparkie = function sparkiePage(view, r) {
             : m.content ? h('div', { class: 'msg-body' }, renderMarkdown(m.content)) : null,
         !mine && m.tools?.length ? toolLines(m.tools, (m.choices || []).length > 0) : null,
         !mine ? checkedFold(m) : null,
+        !mine && !m.streaming ? askLines(m) : null,
         !mine && !m.streaming ? choiceRow(m) : null,
         snapshot ? h('details', { class: 'snapshot' }, h('summary', {}, icon('server'), 'Live snapshot attached'), h('pre', {}, snapshot)) : null,
         m.error ? h('div', { class: 'banner bad', style: { 'margin-top': '8px' } }, icon('alert'), h('div', { class: 'banner-text' }, m.error || 'This reply failed.')) : null,

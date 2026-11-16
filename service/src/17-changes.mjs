@@ -55,7 +55,9 @@ const whoAsks = (viewer, ctx) => (ctx.conv ? sparkieWho(viewer, ctx.conv) : `${v
 // Sparkie). An agent gets it as "ask the owner". During a validation run, follow-up choices carry it on.
 // A validation run's choice is taken on purpose, by whoever asked (the owner, or an agent that may change things,
 // v3.1): pressed or picked by its id, never by a typed "yes".
-function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null } = {}) {
+// whole: lines of text the button shows as they are, which the records keep masked (write_file's, 21-write.mjs): the
+// paired chat's ask sends them whole (tgAsk), and a press's notice keeps them for the owner's page (runChoice).
+function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = false, danger = null, whole = null } = {}) {
   // (on the stand-in fleet only, a test asks this as a dangerous ask instead: 20-danger.mjs; danger: that ask's id)
   const test = ownerOnly && !danger ? dangerForTest(viewer, ctx, choices) : null;
   if (test) return test;
@@ -80,7 +82,7 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
       ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
-  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,
+  const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group, ...(Array.isArray(whole) && whole.length ? { whole } : {}),
     note: ownerOnly ? 'Only the owner can answer this one, from Spark Console. Tell them what it asks; don’t answer it yourself.'
       : validation ? 'This change’s workflow hasn’t had its first run on the Sparks yet. If you were asked to make this change, run it as that first run: call the action again with only {"choice": "<id>"} of the "Yes, run it as its validation" choice. Otherwise leave it.'
         : 'Ask the owner this, in plain words, with these choices, and wait for their answer. Then call the action with only {"choice": "<id>"} of the one they pick. Don’t choose for them.' };

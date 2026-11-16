@@ -580,7 +580,7 @@ const handler = async (req, res) => {
         return await chatReply(req, res, viewer, conv, text.trim(), context);
       }
       if (chatMatch[2]) throw new HttpError(405, 'Use POST to send a message.');
-      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(conv.messages) });
+      if (req.method === 'GET') return send(res, 200, { ...chatSummary(conv), messages: dangerShown(chatWholeShown(conv.messages)) });
       if (replying.has(conv.id)) throw new HttpError(409, 'Wait until Sparkie finishes answering.');
       if (req.method === 'PATCH') {
         const { title } = await readBody(req);

@@ -54,7 +54,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const sent = { chatId: p.chatId, userId: p.userId, pairedAt: p.pairedAt || null, group: q.group, conv: conv.id };
     for (const c of shown) tgAsks.set(c.choice, sent);
     const drop = () => { for (const c of shown) if (tgAsks.get(c.choice) === sent) tgAsks.delete(c.choice); };
-    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })) }).then(ok => { if (!ok) drop(); }, drop);
+    // (lines the button shows whole go as they are: question()'s whole, write_file's)
+    tell('ask', words, { buttons: shown.slice(0, 4).map(c => ({ id: c.choice, label: String(c.label).slice(0, 60) })), keep: Array.isArray(q.whole) ? q.whole : [] }).then(ok => { if (!ok) drop(); }, drop);
     return true;
   } catch (e) { console.error(`Asking on Telegram: ${e.message}`); return false; }
 }

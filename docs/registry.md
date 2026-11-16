@@ -64,6 +64,7 @@ from outside. Group: the tool group Sparkie is offered it in (R46; the core is i
 | `search_web` | read | `21-web` | core | — | — | yes | outside |
 | `read_page` | read | `21-web` | reading | — | — | yes | outside |
 | `run` | read | `21-work` | core | work | — | no | outside |
+| `write_file` | read | `21-write` | reading | — | — | yes | outside |
 
 ## State files and their writers
 
