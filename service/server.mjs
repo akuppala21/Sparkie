@@ -5568,8 +5568,8 @@ async function firmModel(name, input) {
   return exact ? { ...input, model: exact } : input;
 }
 // Whose changes count toward the hour's 12 (R9): not the owner's own clicks, POST /actions, a saved workflow's steps,
-// nor self-healing.
-const hourCounts = ctx => Boolean(ctx.via) && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+// self-healing, nor the owner's own /undo from Telegram (R1-01).
+const hourCounts = ctx => Boolean(ctx.via) && !ctx.ownerWord && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
 // A change that ran through run or write_file (reads to runAction: the ladder decides) counts as runAction's own do,
 // for whoever caused it (S-11): one that ran, or a long one started as an operation. A look, a button, the box and a
 // refusal don't. The twelfth in the hour pauses agents' changes, and the runner refuses the next while paused.
@@ -6451,9 +6451,11 @@ function setAgentSettings(change) {
 const noStopWords = ctx => (ctx?.via === 'watcher' ? 'and self-healing never stops anything else to bring something back'
   : ctx?.selfTest ? 'and the self-test never stops anything' : ctx?.compareRun ? 'and a compare never stops a model to make room'
     : 'and the owner said not to stop anything');
+// (the owner's own /undo, typed on the page or in the paired Telegram chat, runs its steps while paused, as runAction
+// lets it through: R34, R1-01)
 const pausedCheck = ctx => {
   const s = agentSettings();
-  if (ctx?.via && ctx.via !== 'page' && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
+  if (ctx?.via && ctx.via !== 'page' && !ctx.ownerWord && s.halted && !(ctx.via === 'watcher' && s.autoPaused)) throw new Error('Stopped: agents’ changes are paused.');
 };
 
 // Questions and their choices. Each choice's arguments stay here; the caller only gets an id to answer with.
@@ -9778,20 +9780,23 @@ action({
     const sparks = new Set([...rev.added, ...rev.removed].map(k => k.split('/')[0]));
     const later = d.revisions.filter(r => r.revision > rev.revision && !r.undo && !r.app && r.chat !== ctx.conv && [...r.added, ...r.removed].some(k => sparks.has(k.split('/')[0])));
     if (later.length) throw new HttpError(409, `Since then, ${later[later.length - 1].by || 'someone'} changed ${[...sparks].join(', ')} too, so undoing would reverse that as well. Say exactly what to stop or start instead.`);
-    // Marked now, so a second "undo" while this one runs doesn't pick the same change.
-    const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
+    // Marked now, so a second "undo" while this one runs doesn't pick the same change; the mark goes again when the undo
+    // didn't put it all back (R1-01), so the next "undo" is this change again, never the one before it.
+    const markUndone = (on = true) => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { if (on) r.undone = true; else delete r.undone; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
     // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
     const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
-    runJob(job, async j => {
+    runJob(job, async j => { try { await undoSteps(j); } catch (e) { markUndone(false); throw e; } });
+    async function undoSteps(j) {
       const problems = [];
+      let worked = 0;
       const follow = async (what, out) => {
-        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); return; }
+        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); else worked += 1; return; }
         note(j, `${what}: operation ${out.operation}`);
         const done = await waitJob(out.operation, 45 * 60000);
-        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`);
+        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`); else worked += 1;
       };
       // What it started stops first (that frees the room), then what it stopped starts again.
       for (const k of rev.added) {
@@ -9811,8 +9816,8 @@ action({
               : await runAction('restart_model', viewer, { spark, container }, by));
         } catch (e) { problems.push(`starting ${container} again: ${e.message}`); }
       }
-      if (problems.length) throw new Error(`Part of the undo didn’t work: ${problems.join('; ')}`);
-    });
+      if (problems.length) throw new Error(`${worked ? 'Part of the undo didn’t work' : 'Nothing was put back'}: ${problems.join('; ')}. That change is still this chat’s last one, so “undo” tries it again.`);
+    }
     return { outcome: 'started', operation: job.id, undoing: { stops: rev.added, startsAgain: rev.removed },
       note: `Putting back this chat’s last change (it ${undoRevWords(rev)}): what it started stops, then what it stopped starts again. This chat hears when it’s done.` };
   },

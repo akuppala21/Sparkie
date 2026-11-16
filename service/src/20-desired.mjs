@@ -302,20 +302,23 @@ action({
     const sparks = new Set([...rev.added, ...rev.removed].map(k => k.split('/')[0]));
     const later = d.revisions.filter(r => r.revision > rev.revision && !r.undo && !r.app && r.chat !== ctx.conv && [...r.added, ...r.removed].some(k => sparks.has(k.split('/')[0])));
     if (later.length) throw new HttpError(409, `Since then, ${later[later.length - 1].by || 'someone'} changed ${[...sparks].join(', ')} too, so undoing would reverse that as well. Say exactly what to stop or start instead.`);
-    // Marked now, so a second "undo" while this one runs doesn't pick the same change.
-    const markUndone = () => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { r.undone = true; writePrivate(DESIRED_FILE, fresh); } } catch {} };
+    // Marked now, so a second "undo" while this one runs doesn't pick the same change; the mark goes again when the undo
+    // didn't put it all back (R1-01), so the next "undo" is this change again, never the one before it.
+    const markUndone = (on = true) => { try { const fresh = desired(true); const r = fresh.revisions.find(x => x.revision === rev.revision); if (r) { if (on) r.undone = true; else delete r.undone; writePrivate(DESIRED_FILE, fresh); } } catch {} };
     markUndone();
     // Its own steps don't post to the chat one by one (the undo posts once), and never count as a change to undo.
     // (agentId: null, so an undo an agent asked for finishes even if that agent is removed while it runs, R9)
     const by = { ...ctx, via: ctx.via === 'sparkie' ? 'sparkie-undo' : ctx.via, conv: null, undo: true, trusted: true, request: `undo revision ${rev.revision}`, agentId: null };
     const job = newJob('undo', { by: viewer.login, actor: ctx.actor || viewer.login, via: ctx.via, conv: ctx.conv, undo: true, revision: rev.revision });
-    runJob(job, async j => {
+    runJob(job, async j => { try { await undoSteps(j); } catch (e) { markUndone(false); throw e; } });
+    async function undoSteps(j) {
       const problems = [];
+      let worked = 0;
       const follow = async (what, out) => {
-        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); return; }
+        if (!out?.operation) { if (out?.outcome && !['already', 'already-starting', 'kept'].includes(out.outcome)) problems.push(`${what}: ${out.note || out.question || out.outcome}`); else worked += 1; return; }
         note(j, `${what}: operation ${out.operation}`);
         const done = await waitJob(out.operation, 45 * 60000);
-        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`);
+        if (done?.status !== 'completed') problems.push(`${what}: ${String(done?.error || done?.status).split('\n')[0]}`); else worked += 1;
       };
       // What it started stops first (that frees the room), then what it stopped starts again.
       for (const k of rev.added) {
@@ -335,8 +338,8 @@ action({
               : await runAction('restart_model', viewer, { spark, container }, by));
         } catch (e) { problems.push(`starting ${container} again: ${e.message}`); }
       }
-      if (problems.length) throw new Error(`Part of the undo didn’t work: ${problems.join('; ')}`);
-    });
+      if (problems.length) throw new Error(`${worked ? 'Part of the undo didn’t work' : 'Nothing was put back'}: ${problems.join('; ')}. That change is still this chat’s last one, so “undo” tries it again.`);
+    }
     return { outcome: 'started', operation: job.id, undoing: { stops: rev.added, startsAgain: rev.removed },
       note: `Putting back this chat’s last change (it ${undoRevWords(rev)}): what it started stops, then what it stopped starts again. This chat hears when it’s done.` };
   },

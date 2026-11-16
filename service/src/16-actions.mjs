@@ -529,8 +529,8 @@ async function firmModel(name, input) {
   return exact ? { ...input, model: exact } : input;
 }
 // Whose changes count toward the hour's 12 (R9): not the owner's own clicks, POST /actions, a saved workflow's steps,
-// nor self-healing.
-const hourCounts = ctx => Boolean(ctx.via) && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
+// self-healing, nor the owner's own /undo from Telegram (R1-01).
+const hourCounts = ctx => Boolean(ctx.via) && !ctx.ownerWord && !['page', 'gateway', 'workflow', 'watcher', 'api'].includes(ctx.via);
 // A change that ran through run or write_file (reads to runAction: the ladder decides) counts as runAction's own do,
 // for whoever caused it (S-11): one that ran, or a long one started as an operation. A look, a button, the box and a
 // refusal don't. The twelfth in the hour pauses agents' changes, and the runner refuses the next while paused.

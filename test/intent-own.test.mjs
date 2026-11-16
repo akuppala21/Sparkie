@@ -100,3 +100,14 @@ test('the reader stays short work on megabytes of the worst input', () => {
   }
 });
 
+test('R1-01: the owner\'s own /undo runs its steps while changes are paused, and counts toward no hour; an agent\'s, Sparkie\'s or Telegram\'s other changes do', () => {
+  const settings = { halted: true, autoPaused: false };
+  const pausedCheck = new Function('agentSettings', `${/^const pausedCheck = ctx => \{[\s\S]*?\n\};$/m.exec(part('17-changes.mjs'))?.[0]}\nreturn pausedCheck;`)(() => settings);
+  assert.doesNotThrow(() => pausedCheck({ via: 'telegram', ownerWord: true }));
+  assert.doesNotThrow(() => pausedCheck({ via: 'page' }));
+  for (const via of ['telegram', 'sparkie', 'agent', 'sparkie-undo']) assert.throws(() => pausedCheck({ via }), /paused/, via);
+  const hourCounts = new Function(`${/^const hourCounts = .*$/m.exec(part('16-actions.mjs'))?.[0]}\nreturn hourCounts;`)();
+  assert.equal(hourCounts({ via: 'telegram', ownerWord: true }), false);
+  for (const via of ['telegram', 'sparkie', 'agent']) assert.equal(hourCounts({ via }), true, via);
+  for (const via of ['page', 'api', 'workflow', 'watcher']) assert.equal(hourCounts({ via }), false, via);
+});

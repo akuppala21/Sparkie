@@ -95,6 +95,31 @@ test('C-16: /undo after a change it can\'t put back (a file saved) says so, name
   assert.equal(text('notes/u.txt'), 'after\n');
 });
 
+test('R1-01: an undo that put nothing back leaves its change this chat\'s last: the next /undo is that change again, never the one before it', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), file = join(T.fleet.stateDir, 'desired.json');
+  // (the list's first look writes desired.json, a minute after the console starts)
+  await waitFor(() => existsSync(file), { timeout: 120000, every: 1000, what: 'desired.json written by its first look' });
+  const d = JSON.parse(readFileSync(file, 'utf8'));
+  const at = new Date(Date.now() - 60000).toISOString(), later = new Date(Date.now() - 30000).toISOString();
+  d.revisions.push({ revision: d.revision + 1, at, operation: null, chat, by: 'owner', added: ['spark4/sc-r101-older'], removed: [], before: [] });
+  d.revisions.push({ revision: d.revision + 2, at: later, operation: null, chat, by: 'owner', added: [], removed: ['spark3/sc-r101-gone'],
+    before: [{ spark: 'spark3', container: 'sc-r101-gone', model: 'r101-gone', since: at, by: 'owner' }] });
+  d.revision += 2;
+  writeFileSync(file, JSON.stringify(d), { mode: 0o600 });
+  const undoJobs = async () => (await api('/jobs')).json.jobs.filter(j => j.type === 'undo' && j.conv === chat);
+  for (const n of [1, 2]) {
+    const u = await say(chat, '/undo');
+    assert.match(u.text, /Putting back this chat’s last change \(it stopped sc-r101-gone on Spark 3\)/, u.text);
+    const j = await waitFor(async () => (await undoJobs()).find((x, i, all) => all.length >= n && x.status !== 'running' && x === all[0]), { timeout: 60000, what: `undo ${n} to end` });
+    assert.equal(j.status, 'failed', JSON.stringify(j));
+    assert.equal(j.revision, d.revision, 'the newest change, again');
+    assert.match(j.error, /^Nothing was put back: starting sc-r101-gone again: .*That change is still this chat’s last one, so “undo” tries it again\./s, j.error);
+    const now = JSON.parse(readFileSync(file, 'utf8')).revisions;
+    assert.equal(now.find(r => r.revision === d.revision)?.undone, undefined, 'not marked undone');
+    assert.equal(now.find(r => r.revision === d.revision - 1)?.undone, undefined, 'the one before it untouched');
+  }
+});
+
 // (last: a change inside the lock-out net)
 test('C-16: /undo after a change inside the lock-out net says so and points to /putback; the change before it is not put back instead', { timeout: 300000 * SLOW }, async () => {
   const chat = await newChat();

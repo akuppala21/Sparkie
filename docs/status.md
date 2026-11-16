@@ -47,7 +47,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R31](rules/R31.md) | built | `test/internet.test.mjs` (“security fixes”); `test/no-editor.test.mjs` (“the service has no editor route”) |  |
 | [R32](rules/R32.md) | partly | `test/telegram.test.mjs`; `test/tg-approve.test.mjs`; `test/beat.test.mjs`; `test/needs-me.test.mjs`; `test/power.test.mjs`; `test/app-keys.test.mjs` | falls short today: its file says where |
 | [R33](rules/R33.md) | built | `test/internet.test.mjs` (“recovery codes, and a fresh device’s own passkey”, “with no passkey on file, whoami still says a recovery code signs in here”, “who is signed in, for the owner only (A5)”); `test/putback.test.mjs` (“under the hold, whoami offers no sign-in from the internet”) |  |
-| [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/fix-intent.test.mjs` (“C-16”); `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
+| [R34](rules/R34.md) | built | `test/words.test.mjs`; `test/fix-intent.test.mjs` (“C-16”, “R1-01”); `test/intent-own.test.mjs` (“R1-01”); `test/telegram.test.mjs`; `test/sparkie-more.test.mjs`; `test/internet.test.mjs`; `test/go-back.test.mjs`; `test/needs.test.mjs` |  |
 | [R35](rules/R35.md) | built | `test/steps.test.mjs`; `test/workloads.test.mjs`; `test/workloads-place.test.mjs`; `test/workloads-save.test.mjs`; `test/workloads-images.test.mjs`; `test/telegram.test.mjs`; `test/change.test.mjs` |  |
 | [R36](rules/R36.md) | built | `test/paste.test.mjs` |  |
 | [R37](rules/R37.md) | built | `test/files.test.mjs` |  |
