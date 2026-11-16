@@ -1,7 +1,7 @@
 /* ───────── Spark Console's own updates, from chat: is a newer tested build out (design C 2.3, step 5) ───────── */
-// Area: features        Rules: R58        Tests: check-update.test.mjs, tools.test.mjs
-// Owns: none
-// Timers: none        Wakes: none
+// Area: features        Rules: R58        Tests: check-update.test.mjs, install-update.test.mjs, tools.test.mjs
+// Owns: update-asked.json (writers: updInstallStart, updResultLook), update-result.json (writers: none; pull.sh writes it)
+// Timers: updResultLook (every 10 s while an install asked from chat waits for its result)        Wakes: none
 // check_update runs `pull.sh check --json` on Spark 2 (the copy every install leaves beside go-back.sh), as /key GITHUB
 // runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and
 // whether it is newer; whether it changes what the brain reads (the two locks' brainReads) and the eval's result for
@@ -37,17 +37,30 @@ async function updPullFacts() {
   if (slow) return { slow: true };
   try { const v = JSON.parse(out || ''); return v && typeof v === 'object' && v.installed && v.main ? v : null; } catch { return null; }
 }
-// The eval on record for what a build's brain reads, for the brain serving now and today's case set; "not run" if none.
-function updEvalFor(reads) {
+// The eval on record for what a build's brain reads, for the brain serving now and the case set that build's lock names
+// (else today's); "not run" if none.
+function updEvalFor(reads, setOfBuild = null) {
   try {
     if (!/^[0-9a-f]{64}$/.test(String(reads || ''))) return { state: 'not known', says: 'not known: that build’s lock doesn’t say what its brain reads' };
-    const p = MAIN ? brainProfileOf(MAIN) : null, set = evalSetNow();
+    const p = MAIN ? brainProfileOf(MAIN) : null, set = setOfBuild || evalSetNow();
     const here = set && Object.entries(p?.evals || {}).filter(([k, v]) => EVAL_SLOT.test(k) && Array.isArray(v)).flatMap(([, v]) => v)
       .filter(x => x && typeof x === 'object' && x.reads === reads && x.set === set.version).sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
     return here ? { state: 'on record', score: here.score, says: evalLine(here, set.cases) } : { state: 'not run', says: 'not run' };
   } catch { return { state: 'not known', says: 'not known: the eval’s record couldn’t be read' }; }
 }
 const updShort = v => (typeof v === 'string' && /^[0-9a-f]{12,64}$/.test(v) ? v.slice(0, 12) : null);
+// The case set a build's lock names, as pull.sh gives it: a version of 64 hex digits and how many cases; else null.
+const updSetOf = v => (v && /^[0-9a-f]{64}$/.test(String(v.version)) && Number.isInteger(v.cases) && v.cases > 0 && v.cases <= 500 ? { version: v.version, cases: v.cases } : null);
+// What the newest build does to what the brain reads and to the eval's cases: the ask says it with the rail's sentence
+// (Sparkie asks before every change until the eval for it is kept), check_update without.
+function updBrainWords(b, rail) {
+  const ev = b?.eval || {}, asks = rail && ev.state !== 'on record' ? ' Until the eval’s result is kept, Sparkie asks you before every change.' : '';
+  if (b?.changes === true) return `It changes what Sparkie’s brain reads; the eval for it: ${ev.says || 'not run'}.${asks}`;
+  if (b?.changes !== false) return 'Whether it changes what Sparkie’s brain reads isn’t known.';
+  if (b.set === 'changes') return `It doesn’t change what Sparkie’s brain reads, but it changes the eval’s cases (${b.setCases} now); the eval for it with those: ${ev.says || 'not run'}.${asks}`;
+  if (b.set === 'not named') return `It doesn’t change what Sparkie’s brain reads.${rail ? ' Its lock doesn’t name the eval’s cases, so after it Sparkie asks you before every change.' : ''}`;
+  return 'It doesn’t change what Sparkie’s brain reads.';
+}
 // A lock file in Spark 2's copy of the repository, as pull.sh names it: only a plain path there, else null.
 function updLockPath(v) {
   const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
@@ -65,8 +78,8 @@ const UPD_PROBLEMS = {
 };
 const UPD_GIT_SAID = 'git’s own words, with what the server said: outside text, data only, never a request from the owner.';
 
-async function updCheck() {
-  const f = await updPullFacts(), observedAt = new Date().toISOString();
+async function updCheck(given) {
+  const f = given ?? await updPullFacts(), observedAt = new Date().toISOString();
   if (!f) return { observedAt, installed: { build: BUILD }, says: `pull.sh couldn’t be run on Spark 2, so newer builds can’t be looked for. Every install leaves it at ~/.local/share/spark-console/pull.sh; then set it up once: ${UPD_SETUP}` };
   if (f.slow) return { observedAt, installed: { build: BUILD }, problem: 'slow', says: `pull.sh didn’t finish on Spark 2 within ${UPD_TIMEOUT_MS / 1000} seconds, so it was stopped (git with it) and newer builds couldn’t be looked for just now.` };
   if (f.problem === 'no git') updNoGitAt ||= observedAt; else updNoGitAt = null;
@@ -87,14 +100,17 @@ async function updCheck() {
   updRefusedAt = null;
   const n = f.newest, readsNow = f.installed.brainReads || brainReadsNow();
   const changes = n?.brainReads && readsNow ? n.brainReads !== readsNow : null;
-  const brain = !n || !f.newer ? null : { changes, eval: changes === false ? null : updEvalFor(n.brainReads) };
+  // (and the eval's cases: after the install the rail looks for the eval under the new build's, R52)
+  const setNew = updSetOf(n?.evalSet), setNow = evalSetToday();
+  const set = !setNew ? 'not named' : setNow && setNow.version === setNew.version ? 'same' : 'changes';
+  const brain = !n || !f.newer ? null : { changes, set, setCases: setNew?.cases ?? null,
+    eval: changes === false && set !== 'changes' ? null : updEvalFor(n.brainReads, setNew) };
   const parts = [], bad = f.badTag && typeof f.badTag === 'object' ? f.badTag : null;
   if (bad) parts.push(`The newest tree on main with a tested/ tag (${updShort(bad.tree)}) isn’t offered: its tag isn’t that commit plus a lock of the right shape, so an install would refuse it too. pull.sh says why, below.`);
   else if (!n) parts.push('Nothing on main has the tested mark yet, so there is no tested build to install.');
   else if (f.newer) {
     parts.push(`A newer tested build is on GitHub: tree ${updShort(n.tree)}${updShort(n.build) ? `, build ${updShort(n.build)}` : ''}${updDay(n.testedAt) ? `, tested ${updDay(n.testedAt)}` : ''}.`);
-    parts.push(changes === true ? `It changes what Sparkie’s brain reads; the eval for it: ${brain.eval.says}.`
-      : changes === false ? 'It doesn’t change what Sparkie’s brain reads.' : 'Whether it changes what Sparkie’s brain reads isn’t known.');
+    parts.push(updBrainWords(brain, false));
     parts.push(`Installing it from chat comes later; on Spark 2: bash ~/.local/share/spark-console/pull.sh install ${updShort(n.tree)}`);
   } else parts.push(`No newer tested build: the newest with the tested mark (tree ${updShort(n.tree)}) ${n.tree === f.installed.tree ? 'is the one installed' : 'isn’t newer than the one installed'}.`);
   // (a tag that isn't offered on main's head is said once, above)
@@ -114,6 +130,151 @@ function updNeeds(add) {
   if (updRefusedAt) add('github-token', 'GitHub didn’t take the install’s token at the last check (it may have expired). Give a new one in your own chat: /key GITHUB, then the token.');
   if (updNoGitAt) add('update-git', 'git isn’t installed on Spark 2, so newer builds of Spark Console can’t be looked for. Install it there once, in a terminal: sudo apt install git');
 }
+
+/* install_update (C5): from chat, the newest tested build is installed through pull.sh, as a dangerous ask (R54) on the
+   page or in the paired Telegram chat. The ask names the build `check` worked out from the code, the tree, the day and
+   time it was tested, the files that differ (or that they aren't known), and whether it changes what the brain reads or
+   the eval's cases (with the eval's result for it, or "not run", and that until that result is kept Sparkie asks
+   before every change). Its yes starts pull.sh outside this service (systemd-run, with a time limit of its own), which
+   restarts it; the result pull.sh writes (update-result.json) is told in the chat that asked, and on Telegram when it
+   was asked from there, by whichever build runs then; after a kept one, the self-test is started once (it wakes
+   nothing). One at a time: a yes while an install asked from chat is going is refused. */
+const UPD_ASKED_FILE = `${STATE_DIR}/update-asked.json`, UPD_RESULT_FILE = `${STATE_DIR}/update-result.json`;
+const UPD_WAIT_MS = 90 * 60000;
+// The unit's own limit: longer than an install with its way back can take (the way back's timer puts the build from
+// before back 30 minutes after it is armed). Reached, systemd stops pull.sh: before the way back is armed it says it
+// was stopped before it changed anything (refused); after, the timer has already put the build from before back.
+const UPD_UNIT_MAX_S = 3600;
+// The press waits 50 seconds for its result (14-chats.mjs); the yes answers it within this, and what comes later is
+// told in the chat that asked, as a result is.
+const UPD_YES_WAIT_MS = (ALL_LOCAL && /^\d+$/.test(process.env.SPARK_CONSOLE_UPDATE_YES_WAIT_S || '') ? Number(process.env.SPARK_CONSOLE_UPDATE_YES_WAIT_S) : 40) * 1000;
+const updBrainLine = x => updBrainWords(x.brain, true);
+let updYesBusy = false;
+async function updInstallAsk(viewer, ctx) {
+  const f = await updPullFacts(), x = await updCheck(f);
+  // Nothing newer, or no facts: what check_update says, and nothing is asked.
+  if (x.problem || !f || f.slow || !x.newer || !x.newest) return { outcome: 'already', note: `${x.says} Nothing was asked or installed.` };
+  const hub = NODES.find(n => n.host === 'local')?.id || brainSparks()[0] || null;
+  // (not known when the installed build's commit isn't in Spark 2's copy of the repository)
+  const differs = f.differsKnown !== true ? null : [...(Array.isArray(f.differs) ? f.differs : []).map(d => String(d).slice(0, 160)),
+    ...(f.differsOther > 0 ? [`${f.differsOther} with an odd name`] : [])];
+  // (asked: the owner's own words in this request ask to install, not as a question or ruled out; the place is the
+  // console itself, so it needn't be named)
+  const i = ctx.intent || {}, has = (l, k) => (l || []).includes(k);
+  const asked = !ctx.agent && ['sparkie', 'page'].includes(ctx.via) && has(i.asked, 'install') && !has(i.negated, 'install') && !has(i.mixed, 'install');
+  return dangerAsk(viewer, ctx, { kinds: ['install'], where: hub,
+    facts: { asked, install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
+    call: { action: 'install_update', args: { tree: x.newest.tree } } });
+}
+// What the chat that asked is told: a notice there, the event, and Telegram when it was asked from there.
+function updTell(asked, line) {
+  const conv = asked.conv ? chatData().conversations.find(c => c.id === asked.conv) : null;
+  if (conv) {
+    conv.messages.push({ role: 'assistant', notice: true, createdAt: new Date().toISOString(), content: line });
+    conv.updatedAt = new Date().toISOString();
+    saveChats();
+  }
+  fleetEvent({ type: 'notice', text: line });
+  if (asked.channel === 'telegram') tell('result', line).catch(() => {});
+  return conv;
+}
+// The yes: answered within UPD_YES_WAIT_MS; a check that takes longer goes on, and what it comes to is told in the chat.
+async function updInstallRun(viewer, ctx, tree) {
+  if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{12}$/.test(String(tree))) throw new HttpError(403, 'Only the owner’s yes to the install’s own ask installs a build.');
+  // (one yes at a time: a second, while the first is still being checked, is refused as one while an install is going)
+  if (updYesBusy) throw new HttpError(409, 'Another yes to an install is still being checked. Nothing else was installed; ask again once it is told.');
+  updYesBusy = true;
+  const work = updInstallStart(viewer, ctx, tree).finally(() => { updYesBusy = false; });
+  const now = await Promise.race([work.then(v => ({ v }), e => ({ e })), sleep(UPD_YES_WAIT_MS).then(() => null)]);
+  if (now?.e) throw now.e;
+  if (now) return now.v;
+  const asked = { conv: ctx.conv || null, channel: ctx.channel || null };
+  work.then(v => updTell(asked, v.note), e => updTell(asked, `The install of tree ${tree} didn’t start: ${maskSecrets(e.message)}`)).catch(() => {});
+  return { ok: true, outcome: 'pending', tree, note: `GitHub is still being asked whether tree ${tree} is still the newest tested build. What comes of it is said here.` };
+}
+// Still the newest tested build and still newer, nothing running, no install asked from chat going; then pull.sh,
+// outside this service.
+async function updInstallStart(viewer, ctx, tree) {
+  const going = readJson(UPD_ASKED_FILE);
+  if (going) throw new HttpError(409, `An install you said yes to is still going (tree ${updShort(going.tree) || '?'}, since ${dangerDay(going.at)}): its result is said in the chat that asked it. Nothing else was installed; ask again once it is told.`);
+  const x = await updCheck();
+  if (!x.problem && x.installed?.tree === tree) throw new HttpError(409, `Tree ${tree} is the one installed now: it was installed another way after you were asked (by hand on Spark 2, say). Nothing was installed.`);
+  if (x.problem || !x.newer || x.newest?.tree !== tree) throw new HttpError(409, `The newest tested build isn’t the one you were asked about any more (${x.newest?.tree || 'none'}), so nothing was installed. Ask again.`);
+  if ([...jobs.values()].some(j => j.status === 'running')) throw new HttpError(409, 'Operations are running: wait for them to finish (or cancel them), then ask again. Nothing was installed.');
+  const home = SECRETS_FILE?.endsWith(SECRETS_TAIL) ? SECRETS_FILE.slice(0, -SECRETS_TAIL.length) : null;
+  const script = home && `${home}/.local/share/spark-console/pull.sh`;
+  if (!script || !existsSync(script)) throw new HttpError(409, 'pull.sh isn’t on Spark 2, so nothing was installed.');
+  writePrivate(UPD_ASKED_FILE, { tree, build: x.newest.build, conv: ctx.conv || null, channel: ctx.channel || null, at: new Date().toISOString() });
+  try {
+    if (!ALL_LOCAL) {
+      // (outside this service, so its restart doesn't end it; one at a time; the busy question is the ask's yes. Its
+      // environment is only these, never the service manager's: no SPARK_CONSOLE_* test setting can reach it)
+      const r = await new Promise(resolve => {
+        // (and what systemctl --user needs to reach the owner's service manager, which the install restarts)
+        const run = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`, user = userInfo().username;
+        const p = spawn('systemd-run', ['--user', '--collect', '--unit', 'spark-console-pull-install', '-p', `RuntimeMaxSec=${UPD_UNIT_MAX_S}`, '/usr/bin/env', '-i', `HOME=${home}`, `PATH=${FIXED_PATH}`, 'LANG=C.UTF-8', 'ASSUME_YES=1',
+          `USER=${user}`, `LOGNAME=${user}`, `XDG_RUNTIME_DIR=${run}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=${run}/bus`, 'bash', script, 'install', tree], { stdio: ['ignore', 'ignore', 'pipe'] });
+        let err = '';
+        p.stderr.on('data', d => { err += d; });
+        p.on('error', e => resolve({ code: -1, err: e.message }));
+        p.on('close', code => resolve({ code, err }));
+      });
+      if (r.code !== 0) throw new HttpError(500, `Couldn’t start the install: ${String(r.err).trim().slice(0, 200) || `systemd-run exited ${r.code}`}. On Spark 2 run: bash ${script} install ${tree}`);
+    } else {
+      // (the stand-in fleet: pull.sh at the test's own home, with its test settings)
+      const env = { HOME: home, PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8', ASSUME_YES: '1', SPARK_CONSOLE_ALL_LOCAL: '1',
+        ...Object.fromEntries(['SPARK_CONSOLE_REPO_URL', 'SPARK_CONSOLE_FETCH_S', 'SPARK_CONSOLE_DOOR_URL'].map(k => [k, process.env[k] || ''])) };
+      spawn('bash', [script, 'install', tree], { env, stdio: 'ignore', detached: true }).unref();
+    }
+  } catch (e) { try { unlinkSync(UPD_ASKED_FILE); } catch {} throw e; }
+  audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'install-update', args: { tree }, ok: true });
+  fleetEvent({ type: 'notice', text: `Installing build ${x.newest.build} (tree ${tree}) from GitHub. Spark Console restarts during it; the result is said in the chat that asked.` });
+  return { ok: true, outcome: 'started', tree, build: x.newest.build,
+    note: `Installing build ${x.newest.build} (tree ${tree}) from GitHub on Spark 2. Spark Console restarts during it; the result is said here when there is one.` };
+}
+// The result, told once in the chat that asked (and on Telegram when it was asked from there): pull.sh's own words with
+// the ids it checked. An hour and a half with none is said too.
+function updResultLook() {
+  const asked = readJson(UPD_ASKED_FILE);
+  if (!asked) return;
+  const res = readJson(UPD_RESULT_FILE), at = Date.parse(asked.at || '');
+  // (pull.sh writes its time to the second: a result in the second the yes was pressed is this install's)
+  const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= Math.floor(at / 1000) * 1000;
+  if (!done && Date.now() - at < UPD_WAIT_MS) return;
+  try { unlinkSync(UPD_ASKED_FILE); } catch {}
+  const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 800)) : '';
+  const line = !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
+    : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
+    : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
+    : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
+  const conv = updTell(asked, line);
+  if (done && res.result === 'kept') updSelfTest(conv).catch(() => {});
+}
+// After a kept install, the self-test once (the owner's call 3), as the owner's: it wakes nothing, and a Spark that is
+// off or busy is said, with nothing started. Its report is posted in the chat that asked, as any operation's is.
+async function updSelfTest(conv) {
+  let line;
+  try {
+    const out = await runAction('self_test', healOwner(), {}, { via: 'update', actor: 'Spark Console, after the install', canChange: true,
+      request: 'The self-test after an install from chat', ...(conv ? { conv: conv.id, chat: conv.id } : {}) });
+    line = `After the install: ${out?.note || 'the self-test started.'}`;
+  } catch (e) { line = `After the install, the self-test didn’t run: ${maskSecrets(e.message)}`; }
+  if (!conv) return;
+  conv.messages.push({ role: 'assistant', notice: true, createdAt: new Date().toISOString(), content: line });
+  conv.updatedAt = new Date().toISOString();
+  saveChats();
+}
+function updAfterRestart() {
+  try { updResultLook(); } catch (e) { console.error(`The install's result: ${e.message}`); }
+  setInterval(() => { try { updResultLook(); } catch {} }, 10000).unref?.();
+}
+
+action({
+  name: 'install_update', title: 'Install the newest tested build', kind: 'change', scope: 'fleet:act', who: 'owner', group: 'updates', asks: 'danger',
+  description: 'Use when the owner asks to install or update to the newest tested build of Spark Console. Asks the owner as its own message (a dangerous ask: the build, what it changes, two digits to type with the yes); only the owner answers it, on the page or in their paired Telegram chat. Installs nothing by itself; Spark Console restarts during the install, and the result is said in this chat.',
+  input: { type: 'object', properties: {}, additionalProperties: false },
+  run: async (input, viewer, ctx) => (input?.tree ? updInstallRun(viewer, ctx, input.tree) : updInstallAsk(viewer, ctx)),
+});
 
 action({
   name: 'check_update', title: 'Check for a newer build', kind: 'read', scope: 'fleet:read', who: 'owner', group: 'updates',
