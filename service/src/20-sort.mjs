@@ -28,7 +28,8 @@
 // chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
 // command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
-// (files it runs, to hash for the ask); unshown (code it runs that it does not show, in the sorter's words); overwrites (with
+// (files it runs, to hash for the ask); unshown (code it runs that is not all on the button, in the sorter's words: root
+// refuses on it); overwrites (with
 // deletes, the places whose old content it removes or writes over); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
 // writes, removes or changes, as the sorter placed it, ~/… or a whole path, a * kept: wide the folders it reaches
@@ -212,7 +213,7 @@ const SORT_ROOT_OPTS = {
 };
 function sortProgram(words, ctx, r, x) {
   const [w0, ...args] = words;
-  if (w0.unknown || w0.glob || w0.brace) unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
+  if (w0.unknown || w0.glob || w0.brace) sortUnshown(r, 'a program a $, a pattern or a {…} names'), unsure(`The program it runs comes from ${w0.unknown ? 'a $ or a command' : 'a * or {…}'}, so the sorter can't know what runs.`);
   if (++ctx.wraps > SORT_WRAPS || ++ctx.steps > SORT_STEPS) unsure('It wraps commands in commands more than the sorter reads.');
   const gitTouch = ctx.gitTouch;
   ctx.gitTouch = false;
@@ -388,7 +389,7 @@ function sortCommand(command, opts) {
   let uses = { reads: [], installs: [], reach: [] };
   try { uses = sortUses(ctx, r, text, form); uses.reads = uses.reads.filter(plain); } catch { /* the fields add, never decide */ }
   return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
-    unshown: r.class === 'look' || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
+    unshown: (r.class === 'look' && !ctx.root) || r.unshown == null ? null : r.unshown.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' '),
     placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p), ...uses,
     // (with deletes: the places whose old content it removes or writes over, placed less what it only reads, and wide)
     overwrites: r.deletes ? changes.filter(([p, w]) => w || !uses.reads.includes(p)).map(([p]) => p) : [] };

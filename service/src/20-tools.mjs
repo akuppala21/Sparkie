@@ -126,9 +126,12 @@ Object.assign(SORT_HANDLERS, {
     let k = 0, dir = null;
     for (; k < a.length && a[k].text.startsWith('-'); k++) {
       if (a[k].text === '-C') dir = a[++k];
-      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) r.simple = false, unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
+      else if (!/^(?:--no-pager|-P|--paginate|-p|--bare|--no-optional-locks|--literal-pathspecs|--no-replace-objects)$/.test(a[k].text)) r.simple = false, sortUnshown(r, `a program git ${a[k].text.split('=')[0]} may name (a pager, an alias, a helper, a hook)`), unsure(`git ${sortQ(a[k].text)} can make any git command run a program, or work on another repository.`);
     }
     if (a.some(w => /(?:^|[^\w])(?:ext|fd)::/.test(w.text))) unsure('git is handed an ext:: or fd:: address, which runs a command.');
+    // (as root, git runs what the repository's own settings name, a look too: an external diff, a filter, fsmonitor, a
+    // pager, a hook; those settings are in a folder the owner can write, and on no button; a clone makes a new one)
+    if (ctx.root && !/^(?:clone|init|ls-remote|version|help)$/.test(a.find((w, i) => i >= 0 && !w.text.startsWith('-') && a[i - 1]?.text !== '-C')?.text ?? '')) sortUnshown(r, 'the programs the repository’s own settings may name (an external diff, a filter, fsmonitor, a pager, a hook)');
     if (a[k]?.unknown) unsure('git’s sub-command comes from a $ or a command.');
     const v = a[k]?.text ?? '', own = a.slice(k + 1), rest = own.map(w => w.text), only = re => rest.every(s => re.test(s));
     if (GIT_LOOK.has(v) && rest.some(s => /^--(?:ext|textconv|open)|^-O/.test(s))) unsure(`git ${sortQ(v)} is told to run a program (--ext-diff, --textconv, -O or --open-files-in-pager).`);
