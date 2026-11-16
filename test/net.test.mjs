@@ -489,3 +489,18 @@ test('what a command inside the net printed keeps its own lines that begin with 
   // (cut off, no end line: nothing at the end is taken for the helper's)
   assert.equal(netOutput(id, L(`${id} net armed: x unless they are kept`, 'out', `${id} net open: y`)), ['out', `${id} net open: y`].join('\n'));
 });
+
+// The final read's net-claim-restart: after a console restart a guard left to its timer held no claim on its Spark.
+test('after a restart, a guard its Spark didn’t answer for keeps that Spark claimed until its time, then is looked at again', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), fn = /^async function netRecover\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'netRecover');
+  const at = new Date(Date.now() + 600000).toISOString(), claims = [], holds = [], told = [];
+  const netRecover = new Function('netNow', 'NET_OPEN', 'nodeById', 'sparkName', 'guardAnswer', 'guardCall', 'netMark', 'netStillLost', 'netTell', 'netStillWords', 'NET_SLACK_MS', 'netGoneWords', 'netHhmm', 'netAfterTime', 'claimSparks', 'netHold', `${fn}\nreturn netRecover;`)(
+    () => ({ guards: [{ id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: at }] }), ['arming', 'open', 'timer'], id => ({ id }), n => `Spark ${n.id.slice(5)}`,
+    () => ({}), () => Promise.resolve({ out: '' }), () => {}, () => Promise.resolve([]), (g, text) => told.push(text), () => '', 60000, () => 'gone', () => '22:10 UTC',
+    () => Promise.resolve(), (ids, why) => { claims.push([ids, why]); return () => {}; }, (spark, until, release, then) => holds.push([spark, until, typeof release, typeof then]));
+  await netRecover();
+  assert.deepEqual(claims, [[['spark3'], 'a change inside the lock-out net']]);
+  assert.deepEqual(holds, [['spark3', Date.parse(at), 'function', 'function']]);
+  assert.match(told[0] || '', /its own timer puts it back at 22:10 UTC, or at its next restart\. Spark 3 stays claimed until then\.$/);
+});

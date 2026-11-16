@@ -19646,8 +19646,13 @@ async function netRecover() {
     // (past its time and still no answer: what the timer can't put back most likely cut it off; else looked at again then)
     const wait = Date.parse(g.goesBackAt || 0) + NET_SLACK_MS - Date.now();
     if (!(wait > 0)) { netTell(g, netGoneWords(which, at, g)); continue; }
-    netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart.`);
-    setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
+    netTell(g, `${which} couldn’t be put back now (${at} didn’t answer): its own timer puts it back at ${netHhmm(g.goesBackAt)}, or at its next restart. ${at} stays claimed until then.`);
+    // (claimed until its time, as before the restart: nothing else changes there while its own timer may still put it
+    // back; then looked at again, netAfterTime, and let go)
+    let release = null;
+    try { release = claimSparks([g.spark], 'a change inside the lock-out net'); } catch {}
+    if (release) netHold(g.spark, Date.parse(g.goesBackAt) || Date.now(), release, () => netAfterTime(g.id));
+    else setTimeout(() => netAfterTime(g.id).catch(e => console.error(`The lock-out net’s look after its time: ${e.message}`)), wait).unref?.();
   }
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
