@@ -58,8 +58,9 @@ RUN_CPU=20 RUN_IO=20 DISK_FLOOR=50000000000
 # range. R63 says both.)
 LAN_RANGES='10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10'
 # The top of the owner's home is read-only for a plain change: nothing made, removed or renamed directly in it, every
-# dot name read-only but these download caches, ~/bin read-only; the other folders there stay writable.
-HOME_CACHES='.cache .npm .cargo/registry .cargo/git .m2 .gradle .local/share/pnpm .bun .yarn'
+# dot name read-only but these download caches, ~/bin read-only; the other folders there stay writable. (Bun's, Yarn's
+# and pnpm's own folders hold a folder their installers put first on the PATH: only the cache inside each is named.)
+HOME_CACHES='.cache .npm .cargo/registry .cargo/git .m2 .gradle .local/share/pnpm/store .bun/install/cache .yarn/berry'
 # What must be there in the owner's home before a change runs: a start file, or a folder that something outside the
 # walls reads, that is not there could be made from inside the run wall. The one-time command makes the missing ones.
 # (The start files are bash's: a change is refused unless the owner's login shell is bash, sh or dash.)
@@ -319,7 +320,7 @@ hide_home() {
   for p in .profile .bashrc .bash_profile .bash_login .bash_logout .bash_aliases .zshenv .zprofile .zshrc .zlogin \
            .zlogout .pam_environment .config/fish .config/systemd .config/environment.d .config/autostart \
            .config/user-tmpfiles.d .local/share/systemd .local/share/user-tmpfiles.d \
-           .kaggle .config/rclone .config/gcloud .ollama/id_ed25519 .claude .claude.json .codex .gemini \
+           .kaggle .config/rclone .config/gcloud .ollama .claude .claude.json .codex .gemini \
            .config/github-copilot .config/anthropic .openai .azure .wandb .vault-token .terraform.d .config/sops .continue \
            .aider.conf.yml .env .my.cnf .cargo/credentials.toml .cargo/credentials .local/share/jupyter .jupyter .ipython \
            snap/firefox snap/chromium .mozilla .config/google-chrome .config/chromium .config/BraveSoftware \
@@ -330,6 +331,10 @@ hide_home() {
            .local/share/fish/fish_history; do
     hide "$h/$p"
   done
+  # (Ollama's folder holds its key and what the owner typed to models: hidden whole; its models put back read-only, a
+  # real folder only, as .ssh's safe files are)
+  p="$h/.ollama/models"
+  if [[ " ${TMPFS[*]} " == *" $h/.ollama "* ]] && [ -d "$R$p" ] && [ ! -L "$R$p" ] && real_here "$p" && safe_path "$p"; then BACK+=("$p"); fi
   # Spark Console's state folder (on Spark 2 only), the same way in both walls: hidden, and its plain files put back
   # read-only but the sign-in files, the sockets and the owner's words (a change cannot rename a hidden name out of the
   # way or write the brain's memory, and no look or change reads what was said).
@@ -545,7 +550,8 @@ home_back() {   # $1 the home's "mode uid gid" before the change: put back right
   fi
   printf '%s' "$said"
 }
-home_dots() {   # --home: each dot name at the top of the home read-only, but the writable ones given and what a list holds
+home_dots() {   # --home: each dot name at the top of the home that is there now, real and plainly named, read-only, but the
+  # writable ones given and what a list holds (one that is not there yet can be made: R63 says what that leaves)
   local d p
   for d in "$R$OWNER_HOME"/.[!.]* "$R$OWNER_HOME"/..?*; do
     [ -e "$d" ] && [ ! -L "$d" ] || continue
@@ -626,10 +632,11 @@ do_state() {   # what became of a look's or change's call by its id: firm, from 
     begun|handed)
       if [[ $p =~ ^[1-9][0-9]*$ ]] && kill -0 "$p" 2> /dev/null; then say "state running: it runs, or may still start"
       elif [ "$m" = handed ]; then
-        # (each unit by itself; when systemd answered for neither, it may still run: never "ended" on no answer)
+        # (each unit by itself; one systemd gave no answer for may still run: never "ended" without systemd's word for
+        # every name, since the mark does not say which verb the call was)
         unit_runs "sw-run-$ID.service"; r=$?
         unit_runs "sw-look-$ID.service"; l=$?
-        if [ "$r" = 0 ] || [ "$l" = 0 ] || [ "$r$l" = 22 ]; then say "state running: it runs, or may still start"
+        if [ "$r" != 1 ] || [ "$l" != 1 ]; then say "state running: it runs, or may still start"
         else say "state ended: its call is gone and nothing of it runs"; fi
       else say "state never: it never started, and its call has ended, so it cannot start now"; fi ;;
   esac
@@ -813,8 +820,8 @@ do_unit() {
   while case "$(systemctl show --property=ActiveState --value "$unit.service" 2> /dev/null)" in
           active|activating|deactivating|reloading|refreshing) quiet=0; true ;; '') quiet=$((quiet + 1)); (( quiet < 60 )) ;; *) false ;; esac
   do sleep 1; done
-  mark ended "$rc"
-  CALL_MARK=ended
+  # (systemd silent for a minute: the mark stays "handed", and state --id asks systemd itself, never "ended" unasked)
+  if (( quiet < 60 )); then mark ended "$rc"; CALL_MARK=ended; fi
   if [ -n "$watch" ]; then kill "$watch" 2> /dev/null; wait "$watch" 2> /dev/null; fi
   if [ -e "$H/disk-low" ]; then tail+=("stopped: the disk's free space fell under $((DISK_FLOOR / 1000000000)) GB"); fi
   rm -rf -- "$H"
@@ -1242,6 +1249,8 @@ def run_text(cmd):
 
 
 ON, OFF = ('active', 'reloading'), ('inactive', 'failed')   # (anything else is passing: a start, a stop, a reload)
+# Now, at the put-back, a state still passing after the wait counts by where it is headed (the copy's never does)
+NOW_ON, NOW_OFF = ON + ('activating',), OFF + ('deactivating',)
 
 
 def unit_state(u):
@@ -1278,9 +1287,9 @@ def moved(was_st, now_st):   # (the units and ufw that differ and go back, what 
         # (a masked unit's LoadState is "masked": it is there, and counts like a loaded one)
         if a.get('load') in ('loaded', 'masked') and b.get('load') == 'not-found':
             lost.append(f'{u} is gone (its package removed?)')
-        elif a.get('load') in ('loaded', 'masked') and (a.get('file') != b.get('file') or (a.get('active') in ON and b.get('active') in OFF)
-                                             or (a.get('active') in OFF and b.get('active') in ON)):
-            back.append(u)   # (a state passing at the copy, or now, never counts: only on to off, off to on, or its file)
+        elif a.get('load') in ('loaded', 'masked') and (a.get('file') != b.get('file') or (a.get('active') in ON and b.get('active') in NOW_OFF)
+                                             or (a.get('active') in OFF and b.get('active') in NOW_ON)):
+            back.append(u)   # (a state passing at the copy never counts: only on to off, off to on, or its file)
     if was_st.get('ufw') in ('active', 'inactive') and now_st.get('ufw') in ('active', 'inactive') and was_st['ufw'] != now_st['ufw']:
         back.append('ufw')
     a, b = was_st.get('tailscale') or {}, now_st.get('tailscale') or {}
@@ -1358,7 +1367,7 @@ def compare():
         diff = [p for p in diff if p != TS_STATE]
     # (what does not go back by itself: the live firewall rules; Tailscale's settings when its state file is as it was)
     unsaid = [k for k in snaps if not (k == 'tailscale' and TS_STATE in diff)]
-    back, lost = moved(saved.get('running') or {}, running())
+    back, lost = moved(saved.get('running') or {}, running(wait=True))
     return was, found, diff, unsaid, aboves, back, lost, saved.get('running') or {}
 
 
@@ -1613,15 +1622,16 @@ def restore(why):
             call(CONSOLE_UNIT + ['daemon-reload'])
             call(CONSOLE_UNIT + ['start', 'spark-console-api.service'])
     # Then the ways in that are not files: each unit back to enabled, disabled or masked, and to running or not where
-    # it was settled at the copy (started only if it ran and now does not, stopped only if it did not and now runs; a
-    # state passing then is left as it runs); ufw on or off. After a restart a unit's file is put right, and one that
+    # it was settled at the copy and is now (started only if it ran and now does not, stopped only if it did not and
+    # now runs; one passing now is waited for, and counts by where it is headed; a state passing at the copy is left
+    # as it runs); ufw on or off. After a restart a unit's file is put right, and one that
     # ran at the copy and whose file went back is queued to start (the restart had already chosen what starts); the
     # others start by themselves, none is stopped, and ufw reads its own restored file. A unit counts as gone back only
     # when systemd said so.
     if was_st:
-        back, _ = moved(was_st, running())
+        back, _ = moved(was_st, running(wait=True))
         for u in [x for x in back if x != 'ufw']:
-            a, b = was_st[u], unit_state(u)
+            a, b = was_st[u], settled(u)
             wf, nf = a.get('file'), b.get('file')
             mine = []
             if nf == 'masked' and wf != 'masked':
@@ -1633,9 +1643,9 @@ def restore(why):
             elif wf == 'masked' and nf != 'masked':
                 mine.append(['systemctl', 'mask', u])
             if not boot:
-                if a.get('active') in ON and b.get('active') in OFF:
+                if a.get('active') in ON and b.get('active') in NOW_OFF:
                     mine.append(['systemctl', 'start', u])
-                elif a.get('active') in OFF and b.get('active') in ON:
+                elif a.get('active') in OFF and b.get('active') in NOW_ON:
                     mine.append(['systemctl', 'stop', u])
             elif mine and a.get('active') in ON:   # (its file went back after the restart chose what starts: queued)
                 mine.append(['systemctl', '--no-block', 'start', u])

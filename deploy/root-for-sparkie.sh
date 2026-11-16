@@ -117,6 +117,34 @@ links() {   # $1 names: those that are links or under one, as the helper judges 
     [ "$real" = "$home/$n" ] || printf '%s ' "$n"
   done
 }
+start_reads() {   # what bash and your own start files read in your home that is not there: a --home change could make it
+  local f w seen=' '
+  for w in .bash_completion .local/share/bash-completion .inputrc; do
+    seen+="$w "
+    [ -e "$HOME/$w" ] || [ -L "$HOME/$w" ] || printf '%s ' "$w"
+  done
+  for f in .bashrc .profile .bash_profile .bash_login .bash_logout .bash_aliases; do
+    [ -f "$HOME/$f" ] || continue
+    while IFS= read -r w; do
+      w=${w#\$HOME/} w=${w#\$\{HOME\}/} w=${w#\~/} w=${w%/}
+      [ -n "$w" ] && [[ $seen != *" $w "* ]] || continue
+      seen+="$w "
+      [ -e "$HOME/$w" ] || [ -L "$HOME/$w" ] || printf '%s ' "$w"
+    done < <(grep -oE '(\$HOME|\$\{HOME\}|~)/[A-Za-z0-9._/-]+' "$HOME/$f" 2>/dev/null || true)
+  done
+}
+path_dirs() {   # the folders in your home that your start files put on the PATH (read from them, never run)
+  local f w seen=' '
+  for f in .profile .bashrc .bash_profile .bash_login .bash_aliases; do
+    [ -f "$HOME/$f" ] || continue
+    while IFS= read -r w; do
+      w=${w#\$HOME/} w=${w#\$\{HOME\}/} w=${w#\~/} w=${w%/}
+      [ -n "$w" ] && [[ $seen != *" $w "* ]] || continue
+      seen+="$w "
+      printf '~/%s ' "$w"
+    done < <(grep -E 'PATH' "$HOME/$f" 2>/dev/null | grep -oE '(\$HOME|\$\{HOME\}|~)/[A-Za-z0-9._/-]+' || true)
+  done
+}
 home_lines() {   # what the run wall needs of your home, and what reaches round it: reads only
   local v u path n bad files
   v=$(missing)
@@ -145,6 +173,12 @@ home_lines() {   # what the run wall needs of your home, and what reaches round 
              find "$d" -mindepth 2 -maxdepth 2 -path '*.wants/*' -printf '%f\n' 2>/dev/null || true
            done | sort -u)
   if [ -n "$bad" ]; then note "enabled units of yours that run a program a change could rewrite: ${bad% }"; else note "no enabled unit of yours runs a program a change could rewrite"; fi
+  v=$(start_reads)
+  if [ -n "$v" ]; then note "read by bash or your start files, but not there (a --home change could make them): ${v% }"
+  else note "everything bash and your start files read in your home is there"; fi
+  v=$(path_dirs)
+  if [ -n "$v" ]; then note "folders in your home your start files put on the PATH (a --home change may put programs there): ${v% }"
+  else note "your start files put no folder in your home on the PATH"; fi
   v=$(tailscale debug prefs 2>/dev/null || true)
   if [[ $v == *'"RunSSH": true'* ]]; then
     note "Tailscale SSH: on. Any program on your tailnet signed in as you can open a shell here with no key, outside every"
