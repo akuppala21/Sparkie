@@ -8,6 +8,7 @@
 // takes its Spark down (into the offline file) and switching it on boots it bootMs later (out of the file), unless
 // setNoBoot(node). setStuck(node): its watts never drop (the plug isn't on that Spark). setWatts(node, milliwatts): a
 // reading that stays at that value whatever its Spark does (one the controller hasn't caught up with); null ends it.
+// setFail(node, text): every command to that node is refused with that text as the controller's details; null ends it.
 // commands lists what was sent.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -43,7 +44,7 @@ function frames(buf) {
 
 export async function startPlugs(nodes = []) {
   let current = nodes, fleet = null, names = 'lower';
-  const asked = [], commands = [], stuck = new Set(), noBoot = new Set(), boots = new Map(), fixed = new Map();
+  const asked = [], commands = [], stuck = new Set(), noBoot = new Set(), boots = new Map(), fixed = new Map(), fail = new Map();
   const offline = () => { try { return readFileSync(fleet.offlineFile, 'utf8').split(/[\s,]+/).filter(Boolean); } catch { return []; } };
   const setOffline = (spark, off) => {
     const now = offline().filter(x => x !== spark);
@@ -61,6 +62,7 @@ export async function startPlugs(nodes = []) {
   function command(args) {
     const n = current.find(x => x.node_id === args?.node_id);
     if (!n) return { error_code: 5, details: `Node ${args?.node_id} not found.` };
+    if (fail.has(n.node_id)) return { error_code: 1, details: fail.get(n.node_id) };
     if (args.cluster_id !== 6) return { error_code: 5, details: `The stand-in has no cluster ${args.cluster_id}.` };
     const known = names === 'upper' ? ['On', 'Off'] : ['on', 'off'];
     if (!known.includes(args.command_name)) return { error_code: 5, details: `Command ${args.command_name} not found on cluster 6.` };
@@ -107,6 +109,7 @@ export async function startPlugs(nodes = []) {
     setStuck: (node, on = true) => { if (on) stuck.add(node); else stuck.delete(node); },
     setNoBoot: (node, on = true) => { if (on) noBoot.add(node); else noBoot.delete(node); },
     setWatts: (node, mw) => { if (mw === null || mw === undefined) fixed.delete(node); else fixed.set(node, mw); },
+    setFail: (node, text) => { if (text === null || text === undefined) fail.delete(node); else fail.set(node, String(text)); },
     node: id => current.find(x => x.node_id === id),
     close: () => new Promise(resolve => { for (const t of boots.values()) clearTimeout(t); server.closeAllConnections?.(); server.close(() => resolve()); }),
   };

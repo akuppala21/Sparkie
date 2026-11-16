@@ -18,7 +18,8 @@
 // put-back never takes one the owner never took. go-back.sh and an update's way back put
 // back program files only and never trip it. An always-allowed kind taken away raises the number too: an older copy put
 // back by hand holds, and the kind is taken away again (not live before or after "Keep these"). When the state's first
-// number can't be written, the secrets file's is taken out again, so the next start holds nothing.
+// number can't be written, the secrets file's is taken out again, so the next start holds nothing. The notice of what
+// came back masks the names it gives (an agent named like a key).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, cpSync, chmodSync, readdirSync, symlinkSync } from 'node:fs';
@@ -571,5 +572,30 @@ describe('the state’s first number when its second write fails', { concurrency
     assert.equal((await net(N, '/whoami')).json.held, undefined, 'no hold');
     assert.equal(secretsOf(N).auth?.hold, undefined);
     assert.deepEqual([serialIn(N), secretsOf(N).auth?.serial], [1, 1], 'both numbers started at this start');
+  });
+});
+
+// The put-back notice names what came back and was removed again (R7, R1-06): names typed by whoever set each up, so a
+// key typed as an agent's name is masked in the notice, as in every notice.
+describe('the put-back notice masks the names it gives', { concurrency: 1 }, () => {
+  const NAME = 'hf_MadeUpKeyForMaskTest5abcdefghij0123';
+  let A, B;
+  after(async () => { await A?.stop(); await B?.stop(); });
+
+  test('an agent named like a key, removed, then an older copy put back: the notice says it was removed again, masked', { timeout: 300000 * SLOW }, async () => {
+    A = await startMock({});
+    use(A);
+    const k = await ask(A, '/agents', { method: 'POST', body: { name: NAME } });
+    is(k, 201, 'an agent named like a key');
+    const older = copyState(A, 'key-named-older');
+    is(await ask(A, `/agents/${k.json.id}`, { method: 'DELETE' }), 200, 'removed');
+    const secrets = readFileSync(A.secretsFile, 'utf8');
+    await A.stop(); A = null;
+    B = await startFrom(older, secrets);
+    use(B);
+    assert.equal((await net(B, '/whoami')).json.held, LINE, 'held');
+    const notice = eventLines(B).find(e => e.type === 'notice' && /^Spark Console’s state was put back from a copy\./.test(e.text || ''));
+    assert.match(notice?.text || '', /was removed again \(agent key “\[hidden\]”\)/, JSON.stringify(notice));
+    assert.ok(!eventLines(B).some(e => e.type === 'notice' && String(e.text).includes(NAME)), 'no notice holds the name whole');
   });
 });

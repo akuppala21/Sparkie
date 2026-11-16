@@ -5,7 +5,8 @@
 # shuts this stand-in Spark down: every running container exits as a clean shutdown stops it, and the Spark goes dark
 # (its name joins the stand-in fleet's offline file, which the stand-in plug reads for its watts). ~/.mock/poweroff-hangs:
 # the shutdown is accepted but the Spark keeps answering. ~/.mock/poweroff-refused: asking (-l) says yes, but the shutdown
-# itself asks for a password (a rule changed in between). Never runs anything for real.
+# itself asks for a password (a rule changed in between). ~/.mock/poweroff-says (a line): the shutdown prints that line
+# and fails, and the Spark stays up. Never runs anything for real.
 # The root helper's rehearsal (test/rehearsal.mjs): a Spark whose ~/.rehearsal holds a made-up root with the real
 # helper runs it, through sudo -n only and only while the rehearsal has its sudo line, as sudo would run it for root
 # (SUDO_UID and SUDO_USER set; the rehearsal's folder named, so the helper reads every system path under it).
@@ -41,6 +42,7 @@ case "$*" in
   "/usr/bin/systemctl poweroff")
     [ $list = 1 ] && { echo "$*"; exit 0; }
     if [ -f "$M/poweroff-refused" ]; then echo "sudo: a password is required" >&2; exit 1; fi
+    if [ -f "$M/poweroff-says" ]; then cat "$M/poweroff-says"; exit 1; fi
     [ -f "$M/poweroff-hangs" ] && exit 0
     if [ -f "$M/containers" ]; then
       sed 's/^\([^|]*\)|running|[^|]*|/\1|exited|Exited (0) just now|/' "$M/containers" > "$M/c.tmp" && mv "$M/c.tmp" "$M/containers"

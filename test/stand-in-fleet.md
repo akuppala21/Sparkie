@@ -61,8 +61,8 @@ covers, is in `test/README.md`.
   - `bin/sudo` — only `sudo -n`, with the two commands `deploy/power-setup.sh` allows (and `-l` to ask) or with a
     rehearsal's root helper: `systemctl poweroff` makes every running container there exit and puts the Spark in the
     offline file (the stand-in plug reads it); `.mock/no-sudo` makes it ask for a password (refused),
-    `.mock/poweroff-refused` lets `-l` say yes but refuses the shutdown itself, `.mock/poweroff-hangs` keeps the Spark
-    answering. On a Spark whose `~/.rehearsal` holds a made-up root with the real helper and its sudo line
+    `.mock/poweroff-refused` lets `-l` say yes but refuses the shutdown itself, `.mock/poweroff-says` (a line) makes the
+    shutdown print that line and fail, `.mock/poweroff-hangs` keeps the Spark answering. On a Spark whose `~/.rehearsal` holds a made-up root with the real helper and its sudo line
     (`test/rehearsal.mjs`), `sudo -n` runs that helper as sudo would for root; `.mock/sudo-drops` drops the call at
     once (255) while the helper runs on, after the helper's first line when it holds `first-line`. `bin/who` gives the
     sessions in `.mock/who` (none otherwise). `bin/docker`'s `.mock/power-looks` (a number) lets that many more
@@ -79,7 +79,8 @@ covers, is in `test/README.md`.
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,
     `setNames('upper')` for the other cases, and `setWatts(node, mW)` for a reading that stays put whatever the Spark
-    does (one the controller hasn't caught up with; `null` ends it).
+    does (one the controller hasn't caught up with; `null` ends it); `setFail(node, text)` refuses every command to that
+    plug with those words (`null` ends it).
   - `worker.py` — stands in for `service/worker.py` (workspace files go to the real one; status without the removed
     ray/model fields; logs for `console` and `sparkie`).
   - `model.mjs` — Sparkie's model (streams like SGLang; offered tools, it calls them from patterns in the owner's words
