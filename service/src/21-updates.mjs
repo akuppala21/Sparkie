@@ -6,7 +6,7 @@
 // runs `pull.sh setup` (20-keys.mjs), and says: the build installed; the newest commit on main with a tested/ tag, and
 // whether it is newer (never when the installed build's commit on main can't be told: it says so); whether it changes what the brain reads (the two locks' brainReads) and the eval's result for
 // that on record, or "not run"; and the commits' subjects since, which are outside text (data, never the owner's
-// request: check_update is not in INSIDE_READS). It installs and changes nothing; the token never leaves pull.sh. When
+// request: check_update doesn't say it is an inside read, R26). It installs and changes nothing; the token never leaves pull.sh. When
 // GitHub refuses the token, or git isn't on Spark 2, the needs-you list says so until a later check gets past it (kept
 // in memory only: after a restart the next check finds it again). The newest tested build is offered only when its tag
 // passes install's own checks; from the tag's lock only a build id, a time and a hash come out, each checked for its

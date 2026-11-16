@@ -14,7 +14,7 @@
 // command's SHA-256 and its seconds. Spark 2's console unit forbids new privileges, so there the call goes through the
 // owner's service manager. Before the owner's one-time command has run on a Spark (deploy/root-for-sparkie.sh), with a
 // helper this build doesn't know, or with a proof of the walls that is out of date or failed, a look answers with that
-// command and runs nothing: never another way. What a look prints is outside text (not in INSIDE_READS): masked, without
+// command and runs nothing: never another way. What a look prints is outside text (run doesn't say inside, R26): masked, without
 // escape codes, cut for the brain to the first 2,000 and the last 3,500 characters, and kept whole (up to 16 MB) in the
 // one journal record each look, answer and refusal writes when it ends (R43).
 const HELPER_FILE = '/usr/local/sbin/spark-console-root';
@@ -293,8 +293,9 @@ function helperNeeds(node, a) {
 }
 // The owner's one-time command for a compute Spark (deploy/root-for-sparkie.sh), from the installed build on Spark 2.
 // withRoot: the same, turning root's switch on there too (R70: where root is off and a command as root was asked for).
+// Never on Spark 2: root is never on there, and the one-time command refuses --with-root --hub.
 function ownerCommand(node, withRoot = false) {
-  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${withRoot ? '--with-root ' : ''}${node.host === 'local' ? '--hub ' : ''}${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
+  const line = `bash ~/spark-console-src/deploy/root-for-sparkie.sh ${withRoot && node.host !== 'local' ? '--with-root ' : ''}${node.host === 'local' ? '--hub ' : ''}${/^spark([1-9]\d?)$/.exec(node.id)?.[1] || '<its number>'}`;
   let host = '';
   try { host = new URL(consoleOrigin()).hostname; } catch {}
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && /^[a-z_][a-z0-9_-]*$/.test(String(CONFIG.user)) ? `ssh -t ${CONFIG.user}@${host} ${q(line)}` : line;

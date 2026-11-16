@@ -97,7 +97,7 @@ async function rootChange(input, viewer, ctx = {}) {
   // The dangerous ask's press, and only that: inside the net, as root, with the helper's own time limit.
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netGuarded(node, command, { ctx, dir, seconds, cls: sorted.class, gate: 'asked', root: true });
   const open = netOpenOn(node.id);
-  if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
+  if (open) throw new HttpError(409, `${netOpenWords(open, at)} Nothing was asked or run.`);
   // (a root command in the lock-out class: only the owner's own words ask for one, contract 8.3, 21-net.mjs)
   if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from, node); }
   // (no helper there, one this build doesn't know, walls not proven, or root's switch off there: the owner's one command,
