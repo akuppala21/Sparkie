@@ -6,7 +6,8 @@
 // Spark's own timer puts it back, the Spark stays claimed, a second lock-out change there is refused before it is
 // asked, /stop leaves the timer, and /putback puts it back by the owner's word; what the net can't put back (a
 // Tailscale sign-out, a sign-in as another key) is not done; a restart of Spark Console inside the window puts it back
-// at start and says so.
+// at start and says so. The net's seam (netGuarded, which A11's Spark 2 and A12's root call too) runs nothing with the
+// net off, without the owner's press, with a time or folder out of shape, or with a guard open there.
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true): its
 // net's copies and timer are the rehearsal's (the stand-in systemd-run keeps a waiting timer as a file), and a change
 // names the owner's authorized_keys from the Spark's own folder. The ways in tried from outside: a new connection (the
@@ -16,7 +17,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW, REPO } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
@@ -232,4 +233,25 @@ test('a restart of Spark Console inside the window puts the change back at start
   assert.equal(msgs.filter(x => x.notice && /cut off/.test(x.content)).length, 0, JSON.stringify(msgs.filter(x => x.notice).map(x => x.content)));
   assert.ok(statSync(keysFile(A)).isFile());
   await sleep(10);
+});
+
+test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with the net off, without the owner’s press, a time or folder out of shape, or a guard open there; past those it takes the Spark’s claim, Spark 2 as any other', async () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
+  const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'netGuarded');
+  class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
+  const open = new Map([['spark4', { id: 'g1', record: 'j_1', goesBackAt: '2026-11-15T17:00:00Z' }]]);
+  const make = on => new Function('NET_ON', 'HttpError', 'sparkName', 'netOpenOn', 'netHhmm', 'RUNNER_DIR', 'RUNNER_SECONDS', 'randomBytes', 'claimSparks', `${fn}\nreturn netGuarded;`)(
+    on, HttpError, n => `Spark ${n.id.slice(5)}`, s => open.get(s) || null, () => '17:00 UTC', '~/work', 1800, () => Buffer.from('0123456789ab'), s => { throw new Error(`claimed ${s.join(',')}`); });
+  const pressed = { button: true, ownerConfirmed: true };
+  const refused = (p, status, words) => assert.rejects(p, e => e.status === status && words.test(e.message));
+  await refused(make(false)({ id: 'spark3' }, 'true', { ctx: pressed }), 403, /^Nothing ran: the lock-out net is off/);
+  const seam = make(true);
+  await refused(seam({ id: 'spark3' }, 'true', {}), 403, /only the owner’s yes/);
+  await refused(seam({ id: 'spark3' }, 'true', { ctx: { button: true } }), 403, /only the owner’s yes/);
+  for (const seconds of [0, 1801, 1.5, '60']) await refused(seam({ id: 'spark3' }, 'true', { ctx: pressed, seconds }), 400, /1 to 1,800 seconds/);
+  for (const dir of ['/etc', '~/../x', '~/a/./b', 'work']) await refused(seam({ id: 'spark3' }, 'true', { ctx: pressed, dir }), 400, /starts in ~ or a folder under it/);
+  await refused(seam({ id: 'spark4' }, 'true', { ctx: pressed }), 409, /still open there \(record j_1\)/);
+  // (past its gates the seam takes the Spark's claim: Spark 2 as any other, its caller having said yes)
+  for (const id of ['spark2', 'spark3']) await assert.rejects(seam({ id }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), e => e.message === `claimed ${id}`);
 });

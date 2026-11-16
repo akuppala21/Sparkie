@@ -18,7 +18,8 @@
 // 21-telegram.mjs). /stop never stops the timer: it is the Spark's own. One guard a Spark at a time: while one is open
 // on record, a second lock-out change there is refused before it is asked, and its claim refuses it after. At start,
 // each guard still open on record is put back (or found back already, or kept) and the owner told (netRecover). Off
-// (NET_ON), a lock-out change is answered as before: it waits for the net. Spark 2 is A11's; root is A12's.
+// (NET_ON), a lock-out change is answered as before: it waits for the net. Spark 2 (A11) and root (A12) are their
+// steps', through the same seam (netGuarded).
 
 // The switch, dark: this one line turns the net on, once the whole chain has been read. The stand-in fleet may turn it
 // on for a test (SPARK_CONSOLE_NET=1).
@@ -120,12 +121,35 @@ async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
       lockWhy: sorted.why } });
 }
 
-// The press: inside the net, as the module's head says. Returns what the press answers (its note is the outcome).
+// The ladder's press (a lock-out change on a compute Spark): its own gate, then the net's seam.
 async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   // (Spark 2, a brain Spark, root, the root helper named, a pause: whatever its caller says, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class !== 'lockout' || sorted.lasting) throw new HttpError(409, 'It isn’t a lock-out change the net can put back, so the net didn’t run it.');
-  const at = sparkName(node), seconds = RUNNER_SECONDS, id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, t0 = Date.now();
+  return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS });
+}
+
+// The net's one seam: arm the net for this command on this Spark, run it, try the ways in from outside, keep it or put
+// it back, and say so once, as the module's head says. The ladder's press calls it (netRun); so do A11 (a change on
+// Spark 2) and A12 (root), each after its own ask's press and its own gate: the seam refuses no Spark itself.
+//   node: the Spark (nodeById); command: the exact command the owner saw.
+//   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
+//   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
+//   the journal's class and gate.
+// Answers as run does, with net: { id, outcome: kept | put back | timer, goesBackAt } and note: the outcome's words
+// (or, with no helper or an unknown one there, the owner's set-up command, needsOwner). Throws, nothing having run:
+// the net off, no owner's press, a time or folder out of shape, a guard still open there, the Spark claimed, a way in
+// down before.
+async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked' } = {}) {
+  const at = sparkName(node);
+  if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is off in this build, so ${at} wasn’t changed.`);
+  if (!(ctx.button && ctx.ownerConfirmed)) throw new HttpError(403, 'Nothing ran: only the owner’s yes runs a change inside the lock-out net.');
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 1800) throw new HttpError(400, `Nothing ran: a change inside the lock-out net runs 1 to 1,800 seconds, not ${String(seconds).slice(0, 20)}.`);
+  if (!/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new HttpError(400, `Nothing ran: a change inside the lock-out net starts in ~ or a folder under it, not ${String(dir).slice(0, 80)}.`);
+  // (one guard a Spark: the record outlives a restart, where the claim doesn't)
+  const open = netOpenOn(node.id);
+  if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing ran.`);
+  const id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, t0 = Date.now();
   const release = claimSparks([node.id], 'a change inside the lock-out net');
   let held = false, rid = null, ended = null;
   const g = { id, spark: node.id, chat: ctx.chat || null };
@@ -135,7 +159,7 @@ async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
     // (on record before the call: a restart from here on puts it back at start)
     netSave(f => f.guards.push({ ...g, state: 'arming', at: new Date().toISOString(), goesBackAt: new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString() }));
-    rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'lockout', gate: 'asked', unit, seconds,
+    rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: cls, gate, unit, seconds,
       root: false, net: id, args: { spark: node.id, command: command.slice(0, 600), dir }, sub: jSub(node.id) });
     if (!rid) { netMark(id, { state: 'never' }); throw new HttpError(507, JOURNAL_REFUSED); }
     netMark(id, { record: rid });

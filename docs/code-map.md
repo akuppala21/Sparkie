@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22314 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 89 parts in `service/src/`, joined in name order into `service/server.mjs` (22338 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1024,11 +1024,11 @@ run hands every command the sorter does not call a look to workChange (21-work.m
 A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, users and sudo, the network, the helper's own line) on a compute Spark runs only inside the net (R60; design A 2.8). run's ladder (21-ladder.mjs) hands it here. It is always the dangerous ask (20-danger.mjs, R54: what goes back and when, why it can lock the owner out, the exact command); what the net cannot put back (a Tailscale sign-out or a sign-in as another key, a deleted user's home: the sorter's `lasting`) is never done. Pressed, with its two digits: the Spark's claim (R13) is taken; the ways in that work now …
 
 - **Area:** features. **Rules:** R60, R54, R61, R13, R43. **Tests:** net.test.mjs
-- **Lines:** 262
+- **Lines:** 286
 - **Owns:** net.json (writers: netSave)
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `netHhmm`, `netNow`, `netSave`, `netMark`, `netOpenOn`, `netHold`, `netUnhold`, `netTell`, `netTailnet`, `netProbe`, `netOutput`, `netChange`, `netRun`, `netPutbackWord`, `netRecover`
+- **Functions:** `netHhmm`, `netNow`, `netSave`, `netMark`, `netOpenOn`, `netHold`, `netUnhold`, `netTell`, `netTailnet`, `netProbe`, `netOutput`, `netChange`, `netRun`, `netGuarded`, `netPutbackWord`, `netRecover`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `HttpError`, `nodeById`), `02-ssh` (`fields`, `run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`), `21-guard` (`guardCall`, `guardAnswer`), `21-runner` (`RUNNER_DIR`, `RUNNER_SECONDS`, `runnerNever`), `21-work` (`helperCall`, `needsOwner`, `lookClean`, `forBrain`)
 - **Used by:** `19-watcher`, `20-words`, `21-ladder`, `21-telegram`
 
