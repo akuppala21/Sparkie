@@ -120,7 +120,8 @@ export function testedFiles(git, env = process.env) {
 }
 
 // The lock for the build the stand-in fleet runs. `git` is what gitFields gave before the suite ran. `evalSet` is the eval's
-// case set this tree holds (its version and each case's id and expect), so a build reads its own set (R52).
+// case set this tree holds (its version and each case's id and expect), so a build reads its own set (R52). A new key
+// goes in the mark job's check too (.github/workflows/full-run.yml), with its shape: lock.test.mjs holds the two equal.
 export async function lockFor(fleet, { git = gitFields(), env = process.env } = {}) {
   const { workflows } = await (await fetch(`${fleet.base}/workflows`)).json();
   const { build } = await (await fetch(`${fleet.base}/health`)).json();

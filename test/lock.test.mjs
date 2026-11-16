@@ -3,7 +3,8 @@
 // `brainReads`; a character whose bytes reach the stand-in brain in two pieces is recorded whole, so the mark of one
 // tree is the same every time; the lock leaves itself out of `tree`, names `commit` only when HEAD holds exactly the
 // files, and doesn't touch git's own index; without git it names the runner's `SPARK_TEST_TREE` as `tree`; `run` only
-// on GitHub; the service still counts every workflow of the build as tested with the new lock.
+// on GitHub; the service still counts every workflow of the build as tested with the new lock; the mark job's check
+// (`full-run.yml`) names exactly the keys `lockFor` writes, and where jq is, takes that lock and refuses other shapes.
 //
 // The tested mark, test/lock.mjs, without running the whole suite: the lock it writes for the stand-in fleet's build
 // names the files tested (tree, and commit when they are exactly a commit's), the GitHub run (only on GitHub) and what
@@ -119,6 +120,32 @@ describe('the lock', () => {
     for (const bad of ['', 'c'.repeat(39), `${tree}\n`, 'C'.repeat(40), '../x', `${tree} ${tree}`]) assert.deepEqual(testedFiles({}, { SPARK_TEST_TREE: bad }), {}, JSON.stringify(bad));
     assert.deepEqual(testedFiles({}, { SPARK_TEST_TREE: 'd'.repeat(64) }), { tree: 'd'.repeat(64) });
     assert.deepEqual(testedFiles({}, {}), {});
+  });
+
+  // (the final read's U2: the mark job's check named seven keys after lockFor began writing an eighth, evalSet, so
+  // GitHub marked no tree tested from then on)
+  test('the mark job takes the lock lockFor writes on GitHub: the same keys, each in its shape; a key more, or a case set of another shape, is refused', { timeout: 120000 * SLOW }, async () => {
+    const yml = readFileSync(join(REPO, '.github', 'workflows', 'full-run.yml'), 'utf8');
+    const listed = /\(\(keys - (\[[^\]]*\])\) == \[\]\)\n\s*and \.build == \$build/.exec(yml);
+    assert.ok(listed, 'the mark job names the lock’s keys');
+    const tree = 'a'.repeat(40), commit = 'b'.repeat(40);
+    const lock = await lockFor(T.fleet, { env: GITHUB, git: { tree, commit } });
+    assert.deepEqual(Object.keys(lock).sort(), JSON.parse(listed[1]).sort());
+    // (the job's own program on that lock, where jq is: GitHub's runner has it)
+    if (spawnSync('jq', ['--version'], { timeout: 10000 }).status !== 0) return;
+    const program = /--arg run "\$run" '\n([\s\S]*?)\n\s*' "\$LOCK"/.exec(yml)[1];
+    const dir = mkdtempSync(join(tmpdir(), 'lock-mark-'));
+    try {
+      const judge = l => {
+        writeFileSync(join(dir, 'lock.json'), JSON.stringify(l));
+        return spawnSync('jq', ['-e', '-s', '--arg', 'build', lock.build, '--arg', 'tree', tree, '--arg', 'commit', commit, '--arg', 'run', lock.run, program, join(dir, 'lock.json')], { timeout: 10000 }).status;
+      };
+      assert.equal(judge(lock), 0);
+      assert.notEqual(judge({ ...lock, extra: 'x' }), 0);
+      const { evalSet, ...noSet } = lock;
+      assert.notEqual(judge(noSet), 0);
+      for (const set of [{ ...evalSet, version: 'x' }, { ...evalSet, cases: [] }, { ...evalSet, cases: [['one', 'maybe']] }, { ...evalSet, cases: [['One', 'act']] }, { ...evalSet, more: 1 }]) assert.notEqual(judge({ ...lock, evalSet: set }), 0, JSON.stringify(set).slice(0, 200));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
