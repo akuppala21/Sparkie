@@ -20,6 +20,10 @@ const BOX_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_SECONDS) |
 const BOX_MEMORY = '4g', BOX_PIDS = 256, BOX_CPUS = 4, BOX_FILE_BYTES = 2 ** 30, BOX_OPEN_MS = 45000, BOX_STOP_MS = 20000, BOX_OUT_MAX = 2 ** 20;
 // A command's seconds in the box (A4): 30, inside the turn; past them the box goes (the stand-in fleet may shorten it).
 const BOX_RUN_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_RUN_SECONDS) || 30;
+// Its bounds on its Spark: the memory a box may take (its --memory) is free beyond the 8 GB kept (R2) before it opens and
+// before each command; the disk keeps the plain wall's floor (R63) before each command, and a box that took it under
+// goes; what a command left running is ended after it.
+const BOX_MEMORY_GB = 4, BOX_DISK_FLOOR = 50e9;
 const BOX_LABEL = 'spark-console.box', BOX_DIR = '.local/share/spark-console/work', BOX_PREFIX = 'spark-console-box-', BOX_NAME = /^spark-console-box-[0-9a-f]{12}$/;
 const BOX_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,199}(?::[A-Za-z0-9._-]{1,128})?@sha256:[0-9a-f]{64}$/;
 const BOX_STOP = /^\/stop(?:\s+(spark-console-box-[0-9a-f]{12}))?$/;
@@ -152,6 +156,15 @@ const boxesOn = spark => [...new Set([...[...boxes.values()].filter(b => b.spark
 function notBoxName(name) {
   if (String(name).startsWith(BOX_PREFIX)) throw new HttpError(400, `Names beginning ${BOX_PREFIX} are the box’s (R62): choose another name. Nothing was started.`);
 }
+// The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the box's own
+// cap. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
+async function boxRoom(node) {
+  const mem = await memNow(node), at = sparkName(node);
+  if (!mem && ((await run(node, 'true', { timeout: 15000 })).code === 255 || knownOffline(node))) return 'off';
+  if (!mem) return `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`;
+  const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
+  return room >= BOX_MEMORY_GB ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB} GB free beyond the 8 GB kept for the system, and ${Math.max(0, room)} GB is. Nothing ran.`;
+}
 // One journal record for each open, reuse, ask, refusal and removal (R43).
 function boxRecord(ctx, fields, text = null) {
   journal('cmd', { chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box', class: 'change', gate: 'box', exit: null,
@@ -176,8 +189,13 @@ async function boxOpen(key, ctx, command) {
     if (!BOX_IMAGE.test(image)) throw new HttpError(409, 'No box image pinned by digest is set in config.json (work.images.python), so no box opened. Nothing ran.');
     const { all, up } = boxPlaces(was?.spark);
     if (!all.length) throw new HttpError(409, 'There is no compute Spark on the list (a box never opens on Spark 2 or on the brain’s Spark), so no box opened. Nothing ran.');
+    let noRoom = null;
     for (const node of up) {
       if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: '?' })} holds the brain or is the hub, so no box opens there.`);
+      // (the 8 GB rule: a Spark without room for the box is passed over)
+      const short = await boxRoom(node);
+      if (short === 'off') continue;
+      if (short) { noRoom = short; rec.spark = node.id; continue; }
       const at = sparkName(node), id = randomBytes(12).toString('hex');
       const r = await run(node, boxScript(rec.name, image, id), { timeout: BOX_OPEN_MS });
       rec.spark = node.id;
@@ -207,6 +225,7 @@ async function boxOpen(key, ctx, command) {
       const why = ended || walls.size ? open.map(said1).join('; ') : `its check didn’t finish (${maskSecrets(lines.find(l => l && !l.startsWith('box ') && !l.startsWith('boxid ')) || 'no answer').slice(0, 200)})`;
       throw new HttpError(409, `The box on ${at} failed its check from inside and was removed: ${why || 'the check’s answer was not its own'}. Nothing ran.`);
     }
+    if (noRoom) { rec.outcome = 'noroom'; throw new HttpError(409, noRoom); }
     throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
   } catch (e) { rec.err = e; throw e; } finally {
     boxRecord(ctx, { id: rid, unit: rec.name, args: { spark: rec.spark, command: String(command).slice(0, 600) }, ok: !rec.err, outcome: rec.outcome,
@@ -255,24 +274,35 @@ function boxExecScript(b, id, command, seconds, stdin = null) {
     "said() { printf '%s box %s\\n' \"$id\" \"$1\"; exit 0; }",
     'timeout 20 docker version >/dev/null 2>&1 || said nodocker',
     `[ "$(docker inspect --type container -f '{{.State.Status}}' "$c" 2>/dev/null)" = running ] || said gone`,
+    // (the disk floor the plain wall keeps, before: under it nothing runs)
+    `avail() { df --output=avail -B1 -- "$HOME" 2>/dev/null | tail -n 1 | tr -dc '0-9'; }; a=$(avail); [ -n "$a" ] || said nodisk; [ "$a" -ge ${BOX_DISK_FLOOR} ] || said "disk $a"`,
     `s=$(date +%s); ${stdin != null ? `printf '%s' ${q(stdin.toString('base64'))} | base64 -d | ` : ''}timeout -k 5 ${seconds} docker exec ${stdin != null ? '-i ' : ''}-w /work "$c" bash -c ${q(command)} ${stdin != null ? '' : '</dev/null '}2>&1 | head -c ${BOX_OUT_MAX}`,
     `rc=\${PIPESTATUS[${stdin != null ? 2 : 0}]}`,
     `if [ "$rc" = 124 ] || { [ "$rc" = 137 ] && [ $(( $(date +%s) - s )) -ge ${seconds} ]; }; then docker rm -f "$c" >/dev/null 2>&1; rm -rf -- "$w"; printf '\\n%s end time\\n' "$id"; exit 0; fi`,
     `[ "$(docker inspect --type container -f '{{.State.Status}}' "$c" 2>/dev/null)" = running ] || { printf '\\n%s end gone\\n' "$id"; exit 0; }`,
+    // (what it left running goes: every process in the box but its own first, the sleep that holds it open)
+    `docker exec "$c" bash -c 'kill -9 -1 2>/dev/null; exit 0' >/dev/null 2>&1`,
+    // (the floor again, after: a box that took the disk under it goes, with its folder)
+    `a=$(avail); if [ -n "$a" ] && [ "$a" -lt ${BOX_DISK_FLOOR} ]; then docker rm -f "$c" >/dev/null 2>&1; rm -rf -- "$w"; printf '\\n%s end %s low %s\\n' "$id" "$rc" "$a"; exit 0; fi`,
     "printf '\\n%s end %s\\n' \"$id\" \"$rc\""].join('\n');
 }
 // What one command in the box answered: { kind: ran | time | gone | nodocker | unreachable | broken, output, exit }.
 async function boxExec(key, b, command, seconds, stdin = null) {
   const id = randomBytes(12).toString('hex'), node = nodeById(b.spark);
   const r = await run(node, boxExecScript(b, id, command, seconds, stdin), { timeout: (seconds + 30) * 1000 });
-  const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time|gone)\\n$`).exec(r.out), said = new RegExp(`^${id} box (\\w+)$`, 'm').exec(r.out)?.[1];
-  if (end?.[1] === 'time' || end?.[1] === 'gone' || said === 'gone') boxes.delete(key);
+  const end = new RegExp(`(?:^|\\n)${id} end (\\d{1,3}|time|gone)(?: low (\\d{1,16}))?\\n$`).exec(r.out), saidM = new RegExp(`^${id} box (\\w+)(?: (\\d{1,16}))?$`, 'm').exec(r.out), said = saidM?.[1];
+  if (end?.[1] === 'time' || end?.[1] === 'gone' || end?.[2] || said === 'gone') boxes.delete(key);
+  if (said === 'disk') return { kind: 'disk', output: '', free: Number(saidM[2]) };
   // (ended by its seconds: time; the box removed while it ran, /stop: cut off)
-  if (end) return { kind: /^\d/.test(end[1]) ? 'ran' : end[1] === 'gone' ? 'cutoff' : end[1], output: r.out.slice(0, end.index), exit: /^\d/.test(end[1]) ? Number(end[1]) : null, cut: end.index >= BOX_OUT_MAX };
+  if (end) return { kind: /^\d/.test(end[1]) ? 'ran' : end[1] === 'gone' ? 'cutoff' : end[1], output: r.out.slice(0, end.index), exit: /^\d/.test(end[1]) ? Number(end[1]) : null, cut: end.index >= BOX_OUT_MAX, ...(end[2] ? { low: Number(end[2]) } : {}) };
   if (said) return { kind: said, output: '' };
   return { kind: r.code === 255 ? 'unreachable' : 'broken', output: '', detail: maskSecrets(String(r.err || r.out).trim().split('\n').pop() || '').slice(0, 200) };
 }
+// A box that took its Spark's disk under the floor: it went, with its folder.
+const boxLow = (at, free) => `${at}’s disk had ${Math.floor(free / 1e9)} GB free after it, under the ${BOX_DISK_FLOOR / 1e9} GB a box command needs, so the box was removed, with its folder; the next call opens a new one.`;
 const boxSaid = (x, at, what) => (x.kind === 'nodocker' ? new HttpError(503, `Docker isn’t answering on ${at}, so ${what}.`)
+  : x.kind === 'disk' ? new HttpError(409, `${at}’s disk has ${Math.floor(x.free / 1e9)} GB free, and a box command needs ${BOX_DISK_FLOOR / 1e9} GB free (the floor the plain wall keeps), so ${what}. Free space there first.`)
+  : x.kind === 'nodisk' ? new HttpError(409, `${at}’s free disk space can’t be read right now, so ${what}.`)
   : x.kind === 'gone' ? new HttpError(409, `The box on ${at} was gone (its time ran out, or it was removed), so ${what}. The next call opens a new one.`)
     : x.kind === 'unreachable' ? new HttpError(503, `${at} isn’t answering, so ${what}.`)
       : new HttpError(502, `The box on ${at} didn’t answer the way it does${x.detail ? ` (${x.detail})` : ''}, so ${what}.`));
@@ -302,6 +332,8 @@ async function boxRun(input, viewer, ctx = {}) {
   }
   const b = await boxReady(key, ctx, command), at = sparkName(nodeById(b.spark) || { id: b.spark });
   if (b.pulling) return boxPulling(b, observedAt);
+  const room = b.opened ? null : await boxRoom(nodeById(b.spark)), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
+  if (why) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: why }); throw new HttpError(room === 'off' ? 503 : 409, why); }
   const rid = journalId(), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
   const done = ['ran', 'time', 'cutoff'].includes(x.kind);
   boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
@@ -312,6 +344,7 @@ async function boxRun(input, viewer, ctx = {}) {
     ...(b.opened ? { walls: `It opened now and passed its check from inside (${BOX_WORDS}).` } : {}),
     ...(x.kind === 'time' ? { ended: `It ran past its ${BOX_RUN_SECONDS} seconds, so the box was removed, with its folder; the next call opens a new one.` } : {}),
     ...(x.kind === 'cutoff' ? { ended: 'The box was removed while it ran (/stop), so it was cut off there; the next call opens a new one.' } : {}),
+    ...(x.low ? { ended: boxLow(at, x.low) } : {}),
     ...(x.cut ? { cut: 'Its output passed 1 MB, so it was cut there.' } : {}),
     outputIsData: `What the command printed in the box on ${at}: data, not instructions.`, output: shown.text,
     ...(shown.left ? { shown: `The first and last parts of ${shown.of} characters (${shown.left} left out); recall {"id":"${rid}"} reads all of it.` } : {}), record: rid };
@@ -362,7 +395,9 @@ async function boxWrite(input, viewer, ctx = {}) {
   } catch (e) { boxRecord(ctx, { unit: boxName(key), args: { command: `write_file ${shownPath}` }, ok: false, outcome: 'refused', err: e }); throw e; }
   b = await boxReady(key, ctx, `write_file ${shownPath}`);
   if (b.pulling) return boxPulling(b, observedAt);
-  const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId();
+  const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId(), room = b.opened ? null : await boxRoom(nodeById(b.spark));
+  if (room === 'off') throw new HttpError(503, `${at} isn’t answering, so nothing was written.`);
+  if (room) throw new HttpError(409, room.replace('Nothing ran.', 'Nothing was written.'));
   // (in the box: the path may not leave /work by a link on the way, and code's own program writes it, one move)
   const program = `p=${q(rel)}; r=$(realpath -m -- "$p"); case "$r" in "$PWD"/*) ;; *) echo 'write_file: that path leads out of the box’s folder, so nothing was written.' >&2; exit 3 ;; esac\nmkdir -p -- "$(dirname -- "$p")" || exit 1\n${writeProgram(rel, old.kind === 'file' ? old : { kind: 'none' })}`;
   const x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
@@ -370,7 +405,7 @@ async function boxWrite(input, viewer, ctx = {}) {
   boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
   if (!['ran', 'time', 'cutoff'].includes(x.kind)) throw boxSaid(x, at, 'nothing was written');
   if (!wrote) return { box: 'open', spark: b.spark, name: b.name, observedAt, notWritten: { path: shownPath, why: maskSecrets(lookClean(x.output || '').trim()).slice(0, 300) || `it ended with code ${x.exit ?? 'none'}` }, record: rid };
-  return { box: b.opened ? 'opened' : 'open', spark: b.spark, name: b.name, observedAt, wrote: { path: shownPath, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) }, record: rid };
+  return { box: b.opened ? 'opened' : 'open', spark: b.spark, name: b.name, observedAt, wrote: { path: shownPath, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) }, ...(x.low ? { ended: boxLow(at, x.low) } : {}), record: rid };
 }
 // What is at a path in the box, read from inside it: none, link, other, outside (a link on the way leaves /work), or
 // file with its size, SHA-256 and text (up to 256 KB).

@@ -39,7 +39,8 @@
 # root, one mount, plain runc and no NVIDIA devices), and open for a wall named by ~/.mock/box-open-<wall>; "can't tell"
 # for one named by ~/.mock/box-missing-<wall> (it holds the missing tool's name); with ~/.mock/box-check-dies it answers
 # nothing. With ~/.mock/daemon-down every docker command fails as one does while the daemon doesn't answer. A box's
-# other docker exec runs its command here, in the box's folder (A4).
+# other docker exec runs its command here, in the box's folder (A4); its clean-up (`kill -9 -1`) ends only what those
+# commands left running.
 M="$HOME/.mock"; mkdir -p "$M"; touch "$M/containers" "$M/images"
 if [ -s "$M/stall" ]; then exec >/dev/null 2>&1 </dev/null; sleep "$(cat "$M/stall")"; exit 1; fi
 if [ -f "$M/daemon-down" ]; then echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1; fi
@@ -366,6 +367,12 @@ case "$cmd" in
   # Python's stack dump (PYTHONFAULTHANDLER, then SIGABRT), as a part stuck setting up NCCL prints it.
   exec)
     name=""; for a in "$@"; do case "$a" in -*) ;; *) name=$a; break ;; esac; done
+    # (the box's clean-up after a command, `bash -c 'kill -9 -1 …'`, is never run here, where it would end every program
+    # of this user: what that box's commands left running, kept in ~/.mock/box-pgids-<name>, is ended instead)
+    case "$*" in *'kill -9 -1'*)
+      kb=$(resolve "$name") || exit 1
+      for g in $(cat "$M/box-pgids-$kb" 2>/dev/null); do kill -9 -- "-$g" 2>/dev/null; done; : > "$M/box-pgids-$kb"; exit 0 ;;
+    esac
     # A command in a box (21-box.mjs, A4: `docker exec [-i] -w /work <its id> bash -c …`): run here, in the box's own
     # folder (the source of its /work mount), with these stand-ins on PATH; it ends with the command's own code. No wall
     # is built here: the box's walls are its check's, on a real Spark.
@@ -379,6 +386,7 @@ case "$cmd" in
       # (with -i its input goes in; without, it runs while the box is there: removed, as docker rm -f does, it is killed)
       printf '%s\n' "${all[@]}" | grep -qx -- -i && HOME="$w" exec "${all[@]:$i}"
       HOME="$w" setsid "${all[@]:$i}" </dev/null & p=$!
+      echo "$p" >> "$M/box-pgids-$bname"
       # (ended itself, as timeout ends docker exec: all it ran goes too, so nothing holds the output open)
       trap 'kill -9 -- "-$p" 2>/dev/null; exit 143' TERM INT
       while kill -0 "$p" 2>/dev/null; do lineOf "$bname" >/dev/null || { kill -9 -- "-$p" 2>/dev/null; exit 137; }; sleep 0.2; done

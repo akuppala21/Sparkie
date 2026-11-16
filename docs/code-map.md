@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25735 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 100 parts in `service/src/`, joined in name order into `service/server.mjs` (25750 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -141,7 +141,7 @@ One long-running reader per Spark, only while someone has the page open; stopped
 - **Wakes:** none
 - **Functions:** `ggufOnDisk`, `plainText`, `plainImage`, `plainManifest`, `describe`, `inventory`, `containerName`, `engineOf`, `metricsFlags`, `imageOf`, `gpuUsersScript`, `withHow`, `plan`, `fitOf`, `plansFor`, `pairOptions`, `deployOptions`, `memoryShare`, `shareIn`, `withoutShare`, `memNow`, `engineCacheDir`, `engineCache`, `dockerRunCommand`
 - **Uses:** `01-setup` (`MODELS`, `HF_HUB`, `hfSnap`, `NODES`, `NAME_RE`, `CONFIG`, `q`, `HttpError`, `nodeById`, `isProtected`, `hfMounts`), `02-ssh` (`run`, `fields`, `b64json`), `03-identity` (`canUse`), `06-links` (`lastCheck`), `08-cluster` (`clusterPlan`), `12-status` (`sparkName`), `13-main-model` (`MAIN`), `21-web` (`readable`)
-- **Used by:** `07-jobs`, `08-cluster`, `09-verified`, `11-setups`, `13-main-model`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-step-jobs`, `18-workflows`, `20-lessons`, `21-apps`, `21-compare`, `21-power-pair`, `21-power`, `21-runner`, `21-selftest`, `24-handler`
+- **Used by:** `07-jobs`, `08-cluster`, `09-verified`, `11-setups`, `13-main-model`, `14-rounds`, `15-routes`, `16-actions`, `16-reads`, `17-changes`, `18-job-model`, `18-step-jobs`, `18-workflows`, `20-lessons`, `21-apps`, `21-box`, `21-compare`, `21-power-pair`, `21-power`, `21-runner`, `21-selftest`, `24-handler`
 
 ### `06-links.mjs`: multi-Spark readiness (read-only)
 
@@ -933,12 +933,12 @@ Design C 2.5 needs a box that Spark Console's code, never the brain, fills with 
 run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a chat), on a compute Spark that is on, never on Spark 2 or a Spark holding the brain (R1), looked at again before a box already open is used. workBoxCommand builds its only docker run line, every word of it code's: the image pinned by digest (config.json work.images.python), plain runc and no NVIDIA devices, no network, no IPC, no capabilities, no new privileges, a read-only root, the owner's own ids, caps on memory, processes, CPU and file size, one mount (its own folder, …
 
 - **Area:** features. **Rules:** R62, R52, R1, R43. **Tests:** box.test.mjs
-- **Lines:** 388
+- **Lines:** 423
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
-- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxRecord`, `boxOpen`, `boxEnd`, `boxGate`, `boxReady`, `boxPulling`, `boxExecScript`, `boxExec`, `boxSaid`, `boxRun`, `boxWrite`, `boxOld`, `boxStop`
-- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `12-status` (`statusCache`, `sparkName`), `16-actions` (`action`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`, `question`), `20-danger` (`DANGER_HIDDEN`), `20-journal` (`journal`, `jErr`, `jSub`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`, `lookClean`, `forBrain`), `21-write` (`WRITE_MAX`, `writeKey`, `writeSplit`, `writeSplice`, `writeShown`, `writeProgram`, `WRITE_READ`)
+- **Functions:** `workBoxCommand`, `boxConsole`, `boxScript`, `boxRemove`, `boxKey`, `boxName`, `boxBy`, `boxBarred`, `boxPlaces`, `boxesOn`, `notBoxName`, `boxRoom`, `boxRecord`, `boxOpen`, `boxEnd`, `boxGate`, `boxReady`, `boxPulling`, `boxExecScript`, `boxExec`, `boxLow`, `boxSaid`, `boxRun`, `boxWrite`, `boxOld`, `boxStop`
+- **Uses:** `01-setup` (`ALL_LOCAL`, `CONFIG`, `q`, `nodeById`, `HttpError`), `02-ssh` (`run`, `knownOffline`, `fields`), `05-library` (`memNow`, `KEEP_FREE`), `12-status` (`statusCache`, `sparkName`), `16-actions` (`action`), `17-changes` (`brainSparks`, `computeSparks`, `agentSettings`, `propose`, `question`), `20-danger` (`DANGER_HIDDEN`), `20-journal` (`journal`, `jErr`, `jSub`, `journalId`), `20-mcp` (`consoleOrigin`, `maskSecrets`), `21-brain-rail` (`brainRail`), `21-selftest` (`wordList`), `21-work` (`whoMayLook`, `lookClean`, `forBrain`), `21-write` (`WRITE_MAX`, `writeKey`, `writeSplit`, `writeSplice`, `writeShown`, `writeProgram`, `WRITE_READ`)
 - **Used by:** `19-watcher`, `20-words`, `21-apps`, `21-box-fill`, `21-work`, `21-write`
 
 ### `21-brain-check.mjs`: the brain check: does Sparkie's model call tools, with arguments that fit (design E 2.3)
@@ -1196,7 +1196,7 @@ runChange sorts one command itself (20-sort.mjs; no caller hands it an answer) a
 propose_update {do: start|send|drop, title, why} (group updates): Sparkie proposes a change to Spark Console's own code as a pull request, all by code. start fills this chat's box with main's tree from Spark 2's copy of the repository and notes that commit (refused while a proposal is open, or the box holds other work); send reads the box back entry by entry as data, never run (C8b), builds the proposal's tree itself on the noted commit, rebuilds the generated files with the installed build's own generator and refuses one the box holds that isn't what that generator makes, refuses any path …
 
 - **Area:** features. **Rules:** R69, R58, R54. **Tests:** selfchange.test.mjs, check-update.test.mjs
-- **Lines:** 522
+- **Lines:** 502
 - **Actions:** `propose_update`
 - **Owns:** tmp (writers: selfTree; a folder: each send's work, removed on every exit)
 - **Timers:** none

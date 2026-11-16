@@ -43,9 +43,9 @@ const selfRepo = () => { const h = selfHome(); return h ? `${h}/.local/share/spa
 // tree it runs from).
 const selfSource = () => (ALL_LOCAL ? fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '') : `${homedir()}/spark-console-src`);
 
-// The stand-in fleet's switches for its tests (STATE_DIR/.test-selfchange.json, ALL_LOCAL only): on (the piece turned
-// on) and box (a stand-in box while this build has none: files, its paths and texts, null for one removed; busy, other
-// work in it). A trial's pass is never stood in for: the tests keep a stand-in record through POST /main/trial.
+// The stand-in fleet's switch for its tests (STATE_DIR/.test-selfchange.json, ALL_LOCAL only): on, the piece turned on.
+// A trial's pass and the box are never stood in for: the tests keep a stand-in trial record through POST /main/trial,
+// and drive the real box on the stand-in fleet's compute Sparks.
 function selfTestFile() {
   if (!ALL_LOCAL) return null;
   try { const v = JSON.parse(readFileSync(`${STATE_DIR}/.test-selfchange.json`, 'utf8')); return v && typeof v === 'object' ? v : null; } catch { return null; }
@@ -184,37 +184,17 @@ async function selfOne(fn) {
 }
 
 // The box (A2; C8b's boxFill fills the chat's box from an exact tree, and boxReadBack reads it back entry by entry as
-// data, never run: the paths that differ from that tree, each new blob already written into the copy). Until C8b is in
-// this build there is no box: start and send are refused, saying so (the stand-in fleet's tests have a stand-in box).
+// data, never run: the paths that differ from that tree, each new blob already written into the copy).
 async function selfBoxFill(viewer, ctx, tree) {
-  if (typeof boxFill === 'function') {
-    const r = await boxFill(viewer, ctx, tree);
-    if (r?.filled !== true || r.tree !== tree) throw new HttpError(409, `This chat’s box couldn’t take main’s tree yet (${clean(r?.why, 200) || 'it isn’t ready'}), so nothing was started. Ask again in a minute.`);
-    return r;
-  }
-  const t = selfTestFile()?.box;
-  if (t && ALL_LOCAL) {
-    if (t.busy) throw new HttpError(409, 'This chat’s box holds other work, so nothing was put in it. Finish or remove that first (/stop removes the chat’s box).');
-    return { tree };
-  }
-  throw new HttpError(409, 'The box a change is worked on in isn’t in this build yet, so nothing was started.');
+  const r = await boxFill(viewer, ctx, tree);
+  if (r?.filled !== true || r.tree !== tree) throw new HttpError(409, `This chat’s box couldn’t take main’s tree yet (${clean(r?.why, 200) || 'it isn’t ready'}), so nothing was started. Ask again in a minute.`);
+  return r;
 }
 // The box read back: [{ path, blob (a blob id in the copy) or null (removed), mode }] against the tree it was filled from.
 async function selfBoxRead(viewer, ctx, tree) {
-  if (typeof boxReadBack === 'function') {
-    const r = await boxReadBack(viewer, ctx);
-    if (r?.tree !== tree) throw new HttpError(409, 'This chat’s box holds another tree than the proposal’s noted commit (it was filled again, or opened anew), so nothing was sent. Drop the proposal and start again.');
-    return (Array.isArray(r.changes) ? r.changes : []).map(c => ({ path: c?.path, blob: c?.blob ?? null, mode: c?.blob ? c?.mode : null }));
-  }
-  const t = selfTestFile()?.box;
-  if (t && ALL_LOCAL && t.files && typeof t.files === 'object') {
-    const out = [];
-    for (const [path, text] of Object.entries(t.files)) {
-      out.push({ path, mode: '100644', blob: text === null ? null : await selfGit(['hash-object', '-w', '--stdin'], { input: Buffer.from(String(text)) }) });
-    }
-    return out;
-  }
-  throw new HttpError(409, 'The box a change is worked on in isn’t in this build yet, so nothing can be read back from it.');
+  const r = await boxReadBack(viewer, ctx);
+  if (r?.tree !== tree) throw new HttpError(409, 'This chat’s box holds another tree than the proposal’s noted commit (it was filled again, or opened anew), so nothing was sent. Drop the proposal and start again.');
+  return (Array.isArray(r.changes) ? r.changes : []).map(c => ({ path: c?.path, blob: c?.blob ?? null, mode: c?.blob ? c?.mode : null }));
 }
 
 // The words of the brain: one line for a title, a few for why; masked and bounded.

@@ -1,5 +1,6 @@
 #!/bin/bash
 # Stand-in df: 3.3 TB free. Inside a rehearsal of the root helper, <rehearsal>/standin/free says what is free instead
-# (the helper's disk floor, R63).
+# (the helper's disk floor, R63); elsewhere ~/.mock/disk-free does (the box's disk floor, 21-box.mjs).
 echo "Avail"
+if [ -s "$HOME/.mock/disk-free" ] && [ -z "${SPARK_CONSOLE_REHEARSAL:-}" ]; then cat "$HOME/.mock/disk-free"; exit 0; fi
 if [ -n "${SPARK_CONSOLE_REHEARSAL:-}" ] && [ -f "$SPARK_CONSOLE_REHEARSAL/standin/free" ]; then cat "$SPARK_CONSOLE_REHEARSAL/standin/free"; else echo "3300000000000"; fi
