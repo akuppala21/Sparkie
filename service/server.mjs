@@ -16223,9 +16223,10 @@ function notBoxName(name) {
   if (String(name).startsWith(BOX_PREFIX)) throw new HttpError(400, `Names beginning ${BOX_PREFIX} are the box’s (R62): choose another name. Nothing was started.`);
 }
 // The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the box's own
-// cap. Why not, in the runner's words, or null.
+// cap. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
 async function boxRoom(node) {
   const mem = await memNow(node), at = sparkName(node);
+  if (!mem && ((await run(node, 'true', { timeout: 15000 })).code === 255 || knownOffline(node))) return 'off';
   if (!mem) return `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`;
   const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
   return room >= BOX_MEMORY_GB ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB} GB free beyond the 8 GB kept for the system, and ${Math.max(0, room)} GB is. Nothing ran.`;
@@ -16259,6 +16260,7 @@ async function boxOpen(key, ctx, command) {
       if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: '?' })} holds the brain or is the hub, so no box opens there.`);
       // (the 8 GB rule: a Spark without room for the box is passed over)
       const short = await boxRoom(node);
+      if (short === 'off') continue;
       if (short) { noRoom = short; rec.spark = node.id; continue; }
       const at = sparkName(node), id = randomBytes(12).toString('hex');
       const r = await run(node, boxScript(rec.name, image, id), { timeout: BOX_OPEN_MS });
@@ -16396,8 +16398,8 @@ async function boxRun(input, viewer, ctx = {}) {
   }
   const b = await boxReady(key, ctx, command), at = sparkName(nodeById(b.spark) || { id: b.spark });
   if (b.pulling) return boxPulling(b, observedAt);
-  const room = b.opened ? null : await boxRoom(nodeById(b.spark));
-  if (room) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: room }); throw new HttpError(409, room); }
+  const room = b.opened ? null : await boxRoom(nodeById(b.spark)), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
+  if (why) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: why }); throw new HttpError(room === 'off' ? 503 : 409, why); }
   const rid = journalId(), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
   const done = ['ran', 'time', 'cutoff'].includes(x.kind);
   boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
@@ -16460,6 +16462,7 @@ async function boxWrite(input, viewer, ctx = {}) {
   b = await boxReady(key, ctx, `write_file ${shownPath}`);
   if (b.pulling) return boxPulling(b, observedAt);
   const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId(), room = b.opened ? null : await boxRoom(nodeById(b.spark));
+  if (room === 'off') throw new HttpError(503, `${at} isn’t answering, so nothing was written.`);
   if (room) throw new HttpError(409, room.replace('Nothing ran.', 'Nothing was written.'));
   // (in the box: the path may not leave /work by a link on the way, and code's own program writes it, one move)
   const program = `p=${q(rel)}; r=$(realpath -m -- "$p"); case "$r" in "$PWD"/*) ;; *) echo 'write_file: that path leads out of the box’s folder, so nothing was written.' >&2; exit 3 ;; esac\nmkdir -p -- "$(dirname -- "$p")" || exit 1\n${writeProgram(rel, old.kind === 'file' ? old : { kind: 'none' })}`;
