@@ -113,8 +113,9 @@ function boxScript(name, image, id) {
     // (the folders of boxes that have ended, at their time or after a console restart, go before one opens; the
     // daemon answered just now, so "no such container" means it is gone)
     'for d in "$base"/spark-console-box-*; do [ -d "$d" ] && [ ! -L "$d" ] || continue; docker inspect --type container "${d##*/}" >/dev/null 2>&1 || rm -rf -- "$d"; done',
-    // (the pinned image is fetched once, apart from the call: a box opens with --pull never)
-    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 &); say pulling; }',
+    // (the pinned image is fetched once, apart from the call: a box opens with --pull never; the fetch doesn't hold the
+    // lock's descriptor, so the next call is told it is being fetched, not that another box is opening)
+    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 9>&- &); say pulling; }',
     'docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; mkdir -m 700 "$w" || say nofolder',
     `o=$(${workBoxCommand()} 2>&1) || { docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; say failed "$(printf '%s' "$o" | tail -n 1 | head -c 300)"; }`,
     // (its id, kept: a command or a write later goes to this container, never another of its name)

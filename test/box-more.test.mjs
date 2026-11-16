@@ -2,13 +2,15 @@
 // 8 GB kept must hold 4 GB for every box on record or opening there, the caller's own included. Of two opens at once
 // on a Spark with room for one box, one opens and the other is refused, saying why; with room for two, a third is
 // refused while two are open; a command in an open box is refused once the free memory has dropped below what the
-// boxes there may take, and runs again once it is back. Starts a stand-in fleet: run it on a Spark.
+// boxes there may take, and runs again once it is back. While the box's image is fetched (a slow stand-in fetch, longer
+// than an open's 20-second wait for the lock), the next call is told it is being fetched at once, not that another box
+// is opening. Starts a stand-in fleet: run it on a Spark.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { T, useFleet, api, call, createActKey, sleep, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, sleep, waitFor, REPO, SLOW } from './lib.mjs';
 
 const IMAGE = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8')).work.images.python;
 const K = {};
@@ -70,4 +72,24 @@ test('a command in an open box is refused once free memory has dropped below wha
   const again = await asOwner('touch ran.txt');
   assert.deepEqual([again.ok, again.box, again.r.json?.exit], [true, 'open', 0], again.r.text);
   assert.ok(existsSync(join(mine, 'ran.txt')));
+});
+
+test('while the box’s image is fetched, the next call is told so at once, not that another box is opening', { timeout: 240000 * SLOW }, async () => {
+  const images = join(mock('spark3'), 'images'), slow = join(mock('spark3'), 'slow-pull');
+  writeFileSync(images, text(images).split('\n').filter(l => l && l !== IMAGE).map(l => `${l}\n`).join(''));
+  writeFileSync(slow, '30\n');
+  available(67108864);
+  const FETCHED = 'The box’s image is being fetched to Spark 3 (once; a minute or two). Ask again then. No box opened, and nothing ran.';
+  try {
+    const first = await asAgent(K.b, 'true');
+    assert.deepEqual([first.ok, first.box, first.r.value?.why], [true, 'not yet', FETCHED], first.said);
+    const t0 = Date.now(), next = await asAgent(K.b, 'true'), ms = Date.now() - t0;
+    assert.deepEqual([next.ok, next.box, next.r.value?.why], [true, 'not yet', FETCHED], next.said);
+    assert.ok(ms < 15000, `answered at once, not after the open's 20-second wait for the lock (${ms} ms)`);
+  } finally {
+    rmSync(slow, { force: true });
+    // (the fetches started here end by themselves, about 32 seconds after they began)
+    await waitFor(() => text(images).split('\n').includes(IMAGE), { timeout: 120000, what: 'the slow fetch to end' });
+    await sleep(5000);
+  }
 });
