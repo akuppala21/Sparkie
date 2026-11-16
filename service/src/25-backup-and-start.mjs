@@ -116,6 +116,8 @@ local.listen(CONFIG.port, '127.0.0.1', () => {
   try { tgAfterRestart(); } catch (e) { console.error(`Telegram after the restart: ${e.message}`); }
   // Changes a restart cut off before their end was written (20-journal.mjs): only here, so a second copy never marks them.
   journalAfterRestart();
+  // An install asked from chat: its result, told once in the chat that asked (21-updates.mjs); only here, likewise.
+  updAfterRestart();
   tgLoop().catch(e => console.error(`Telegram: ${e.message}`));
   // The needs-me line's tick (20-tell.mjs): started here, like the loop, so a second copy never sends.
   setInterval(needsMeTick, NEEDS_MS).unref?.();
