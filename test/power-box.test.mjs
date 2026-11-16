@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { T, useFleet, api, newChat, say, waitFor, eventLines, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, newChat, say, choose, waitFor, eventLines, REPO, SLOW } from './lib.mjs';
 import { startPlugs } from './mock/plugs.mjs';
 
 const NODES = [
@@ -111,10 +111,19 @@ describe('a power-off the owner asks for, with Spark Console’s own box open th
     assert.match(r.json.question, new RegExp(`^A box is open: on Spark 4, ${name}, Sparkie’s box in your chat “[^”]*”, for a task still under way there, holding 1 file \\(b\\.txt\\)\\. Power off Spark 4 anyway\\? The box ends first, and what its folder holds goes with it\\.$`));
     assert.ok(hasBox('spark4', name), 'nothing ended yet');
     assert.deepEqual(plugs.commands.slice(before), [], 'nothing switched');
-    const yes = r.json.choices.find(c => c.label === 'Yes, end the box and power off Spark 4');
-    assert.ok(yes?.choice, JSON.stringify(r.json.choices));
-    const p = await act('power_off', { choice: yes.choice });
-    assert.equal(p.json?.outcome, 'started', p.text);
+    assert.deepEqual(r.json.choices.map(c => c.label), ['Yes, end the box and power off Spark 4', 'No, leave it on']);
+    // (the yes is a button: asked in the owner's own chat, where Sparkie's power-off asks the same)
+    const chat2 = await newChat();
+    script([{ match: '^shut down spark 4', calls: [{ name: 'power_off', arguments: { spark: 'spark4' } }] }]);
+    let asked;
+    try { asked = await say(chat2, 'Shut down Spark 4'); } finally { rmSync(join(T.fleet.dir, 'model-script.json'), { force: true }); }
+    const yes = (asked.message.choices || []).find(c => c.label === 'Yes, end the box and power off Spark 4');
+    assert.ok(yes?.id, JSON.stringify(asked.message));
+    assert.ok(hasBox('spark4', name), 'nothing ended yet');
+    assert.deepEqual(plugs.commands.slice(before), [], 'nothing switched');
+    const p = await choose(chat2, yes.id);
+    assert.equal(p.status, 200, p.text);
+    assert.match(p.json?.operation || '', /^[0-9a-f]{12}$/, p.text);
     const done = await opEnd(p.json.operation, 'the power-off');
     assert.equal(done.status, 'completed', `${done.error}\n${done.log.join('\n')}`);
     assert.ok(!hasBox('spark4', name) && !existsSync(folder('spark4', name)), 'the box and its folder went');

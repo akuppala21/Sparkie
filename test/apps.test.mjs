@@ -862,7 +862,8 @@ describe('any workload: GPU apps, commands, jobs (A13)', { concurrency: 1 }, () 
     try {
       for (const [what, change, re] of [
         ['a GPU app', other, /^gpu-other has Spark 3’s GPU now\. start_model can ask to stop it\.$/],
-        ['less free memory', () => writeFileSync(m('spark3', 'meminfo'), meminfo.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${9 * 1024 * 1024} kB`)),
+        // (the stand-in model's files are a few MB: with 8 GB free, nothing is left beyond the 8 GB kept)
+        ['less free memory', () => writeFileSync(m('spark3', 'meminfo'), meminfo.replace(/^MemAvailable:.*$/m, `MemAvailable:   ${8 * 1024 * 1024} kB`)),
           new RegExp(`^spark3 doesn’t have room for ${MODEL3.replace(/\./g, '\\.')} now \\(it takes about \\d+ GB beyond the 8 GB kept free\\)\\. start_model can make room\\.$`)]]) {
         const r = await api('/actions/restart_model', { method: 'POST', body: { spark: 'spark3', container: MODEL3 } });
         assert.equal(r.json?.outcome, 'started', `${what}: ${r.text}`);
