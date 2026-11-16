@@ -184,9 +184,15 @@ async function selfOne(fn) {
   return p;
 }
 
-// The box (A2; C8b fills it from an exact tree and reads it back entry by entry as data, never run). Until C8b is in
+// The box (A2; C8b's boxFill fills the chat's box from an exact tree, and boxReadBack reads it back entry by entry as
+// data, never run: the paths that differ from that tree, each new blob already written into the copy). Until C8b is in
 // this build there is no box: start and send are refused, saying so (the stand-in fleet's tests have a stand-in box).
 async function selfBoxFill(viewer, ctx, tree) {
+  if (typeof boxFill === 'function') {
+    const r = await boxFill(viewer, ctx, tree);
+    if (r?.filled !== true || r.tree !== tree) throw new HttpError(409, `This chat’s box couldn’t take main’s tree yet (${clean(r?.why, 200) || 'it isn’t ready'}), so nothing was started. Ask again in a minute.`);
+    return r;
+  }
   const t = selfTestFile()?.box;
   if (t && ALL_LOCAL) {
     if (t.busy) throw new HttpError(409, 'This chat’s box holds other work, so nothing was put in it. Finish or remove that first (/stop removes the chat’s box).');
@@ -196,6 +202,11 @@ async function selfBoxFill(viewer, ctx, tree) {
 }
 // The box read back: [{ path, blob (a blob id in the copy) or null (removed), mode }] against the tree it was filled from.
 async function selfBoxRead(viewer, ctx, tree) {
+  if (typeof boxReadBack === 'function') {
+    const r = await boxReadBack(viewer, ctx);
+    if (r?.tree !== tree) throw new HttpError(409, 'This chat’s box holds another tree than the proposal’s noted commit (it was filled again, or opened anew), so nothing was sent. Drop the proposal and start again.');
+    return (Array.isArray(r.changes) ? r.changes : []).map(c => ({ path: c?.path, blob: c?.blob ?? null, mode: c?.blob ? c?.mode : null }));
+  }
   const t = selfTestFile()?.box;
   if (t && ALL_LOCAL && t.files && typeof t.files === 'object') {
     const out = [];
