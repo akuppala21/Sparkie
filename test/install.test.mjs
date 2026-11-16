@@ -8,8 +8,9 @@
 // programs from the fixed path (`path-check.sh`'s); a `.curlrc` and a user-site `.pth` in the home are never read by
 // install.sh, restore.sh or the watchdog, and every Python and curl call in the three scripts says `-I` and `-q`. The
 // stand-in switch is an argument only (--stand-in): set in their environment, it switches nothing. The watchdog writes
-// its three files whole, by rename, never through a link that is there. On macOS it runs under bash 3.2 with `tar` and
-// `find` shims; a Linux run is the full proof.
+// its three files whole, by rename, never through a link that is there. E10f: the console runs on a Node of Spark 2's own
+// (from the fixed path), never code-server's: with only that one, an install is refused before anything changes. On
+// macOS it runs under bash 3.2 with `tar` and `find` shims; a Linux run is the full proof.
 //
 // The installer's Spark 2 half (the install.sh inside deploy/host-on-portal.sh), its restore.sh and its watchdog, run on
 // this machine (F4, H1, S5). Nothing real is touched: each case gets its own short HOME, stand-ins come first on PATH
@@ -563,6 +564,18 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.match(m.out, /Not on the fixed path: nvidia-smi\./);
   });
 
+  test('27b. the watchdog never writes into a folder that has one of its files’ names (mv -T)', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    stopRunner(home);
+    writeFileSync(join(home, 'unit-state'), 'active');
+    const S = join(home, '.local', 'state', 'spark-console');
+    rmSync(join(S, 'watchdog-misses'), { force: true });
+    mkdirSync(join(S, 'watchdog-misses'));
+    spawnSync('bash', [join(home, '.local', 'share', 'spark-console', 'watchdog.sh'), '--stand-in'], { env: envFor(home), cwd: home });
+    assert.deepEqual(readdirSync(join(S, 'watchdog-misses')), [], 'a file was written into the folder');
+    unlinkSync(join(home, 'unit-state'));
+  });
+
   test('27. the watchdog writes its three files whole, by rename: a link left in their place is replaced, and what it pointed at is untouched', CASE, async () => {
     const home = makeHome(); await firstGood(home);
     stopRunner(home);
@@ -586,6 +599,70 @@ describe('the installer\'s Spark 2 half, against a stand-in console', () => {
     assert.match(readFileSync(join(S, 'watchdog-restarts'), 'utf8'), /^\d+\n$/);
     assert.equal(readFileSync(join(S, 'watchdog-misses'), 'utf8').trim(), '0');
     unlinkSync(join(home, 'unit-state'));
+  });
+
+  // (E10f: Spark 2's own Node, never code-server's)
+  // code-server's Node, as code-server installs it under the home (here it runs this machine's node).
+  const codeServerNode = home => {
+    const dir = join(home, '.local', 'opt', 'code-server-4.96.2', 'lib');
+    mkdirSync(dir, { recursive: true });
+    sh(join(dir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+    return dir;
+  };
+  const FIXED = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+  // (what every Node refusal says to do, word for word, as a pattern)
+  const HOW = 'Install Node\\.js 22 from NodeSource: curl -q -fsSL https://deb\\.nodesource\\.com/setup_22\\.x \\| sudo -E bash - && sudo apt-get install -y nodejs\\. Then run this again\\. Nothing was changed\\.';
+  const fixedNode = spawnSync('sh', ['-c', 'command -v node'], { env: { PATH: FIXED }, encoding: 'utf8' }).stdout.trim();
+  test('28. the console runs on Spark 2\'s own Node, from the fixed path: with code-server\'s first on the PATH, install.sh takes the other', { ...CASE, skip: !fixedNode && 'no node on the fixed path here' }, async () => {
+    const home = makeHome(), cs = codeServerNode(home);
+    sh(join(home, 'in', 'path-check.sh'), '#!/bin/sh\nexit 0\n');
+    const r = await run(home, ['check'], { PATH: `${cs}:${envFor(home).PATH}` }, false);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, new RegExp(`Node\\.js v\\d+[^ ]* \\(${fixedNode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\): ok`));
+    assert.doesNotMatch(r.out, /code-server/);
+  });
+
+  test('29. with only code-server\'s Node on Spark 2, an install is refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), cs = codeServerNode(home), b = stage(home, 'good', 1);
+    // (no node on the PATH given: the stand-in fleet's tests take Node from it)
+    const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:/usr/bin:/bin` });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, new RegExp(`STOP: Spark 2 has no Node\\.js of its own, and Spark Console no longer runs on code-server's \\(${join(cs, 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)\\. ${HOW}`));
+    assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+  });
+
+  // (the sixth read of C4b: 22 or newer with the built-in WebSocket client; where the found node leads)
+  const nodeStub = (dir, version, ws) => { mkdirSync(dir, { recursive: true }); sh(join(dir, 'node'), `#!/bin/sh\ncase "$1" in --version) echo ${version} ;; -e) exit ${ws ? 0 : 1} ;; *) exec ${JSON.stringify(process.execPath)} "$@" ;; esac\n`); return dir; };
+  test('30. a Node older than 22, or one without the built-in WebSocket client, or one that leads into the home: refused before anything changes, saying what to install', CASE, async () => {
+    const home = makeHome(), b = stage(home, 'good', 1), out = mkdtempSync(join(tmpdir(), 'scin-node-'));
+    homes.push(out);
+    const cases = [
+      [nodeStub(join(out, 'old'), 'v18.19.1', true), /STOP: Spark Console needs Node\.js 22 or newer, but the one it would run with \([^)]*\) is v18\.19\.1\./],
+      [nodeStub(join(out, 'nows'), 'v22.11.0', false), /STOP: The Node\.js it would run with \([^)]*, v22\.11\.0\) has no built-in WebSocket client, which the plug control needs\./],
+    ];
+    // (a node on the PATH given that is a link to one in the home)
+    const inHome = nodeStub(join(home, '.nvm', 'bin'), 'v22.11.0', true), link = join(out, 'link');
+    mkdirSync(link); symlinkSync(join(inHome, 'node'), join(link, 'node'));
+    cases.push([link, /STOP: The Node\.js found \([^)]*\) is in your home \([^)]*\.nvm\/bin\/node\); Spark Console runs only on Spark 2's own\./]);
+    for (const [dir, re] of cases) {
+      const r = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${dir}:/usr/bin:/bin` });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, re);
+      assert.match(r.out, new RegExp(HOW));
+      assert.deepEqual([snaps(home), existsSync(join(home, 'spark-console-service')), systemctlLog(home)], [[], false, []]);
+    }
+    const ok = await install(home, nextStamp(), b, { PATH: `${join(home, 'bin')}:${nodeStub(join(out, 'good'), 'v22.11.0', true)}:/usr/bin:/bin` });
+    assert.equal(ok.code, 0, ok.out);
+  });
+
+  test('31. restore.sh says so when the unit it puts back starts the service with a Node that is gone', CASE, async () => {
+    const home = makeHome(); await firstGood(home);
+    const stamp = nextStamp();
+    assert.equal((await install(home, stamp, stage(home, 'good', 2))).code, 0);
+    const unit = join(snapDir(home, stamp), 'spark-console-api.service');
+    writeFileSync(unit, readFileSync(unit, 'utf8').replace(/^ExecStart=\S+ /m, `ExecStart=${join(home, 'gone', 'node')} `));
+    const r = spawnSync('bash', [join(snapDir(home, stamp), 'restore.sh'), '--stand-in'], { env: envFor(home), encoding: 'utf8', timeout: 60000 * SLOW });
+    assert.match(r.stdout + r.stderr, new RegExp(`The build put back starts with the Node\\.js at ${join(home, 'gone', 'node').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, which is no longer there, so it can't start\\.`));
   });
 });
 
