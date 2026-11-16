@@ -7,7 +7,9 @@
 // so the made-up root is the fleet's root folder, ~/.rehearsal a link to it, the home in /etc/passwd /<spark> (the
 // Spark's own folder), and the names the run wall holds are made as the one-time command makes them. One Spark a fleet.
 // The command then runs with HOME=/<spark>, which is not there: it starts in the Spark's folder (run's --dir), so a
-// command names its files from there.
+// command names its files from there. With home: true (the eval's practice Spark, test/eval.mjs) the stand-in
+// systemd-run gives a run, look or root unit the made-up root's view of that home (<rehearsal>/standin/home), so its HOME
+// is the Spark's folder and ~ is there, as the owner's home is on a Spark.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, chmodSync, realpathSync, symlinkSync, existsSync } from 'node:fs';
@@ -34,7 +36,7 @@ function makeMissing(home) {
   }
 }
 
-export function rehearse(root, spark, { prove = true, knobs = {}, run = false } = {}) {
+export function rehearse(root, spark, { prove = true, knobs = {}, run = false, home: homeThere = false } = {}) {
   const home = join(root, spark), R = run ? root : join(home, '.rehearsal');
   const put = (p, text = '', mode) => { mkdirSync(dirname(join(R, p)), { recursive: true }); writeFileSync(join(R, p), text); if (mode) chmodSync(join(R, p), mode); };
   mkdirSync(join(R, 'usr/local/sbin'), { recursive: true });
@@ -50,6 +52,7 @@ export function rehearse(root, spark, { prove = true, knobs = {}, run = false } 
   put('sys/fs/cgroup/cgroup.controllers', 'cpu io memory pids\n');
   mkdirSync(join(R, 'standin'), { recursive: true });
   for (const [k, v] of Object.entries(knobs)) put(`standin/${k}`, v);
+  if (homeThere) put('standin/home');
   if (prove) {
     const real = realpathSync(R), p = spawnSync(join(real, 'usr/local/sbin/spark-console-root'), ['prove', '--id', 'prepared00001'], { env: rehearsalEnv(realpathSync(home), real), encoding: 'utf8', timeout: 120000 });
     assert.equal(p.status, 0, p.stdout + p.stderr);

@@ -246,7 +246,11 @@ test('off: run has no root in its schema, so what the brain reads is as before; 
 
 // The final read's root-script: "as root, never a script" held only for a file named as a word. The sorter's next step
 // names what runs unseen in its field `unshown`; root refuses on it, and on scripts as before (stand-in sorted objects).
-test('as root, code the command doesn’t show is never run: a script it names, or what the sorter says runs unseen', () => {
+// Round two with the outside reviewer (A-16, root's own half): root refuses on the sorter's fields alone, unshown and
+// later (work it starts later, off the button and outside the net), and its words say the plain truth: root never runs
+// code it doesn't show, so no way round it is offered (a file run by name included). A program the sorter doesn't know
+// (unknownProgram) is asked, not refused.
+test('as root, code the command doesn’t show is never run, nor work it starts later: a script it names, or what the sorter says runs unseen or later', () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8'), fn = /^function rootUnseen\([\s\S]*?\n\}$/m.exec(src)?.[0];
   assert.ok(fn, 'rootUnseen');
   const rootUnseen = new Function(`${fn}\nreturn rootUnseen;`)();
@@ -254,7 +258,24 @@ test('as root, code the command doesn’t show is never run: a script it names, 
   assert.equal(rootUnseen({ class: 'change', scripts: [], unshown: null }), null);
   assert.match(rootUnseen({ class: 'risky', scripts: ['~/work/fix.sh'] }), /^Nothing was asked or run: as root, give the command itself, not a script \(~\/work\/fix\.sh\)/);
   assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: 'bash runs what comes in through < or a pipe.' }),
-    'Nothing was asked or run: as root, give the command itself. It runs code that isn’t in its own words (bash runs what comes in through < or a pipe), so that code isn’t on the button and can change before your press.');
+    'Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (bash runs what comes in through < or a pipe). Give its steps as plain commands instead, each one on the button.');
+  assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: null, later: null }), null);
+  assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: null, later: 'systemd-run starts work later, by itself, outside this command and the net' }),
+    'Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (systemd-run starts work later, by itself, outside this command and the net). Run the work itself now, as its own command; a timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH.');
+  assert.equal(rootUnseen({ class: 'risky', scripts: [], unshown: null, later: null, unknownProgram: 'frobnicate' }), null, 'a program it doesn’t know is asked');
+  for (const s of [{ scripts: ['~/work/fix.sh'] }, { scripts: [], unshown: 'the code a python3 one-liner runs and loads' }, { scripts: [], later: 'at starts work later' }]) assert.doesNotMatch(rootUnseen(s), /in a file|by name|\bfile\b/, JSON.stringify(s));
+});
+
+// A-16's last part: the root ask says in one line that Sparkie doesn't know the program (the sorter's unknownProgram).
+test('the root ask names, in one line, a program Sparkie doesn’t know; a known program adds no line', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8'), fn = /^function rootLines\([\s\S]*?\n\}$/m.exec(src)?.[0], line = /^const rootLine = .*;$/m.exec(src)?.[0];
+  assert.ok(fn && line, 'rootLines and rootLine');
+  const rootLines = new Function('netTimeWords', 'workStartsIn', `${line}\n${fn}\nreturn rootLines;`)(s => `${s} seconds at most`, d => `It starts in ${d}.`);
+  const known = rootLines('Spark 3', 600, 'apt-get install -y htop', '~/work', { class: 'change', unknownProgram: null });
+  const odd = rootLines('Spark 3', 600, 'frobnicate --all', '~/work', { class: 'risky', unknownProgram: 'frobnicate' });
+  assert.deepEqual(odd.slice(0, -1), known);
+  assert.equal(odd.at(-1), 'Sparkie doesn’t know the program frobnicate, so it can’t tell you what it does as root: read the command before you answer.');
+  assert.equal(odd.filter(l => l.includes('frobnicate')).length, 1);
 });
 
 // From the helper's reviewer, root-mount: root's unit has its own mount table, so a mount, unmount or swap made in it never
@@ -271,4 +292,64 @@ test('as root, a mount, unmount or swap is refused with how to do it instead: re
   const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'mount /dev/sdb1 /data', root: true } });
   assert.equal(r.status, 403, r.text);
   assert.equal(r.json.error, 'Nothing was asked or run: a root command runs with its own view of the disks, so a mount in it never reaches Spark 3 (it would end with the command, and be told as done). Do it through systemd instead: a line in /etc/fstab (or a .mount or .swap unit), then systemctl daemon-reload and systemctl start <its name>.mount (or .swap), as root.');
+});
+
+// Round two with the outside reviewer (A-16, root's own half): an interpreter given its program inline carried no unshown
+// mark, so root accepted programs that load a file the button never shows. The sorter marks every such run in its field
+// unshown (its own step, A-16), and root refuses on that field alone (rootUnseen), with no list of root's own; a command
+// the sorter's reader can't read whole is refused too (rootUnreadable). End to end: one-liners of python3, node and perl
+// that load a file, a program piped into python3, and work started later, by systemd-run or a drop-in written (later).
+test('as root, code the sorter says runs unseen, or work it says starts later, is refused end to end by its field alone, and so is a command the reader can’t read whole', async () => {
+  const shell = readFileSync(join(REPO, 'service', 'src', '20-shell.mjs'), 'utf8'), src = readFileSync(join(REPO, 'service', 'src', '21-root.mjs'), 'utf8');
+  const fn = /^function rootUnreadable\([\s\S]*?\n\}$/m.exec(src)?.[0];
+  assert.ok(fn, 'rootUnreadable');
+  const rootUnreadable = new Function(`${shell}\n${fn}\nreturn rootUnreadable;`)();
+  for (const c of ['python3 --version', 'apt-get install -y python3', 'echo python3 -c', 'chmod 600 /etc/x', 'ufw allow 8002', 'printf root > rooted.txt', 'find old -delete', `python3 -c "print(1)"`]) assert.equal(rootUnreadable(c), null, c);
+  assert.match(rootUnreadable('for f in a b; do echo $f; done') || '', /loop/);
+  assert.doesNotMatch(src, /ROOT_INTERPRETERS|ROOT_INLINE/, 'no list of root’s own');
+  // (end to end, the owner's own call: refused before anything is asked)
+  const r = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'cat /tmp/repair.py | python3', root: true } });
+  assert.deepEqual([r.status, r.json?.error], [403, 'Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it (the python3 code it reads from its input). Give its steps as plain commands instead, each one on the button.'], r.text);
+  for (const [command, prog] of [[`python3 -c "exec(open('/tmp/repair.py').read())"`, 'python3'], [`node -e "require('/tmp/repair.js')"`, 'node'], [`perl -e 'do "/tmp/x.pl"'`, 'perl']]) {
+    const x = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command, root: true } });
+    assert.equal(x.status, 403, `${command}: ${x.text}`);
+    assert.match(x.json.error, new RegExp(`^Nothing was asked or run: as root, Spark Console never runs code the button doesn’t show, and this runs code that isn’t on it \\(the code a ${prog} one-liner runs and loads .*\\)\\. Give its steps as plain commands instead, each one on the button\\.$`), command);
+  }
+  for (const [command, via] of [['systemd-run --on-active=60 touch /x', 'systemd-run'], [`printf '[Service]\\nExecStart=/bin/true\\n' > /etc/systemd/system/x.service.d/override.conf`, 'a schedule or a unit written']]) {
+    const x = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command, root: true } });
+    assert.deepEqual([x.status, x.json?.error], [403, `Nothing was asked or run: as root, Spark Console never starts work that runs later, off the button and outside the net, and this does (${via} starts work later, by itself, outside this command and the net). Run the work itself now, as its own command; a timer, schedule, unit or drop-in meant to stay is made by hand on the Spark, over SSH.`], command);
+  }
+  const loop = await api('/actions/run', { method: 'POST', body: { on: 'spark3', command: 'for f in a b; do touch $f; done', root: true } });
+  assert.equal(loop.status, 403, loop.text);
+  assert.match(loop.json.error, /^Nothing was asked or run: as root, a command is run only when Spark Console can read it whole, and this one it can’t \(/);
+});
+
+// A-16's last part, end to end: the sorter names a program it doesn't know (unknownProgram), and the root ask says so.
+test('the root ask, end to end, says in one line that Sparkie doesn’t know the program; nothing runs before the press', { timeout: 120000 * SLOW }, async () => {
+  const chat = await newChat(), words = 'as root on spark 3, run frobnicate', a = await ask(chat, words, 'frobnicate --all');
+  assert.ok(a.m, `the root ask (${JSON.stringify(sentBack(words))})`);
+  try {
+    assert.equal(a.m.danger.lines[0], 'ROOT on Spark 3', a.m.danger.lines.join('\n'));
+    assert.equal(a.m.danger.lines.filter(l => l === 'Sparkie doesn’t know the program frobnicate, so it can’t tell you what it does as root: read the command before you answer.').length, 1, a.m.danger.lines.join('\n'));
+  } finally { await press(chat, a.no.id); }
+});
+
+// Round two with the outside reviewer (root's own half): rootChange sorted a root command as the owner's (runnerSortOpts
+// sets root: false), so the sorter's root-only rules never applied there: kill -9 812 or kill 1 as root, where a number
+// can be any process (a way in among them), was asked as plain ROOT, outside the lock-out class's own path. Sorted as
+// root, each is the lock-out class: its ask, and from anything but the owner's own words, refused.
+test('as root, kill -9 812 and kill 1 are the lock-out class: ROOT on Spark 3 · CAN LOCK YOU OUT, and from Sparkie’s own proposal refused, never asked', { timeout: 180000 * SLOW }, async () => {
+  for (const [words, command] of [['as root on spark 3, stop the ssh process 812', 'kill -9 812'], ['as root on spark 3, stop sshd', 'kill 1']]) {
+    const chat = await newChat(), a = await ask(chat, words, command);
+    assert.ok(a.m, `${command}: the dangerous ask (${JSON.stringify(sentBack(words))})`);
+    try {
+      assert.equal(a.m.danger.lines[0], 'ROOT on Spark 3 · CAN LOCK YOU OUT', `${command}: ${a.m.danger.lines.join('\n')}`);
+      assert.match(a.m.danger.lines.join('\n'), /\nWhy it can lock you out: “kill” as root may kill any process, a way in among them/, command);
+    } finally { await press(chat, a.no.id); }
+  }
+  // (the lock-out class's own path: words that ask for no lock-out change are refused, never asked)
+  const words = 'as root on spark 3, kill process 812', chat = await newChat(), a = await ask(chat, words, 'kill -9 812');
+  if (a.no) await press(chat, a.no.id);
+  assert.equal(a.m, undefined, 'refused, never asked');
+  assert.match(sentBack(words)[0]?.error || '', /^Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal/);
 });
