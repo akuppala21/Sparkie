@@ -396,6 +396,9 @@ swap() {
   rmdir "$1"
 }
 echo "Putting back the Spark Console install saved in $S …"
+# However this ends, the service is started again: a copy or a move that fails must never leave it stopped (the
+# watchdog leaves a stopped service alone).
+trap 'systemctl --user daemon-reload 2>/dev/null; systemctl --user start spark-console-api 2>/dev/null || true' EXIT
 # First a copy beside each live folder, checked: one that fails (a full disk, a disk error) changes nothing live, the
 # service isn't stopped, and this snapshot stays as it is, to be run again once there is room.
 B="$HOME/.spark-console.restore" BS="$HOME/.spark-console-service.restore" BU="$HOME/.config/systemd/user/.spark-console-api.service.restore"
@@ -405,9 +408,6 @@ if ! { stage "$S/spark-console" "$B" && stage "$S/spark-console-service" "$BS" \
   echo "  The saved install couldn't be copied back (is the disk full?), so nothing was changed. Make room, then run this again: bash $0" >&2
   exit 1
 fi
-# However this ends, the service is started again: a move that fails must never leave it stopped (the watchdog leaves a
-# stopped service alone).
-trap 'systemctl --user daemon-reload 2>/dev/null; systemctl --user start spark-console-api 2>/dev/null || true' EXIT
 systemctl --user stop spark-console-api 2>/dev/null || true
 swap "$B" "$HOME/spark-console"
 swap "$BS" "$HOME/spark-console-service"
