@@ -14998,7 +14998,8 @@ action({
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
 // reads back as one. boxFill takes an exact tree id from the console's own bare copy on Spark 2 (the one pull.sh setup
-// makes): git's own list of it must hold only plain files and folders with plain names, within the bounds; git archive
+// makes): git's own list of it must hold only plain files and folders with plain names, within the bounds (the stand-in
+// fleet's links under test/mock/root/ are left out: FILL_LINKS_LEFT); git archive
 // of that tree is then taken entry by entry here (tarRead) and must hold exactly that tree, byte for byte, before any
 // of it goes into the chat's box, as files under one folder (FILL_FOLDER); a box that holds other work is left as it
 // is. boxReadBack streams that folder out of the box as tar and takes it entry by entry here, as data: anything but a
@@ -15012,6 +15013,9 @@ const FILL_FOLDER = 'spark-console';
 // The bounds, for a fill and a read back alike: entries (files and folders), one file, all files, one path (bytes).
 const FILL_MAX_ENTRIES = 5000, FILL_MAX_FILE = 8 * 2 ** 20, FILL_MAX_BYTES = 64 * 2 ** 20, FILL_MAX_PATH = 255, FILL_MS = 120000;
 const FILL_BOUNDS = '5,000 files and folders, 8 MiB a file, 64 MiB in all, 255 bytes a path';
+// The links the repository itself keeps for the stand-in fleet (its model cache): left out of a fill, so the box never
+// holds them and a read back never says they went. A link anywhere else refuses the fill; a read back takes none.
+const FILL_LINKS_LEFT = 'test/mock/root/';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
@@ -15039,18 +15043,21 @@ const fillBlobId = data => createHash('sha1').update(`blob ${data.length}\0`).up
 // plain files and folders under `folder` is taken: a regular file or a folder, its name as ustar (and git's pax path)
 // gives it, strict UTF-8; nothing else is ever written anywhere. A link, a hard link, a device, a fifo, a type it
 // doesn't know, a pax key it doesn't know, a damaged header, a path that leaves the folder, a name that differs from
-// another only by case or Unicode form, or one past a bound refuses the whole stream, with the entry's name.
+// another only by case or Unicode form, or one past a bound refuses the whole stream, with the entry's name. Only a
+// link whose path is in `skip` (a fill's FILL_LINKS_LEFT, never a read back's) is passed over, and its bytes (with its
+// extended header) are given back in `drop`, for the fill to leave out of the stream.
 const TAR_UTF8 = new TextDecoder('utf-8', { fatal: true });
 const TAR_TYPES = { 1: 'a hard link', 2: 'a link', 3: 'a device', 4: 'a device', 6: 'a fifo', 7: 'an entry type the reader doesn’t know' };
-function tarRead(buf, folder) {
-  const out = [], seen = new Map();
-  let off = 0, pax = null, bytes = 0;
+function tarRead(buf, folder, skip = new Set()) {
+  const out = [], seen = new Map(), drop = [], relOf = n => (String(n).startsWith(`${folder}/`) ? String(n).slice(folder.length + 1) : null);
+  let off = 0, pax = null, bytes = 0, from = 0;
   const cstr = b => { const i = b.indexOf(0); return i < 0 ? b : b.subarray(0, i); };
   const utf8 = (b, name) => { try { return TAR_UTF8.decode(b); } catch { throw fillRefuse('a name isn’t UTF-8', name ?? b.toString('latin1')); } };
   const octal = (b, name) => { const s = cstr(b).toString('latin1').trim(); if (!/^[0-7]{1,12}$/.test(s)) throw fillRefuse('an entry’s header holds a number the reader doesn’t know', name); return parseInt(s, 8); };
   for (;;) {
     if (off + 512 > buf.length) throw fillRefuse('the stream ends before its end mark', null);
     const h = buf.subarray(off, off + 512);
+    if (!pax) from = off;
     if (h.every(x => x === 0)) {
       if (!buf.subarray(off).every(x => x === 0)) throw fillRefuse('there are bytes after the stream’s end', null);
       break;
@@ -15078,7 +15085,7 @@ function tarRead(buf, folder) {
         i += len;
       }
       for (const k of keys.keys()) {
-        if (k === 'linkpath') throw fillRefuse('an entry is a link', keys.get('path') ?? shown);
+        if (k === 'linkpath' && !(type === 'x' && skip.has(relOf(keys.get('path'))))) throw fillRefuse('an entry is a link', keys.get('path') ?? shown);
         if (!(type === 'x' ? ['path', 'mtime', 'atime', 'ctime'] : ['comment']).includes(k)) throw fillRefuse(`an extended header holds a key the reader doesn’t know (${fillShow(k).slice(0, 40)})`, shown);
       }
       if (type === 'x') pax = keys;
@@ -15086,6 +15093,7 @@ function tarRead(buf, folder) {
     }
     let name = pax?.has('path') ? pax.get('path') : utf8(raw, shown);
     pax = null;
+    if (type === '2' && skip.has(relOf(name))) { drop.push([from, off]); continue; }
     if (type !== '0' && type !== '\0' && type !== '5') throw fillRefuse(`an entry is ${TAR_TYPES[type] || 'of a type the reader doesn’t know'}`, name);
     const dir = type === '5';
     if (dir && name.endsWith('/')) name = name.slice(0, -1);
@@ -15106,7 +15114,7 @@ function tarRead(buf, folder) {
     seen.set(key(rel), { rel, dir });
     if (!dir) out.push({ path: rel, mode: octal(h.subarray(100, 108), name) & 0o100 ? '100755' : '100644', data });
   }
-  return { files: out, bytes, entries: seen.size };
+  return { files: out, bytes, entries: seen.size, drop };
 }
 
 // One command on a Spark with bytes in (stdin) and bytes out: at most `max` bytes are kept, and past that it is ended
@@ -15134,7 +15142,7 @@ async function fillTreeList(tree) {
   if (r.code === 3) throw new HttpError(409, `${tree} isn’t a tree in Spark Console’s copy of the repository. Nothing was changed.`);
   if (r.over) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
   if (r.code !== 0) throw new HttpError(502, `git couldn’t list the tree on Spark 2: ${fillShow(r.err.split('\n')[0] || `exit ${r.code}`)}. Nothing was changed.`);
-  const blobs = new Map(), trees = new Set(), seen = new Map();
+  const blobs = new Map(), trees = new Set(), links = new Set(), seen = new Map();
   let bytes = 0;
   for (const rec of r.out.toString('latin1').split('\0').filter(Boolean)) {
     const m = /^(\d{6}) (\w+) ([0-9a-f]{40}) +(-|\d+)\t([\s\S]+)$/.exec(rec);
@@ -15142,21 +15150,23 @@ async function fillTreeList(tree) {
     let path;
     try { path = TAR_UTF8.decode(Buffer.from(m[5], 'latin1')); } catch { throw fillRefuse('a name isn’t UTF-8', m[5]); }
     const [, mode, type, oid, size] = m;
-    if (mode === '120000') throw fillRefuse('the tree holds a link', path);
+    const link = mode === '120000';
+    if (link && !path.startsWith(FILL_LINKS_LEFT)) throw fillRefuse('the tree holds a link', path);
     if (mode === '160000') throw fillRefuse('the tree holds a link to another repository (a submodule)', path);
-    if (!['100644', '100755', '040000'].includes(mode) || (type === 'tree') !== (mode === '040000')) throw fillRefuse('the tree holds an entry type the console doesn’t fill', path);
+    if (!link && (!['100644', '100755', '040000'].includes(mode) || (type === 'tree') !== (mode === '040000'))) throw fillRefuse('the tree holds an entry type the console doesn’t fill', path);
     const wrong = fillPathWrong(path);
     if (wrong) throw fillRefuse(wrong, path);
-    if (blobs.size + trees.size >= FILL_MAX_ENTRIES) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
+    if (blobs.size + trees.size + links.size >= FILL_MAX_ENTRIES) throw fillRefuse(`the tree has more than ${FILL_MAX_ENTRIES.toLocaleString('en-US')} files and folders`, null);
     const key = path.normalize('NFC').toLowerCase(), was = seen.get(key);
     if (was) throw fillRefuse(`a name differs only by case or Unicode form from ${fillShow(was).slice(0, 60)}`, path);
     seen.set(key, path);
+    if (link) { links.add(path); continue; }
     if (type === 'tree') { trees.add(path); continue; }
     if (Number(size) > FILL_MAX_FILE) throw fillRefuse(`a file is over ${FILL_MAX_FILE / 2 ** 20} MiB`, path);
     if ((bytes += Number(size)) > FILL_MAX_BYTES) throw fillRefuse(`the tree’s files are over ${FILL_MAX_BYTES / 2 ** 20} MiB in all`, null);
     blobs.set(path, { mode, oid, size: Number(size) });
   }
-  return { blobs, trees, bytes };
+  return { blobs, trees, links, bytes };
 }
 // Opening a box is a change, and so are a fill and a read back: Sparkie's and an agent's call meet the pause, Sparkie's
 // the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
@@ -15205,10 +15215,12 @@ async function boxFill(viewer, ctx, tree) {
     const list = await fillTreeList(tree);
     const a = await fillStream(fillHub(), `${FILL_GIT} archive --format=tar --prefix=${FILL_FOLDER}/ ${tree}`, { max: FILL_MAX_BYTES + FILL_MAX_ENTRIES * 1024 + 65536 });
     if (a.over || a.code !== 0) throw new HttpError(502, `git couldn’t make the tree’s archive on Spark 2${a.over ? ' within the bounds' : `: ${fillShow(a.err.split('\n')[0] || `exit ${a.code}`)}`}. Nothing was changed.`);
-    const got = tarRead(a.out, FILL_FOLDER), dirs = [...new Set(got.files.flatMap(f => f.path.split('/').slice(0, -1).map((_, i, p) => p.slice(0, i + 1).join('/'))))];
+    const got = tarRead(a.out, FILL_FOLDER, list.links), dirs = [...new Set(got.files.flatMap(f => f.path.split('/').slice(0, -1).map((_, i, p) => p.slice(0, i + 1).join('/'))))];
     const same = got.files.length === list.blobs.size && got.files.every(f => { const b = list.blobs.get(f.path); return b && b.mode === f.mode && fillBlobId(f.data) === b.oid; })
       && dirs.every(d => list.trees.has(d));
     if (!same) throw new HttpError(409, 'git’s archive of the tree doesn’t hold exactly the tree (an attribute of the repository’s may drop or change a file), so the box wasn’t filled. Nothing was changed.');
+    // (git's own bytes, less the links left out: each one's header, extended header and data)
+    const stream = got.drop.length ? Buffer.concat([...got.drop.map(([f], i) => a.out.subarray(i ? got.drop[i - 1][1] : 0, f)), a.out.subarray(got.drop.at(-1)[1])]) : a.out;
     // 2. the box, opened as run {on: "box"} opens it
     let p = boxOpening.get(key);
     if (!p) { p = boxOpen(key, ctx, `fill ${tree}`).finally(() => boxOpening.delete(key)); boxOpening.set(key, p); }
@@ -15217,7 +15229,7 @@ async function boxFill(viewer, ctx, tree) {
     if (b.pulling) { rec.outcome = 'not yet'; return { filled: false, box: 'not yet', spark: b.spark, why: `The box’s image is being fetched to ${sparkName(nodeById(b.spark) || { id: b.spark })} (once; a minute or two). Ask again then. Nothing was filled.` }; }
     const node = fillBoxNode(b), at = sparkName(node), id = randomBytes(12).toString('hex');
     // 3. into the box, only if it holds nothing else
-    const r = await fillStream(node, `docker exec -i ${q(b.name)} bash -c ${q(FILL_SCRIPT)} fill ${id} ${FILL_FOLDER}`, { input: a.out, max: 65536 });
+    const r = await fillStream(node, `docker exec -i ${q(b.name)} bash -c ${q(FILL_SCRIPT)} fill ${id} ${FILL_FOLDER}`, { input: stream, max: 65536 });
     const last = r.out.toString('utf8').split('\n').filter(l => l.startsWith(`${id} fill `)).pop()?.slice(id.length + 6).split(' ') || [];
     if (last[0] === 'busy') { rec.outcome = 'busy'; throw new HttpError(409, `This chat’s box on ${at} holds other work (${Number(last[1]) || 'some'} thing${Number(last[1]) === 1 ? '' : 's'} in its folder), so nothing was put in it.`); }
     if (last[0] !== 'done' || Number(last[1]) !== got.files.length) {

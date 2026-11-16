@@ -68,12 +68,16 @@ function prepareRepo(root) {
   T_.many = makeTree(dir, { many: { tree: Object.fromEntries(Array.from({ length: 5001 }, (_, i) => [`f${i}`, 'x'])) } });
   T_.attr = makeTree(dir, { ...GOOD, '.gitattributes': 'README.md export-ignore\n' });
   T_.commit = gitIn(dir, ['commit-tree', T_.good, '-m', 'c'], '').toString().trim();
+  // (shaped like main: the stand-in fleet's model cache keeps links under test/mock/root/, which a fill leaves out)
+  const hub = { snap: { tree: { 'config.json': { link: '../blobs/cfg1' }, 'real.txt': 'kept\n' } }, blobs: { tree: { cfg1: '{}\n' } } };
+  T_.mainlike = makeTree(dir, { ...GOOD, test: { tree: { mock: { tree: { root: { tree: { spark2: { tree: { hub: { tree: hub } } } } } } } } } });
+  T_.linkelse = makeTree(dir, { ...GOOD, test: { tree: { mock: { tree: { evil: { link: '/etc/passwd' } } } } } });
 }
 function prepare({ root }) {
   for (const sp of ['spark3', 'spark4']) appendFileSync(join(root, sp, '.mock', 'images'), `${IMAGE}\n`);
   prepareRepo(root);
 }
-useFleet({ watchMs: 2000, env: DOOR, prepare }, async () => { T_.agent = await createActKey('fill-agent'); });
+useFleet({ watchMs: 2000, env: DOOR, prepare }, async () => { T_.agent = await createActKey('fill-agent'); T_.agent2 = await createActKey('fill-agent-2'); });
 const later = [];
 after(async () => { for (const F of later) await F.stop().catch(() => {}); });
 
@@ -112,6 +116,7 @@ test('a tree fills the box byte for byte under spark-console/, the exec bit kept
 test('refused before the box is touched: a link, a submodule, a control character, "..", ".git", case and Unicode twins, a file over 8 MiB, over 64 MiB in all, over 5,000 entries, a commit, and an archive that isn’t the tree', { timeout: 240000 * SLOW }, async () => {
   const before = readdirSync(filled());
   await refused(`/fill ${T_.link}`, /^the tree holds a link: link-to-readme\. Nothing was changed\.$/);
+  await refused(`/fill ${T_.linkelse}`, /^the tree holds a link: test\/mock\/evil\. Nothing was changed\.$/);
   await refused(`/fill ${T_.sub}`, /^the tree holds a link to another repository \(a submodule\): vendor\./);
   await refused(`/fill ${T_.ctrl}`, /^a name holds a control character: bell\?\.txt\./);
   await refused(`/fill ${T_.dotdot}`, /^a path leaves the folder: \.\.\./);
@@ -226,6 +231,19 @@ test('each hostile tar refuses the whole read with the entry’s name, masked an
     }
   } finally { rmSync(f, { force: true }); }
   assert.equal(gitIn(T_.dir, ['count-objects', '-v']).toString(), blobsBefore, 'no refused read wrote a blob');
+});
+
+test('a tree shaped like main’s fills without the stand-in fleet’s links under test/mock/root/, and reads back clean: the links are not said to be gone', { timeout: 120000 * SLOW }, async () => {
+  const name = boxName(`agent ${T_.agent2.id}`), at = (...p) => join(folder(name), 'spark-console', 'test', 'mock', 'root', 'spark2', 'hub', ...p);
+  const f = await call(T_.agent2.token, 'run', { on: 'box', command: `/fill ${T_.mainlike}` });
+  assert.equal(f.isError, false, f.text);
+  assert.deepEqual([f.value.filled, f.value.box, f.value.tree, f.value.files], [true, name, T_.mainlike, 7]);
+  assert.equal(readFileSync(at('snap', 'real.txt'), 'utf8'), 'kept\n');
+  assert.equal(readFileSync(at('blobs', 'cfg1'), 'utf8'), '{}\n');
+  assert.ok(!readdirSync(at('snap')).includes('config.json'), 'the link is left out');
+  const r = await call(T_.agent2.token, 'run', { on: 'box', command: '/read-back' });
+  assert.equal(r.isError, false, r.text);
+  assert.deepEqual([r.value.tree, r.value.changes, r.value.files], [T_.mainlike, [], 7]);
 });
 
 test('with agents paused, an agent’s fill and read back are refused; with no eval on record, Sparkie’s fill is a button and opens nothing', { timeout: 240000 * SLOW }, async () => {
