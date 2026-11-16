@@ -108,7 +108,7 @@ const tgSay = text => tgPost('/__push', { message: { message_id: msgId++, date: 
 const tgPress = data => tgPost('/__push', { callback_query: { id: String(msgId++), from: { id: OWNER_TG, is_bot: false, first_name: 'Owner' }, data,
   message: { message_id: msgId++, chat: { id: OWNER_TG, type: 'private' }, date: Math.floor(Date.now() / 1000) } } });
 
-test('the kind is built by code from the sorter\'s answer: its program, a sub-command, the folder; none for the home, outside it or more than one program; the answer\'s words', () => {
+test('the kind is built by code from the sorter\'s answer: its tool and the folder; none for the home, outside it or more than one program; the answer\'s words', () => {
   const kind = (c, dir = '~/work') => P.aheadKind(sorted(c, { dir }), c, dir);
   assert.deepEqual(kind('mkdir -p ~/notes/a/b'), { program: 'mkdir', under: '~/notes/a' });
   assert.deepEqual(kind('cp ~/notes/a.txt ~/notes/b.txt'), { program: 'cp', under: '~/notes' });
