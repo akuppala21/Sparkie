@@ -660,7 +660,12 @@ test('the mark holds what a Telegram turn is sent: only its prompt or its tools 
   // (on a fresh stand-in fleet, as test/lock.mjs measures it: the lock's own mark for this tree, before and now)
   const fresh = await startMock({ evalOnRecord: false });
   let sent;
-  try { sent = await brainSent(fresh); } finally { await fresh.stop(); }
+  try {
+    sent = await brainSent(fresh);
+    // (said beside the mark, for a builder's report: this tree's five workflow versions, as the lock names them)
+    const workflows = (await (await fetch(`${fresh.base}/workflows`)).json()).workflows;
+    t.diagnostic(`the versions: ${JSON.stringify(Object.fromEntries(workflows.map(w => [w.id, w.version])))}`);
+  } finally { await fresh.stop(); }
   const reads = brainReadsOf(sent), tg = sent.catalog.telegram;
   assert.match(tg.system, /writing from Telegram/);
   assert.notEqual(tg.system, sent.system);
