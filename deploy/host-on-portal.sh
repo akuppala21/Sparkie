@@ -324,12 +324,15 @@ on_exit() {
   if [ "$code" != 0 ] && [ "$PHASE" = changing ]; then
     if [ -n "$SNAP" ] && [ -f "$SNAP/restore.sh" ]; then
       echo "  Putting the previous install back (its files only; state stays as it is) ..." >&2
-      # (with --stand-in, its restore.sh is told so by a mark beside it, there only while this put-back runs)
+      # (with --stand-in, its restore.sh is told so by a mark beside it, there only while this put-back runs; so is it
+      # that it may put back in place when there is no room for its checked copy beside: the install may have failed
+      # because the disk filled)
       [ -z "$STAND_IN" ] || : > "$SNAP/stand-in"
+      : > "$SNAP/in-place-if-no-room" 2>/dev/null || true
       # (the incoming source is no longer needed: its room may be what the put-back needs, when the disk filled)
       rm -f "$IN/source.tar"
-      bash "$SNAP/restore.sh" --in-place-if-no-room > "$SNAP/restore.log" 2>&1; back=$?
-      rm -f "$SNAP/stand-in"
+      bash "$SNAP/restore.sh" > "$SNAP/restore.log" 2>&1; back=$?
+      rm -f "$SNAP/stand-in" "$SNAP/in-place-if-no-room"
       sed 's/^/  /' "$SNAP/restore.log" >&2
       if [ "$back" = 0 ]; then echo "  STOP: The update was not kept. The previous version is running again. Fix the problem above and run this again." >&2
       elif [ "$back" = 3 ]; then echo "  STOP: The update was not kept, and the previous files couldn't be put back whole (is the disk full?). Make room, then run: bash $SNAP/restore.sh" >&2
@@ -380,7 +383,8 @@ if [ -e "$HOME/spark-console" ] || [ -e "$HOME/spark-console-service" ] || [ -e 
 # does saved-runs.json: the next start would stop by name what a saved workflow ran back then (R57).
 # Exit 0: back and answering; 1: back, not answering; 3: not put back whole (make room, then run it again).
 #   bash restore.sh [--with-state] [--in-place-if-no-room]
-# --in-place-if-no-room (the installer's own put-back, when the install failed, perhaps because the disk filled): when
+# --in-place-if-no-room, or a mark of that name beside it (the installer's own put-back, when the install failed,
+# perhaps because the disk filled): when
 # there is no room for the checked copy beside the live folders, the files go back in place (emptied, then copied) and
 # are checked after.
 set -euo pipefail
@@ -392,6 +396,7 @@ for a in "$@"; do
     *) echo "Usage: bash $0 [--with-state] [--in-place-if-no-room]" >&2; exit 2 ;; esac
 done
 [ ! -e "${0%/*}/stand-in" ] || SPARK_CONSOLE_ALL_LOCAL=1
+[ ! -e "${0%/*}/in-place-if-no-room" ] || IN_PLACE=1
 [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] || { PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; export PATH; }
 S="$(cd "$(dirname "$0")" && pwd)"
 # stage <saved> <beside>: an exact copy of a saved folder made beside the live one, and checked. Nothing live changes.
