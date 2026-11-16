@@ -181,3 +181,7 @@ test('a change\'s line under the reply says what its own outcome says: "Started"
   assert.equal(said('needs-ok'), 'Start a model: asked for your OK');
   assert.equal(textOf(toolLines([step('started', false)]).kids[0]), 'Couldn’t: Start a model');
 });
+
+test('removing an agent says that nothing it started is cancelled (R9)', () => {
+  assert.match(APP, /title: `Remove \$\{k\.name\}\?`, description: 'Its key stops working right away\. Nothing it started is cancelled: its operations and saved workflows finish\. Your other agents keep working\.'/);
+});

@@ -34,7 +34,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R18](rules/R18.md) | partly | `test/workflows.test.mjs` (“a version that didn't pass the tests doesn't run at all”) | review; falls short today: its file says where |
 | [R19](rules/R19.md) | partly | `test/heal.test.mjs` (“a second crash in the hour is healed”); `test/heal-more.test.mjs` (“a Spark that goes down again within 30 minutes”); `test/workloads-heal.test.mjs`; `test/heal-displaced.test.mjs`; `test/heal-newer.test.mjs`; `test/heal-status.test.mjs`; `test/power.test.mjs`; `test/asleep.test.mjs` (“after a planned wake”); `test/brain.test.mjs`; `test/docker-down.test.mjs`; `test/selftest.test.mjs` (“self-healing brings it back”, “a third self-test within the hour”); `test/selftest-cleanup.test.mjs` (“on a Spark turned on ten minutes ago the drill isn't run”) | falls short today: its file says where |
 | [R20](rules/R20.md) | partly | `test/state.test.mjs` (“the chat keeps answering”, “a throw while a turn is being set up frees the chat”, “a state file that isn't JSON”, “access.json that can't be read”, “a state file that can't be read when an operation finishes is never saved over”, “says whether agents are paused”, “new operations get 503 while a running one finishes”) | falls short today: its file says where |
-| [R21](rules/R21.md) | partly | `test/docker-down.test.mjs` | review; falls short today: its file says where |
+| [R21](rules/R21.md) | partly | `test/docker-down.test.mjs`; `test/workloads-receipts.test.mjs`; `test/workloads-restart.test.mjs` (“a job the owner ran again by hand after the run's job step”) | review; falls short today: its file says where |
 | [R22](rules/R22.md) | built | `test/docs.test.mjs` (“desired.json’s six writers are found in the code”, “a writer of a state file its owner doesn’t declare”); `test/lock.test.mjs`; `test/memory.test.mjs` (“replaces and forgetting retire a line”); `test/selftest.test.mjs` (“a model on the list of what should be running on that Spark is never the test's”, “its first seed passes over the self-test's own model”) |  |
 | [R23](rules/R23.md) | partly | `test/state.test.mjs` (“the fleet's record of operations”); `test/docker-down.test.mjs`; `test/dark.test.mjs` (“while a Spark is dark”); `test/apps.test.mjs` (“a job (once)”, “a job on a Spark the watcher has only seen empty”); `test/power.test.mjs`; `test/long.test.mjs`; `test/asleep.test.mjs` (“after a planned wake”); `test/copy.test.mjs` (“rides on a Spark that is awake”, “before a power-off”); `test/copy-signins.test.mjs` (“a copy holds no saved-runs.json”); `test/putback.test.mjs`; `test/rebuild.test.mjs`; `test/install.test.mjs` (“21. the rebuild steps”); `test/words.test.mjs` (“/help names the rebuild steps”) | falls short today: its file says where |
 | [R24](rules/R24.md) | built | `test/fleet.test.mjs` (“what the Sparks report”); `test/brain-check.test.mjs` |  |
@@ -85,6 +85,7 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | [R70](rules/R70.md) | partly | `test/root-helper.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
 | [R71](rules/R71.md) | partly | `test/net.test.mjs`; `test/root.test.mjs` | falls short today: its file says where |
 | [R72](rules/R72.md) | partly | `test/ladder.test.mjs`; `test/runner.test.mjs`; `test/runner-fixes.test.mjs` | falls short today: its file says where |
+| [R73](rules/R73.md) | partly | `test/door-repeat.test.mjs` | falls short today: its file says where |
 | [R74](rules/R74.md) | partly | `test/intent-own.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”); `test/fix-intent.test.mjs` (“C-1”, “C-6, R1-08”, “S-3”, “A-18”) | falls short today: its file says where |
 
 ## Contract requirements (`docs/contract.md`)
@@ -106,9 +107,9 @@ test that holds an acceptance test (a comment in it that starts with the test’
 | 3.11 | partly | `test/brain-rail.test.mjs` | holds part of T136: “a switch to a brain with no eval on record makes every change a button; once the eval has passed for this brain and build, a clear change runs at once.” |
 | 3.12 | no test yet |  | T142: no test holds it yet |
 | 4.1 | no test yet |  | no acceptance test lists it |
-| 4.2 | no test yet |  | T58: no test holds it yet |
+| 4.2 | partly | `test/door-repeat.test.mjs` | holds part of T58: “the same call twice runs the start once.” |
 | 4.3 | no test yet |  | no acceptance test lists it |
-| 4.4 | no test yet |  | T37, T58: no test holds them yet |
+| 4.4 | partly | `test/door-repeat.test.mjs` | holds part of T58: “the same call twice runs the start once.”; T37: no test holds it yet |
 | 4.5 | no test yet |  | T72: no test holds it yet |
 | 4.6 | no test yet |  | T75, T101, T103: no test holds them yet |
 | 4.7 | no test yet |  | T80: no test holds it yet |

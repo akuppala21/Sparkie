@@ -1,5 +1,5 @@
 /* ───────── the agent door (MCP) ───────── */
-// Area: ways in        Rules: R7, R9, R26, R31, R37, R39        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs
+// Area: ways in        Rules: R7, R9, R26, R31, R37, R39, R73        Tests: door.test.mjs, ask.test.mjs, fuzz.test.mjs, door-repeat.test.mjs
 // Owns: agents.json (writers: handler, top level, putBackAtStart; the top-level one is the last-use timer), audit.jsonl
 //   (writers: audit)
 // Timers: agentUseDirty (every 60 s: agents’ last use, saved when it changed)        Wakes: none
@@ -151,6 +151,19 @@ function audit(entry) {
     appendFileSync(AUDIT_FILE, `${JSON.stringify({ at: new Date().toISOString(), ...entry, ...text('request'), ...text('error'), args })}\n`, { mode: 0o600 });
   } catch {}
 }
+// The door's own call handling (R73). Every answer comes within DOOR_WAIT_MS (clients give up at 60 s). A call of a tool
+// that can change something (a change, or run and write_file: `changes`) made again by the same agent with the same
+// arguments while the first is still going, or while the operation it started still runs, joins it: it waits on the
+// same work and gets the same answer, and nothing runs twice (contract 4.4, A-25). Once that work has ended, a repeat
+// runs and the action's own check answers it (an "already", a conflict). Keyed on the agent, the tool and the
+// arguments, never on the JSON-RPC id, which restarts with each client session. A call keeps its slot of the three at
+// once until its work truly ends, not when the door stops waiting for it.
+const DOOR_WAIT_MS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_DOOR_WAIT_MS) || 50000;
+const doorWork = new Map();
+const doorCanon = v => (Array.isArray(v) ? v.map(doorCanon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, doorCanon(v[k])])) : v);
+const doorKey = (agent, a, args) => createHash('sha256').update(JSON.stringify([agent.id, a.name, doorCanon(args ?? {})])).digest('hex');
+// (still going: the call itself, or the operation its answer names)
+const doorGoing = w => !w.settled || (typeof w.value?.operation === 'string' && jobs.get(w.value.operation)?.status === 'running');
 async function mcpDoor(req, res, viewer) {
   const reply = (status, body) => send(res, status, { jsonrpc: '2.0', ...body });
   const fail = (status, id, code, message) => reply(status, { id: id ?? null, error: { code, message } });
@@ -167,7 +180,7 @@ async function mcpDoor(req, res, viewer) {
   if (!agent) return noKey();
   if (overLimit(agentCalls, agent.id, 60000, 120)) return fail(429, null, -32000, 'Too many requests from this agent. Wait a minute.');
   let msg;
-  // (256 KB is far more than any tool call needs; a megabyte of text was a way to stall the console)
+  // (262,144 characters is far more than any tool call needs; a megabyte of text was a way to stall the console)
   try { msg = await readBody(req, 262144); } catch (e) { return fail(e.status || 400, null, -32700, e.message); }
   // Removed while the request was on its way: refused.
   if (!(agent = agentFor(req, viewer))) return noKey();
@@ -222,34 +235,49 @@ async function mcpDoor(req, res, viewer) {
     const name = msg.params?.name, a = typeof name === 'string' ? offered.find(x => x.name === name) : null;
     if (!a) return fail(200, id, -32602, typeof name === 'string' ? `No tool called ${name.slice(0, 60)} for this agent.` : 'Name the tool to call (params.name).');
     const toolError = text => reply(200, { id, result: { content: [{ type: 'text', text }], isError: true } });
-    // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
-    if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
-    if (a.openWorld) {
-      // Bad arguments are refused before they count against the web-search limit.
-      try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
-      if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+    // (a tool that can change something: a change, or a read that changes, run and write_file)
+    const changing = a.kind !== 'read' || Boolean(a.changes), key = changing ? doorKey(agent, a, msg.params?.arguments) : null;
+    for (const [k, w] of doorWork) if (!doorGoing(w)) doorWork.delete(k);
+    let work = key ? doorWork.get(key) : null;
+    const joined = Boolean(work);
+    if (!work) {
+      // Each look at a Spark opens SSH there, so one agent runs at most 3 tools at once; web searches at most 6 a minute.
+      if ((agentRunning.get(agent.id) || 0) >= 3) return toolError('[busy, retry later] This agent already has 3 tools running. Wait for them, then try again.');
+      if (a.openWorld) {
+        // Bad arguments are refused before they count against the web-search limit.
+        try { checkInput(a.input, msg.params?.arguments, a.name); } catch (e) { return toolError(`[invalid] ${e.message}`); }
+        if (overLimit(agentWorld, agent.id, 60000, 6)) return toolError('[busy, retry later] At most 6 web searches a minute. Wait a minute, or use find_recipes for models already in the recipes.');
+      }
+      agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
+      agentUseDirty = true;
+      agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
+      work = { p: runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }) };
+      const mine = work;
+      if (key) doorWork.set(key, mine);
+      // (the slot goes when the work ends; an answer that names an operation still running is kept for a repeat, R73)
+      mine.p.then(v => { mine.settled = true; mine.value = v; }, () => { mine.settled = true; if (key && doorWork.get(key) === mine) doorWork.delete(key); })
+        .finally(() => { agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1)); });
     }
-    agentUse.set(agent.id, { at: new Date().toISOString(), action: a.name });
-    agentUseDirty = true;
-    agentRunning.set(agent.id, (agentRunning.get(agent.id) || 0) + 1);
     try {
       const started = Date.now();
-      // Answer within 50 s (clients give up at 60): a slow Spark gets a "try again", and its result is cached when it lands.
-      const value = await Promise.race([runAction(a.name, viewer, msg.params?.arguments, { via: 'agent', actor: agent.name, canChange: (agent.scopes || []).includes('fleet:act'), agentId: agent.id, from: req.headers['tailscale-funnel-request'] ? clientAddress(req) || 'internet' : 'tailnet' }),
-        sleep(50000).then(() => { throw new HttpError(504, a.kind === 'change' ? `${a.name} took over 50 seconds and may still be going. Don’t call it again: check recent_operations (or fleet_events) in a minute.` : `${a.name} took over 50 seconds (a Spark is slow to answer). Try again in a minute.`); })]);
+      // Answer within 50 s (clients give up at 60). A look that is slow gets a "try again", and its result is cached
+      // when it lands; a call that can change something is never told to try again (R73).
+      // (the timer is cleared once the work answers, so it never rejects later)
+      let timer;
+      const late = new Promise((ok, no) => { timer = setTimeout(() => no(new HttpError(504, changing ? `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds and is still going: nothing was started twice. Don’t start it another way. The same call with the same arguments, sent again, waits on this one and answers with its result (it doesn’t run it again); an operation it started shows in recent_operations, and wait_operation follows it by its id.` : `${a.name} took over ${Math.round(DOOR_WAIT_MS / 1000)} seconds (a Spark is slow to answer). Try again in a minute.`)), DOOR_WAIT_MS); });
+      let value;
+      try { value = await Promise.race([work.p, late]); } finally { clearTimeout(timer); }
       let text = JSON.stringify(maskDeep(value));
       if (text.length > 60000) {
         text = JSON.stringify({ truncated: true, sizeKB: Math.round(text.length / 1024), note: 'Too big to send whole. Ask for less: a lower limit, one Spark, or without detail.', start: text.slice(0, 30000) });
       }
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length });
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: true, ms: Date.now() - started, bytes: text.length, ...(joined ? { joined: true } : {}) });
       return reply(200, { id, result: { content: [{ type: 'text', text }], isError: false } });
     } catch (e) {
       const code = { 400: 'invalid', 403: 'not_allowed', 404: 'not_found', 409: 'conflict', 413: 'too_large', 429: 'busy', 502: 'unreachable', 503: 'unreachable', 504: 'still_running' }[e.status] || 'failed';
-      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code });
-      if (isFault(e)) recordFault(`agent tool ${a.name}`, e);
+      audit({ agent: agent.id, name: agent.name, action: a.name, args: msg.params?.arguments, ok: false, error: code, ...(joined ? { joined: true } : {}) });
+      if (isFault(e) && !joined) recordFault(`agent tool ${a.name}`, e);
       return toolError(`[${code}${[409, 429, 502, 503].includes(e.status) ? ', retry later' : ''}] ${maskSecrets(e.message || String(e))}`);
-    } finally {
-      agentRunning.set(agent.id, Math.max(0, (agentRunning.get(agent.id) || 1) - 1));
     }
   }
   return fail(200, id, -32601, `This server doesn’t do ${String(msg.method).slice(0, 60)}.`);

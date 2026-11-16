@@ -3260,7 +3260,7 @@ async function connectAgent() {
   await loadAgents();
 }
 async function removeAgent(k) {
-  const ok = await dialog({ title: `Remove ${k.name}?`, description: 'Its key stops working right away. Your other agents keep working.', confirm: 'Remove', danger: true });
+  const ok = await dialog({ title: `Remove ${k.name}?`, description: 'Its key stops working right away. Nothing it started is cancelled: its operations and saved workflows finish. Your other agents keep working.', confirm: 'Remove', danger: true });
   if (!ok) return;
   try { await capi(`agents/${k.id}`, 'DELETE'); toast(`Removed ${k.name}`); } catch (e) { failToast(e); }
   await loadAgents();
