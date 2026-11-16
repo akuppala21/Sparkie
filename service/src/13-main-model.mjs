@@ -200,6 +200,9 @@ ${build(m.model, '$model', 'model')}
 ${m.draft ? build(m.draft, '$draft', 'draft') : ''}`;
 }
 
+// At the brain's own limit its container is left there loading, so it may still come up. A switch doesn't leave it:
+// going back removes it (the same container, docker rm -f), so a switch's words say that instead (switchMain).
+const MAIN_SLOW = 'It didn’t answer within 45 minutes';
 async function startMain(job, keep = [], m = MAIN) {
   const p = await mainPlan(m), node = mainNode(m);
   // (the brain keeper's start: self-healing never stops, copies or downloads anything to bring the brain back)
@@ -244,7 +247,7 @@ docker logs --tail 1 ${q(m.container)} 2>&1 | tail -1`, { timeout: 20000 });
       throw new Error(`The model server stopped while loading.\n${logs.out.trim().slice(-2500)}`);
     }
   }
-  throw new Error('It didn’t answer within 45 minutes. It may still be loading; check its logs.');
+  throw Object.assign(new Error(`${MAIN_SLOW}. It may still be loading; check its logs.`), { stillLoading: true });
 }
 
 // A Library model as a Sparkie setup: its own serving settings (spark.json), served on Sparkie's Spark and port. Its
@@ -277,12 +280,15 @@ async function switchMain(job, target, keep) {
   try {
     await startMain(job, keep, target);
   } catch (e) {
-    note(job, `${target.title} didn’t start: ${e.message.split('\n')[0]}`);
+    // (the new one, still loading at the limit, doesn't stay when there is one to go back to: it is removed for it)
+    const removed = Boolean(e.stillLoading && previous);
+    const why = removed ? `${MAIN_SLOW}, so it was removed to start ${previous.title} again.` : e.message;
+    note(job, `${target.title} didn’t start: ${removed ? `${MAIN_SLOW}; going back to ${previous.title} removes it.` : e.message.split('\n')[0]}`);
     let back = false;
     if (previous) {
       step(job, `Going back to ${previous.title}`);
       try { await startMain(job, [], previous); back = true; } catch (e2) {
-        note(job, `${previous.title} didn’t come back either: ${e2.message.split('\n')[0]}`);
+        note(job, `${previous.title} didn’t come back either: ${e2.stillLoading ? `${MAIN_SLOW}; it is removed too.` : e2.message.split('\n')[0]}`);
         // No half-started container stays behind: Docker would keep restarting it, and "/restart sparkie" must find it
         // gone and start the saved setup, never the one that just failed.
         await run(mainNode(previous), `docker rm -f ${q(previous.container)} >/dev/null 2>&1; true`, { timeout: 60000 });
@@ -290,7 +296,7 @@ async function switchMain(job, target, keep) {
     }
     const outcome = !previous ? '' : back ? `, so ${ASSISTANT_NAME} is back on ${previous.title}`
       : `, and ${previous.title} didn’t come back either, so ${ASSISTANT_NAME} is down. To start it again, type /restart sparkie in Spark Console’s chat`;
-    throw new Error(`${target.title} didn’t start${outcome}. ${e.message}`);
+    throw new Error(`${target.title} didn’t start${outcome}. ${why}`);
   }
   const { copyFrom, sizeBytes, ...kept } = target;
   MAIN = kept;
