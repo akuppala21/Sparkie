@@ -3697,6 +3697,8 @@ const OP_WORDS = {
   'power-on': 'Turning on',
   restart: 'Restarting',
   'restart-model': 'Restarting',
+  // (run with minutes, a long command: its notice is built by code, never its output, 21-long.mjs)
+  run: 'The command',
   'self-test': 'The self-test with',
   'start-model': 'Downloading and starting',
   stop: 'Stopping',
@@ -4396,7 +4398,8 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
   out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
-  const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
+  // (run with minutes started an operation, as a change does: its result wakes the request's carry-on, 21-long.mjs)
+  const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read') || (c.name === 'run' && outcome === 'started'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
   steps[i] = step;
   emit({ type: 'tool', ...step });
@@ -8319,6 +8322,9 @@ setTimeout(() => {
     if (selfTestCutOff(e)) continue;
     // (a saved workflow's run on record, or one of its steps: its clean-up after the restart says what it did, 18-run-record.mjs)
     if (savedRunCutOff(e)) continue;
+    // (a long command, run with minutes: the journal's own cut-off notice, in the chat that asked, says what became of
+    // it; it is never started again, 21-long.mjs)
+    if (e.operation === 'run') continue;
     fleetEvent({ type: 'notice', text: `A restart of Spark Console cut off ${e.operation} ${e.model || ''}${where ? ` on ${where}` : ''}${e.stops?.length ? ` (it was to stop ${e.stops.join(', ')})` : ''}. Check it’s running; if not, start it (or what it stopped) again.` });
   }
   savedRunsRecover().catch(e => console.error(`Stopping what a cut-off saved workflow started: ${e.message}`));
@@ -8950,6 +8956,8 @@ function dangerMore(f) {
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
   for (const l of Array.isArray(f.lines) ? f.lines.slice(0, 12) : []) out.push(dangerPlain(l, 400));
+  // (run with minutes, A6: how long the press lets it run, as the plain ask's button says, 21-long.mjs)
+  if (Number.isInteger(f.minutes) && f.minutes > 0) out.push(`It may run for up to ${f.minutes} minute${f.minutes === 1 ? '' : 's'} as an operation.`);
   return out;
 }
 
@@ -8970,10 +8978,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, lines, whoApproves, switchBrain, wall, recheck});
-// shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call:
-// {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the
-// brain, an agent) is told.
+// say ({asked, backAt, kept, gone, waysIn, install, outsideWall, lines, minutes, whoApproves, switchBrain, wall,
+// recheck}); shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install);
+// call: {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller
+// (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
@@ -10255,6 +10263,9 @@ function journalAfterRestart() {
       // (a change on a Spark may still run there: that Spark is held until its time limit has passed, 21-runner.mjs)
       if (r.k === 'cmd' && r.act === 'run' && r.class === 'change') runnerHold(r);
       const conv = r.chat && chatData().conversations.find(c => c.id === r.chat);
+      // (a long command, run with minutes: its unit is stopped by id when its Spark answers, then its notice says so,
+      // 21-long.mjs)
+      if (r.k === 'cmd' && r.act === 'run' && r.minutes && longCutOff(r, conv)) continue;
       if (!conv) continue;
       const at = new Date().toISOString();
       conv.messages.push({ role: 'assistant', content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC). It may or may not have happened, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`), createdAt: at, notice: true });
@@ -13852,6 +13863,7 @@ const TELL_OPS = {
   'power-on': 'Turning on',
   restart: 'Restarting',
   'restart-model': 'Restarting',
+  run: 'The command',
   'self-test': 'The self-test with',
   'start-model': 'Starting',
   stop: 'Stopping',
@@ -13867,7 +13879,8 @@ function tellWhat(job) {
 }
 function tellResultLine(job) {
   const what = tellWhat(job);
-  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished.`;
+  // (a long command's exit code, a number: an exit other than 0 is a result, told as one, 21-long.mjs)
+  if (job.status === 'completed') return `Done: ${what.charAt(0).toLowerCase()}${what.slice(1)} finished${job.type === 'run' && Number.isInteger(job.exit) ? ` with exit code ${job.exit}` : ''}.`;
   if (job.status === 'cancelled') return `${what} was cancelled.`;
   return `${what} didn’t work. The details are in Spark Console.`;
 }
@@ -18111,7 +18124,10 @@ function workScriptLines(scripts) {
 // and what that lets it do, what put-back covers, what Sparkie read before proposing it, each script's hash.
 function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, shown = workWallLines(node, command, sorted, dir)) {
   const at = sparkName(node), reads = (ctx.reads || []).slice(-4).map(r => r.label);
-  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`, ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
+  const most = ctx.long ? longHeld(ctx.long.minutes, 'asked').minutes : 0;
+  return [`Run this on ${at}?`, `$ ${command}`, `Asked because ${why}.`,
+    ...(most ? [`It runs as an operation for up to ${most} minute${most === 1 ? '' : 's'}; its result is posted here when it ends.`] : []),
+    ...(shown.outside ? [`Runs outside the plain wall: ${shown.outside}.`] : []), ...shown.lines,
     sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : 'The files it names are copied first, so undo can put them back. Anything else it writes isn’t covered by put-back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
@@ -18119,12 +18135,14 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   // (what is shown is what runs: nothing hidden, nothing a mask would hide)
   if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
   const scripts = await workScripts(node, sorted.scripts, dir, command), shown = workWallLines(node, command, sorted, dir, widen, topDirs);
-  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}) } };
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
+    ...(ctx.long ? { minutes: ctx.long.minutes } : {}) } };
   const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: { command }, call,
     facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts)] } })
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...workScriptLines(scripts)],
+      ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown), [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
@@ -18160,6 +18178,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     return runChange(node, command, viewer, ctx, { asked: true, dir, widen, topDirs });
   }
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, await workListeners(node));
+  // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
+  if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (Sparkie's own call runs at once only while its brain is checked: the rail, 21-brain-rail.mjs, R52; run is a
   // lookup to runAction, so the ladder asks the rail itself, last, as it looks at Sparkie's model)
   if (!why && ctx.via === 'sparkie') { const rail = await brainRail(); if (!rail.checked) why = `Sparkie asks before every change: ${rail.why}`; }
@@ -18172,6 +18192,134 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     throw new HttpError(409, `Not run at once: ${why}. Ask for it in your chat with Sparkie, where it is asked with a button. Nothing ran.`);
   }
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs);
+}
+/* ───────── a long command: run with minutes, as an operation (A6) ───────── */
+// Area: features        Rules: R23, R13, R61        Tests: long.test.mjs
+// Owns: none
+// Timers: tryStop (every 30 s, only while a Spark doesn't answer after a restart cut a long command off there, until its limit has passed)        Wakes: none
+// run with minutes (design A 2.10, step 6) runs one command as an operation of type run (07-jobs.mjs). Code decides
+// first, as it would without minutes: the sorter, the ladder's ask, the rail, the walls, the copies and the journal's
+// start and end lines (21-work.mjs, 21-ladder.mjs, 21-runner.mjs); minutes changes only how long it may run and who
+// waits. The call returns the operation's id at once. Its end is posted in the chat that asked, as every operation's
+// is (runJob → postResult, 14-chats.mjs, which wakes the request's carry-on: the one path every operation's end takes,
+// and the seam a parked task's wake uses), built by code: where, how long, the exit code and the record of what it
+// printed, never the output. An exit code other than 0, and the limit, are results; it fails only when it could not
+// run (the helper refused, the Spark went away, no start line). One a Spark at a time; a change holds the Spark's
+// claim, a look none. cancel_operation stops its unit by id through the root helper (stop --id); /stop does not (R34).
+// After a console restart its unit is stopped by id when its Spark answers (journalAfterRestart → longCutOff), and the
+// one cut-off notice says so. It is never run again.
+
+// The most minutes each may have (design A 2.10): a look 1 (the helper gives a look 60 s at most), a change after the
+// owner's yes 120. A change that runs at once has 10 at most, and one asked for more is asked first (the ladder), so
+// the owner's press gives it the time: the wall's analysis keeps an at-once change's time limit short (it is what bounds
+// what a wrongly sorted change could do with the processors, the disk's traffic and a port), and 10 is the design's own
+// smallest bound for an operation (Spark 2, the lock-out class). Root (30) and Spark 2 or
+// the lock-out class (10) come with their own steps: the ladder runs none of them yet.
+const LONG_MOST = { look: 1, atOnce: 10, asked: 120 };
+const LONG_WHY = { look: 'a look runs for one minute at most', atOnce: 'a change that runs without your yes is kept short (asked first, it may have up to 120)', asked: 'a command runs for 120 minutes at most' };
+// Seconds in a minute (the stand-in fleet may shorten it, so a test's limit passes in seconds).
+const LONG_MINUTE = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_MINUTE_SECONDS) || 60;
+// Spark id → the operation of the long command running there: one a Spark at a time.
+const longOn = new Map();
+
+// What a command asked with minutes may have, by what code found it to be: the minutes and seconds it is held to, and
+// the words that say it was held (null when it wasn't).
+function longHeld(minutes, kind) {
+  const asked = Number(minutes) || 1, m = Math.min(asked, LONG_MOST[kind]);
+  return { minutes: m, seconds: kind === 'look' ? Math.min(60, m * LONG_MINUTE) : m * LONG_MINUTE,
+    held: asked > m ? `Held to ${m} minute${m === 1 ? '' : 's'}: ${LONG_WHY[kind]}.` : null };
+}
+const longTook = ms => { const s = Math.max(0, Math.round(ms / 1000)), m = Math.floor(s / 60), r = s % 60;
+  return m ? `${m} minute${m === 1 ? '' : 's'}${r ? ` ${r} second${r === 1 ? '' : 's'}` : ''}` : `${s} second${s === 1 ? '' : 's'}`; };
+
+// Starts one as an operation (kind look, atOnce or asked), after every check its caller made: fn runs it (the look
+// again, or the runner, with ctx.long.job set) and gives the result run would give. What it may still meet at once is
+// said at once: a long command or a change already on that Spark. The started answer goes back; the turn doesn't wait.
+function longStart(node, ctx, kind, fn) {
+  const at = sparkName(node), L = longHeld(ctx.long.minutes, kind), was = longOn.get(node.id);
+  if (was && jobs.get(was)?.status === 'running') throw new HttpError(409, `A long command runs on ${at} already (operation ${was}): one at a time on each Spark. Wait for its result, or cancel it (cancel_operation).`);
+  // (a change: the runner takes the Spark's claim as the operation begins, in this same tick; taken now, it says so here)
+  if (kind !== 'look' && busySparks.has(node.id)) claimSparks([node.id], '');
+  const job = newJob('run', { node: node.id, via: ctx.via || null, actor: ctx.actor || null, minutes: L.minutes, ...(ctx.conv ? { conv: ctx.conv } : {}) });
+  // (run is a read to runAction, which so attaches nothing to what it starts: the owner's own, and Telegram's line)
+  if (ctx.via === 'sparkie' && !ctx.agent) job.ownersOwn = true;
+  if (ctx.channel && ctx.conv) { job.channel = ctx.channel; tellAwait(job); }
+  Object.assign(ctx.long, { job, kind, minutes: L.minutes, seconds: L.seconds });
+  longOn.set(node.id, job.id);
+  job.abort.signal.addEventListener('abort', () => { ctx.long.stopping = longStop(node, ctx.long).catch(() => {}); }, { once: true });
+  step(job, `A command on ${at}, for up to ${L.minutes} minute${L.minutes === 1 ? '' : 's'}`);
+  runJob(job, async j => {
+    const t0 = Date.now();
+    let r;
+    try { r = await fn(); } catch (e) {
+      if (e?.cancelled) j.cleanUp = `It was cancelled before it began on ${at}: nothing ran.`;
+      // (an answer not the helper's may be the command's own words: the notice quotes none of them)
+      if (e?.status === 502) throw new Error(`It didn’t answer the way the root helper does, so what it did on ${at} is unknown.${ctx.long.record ? ` What it printed is record ${ctx.long.record}.` : ''}`);
+      throw e;
+    } finally { ctx.long.over = true; if (longOn.get(node.id) === j.id) longOn.delete(node.id); }
+    const took = longTook(Date.now() - t0);
+    // (a cancel's stop under way: its answer says whether the helper stopped it)
+    if (j.cancelled) await ctx.long.stopping;
+    // (it never ran: the helper not set up, a delete whose files couldn't be copied first)
+    if (r?.ran === false) throw new Error(`${r.why}${r.ownerCommand ? ` The owner runs this once, in their own terminal (it asks ${at}’s password once): ${r.ownerCommand}` : ''}`);
+    // (an end the console couldn't wait for: unknown, and never run again by itself)
+    if (ctx.long.answer === 'ended') throw new Error(`${at} didn’t answer within its time, so whether it finished is unknown; it won’t be run again by itself.${r?.record ? ` Its record: ${r.record}.` : ''}`);
+    j.exit = r.exit ?? null;
+    const files = kind !== 'look' && r.copied > 0 ? ` undo_last_change puts back the ${r.copied === 1 ? 'file' : `${r.copied} files`} it copied first.` : '';
+    const how = j.cancelled ? (ctx.long.stopped ? `It was stopped on ${at} after ${took}, with everything it started.` : `It ended before it could be stopped, after ${took}${Number.isInteger(r.exit) ? `, with exit code ${r.exit}` : ''}.`)
+      : ctx.long.limit ? `It was stopped at its limit of ${L.minutes} minute${L.minutes === 1 ? '' : 's'}, with everything it started.`
+        : Number.isInteger(r.exit) ? `It ran for ${took} and ended with exit code ${r.exit}.` : `It ran for ${took} and was ended before it finished (no exit code).`;
+    j.cleanUp = [how, r.cut ? r.cut : '', `What it printed is record ${r.record} (recall reads it).`, files.trim(),
+      r.putBack?.differed?.length ? 'A way in changed while it ran, so what it had copied first was put back, and changes are paused.' : '',
+      r.putBack?.problem ? 'The check of the ways in after it couldn’t be made.' : '',
+      ...(Array.isArray(r.notes) ? r.notes : []), L.held || ''].filter(Boolean).join(' ');
+    if (j.cancelled) throw Object.assign(new Error(`Cancelled by ${j.cancelled}.`), { cancelled: true });
+  });
+  return { outcome: 'started', operation: job.id, spark: node.id, ...(kind === 'look' ? { look: true } : { change: true }), minutes: L.minutes, ...(L.held ? { held: L.held } : {}),
+    note: `It runs on ${at} as operation ${job.id}, for up to ${L.minutes} minute${L.minutes === 1 ? '' : 's'}; the turn doesn’t wait for it. When it ends, ${ctx.conv ? 'its result is posted in this chat' : 'its operation says how it went (operation_log)'}: how long it ran, its exit code and the record of what it printed (recall reads that). cancel_operation stops it.` };
+}
+
+// cancel_operation's stop: its unit by id through the root helper (stop --id, for its look or its change), asked again
+// while the helper says its call may still start, for a minute at most. Before its unit, the runner sees the cancel
+// itself and runs nothing (21-runner.mjs). L.stopped is set once the helper says it stopped it.
+async function longStop(node, L) {
+  for (let i = 0; i < 30 && L.id && !L.over; i++) {
+    const r = await helperCall(node, 'stop', { id: L.id, limitMs: 75000 });
+    const said = new RegExp(`(?:^|\\n)${L.id} (stopped sw-|stop: neither)`).exec(r.out)?.[1];
+    if (said === 'stopped sw-') { L.stopped = true; return; }
+    // (the helper's marks by id are the same for a look and a change: runnerRunState asks state --id)
+    if (said && (await runnerRunState(node, `sw-run-${L.id}`)) !== 'running') return;
+    await sleep(2000);
+  }
+}
+
+// After a console restart (journalAfterRestart, 20-journal.mjs), a long command's start line with no end: its unit is
+// stopped by id when its Spark answers (asked again every 30 s until its limit has passed: by then it has ended by
+// itself), and then the one cut-off notice goes in the chat that asked, saying which. True: the notice is this part's.
+function longCutOff(r, conv) {
+  const node = nodeById(runnerSparkOf(r) || ''), id = /^sw-(?:run|look)-([0-9a-f]{24})$/.exec(String(r.unit || ''))?.[1];
+  if (!node || !Number.isInteger(r.minutes)) return false;
+  const until = Date.parse(r.at) + ((Number(r.seconds) || 0) + RUNNER_STOP_S) * 1000, at = sparkName(node);
+  const tell = how => {
+    if (!conv) return;
+    const words = { stopped: 'It was stopped there by id after the restart, with everything it started.', gone: 'It had ended there by then.',
+      limit: `It couldn’t be stopped there (${at} didn’t answer), so it ended at its own limit, by ${new Date(until).toISOString().slice(11, 16)} UTC.` }[how];
+    const t = new Date().toISOString();
+    conv.messages.push({ role: 'assistant', createdAt: t, notice: true, content: maskSecrets(`A restart of Spark Console cut off “${jTitle(r)}${jCommand(r, conv)}”${jWhere(r)} before its end was written (it began at ${String(r.at).slice(11, 16)} UTC, with up to ${r.minutes} minute${r.minutes === 1 ? '' : 's'}). ${words} What it did until then stays, and it won’t be run again: check it before asking for it again. Its record: ${r.id}.`) });
+    conv.updatedAt = t;
+    saveChats();
+  };
+  // (an exact form of a look runs no unit: it ends within its minute by itself)
+  if (!id) { tell('gone'); return true; }
+  const tryStop = async () => {
+    const a = await helperCall(node, 'stop', { id, limitMs: 75000 });
+    const said = new RegExp(`(?:^|\\n)${id} (stopped sw-|stop: neither)`).exec(a.out)?.[1];
+    if (said) return tell(said === 'stopped sw-' ? 'stopped' : 'gone');
+    if (Date.now() >= until) return tell('limit');
+    setTimeout(() => { tryStop().catch(e => console.error(`Stopping a long command a restart cut off: ${e.message}`)); }, 30000).unref?.();
+  };
+  tryStop().catch(e => console.error(`Stopping a long command a restart cut off: ${e.message}`));
+  return true;
 }
 /* ───────── a start wakes both Sparks a model across two needs (R56) ───────── */
 // Area: features        Rules: R41, R56        Tests: power-wake-pair.test.mjs, power-wake.test.mjs
@@ -19469,6 +19617,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
   if ((wide.fleet || wide.gpu || wide.home) && !asked) throw new HttpError(409, `It ${wide.fleet ? 'reaches another Spark of this fleet' : wide.home ? 'reaches your home network' : 'uses the GPU'}, which a change gets only after the owner’s yes, so nothing ran.`);
   const open = asked && walls.open.length > 0, home = asked && !open && walls.home.length > 0;
   runnerRefuses(node, sorted, ctx, asked);
+  // (with minutes, A6: an operation from here, the turn not waiting; the claim below is taken as it begins, and what it
+  // writes counts for the request's later commands now, 21-long.mjs)
+  if (ctx.long && !ctx.long.job) {
+    const started = longStart(node, ctx, asked ? 'asked' : 'atOnce', () => runChange(node, command, viewer, ctx, { seconds: ctx.long.seconds, asked, dir, widen, topDirs }));
+    workWrote(ctx, sorted);
+    return started;
+  }
   const at = sparkName(node), id = randomBytes(12).toString('hex'), unit = `sw-run-${id}`, set = copiesSetName(), t0 = Date.now();
   const release = claimSparks([node.id], 'a command Sparkie is running there');
   let rid = null, end = null, unitAt = 0, unknownEnd = false, afterLook = null;
@@ -19496,8 +19651,10 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
         notKept: lost.slice(0, 50).map(said) };
     }
+    // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
+    if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
     rid = journal('cmd', { start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'change',
-      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
+      gate: ctx.gate || (asked ? 'asked' : ctx.via) || null, unit, seconds, ...(ctx.long ? { minutes: ctx.long.minutes, op: ctx.long.job?.id } : {}), root: false, args: { spark: node.id, command: command.slice(0, 600), dir }, set, sha: copied.sha,
       ...(open || home ? { outside: outside.slice(0, 4), wall: open ? 'open' : 'home' } : {}),
       ...(!open && (wide.fleet || wide.gpu) ? { widened: [wide.fleet && 'fleet', wide.gpu && 'gpu'].filter(Boolean) } : {}),
       copied: mine, notKept: copied.notKept.length, sub: jSub(node.id) });
@@ -19519,10 +19676,13 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
         return { differed: differ, restored: back.restored, notRestored: back.notRestored };
       } catch (e) { return { differed: null, problem: maskSecrets(e.message).slice(0, 300) }; }
     };
+    // (a long command's unit, by id, for cancel_operation to stop: 21-long.mjs)
+    if (ctx.long) Object.assign(ctx.long, { id, record: rid });
     const called = await helperCall(node, 'run', { id, command: RUNNER_GIT + command, seconds, dir, protect, memory, open, home, fleet: !open && wide.fleet, gpu: !open && wide.gpu });
     let a = helperAnswer(called);
     // (a never-ran answer with any other exit code may be the command's own words: what it did is unknown)
     if (Object.hasOwn(RUNNER_NEVER, a.kind) && called.code !== RUNNER_NEVER[a.kind]) a = { kind: 'unreachable' };
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     unknownEnd = ['unreachable', 'ended', 'broken'].includes(a.kind);
     // (after the console's own time-out the after-look waits for the helper's "ended"; a change the connection
     // dropped, or whose answer couldn't be read, gets none: undo's cut-off rule reads its files by their times)
@@ -21352,10 +21512,13 @@ function updResultLook() {
   const res = readJson(UPD_RESULT_FILE), at = Date.parse(asked.at || '');
   // (pull.sh writes its time to the second: a result in the second the yes was pressed is this install's)
   const done = res && res.tree === asked.tree && Date.parse(res.at || '') >= Math.floor(at / 1000) * 1000;
-  if (!done && Date.now() - at < UPD_WAIT_MS) return;
+  // (a time ahead of the clock counts as old: else it would refuse every yes until that time and an hour and a half)
+  const ahead = at > Date.now();
+  if (!done && !ahead && Date.now() - at < UPD_WAIT_MS) return;
   try { unlinkSync(UPD_ASKED_FILE); } catch {}
   const why = done ? maskSecrets(String(res.why || '').replace(/\s+/g, ' ').slice(0, 800)) : '';
-  const line = !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
+  const line = !done && ahead ? `The install of tree ${asked.tree} isn’t waited for any more: the time it was asked is ahead of Spark 2’s clock. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
+    : !done ? `The install of tree ${asked.tree} said nothing in an hour and a half. Look on Spark 2: ~/.local/state/spark-console/update-result.json.`
     : res.result === 'kept' ? `Installed: build ${updShort(res.build) || asked.build} (tree ${asked.tree}) is running. ${why}`
     : res.result === 'refused' ? `The install of tree ${asked.tree} was refused, and nothing changed: ${why}`
     : `The install of tree ${asked.tree} wasn’t kept, so the build from before is back: ${why}`;
@@ -22060,7 +22223,11 @@ function forBrain(t) {
 async function runCommand(input, viewer, ctx = {}) {
   if (BOX_FILL_DOOR && input.on === 'box' && /^\/(?:fill [0-9a-f]{40}|read-back)$/.test(String(input.command).trim())) return boxFillDoor(input, viewer, ctx);   // (stand-in fleet only: C8b, 21-box-fill.mjs)
   if (input.on === 'box') return boxRun(input, viewer, ctx);   // (the box, 21-box.mjs: opened and checked; A4 runs the command)
-  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = LOOK_SECONDS;
+  // (with minutes, A6: an operation, once code has decided all it decides without them, 21-long.mjs)
+  if (Number.isInteger(input.minutes) && !ctx.long) ctx = { ...ctx, long: { minutes: input.minutes } };
+  const t0 = Date.now(), node = sparkOf(viewer, input.on), at = sparkName(node), command = String(input.command), seconds = ctx.long?.job ? ctx.long.seconds : LOOK_SECONDS;
+  // (not on Spark 2 yet: a long command there would run outside the lock-out net its changes run in, A11)
+  if (ctx.long && node.host === 'local') throw new HttpError(403, `minutes isn’t on ${at} yet: a long command runs on a compute Spark. Nothing ran.`);
   if (command.trim()) {
     const { words, sudo } = lookWords(command);
     if (!words.some(keyWord)) {
@@ -22082,10 +22249,21 @@ async function runCommand(input, viewer, ctx = {}) {
     if (input.dir !== undefined && input.dir !== '~') throw new HttpError(400, 'A look starts in ~: name its paths from there (dir is where a change starts).');
     if (input.fleet === true || input.gpu === true) throw new HttpError(400, 'A look reaches no network and no device: fleet and gpu are for a change, asked first.');
     if ((looking.get(node.id) || 0) >= LOOK_AT_ONCE) throw new HttpError(429, `Two looks are running on ${at} already. Try again when one has answered.`);
+    // (with minutes: the look itself runs as an operation, and the turn doesn't wait, 21-long.mjs)
+    if (ctx.long && !ctx.long.job) { const started = longStart(node, ctx, 'look', () => runCommand(input, viewer, ctx)); rec.handed = true; return started; }
+    // (a long look's start line first, so after a restart its unit is found by id and stopped, 21-long.mjs)
+    const hid = randomBytes(12).toString('hex');
+    if (ctx.long?.job) {
+      rec.started = journal('cmd', { id: rid, start: true, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+        unit: form ? null : `sw-look-${hid}`, form: form || null, seconds, minutes: ctx.long.minutes, op: ctx.long.job.id, args: { spark: node.id, command: command.slice(0, 600) }, sub: jSub(node.id) });
+      if (!rec.started) throw new HttpError(507, JOURNAL_REFUSED);
+      Object.assign(ctx.long, { id: form ? null : hid, record: rid });
+    }
     looking.set(node.id, (looking.get(node.id) || 0) + 1);
     let r;
-    try { r = await helperCall(node, form ? 'check' : 'look', form ? { seconds, form } : { command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
+    try { r = await helperCall(node, form ? 'check' : 'look', form ? { id: hid, seconds, form } : { id: hid, command, seconds, words, walks }); } finally { looking.set(node.id, looking.get(node.id) - 1); }
     const a = helperAnswer(r), why = String(a.detail || '').slice(0, 300);
+    if (ctx.long) Object.assign(ctx.long, { answer: a.kind, limit: a.ended === true });
     Object.assign(rec, { outcome: a.kind, unit: form ? null : `sw-look-${r.id}`, form });
     if (a.kind === 'none') return needsOwner(node, a.kind, `The root helper isn’t set up on ${at} yet (the owner’s one-time command hasn’t run there)`);
     if (a.kind === 'nosudo') return needsOwner(node, a.kind, `The root helper’s sudo line isn’t on ${at} (sudo asked for a password)`);
@@ -22111,7 +22289,7 @@ async function runCommand(input, viewer, ctx = {}) {
       ...(b.left ? { shown: `The first and last parts of ${b.of} characters (${b.left} left out); recall {"id":"${rid}"} reads all of it, and recall {"id":"${rid}","find":"<words>"} its lines that hold those words, numbered.` } : {}), record: rid,
     };
   } catch (e) { rec.err = e; throw e; } finally {
-    journal('cmd', { id: rid, chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
+    if (!rec.handed) journal('cmd', { id: rid, ...(rec.started ? { end: true } : {}), chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'host', class: 'look', gate: 'look',
       unit: rec.unit || null, form: rec.form || null, args: { spark: node.id, command: command.slice(0, 600) }, ok: !rec.err, outcome: rec.outcome, exit: rec.exit ?? null,
       err: jErr(rec.err), ms: Date.now() - t0, bytes: rec.bytes ?? null, cut: rec.cut || null, sub: jSub(node.id) }, `$ ${command}\n${rec.text ?? ''}`);
   }
@@ -22126,6 +22304,7 @@ action({
     dir: { type: 'string', maxLength: 300, pattern: '^~(/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@+-]+)*$', description: 'Where a change starts: ~/work (the default, made when missing), ~, or a folder under ~ that is there. A look starts in ~ and takes no other.' },
     fleet: { type: 'boolean', description: 'A change that must reach another Spark or the home network: asked first, and the button says so.' },
     gpu: { type: 'boolean', description: 'A change that must use the GPU: asked first, and the button says so.' },
+    minutes: { type: 'integer', minimum: 1, maximum: 120, description: 'For a command that takes longer than 30 seconds: how many minutes it may run, 1 to 120. It then runs as an operation: the call answers at once, and its result (how long, the exit code, the record of what it printed) is posted in this chat when it ends. Asked first or not as without it. A look is held to 1 minute; a change asked for more than 10 is asked first.' },
   }, required: ['on', 'command'], additionalProperties: false },
   run: (input, viewer, ctx) => runCommand(input, viewer, ctx),
 });
