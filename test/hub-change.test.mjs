@@ -165,7 +165,7 @@ test('always asked, one command a press, whatever the words; from the API, with 
   assert.equal(api0.json.error, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
   const chat = await newChat(), c = await inChat(chat, 'fix the notes on spark 2', 'echo hub > notes/hub.txt');
   assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value));
-  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt starts in ~\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of your sign-in to Spark Console, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\. In its wall it can’t reach Docker \(so not the brain’s container\), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only\.\n/, c.value.question);
+  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt starts in ~\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of Spark Console answering you as the owner, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\. These are Spark Console’s own checks, made on Spark 2 itself: they don’t prove your browser or passkey still reach it\. In its wall it can’t reach Docker \(so not the brain’s container\), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only\.\n/, c.value.question);
   assert.ok(!existsSync(at2('notes/hub.txt')) && !existsSync(at2('notes/api.txt')), 'nothing ran');
   const yes = c.r.message.choices.find(x => x.label === 'Run it');
   assert.ok(yes, JSON.stringify(c.r.message.choices));
@@ -173,7 +173,7 @@ test('always asked, one command a press, whatever the words; from the API, with 
   try {
     const p = await choose(chat, yes.id);
     assert.equal(p.status, 200, p.text);
-    assert.match(p.json.message.content, /^A change that could lock you out of Spark 2 \(record j_[0-9a-f]{12}\) ran inside the lock-out net, and Spark 2 still answers every way it did before \(a new connection, the root helper, your sign-in to Spark Console, its agent door, [^)]*its route on Tailscale[^)]*\): it is kept\./, p.text);
+    assert.match(p.json.message.content, /^A change that could lock you out of Spark 2 \(record j_[0-9a-f]{12}\) ran inside the lock-out net, and Spark 2 still answers every way it did before \(a new connection, the root helper, Spark Console answering you as the owner, its agent door, [^)]*its route on Tailscale[^)]*\): it is kept\./, p.text);
   } finally { rmSync(join(T.fleet.dir, 'serve.json'), { force: true }); }
   assert.equal(readFileSync(at2('notes/hub.txt'), 'utf8'), 'hub\n');
   // Through the owner's service manager, with the net and the 2 GB cap; on record, kept.
