@@ -384,10 +384,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   workHeld(viewer, ctx);
   // (an installer run from an address as it is fetched: download it first, workFetchRun)
   if (!spec && workFetchRun(command)) throw new HttpError(409, WORK_FETCHRUN);
-  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs; then code it runs
-  // unseen, workKeyCode)
+  // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
-  if (keys.length) workKeyCode(sorted);
   const at = sparkName(node);
   // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below. Never a write_file's
   // plain write nor a command given a key, which the hub would run bare: those are refused there, as below)
@@ -407,6 +405,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   const topDirs = await runnerTopDirs(node, sorted);
   if (!topDirs) throw new HttpError(503, `Which folders at the top of the home it names are there on ${at} couldn’t be read, so nothing was ${ctx.button ? '' : 'asked or '}run.`);
   if (keys.length) runKeysOutside(runnerWalls(sorted, command, dir, topDirs).open);
+  // (then code it runs unseen, workKeyCode: after the walls' own refusal, whose words come first)
+  if (keys.length) workKeyCode(sorted);
   // The owner's yes, pressed (on the page, or in the paired Telegram chat while approvals from there are on): it runs
   // as its button showed it, by the ask's record under that button's id, or it is asked again.
   if (ctx.button && ctx.ownerConfirmed) {
