@@ -1,9 +1,13 @@
 # Review guide for Astra
 
-This is the whole Spark Console folder as of 2026-11-15, with nothing left out. The code is as of commit `36db95e`
-on `main`. Two commits came after it: this guide, and fixes to stale documents and to three comments in the parts.
-Neither changes what the code does. Please review it for bugs, gaps and suggestions. This page says what to read,
-what changed, what was left out on purpose, how it was checked, and how it gets installed.
+This is the whole Spark Console folder as of 2026-11-15, with nothing left out. Please review the commit named in the
+owner's message, for bugs, gaps and suggestions. Its code is that of commit `36db95e` on `main`: as this guide was
+written, the commits after it change documents and three comments in the parts, not what the code does. This page
+says what to read, what changed, what was left out on purpose, how it was checked, and how it gets installed.
+
+**This review runs beside our own.** Our final read of the same code is running now. Fixes from it land on `main`,
+on top of the commit you were given. If you report something a later commit has already closed, we answer with that
+commit.
 
 Two things are new since your first review:
 
@@ -340,9 +344,11 @@ D9 to D11.
   runs in a container on a compute Spark, with no network and no access to Docker (`tools/test-on-spark.sh`), and
   on GitHub on every push (`.github/workflows/full-run.yml`: the job that runs the code can only read; a second
   job that runs none of it pushes the `tested/` tag). The installer refuses a lock that doesn't match the code.
-
-TESTS_LINE
-
+- **The result.** On 2026-11-15 the whole suite passed on the code at commit `36db95e`: 2,352 of 2,353 tests, none
+  failed, one skipped, in a container on Spark 4, in 46 minutes. A test skips itself where a program it needs is
+  missing; in round 1's run the one skipped was the zsh case in `test/state.test.mjs`. The commits after `36db95e`
+  change documents and comments only. The whole suite is run again on each of them before it is pushed; this guide
+  claims no result for those runs.
 - **Reviews.** Opus 5.5 built the steps and Fable 5.2 read them. The dangerous pieces were read more than once
   before they were switched on: R64's Why names a sixth review of the sorter, R60's Today a third read of the
   net's helper half, R70's a fourth read of root. Findings were fixed with a test or written into the rule's
@@ -373,7 +379,8 @@ time. After changing a part, run `node tools/make.mjs`.
 
 ## 8. Install and the checks after it
 
-INSTALL_LINE
+Spark 2 runs build `32cfab4f06fa`, installed on 2026-11-14, after round 1's reply was written. Nothing built on
+2026-11-15 is installed.
 
 The install runs from the owner's Mac, with a note of what changed:
 
