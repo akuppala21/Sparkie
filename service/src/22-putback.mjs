@@ -138,8 +138,9 @@ function putBackAtStart() {
     try {
       const at = new Date().toISOString();
       for (const conv of chatData().conversations.filter(c => c.task)) {
-        const request = String(conv.task.request || '').slice(0, 200);
+        const request = String(conv.task.request || '').slice(0, 200), was = conv.task;
         conv.task = null;
+        taskEnded(conv, was, 'put-back');
         conv.messages.push({ role: 'assistant', content: maskSecrets(`Spark Console’s state was put back from a copy, so “${request}” isn’t carried on. Once you have looked at what came back (open Spark Console on your tailnet), say “carry on” if it’s still wanted.`), createdAt: at, notice: true });
         conv.updatedAt = at;
         parked++;

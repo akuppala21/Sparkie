@@ -277,7 +277,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     ok = false;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
   }
-  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started }, out);
+  const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started, task: ctx?.task || null }, out);
   // What this request read from outside, by its record (A7c; the dangerous ask's "came from", 20-danger.mjs): a label
   // built by code, the tool and its Spark, never its source's words.
   if (ok && jid && a?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')))) workRead(ctx, jid, a.title, c.args);

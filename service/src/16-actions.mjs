@@ -584,6 +584,8 @@ async function runAction(name, viewer, args, ctx = {}) {
     const out = await a.run(input, viewer, ctx);
     if (byAgent && out?.operation && out.outcome !== 'already-starting') agentChanges.push(Date.now());
     if (ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).conv ||= ctx.conv;
+    // (and the request it was made for, so its task's report counts it: E7, 14-tasks.mjs)
+    if (ctx.task && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).task ||= ctx.task;
     if (ownersOwn && out?.outcome === 'started' && out?.operation && jobs.has(out.operation)) jobs.get(out.operation).ownersOwn = true;
     // Work started from Telegram reports there when it ends (20-tell.mjs).
     if (ctx.channel && ctx.conv && out?.outcome === 'started' && out?.operation && jobs.has(out.operation) && !jobs.get(out.operation).channel) {
