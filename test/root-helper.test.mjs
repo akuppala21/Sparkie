@@ -477,10 +477,11 @@ describe('what the run wall holds in the home', () => {
       assert.ok(c.includes('InaccessiblePaths=/home/owner/dotfiles/netrc') && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
       assert.ok(!c.some(a => /\/home\/owner\/(\.netrc|\.aws|\.bash_history)|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
     }
-    for (const [name, to, why] of [['.pgpass', 'dotfiles/missing', 'is a link to nothing that is there'], ['.my.cnf', join(s.R, 'etc/shadow'), 'is a link out of the home folder, or to it'],
-      ['.kube', join(s.R, 'home/owner/.config'), 'is a link to a folder that holds what the walls hold']]) {
+    // (each target in the rehearsal its link is made in)
+    for (const [name, to, why] of [['.pgpass', () => 'dotfiles/missing', 'is a link to nothing that is there'], ['.my.cnf', R => join(R, 'etc/shadow'), 'is a link out of the home folder, or to it'],
+      ['.kube', R => join(R, 'home/owner/.config'), 'is a link to a folder that holds what the walls hold']]) {
       const t = proven();
-      symlinkSync(to, join(t.R, 'home/owner', name));
+      symlinkSync(to(t.R), join(t.R, 'home/owner', name));
       const before = started(t).length;
       refused(look(t, 'true'), `/home/owner/${name} ${why}, which a look cannot hide: put the file itself there, or take the link away`);
       refused(change(t, 'true'), `/home/owner/${name} ${why}, which a change cannot hide`);
