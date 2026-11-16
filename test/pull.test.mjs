@@ -20,7 +20,9 @@
 // comes only once every process the power cut stopped is gone). The stand-in systemd counts a runner that has ended
 // but isn't reaped yet (ps shows Z) as stopped, so a start then brings the console up. R53: with a `.curlrc` and a
 // user-site `.pth` in Spark 2's home, setup, check, an install kept through the way back and one put back by it read
-// neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q).
+// neither (pull.sh, update-guard.sh and the installer run Python as -I and curl as -q). C4a's tests to add: a setup
+// whose fetch fails saves nothing; the token goes to git only under github.com's header key; a second install while
+// one runs is refused (where flock is); busy with no terminal is refused; the installer calls docker only to look.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -628,6 +630,92 @@ describe('pull.sh against a bare repository standing in for GitHub', { concurren
       // (the lock as it was, unless the newer build was installed and wrote its own)
       if (!(n1 && resultOf(home).tree === n1.t12 && resultOf(home).result === 'kept')) writeFileSync(lockFile, lock);
     }
+  });
+
+  // (R29's "tests to add", from the pull install's first review, C4a)
+  test('setup whose fetch fails saves nothing', CASE, async () => {
+    needs('setup');
+    const secrets = join(home, '.config', 'spark-console', 'secrets.json'), was = read(secrets);
+    const r = await pull(home, ['setup', OWNER_REPO], { input: 'another_made_up_token_0123456789\n', extra: { SPARK_CONSOLE_REPO_URL: join(WORK, 'nowhere.git') } });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /GitHub didn't accept that token for someone\/spark-console, or couldn't be reached\. Nothing was saved\./);
+    assert.equal(read(secrets), was, 'the secrets file is as it was');
+  });
+
+  test('the token goes to git only under github.com\'s header key', CASE, async () => {
+    needs('setup');
+    // (git as pull.sh hands it over: each setting's key beside whether its value is the token's header)
+    const keys = join(home, 'keybin');
+    mkdirSync(keys, { recursive: true });
+    sh(join(keys, 'git'), `#!/bin/sh
+for i in 0 1 2 3; do
+  eval "k=\\\${GIT_CONFIG_KEY_$i:-} v=\\\${GIT_CONFIG_VALUE_$i:-}"
+  case "$v" in *Authorization*) w=header ;; *) w=other ;; esac
+  [ -z "$k" ] || printf '%s %s\\n' "$k" "$w" >> "$HOME/git-keys.log"
+done
+exec '${join(home, 'bin', 'git')}' "$@"
+`);
+    rmSync(join(home, 'git-keys.log'), { force: true });
+    const r = await pull(home, ['check'], { extra: { PATH: `${keys}:${join(home, 'bin')}:${NODE_DIR}:${process.env.PATH}` } });
+    assert.equal(r.code, 0, r.out);
+    const set = lines(home, 'git-keys.log');
+    assert.ok(set.includes('http.https://github.com/.extraheader header'), set.join('\n'));
+    assert.deepEqual(set.filter(l => l.endsWith(' header')).map(l => l.split(' ')[0]).filter(k => k !== 'http.https://github.com/.extraheader'), [], 'the header under no other key');
+  });
+
+  test('a second install while one runs is refused, with nothing changed', { ...CASE, skip: spawnSync('sh', ['-c', 'command -v flock'], { timeout: 5000 }).status !== 0 && 'no flock here' }, async () => {
+    needs('setup');
+    const lockPath = join(home, '.cache', 'spark-console', 'pull.lock'), was = installedNow(home), resultFile = join(home, '.local', 'state', 'spark-console', 'update-result.json');
+    const result = existsSync(resultFile) ? read(resultFile) : null;
+    mkdirSync(dirname(lockPath), { recursive: true });
+    const free = () => spawnSync('flock', ['-n', lockPath, 'true'], { timeout: 5000 }).status === 0;
+    // (an install that runs: its lock held by a process of its own)
+    const holder = spawn('flock', ['-x', lockPath, 'sleep', '300'], { detached: true, stdio: 'ignore' });
+    try {
+      await waitFor(() => !free(), { timeout: 10000, what: 'the other install holding pull.sh\'s lock' });
+      const r = await pull(home, ['install', 'abcdefabcdef']);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Another install from pull\.sh is running\. Nothing was changed\./);
+      assert.deepEqual(installedNow(home), was);
+      assert.equal(existsSync(resultFile) ? read(resultFile) : null, result, 'no result written for it');
+    } finally {
+      try { process.kill(-holder.pid, 'SIGKILL'); } catch {}
+      await waitFor(free, { timeout: 10000, what: 'pull.sh\'s lock let go' });
+    }
+  });
+
+  test('busy with no terminal: refused, nothing changed', CASE, async () => {
+    needs('newer');
+    const g = push(treeFiles(15), 'Asked while the console was busy');
+    mark(g);
+    const was = installedNow(home);
+    writeFileSync(join(home, 'standin-busy'), '2');
+    try {
+      // (in a session of its own: no terminal to answer the question)
+      const r = await pull(home, ['install', g.t12], { detached: true });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /Spark Console is busy: 2 job\(s\) running/);
+      assert.match(r.out, /Spark Console is busy, and the update wasn't confirmed \(ASSUME_YES=1 updates anyway\)\. Nothing was changed\./);
+      assert.deepEqual(installedNow(home), was);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'refused']);
+    } finally { rmSync(join(home, 'standin-busy'), { force: true }); }
+  });
+
+  test('an install from pull.sh calls docker only to look (a stand-in docker that writes down each call)', { timeout: 300000 * SLOW }, async () => {
+    needs('newer');
+    const g = push(treeFiles(16), 'Installed with docker written down');
+    mark(g);
+    const docker = join(home, 'bin', 'docker');
+    sh(docker, '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$HOME/docker.log"\nexit 0\n');
+    rmSync(join(home, 'docker.log'), { force: true });
+    try {
+      const r = await pull(home, ['install', g.t12]);
+      assert.equal(r.code, 0, r.out);
+      assert.deepEqual([resultOf(home).tree, resultOf(home).result], [g.t12, 'kept']);
+      const calls = lines(home, 'docker.log');
+      assert.ok(calls.length > 0, 'the installer looked for the retired web page');
+      assert.deepEqual(calls.filter(c => !/^ps -a --format \{\{\.Names\}\}$/.test(c)), [], 'docker only to look');
+    } finally { sh(docker, '#!/bin/sh\nexit 0\n'); }
   });
 });
 
