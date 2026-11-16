@@ -617,7 +617,8 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a turn a budget ended that would have carried on but for the task's own limit, or that reached the task's 120
   // commands, E5b's 'task': its reply carries the mark, 14-tasks.mjs; the commands are counted once, by taskStepsKept
   // after this, so this turn's are no count of keepTask's)
-  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output'].includes(spent) ? taskOver(task) : null;
+  // (the steps, the output or the rounds a message may take, alike: R50)
+  const over = spent === 'task' ? 'steps' : !carry && ['steps', 'output', 'rounds'].includes(spent) ? taskOver(task) : null;
   if (!agent && task && conv.task === task && over) taskStopped(conv, task, over, conv.messages.at(-1)?.role === 'assistant' ? conv.messages.at(-1) : null);
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
