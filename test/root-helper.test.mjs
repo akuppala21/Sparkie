@@ -158,7 +158,7 @@ const LOOK_WALL = ['-p', 'DynamicUser=yes', '-p', 'AmbientCapabilities=CAP_DAC_R
   '-p', 'SystemCallErrorNumber=EPERM', '-p', 'SystemCallArchitectures=native', '-p', 'ProtectSystem=strict',
   '-p', 'ProtectHome=read-only', '-p', 'ProtectKernelTunables=yes', '-p', 'ProtectControlGroups=yes', '-p', 'PrivateTmp=yes',
   '-p', 'PrivateIPC=yes', '-p', 'PrivateNetwork=yes', '-p', 'PrivateDevices=yes', '-p', 'TemporaryFileSystem=/dev/shm:ro',
-  '-p', 'ReadOnlyPaths=/'];
+  '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'ReadOnlyPaths=/'];
 function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console']) {
   return ['systemd-run', `--unit=sw-look-${id}`, `--description=Spark Console look ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', ...LOOK_WALL, ...HIDDEN(hiddenExtra), '-p', `BindReadOnlyPaths=/run/spark-console/${id}`,
@@ -168,7 +168,8 @@ function lookCall(s, id, hash, secs, hiddenExtra = ['/home/owner/.local/share/sp
 function runCall(s, id, hash, secs, { protect = [], pins = PINS, rw = HOME_RW, hiddenExtra = ['/home/owner/.local/share/spark-console', '/var/lib/spark-console'], memory = '8G' } = {}) {
   return ['systemd-run', `--unit=sw-run-${id}`, `--description=Spark Console run ${id} sha256 ${hash}`, '--wait', '--pipe',
     '--collect', '--quiet', '-p', 'NoNewPrivileges=yes', '-p', 'PrivateTmp=yes', '-p', `IPAddressDeny=localhost ${LAN}`,
-    '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm:mode=1777,nosuid', '-p', 'PrivateDevices=yes',
+    '-p', 'IPAddressAllow=127.0.0.53', '-p', 'PrivateIPC=yes', '-p', 'TemporaryFileSystem=/dev/shm:mode=1777,nosuid',
+    '-p', 'TemporaryFileSystem=/dev/pts:ro', '-p', 'PrivateDevices=yes',
     ...HIDDEN(hiddenExtra), '-p', 'BindReadOnlyPaths=/run/systemd/resolve',
     ...[...READ_ONLY, ...protect].flatMap(p => ['-p', `ReadOnlyPaths=${p}`]), '-p', 'ReadOnlyPaths=/home/owner',
     ...rw.flatMap(p => ['-p', `ReadWritePaths=${p}`]),
@@ -579,9 +580,9 @@ describe('the proof of the walls', () => {
     "a connection to this Spark's own address or the tailnet", 'a file or segment left in /dev/shm or IPC', "the home's own mode",
     "the owner's start files", 'a name made at the top of the home or in a dot folder',
     'a write where a change may write, refused (~/.cache, /dev/shm)', 'with --home, a name at the top of the home or in ~/.local/bin, refused',
-    'a write in ~/.ssh'];
-  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26];
-  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29];
+    'a write in ~/.ssh', 'a terminal of this Spark (/dev/pts)'];
+  const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26, 30];
+  const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30];
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
@@ -617,7 +618,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26, 30].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -672,6 +673,13 @@ describe('the proof of the walls', () => {
     const p = prove(s);
     noMark(s, p);
     assert.match(p.stdout, FAILED(`attempt 14 (${NAMES[14]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
+  });
+  test('attempt 30 not seen working outside the walls (the terminal its own program holds): no mark, even with every wall holding', () => {
+    const s = proven();
+    s.put('standin/outside', '30 not-there stand-in\n');
+    const p = prove(s);
+    noMark(s, p);
+    assert.match(p.stdout, FAILED(`attempt 30 (${NAMES[30]}) could not be shown working outside the walls, so stopping it inside would show nothing`));
   });
   test('attempt 2 that reaches other things outside but not its own program on the loopback: no mark', () => {
     const s = proven();
@@ -1685,6 +1693,21 @@ describe('what bounds a plain change (R63)', () => {
     refused(look(s, 'true', { extra: ['--gpu'] }), '--fleet and --gpu are for run: a look reaches no network and no device');
   });
 
+  // The final read's "pts": PrivateDevices keeps the Spark's own /dev/pts (systemd.exec: "as well as the pseudo TTY
+  // subsystem"), so a look could read what is typed in any terminal and a change the owner's. The stand-ins build no
+  // wall: this shows the empty one is asked for; the proof's attempt 30, on a Spark, shows it holds.
+  test('no terminal of the Spark: an empty read-only /dev/pts in a look and in every change but --open, with --gpu, --fleet and --home too', () => {
+    const s = proven();
+    const PTS = 'TemporaryFileSystem=/dev/pts:ro';
+    for (const [wall, r] of [['look', look(s, 'true')], ['run', change(s, 'true')], ['run', change(s, 'true', { extra: ['--gpu'] })],
+      ['run', change(s, 'true', { extra: ['--fleet'] })], ['run', change(s, 'true', { extra: ['--home'] })]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(unitCall(s, `sw-${wall}-${r.id}`).includes(PTS), `${wall} ${r.id}`);
+    }
+    const o = change(s, 'true', { extra: ['--open'] });
+    assert.ok(!unitCall(s, `sw-run-${o.id}`).includes(PTS), '--open (asked) drops the device bounds, as R63 says');
+  });
+
   test('--protect takes ~/ and a folder in the owner\'s home; ~user/, ~/../x, a bare ~ and a link under ~ are refused; up to 8', () => {
     const s = proven();
     for (const d of ['.cache/huggingface', '.local/share/spark-portal/workspaces/shared']) mkdirSync(join(s.R, 'home/owner', d), { recursive: true });
@@ -2291,6 +2314,24 @@ describe("the proof's own attempts", () => {
       const post = lines(P.py('post'));
       assert.ok(post.some(l => l.startsWith('V 14 run through ')) && post.some(l => l.startsWith('V 1 run through ')), post.join('\n'));
       assert.ok(!existsSync(join(P.home, '.sparkie-proof-proofrunhere14')), 'the proof cleans up after itself');
+    } finally {
+      target.kill('SIGKILL');
+    }
+  });
+
+  test('with no wall, attempt 30 opens the terminal the proof\'s own program holds: seen working outside, and getting through inside', async t => {
+    const P = realProof('proofrunhere30');
+    if (!P) return t.skip('no folder here gives file handles, which the proof needs for its key');
+    if (spawnSync('python3', ['-I', '-S', '-c', 'import os; os.openpty()'], { timeout: 10000 }).status !== 0) return t.skip('this machine gives no terminals');
+    assert.deepEqual(lines(P.py('prep')), ['S ok']);
+    const target = spawn('python3', ['-I', '-S', join(P.held, 'proof.py'), 'target'], { env: { PATH: '/usr/bin:/bin', SPARK_PROOF_MARK: 'proofrunhere30' }, cwd: P.H, stdio: 'ignore' });
+    try {
+      writeFileSync(join(P.held, 'target'), String(target.pid));
+      const outside = lines(P.py('outside', 30));
+      assert.ok(outside.some(l => /^P 30 outside works \/dev\/pts\/\d+/.test(l)), outside.join('\n'));
+      const mine = /\/dev\/pts\/\d+/.exec(outside.join('\n'))[0];
+      const inside = lines(P.py('run', 30));
+      for (const how of ['direct', 'child']) assert.ok(inside.some(l => l.startsWith(`P 30 ${how} through `) && l.includes(mine)), inside.join('\n'));
     } finally {
       target.kill('SIGKILL');
     }
