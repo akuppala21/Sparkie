@@ -80,6 +80,8 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  // (on Spark 2: how it runs there and what is checked after it, 21-hub.mjs)
+  if (f.hub) out.push(dangerPlain(f.hub, 400));
   return out;
 }
 
@@ -100,9 +102,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
-// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
-// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, hub, whoApproves, switchBrain,
+// recheck}); shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install);
+// call: {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller
+// (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');

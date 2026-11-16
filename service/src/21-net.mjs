@@ -135,12 +135,15 @@ async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
 //   node: the Spark (nodeById); command: the exact command the owner saw.
 //   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
 //   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
-//   the journal's class and gate.
+//   the journal's class and gate. A11 (Spark 2) adds three: memory, the run wall's cap in GB (1 to 8; the helper's own
+//   when not given); ways, { words: {name: what it is}, probe: node => ({name: true | false | null}) }, the caller's own
+//   ways in, tried with the net's before and after and counted the same; pause, true to pause Sparkie's and agents'
+//   changes (tripBreaker) when a way in stopped working.
 // Answers as run does, with net: { id, outcome: kept | put back | timer, goesBackAt } and note: the outcome's words
 // (or, with no helper or an unknown one there, the owner's set-up command, needsOwner). Throws, nothing having run:
 // the net off, no owner's press, a time or folder out of shape, a guard still open there, the Spark claimed, a way in
 // down before.
-async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked' } = {}) {
+async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked', memory = null, ways = null, pause = false } = {}) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is off in this build, so ${at} wasn’t changed.`);
   if (!(ctx.button && ctx.ownerConfirmed)) throw new HttpError(403, 'Nothing ran: only the owner’s yes runs a change inside the lock-out net.');
@@ -155,7 +158,9 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   const g = { id, spark: node.id, chat: ctx.chat || null };
   const end = (fields, text = null) => { if (rid && !ended) { ended = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, net: id, ms: Date.now() - t0, ...fields }, text); } };
   try {
-    const before = await netProbe(node);
+    // (its caller's own ways in, beside the net's, tried before and after it: A11's Spark 2)
+    const probe = async () => ({ ...(await netProbe(node)), ...(ways ? await ways.probe(node) : {}) }), names = { ...NET_PROBES, ...(ways?.words || {}) };
+    const before = await probe();
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
     // (on record before the call: a restart from here on puts it back at start)
     netSave(f => f.guards.push({ ...g, state: 'arming', at: new Date().toISOString(), goesBackAt: new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString() }));
@@ -165,7 +170,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     netMark(id, { record: rid });
     // (a change starts in ~/work unless it says: made first, as the owner, outside the wall, as the runner's copies do)
     if (dir === RUNNER_DIR) await run(node, '[ -d "$HOME/work" ] || mkdir -m 0755 -- "$HOME/work"', { timeout: 15000 });
-    const called = await guardCall(node, 'run', { id, command, seconds, dir });
+    const called = await guardCall(node, 'run', { id, command, seconds, dir, memory });
     const a = guardAnswer(id, called.out);
     if (a.said || a.refused != null || (!a.goesBackAt && a.exit === undefined && called.code !== 255)) {
       netMark(id, { state: 'never' });
@@ -198,13 +203,13 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       netTell(g, words, late());
       return result('put back', words);
     }
-    const after = await netProbe(node), lost = Object.keys(NET_PROBES).filter(p => before[p] === true && after[p] !== true);
+    const after = await probe(), lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
     if (!lost.length) {
       const k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
       if (k.kept) {
         netMark(id, { state: 'kept', keptAt: new Date().toISOString() });
         end({ ok: true, outcome: 'kept', exit: a.exit }, `$ ${command}\n${output}`);
-        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and ${at} still answers every way it did before (a new connection, the root helper${before.tailnet ? ', Tailscale' : ''}): it is kept.${a.exit ? ` The command itself ended with exit ${a.exit}.` : ''}`;
+        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and ${at} still answers every way it did before (a new connection, the root helper${before.tailnet ? ', Tailscale' : ''}${ways ? Object.keys(ways.words).filter(p => before[p] === true).map(p => `, ${ways.words[p]}`).join('') : ''}): it is kept.${a.exit ? ` The command itself ended with exit ${a.exit}.` : ''}`;
         netTell(g, words, late());
         return result('kept', words);
       }
@@ -225,8 +230,10 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       return result('timer', words);
     }
     // A way in that worked before doesn't now: put back at once, or, if that can't reach it, by its own timer.
-    const what = lost.map(p => NET_PROBES[p]).join(', ');
+    const what = lost.map(p => names[p]).join(', ');
     const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
+    // (and, for a caller that asks it, Sparkie's and agents' changes pause: A11's Spark 2, design A 2.7)
+    if (pause) tripBreaker(`a change on ${at} (record ${rid}) broke ${what}; ${p.putBackAt ? 'it was put back' : `${at}’s own timer puts it back`}`);
     if (p.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: p.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit, lost }, `$ ${command}\n${output}`);

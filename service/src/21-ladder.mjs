@@ -4,8 +4,8 @@
 // Timers: none        Wakes: none
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
-// said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the
-// brain (asked first, a later build); the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
+// said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 (21-hub.mjs, behind its
+// switch) or a Spark holding the brain; the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
 // once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
 // placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
@@ -183,6 +183,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
 async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
+  // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below)
+  if (node.host === 'local' && HUB_ON) return hubChange(node, command, sorted, viewer, ctx, dir, widen);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);

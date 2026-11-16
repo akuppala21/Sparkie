@@ -737,6 +737,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
       '21-updates.mjs', // install_update (C5)
       '21-ladder.mjs', // a risky change of a dangerous kind (A7c)
       '21-net.mjs', // a lock-out change, before the net runs it (A13b, read before it lands)
+      '21-hub.mjs', // a delete on Spark 2 it cannot see, before the net runs it (A11, read before it lands)
     ];
     const src = join(REPO, 'service', 'src');
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {

@@ -8638,6 +8638,8 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
+  // (on Spark 2: how it runs there and what is checked after it, 21-hub.mjs)
+  if (f.hub) out.push(dangerPlain(f.hub, 400));
   return out;
 }
 
@@ -8658,9 +8660,10 @@ function dangerOwnerWords(conv) {
 }
 
 // kinds: some of DANGER_KINDS (code names them, never the brain); where: the Spark; facts: what lines 2, 3, 5 and 6
-// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, whoApproves, switchBrain, recheck}); shown: the exact
-// bytes the press runs ({command}, {path, before, after}, {script}; none for an install); call: {action, args}, what the
-// yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller (the brain, an agent) is told.
+// say ({asked, backAt, net, kept, gone, lockWhy, waysIn, install, outsideWall, hub, whoApproves, switchBrain,
+// recheck}); shown: the exact bytes the press runs ({command}, {path, before, after}, {script}; none for an install);
+// call: {action, args}, what the yes runs. ctx.reads: what this request read ({id, label, at}). Returns what the caller
+// (the brain, an agent) is told.
 function dangerAsk(viewer, ctx, { kinds, where = null, facts = {}, shown = {}, call } = {}) {
   const ks = DANGER_KINDS.filter(k => (kinds || []).includes(k));
   if (!ks.length || !call?.action || !ACTIONS.has(call.action)) throw new Error('A dangerous ask needs one of its kinds and the action it runs.');
@@ -16612,14 +16615,14 @@ async function doorUpgrade(req, socket, head) {
 // at once with `putback`. Only the console's half calls these (21-net.mjs, A13b: dark until its switch is on): guardScript
 // builds the one script a call runs on a Spark, as helperScript does for a look (the helper must be the one this build
 // ships), and guardAnswer reads what came back. The guard's id is the call's own, and keep and putback name it again.
-function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~' }) {
+function guardScript(node, verb, { id, command = '', seconds = 60, dir = '~', memory = null }) {
   // (the id goes into a shell line: only the shape every helper call has)
   if (!/^[a-z0-9]{8,40}$/.test(String(id))) throw new Error('A guard id is 8 to 40 of a-z and 0-9.');
   // (where the change starts: ~ or a folder under it, as run's dir takes it, A13b; never quietly ~)
   if (!/^~(?:\/(?!\.\.?(?:\/|$))[\w.@+-]+)*$/.test(String(dir))) throw new Error('A guard’s folder is ~ or a folder under it.');
   const sudo = node.host === 'local' ? 'systemd-run --user --quiet --wait --pipe --collect --expand-environment=no sudo -n' : 'sudo -n';
   const call = verb === 'run'
-    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`} -- ${q(command)}`
+    ? `run --net --id "$id" --sha256 ${createHash('sha256').update(command).digest('hex')} --seconds ${Math.trunc(Number(seconds))} --dir ${dir === '~' ? '"$HOME"' : `"$HOME"${q(dir.slice(1))}`}${Number.isInteger(memory) && memory >= 1 && memory <= 8 ? ` --memory ${memory}G` : ''} -- ${q(command)}`
     : verb === 'putback' ? 'putback --id "$id"' : 'keep --id "$id"';
   return [
     `id=${id}; h=${HELPER_AT}`,
@@ -16653,9 +16656,9 @@ function guardAnswer(id, out) {
 }
 // One call of the net on a Spark (never rejects): { id, code, out }. run: the command in the run wall, the net armed
 // first, starting in dir (~ or a folder under it); keep: id is the guard's own.
-function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~' } = {}) {
+function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null } = {}) {
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir }), limit: Number(seconds) + 180 });
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory }), limit: Number(seconds) + 180 });
     const chunks = [];
     let bytes = 0;
     child.stdout.on('data', c => { if (bytes < J_MAX) { chunks.push(c); bytes += c.length; } });
@@ -16772,14 +16775,202 @@ action({
       next: open === null ? 'Every tool is offered here: call them by name.' : open ? 'These are offered from your next round.' : 'This brain’s setup offers the core only: call one by its name and it runs.' };
   },
 });
+/* ───────── a change on Spark 2, the hub: always asked, inside the net, its own ways in checked after (A11, dark) ───────── */
+// Area: features        Rules: R1, R60, R61        Tests: hub-change.test.mjs
+// Owns: none
+// Timers: none        Wakes: none
+// Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, step 11). With HUB_ON, run's ladder
+// (workChange, 21-ladder.mjs) hands every change there to hubChange; off, it is not done, as before (runnerNever's
+// words). First, refused by code before anything is asked, whatever the words, a go-ahead or an agent say: what the
+// sorter calls not done; root and the root helper's own line (later steps); a pause; the lock-out class (it is kept only
+// by a fresh visit, A13c); and the owner's standing rules for the hub (hubRefuses): nothing that stops, restarts,
+// removes or changes the brain's container or its model files; nothing that starts a model, a job or any other workload
+// there; nothing that touches Spark Console's own unit, state, secrets or repository copy (only its installer changes
+// those); nothing about Spark 2's power or its plug; no more than 10 minutes. Then it is always asked: one button, one
+// command a press, built here (a delete it cannot see is the dangerous ask, 20-danger.mjs), never at once. The press
+// sorts it again and runs it through the lock-out net's seam (netGuarded, 21-net.mjs): the call reaches the root helper
+// through the owner's service manager, so the command runs outside the console's own unit (helperScript's and
+// guardScript's local case), in the run wall with 2 GB, the net armed first. Before and after it, beside the net's own
+// ways in, Spark Console's (the installer's check_ways: the owner signs in, the agent door answers, the model address
+// lists; its route on Tailscale; the brain answering): one that worked before and doesn't after puts it back at once,
+// pauses Sparkie's and agents' changes and tells the owner what stopped working.
+
+// The switch, dark: a change on Spark 2 is not done until this one line is on, once the whole chain has been read. The
+// stand-in fleet may turn it on for a test (SPARK_CONSOLE_HUB=1).
+const HUB_ON = ALL_LOCAL && process.env.SPARK_CONSOLE_HUB === '1';
+// The run wall's cap there (design A 2.7: 2 GB), and the most a command there may run (decision P-1, 2.10: 10 minutes).
+const HUB_MEMORY = 2, HUB_MOST_MINUTES = 10;
+const HUB_NOT = 'Spark 2 runs only Spark Console and the brain; nothing was asked or run.';
+// Programs that set the next one going (their options skipped): what that one is counts.
+const HUB_WRAPPERS = new Set(['env', 'nice', 'ionice', 'nohup', 'time', 'command', 'exec', 'stdbuf', 'timeout', 'setsid', 'sudo', 'doas', 'xargs', 'chrt', 'taskset', 'unbuffer', 'watch', 'flock']);
+const HUB_CONTAINERS = new Set(['docker', 'podman', 'nerdctl', 'ctr', 'crictl', 'docker-compose', 'kubectl', 'k3s', 'microk8s', 'containerd', 'dockerd']);
+const HUB_STARTS = new Set(['run', 'create', 'start', 'up', 'service', 'stack', 'swarm', 'build', 'buildx', 'pull', 'load', 'import']);
+// A container program's sub-command (past its options; compose, container and image name one more): whether it starts one.
+function hubStarts(args) {
+  const words = args.filter(a => !a.startsWith('-')), [a, b] = words;
+  return HUB_STARTS.has(a) || (['compose', 'container', 'image'].includes(a) && HUB_STARTS.has(b));
+}
+const HUB_SERVERS = new Set(['vllm', 'sglang', 'llama-server', 'llama-cli', 'ollama', 'trtllm-serve', 'trtllm-build', 'text-generation-launcher', 'tritonserver',
+  'torchrun', 'deepspeed', 'accelerate', 'jupyter', 'jupyter-lab', 'jupyter-notebook', 'uvicorn', 'gunicorn', 'huggingface-cli']);
+const HUB_LASTING = new Set(['nohup', 'setsid', 'disown', 'screen', 'tmux', 'at', 'batch', 'crontab', 'systemd-run', 'daemonize', 'start-stop-daemon']);
+const HUB_POWER = new Set(['reboot', 'shutdown', 'poweroff', 'halt', 'telinit', 'init']);
+const HUB_KILL = new Set(['kill', 'pkill', 'killall', 'fuser']);
+// systemctl's and service's verbs that change something (status, show, cat, list-… only read).
+const HUB_UNIT_VERBS = /^(?:start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|enable|disable|reenable|mask|unmask|kill|edit|set-property|daemon-reload|daemon-reexec|link|revert|preset|preset-all|isolate|set-environment|unset-environment|import-environment|reset-failed|freeze|thaw|clean|reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec|default|rescue|emergency|exit|switch-root|add-wants|add-requires)$/;
+
+// Each program a command runs, roughly as a shell splits it (shellWords, 21-work.mjs), through the wrappers above and
+// into a word that holds a whole command (sh -c '…'), twice deep: [{prog, args}].
+function hubPrograms(command, depth = 0) {
+  const progs = [];
+  let seg = [];
+  const flush = () => {
+    for (let k = 0; k < seg.length;) {
+      if (/^[A-Za-z_]\w*=/.test(seg[k])) { k++; continue; }
+      const prog = seg[k].split('/').pop();
+      progs.push({ prog, args: seg.slice(k + 1) });
+      if (!HUB_WRAPPERS.has(prog)) break;
+      k++;
+      while (k < seg.length && /^(?:-|\d)/.test(seg[k])) k++;
+    }
+    if (depth < 2) for (const w of seg) if (/\s/.test(w)) progs.push(...hubPrograms(w, depth + 1));
+    seg = [];
+  };
+  for (const t of shellWords(String(command))) {
+    if (t.op) { if (!['<', '>'].includes(t.op)) flush(); continue; }
+    seg.push(t.w);
+  }
+  flush();
+  return progs;
+}
+const hubEsc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The brain's names: its container, the name it serves, its model (as the store keeps it), and the protected containers.
+function hubBrainNames() {
+  const names = [MAIN?.container, MAIN?.served, MAIN?.model, MAIN?.model && repoOf(MAIN.model), MAIN?.model && `models--${String(MAIN.model).replace('/', '--')}`]
+    .filter(x => typeof x === 'string' && x.length >= 3).map(hubEsc);
+  const globs = (Array.isArray(CONFIG.protect) ? CONFIG.protect : []).filter(x => typeof x === 'string' && x).map(g => hubEsc(g.replace(/\*+$/, '')));
+  return [...names, ...globs];
+}
+
+// The owner's standing rules for Spark 2 (each said in its own words): why it is never done there, or null.
+function hubRefuses(command, sorted, ctx = {}, dir = RUNNER_DIR, widen = {}) {
+  const text = String(command), progs = hubPrograms(text), has = set => progs.find(p => set.has(p.prog));
+  const unit = progs.find(p => ['systemctl', 'service'].includes(p.prog) && p.args.some(a => HUB_UNIT_VERBS.test(a)));
+  // Its plug, and its power
+  if (/5580|spark-console-plugs|plugs\.sh|spark-console\/matter|matter-server|chip-tool|\btapo\b|\bkasa\b/i.test(text) || has(HUB_POWER)
+    || (unit && unit.args.some(a => /^(?:reboot|poweroff|halt|suspend|hibernate|hybrid-sleep|kexec)$/.test(a)))) return 'it touches Spark 2’s power or its plug, which are never changed from here';
+  // Spark Console's own unit, state, secrets and repository copy (the installer's, and only through its own actions)
+  const own = [STATE_DIR, SECRETS_FILE, `${homedir()}/spark-console-src`].filter(Boolean).map(hubEsc).join('|');
+  if (/spark-console|api\.sock|door\.sock/i.test(text) || (own && new RegExp(own).test(text)) || has(HUB_KILL)) return 'it touches Spark Console’s own unit, state, secrets or repository copy, which only its installer changes';
+  // The brain's container and its model files (a container program other than a start, a name of the brain's, the folders models are kept in)
+  const brain = hubBrainNames(), box = progs.find(p => HUB_CONTAINERS.has(p.prog));
+  if ((sorted?.kinds || []).includes('brain') || (brain.length && new RegExp(brain.join('|'), 'i').test(text)) || runnerProtected(sorted, dir).length
+    || (box && !hubStarts(box.args)) || (unit && unit.args.some(a => /^(?:docker|containerd)(?:\.service|\.socket)?$/.test(a)))) return 'it would stop, restart, remove or change the brain’s container or its model files';
+  // A model, a job or any other workload (a container started, a model server, something left running, a service, the GPU)
+  if (box || has(HUB_SERVERS) || has(HUB_LASTING) || /(?:^|\s)-m\s+(?:vllm|sglang|http\.server|uvicorn|jupyter|torch\.distributed)\b/.test(text)
+    || /\bloginctl\s+enable-linger\b/.test(text) || widen.gpu === true || sorted?.gpu === true) return 'it would start a model, a job or another workload there';
+  if (unit) return 'it would start, stop or change a service there';
+  // (minutes, A6: held to 10 there, and more is not done)
+  if (Number(ctx.long?.minutes) > HUB_MOST_MINUTES) return `a command on Spark 2 runs ${HUB_MOST_MINUTES} minutes at most`;
+  return null;
+}
+
+// A change on Spark 2 (workChange, with HUB_ON): refused, asked, or, from the ask's own press, run inside the net.
+async function hubChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
+  whoMayLook(viewer, ctx);
+  // (as on every Spark, whatever the caller says: not done, root, the root helper's line, a pause)
+  if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
+  if (ctx.root || sorted?.kinds?.includes('root') || sorted?.answer === 'set root') throw new HttpError(403, 'A change as root waits for the put-back net, which isn’t built yet, so nothing ran.');
+  if (sorted?.answer) throw new HttpError(403, 'It calls the root helper or its sudo line, which only the owner’s one-time command sets up, so nothing ran.');
+  if (agentSettings().halted) throw new HttpError(403, 'Sparkie’s and agents’ changes are paused (your account menu → Agents and Telegram), so nothing ran.');
+  const why = hubRefuses(command, sorted, ctx, dir, widen);
+  if (why) throw new HttpError(403, `Not done on Spark 2: ${why}. ${HUB_NOT}`);
+  if (sorted.class === 'lockout') throw new HttpError(403, `Not done on Spark 2 yet: a change that can lock you out of Spark 2 is kept only by a fresh visit to Spark Console, which comes with a later build. ${sorted.why} Nothing was asked or run.`);
+  if (widen.fleet === true) throw new HttpError(403, `Not done on Spark 2: a change there reaches no other Spark. ${HUB_NOT}`);
+  const dangerous = (sorted.kinds || []).filter(k => k === 'delete');
+  // The owner's yes, pressed (the dangerous ask's press carries its pair): sorted again, its scripts read again.
+  if (ctx.button && ctx.ownerConfirmed && (!dangerous.length || ctx.danger)) {
+    const key = workKey(node, command, ctx, dir), was = workAsks.get(key);
+    workAsks.delete(key);
+    if (was && Object.keys(was.sums).length) {
+      const now = (await workScripts(node, sorted.scripts, dir, command)).sums;
+      if ([...new Set([...Object.keys(was.sums), ...Object.keys(now)])].some(p => was.sums[p] !== now[p])) return hubAsk(node, command, sorted, viewer, { ...ctx, button: false, ownerConfirmed: false, danger: false }, dir, 'a script it runs changed after you were asked, so that yes was void');
+    }
+    return netGuarded(node, command, { ctx, dir, seconds: RUNNER_SECONDS, cls: sorted.class, gate: 'asked', memory: HUB_MEMORY, ways: HUB_WAYS, pause: true });
+  }
+  // The owner's own call with no chat to show a button in (the API): nothing is asked there.
+  if (!ctx.conv && !ctx.onQuestion && !ctx.agent && !ctx.agentId && !viewer?.agentKey) throw new HttpError(409, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
+  return hubAsk(node, command, sorted, viewer, ctx, dir);
+}
+
+// The ask, built by code: the exact command, why it is asked, how it runs and what is checked after, what put-back
+// covers, what Sparkie read before proposing it, each script's hash. A delete it cannot see is the dangerous ask.
+async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why = 'every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain') {
+  if (maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
+  const scripts = await workScripts(node, sorted.scripts, dir, command);
+  for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
+  workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
+  const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
+  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told.`;
+  if ((sorted.kinds || []).includes('delete')) {
+    return dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
+      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: net } });
+  }
+  const reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {} } = scripts;
+  const label = [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, net,
+    'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
+    ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []),
+    ...Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`)].join('\n');
+  return question(viewer, ctx, label, [{ label: 'Run it', call }, { label: 'No', call: null }], 'proposal', { ownerOnly: true });
+}
+
+// Spark Console's own ways in, as the installer's check_ways tries them (deploy/host-on-portal.sh), from its own socket
+// as the owner; its route on Tailscale (port 8443's, by the main address); the brain answering. true, false, or null
+// (can't be told: not counted before, and a miss after).
+function hubSelf(path, body = null) {
+  return new Promise(resolve => {
+    const req = http.request({ socketPath: API_SOCKET, path, method: body ? 'POST' : 'GET', timeout: 15000,
+      headers: { 'tailscale-user-login': String(accessList().owner || ''), ...(body ? { 'content-type': 'application/json' } : {}) } }, res => {
+      let out = '';
+      res.on('data', d => { if (out.length < 1e6) out += d; });
+      res.on('end', () => resolve({ status: res.statusCode, out }));
+      res.on('error', () => resolve({ status: 0, out: '' }));
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve({ status: 0, out: '' }));
+    req.end(body ? JSON.stringify(body) : undefined);
+  });
+}
+function hubRoute() {
+  return new Promise(resolve => {
+    let out = '';
+    const child = spawn('tailscale', ['serve', 'status', '--json'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 10000);
+    child.stdout.on('data', d => { if (out.length < 4e6) out += d; });
+    child.on('error', () => {});
+    child.on('close', code => {
+      clearTimeout(t);
+      try { const cfg = JSON.parse(out || '{}'), host = new URL(consoleOrigin()).host; resolve(code !== 0 || !cfg?.Web ? null : Boolean(cfg.Web[host])); } catch { resolve(null); }
+    });
+  });
+}
+const hubJson = s => { try { return JSON.parse(s); } catch { return null; } };
+const HUB_WAYS = {
+  words: { signin: 'your sign-in to Spark Console', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
+  probe: async () => {
+    const [who, door, models, route, brain] = await Promise.all([hubSelf('/whoami'), hubSelf('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize' }), hubSelf('/v1/models'),
+      hubRoute(), mainStatus().catch(() => null)]);
+    return { signin: hubJson(who.out)?.access === 'owner', door: door.status >= 200 && door.status < 500, models: hubJson(models.out)?.object === 'list',
+      route, brain: brain && brain.configured ? brain.healthy === true : null };
+  },
+};
 /* ───────── the ladder: a change on a Spark at once, asked first, or not done (A7c) ───────── */
 // Area: features        Rules: R61, R55, R54, R52        Tests: ladder.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the
 // sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is
-// said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 or a Spark holding the
-// brain (asked first, a later build); the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
+// said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 (21-hub.mjs, behind its
+// switch) or a Spark holding the brain; the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At
 // once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when
 // hostClear holds, which it never does while a Spark advertises Tailscale SSH (or that can't be told) or for a change
 // placed in the model store, the Hugging Face cache or the shared folder. Otherwise asked: one button for the owner
@@ -16957,6 +17148,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
 async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, widen = {}) {
   whoMayLook(viewer, ctx);
   const at = sparkName(node);
+  // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below)
+  if (node.host === 'local' && HUB_ON) return hubChange(node, command, sorted, viewer, ctx, dir, widen);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
@@ -17128,12 +17321,15 @@ async function netRun(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
 //   node: the Spark (nodeById); command: the exact command the owner saw.
 //   ctx: the press's (button and ownerConfirmed, chat, via, actor); dir: where it starts (~/work, made when missing; ~;
 //   or a folder under ~); seconds: its time limit, 1 to 1800 (the Spark's timer fires 600 s after it); cls and gate:
-//   the journal's class and gate.
+//   the journal's class and gate. A11 (Spark 2) adds three: memory, the run wall's cap in GB (1 to 8; the helper's own
+//   when not given); ways, { words: {name: what it is}, probe: node => ({name: true | false | null}) }, the caller's own
+//   ways in, tried with the net's before and after and counted the same; pause, true to pause Sparkie's and agents'
+//   changes (tripBreaker) when a way in stopped working.
 // Answers as run does, with net: { id, outcome: kept | put back | timer, goesBackAt } and note: the outcome's words
 // (or, with no helper or an unknown one there, the owner's set-up command, needsOwner). Throws, nothing having run:
 // the net off, no owner's press, a time or folder out of shape, a guard still open there, the Spark claimed, a way in
 // down before.
-async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked' } = {}) {
+async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds = RUNNER_SECONDS, cls = 'lockout', gate = 'asked', memory = null, ways = null, pause = false } = {}) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is off in this build, so ${at} wasn’t changed.`);
   if (!(ctx.button && ctx.ownerConfirmed)) throw new HttpError(403, 'Nothing ran: only the owner’s yes runs a change inside the lock-out net.');
@@ -17148,7 +17344,9 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
   const g = { id, spark: node.id, chat: ctx.chat || null };
   const end = (fields, text = null) => { if (rid && !ended) { ended = fields; journal('cmd', { id: rid, end: true, act: 'run', chat: ctx.chat || null, unit, net: id, ms: Date.now() - t0, ...fields }, text); } };
   try {
-    const before = await netProbe(node);
+    // (its caller's own ways in, beside the net's, tried before and after it: A11's Spark 2)
+    const probe = async () => ({ ...(await netProbe(node)), ...(ways ? await ways.probe(node) : {}) }), names = { ...NET_PROBES, ...(ways?.words || {}) };
+    const before = await probe();
     if (!before.ssh || !before.helper) throw new HttpError(503, `${at} ${!before.ssh ? 'doesn’t answer a new connection' : 'doesn’t answer through the root helper'} now, so nothing ran.`);
     // (on record before the call: a restart from here on puts it back at start)
     netSave(f => f.guards.push({ ...g, state: 'arming', at: new Date().toISOString(), goesBackAt: new Date(Date.now() + (seconds + NET_AFTER_S) * 1000).toISOString() }));
@@ -17158,7 +17356,7 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
     netMark(id, { record: rid });
     // (a change starts in ~/work unless it says: made first, as the owner, outside the wall, as the runner's copies do)
     if (dir === RUNNER_DIR) await run(node, '[ -d "$HOME/work" ] || mkdir -m 0755 -- "$HOME/work"', { timeout: 15000 });
-    const called = await guardCall(node, 'run', { id, command, seconds, dir });
+    const called = await guardCall(node, 'run', { id, command, seconds, dir, memory });
     const a = guardAnswer(id, called.out);
     if (a.said || a.refused != null || (!a.goesBackAt && a.exit === undefined && called.code !== 255)) {
       netMark(id, { state: 'never' });
@@ -17191,13 +17389,13 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       netTell(g, words, late());
       return result('put back', words);
     }
-    const after = await netProbe(node), lost = Object.keys(NET_PROBES).filter(p => before[p] === true && after[p] !== true);
+    const after = await probe(), lost = Object.keys(names).filter(p => before[p] === true && after[p] !== true);
     if (!lost.length) {
       const k = guardAnswer(id, (await guardCall(node, 'keep', { id })).out);
       if (k.kept) {
         netMark(id, { state: 'kept', keptAt: new Date().toISOString() });
         end({ ok: true, outcome: 'kept', exit: a.exit }, `$ ${command}\n${output}`);
-        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and ${at} still answers every way it did before (a new connection, the root helper${before.tailnet ? ', Tailscale' : ''}): it is kept.${a.exit ? ` The command itself ended with exit ${a.exit}.` : ''}`;
+        const words = `A change that could lock you out of ${at} (record ${rid}) ran inside the lock-out net, and ${at} still answers every way it did before (a new connection, the root helper${before.tailnet ? ', Tailscale' : ''}${ways ? Object.keys(ways.words).filter(p => before[p] === true).map(p => `, ${ways.words[p]}`).join('') : ''}): it is kept.${a.exit ? ` The command itself ended with exit ${a.exit}.` : ''}`;
         netTell(g, words, late());
         return result('kept', words);
       }
@@ -17218,8 +17416,10 @@ async function netGuarded(node, command, { ctx = {}, dir = RUNNER_DIR, seconds =
       return result('timer', words);
     }
     // A way in that worked before doesn't now: put back at once, or, if that can't reach it, by its own timer.
-    const what = lost.map(p => NET_PROBES[p]).join(', ');
+    const what = lost.map(p => names[p]).join(', ');
     const p = guardAnswer(id, (await guardCall(node, 'putback', { id })).out);
+    // (and, for a caller that asks it, Sparkie's and agents' changes pause: A11's Spark 2, design A 2.7)
+    if (pause) tripBreaker(`a change on ${at} (record ${rid}) broke ${what}; ${p.putBackAt ? 'it was put back' : `${at}’s own timer puts it back`}`);
     if (p.putBackAt) {
       netMark(id, { state: 'put back', putBackAt: p.putBackAt });
       end({ ok: false, outcome: 'put back', exit: a.exit, lost }, `$ ${command}\n${output}`);
