@@ -55,6 +55,11 @@ const GUARD_SAYS = {
   sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
   timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
+// A put-back that went back only in part: the helper's own count of what did not go back ("N did not" above 0), or, in
+// its later words, "in part". Never read as put back. Kept apart from GUARD_SAYS, which own-programs.test holds to what
+// the helper prints today.
+const GUARD_PART = /\bin part\b|\b[1-9]\d* (?:did not|didn’t|didn't|could not|couldn’t|couldn't)\b/i;
+const GUARD_PART_SAID = /^(?:net:? |already |refused: )?(?:the )?put[- ]back (?:is |was |went back )?(?:only )?in part:? ?(?:at )?(.*)$/i;
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
 // so a line the command printed is never read as the helper's. keep and putback print the helper's lines alone.
@@ -66,16 +71,21 @@ function guardAnswer(id, out) {
   const end = GUARD_SAYS.end.exec(last);
   const net = end ? own(lines.at(-2)) ?? '' : last;
   const after = re => re.exec(net)?.[1] ?? null;
+  // (a put-back: whole, in part, or failed, three different things; from the net's line, or putback's own answer)
+  const refusedText = !end && last.startsWith('refused: ') ? last.slice('refused: '.length) : null;
+  const back = after(GUARD_SAYS.putBack), partSaid = GUARD_PART_SAID.exec(net)?.[1] ?? (refusedText != null ? GUARD_PART_SAID.exec(refusedText)?.[1] : null) ?? null;
+  const part = partSaid ?? (back && GUARD_PART.test(back) ? back : null);
   // (why a put-back came at once: the helper's line just before its result, which it prints only then)
-  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net)) ? own(lines.at(-3)) ?? '' : '';
+  const why = end && (GUARD_SAYS.putBack.test(net) || GUARD_SAYS.failed.test(net) || partSaid != null) ? own(lines.at(-3)) ?? '' : '';
   return {
     ...(!end && first.startsWith('console ') ? { said: first.slice('console '.length) } : {}),
     ...(!end && last.startsWith('refused: ') ? { refused: last.slice('refused: '.length) } : {}),
     goesBackAt: GUARD_SAYS.netArmed.exec(first)?.[1] || null,
     open: after(GUARD_SAYS.netOpen),
     kept: !end && GUARD_SAYS.kept.test(last),
-    putBackAt: after(GUARD_SAYS.putBack),
-    failed: after(GUARD_SAYS.failed),
+    putBackAt: part == null ? back : null,
+    part,
+    failed: after(GUARD_SAYS.failed) ?? (refusedText != null ? /^the put-back failed: ?(.*)$/.exec(refusedText)?.[1] ?? null : null),
     sshd: GUARD_SAYS.sshd.exec(why)?.[1] ?? null,
     timerGone: GUARD_SAYS.timerGone.exec(why)?.[1] ?? null,
     ...(end ? { exit: end[1] === 'time' ? null : Number(end[1]) } : {}),
@@ -87,9 +97,14 @@ function guardAnswer(id, out) {
 // own lines come last, after anything the command printed, so a command that prints past the cap can't choose them
 // (guardAnswer reads them from the true end). cut: something in the middle was left out, and a line in its place says so.
 const GUARD_TAIL = 65536;
+// A putback waits for the helper's own put-back to end, and the Spark ends the call itself at this limit (spawnOn), so
+// it must outlast the helper's worst case, from the helper's own numbers: its command's unit given 60 s to stop and 10
+// more to be killed, then three tries 20 s apart, each with a systemd call that hangs to guard.py's 120 s bound, and
+// another put-back holding the guard's lock for up to 120 s before it: 60 + 10 + 3 × 120 + 40 + 120, and 70 to spare.
+const GUARD_PUTBACK_S = 660;
 function guardCall(node, verb, { id = randomBytes(12).toString('hex'), command = '', seconds = 60, dir = '~', memory = null, protect = [], lockout = false } = {}) {
   return new Promise(resolve => {
-    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: Number(seconds) + 180 });
+    const child = spawnOn(node, { script: guardScript(node, verb, { id, command, seconds, dir, memory, protect, lockout }), limit: verb === 'putback' ? GUARD_PUTBACK_S : Number(seconds) + 180 });
     const head = [], headMost = Math.max(GUARD_TAIL, J_MAX - GUARD_TAIL);
     let headBytes = 0, tail = Buffer.alloc(0), past = 0;
     child.stdout.on('data', c => {

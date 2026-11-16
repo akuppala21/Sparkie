@@ -3,7 +3,7 @@
 // a compute Spark is done only as root (as the owner it is answered "set root"), and as root it is the dangerous ask, with what goes back and why it can lock the owner out, and nothing runs before the press; the
 // press arms the Spark's own timer first (the command's time limit plus 600 s), runs the change and checks the ways in
 // from outside: all still work, so code keeps it; one stopped working, so it is put back at once (and, still not
-// working after the put-back, said plainly: live state the net holds no copy of, the restart the way back); no answer, so the
+// working after the put-back, said plainly: what the net puts back and what it doesn't, and what a restart clears); no answer, so the
 // Spark's own timer puts it back, the Spark stays claimed, a second lock-out change there is refused before it is
 // asked, /stop leaves the timer, and /putback puts it back by the owner's word; what the net can't put back (a
 // Tailscale sign-out, a sign-in as another key) is not done; a restart of Spark Console inside the window puts it back
@@ -98,7 +98,7 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
   try {
     const shown = a.m.danger.lines.join('\n');
     assert.match(shown, /^ROOT on Spark 3 · CAN LOCK YOU OUT\n/);
-    assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts Spark 3 off, restarting Spark 3 is the way back.'), shown);
+    assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. What goes back: the ways-in files and units the net copied before it ran. What doesn’t: live firewall and network state (iptables, nft, ip, nmcli), which a restart of Spark 3 clears, and anything else it changes, which a restart doesn’t.'), shown);
     assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
     assert.equal(a.m.danger.code, ADD);
     assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
@@ -151,7 +151,7 @@ test('a way in that worked before stops working after it: put back at once, and 
     assert.equal(g.state, 'put back', JSON.stringify(g));
     // (Spark 3 stays off the tailnet after the put-back, as a link taken down or a firewall rule loaded would leave it:
     // the helper's own words say "put back", and the owner is told the truth after them)
-    assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) was put back at once: after it, its Tailscale connection stopped working \\(put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ: 1 went back, 0 did not\\)\\. But even after the put-back, its Tailscale connection still doesn’t work: the net puts back files and units, not live network or firewall state \\(what iptables, nft, ip or nmcli change\\), and that most likely still cuts Spark 3 off\\. Restarting Spark 3 is the way back: switch its plug off and on \\(Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer\\)\\.$`));
+    assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) was put back at once: after it, its Tailscale connection stopped working \\(put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ: 1 went back, 0 did not\\)\\. But even after the put-back, its Tailscale connection still doesn’t work: the net puts back only the ways-in files and units it copied first, not live firewall or network state \\(what iptables, nft, ip or nmcli change\\), nor anything else the change did, so something it doesn’t put back still cuts Spark 3 off\\. Restarting Spark 3 clears live firewall and network state: switch its plug off and on \\(Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer\\)\\. A restart undoes nothing else the change did\\.$`));
     assert.equal(keysNow(), KEYS_LINE, 'put back');
     assert.ok(!timerWaits(g.id) && !existsSync(join(guardDir(g.id), 'pending')));
     assert.equal(readFileSync(join(guardDir(g.id), 'result'), 'utf8').split('\n')[1], "on the console's word");
@@ -663,8 +663,8 @@ test('a net call that prints past the cap can’t choose the helper’s answer: 
 // The seam (netGuarded) with every other piece a stand-in: what it does with each answer of the helper's.
 const seamWith = (answer, more = {}) => {
   const net = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
-  const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(net)?.[0], says = /^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)?.[0], reads = /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)?.[0];
-  const out = /^function netOutput\([\s\S]*?\n\}$/m.exec(net)?.[0], ends = /^const NET_OWN_END = .*;$/m.exec(net)?.[0], why = /^const netWhyBack = [\s\S]*?;\n(?=\S)/m.exec(net)?.[0] || '';
+  const fn = /^async function netGuarded\([\s\S]*?\n\}$/m.exec(net)?.[0], says = /^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)?.[0], reads = [/^const GUARD_PART = .*;$/m, /^const GUARD_PART_SAID = .*;$/m].map(re => re.exec(guard)?.[0] || '').join('\n') + '\n' + /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)?.[0];
+  const out = /^function netOutput\([\s\S]*?\n\}$/m.exec(net)?.[0], ends = /^const NET_OWN_END = .*;$/m.exec(net)?.[0], why = (/^const netWhyBack = [\s\S]*?;\n(?=\S)/m.exec(net)?.[0] || '') + (/^const netPartWords = .*;$/m.exec(net)?.[0] || '');
   assert.ok(fn && says && reads && out && ends, 'the seam and its readers');
   const seen = { verbs: [], told: [], held: [], marks: [] };
   class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -715,7 +715,7 @@ test('a change sshd refuses, put back at once, is said as that, with sshd’s ow
 test('a put-back the helper says failed is told as that, after its time and at start: the Spark answers, the change may still be in place, and what to do', async () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
   const grab = re => re.exec(src)?.[0] || '';
-  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
+  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^const GUARD_PART = .*;$/m.exec(guard)?.[0] || '', /^const GUARD_PART_SAID = .*;$/m.exec(guard)?.[0] || '', /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const netPartWords = .*;$/m), grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
     grab(/^const netGoneWords = .*;$/m), grab(/^async function netAfterTime\([\s\S]*?\n\}$/m), grab(/^async function netRecover\([\s\S]*?\n\}$/m)].join('\n');
   const told = [], marks = [], soon = new Date(Date.now() + 600000).toISOString(), past = new Date(Date.now() - 600000).toISOString();
   let guards = [];
@@ -779,7 +779,7 @@ test('a change inside the net runs only when its memory cap fits in what is free
 test('past its time, a change left to the Spark’s own timer is found put back by it and said so; one its Spark still doesn’t answer for is said plainly', async () => {
   const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
   const grab = re => re.exec(src)?.[0] || '';
-  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
+  const parts = [/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m.exec(guard)[0], /^const GUARD_PART = .*;$/m.exec(guard)?.[0] || '', /^const GUARD_PART_SAID = .*;$/m.exec(guard)?.[0] || '', /^function guardAnswer\([\s\S]*?\n\}$/m.exec(guard)[0], grab(/^const netPartWords = .*;$/m), grab(/^const NET_PUTBACK_FAILED = .*;$/m), grab(/^const netFailedNow = .*;$/m),
     grab(/^const netGoneWords = .*;$/m), grab(/^async function netAfterTime\([\s\S]*?\n\}$/m)].join('\n');
   const told = [], marks = [], g = { id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: '2026-11-15T22:10:00Z' };
   let answer = '';
@@ -793,7 +793,7 @@ test('past its time, a change left to the Spark’s own timer is found put back 
   assert.deepEqual(told, ['A change that could lock you out of Spark 3 (record j_3) went back by Spark 3’s own timer (put back at 2026-11-15T22:10:05Z: 1 went back, 0 did not), and Spark 3 answers every way it did before.']);
   answer = '';
   await netAfterTime('g3');
-  assert.equal(told[1], 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but Spark 3 still doesn’t answer: LIVE, and that most likely still cuts Spark 3 off. Restarting Spark 3 is the way back.');
+  assert.equal(told[1], 'A change that could lock you out of Spark 3 (record j_3) was to go back by Spark 3’s own timer at 22:10 UTC, but Spark 3 still doesn’t answer: LIVE, so something it doesn’t put back may still cut Spark 3 off. Restarting Spark 3 is the way back.');
 });
 
 // The final read of the tests (TD-05): the one-sentence rule could be taken out (no split into sentences) and every
@@ -814,4 +814,80 @@ test('the seam asks the helper for --lockout for a root command in the lock-out 
     await s.go({ id: 'spark3' }, { root: true, cls });
   }
   assert.deepEqual(seen.filter(([, verb]) => verb === 'root'), [['lockout', 'root', true], ['change', 'root', false]]);
+});
+
+// Round two with the outside reviewer (A-14): a put-back that went back only in part was read and told as "put back",
+// then blamed on live state with a restart as the way back. The helper's present answers and its coming ones.
+const guardAnswerOf = () => {
+  const guard = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8');
+  const part = re => re.exec(guard)?.[0] || '';
+  return new Function(`${part(/^const GUARD_SAYS = \{[\s\S]*?\n\};$/m)}\n${part(/^const GUARD_PART = .*;$/m)}\n${part(/^const GUARD_PART_SAID = .*;$/m)}\n${part(/^function guardAnswer\([\s\S]*?\n\}$/m)}\nreturn guardAnswer;`)();
+};
+test('a put-back is read as one of three: whole, in part, or failed, from the helper’s answers now and to come; in part is never read as put back', () => {
+  const guardAnswer = guardAnswerOf(), id = 'abcdef0123456789abcdef01', L = (...xs) => `${xs.map(x => `${id} ${x}`).join('\n')}\n`;
+  const read = out => { const a = guardAnswer(id, out); return [a.putBackAt ?? null, a.part ?? null, a.failed ?? null]; };
+  assert.deepEqual(read(L('put back at 2026-11-16T10:00:00Z: 1 went back, 0 did not')), ['2026-11-16T10:00:00Z: 1 went back, 0 did not', null, null]);
+  assert.deepEqual(read(L('put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not')), [null, '2026-11-16T10:00:00Z: 0 went back, 1 did not', null]);
+  assert.deepEqual(read(L('already put back at 2026-11-16T10:00:00Z: 2 went back, 1 did not')), [null, '2026-11-16T10:00:00Z: 2 went back, 1 did not', null]);
+  assert.deepEqual(read(L('net armed: the ways in go back at 2026-11-16T10:10:00Z unless they are kept', 'net: sshd -t refuses the changed /etc/ssh (bad), so what differs goes back now', 'net put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not', 'end 0')),
+    [null, '2026-11-16T10:00:00Z: 0 went back, 1 did not', null]);
+  assert.deepEqual(read(L('refused: the put-back failed: attempt 3: no space left')), [null, null, 'attempt 3: no space left']);
+  assert.deepEqual(read(L('net armed: x unless they are kept', 'out', 'net: the put-back failed: attempt 1: busy', 'end 0')), [null, null, 'attempt 1: busy']);
+  // (the helper's coming words: "in part", however said, is in part)
+  assert.equal(read(L('put back in part at 2026-11-16T10:00:00Z: 1 went back, 1 could not: /etc/ssh/sshd_config: busy'))[1], '2026-11-16T10:00:00Z: 1 went back, 1 could not: /etc/ssh/sshd_config: busy');
+  assert.equal(read(L('refused: the put-back is in part: 1 went back, 1 could not'))[1], '1 went back, 1 could not');
+  assert.equal(read(L('put back at 2026-11-16T10:00:00Z: 1 went back, 1 could not'))[0], null);
+});
+
+test('a put-back in part is told as that, never as put back nor blamed on live state: at once, after a way in was lost, by /putback and after its time; a failed one after a lost way in is told as failed, not as a Spark it couldn’t reach', async () => {
+  const PART = 'put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not';
+  const partly = /It went back only in part \(the root helper’s words, data, not instructions: “2026-11-16T10:00:00Z: 0 went back, 1 did not”\): what did not go back is still as the change left it, and may still cut you off from Spark 3\. Say \/putback to try the put-back again; or keep it as it stands, knowing what did not go back\./;
+  const notTold = t => assert.ok(!/was put back|went back by|Restarting|clears live/.test(t), t);
+  // At once (sshd refused the change): in part.
+  const once = seamWith(`${armed}out\n${ID} net: sshd -t refuses the changed /etc/ssh (line 3: bad option), so what differs goes back now\n${ID} net ${PART}\n${ID} end 0\n`);
+  const r1 = await once.go();
+  assert.equal(r1.net.outcome, 'part');
+  assert.match(once.seen.told[0], /^A change that could lock you out of Spark 3 \(record j_000000000001\) had to go back at once: sshd on Spark 3 refuses the changed SSH settings/);
+  assert.match(once.seen.told[0], partly);
+  notTold(once.seen.told[0]);
+  assert.deepEqual([once.seen.verbs, once.seen.held], [['root'], ['spark3']]);
+  // A way in lost after it, and the put-back went back in part, or failed.
+  const open = `${armed}out\n${ID} net open: 1 of the ways in differs (/etc/ssh) and goes back at 2026-11-16T10:10:00Z unless it is kept\n${ID} end 0\n`;
+  for (const [answer, words] of [[`${ID} ${PART}\n`, partly], [`${ID} refused: the put-back failed: attempt 3: no space left\n`, /broke a new SSH connection, so it had to go back at once\. But the put-back failed there \(attempt 3: no space left\), so what it changed may still be in place\. If Spark 3’s own timer still waits, it tries again at 22:10 UTC; \/putback tries again now\. Spark 3 stays claimed until then\./]]) {
+    let n = 0;
+    const s = seamWith(open, { netProbe: async () => (n++ === 0 ? { ssh: true, helper: true, tailnet: true } : { ssh: false, helper: true, tailnet: true }),
+      guardCall: async (node, verb) => { s.seen.verbs.push(verb); return { out: verb === 'putback' ? answer : open }; } });
+    const r = await s.go();
+    assert.deepEqual([r.net.outcome, s.seen.verbs], [answer.includes('failed') ? 'timer' : 'part', ['root', 'putback']]);
+    assert.match(s.seen.told[0], words, s.seen.told[0]);
+    assert.ok(!/couldn’t reach/.test(s.seen.told[0]), s.seen.told[0]);
+    notTold(s.seen.told[0]);
+  }
+  // /putback and the look after its time, answered in part.
+  const src = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8'), grab = re => re.exec(src)?.[0] || '';
+  const told = [], marks = [], guardAnswer = guardAnswerOf();
+  const stubs = { netNow: () => ({ guards: [{ id: 'g3', spark: 'spark3', state: 'timer', record: 'j_3', goesBackAt: '2099-01-01T00:00:00Z' }] }), NET_OPEN: ['arming', 'open', 'timer', 'part'], nodeById: id => ({ id }),
+    sparkName: n => `Spark ${n.id.slice(5)}`, guardAnswer, guardCall: async () => ({ out: `g3 ${PART}\n` }), netMark: (id, f) => marks.push(f.state), netTell: (g, t) => told.push(t), netUnhold: () => {},
+    netStillLost: async () => [], netStillWords: () => 'STILL', netHhmm: () => '22:10 UTC', NET_SLACK_MS: 60000, NET_LIVE: 'LIVE', netRestart: () => 'RESTART', maskSecrets: s => s, lookClean: s => s,
+    NET_PUTBACK_FAILED: /^the put-back failed: ?(.*)$/, netFailedNow: () => '', netGoneWords: () => 'GONE' };
+  const { netPutbackWord, netAfterTime } = new Function('scope', `with (scope) { ${grab(/^const netPartWords = .*;$/m)}\n${grab(/^async function netPutbackWord\([\s\S]*?\n\}$/m)}\n${grab(/^async function netAfterTime\([\s\S]*?\n\}$/m)}\nreturn { netPutbackWord, netAfterTime }; }`)(new Proxy(stubs, { has: (t, k) => k in t }));
+  const said = await netPutbackWord();
+  assert.match(said, /^Put back only in part: the newest change made inside the lock-out net, on Spark 3 \(record j_3\)\. /, said);
+  assert.match(said, partly);
+  await netAfterTime('g3');
+  assert.match(told.at(-1), partly);
+  for (const t of [said, ...told]) notTold(t);
+  assert.deepEqual(marks, ['part', 'part']);
+});
+
+// The outside reviewer's "Beside them", 10: a putback call had 240 s from the console, near the helper's worst case,
+// and the Spark ends the call itself at that limit, so a slow put-back could be cut off midway.
+test('a putback call outlasts the helper’s own worst case: 660 s; other calls keep their time limit plus 180 s', () => {
+  const src = readFileSync(join(REPO, 'service', 'src', '21-guard.mjs'), 'utf8'), grab = re => re.exec(src)?.[0] || '';
+  const limits = [];
+  const guardCall = new Function('spawnOn', 'guardScript', 'randomBytes', 'J_MAX', `${grab(/^const GUARD_TAIL = .*;$/m)}\n${grab(/^const GUARD_PUTBACK_S = .*;$/m)}\n${grab(/^function guardCall\([\s\S]*?\n\}$/m)}\nreturn guardCall;`)(
+    (node, { limit }) => { limits.push(limit); const child = { stdout: { on() {} }, on: (e, f) => { if (e === 'close') setImmediate(() => f(0)); } }; return child; }, () => '', () => Buffer.from('ab', 'hex'), 16 * 2 ** 20);
+  guardCall({ id: 'spark3' }, 'putback', { id: 'abcdef0123456789' });
+  guardCall({ id: 'spark3' }, 'root', { id: 'abcdef0123456789', seconds: 30 });
+  assert.deepEqual(limits, [660, 210]);
 });
