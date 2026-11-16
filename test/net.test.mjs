@@ -262,3 +262,9 @@ test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with 
   // (past its gates the seam takes the Spark's claim: Spark 2 as any other, its caller having said yes)
   for (const id of ['spark2', 'spark3']) await assert.rejects(seam({ id }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), e => e.message === `claimed ${id}`);
 });
+
+test('a write_file to a way in is refused, never a net ask: the net runs only a plain command (step-train)', { timeout: 60000 * SLOW }, async () => {
+  const w = await api('/actions/write_file', { method: 'POST', body: { on: 'spark3', path: '~/.ssh/authorized_keys', text: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\n' } });
+  assert.equal(w.status, 403, w.text);
+  assert.match(w.json.error, /^Nothing ran: a change that can lock you out of Spark 3 runs only as a plain command inside the lock-out net, never as write_file\./);
+});

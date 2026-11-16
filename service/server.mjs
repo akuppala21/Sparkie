@@ -18814,12 +18814,18 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   // (a command given keys: what is never given one comes first, in its own words, 21-run-keys.mjs)
   if (keys.length) runKeysNever(node, command, sorted, ctx, keys);
   const at = sparkName(node);
-  // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below)
-  if (node.host === 'local' && HUB_ON) return hubChange(node, command, sorted, viewer, ctx, dir, widen);
+  // (Spark 2, with its switch on: always asked, inside the net, 21-hub.mjs; off, not done, as below. Never a write_file's
+  // plain write nor a command given a key, which the hub would run bare: those are refused there, as below)
+  if (node.host === 'local' && HUB_ON && !spec && !keys.length) return hubChange(node, command, sorted, viewer, ctx, dir, widen);
   // (Spark 2, a brain Spark, root, the root helper named, a pause: the runner's own words, 21-runner.mjs)
   runnerNever(node, sorted, ctx);
   if (sorted.class === 'notdone') throw new HttpError(403, `Not done: ${sorted.why}`);
-  // (the lock-out class: the net's, 21-net.mjs; while the net is off it waits for it, as before)
+  // (the lock-out class: the net's, 21-net.mjs; while the net is off it waits for it, as before. Never a write_file's,
+  // whose command is only the plain write the sorter was handed, nor one given a key: the net runs a command bare)
+  if (sorted.class === 'lockout' && (spec || keys.length)) {
+    throw new HttpError(403, NET_ON ? `Nothing ran: a change that can lock you out of ${at} runs only as a plain command inside the lock-out net, never ${spec ? 'as write_file' : 'with a key'}. ${sorted.why}`
+      : `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  }
   if (sorted.class === 'lockout') return netChange(node, command, sorted, viewer, ctx, dir);
   // (which folders at the top of the home it names are there now: writing inside one isn't at the top, R63. A look that
   // fails stops here: "none is there" would widen the wall)
@@ -23713,7 +23719,13 @@ async function writeFile(input, viewer, ctx = {}) {
   const place = writePlace(input.path), sortAs = `cat > ${q(place.rel)}`, sorted = sortCommand(sortAs, runnerSortOpts(node, ctx, place.dir));
   // (Spark 2, a brain Spark, root, a pause, not done, the lock-out class: refused before anything is read, as for run)
   runnerNever(node, sorted, ctx);
-  if (['notdone', 'lockout'].includes(sorted.class)) return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
+  // (the lock-out class is never written, nor handed to the lock-out net, which runs a command bare: its press would run
+  // the plain write the sorter was handed, with nothing on its input)
+  if (sorted.class === 'lockout') {
+    throw new HttpError(403, NET_ON ? `Nothing ran: a change that can lock you out of ${sparkName(node)} runs only as a plain command inside the lock-out net, never as write_file. ${sorted.why}`
+      : `Nothing ran: a change that can lock you out of ${sparkName(node)} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  }
+  if (sorted.class === 'notdone') return workChange(node, sortAs, sorted, viewer, ctx, place.dir);
   const old = await writeOld(node, place);
   if (old.kind === 'helper') {
     const needs = helperNeeds(node, old.answer);

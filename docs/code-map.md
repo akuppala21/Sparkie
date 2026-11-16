@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 99 parts in `service/src/`, joined in name order into `service/server.mjs` (25454 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 99 parts in `service/src/`, joined in name order into `service/server.mjs` (25466 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -1091,12 +1091,12 @@ Spark 2 runs Spark Console and the brain and nothing else (R1; design A 2.7, ste
 run hands every command the sorter does not call a look to workChange (21-work.mjs). Code alone decides, from the sorter's answer (20-sort.mjs) and the request (design A 2.5 and 2.8; the one page, section 4). Not done, whatever is said: what the sorter calls not done; root (set root, a later build); any change on Spark 2 (21-hub.mjs, behind its switch) or a Spark holding the brain; the lock-out class (the lock-out net's, 21-net.mjs: it waits while that is off). At once, through the runner (21-runner.mjs: copies first, inside the run wall, starting in ~/work): a plain change when hostClear …
 
 - **Area:** features. **Rules:** R61, R55, R54, R52. **Tests:** ladder.test.mjs
-- **Lines:** 298
+- **Lines:** 304
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `workTask`, `workKeep`, `workRead`, `workWrote`, `hostClear`, `workListeners`, `workOwnPorts`, `workTailnetSsh`, `workScriptPaths`, `workScripts`, `workRecord`, `workWallLines`, `workScriptLines`, `workStartsIn`, `workLabel`, `workAsk`, `workChange`
-- **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`pendingChoices`, `question`), `20-danger` (`DANGER_LATE_MS`, `dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-ahead` (`aheadOffer`, `aheadCover`), `21-brain-rail` (`brainRail`), `21-hub` (`HUB_ON`, `hubChange`), `21-long` (`longHeld`, `LONG_MOST`), `21-net` (`netChange`), `21-run-keys` (`RUNKEY_SCRIPT_UNPINNED`, `runKeysLabel`, `runKeysNever`, `runKeysOutside`, `RUNKEY_SCRIPT_CHANGED`, `runKeysWhy`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `runnerHomeLines`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`)
+- **Uses:** `01-setup` (`nodeById`, `ALL_LOCAL`, `CONFIG`, `NODES`, `q`, `HttpError`), `02-ssh` (`run`), `12-status` (`sparkName`), `16-actions` (`sparkIdOf`, `tokensOf`, `action`), `17-changes` (`pendingChoices`, `question`), `20-danger` (`DANGER_LATE_MS`, `dangerAsk`), `20-desired` (`desired`), `20-mcp` (`maskSecrets`), `20-ways-in` (`waysIn`, `LOOK_STALE_MS`), `21-ahead` (`aheadOffer`, `aheadCover`), `21-brain-rail` (`brainRail`), `21-hub` (`HUB_ON`, `hubChange`), `21-long` (`longHeld`, `LONG_MOST`), `21-net` (`NET_ON`, `netChange`), `21-run-keys` (`RUNKEY_SCRIPT_UNPINNED`, `runKeysLabel`, `runKeysNever`, `runKeysOutside`, `RUNKEY_SCRIPT_CHANGED`, `runKeysWhy`), `21-runner` (`RUNNER_DIR`, `runnerProtected`, `runnerWalls`, `runnerWiden`, `RUNNER_WIDE`, `RUNNER_OPEN_HOLDS`, `runnerHomeLines`, `RUNNER_NOT_COVERED`, `runnerNever`, `runnerTopDirs`, `runChange`, `runnerOutside`), `21-work` (`helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`)
 - **Used by:** `14-chats`, `14-rounds`, `21-hub`, `21-run-keys`, `21-runner`, `21-work`, `21-write`
 
 ### `21-long.mjs`: a long command: run with minutes, as an operation (A6)
@@ -1123,7 +1123,7 @@ A change the sorter calls lock-out (20-sort.mjs: ssh, Tailscale, the firewall, u
 - **Wakes:** none
 - **Functions:** `netHhmm`, `netNow`, `netSave`, `netMark`, `netOpenOn`, `netHold`, `netUnhold`, `netTell`, `netTailnet`, `netProbe`, `netRestart`, `netStillLost`, `netStillWords`, `netGoneWords`, `netAfterTime`, `netOutput`, `netChange`, `netRun`, `netGuarded`, `netPutbackWord`, `netRecover`
 - **Uses:** `01-setup` (`ALL_LOCAL`, `STATE_DIR`, `nodeById`, `HttpError`), `02-ssh` (`fields`, `run`), `03-identity` (`readKept`, `writePrivate`), `07-jobs` (`claimSparks`, `note`), `12-status` (`sparkName`), `14-chats` (`chatData`, `saveChats`), `16-actions` (`action`, `tripBreaker`), `19-watcher` (`fleetEvent`), `20-danger` (`dangerAsk`), `20-journal` (`journal`, `jSub`, `JOURNAL_REFUSED`, `jErr`), `20-mcp` (`maskSecrets`), `21-guard` (`guardAnswer`, `guardCall`), `21-runner` (`RUNNER_DIR`, `RUNNER_SECONDS`, `runnerNever`), `21-work` (`helperCall`, `needsOwner`, `lookClean`, `forBrain`)
-- **Used by:** `19-watcher`, `20-words`, `21-hub`, `21-ladder`, `21-telegram`
+- **Used by:** `19-watcher`, `20-words`, `21-hub`, `21-ladder`, `21-telegram`, `21-write`
 
 ### `21-power-pair.mjs`: a start wakes both Sparks a model across two needs (R56)
 
@@ -1279,13 +1279,13 @@ run (the one page's tool, design A's host_look) runs one command Sparkie writes 
 write_file {on, path, text, from?, to?}: the whole file, or its lines from to to (as cat -n numbered them; to = from - 1 puts the text before line from), on a compute Spark. Code decides as for run (21-ladder.mjs, R61): the sorter is handed a plain write of that path from where the change starts (cat > path), never the brain's words, so the file is refused, asked or written at once exactly as a run writing it would be; the runner (21-runner.mjs) copies it first, keeps the start and end lines, the hold and written, and runs code's own program in the run wall with the bytes on the helper's …
 
 - **Area:** features. **Rules:** R68, R61. **Tests:** write.test.mjs
-- **Lines:** 192
+- **Lines:** 198
 - **Actions:** `write_file`
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none
 - **Functions:** `writePlace`, `writeKey`, `writeOld`, `writeProgram`, `writeSplit`, `writeSplice`, `writeLineShown`, `writeShown`, `writeFile`
-- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-ladder` (`workChange`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`, `helperNeeds`)
+- **Uses:** `01-setup` (`HttpError`, `q`), `02-ssh` (`run`), `03-secrets` (`keptHidden`), `12-status` (`sparkName`), `16-actions` (`sizeWords`, `sparkOf`, `action`, `sparkArg`), `20-danger` (`DANGER_HIDDEN`), `20-mcp` (`hidePrivateKeys`, `SECRET_PATTERNS`, `maskSecrets`), `20-sort` (`sortCommand`), `21-ladder` (`workChange`), `21-net` (`NET_ON`), `21-runner` (`RUNNER_DIR`, `runnerSortOpts`, `runnerNever`), `21-work` (`keyWord`, `lookWords`, `helperAnswer`, `helperCall`, `LOOK_SECONDS`, `whoMayLook`, `helperNeeds`)
 - **Used by:** no other part
 
 ### `22-passkey.mjs`: the owner's passkey: confirming changes to who has access
