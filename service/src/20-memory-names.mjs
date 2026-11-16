@@ -205,7 +205,8 @@ function memorySystem() {
   const x = idx.lines.length ? memoryShownNow(idx, memorySizes()) : null;
   if (!x) return null;
   const agents = memoryAgentsLine(idx.lines.length - x.own), own = x.own ? memoryPrompt({ all: idx.lines.filter(ownLine), shown: x.list, tail: memoryTail(x.wishesLeft) }) : null;
-  return own || agents ? memoryKeysHidden([own, agents].filter(Boolean).join('\n')) : null;
+  // (its line first, then the owner's own block as it was)
+  return own || agents ? memoryKeysHidden([agents, own].filter(Boolean).join('\n')) : null;
 }
 // The picks for the owner's words, from the lines the system prompt doesn't hold (design G 3.4): a line scores 100 for
 // each of its names in the words, 10 for each rare word it shares with them (6 at most) and 3, 2, 1 or 0 for a
