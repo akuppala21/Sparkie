@@ -19327,11 +19327,48 @@ function netOutput(id, out) {
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
-// page or a fix suggested it): null when the request is the owner's own message asking for a change on that Spark with
-// nothing read from outside since (hostClear's test for "at once", 21-ladder.mjs, with the verbs a lock-out change is
-// asked in: add, open, allow, …), or the owner's own call (the page, POST /actions); otherwise where it came from.
-const NET_ASK = /\b(?:fix|install|set\s+up|change|edit|update|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give|reset|rotate|turn\s+(?:on|off))\b/i;
-const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need)\b/i;
+// page or a fix suggested it): null when the owner's own words (this message and the one before, R25) ask for it on that
+// Spark (netAsks) with nothing read from outside since, or for the owner's own call (the page, POST /actions);
+// otherwise where it came from. netAsks: one sentence of theirs does all three. 1, it names that Spark. 2, it names what
+// is to change, in the lock-out class (NET_WHAT), in the words right after a change verb (NET_BREAK). 3, it asks for that
+// change as an instruction: the verb in its plain form (NET_ASK; not "port 22 is open", not inside "how to …" or
+// "whether to …"), no "don't" (NET_NOT), and no question about how things are: one that starts with why, is, does,
+// can … or ends in "?" (NET_QUESTION) counts only when "can you", "could you", "would you", "will you" or "please" opens
+// it; "tell me", "show me", "check" … (INFO_START, 16-actions.mjs) ask to be told. The intent sorter's `work` verbs are
+// all in NET_ASK but "try", which asks for an attempt. A word list is never perfect: what it misses is refused, never
+// run, and the refusal says how to ask.
+// What a lock-out change is about, as the owner names it (point 2): the sorter's lock-out class (20-tables.mjs,
+// 20-places.mjs) in plain words: SSH and keys, Tailscale, the firewall and ports, the network settings, users, accounts,
+// passwords, sudo and groups, the shell's start files, signing in, logging in, access.
+const NET_WHAT = /\b(?:ssh\w*|openssh\S*|authorized_keys2?|(?:pub)?keys?|tailscale\w*|tailnet|firewall\w*|ufw|iptables|ip6tables|nft(?:ables)?|ports?|network\w*|netplan|nmcli|wi-?fi|ip|dns|routes?|interfaces?|hostname|users?|usernames?|accounts?|admins?|passwords?|passwd|sudo\w*|groups?|bashrc|bash_profile|profile|zshrc|shell|sign(?:ed|ing)?[\s-]?in(?:s|to)?|log(?:ged|ging)?[\s-]?in(?:s|to)?|logon|access)\b/i;
+const NET_ASK = /\b(?:fix|install|uninstall|reinstall|set(?:\s+up)?|change|edit|update|upgrade|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give(?!\s+me\b)|reset|rotate|restart|reload|start|stop|create|make|put|copy|replace|rename|lock|unlock|configure|build|clean\s*up|(?:turn|switch)(?:\s+[\w.-]+){0,3}?\s+(?:on|off))\b/gi;
+const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need|not\s+to|shouldn'?t|should\s+not|mustn'?t|must\s+not)\b/i;
+// (a greeting or a joining word before the sentence's own start: "hey Sparkie, why …", "so can you …")
+const NET_LEAD = String.raw`^\s*(?:(?:hey|hi|hello|ok|okay|so|and|but|also|now|then|well|sparkie)\b[\s,]*)*`;
+const NET_PLEASE = new RegExp(String.raw`${NET_LEAD}(?:please\b[\s,]*)?(?:(?:can|could|would|will)\s+(?:you|u|ya)\b[\s,]*(?:please\b[\s,]*)?|please\b[\s,]*)`, 'i');
+const NET_QUESTION = new RegExp(String.raw`${NET_LEAD}(?:why|what|which|who|whom|whose|when|where|how|am|is|are|was|were|does|do|did|has|have|had|should|shall|can|could|would|will|may|might|must)(?:n't)?\b`, 'i');
+// (before a change verb: it says how things are, "is open", "isn't open", "still open"; or it is asked about, "how to
+// open", "whether to add", "should I open")
+const NET_STATE = /(?:\b(?:am|is|are|was|were|be|been|being|still|already|left|kept|stays?|remains?|not|never)|n't|(?<!\blet)'s|'m|'re)\s+$/i;
+const NET_IF = /\b(?:how|why|what|when|where|which|who|whether|if|should|would|could|can|might|may)\b(?!')[^,;:]*$/i;
+// (what the verb changes: its own words and the six after it, up to a comma or a joining word, so "start a model on
+// Spark 3 with port 8000" names no lock-out thing to change)
+const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|which|while|after|before|when|if)\s/i;
+function netAsks(node, text) {
+  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+    const s = raw.trim();
+    if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
+    const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;
+    if (NET_QUESTION.test(body) || (!opened && /\?$/.test(s)) || INFO_START.test(body.replace(new RegExp(NET_LEAD, 'i'), ''))) continue;
+    for (const m of body.matchAll(NET_ASK)) {
+      const pre = body.slice(Math.max(0, m.index - 120), m.index);
+      if (NET_STATE.test(pre) || NET_IF.test(pre)) continue;
+      const rest = body.slice(m.index + m[0].length, m.index + m[0].length + 400), cut = NET_BREAK.exec(rest);
+      if (NET_WHAT.test(`${m[0]} ${(cut ? rest.slice(0, cut.index) : rest).trim().split(/\s+/).slice(0, 6).join(' ')}`)) return true;
+    }
+  }
+  return false;
+}
 function netWhose(node, viewer, ctx) {
   if (ctx.via === 'workflow') return 'a saved workflow’s step';
   if (ctx.via === 'watcher') return 'a healing fix';
@@ -19339,13 +19376,12 @@ function netWhose(node, viewer, ctx) {
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
   if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
-  const said = String(ctx.said || ctx.request || ''), i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
-  const asks = (has(i.asked, 'work') && !has(i.negated, 'work') && !has(i.mixed, 'work')) || (NET_ASK.test(said) && !NET_NOT.test(said));
-  if (!asks || !tokensOf(said).has(node.id)) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  if (!netAsks(node, String(ctx.said || ctx.request || ''))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
 }
-// The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs).
-const netNotYours = from => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}.`);
+// The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
+// how to ask for one.
+const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}. To ask, say it yourself in one sentence: what to change, and on which Spark. For example: “Add my laptop’s SSH key on ${node ? sparkName(node) : 'Spark 3'}.”`);
 
 // From the ladder (workChange), for every change the sorter calls lock-out: off, as before; else not done, refused while
 // a guard is open there, refused when it isn't the owner's own (netWhose), asked, or (the dangerous ask's press) run
@@ -19359,7 +19395,7 @@ async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netRun(node, command, sorted, viewer, ctx, dir);
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);
-  if (from) throw netNotYours(from);
+  if (from) throw netNotYours(from, node);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;
@@ -20735,7 +20771,7 @@ async function rootChange(input, viewer, ctx = {}) {
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
   // (a root command in the lock-out class: only the owner's own words ask for one, contract 8.3, 21-net.mjs)
-  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from); }
+  if (lockout) { const from = netWhose(node, viewer, ctx); if (from) throw netNotYours(from, node); }
   // (no helper there, one this build doesn't know, walls not proven, or root's switch off there: the owner's one command,
   // and nothing is asked)
   const first = await netHelperFirst(node);
