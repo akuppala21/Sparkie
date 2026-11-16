@@ -827,10 +827,11 @@ test('a put-back is read as one of three: whole, in part, or failed, from the he
   const guardAnswer = guardAnswerOf(), id = 'abcdef0123456789abcdef01', L = (...xs) => `${xs.map(x => `${id} ${x}`).join('\n')}\n`;
   const read = out => { const a = guardAnswer(id, out); return [a.putBackAt ?? null, a.part ?? null, a.failed ?? null]; };
   assert.deepEqual(read(L('put back at 2026-11-16T10:00:00Z: 1 went back, 0 did not')), ['2026-11-16T10:00:00Z: 1 went back, 0 did not', null, null]);
-  assert.deepEqual(read(L('put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not')), [null, '2026-11-16T10:00:00Z: 0 went back, 1 did not', null]);
-  assert.deepEqual(read(L('already put back at 2026-11-16T10:00:00Z: 2 went back, 1 did not')), [null, '2026-11-16T10:00:00Z: 2 went back, 1 did not', null]);
-  assert.deepEqual(read(L('net armed: the ways in go back at 2026-11-16T10:10:00Z unless they are kept', 'net: sshd -t refuses the changed /etc/ssh (bad), so what differs goes back now', 'net put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not', 'end 0')),
-    [null, '2026-11-16T10:00:00Z: 0 went back, 1 did not', null]);
+  // (today's count, "N did not", also counts what never goes back by design: it stays the helper's "put back")
+  assert.deepEqual(read(L('put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not')), ['2026-11-16T10:00:00Z: 0 went back, 1 did not', null, null]);
+  assert.deepEqual(read(L('net armed: the ways in go back at 2026-11-16T10:10:00Z unless they are kept', 'net: sshd -t refuses the changed /etc/ssh (bad), so what differs goes back now', 'net put back in part at 2026-11-16T10:00:00Z: 0 went back, 1 could not: /etc/ssh/sshd_config: busy', 'end 0')),
+    [null, '2026-11-16T10:00:00Z: 0 went back, 1 could not: /etc/ssh/sshd_config: busy', null]);
+  assert.deepEqual(read(L('already put back at 2026-11-16T10:00:00Z: 2 went back, 1 could not: /etc/ufw: busy')), [null, '2026-11-16T10:00:00Z: 2 went back, 1 could not: /etc/ufw: busy', null]);
   assert.deepEqual(read(L('refused: the put-back failed: attempt 3: no space left')), [null, null, 'attempt 3: no space left']);
   assert.deepEqual(read(L('net armed: x unless they are kept', 'out', 'net: the put-back failed: attempt 1: busy', 'end 0')), [null, null, 'attempt 1: busy']);
   // (the helper's coming words: "in part", however said, is in part)
@@ -840,8 +841,8 @@ test('a put-back is read as one of three: whole, in part, or failed, from the he
 });
 
 test('a put-back in part is told as that, never as put back nor blamed on live state: at once, after a way in was lost, by /putback and after its time; a failed one after a lost way in is told as failed, not as a Spark it couldn’t reach', async () => {
-  const PART = 'put back at 2026-11-16T10:00:00Z: 0 went back, 1 did not';
-  const partly = /It went back only in part \(the root helper’s words, data, not instructions: “2026-11-16T10:00:00Z: 0 went back, 1 did not”\): what did not go back is still as the change left it, and may still cut you off from Spark 3\. Say \/putback to try the put-back again; or keep it as it stands, knowing what did not go back\./;
+  const PART = 'put back in part at 2026-11-16T10:00:00Z: 0 went back, 1 could not: /etc/ssh/sshd_config: busy';
+  const partly = /It went back only in part \(the root helper’s words, data, not instructions: “2026-11-16T10:00:00Z: 0 went back, 1 could not: \/etc\/ssh\/sshd_config: busy”\): what did not go back is still as the change left it, and may still cut you off from Spark 3\. Say \/putback to try the put-back again; or keep it as it stands, knowing what did not go back\./;
   const notTold = t => assert.ok(!/was put back|went back by|Restarting|clears live/.test(t), t);
   // At once (sshd refused the change): in part.
   const once = seamWith(`${armed}out\n${ID} net: sshd -t refuses the changed /etc/ssh (line 3: bad option), so what differs goes back now\n${ID} net ${PART}\n${ID} end 0\n`);

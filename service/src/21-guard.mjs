@@ -55,10 +55,11 @@ const GUARD_SAYS = {
   sshd: /^net: sshd -t refuses the changed \/etc\/ssh \((.*)\), so what differs goes back now$/,
   timerGone: /^net: its timer is not waiting \((.*)\), so what differs goes back now$/,
 };
-// A put-back that went back only in part: the helper's own count of what did not go back ("N did not" above 0), or, in
-// its later words, "in part". Never read as put back. Kept apart from GUARD_SAYS, which own-programs.test holds to what
-// the helper prints today.
-const GUARD_PART = /\bin part\b|\b[1-9]\d* (?:did not|didn’t|didn't|could not|couldn’t|couldn't)\b/i;
+// A put-back that went back only in part, by the helper's own words: "in part", or a count of what could not go back
+// ("N could not" above 0). Never read as put back. Today's count "N did not" is not that: it also counts what the net
+// never puts back by design (live firewall rules, Tailscale's settings), so it stays the helper's "put back", said with
+// its count. Kept apart from GUARD_SAYS, which own-programs.test holds to what the helper prints today.
+const GUARD_PART = /\bin part\b|\b[1-9]\d* (?:could not|couldn’t|couldn't)\b/i;
 const GUARD_PART_SAID = /^(?:net:? |already |refused: )?(?:the )?put[- ]back (?:is |was |went back )?(?:only )?in part:? ?(?:at )?(.*)$/i;
 // What the helper said of the net, read as helperAnswer reads a look: a run's last line is "<id> end <code>", the net's
 // own line is the one just before it, and the net's "armed" line is the first (it comes before the command starts),
