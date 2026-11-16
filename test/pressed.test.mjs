@@ -5,7 +5,8 @@
 // where it is); one that exits 1 says so, with its exit code and last line; a write_file into a folder that isn't there
 // says nothing was written; one ended at its time limit says so. A task parked at the button and woken by a failed press
 // reads what happened, not "done". A task's report counts its changes from the journal's own lines, as the code writes
-// them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't.
+// them (K5): one that ran after the yes counts; one whose end line says it never ran doesn't. The report goes to Telegram
+// only for a task begun there, without the failure lines (C-8, R32).
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and none
 // on Spark 4, the stand-in brain told by a script which tools to call, and the paired Telegram chat (test/mock/
 // telegram.mjs) with approvals from there on. Linux only: run it on a Spark with tools/test-on-spark.sh.
@@ -13,15 +14,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { T, useFleet, api, newChat, say, choose, chatMessages, waitFor, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 
 const SECONDS = 6, TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
 const ANSWERED = '^\\[Spark Console\\] The owner answered your question';
+// (C-8) A task begun in the paired chat, parked at a button, with one failed operation on record whose error line holds a
+// home path and an address: its journal line as the operations' end lines carry the task.
+const TGSEED = { chat: 'sc_c8c8000000000a01', task: 'j_c8c800000001', words: 'start the c8 model, then tell me when it answers', err: 'pull failed at /home/owner/.cache/x from 100.64.0.7' };
+function seedTgTask(dir, stateDir, pairedAt) {
+  const at = new Date(Date.now() - 600000).toISOString(), tg = createHash('sha256').update(`${OWNER_TG}:${OWNER_TG}:${pairedAt}`).digest('hex').slice(0, 16);
+  writeFileSync(join(stateDir, 'chats.json'), JSON.stringify({ conversations: [{ id: TGSEED.chat, login: 'owner@test', title: 'c8', spark: null, createdAt: at, updatedAt: at, channel: 'telegram',
+    messages: [{ role: 'user', content: TGSEED.words, createdAt: at }, { role: 'assistant', content: 'Asked first.', createdAt: at }],
+    task: { id: TGSEED.task, since: at, request: TGSEED.words, at, continuations: 0, hours: 2, turns: 8, parked: at, channel: 'telegram', tg } }] }), { mode: 0o600 });
+  mkdirSync(join(dir, 'journal'), { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, 'journal', `journal-${new Date().toISOString().slice(0, 7)}.jsonl`), `${JSON.stringify({ id: 'j_c8c8000000c1', at, k: 'op', chat: TGSEED.chat, task: TGSEED.task,
+    op: 'c8c8000000c1', act: 'deploy', model: 'c8-model', ok: false, outcome: 'failed', err: TGSEED.err, noWh: 'it ran on no Spark' })}\n`, { mode: 0o600 });
+}
 useFleet({ telegram: true, watchMs: 60000,
   env: { SPARK_CONSOLE_RUN_SECONDS: String(SECONDS), SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000',
     SPARK_CONSOLE_CONTINUE_MS: '1000' },
-  prepare: ({ root, dir }) => {
+  prepare: ({ root, dir, stateDir }) => {
     rehearse(root, 'spark3', { run: true });
     const h = join(root, 'spark3');
     const put = (p, data, mode = 0o644) => { mkdirSync(dirname(join(h, p)), { recursive: true }); writeFileSync(join(h, p), data); chmodSync(join(h, p), mode); };
@@ -29,8 +43,10 @@ useFleet({ telegram: true, watchMs: 60000,
     put('notes/slow.sh', 'sleep 40\n');
     mkdirSync(join(root, 'spark4', 'notes'), { recursive: true });
     mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
+    const pairedAt = new Date().toISOString();
     writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner',
-      pairedAt: new Date().toISOString(), approve: true } }), { mode: 0o600 });
+      pairedAt, approve: true } }), { mode: 0o600 });
+    seedTgTask(dir, stateDir, pairedAt);
   } }, () => waitFor(async () => (await api('/telegram')).json.state === 'ok', { what: 'Telegram polling' }));
 
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
@@ -143,6 +159,10 @@ test('a task parked at its button and woken by a press that failed reads what ha
     // (K5: its report counts the change, which ran, after the yes)
     const report = await waitFor(async () => (await chatMessages(chat)).find(m => m.report), { timeout: 90000, what: 'the task’s report' });
     assert.equal(report.content.split('\n')[2], 'Changes: 0 made at once, 1 after your yes; 1 question asked of you. Undone: 0.', report.content);
+    // (C-8: begun on the page, so its report isn't sent to Telegram, though its ask went there)
+    assert.ok(tgSent().some(x => JSON.stringify(x.body?.reply_markup || {}).includes(yes.id)), 'set-up: its ask went to the paired chat');
+    await waitFor(() => !JSON.parse(readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat)?.reports, { what: 'the report no longer owed' });
+    assert.deepEqual(tgSent().map(x => x.body.text).filter(t => t.startsWith('Report on your request')), []);
   } finally { noScript(); rmSync(marker, { force: true }); }
 });
 
@@ -164,6 +184,18 @@ test('a task’s change that never ran (no root helper on Spark 4) is no change 
     assert.equal(journal().find(x => x.id === start.id && x.end)?.ran, false);
     assert.ok(!existsSync(join(T.fleet.root, 'spark4', 'notes', 'k5.txt')));
   } finally { noScript(); }
+});
+
+// C-8 (R32): a task begun in the paired chat is reported there once, without the failure lines (no error text there).
+test('a task begun in the paired chat: its report there says how many failed and where to look, with no error line; the page’s has it', { timeout: 120000 * SLOW }, async () => {
+  const stop = await api(`/chats/${TGSEED.chat}/messages`, { method: 'POST', body: { text: '/stop' } });
+  assert.equal(stop.status, 200, stop.text);
+  const page = await waitFor(async () => (await chatMessages(TGSEED.chat)).find(m => m.report), { timeout: 60000, what: 'the report in its chat' });
+  assert.match(page.content.split('\n')[1], /^Operations: 1 \(1 failed\)\. Failed: Starting c8-model: pull failed at /, page.content);
+  const there = await waitFor(() => tgSent().map(x => x.body.text).find(t => t.startsWith('Report on your request')), { timeout: 60000, what: 'the report on Telegram' });
+  assert.equal(there.split('\n')[0], `Report on your request “${TGSEED.words}”: stopped by you.`);
+  assert.equal(there.split('\n')[1], 'Operations: 1 (1 failed). What failed is in Spark Console.');
+  assert.ok(!there.includes('pull failed') && !there.includes('100.64.0.7') && !there.includes('/home/owner'), there);
 });
 
 // The two functions, cut from their parts, for every kind of result (Telegram's approvals allow 3 presses an hour, so

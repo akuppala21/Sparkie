@@ -579,8 +579,6 @@ function keepTask({ viewer, conv, text, agent, task, channel, now, kept, used, g
   // (a reply that offered a button waits for the owner's answer: it doesn't carry on by itself, contract 4.8, 14-tasks.mjs)
   if (!agent && conv.task && (!task || conv.task === task) && taskAsked(asked)) {
     taskPark(conv.task, asked);
-    // (its question went to the paired Telegram chat as an ask: its report goes there too, E7)
-    if ([...tgAsks.values()].some(x => x.conv === conv.id)) conv.task.tgAsked = true;
   }
   // A carry-on turn that ended owing nothing (no carry-on asked for, not stopped at a limit, no button of it waiting,
   // nothing started in it, nothing of its chat still running, no job of it still to end, and no result or job's end
