@@ -47,8 +47,9 @@ function workWrote(ctx, sorted) {
 // one), would not fail inside the run wall (runnerOutside) and needs neither another Spark nor the GPU (runnerWiden).
 // 2, in a chat: the owner's words ask for work (CHANGE_WORDS' kind `work`) and name the Spark. 3, nothing read from
 // outside since, in the turn or its task. (5, the Spark's claim, is the runner's: taken, it answers so.) The first that
-// fails is the reason the button gives. file: write_file's (its path's words name no Spark, A7d). ahead: a go-ahead of
-// this task covers it (21-ahead.mjs), which stands in for 2 and 3 only.
+// fails is the reason the button gives. file: write_file's (its path's words name no Spark, A7d). ahead (21-ahead.mjs):
+// 'task', a go-ahead of this task covers it, which stands in for 2 and 3; 'always', a standing entry, which stands in for
+// the naming of the Spark and for 3.
 function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', widen = {}, topDirs = [], listeners = null, file = false, ahead = false) {
   if (ctx.agent || ctx.agentId || viewer?.agentKey) return 'an agent asked for it';
   // (the sorter's own reason first: it says what the button is about)
@@ -71,10 +72,11 @@ function hostClear(node, sorted, viewer, ctx, dir = RUNNER_DIR, command = '', wi
   if (!listeners?.ok) return `whether something listens on every address on ${sparkName(node)} couldn’t be told`;
   const own = workOwnPorts(node), wideOpen = listeners.wide.filter(x => !own.has(x.port));
   if (wideOpen.length) return `${wideOpen.slice(0, 3).map(x => `port ${x.port}${x.prog ? ` (${x.prog})` : ''}`).join(', ')} ${wideOpen.length === 1 ? 'listens' : 'listen'} on every address on ${sparkName(node)}, which a change could reach`;
-  if (ahead) return null;
+  if (ahead === 'task') return null;
   if (ctx.via === 'sparkie') {
     const i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
     if (!has(i.asked, 'work') || has(i.negated, 'work') || has(i.mixed, 'work')) return 'your words don’t ask for a change';
+    if (ahead) return null;
     if (!tokensOf(ctx.said || ctx.request || '').has(node.id)) return `your words don’t name ${sparkName(node)}`;
     if (ctx.readOutside) return 'Sparkie read text from outside first';
   } else if (!['api', 'page'].includes(ctx.via)) return 'it wasn’t asked for in your words';
@@ -224,8 +226,8 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
-      [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), { label: 'No', call: null }], 'proposal',
-      { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
+      [{ label: 'Run it', call }, ...(offer ? [{ label: offer.label, call, ahead: offer.ahead }] : []), ...(offer?.always ? [{ label: offer.always.label, call, always: offer.always }] : []),
+        { label: 'No', call: null }], 'proposal', { ownerOnly: true, ...(spec?.whole ? { whole: spec.whole(sparkName(node)) } : {}) });
   // (kept under the yes button's own id, when one was made: no button, no record, and nothing to press)
   workRecord(call.args, { spark: node.id, command: spec?.key ?? command, dir, wall: shown.wall, sums: scripts.sums, unread: scripts.unread || null, at: Date.now() });
   return out;
@@ -272,7 +274,8 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   let why = hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, Boolean(spec)) || spec?.ask || null, gate = null;
   // (asked only for the request's own rules, and a go-ahead of this task covers it: it runs, its record says so. Never a
   // write_file, nor a command given a key, which is always asked)
-  if (why && !spec && !keys.length && aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) && !hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, false, true)) [why, gate] = [null, 'go-ahead'];
+  const cover = why && !spec && !keys.length ? aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) : null;
+  if (cover && !hostClear(node, sorted, viewer, ctx, dir, command, widen, topDirs, listeners, false, cover.always ? 'always' : 'task')) [why, gate] = [null, cover.gate];
   // (a long command over what runs at once is asked, so the owner's press gives it its time, A6, 21-long.mjs)
   if (!why && ctx.long && ctx.long.minutes > LONG_MOST.atOnce) why = `it may run for ${ctx.long.minutes} minutes`;
   // (a command given a key is always asked, R51: the button names each key and each new place)

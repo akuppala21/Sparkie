@@ -171,7 +171,8 @@ async function runChoice(viewer, conv, id, by) {
       content = outcomeText(c.label, out);
       if (conv.task && !conv.task.ended) workKeep(conv.task, ctx);
       // (the go-ahead's answer, once what it ran wasn't asked again: kept for the rest of its task, 21-ahead.mjs)
-      const given = c.ahead && !['question', 'needs-ok'].includes(out?.outcome) ? aheadGive(conv, c.ahead, by) : null;
+      const ran = !['question', 'needs-ok'].includes(out?.outcome);
+      const given = ran && c.ahead ? aheadGive(conv, c.ahead, by) : ran && c.always ? aheadKeep(c.always, by) : null;
       if (given) content = `${content}\n${given}`;
     } catch (e) {
       out = { outcome: 'error', error: e.message };

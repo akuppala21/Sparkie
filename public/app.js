@@ -2434,8 +2434,8 @@ PAGES.sparkie = function sparkiePage(view, r) {
   const slashDraft = () => owner() && ta.value.trim().startsWith('/');
   // One of the owner's words, exactly (the same rule as the server's): it goes through even while another answer is
   // stuck, as its own small request.
-  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/help'];
-  const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && OWNER_WORDS.includes(t); };
+  const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/help'];
+  const isWord = text => { const t = String(text).trim().toLowerCase().replace(/_/g, ' '); return owner() && t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)); };
   const syncSend = () => { sendBtn.disabled = (c.sending && !isWord(ta.value)) || (!sparkieModel().up && !slashDraft()); };
   ta.addEventListener('input', () => { c.draft = ta.value; grow(); syncSend(); });
   ta.addEventListener('keydown', e => {
@@ -3637,6 +3637,8 @@ async function putBackList() {
     l.passkeys.length ? h('ul', { class: 'putback-list' }, ...l.passkeys.map(k => row(k.name, `Added ${when(k.addedAt)} · last used ${when(k.lastUsedAt)}`, () => capi(`auth/passkeys/${encodeURIComponent(k.id)}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
     h('h3', {}, 'Agent keys'),
     l.agentKeys.length ? h('ul', { class: 'putback-list' }, ...l.agentKeys.map(k => row(k.name, `${k.canChange ? 'Can start and stop models' : 'Can only look'}${k.fromAnywhere ? ', from anywhere' : ', on your tailnet only'}`, () => capi(`agents/${k.id}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    ...(l.allowed?.length ? [h('h3', {}, 'Always allowed'), h('ul', { class: 'putback-list' }, ...l.allowed.map(w => h('li', { class: 'putback-row' }, h('div', {}, w)))),
+      h('p', { class: 'muted' }, 'These run without asking again only after you keep them. Take one away with /allowed off in your chat.')] : []),
     h('p', { class: 'muted' }, `${l.agentsPaused ? 'Agents’ changes are paused. ' : ''}${l.lastUse} ${l.namesAreData}`));
   const ok = await dialog({
     title: 'Spark Console’s state was put back from a copy', description: 'Until you keep what came back, sign-in from the internet is refused and agents can’t change anything.',

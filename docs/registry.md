@@ -77,7 +77,7 @@ with `readKept`, which sets an unreadable file aside and keeps one earlier copy 
 | `access.json` | `03-identity` | none | yes | no |
 | `access.json.good` | `03-identity` | `ownAccess`; a copy of the last good access.json; `ownAccess` is called by `accessList`, `openProblems` | yes | no |
 | `added-models.json` | `10-recipes` | `addModel` | yes | yes |
-| `agent-settings.json` | `17-changes` | `setAgentSettings`; `setAgentSettings` is called by `tripBreaker`, `pauseWord`, `putBackAtStart`, `handler` | yes | no |
+| `agent-settings.json` | `17-changes` | `setAgentSettings` | yes | no |
 | `agents.json` | `20-mcp` | `top level`, `putBackAtStart` (22-putback), `handler` (24-handler); the top-level one is the last-use timer | yes | no |
 | `api-locked` | `23-http` | `checkRoute` | yes | no |
 | `audit.jsonl` | `20-mcp` | `audit` | yes | no |

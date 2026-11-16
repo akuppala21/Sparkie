@@ -11,11 +11,12 @@
 // undo_update, through runAction as the page, so that action's own guard decides, R31). In the paired Telegram chat
 // (21-telegram.mjs) /status, /pause, /restart sparkie, /stop, /undo and /help work too; /undo update never does there. Resuming is never a word (it needs the passkey, or the file by hand). On the page each answer
 // is saved as one Spark Console notice quoting the word, so Sparkie later reads it as data.
-const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/help'];
+const OWNER_WORDS = ['/status', '/pause', '/restart sparkie', '/stop', '/undo', '/undo update', '/allowed', '/help'];
 // The whole message, trimmed and lowercased ("/restart_sparkie" too); "/pause now" or "please /pause" is not a word.
 function ownerWord(text) {
   const t = String(text).trim().toLowerCase().replace(/_/g, ' ');
-  return t.length <= 40 && OWNER_WORDS.includes(t) ? t : null;
+  // (/allowed off 2, /allowed off all: 21-ahead.mjs)
+  return t.length <= 40 && (OWNER_WORDS.includes(t) || /^\/allowed off (?:all|[1-9]\d?)$/.test(t)) ? t : null;
 }
 const BRAIN_WORD_MIN_UP_MS = 10 * 60000;
 // With Sparkie's own model not answering, an owner's one-line message starting with "/" that isn't a word gets /help
@@ -159,6 +160,7 @@ function helpWord() {
     '/stop: end Sparkie’s answer in this chat and its carrying on; operations and models keep running',
     '/undo: put back this chat’s last change (works while changes are paused)',
     '/undo update: go back to the build from before the last update (Spark Console restarts; signed in from the internet, it asks for your passkey)',
+    '/allowed: what is always allowed in your chats; /allowed off 2 takes one away, /allowed off all every one',
     '/help: this list'];
   lines.push('', '/key NAME and then the key (HF_TOKEN, say, or GITHUB): give Sparkie a key once; it is kept by name and never shown. A heartbeat address from Healthchecks.io can be pasted as it is.');
   lines.push('', 'By hand, in a terminal:');
@@ -174,7 +176,7 @@ function helpWord() {
 async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null) {
   const undo = word === '/undo update' ? await undoWord(viewer, conv) : word === '/undo' ? await undoChangeWord(viewer, conv, 'page') : null;
   const reply = undo ? undo.reply : word === '/status' ? await statusText() : word === '/pause' ? pauseWord(via)
-    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : helpWord();
+    : word === '/restart sparkie' ? await restartWord(via) : word === '/stop' ? await stopWord(conv) : word.startsWith('/allowed') ? allowedWord(word, via) : helpWord();
   const head = typed ? `${String(typed).trim().slice(0, 40)}\nThat isn’t one of the words, and Sparkie’s model isn’t answering.` : word;
   const message = { role: 'assistant', content: `${maskSecrets(head)}\n${maskSecrets(reply)}`, createdAt: new Date().toISOString(), notice: true, word: true,
     ...(undo?.choices?.length ? { choices: undo.choices } : {}) };
