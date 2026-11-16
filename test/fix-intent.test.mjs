@@ -174,6 +174,7 @@ test('C-16: /undo after a change inside the lock-out net says so and points to /
   assert.equal(p.status, 200, p.text);
   assert.ok(!existsSync(at3('.bash_aliases')), 'the lock-out change ran');
   const u = await say(chat, '/undo');
-  assert.match(u.text, /^\/undo\nNothing was undone: this chat’s last change was a command on Spark 3 that ran inside the lock-out net \(record j_[0-9a-f]{12}\), and undo has no way to put that back\. While its guard is still open, \/putback puts back what it changed\./, u.text);
+  // (the change is root's now, and /undo names it so: "a command as root", R71)
+  assert.match(u.text, /^\/undo\nNothing was undone: this chat’s last change was a command as root on Spark 3 that ran inside the lock-out net \(record j_[0-9a-f]{12}\), and undo has no way to put that back\. While its guard is still open, \/putback puts back what it changed\./, u.text);
   assert.equal(text('notes/v.txt'), 'after\n', 'the change before it was not put back');
 });
