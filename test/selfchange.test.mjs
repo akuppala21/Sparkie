@@ -410,7 +410,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.match(q?.choices?.[0]?.label || '', /^Send the proposal “A calmer page”/);
     assert.deepEqual(ghBranches(), [], 'nothing sent at once');
     const r = await say(chat, 'please change your own code: send it now');
-    assert.match(r.text, /propose_update said: .*Sent: sparkie\//);
+    assert.match(r.text, /propose_update said: \{"ok":true,"outcome":"sent","proposal":"[0-9a-f]{8}","branch":"sparkie\//);
     assert.equal(ghBranches().length, 1);
     await pressed(chat, 'drop your code proposal');
     assert.equal(refs(), '');
