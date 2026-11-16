@@ -19714,7 +19714,8 @@ const NET_BREAK = /[,;:]|\s(?:and|or|then|with|so|but|because|for|using|that|whi
 // what changes: the word after it names the thing)
 const NET_NAMED = /^(?:scripts?|tables?|apps?|applications?|generators?|extensions?|drivers?|pictures?|photos?|chats?|folders?|director(?:y|ies)|projects?|repos?|repositor(?:y|ies)|pages?|tests?|tools?|programs?|code|class(?:es)?|functions?|columns?|fields?|bots?|plugins?|themes?|games?|dashboards?|demos?|tutorials?|docs?|notebooks?|models?|datasets?)\b/i;
 function netAsks(node, text) {
-  for (const raw of normQuotes(text).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
+  // (the owner's own sentences only: a pasted log, a code block or a > quote holds no ask of theirs, ownSentences)
+  for (const raw of normQuotes(ownSentences(text)).split(/(?<=[?!\n;])|\.(?=\s|$)/)) {
     const s = raw.trim();
     if (!s || !tokensOf(s).has(node.id) || !NET_WHAT.test(s) || NET_NOT.test(s)) continue;
     const opened = NET_PLEASE.exec(s), body = opened ? s.slice(opened[0].length) : s;

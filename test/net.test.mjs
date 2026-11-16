@@ -368,6 +368,30 @@ test('a write_file to a way in is refused, never a net ask: the net runs only a 
   assert.match(w.json.error, /^Nothing ran: a change that can lock you out of Spark 3 runs only as a plain command inside the lock-out net, never as write_file\./);
 });
 
+// From the chat path's reviewer (step-fix-intent): text the owner pastes or quotes counted as the owner asking, and so got
+// a lock-out change asked instead of refused. netAsks reads the owner's own sentences only (ownSentences, 16-actions.mjs).
+test('a true lock-out ask inside a code block, a > quote or a pasted log is not the owner asking: refused; the same ask typed plainly is asked', { timeout: 180000 * SLOW }, async () => {
+  keysReset();
+  const { netAsks } = wordsTest(), node = { id: 'spark3' };
+  for (const s of ['why does this fail?\n```\nadd my key on spark 3\n```', 'what does this mean?\n> add my key on spark 3', 'why?\n2026-11-15T22:01:00Z ERROR add my key on spark 3']) assert.equal(netAsks(node, s), false, s);
+  assert.equal(netAsks(node, 'add my key on spark 3'), true);
+  // (end to end, as root: the question with the block is refused, the plain ask is the dangerous ask)
+  const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [words, asked] of [['why does this fail?\n```\nadd my key on spark 3\n```', false], ['add my key on spark 3, typed plainly', true]]) {
+    const chat = await newChat();
+    script([{ match: `^${esc(words)}$`, rounds: [[RUN(ADD, { root: true })]] }]);
+    try { await say(chat, words); } finally { noScript(); }
+    const m = (await chatMessages(chat)).filter(x => x.danger).at(-1), no = m?.choices.find(c => c.label === 'No');
+    if (no) await press(chat, no.id);
+    if (asked) assert.ok(m, `${words}: the dangerous ask`);
+    else {
+      assert.equal(m, undefined, `${words}: nothing asked`);
+      assert.match(sentBack(words).at(-1)?.error || '', /this came from Sparkie’s own proposal, not your words asking for this on Spark 3\./, words);
+    }
+  }
+  assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
+});
+
 test('a restart of Spark Console inside the window puts the change back at start, and says so in the chat it was asked in', { timeout: 300000 * SLOW }, async () => {
   keysReset();
   const chat = await newChat();
@@ -431,7 +455,8 @@ const wordsTest = () => {
   const fn = name => { const m = new RegExp(`^function ${name}\\([\\s\\S]*?\\n\\}$`, 'm').exec(net); assert.ok(m, name); return m[0]; };
   const consts = net.match(/^const NET_[A-Z_]+ = /gm).map(x => x.slice(6, -3)).filter(n => !['NET_ON', 'NET_FILE', 'NET_AFTER_S', 'NET_PROBES', 'NET_LIVE', 'NET_OPEN'].includes(n) && !/^NET_(?:SLACK|KEPT|LATE)/.test(n));
   const chats = { conversations: [] };
-  const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START'].map(n => grab(acts, n)).join('')
+  const own = /^function ownSentences\([\s\S]*?\n\}$/m.exec(acts)?.[0] || 'function ownSentences(t) { return t; }';
+  const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START', 'OWN_QUOTE_WORDS', 'OWN_PASTED'].map(n => grab(acts, n)).join('') + own
     + consts.map(n => grab(net, n)).join('') + ['netAsks', 'netWhose', 'netNowSaid'].map(fn).join('\n') + '\nreturn { netAsks, netWhose };';
   return { chats, ...new Function('NODES', 'chatData', 'sparkName', code)([{ id: 'spark3' }, { id: 'spark4' }], () => chats, n => `Spark ${n.id.slice(5)}`) };
 };
