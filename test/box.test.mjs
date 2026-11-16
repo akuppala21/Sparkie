@@ -25,7 +25,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, rmSync, statSync, readdirSync, appendFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync, statSync, readdirSync, appendFileSync, mkdtempSync, mkdirSync, symlinkSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T, useFleet, api, call, createActKey, agentSettings, newChat, say, choose, waitFor, sleep, REPO, SLOW } from './lib.mjs';
@@ -287,6 +287,11 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
     const f = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(f, 'utf8'));
     m.presets['box-s3'] = { ...m.presets[m.current], node: 'spark3', title: 'Aphex on Spark 3' };
     writeFileSync(f, JSON.stringify(m), { mode: 0o600 });
+    // (Sparkie's model and its draft are on Spark 3 too, so the switch there can start it)
+    for (const m of ['RadixArk--Qwen3.8-27B-NVFP4', 'z-lab--Qwen3.8-27B-DFlash2']) {
+      const hub = `.cache/huggingface/hub/models--${m}`;
+      cpSync(join(root, 'spark2', hub), join(root, 'spark3', hub), { recursive: true, verbatimSymlinks: true });
+    }
     for (const spark of ['spark3', 'spark4']) appendFileSync(join(root, spark, '.mock', 'images'), `\n${IMAGE}\n`);
   } });
   later.push(F);
@@ -303,8 +308,8 @@ test('opening a box is a change: with no eval on record Sparkie’s call is one 
   assert.deepEqual(boxLines('spark3', F), [], 'nothing opened before the press');
   const pressed = await post(`/chats/${chat}/choose`, { choice: choices[0].id });
   assert.equal(pressed.status, 200, JSON.stringify(pressed.json));
-  assert.deepEqual([pressed.json.box, pressed.json.spark], ['opened', 'spark3'], JSON.stringify(pressed.json));
-  assert.ok(hasBox('spark3', boxName(`chat ${chat}`), F));
+  assert.equal(pressed.json.message?.content, `${choices[0].label}: done.`, JSON.stringify(pressed.json));
+  assert.ok(hasBox('spark3', boxName(`chat ${chat}`), F), 'the press opened it on Spark 3');
   assert.ok(journal(F).some(j => j.where === 'box' && j.outcome === 'asked' && j.chat === chat));
   const own = await act('run', { on: 'box', command: 'true' }, F);
   assert.deepEqual([own.status, own.json.box, own.json.spark], [200, 'opened', 'spark3'], own.text);
