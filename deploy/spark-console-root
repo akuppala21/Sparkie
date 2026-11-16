@@ -13,15 +13,19 @@
 #   sudo -n /usr/local/sbin/spark-console-root run --net ...  a change with the lock-out net armed first (R60)
 #   sudo -n /usr/local/sbin/spark-console-root keep --id <id>     keeps what a change inside the net did
 #   sudo -n /usr/local/sbin/spark-console-root putback --id <id>  puts it back now, on the console's word
-#   sudo -n /usr/local/sbin/spark-console-root stop --id <id>     ends the look or change this helper started for that id
+#   sudo -n /usr/local/sbin/spark-console-root root --id <id> --sha256 <hash> --seconds <n> --dir <folder> --net
+#        [--lockout] [--path <file or folder>]... [--unit <unit>]... [--stdin | -- '<command>']
+#                                       a command as root, only inside the net armed in the same call (R70)
+#   sudo -n /usr/local/sbin/spark-console-root stop --id <id>     ends the look, change or root command this helper
+#                                                                 started for that id
 #   sudo -n /usr/local/sbin/spark-console-root state --id <id>    says whether that call's unit never started, runs (or
 #                                                                 may still start), or has ended
-#   sudo -n /usr/local/sbin/spark-console-root root ...      always refused: root is not turned on yet
 #
 # What the caller chooses, and nothing else: the verb; the id (a random word, a-z and 0-9, 8 to 40 of them); the
 # command's bytes and their SHA-256; the seconds; the folder; for run, --open, --home, --protect, --stdin, --memory,
-# --fleet, --gpu and --net (R60, R63; --home never with --open). Every other path, name and setting is this file's own
-# text, or read from the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
+# --fleet, --gpu and --net (R60, R63; --home never with --open); for root (R70), --net (always), --lockout, --path, --unit
+# and --stdin (the command itself on input). Every other path, name and setting is this file's own text, or read from
+# the Spark (/etc/passwd, /etc/group, /proc/swaps, what exists).
 # The command never goes on a unit's command line (systemd would expand ${...} there): it is written to a root-owned
 # file in /run/spark-console/<id>/, hashed there, and run from there by bash.
 #
@@ -89,6 +93,25 @@ BOOT=/etc/systemd/system
 NET_MAX=1800    # seconds a change inside the net may take (30 minutes)
 PROOF_MEMORY=2G # the cap the proof's own change is given (--memory), to see it held (attempt 21)
 NET_AFTER=600   # the timer: the command's own time limit plus ten minutes, so it never fires under a running command
+# --- root (docs/rules/R70.md; design A 2.13, step 12): a command as root, only inside the net armed in the same call --
+ROOT_MAX=1800 LOCKOUT_MAX=600   # seconds: 30 minutes, 10 when the console says the command is in the lock-out class
+# Root's switch on this Spark, off by default: only the owner's one-time command with --with-root writes it (root's,
+# 0600: "on <day> helper <this helper's SHA-256>"); --without-root and --undo take it away. Without it, or for another
+# build of the helper, root refuses before it reads anything else of the call. No put-back ever touches it, and a root
+# command may not name it (it is under the helper's folder, below).
+ROOT_ON=/var/lib/spark-console/root-on
+ROOT_PATHS_MAX=32 ROOT_UNITS_MAX=16   # the files, folders and units the call names, copied with the ways in first
+# What a root command may never name: the helper and its sudo line, sudo's own settings, PAM, the helper's own
+# folders (its proof mark, root's switch, the net's copies, the held commands) and the net's own timer and restart
+# unit (sw-guard-). Found by these words anywhere in the command (quotes and backslashes taken out first), and by
+# each path in it resolved through its links. A guard on names, not a wall: root can do anything, the net's switch-off
+# included; what bounds a root command is the net and the owner's press (R70).
+ROOT_NEVER_WORDS='spark-console-root sudoers sudo.conf pam.d pam.conf /etc/pam /etc/security /security/pam_
+  /var/lib/spark-console /run/spark-console sw-guard-'
+ROOT_NEVER_PATHS='/usr/local/sbin/spark-console-root /etc/sudoers.d/spark-console-root /etc/sudoers /etc/sudoers.d
+  /etc/sudo.conf /etc/pam.d /etc/pam.conf /etc/security /lib/security /usr/lib/security /lib/aarch64-linux-gnu/security
+  /usr/lib/aarch64-linux-gnu/security /lib/x86_64-linux-gnu/security /usr/lib/x86_64-linux-gnu/security
+  /var/lib/spark-console /run/spark-console'
 # The ways in, copied before the change: the system's (a missing one is copied as missing, and put back so) ...
 NET_SYSTEM='/etc/ssh /etc/sudoers /etc/sudoers.d /etc/sudo.conf /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/pam.d
   /etc/security /etc/nsswitch.conf /etc/nologin /etc/hosts.allow /etc/hosts.deny /etc/profile /etc/profile.d
@@ -126,6 +149,52 @@ safe_path() {
   case "$1/" in */./*|*/../*) return 1 ;; esac
   [ "${#1}" -le 1024 ]
 }
+ROOT_LINE=$'^on [0-9]{4}-[0-9]{2}-[0-9]{2} helper ([0-9a-f]{64})\n$'
+root_off() {   # why root's switch does not count on this Spark: nothing when root is on, "-" when there is no switch.
+  # It counts only as the one-time command writes it: one line, a plain file root's alone (0600) in a folder only root
+  # can change, naming this very helper's SHA-256
+  local f="$R$ROOT_ON" d="$R${ROOT_ON%/*}" st body want
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then printf -- '-'; return; fi
+  if [ -L "$f" ] || [ -L "$d" ]; then printf 'its switch, or the folder it is in, is a link'; return; fi
+  [ -f "$f" ] || { printf 'its switch is not a plain file'; return; }
+  st=$(stat -c '%u %a' -- "$f" 2> /dev/null) || { printf 'its switch cannot be read'; return; }
+  [ "${st% *}" = "$SUPER" ] || { printf 'its switch is owned by another account than root'; return; }
+  [ "${st#* }" = 600 ] || { printf 'its switch has mode %s, not 600 (root alone)' "${st#* }"; return; }
+  st=$(stat -c '%u %a' -- "$d" 2> /dev/null) || { printf 'the folder of its switch cannot be read'; return; }
+  [ "${st% *}" = "$SUPER" ] && (( (8#${st#* } & 8#022) == 0 )) \
+    || { printf 'the folder of its switch can be changed by another account than root'; return; }
+  body=$(head -c 200 -- "$f"; printf x)
+  body=${body%x}
+  [[ $body =~ $ROOT_LINE ]] || { printf 'its switch is not the one line the one-time command writes'; return; }
+  read -r want _ < <(sha256sum -- "$R$HELPER" 2> /dev/null) || want=''
+  [ "${BASH_REMATCH[1]}" = "$want" ] || { printf 'this helper is newer than the one root was turned on for'; return; }
+}
+root_on() { [ -z "$(root_off)" ]; }
+root_off_words() {   # $1 what root_off said: why root is off, as the refusal and check say it
+  case "$1" in
+    -) printf 'the owner turns it on with the one command (--with-root)' ;;
+    *) printf '%s, so its switch does not count: the owner turns it on with the one command (--with-root)' "$1" ;;
+  esac
+}
+root_named() {   # $1 the held command, then the paths the call names: the first name a root command may not touch, or
+  # nothing. A guard on names, not a wall (ROOT_NEVER_WORDS): the words anywhere, then each path resolved through links
+  local f=$1 text w r n never=()
+  shift
+  text=$({ tr -d "'\"\\\\" < "$f"; printf '\n'; printf '%s\n' "$@"; } | tr -d '\000')
+  for n in $ROOT_NEVER_WORDS; do
+    if [[ $text == *"$n"* ]]; then printf '%s' "$n"; return; fi
+  done
+  for n in $ROOT_NEVER_PATHS; do
+    never+=("$n")
+    r=$(realpath -m -- "$R$n" 2> /dev/null) && never+=("${r#"$R"}")
+  done
+  while IFS= read -r w; do
+    case "$w" in '~/'*) w="/root/${w#'~/'}" ;; /*) ;; *) continue ;; esac
+    r=$(realpath -m -- "$R$w" 2> /dev/null) || continue
+    r=${r#"$R"}
+    for n in "${never[@]}"; do case "$r/" in "$n"/*) printf '%s' "$w"; return ;; esac; done
+  done < <(printf '%s\n' "$text" | tr -s '[:space:];|&<>()`=$,' '\n')
+}
 
 init() {
   if [ "$EUID" -eq 0 ]; then
@@ -147,31 +216,41 @@ init() {
 
 # --- the call ---------------------------------------------------------------------------------------------------------
 VERB='' SHA='' SECS='' DIR='' MEM='' OPEN=0 STDIN=0 NET=0 FLEET=0 GPU=0 HOMEW=0 PROTECT=() CMD=() BAD='' ID_IN=''
+LOCKOUT=0 NAMED_PATHS=() NAMED_UNITS=()
 parse() {
   VERB=${1-}
   [ $# -gt 0 ] && shift
   local seen=' '
   while [ $# -gt 0 ]; do
     case "$1" in
-      --id|--sha256|--seconds|--dir|--protect|--memory)
+      --id|--sha256|--seconds|--dir|--protect|--memory|--path|--unit)
         if [ $# -lt 2 ]; then BAD="$1 needs a value"; break; fi
         if [ "$1" = --protect ]; then PROTECT+=("$2")
+        elif [ "$1" = --path ]; then NAMED_PATHS+=("$2")
+        elif [ "$1" = --unit ]; then NAMED_UNITS+=("$2")
         elif [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break
         else
           seen+="$1 "
           case "$1" in --id) ID_IN=$2 ;; --sha256) SHA=$2 ;; --seconds) SECS=$2 ;; --dir) DIR=$2 ;; --memory) MEM=$2 ;; esac
         fi
         shift 2 ;;
-      --open|--stdin|--net|--fleet|--gpu|--home)
+      --open|--stdin|--net|--fleet|--gpu|--home|--lockout)
         if [[ $seen == *" $1 "* ]]; then BAD="$1 is given twice"; break; fi
         seen+="$1 "
-        case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; --fleet) FLEET=1 ;; --gpu) GPU=1 ;; --home) HOMEW=1 ;; esac
+        case "$1" in --open) OPEN=1 ;; --stdin) STDIN=1 ;; --net) NET=1 ;; --fleet) FLEET=1 ;; --gpu) GPU=1 ;; --home) HOMEW=1 ;;
+          --lockout) LOCKOUT=1 ;; esac
         shift ;;
       --) shift; CMD=("$@"); break ;;
       *) BAD="not understood: an option this helper does not know, or a command without -- before it"; break ;;
     esac
   done
   if [[ $ID_IN =~ ^[a-z0-9]{8,40}$ ]]; then ID=$ID_IN; fi
+  # (root with its switch off refuses before anything else of the call is read)
+  if [ "$VERB" = root ]; then
+    local off
+    off=$(root_off)
+    [ -z "$off" ] || refuse "root is off on this Spark: $(root_off_words "$off")"
+  fi
   [ -n "$ID" ] || refuse "no --id, or one that is not 8 to 40 of a-z and 0-9"
   [ -z "$BAD" ] || refuse "$BAD"
 }
@@ -435,9 +514,17 @@ held_problem() {   # why the run wall cannot hold the owner's home as listed, or
 
 # --- the walls -------------------------------------------------------------------------------------------------------
 PROPS=() PRE=()
-wall_props() {   # $1 look or run, $2 seconds: fills PROPS (the hidden and read-only lists must be made first)
+wall_props() {   # $1 look, run or root, $2 seconds: fills PROPS (the hidden and read-only lists must be made first)
   local wall=$1 secs=$2 p
   PROPS=()
+  if [ "$wall" = root ]; then
+    # Root has no wall (design A 2.13, "Net"): it may write everything but the helper, its sudo line and the helper's
+    # own folders (the net's copies, root's switch, the proof's mark, the held commands), and those only by these
+    # settings, which root itself can undo. What bounds it is the net armed first and the owner's press (R70).
+    PROPS+=(-p "ReadOnlyPaths=$HELPER" -p "ReadOnlyPaths=-$LINE" -p "InaccessiblePaths=-${GUARD%/*}" -p "ReadOnlyPaths=$HOLD"
+            -p "RuntimeMaxSec=$secs" -p TimeoutStopSec=5 -p "MemoryMax=$RUN_MEMORY" -p MemorySwapMax=0 -p "TasksMax=$RUN_TASKS")
+    return
+  fi
   if [ "$wall" = look ]; then
     PROPS+=(-p DynamicUser=yes
             -p AmbientCapabilities=CAP_DAC_READ_SEARCH -p CapabilityBoundingSet=CAP_DAC_READ_SEARCH
@@ -612,8 +699,8 @@ unit_runs() {   # $1 a unit: does systemd say it runs, or is starting or stoppin
     *) return 1 ;;
   esac
 }
-do_state() {   # what became of a look's or change's call by its id: firm, from the helper's own marks
-  local m='' p='' at='' r l
+do_state() {   # what became of a look's, change's or root command's call by its id: firm, from the helper's own marks
+  local m='' p='' at='' r l o
   only_id
   sweep_held
   read -r m p at < "$R$CALLS/$ID" 2> /dev/null || m=''
@@ -629,7 +716,8 @@ do_state() {   # what became of a look's or change's call by its id: firm, from 
         # (each unit by itself; when systemd answered for neither, it may still run: never "ended" on no answer)
         unit_runs "sw-run-$ID.service"; r=$?
         unit_runs "sw-look-$ID.service"; l=$?
-        if [ "$r" = 0 ] || [ "$l" = 0 ] || [ "$r$l" = 22 ]; then say "state running: it runs, or may still start"
+        unit_runs "sw-root-$ID.service"; o=$?
+        if [ "$r" = 0 ] || [ "$l" = 0 ] || [ "$o" = 0 ] || [ "$r$l$o" = 222 ]; then say "state running: it runs, or may still start"
         else say "state ended: its call is gone and nothing of it runs"; fi
       else say "state never: it never started, and its call has ended, so it cannot start now"; fi ;;
   esac
@@ -672,8 +760,8 @@ START
 }
 
 # --- verbs -----------------------------------------------------------------------------------------------------------
-only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW" = 000000 ] && [ ${#PROTECT[@]} -eq 0 ] && [ ${#CMD[@]} -eq 0 ] \
-  || refuse "$VERB takes --id and nothing else"; }
+only_id() { [ -z "$SHA$SECS$DIR$MEM" ] && [ "$OPEN$STDIN$NET$FLEET$GPU$HOMEW$LOCKOUT" = 0000000 ] && [ ${#PROTECT[@]} -eq 0 ] \
+  && [ ${#CMD[@]} -eq 0 ] && [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] || refuse "$VERB takes --id and nothing else"; }
 
 do_check() {
   local state why='' held look_why open timer
@@ -696,11 +784,17 @@ do_check() {
   if [ ${#PROBLEMS[@]} -gt 0 ]; then why=${PROBLEMS[0]}
   elif [ "$state" != current ]; then why="the wall proof is $state on this Spark"; fi
   look_why=$why
+  local root_why=$why
   [ -n "$look_why" ] || look_why=$(look_problem)
   if [ -z "$look_why" ]; then say "look ready"; else say "look refuses: $look_why"; fi
   [ -n "$why" ] || why=$held
   if [ -z "$why" ]; then say "run ready"; else say "run refuses: $why"; fi
-  say "root refuses: root is not turned on yet"
+  local off
+  off=$(root_off)
+  if [ "$off" = 'this helper is newer than the one root was turned on for' ]; then say "root off: $off"
+  elif [ -n "$off" ]; then say "root off: $(root_off_words "$off")"
+  elif [ -n "$root_why" ]; then say "root refuses: $root_why"
+  else say "root ready: only inside the net (--net), $((ROOT_MAX / 60)) minutes at most, $((LOCKOUT_MAX / 60)) in the lock-out class"; fi
   open=$(open_guard)
   if [ -n "$open" ]; then
     timer=$(systemctl show --property=ActiveState --value "sw-guard-$open.timer" 2>/dev/null) || timer=''
@@ -720,7 +814,25 @@ do_unit() {
   CALL_MARK=begun
   [[ $SHA =~ ^[0-9a-f]{64}$ ]] || refuse "--sha256 must be 64 hex digits, a-f and 0-9"
   [[ $SECS =~ ^[1-9][0-9]{0,5}$ ]] || refuse "--seconds must be a whole number of seconds"
-  if [ "$VERB" = look ]; then
+  if [ "$VERB" != root ]; then
+    [ ${#NAMED_PATHS[@]} -eq 0 ] && [ ${#NAMED_UNITS[@]} -eq 0 ] && [ "$LOCKOUT" = 0 ] || refuse "--path, --unit and --lockout are for root"
+  fi
+  if [ "$VERB" = root ]; then
+    # (its switch was read first, in parse: root is on here)
+    [ "$NET" = 1 ] || refuse "root runs only inside the net, armed in this same call: --net is missing"
+    [ "$OPEN$HOMEW$FLEET$GPU" = 0000 ] && [ -z "$MEM" ] && [ ${#PROTECT[@]} -eq 0 ] \
+      || refuse "root takes no --open, --home, --fleet, --gpu, --memory or --protect: those bound the run wall, and root has no wall"
+    if [ "$LOCKOUT" = 1 ]; then (( 10#$SECS <= LOCKOUT_MAX )) || refuse "a root command in the lock-out class is held to $((LOCKOUT_MAX / 60)) minutes"
+    else (( 10#$SECS <= ROOT_MAX )) || refuse "a root command is held to $((ROOT_MAX / 60)) minutes"; fi
+    [ ${#NAMED_PATHS[@]} -le $ROOT_PATHS_MAX ] || refuse "at most $ROOT_PATHS_MAX --path"
+    [ ${#NAMED_UNITS[@]} -le $ROOT_UNITS_MAX ] || refuse "at most $ROOT_UNITS_MAX --unit"
+    for p in "${NAMED_PATHS[@]}"; do safe_path "$p" || refuse "--path must name a whole path that can stand in a setting"; done
+    for p in "${NAMED_UNITS[@]}"; do
+      [[ $p =~ ^[A-Za-z0-9@._-]{1,120}\.(service|socket|timer|target|mount|path)$ ]] \
+        || refuse "--unit must name a unit: a name, then .service, .socket, .timer, .target, .mount or .path"
+      case "$p" in sw-*) refuse "--unit never names one of this helper's own units (sw-)" ;; esac
+    done
+  elif [ "$VERB" = look ]; then
     max=$LOOK_MAX
     [ "$OPEN" = 0 ] || refuse "a look never takes --open"
     [ "$STDIN" = 0 ] || refuse "a look takes no input"
@@ -754,8 +866,12 @@ do_unit() {
     done
   fi
   [[ $DIR == /* ]] && [ "${#DIR}" -le 4096 ] && [[ $DIR != *[[:cntrl:]]* ]] || refuse "--dir must be a whole path on one line"
-  [ ${#CMD[@]} -eq 1 ] || refuse "the command must be one word after --"
-  [ -n "${CMD[0]}" ] || refuse "the command is empty"
+  if [ "$VERB" = root ] && [ "$STDIN" = 1 ]; then
+    [ ${#CMD[@]} -eq 0 ] || refuse "with --stdin the command is what comes on input: nothing after --"
+  else
+    [ ${#CMD[@]} -eq 1 ] || refuse "the command must be one word after --"
+    [ -n "${CMD[0]}" ] || refuse "the command is empty"
+  fi
   prereqs
   [ ${#PROBLEMS[@]} -eq 0 ] || refuse "${PROBLEMS[0]}"
   local state; state=$(proof_state)
@@ -764,22 +880,38 @@ do_unit() {
   if [ "$VERB" = run ]; then
     p=$(held_problem)
     [ -n "$p" ] || [ "$OPEN$HOMEW" != 00 ] || p=$(disk_problem)   # (an asked change may free space: no floor)
-  else
+  elif [ "$VERB" = look ]; then
     p=$(look_problem)
+  else
+    p=''   # (root has no wall to hold the home: the net copies what it names)
   fi
   [ -z "$p" ] || refuse "$p"
   hold_folder
   # A hang-up or an interrupt (the caller's connection dropped) before the unit is handed to systemd removes the held
   # folder and marks the call "never"; after it, the call waits for the unit (below).
   trap 'mark never; rm -rf -- "$H"; exit 129' HUP INT TERM
-  printf '%s' "${CMD[0]}" > "$H/command"
+  if [ "$VERB" = root ] && [ "$STDIN" = 1 ]; then   # (a script as root: its bytes on input, read once, here)
+    head -c $((STDIN_MAX + 1)) > "$H/command"
+    if (( $(stat -c %s -- "$H/command") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the command on input is over 16 MB"; fi
+    [ -s "$H/command" ] || { rm -rf -- "$H"; refuse "the command is empty"; }
+  else
+    printf '%s' "${CMD[0]}" > "$H/command"
+  fi
   read -r got _ < <(sha256sum -- "$H/command")
   if [ "$got" != "$SHA" ]; then rm -rf -- "$H"; refuse "the command's bytes do not have the SHA-256 it was given, so nothing ran"; fi
+  if [ "$VERB" = root ]; then
+    p=$(root_named "$H/command" "${NAMED_PATHS[@]}")
+    p=${p//[![:print:]]/?}
+    if [ -n "$p" ]; then
+      rm -rf -- "$H"
+      refuse "a root command never names the helper, its sudo line, sudo's settings, PAM, the helper's folders or the net's timer (it names ${p:0:120}): those change only by the owner's one-time command, deploy/root-for-sparkie.sh"
+    fi
+  fi
   printf '%s' "$DIR" > "$H/dir"
-  printf '%s' "$OWNER_HOME" > "$H/home"
-  printf '%s' "$OWNER" > "$H/user"
+  if [ "$VERB" = root ]; then printf '/root' > "$H/home"; printf 'root' > "$H/user"
+  else printf '%s' "$OWNER_HOME" > "$H/home"; printf '%s' "$OWNER" > "$H/user"; fi
   start_script > "$H/start"
-  if [ "$STDIN" = 1 ]; then
+  if [ "$STDIN" = 1 ] && [ "$VERB" != root ]; then
     head -c $((STDIN_MAX + 1)) > "$H/stdin"
     if (( $(stat -c %s -- "$H/stdin") > STDIN_MAX )); then rm -rf -- "$H"; refuse "the input is over 16 MB"; fi
     input="$H/stdin"
@@ -787,6 +919,8 @@ do_unit() {
   seal
   # The net, armed before anything changes: the copy, restore.sh, the timer. If it cannot be armed, nothing runs.
   [ "$NET" = 0 ] || net_arm
+  # (the record: a root command is said as such, before anything of it runs)
+  [ "$VERB" != root ] || say "as root: sw-root-$ID runs the command whose SHA-256 is $SHA, inside the net"
   wall_props "$VERB" "$SECS"
   PRE=()
   [ "$VERB" = run ] && run_prefix
@@ -920,7 +1054,7 @@ net_arm() {
   : > "$G/lock"   # (made now: a put-back never has to make it)
   restore_sh > "$G/restore.sh"
   guard_py > "$G/guard.py"
-  printf 'sw-run-%s.service' "$ID" > "$G/unit"
+  printf 'sw-%s-%s.service' "$VERB" "$ID" > "$G/unit"
   printf '%s' "$R" > "$G/root"
   printf '%s\n%s\n%s\n' "$OWNER" "$OWNER_UID" "$OWNER_HOME" > "$G/owner"
   {
@@ -931,7 +1065,11 @@ net_arm() {
     if [ -d "$R$s" ] && [ ! -L "$R$s" ]; then
       for f in $SIGNIN; do case "$f" in *.sock|sessions.json) ;; *) printf '%s\0' "$s/$f" ;; esac; done
     fi
+    # (root: the files and folders the call names, copied with the ways in, before anything runs)
+    for p in "${NAMED_PATHS[@]}"; do printf '%s\0' "$p"; done
   } > "$G/paths"
+  # (and the units it names: whether each runs, and is enabled, disabled or masked, put back as the ways in are)
+  [ ${#NAMED_UNITS[@]} -eq 0 ] || printf '%s\n' "${NAMED_UNITS[@]}" > "$G/units"
   printf '%s' "$(( $(date +%s) + 10#$SECS + NET_AFTER ))" > "$G/at"
   if ! "$PY" -I -S "$G/guard.py" copy > "$G/copy.out" 2>&1; then
     n=$(head -c 200 -- "$G/copy.out" | tr -c '[:print:]' ' ')
@@ -998,12 +1136,13 @@ do_putback() {   # the put-back now, on the console's word: also for a guard who
   if [ -e "$G/kept" ]; then say "kept already: nothing goes back"; exit 0; fi
   refuse "the put-back failed: $(tail -n 1 -- "$G/failures" 2>/dev/null | cut -c1-200)"
 }
-# Ends one unit this helper started, early (design A 2.10: killable by name): the change's or the look's for that id,
-# never the net's timer or any other unit. It waits until the unit is gone and says whether it was running.
+# Ends one unit this helper started, early (design A 2.10: killable by name): the change's, the look's or the root
+# command's for that id, never the net's timer or any other unit. It waits until the unit is gone and says whether it
+# was running. (A root command's net stays: what it changed goes back by the timer, or by putback, unless kept.)
 do_stop() {
   local u state was='' n
   only_id
-  for u in "sw-run-$ID.service" "sw-look-$ID.service"; do
+  for u in "sw-run-$ID.service" "sw-look-$ID.service" "sw-root-$ID.service"; do
     state=$(systemctl show --property=ActiveState --value "$u" 2>/dev/null) || state=''
     case "$state" in active|activating|deactivating|reloading|refreshing) ;; *) continue ;; esac
     was=${u%.service}
@@ -1146,6 +1285,12 @@ SWAP = {f'{HOME}/.ssh', STATE, '/var/lib/tailscale', '/var/lib/systemd/linger'}
 # key, or a unit whose package went cannot be brought back, and is said by name.
 UNITS = ['ssh.service', 'ssh.socket', 'sshd.service', 'tailscaled.service', 'NetworkManager.service',
          'systemd-networkd.service', 'ufw.service']
+try:   # (and the units a root command named, step 12: the helper checked each name)
+    NAMED = [u for u in text('units').split('\n') if re.fullmatch(r'[A-Za-z0-9@._-]{1,120}\.(service|socket|timer|target|mount|path)', u)
+             and not u.startswith('sw-') and u not in UNITS]
+except OSError:
+    NAMED = []
+UNITS += NAMED
 CONSOLE_UNIT = ['systemctl', f'--machine={OWNER}@.host', '--user']
 
 
@@ -1602,6 +1747,10 @@ def restore(why):
             cmds = [['netplan', 'generate']] if top == '/etc/netplan' else [['systemctl', 'daemon-reload']] if top == '/etc/systemd/system' else []
         for cmd in cmds:
             call(cmd)
+    # (a root command's named units read their files again once anything went back: one that runs is reloaded or restarted)
+    if not boot and went:
+        for u in NAMED:
+            call(['systemctl', 'try-reload-or-restart', u])
     if ssh_socket and any(under(p, '/etc/ssh') or under(p, '/etc/systemd/system/ssh.socket') or under(p, '/etc/systemd/system/ssh.socket.d') for p in went):
         call(['systemctl', 'daemon-reload'])
         if not boot:
@@ -1675,7 +1824,7 @@ if __name__ == '__main__':
 GUARDPY
 }
 
-# --- the proof of the walls (2.13; R60; R63): attempts 1 to 29, 13 being root's; a mark only when every one is stopped ------
+# --- the proof of the walls (2.13; R60; R63; R70): attempts 1 to 29, 13 being root's; a mark only when every one is stopped ------
 NAMES=('' 'a write through a link' 'an open connection' "the Docker or Tailscale socket, api.sock or the door's socket"
        "another program's environment" 'a write that stays' "round the hiding, through another program's /proc"
        'a signal to a program outside the wall' 'more rights: sudo, the helper, a capability'
@@ -1892,8 +2041,29 @@ do_prove() {
     fi
     if [ -z "$bad" ]; then say "proof $wall passed"; else say "proof $wall failed"; fi
   done
-  # 13: root with no net. The net (a put-back timer armed in the same call) is a later step, so root always refuses.
-  say "proof root 13 refused: ${NAMES[13]}"
+  # 13: root with no net, tried for real: the helper's own root verb, called as the console would but without --net,
+  # must refuse; and while root's switch is off, root --net must refuse too (the switch is read first).
+  local i13="${ID:0:36}r013" ioff="${ID:0:36}roff" o13 r13=0 want13 true_sha
+  read -r true_sha _ < <(printf 'true' | sha256sum)
+  if root_on; then want13="$i13 refused: root runs only inside the net, armed in this same call: --net is missing"
+  else want13="$i13 refused: root is off on this Spark: *"; fi
+  o13=$("$R$HELPER" root --id "$i13" --sha256 "$true_sha" --seconds 5 --dir / -- true < /dev/null 2>&1) || r13=$?
+  # shellcheck disable=SC2053
+  if [ "$r13" = 125 ] && [[ $o13 == $want13 ]] && [[ $o13 != *$'\n'* ]]; then say "proof root 13 refused: ${NAMES[13]}"
+  else
+    say "proof root 13 got through: ${NAMES[13]} (it answered: $(printf '%s' "$o13" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-120))"
+    [ -n "$first" ] || first="attempt 13 got through (${NAMES[13]})"
+  fi
+  if ! root_on; then
+    r13=0
+    o13=$("$R$HELPER" root --id "$ioff" --sha256 "$true_sha" --seconds 5 --dir / --net -- true < /dev/null 2>&1) || r13=$?
+    if [ "$r13" = 125 ] && [[ $o13 == "$ioff refused: root is off on this Spark: "* ]] && [[ $o13 != *$'\n'* ]]; then
+      say "proof root off refused: root --net while root is off on this Spark"
+    else
+      say "proof root off got through: root --net while root is off on this Spark"
+      [ -n "$first" ] || first="root --net got through while root is off on this Spark"
+    fi
+  fi
   [ -n "$failed" ] || failed=$control
   [ -n "$failed" ] || failed=$unitfail
   [ -n "$failed" ] || failed=$first
@@ -2742,15 +2912,14 @@ main() {
   init
   parse "$@"
   case "$VERB" in
-    check|prove|look|run|keep|putback|stop|state) ;;
-    root) refuse "root is not turned on yet: it is refused on every Spark" ;;
+    check|prove|look|run|root|keep|putback|stop|state) ;;
     *) refuse "no such verb: check, prove, look, run, keep, putback, stop, state or root" ;;
   esac
   caller
   case "$VERB" in
     check) only_id; do_check ;;
     prove) only_id; do_prove ;;
-    look|run) do_unit ;;
+    look|run|root) do_unit ;;
     keep) do_keep ;;
     putback) do_putback ;;
     state) do_state ;;

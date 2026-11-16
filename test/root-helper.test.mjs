@@ -317,11 +317,11 @@ describe('the walls asked for', () => {
     assert.ok(existsSync(join(s.R, 'run/spark-console/prove.lock')), 'not a held folder: kept');
   });
 
-  test('root refuses, always: the put-back net is not built yet', () => {
+  test('root is off until the owner turns it on: refused before anything else of the call is read', () => {
     const before = calls(s).length;
     const r = run(s, ['root', '--id', newId(), '--sha256', sha('id'), '--seconds', '5', '--dir', s.work, '--', 'id']);
     assert.equal(r.status, 125);
-    assert.match(r.stdout, /^call\d+ refused: root is not turned on yet: it is refused on every Spark\n$/);
+    assert.match(r.stdout, /^call\d+ refused: root is off on this Spark: the owner turns it on with the one command \(--with-root\)\n$/);
     assert.equal(calls(s).length, before, 'nothing was asked of systemd');
   });
 
@@ -332,7 +332,7 @@ describe('the walls asked for', () => {
     assert.equal(r.stdout, [
       `helper ${sha(readFileSync(HELPER_SRC))}`, 'systemd 255.4-1ubuntu8.4 ok', 'first-process ok', 'cgroup2 ok', 'unshare ok',
       'setpriv ok', 'python3 ok', 'files ok', 'kernel 6.11.0-1016-nvidia', 'proof current', 'look ready', 'run ready',
-      'root refuses: root is not turned on yet'].map(l => `${id} ${l}\n`).join(''));
+      'root off: the owner turns it on with the one command (--with-root)'].map(l => `${id} ${l}\n`).join(''));
   });
 });
 
@@ -1883,15 +1883,57 @@ describe("the owner's one-time command", () => {
     assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved'));
   });
 
-  test('--undo: the line, then the helper, then the mark', () => {
+  test("--with-root turns root on after a passing proof (root's switch: 0600, the day and this helper's SHA-256); --without-root and --undo turn it off; a plain run leaves it as it is", () => {
+    const f = fleet();
+    const r = f.cmd(['--with-root', '3']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /root is on here: Sparkie may run a command as root on .*, each time inside the put-back net, after your\n {2}press\. Turn it off again with --without-root\.\n/);
+    const sw = join(f.target.R, 'var/lib/spark-console/root-on');
+    assert.match(readFileSync(sw, 'utf8'), new RegExp(`^on \\d{4}-\\d\\d-\\d\\d helper ${sha(readFileSync(HELPER_SRC))}\\n$`));
+    assert.equal(statSync(sw).mode & 0o777, 0o600);
+    const steps = sudoCalls(f);
+    const proved = steps.findIndex(x => / prove --id /.test(x)), on = steps.indexOf('tee /var/lib/spark-console/root-on.new');
+    assert.ok(proved >= 0 && on > proved, `the switch only after the proof: ${steps.join(' | ')}`);
+    assert.deepEqual(steps.slice(on, on + 3), ['tee /var/lib/spark-console/root-on.new', 'chmod 0600 /var/lib/spark-console/root-on.new',
+      'mv -f /var/lib/spark-console/root-on.new /var/lib/spark-console/root-on']);
+    assert.match(f.cmd(['--check', '3']).stdout, / {4}root ready: only inside the net \(--net\), 30 minutes at most, 10 in the lock-out class\n$/);
+    assert.equal(f.cmd(['3']).status, 0);
+    assert.ok(has(f, 'var/lib/spark-console/root-on'), 'a plain run leaves the switch as it is');
+    const w = f.cmd(['--without-root', '3']);
+    assert.equal(w.status, 0, w.stdout + w.stderr);
+    assert.match(w.stdout, /root is off here: the helper refuses every root command on /);
+    assert.ok(!has(f, 'var/lib/spark-console/root-on') && has(f, 'usr/local/sbin/spark-console-root'), 'only the switch went');
+    assert.match(f.cmd(['--check', '3']).stdout, / {4}root off: the owner turns it on with the one command \(--with-root\)\n$/);
+    assert.equal(f.cmd(['--with-root', '3']).status, 0);
+    assert.equal(f.cmd(['--undo', '3']).status, 0);
+    assert.ok(!has(f, 'var/lib/spark-console/root-on'));
+    // After --undo root answers as before set-up: sudo asks for a password, which the console answers with the owner's
+    // one command (work.test.mjs), and nothing runs.
+    const u = spawnSync('sudo', ['-n', '/usr/local/sbin/spark-console-root', 'root', '--id', 'afterundo01', '--sha256', sha('true'), '--seconds', '5', '--dir', '/',
+      '--net', '--', 'true'], { env: f.env, encoding: 'utf8', timeout: 60000 });
+    assert.equal(u.status, 1, u.stdout + u.stderr);
+    assert.match(u.stderr, /a password is required/);
+    assert.ok(!calls(f.target).some(c => c[0] === 'systemd-run' && c.some(a => a.startsWith('--unit=sw-root-'))));
+  });
+
+  test('--with-root with a proof that fails leaves root off', () => {
+    const f = fleet({ target: spark({ installed: false, knobs: { 'let-through': '3 look\n' } }) });
+    const r = f.cmd(['--with-root', '3']);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(!has(f, 'var/lib/spark-console/root-on') && !sudoCalls(f).some(x => x.startsWith('tee /var/lib/spark-console/root-on')), sudoCalls(f).join('\n'));
+  });
+
+  test("--undo: root's switch, then the line, then the helper, then the mark", () => {
     const f = fleet();
     assert.equal(f.cmd(['3']).status, 0);
     const n = sudoCalls(f).length;
     const r = f.cmd(['--undo', '3']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /etc/sudoers.d/spark-console-root /etc/sudoers.d/spark-console-root.new',
+    assert.deepEqual(sudoCalls(f).slice(n), ['-v', 'rm -f /var/lib/spark-console/root-on /var/lib/spark-console/root-on.new',
+      'rm -f /etc/sudoers.d/spark-console-root /etc/sudoers.d/spark-console-root.new',
       'rm -f /usr/local/sbin/spark-console-root /usr/local/sbin/spark-console-root.new', 'rm -f /var/lib/spark-console/proved']);
-    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved'));
+    assert.ok(!has(f, 'usr/local/sbin/spark-console-root') && !has(f, 'etc/sudoers.d/spark-console-root') && !has(f, 'var/lib/spark-console/proved')
+      && !has(f, 'var/lib/spark-console/root-on'));
   });
 
   test('--check changes nothing and asks no password, before and after set-up; every call is a read', () => {
@@ -1916,11 +1958,11 @@ describe("the owner's one-time command", () => {
         assert.match(r.stdout, /systemd 255\.4-1ubuntu8\.4 \(needs 248 or newer\): ok\n/);
         assert.match(r.stdout, /unshare knows --kill-child and --mount-proc: ok\n {2}setpriv knows --groups and --bounding-set: ok\n/);
         assert.match(r.stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): not there\n/);
-        assert.match(r.stdout, /look wall: not set up\n {2}run wall: not set up\n {2}root \(the net\): not built yet, refused on every Spark\n$/);
+        assert.match(r.stdout, /look wall: not set up\n {2}run wall: not set up\n {2}root \(inside the net\): not set up\n$/);
       } else {
         assert.match(r.stdout, /the helper \(\/usr\/local\/sbin\/spark-console-root\): there, this build's\n/);
         assert.match(r.stdout, /its sudo line .*: works/);
-        assert.match(r.stdout, / {4}proof current\n {4}look ready\n {4}run ready\n {4}root refuses: root is not turned on yet\n$/);
+        assert.match(r.stdout, / {4}proof current\n {4}look ready\n {4}run ready\n {4}root off: the owner turns it on with the one command \(--with-root\)\n$/);
       }
     }
   });
@@ -2168,5 +2210,215 @@ describe("the proof's own attempts", () => {
     assert.match(p.stdout, /proof failed: attempt 1 \(a write through a link\) could not be shown working outside the walls, so stopping it inside would show nothing\. No mark was written/);
     assert.ok(p.stdout.includes(`${p.id} proof look 1 was not reported: a write through a link\n`), p.stdout);
     assert.ok(!existsSync(join(s.R, 'var/lib/spark-console/proved')));
+  });
+});
+
+
+// Root (R70; design A 2.13, step 12): a command as root, only inside the net armed in the same call, and only while root's
+// switch is on (the owner's one-time command with --with-root). The stand-in runs it as the test's own account.
+describe('root inside the net (R70)', () => {
+  const HELPER_AT = s => join(s.R, 'usr/local/sbin/spark-console-root');
+  const SWITCH = s => join(s.R, 'var/lib/spark-console/root-on');
+  const G = (s, id) => join(s.R, 'var/lib/spark-console/guard', id);
+  const rootOn = (s, line = `on 2026-11-15 helper ${sha(readFileSync(HELPER_AT(s)))}\n`) => {
+    mkdirSync(dirname(SWITCH(s)), { recursive: true });
+    chmodSync(dirname(SWITCH(s)), 0o755);
+    writeFileSync(SWITCH(s), line, { mode: 0o600 });
+    chmodSync(SWITCH(s), 0o600);
+  };
+  const rooted = () => { const s = proven(); s.put('etc/ssh/sshd_config', 'Port 22\n', 0o640); rootOn(s); return s; };
+  const rootRun = (s, cmd, { id = newId(), hash = sha(cmd), secs = 60, extra = ['--net'], input } = {}) =>
+    ({ ...run(s, ['root', '--id', id, '--sha256', hash, '--seconds', String(secs), '--dir', s.work, ...extra, '--', cmd], { input }), id });
+  const OFF = 'root is off on this Spark: ';
+  const ASK = 'the owner turns it on with the one command (--with-root)';
+  const SSH_CHANGE = 'printf "Port 2222\\n" > "$SPARK_CONSOLE_REHEARSAL/etc/ssh/sshd_config"';
+  const checkLine = s => { const id = newId(); return run(s, ['check', '--id', id]).stdout.split('\n').find(l => l.startsWith(`${id} root `)).slice(id.length + 1); };
+
+  test("root's switch counts only as the one-time command writes it, and the refusal and check say why not", () => {
+    const s = proven();
+    const why = w => `${OFF}${w}, so its switch does not count: ${ASK}`;
+    assert.equal(checkLine(s), `root off: ${ASK}`);
+    const cases = [
+      ['a link', t => { rootOn(t); renameSync(SWITCH(t), `${SWITCH(t)}.real`); symlinkSync(`${SWITCH(t)}.real`, SWITCH(t)); }, 'its switch, or the folder it is in, is a link'],
+      ['a folder', t => mkdirSync(SWITCH(t), { recursive: true }), 'its switch is not a plain file'],
+      ['a wider mode', t => { rootOn(t); chmodSync(SWITCH(t), 0o644); }, 'its switch has mode 644, not 600 (root alone)'],
+      ['a folder others may change', t => { rootOn(t); chmodSync(dirname(SWITCH(t)), 0o775); }, 'the folder of its switch can be changed by another account than root'],
+      ['a second line', t => rootOn(t, `on 2026-11-15 helper ${sha(readFileSync(HELPER_AT(t)))}\nand more\n`), 'its switch is not the one line the one-time command writes'],
+      ['no line break', t => rootOn(t, `on 2026-11-15 helper ${sha(readFileSync(HELPER_AT(t)))}`), 'its switch is not the one line the one-time command writes'],
+      ['another helper\'s hash', t => rootOn(t, `on 2026-11-15 helper ${'a'.repeat(64)}\n`), 'this helper is newer than the one root was turned on for'],
+    ];
+    for (const [name, make, words] of cases) {
+      const t = proven();
+      make(t);
+      const before = calls(t).length;
+      const r = rootRun(t, SSH_CHANGE);
+      refused(r, why(words));
+      assert.equal(calls(t).length, before, `${name}: nothing was asked of systemd`);
+      assert.ok(!existsSync(G(t, r.id)), `${name}: no net was armed`);
+      assert.equal(checkLine(t), words.startsWith('this helper is newer') ? `root off: ${words}` : `root off: ${why(words).slice(OFF.length)}`, name);
+    }
+    // (an account other than root owning the switch is refused the same way: the stand-in Spark has no second account)
+    rootOn(s);
+    assert.equal(checkLine(s), 'root ready: only inside the net (--net), 30 minutes at most, 10 in the lock-out class');
+    // Read before anything else of the call: an option the helper does not know is not even looked at.
+    const t = proven();
+    refused({ ...run(t, ['root', '--id', 'offbefore01', '--made-up']), id: 'offbefore01' }, `${OFF}${ASK}`);
+  });
+
+  test('with the switch on and no --net, root is refused: it runs only inside the net armed in the same call', () => {
+    const s = rooted();
+    const before = calls(s).length;
+    const r = rootRun(s, SSH_CHANGE, { extra: [] });
+    refused(r, 'root runs only inside the net, armed in this same call: --net is missing');
+    assert.equal(calls(s).length, before, 'nothing was asked of systemd');
+    assert.ok(!existsSync(G(s, r.id)));
+    assert.equal(readFileSync(join(s.R, 'etc/ssh/sshd_config'), 'utf8'), 'Port 22\n');
+  });
+
+  test('inside the net: the net is armed first, then sw-root-<id> runs the held bytes as root, said "as root"; the net\'s own line follows', () => {
+    const s = rooted();
+    const before = calls(s).length;
+    const r = rootRun(s, SSH_CHANGE, { secs: 120 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^${r.id} net armed: the ways in go back at \\S+ unless they are kept\\n${r.id} as root: sw-root-${r.id} runs the command `
+      + `whose SHA-256 is ${sha(SSH_CHANGE)}, inside the net\\n\\n${r.id} net open: 1 of the ways in differs \\(/etc/ssh\\) and goes back at \\S+ unless it is kept\\n${r.id} end 0\\n$`), r.stdout);
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemd-run').map(c => c.find(a => a.startsWith('--unit=')));
+    assert.deepEqual(asked, [`--unit=sw-guard-${r.id}`, `--unit=sw-root-${r.id}`], 'the timer first');
+    assert.ok(unitCall(s, `sw-guard-${r.id}`).includes('--on-active=720s'), 'its time limit plus 600 s');
+    assert.deepEqual(unitCall(s, `sw-root-${r.id}`), ['systemd-run', `--unit=sw-root-${r.id}`, `--description=Spark Console root ${r.id} sha256 ${sha(SSH_CHANGE)}`,
+      '--wait', '--pipe', '--collect', '--quiet', '-p', 'ReadOnlyPaths=/usr/local/sbin/spark-console-root', '-p', 'ReadOnlyPaths=-/etc/sudoers.d/spark-console-root',
+      '-p', 'InaccessiblePaths=-/var/lib/spark-console', '-p', 'ReadOnlyPaths=/run/spark-console', '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5',
+      '-p', 'MemoryMax=8G', '-p', 'MemorySwapMax=0', '-p', 'TasksMax=4096', '--', which(s, 'bash'), '--noprofile', '--norc', `/run/spark-console/${r.id}/start`]);
+    const ran = join(s.R, 'standin/ran', `sw-root-${r.id}`);
+    assert.deepEqual(['command', 'home', 'user'].map(f => readFileSync(join(ran, f), 'utf8')), [SSH_CHANGE, '/root', 'root']);
+    assert.equal(readFileSync(join(G(s, r.id), 'unit'), 'utf8'), `sw-root-${r.id}.service`);
+    assert.equal(run(s, ['state', '--id', r.id]).stdout, `${r.id} state ended: it ran and has ended\n`);
+  });
+
+  test('held to 30 minutes, 10 in the lock-out class; the run wall\'s choices are not root\'s, nor root\'s choices another verb\'s', () => {
+    const s = rooted();
+    const before = calls(s).length;
+    refused(rootRun(s, 'true', { secs: 1801 }), 'a root command is held to 30 minutes');
+    refused(rootRun(s, 'true', { secs: 601, extra: ['--net', '--lockout'] }), 'a root command in the lock-out class is held to 10 minutes');
+    for (const x of [['--open'], ['--home'], ['--fleet'], ['--gpu'], ['--memory', '2G'], ['--protect', '/srv']]) {
+      refused(rootRun(s, 'true', { extra: ['--net', ...x] }), 'root takes no --open, --home, --fleet, --gpu, --memory or --protect: those bound the run wall, and root has no wall');
+    }
+    for (const x of [['--lockout'], ['--path', '/etc/hosts'], ['--unit', 'nginx.service']]) refused(change(s, 'true', { extra: x }), '--path, --unit and --lockout are for root');
+    refused(rootRun(s, 'true', { extra: ['--net', ...Array(33).fill(['--path', '/etc/hosts']).flat()] }), 'at most 32 --path');
+    refused(rootRun(s, 'true', { extra: ['--net', ...Array(17).fill(['--unit', 'nginx.service']).flat()] }), 'at most 16 --unit');
+    refused(rootRun(s, 'true', { extra: ['--net', '--path', '/etc/a file'] }), '--path must name a whole path that can stand in a setting');
+    for (const u of ['nginx', 'a b.service', '../x.service', 'x.service;y']) refused(rootRun(s, 'true', { extra: ['--net', '--unit', u] }), '--unit must name a unit: a name, then .service, .socket, .timer, .target, .mount or .path');
+    refused(rootRun(s, 'true', { extra: ['--net', '--unit', 'sw-guard-x.timer'] }), "--unit never names one of this helper's own units (sw-)");
+    assert.ok(!calls(s).slice(before).some(c => c[0] === 'systemd-run'), 'nothing ran, nothing was armed');
+    const r = rootRun(s, 'true', { secs: 600, extra: ['--net', '--lockout'] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(unitCall(s, `sw-guard-${r.id}`).includes('--on-active=1200s'));
+    assert.ok(unitCall(s, `sw-root-${r.id}`).includes('RuntimeMaxSec=600'));
+  });
+
+  test('--path and --unit join the copy set before anything runs, and go back with the ways in: the file, the unit, its reload', () => {
+    const s = rooted();
+    s.put('opt/app/app.conf', 'old\n', 0o644);
+    s.put('standin/units/nginx.service', 'active enabled\n');
+    const cmd = 'printf "new\\n" > "$SPARK_CONSOLE_REHEARSAL/opt/app/app.conf"; systemctl stop nginx.service';
+    const r = rootRun(s, cmd, { extra: ['--net', '--path', '/opt/app/app.conf', '--unit', 'nginx.service'] });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /net open: 2 of the ways in differ \(\/opt\/app\/app\.conf nginx\.service\)/, r.stdout);
+    assert.ok(readFileSync(join(G(s, r.id), 'paths'), 'utf8').split('\0').includes('/opt/app/app.conf'));
+    assert.equal(readFileSync(join(G(s, r.id), 'units'), 'utf8'), 'nginx.service\n');
+    const before = calls(s).length;
+    const f = spawnSync('bash', [join(G(s, r.id), 'restore.sh'), 'timer'], { env: s.env, encoding: 'utf8', timeout: 120000 });
+    assert.equal(f.status, 0, f.stdout + f.stderr);
+    assert.equal(readFileSync(join(s.R, 'opt/app/app.conf'), 'utf8'), 'old\n');
+    assert.equal(readFileSync(join(s.R, 'standin/units/nginx.service'), 'utf8').trim(), 'active enabled');
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.ok(asked[0] === `stop -- sw-root-${r.id}.service`, `the root command's unit is stopped before anything goes back: ${asked.join(' | ')}`);
+    for (const c of ['try-reload-or-restart nginx.service', 'start nginx.service']) assert.ok(asked.includes(c), asked.join(' | '));
+  });
+
+  test('a script as root: its bytes come on input, are read once and must have the SHA-256 the call names', () => {
+    const s = rooted();
+    const script = '#!/bin/bash\necho "from the script"\n';
+    const id = newId();
+    const r = { ...run(s, ['root', '--id', id, '--sha256', sha(script), '--seconds', '60', '--dir', s.work, '--net', '--stdin'], { input: script }), id };
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /\nfrom the script\n/);
+    assert.equal(readFileSync(join(s.R, 'standin/ran', `sw-root-${id}`, 'command'), 'utf8'), script);
+    const t = rooted();
+    const n = calls(t).length;
+    const bad = newId();
+    refused({ ...run(t, ['root', '--id', bad, '--sha256', sha(script), '--seconds', '60', '--dir', t.work, '--net', '--stdin'], { input: script.replace('from', 'From') }), id: bad },
+      "the command's bytes do not have the SHA-256 it was given, so nothing ran");
+    const two = newId();
+    refused({ ...run(t, ['root', '--id', two, '--sha256', sha(script), '--seconds', '60', '--dir', t.work, '--net', '--stdin', '--', 'true'], { input: script }), id: two },
+      'with --stdin the command is what comes on input: nothing after --');
+    const none = newId();
+    refused({ ...run(t, ['root', '--id', none, '--sha256', sha(''), '--seconds', '60', '--dir', t.work, '--net', '--stdin'], { input: '' }), id: none }, 'the command is empty');
+    assert.equal(calls(t).length, n, 'nothing was asked of systemd');
+  });
+
+  test('the guard on names: a root command that names the helper, its line, sudo\'s settings, PAM, the helper\'s folders or the net\'s timer, by word or through a link, runs nothing', () => {
+    const s = rooted();
+    const before = calls(s).length;
+    mkdirSync(join(s.R, 'tmp'), { recursive: true });
+    mkdirSync(join(s.R, 'etc/sudoers.d'), { recursive: true });
+    symlinkSync(join(s.R, 'etc/sudoers.d'), join(s.R, 'tmp/s'));
+    const said = (cmd, names, extra = ['--net']) => {
+      const r = rootRun(s, cmd, { extra });
+      refused(r, `a root command never names the helper, its sudo line, sudo's settings, PAM, the helper's folders or the net's timer (it names ${names}): those change only by the owner's one-time command, deploy/root-for-sparkie.sh`);
+      assert.ok(!existsSync(G(s, r.id)), `${cmd}: no net was armed`);
+    };
+    said('cp x /usr/local/sbin/spark-console-root', 'spark-console-root');
+    said('cat /etc/sudoers', 'sudoers');
+    said('echo x > /etc/sud"o"ers.d/y', 'sudoers');
+    said('cat /etc/sudo.conf', 'sudo.conf');
+    said('sed -i s/a/b/ /etc/pam.d/sshd', 'pam.d');
+    said('echo "* hard nofile 9" >> /etc/security/limits.conf', '/etc/security');
+    said('cp x /lib/aarch64-linux-gnu/security/pam_unix.so', '/security/pam_');
+    said('rm /var/lib/spark-console/root-on', '/var/lib/spark-console');
+    said('ls /run/spark-console', '/run/spark-console');
+    said('systemctl stop sw-guard-abc.timer', 'sw-guard-');
+    said('echo x > /tmp/s/y', '/tmp/s/y');
+    said('true', '/var/lib/spark-console', ['--net', '--path', '/var/lib/spark-console/root-on']);
+    said('true', '/tmp/s/y', ['--net', '--path', '/tmp/s/y']);
+    assert.ok(!calls(s).slice(before).some(c => c[0] === 'systemd-run'), 'nothing ran, nothing was armed');
+    const ok = rootRun(s, 'true /etc/hosts /tmp/x');
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  });
+
+  test('state, stop and putback find the root command\'s own unit: putback stops it before the first copy back', () => {
+    const s = rooted();
+    const r = rootRun(s, SSH_CHANGE);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const id = newId();
+    s.put(`run/spark-console/.calls/${id}`, 'handed 999999 1\n');
+    s.put(`standin/active/sw-root-${id}.service`, '');
+    assert.equal(run(s, ['state', '--id', id]).stdout, `${id} state running: it runs, or may still start\n`);
+    assert.equal(run(s, ['stop', '--id', id]).stdout, `${id} stopped sw-root-${id}: it was running, and it is gone\n`);
+    assert.equal(run(s, ['state', '--id', id]).stdout, `${id} state ended: its call is gone and nothing of it runs\n`);
+    // (as if the root command still ran when the owner pressed "put it back")
+    s.put(`standin/active/sw-root-${r.id}.service`, '');
+    const before = calls(s).length;
+    const p = run(s, ['putback', '--id', r.id]);
+    assert.match(p.stdout, new RegExp(`^${r.id} put back at `), p.stdout + p.stderr);
+    const asked = calls(s).slice(before).filter(c => c[0] === 'systemctl' && c[1] !== 'show').map(c => c.slice(1).join(' '));
+    assert.equal(asked[0], `stop -- sw-root-${r.id}.service`, asked.join(' | '));
+    assert.ok(!existsSync(join(s.R, `standin/active/sw-root-${r.id}.service`)), 'it was stopped');
+    assert.equal(readFileSync(join(s.R, 'etc/ssh/sshd_config'), 'utf8'), 'Port 22\n');
+  });
+
+  test('check: root off, root ready, or root refuses while the proof is not current; the proof tries root without --net, and with --net while it is off', () => {
+    const s = proven();
+    const off = prove(s);
+    assert.equal(off.status, 0, off.stdout + off.stderr);
+    assert.ok(off.stdout.includes(`${off.id} proof root 13 refused: root with no net\n`) && off.stdout.includes(`${off.id} proof root off refused: root --net while root is off on this Spark\n`), off.stdout);
+    rootOn(s);
+    const on = prove(s);
+    assert.equal(on.status, 0, on.stdout + on.stderr);
+    assert.ok(on.stdout.includes(`${on.id} proof root 13 refused: root with no net\n`) && !on.stdout.includes('proof root off'), on.stdout);
+    assert.equal(checkLine(s), 'root ready: only inside the net (--net), 30 minutes at most, 10 in the lock-out class');
+    rmSync(join(s.R, 'var/lib/spark-console/proved'));
+    assert.equal(checkLine(s), 'root refuses: the wall proof is none on this Spark');
+    refused(rootRun(s, 'true'), 'the wall proof is none on this Spark: prove first');
   });
 });

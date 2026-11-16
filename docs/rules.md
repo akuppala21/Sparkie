@@ -65,3 +65,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R61](rules/R61.md): What the runner does with a change (R55 is the sorter, R42 the root helper and its walls).
 - [R63](rules/R63.md): What bounds a plain change.
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
+- [R70](rules/R70.md): Root, only where the owner turned it on, and only inside the net.
