@@ -8,7 +8,11 @@
 // test run's lock or map, and a generated file the generator doesn't make are refused with nothing pushed; check_update
 // answers for the open proposal (its run, the failed tests' names, the review) as outside text; drop closes the pull
 // request and deletes the branch; 6 pushes at most; the protected list is tools/affected.mjs's, and holds every part
-// whose Area is safety or ways in, or that raises an ask or calls a gate. The token is never in a chat or an answer.
+// whose Area is safety or ways in, or that raises an ask or calls a gate, and a send lists each kind it touches. A push
+// GitHub would take only by force is refused, both refs left where they were; a name the box no longer holds, spelled
+// again only in case, is refused; the eval's held-out set is never in the box. The install's ask names the protected
+// paths, the test files and the review of its head (never an older head's), and its yes merges nothing once the proposal
+// was sent again or GitHub's branch moved. The token is never in a chat or an answer.
 // GitHub is a stand-in: a bare repository holding this tree as main (SPARK_CONSOLE_REPO_URL) and test/mock/github.mjs
 // for the API. The box is the real one (A2, C8b) on the stand-in fleet's compute Sparks, filled by boxFill and read back
 // by boxReadBack; the test changes files in it as the brain would. The trial's pass is a stand-in record (R67).
@@ -223,7 +227,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal(refs(), '');
   });
 
-  test('the stand-in switches are read only on the stand-in fleet: the function returns before the file without ALL_LOCAL', () => {
+  test('the stand-in switches are read only on the stand-in fleet: the function returns before the file without ALL_LOCAL (this pins the source’s text)', () => {
     assert.match(readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8'), /function selfTestFile\(\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
     assert.match(readFileSync(join(REPO, 'service', 'src', '21-selfchange.mjs'), 'utf8'), /^const SELF_CHANGE_ON = false;$/m);
   });
@@ -314,6 +318,20 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.deepEqual([p.pullRequest.number, p.pullRequest.state], [1, 'open']);
     assert.ok(!c.text.includes(TOKEN));
     selfHead = head;
+  });
+
+  // (final read TE-05: a push that GitHub would take only by force)
+  test('never by force: with GitHub’s branch moved to a commit the copy doesn’t hold, a send is refused, GitHub’s branch stays where it is and the copy’s ref goes back', LONG, async () => {
+    const branch = `refs/heads/sparkie/${selfId}`, part = atMain('service/src/21-web.mjs');
+    const elsewhere = git(GH, ['commit-tree', `${MAIN}^{tree}`, '-p', MAIN, '-m', 'Someone else’s push']);
+    git(GH, ['update-ref', branch, elsewhere, selfHead]);
+    try {
+      box({ 'service/src/21-web.mjs': `${part}// A proposal’s comment, from the box.\n// And a third one.\n` });
+      const s = await pressed(selfChat, 'send your code proposal');
+      assert.match(s.says, new RegExp(`The push to sparkie/${selfId} was refused, so nothing was sent`), s.says);
+      assert.equal(git(GH, ['rev-parse', branch]), elsewhere, 'GitHub’s branch was not moved');
+      assert.equal(git(COPY, ['rev-parse', `refs/sparkie/${selfId}`]), selfHead, 'the copy’s ref is back where it was');
+    } finally { git(GH, ['update-ref', branch, selfHead, elsewhere]); }
   });
 
   test('refused with nothing pushed: a path under .github/, and a generated file the installed generator doesn’t make', LONG, async () => {
@@ -426,6 +444,11 @@ describe('propose_update', { concurrency: 1 }, () => {
       assert.match(r.says, why, path);
       assert.match(r.says, /Nothing was (?:sent|changed)\./);
     }
+    // (the tree's name gone from the box and another spelling of it in its place: the box's own reader sees one name,
+    // and only this piece, against the noted commit's tree, refuses it; final read TE-02)
+    box({ 'service/src/21-web.mjs': `${part}// x\n`, 'AGENTS.md': null, 'AGENTS.MD': 'x\n' });
+    const twin = await pressed(chat, 'send your code proposal');
+    assert.match(twin.says, /These names differ only in case \(or Unicode form\) from one already in the tree, which on a Mac is the same file: AGENTS\.MD \(AGENTS\.md is there\)\. Use the name as it is\. Nothing was sent\./);
     assert.deepEqual(ghBranches(), [], 'nothing pushed');
     await pressed(chat, 'drop your code proposal');
     assert.equal(refs(), '');
@@ -519,6 +542,27 @@ describe('propose_update', { concurrency: 1 }, () => {
     await pressed(chat, 'drop your code proposal');
   });
 
+  // (final read TE-03: the protected list as used, not only as written; and R47's held-out set kept out of the box)
+  test('a send lists every protected path it touches (a part that holds or feeds a gate, the contract, AGENTS.md, the page, the installer, a test helper, tools/); the eval’s held-out set is never in the box, and a box holding one sends nothing', LONG, async () => {
+    const chat = await newChat();
+    box({});
+    assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
+    try {
+      assert.ok(existsSync(join(boxDir(chat), 'service', 'src', '21-web.mjs')) && !existsSync(join(boxDir(chat), 'test', 'eval', 'memory-held-out.json')), 'main’s tree, less the held-out set');
+      const PROT = ['AGENTS.md', 'deploy/pull.sh', 'docs/contract.md', 'public/app.js', 'service/src/20-danger.mjs', 'service/src/21-ladder.mjs', 'test/lib.mjs', 'tools/affected.mjs'];
+      const line = p => (p.endsWith('.md') ? '\nA proposal’s line.\n' : p.endsWith('.sh') ? '# a proposal’s line\n' : '// a proposal’s line\n');
+      box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// p\n`, ...Object.fromEntries(PROT.map(p => [p, `${atMain(p)}${line(p)}`])) });
+      const r = await pressed(chat, 'send your code proposal');
+      assert.equal(r.p.json.outcome, 'sent', r.says);
+      assert.ok(r.says.includes(`Protected paths (your passkey, on the page): ${PROT.join(', ')}.`), r.says);
+      assert.ok(GHAPI.state.pulls.at(-1).body.includes(`Protected paths (the owner’s passkey, on the page): ${PROT.join(', ')}`), GHAPI.state.pulls.at(-1).body);
+      box({ 'test/eval/memory-held-out.json': '{"questions":[]}\n' });
+      const held = await pressed(chat, 'send your code proposal');
+      assert.match(held.says, /the eval’s held-out set is never taken from a box: spark-console\/test\/eval\/memory-held-out\.json\. Nothing was changed\./);
+    } finally { if (refs()) await pressed(chat, 'drop your code proposal').catch(() => {}); }
+    assert.equal(refs(), '');
+  });
+
   test('a send cut off before its pull request opened can be tried again with the box as it is; a proposal whose chat is gone is dropped from another of the owner’s chats', LONG, async () => {
     const chat = await newChat();
     box({});
@@ -561,11 +605,11 @@ describe('propose_update', { concurrency: 1 }, () => {
       const ask = (await chatMessages(chat)).findLast(m => m.danger), shown = (await api(`/chats/${chat}`)).json.messages.find(m => m.danger?.ask === ask?.danger.ask);
       return { ask, yes: ask?.choices.find(c => c.pair), pair: shown?.pair };
     }
-    const sent = async (chat, line) => {
+    const sent = async (chat, line, more = {}) => {
       git(COPY, ['fetch', '-q', GH, '+refs/heads/main:refs/heads/main']);
       box({});
       assert.equal((await pressed(chat, 'please open a proposal')).p.json.outcome, 'started');
-      box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// ${line}\n` });
+      box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// ${line}\n`, ...more });
       const s = await pressed(chat, 'send your code proposal');
       assert.equal(s.p.json.outcome, 'sent', s.says);
       const id = openId(), head = ghRev(`refs/heads/sparkie/${id}`);
@@ -602,8 +646,38 @@ describe('propose_update', { concurrency: 1 }, () => {
     assert.equal((await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: ia.choices.find(c => c.label === 'No').id } })).status, 200);
     script(SCRIPT);
     // (a second proposal; GitHub's main moves before the yes: nothing merged or installed)
-    const chat2 = await newChat(), q = await sent(chat2, 'a second proposal');
-    GHAPI.state.checkRuns[q.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    // (it also changes a part that holds a gate and an existing test, and has two reviews: one of its head, one of an
+    // older head; final read TE-01)
+    const chat2 = await newChat(), q = await sent(chat2, 'a second proposal', { 'service/src/20-danger.mjs': `${atMain('service/src/20-danger.mjs')}// a proposal’s line\n`,
+      'test/abilities.test.mjs': `${atMain('test/abilities.test.mjs')}// a line the proposal adds\n` });
+    const passed = () => [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    GHAPI.state.checkRuns[q.head] = passed();
+    const prNo = GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).number;
+    GHAPI.state.reviews[String(prNo)] = [{ user: { login: 'old-bot' }, state: 'CHANGES_REQUESTED', commit_id: MAIN, body: 'An older head’s words.' },
+      { user: { login: 'reviewer-app[bot]' }, state: 'APPROVED', commit_id: q.head, body: 'Looks right to me.' }];
+    const a1 = await theAsk(chat2);
+    assert.ok(a1.ask, 'the ask');
+    for (const said of ['Protected paths: service/src/20-danger.mjs.', 'Test files it changes: test/abilities.test.mjs.', 'Review: reviewer-app[bot] APPROVED: “Looks right to me.” (their words).']) assert.ok(a1.ask.content.includes(said), `${said}\n${a1.ask.content}`);
+    assert.ok(!a1.ask.content.includes('An older head’s words') && !a1.ask.content.includes('Nobody else reviewed this.'), a1.ask.content);
+    // (sent again after the ask: that yes is void, nothing merged; final read TE-04)
+    box({ 'service/src/21-web.mjs': `${atMain('service/src/21-web.mjs')}// a second proposal, sent again\n` });
+    assert.equal((await pressed(chat2, 'send your code proposal')).p.json.outcome, 'sent');
+    const h2 = ghRev(`refs/heads/sparkie/${q.id}`), mainNow = ghRev('refs/heads/main');
+    assert.notEqual(h2, q.head);
+    const void1 = await api(`/chats/${chat2}/choose`, { method: 'POST', body: { choice: a1.yes.id, pair: a1.pair } });
+    assert.equal(void1.status, 200, void1.text);
+    assert.match(void1.json.message.content, /The proposal changed since you were asked, so nothing was merged or installed\. Ask again\./);
+    assert.deepEqual([GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state, ghRev('refs/heads/main')], ['open', mainNow]);
+    // (GitHub's branch moved back alone after the ask: that yes is void too)
+    GHAPI.state.checkRuns[h2] = passed();
+    const a2 = await theAsk(chat2);
+    git(GH, ['update-ref', `refs/heads/sparkie/${q.id}`, q.head, h2]);
+    try {
+      const void2 = await api(`/chats/${chat2}/choose`, { method: 'POST', body: { choice: a2.yes.id, pair: a2.pair } });
+      assert.equal(void2.status, 200, void2.text);
+      assert.match(void2.json.message.content, new RegExp(`sparkie/${q.id}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed\\. Ask again\\.`));
+      assert.deepEqual([GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state, ghRev('refs/heads/main')], ['open', mainNow]);
+    } finally { git(GH, ['update-ref', `refs/heads/sparkie/${q.id}`, h2, q.head]); }
     const b = await theAsk(chat2);
     const main = ghRev('refs/heads/main'), moved = git(GH, ['commit-tree', `${main}^{tree}`, '-p', main, '-m', 'Someone else’s change']);
     git(GH, ['update-ref', 'refs/heads/main', moved, main]);
@@ -626,6 +700,12 @@ describe('propose_update', { concurrency: 1 }, () => {
       for (const m of text.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)) {
         if (m[1].startsWith('node:')) continue;
         assert.match(m[1], /^\.\/[a-z-]+\.mjs$/, `${f} imports ${m[1]}`);
+        todo.push(m[1].slice(2));
+      }
+      // (and what a tool hands on from another file: export … from, final read TE-14)
+      for (const m of text.matchAll(/^export\s[^'"]*from\s*['"]([^'"]+)['"]/gm)) {
+        if (m[1].startsWith('node:')) continue;
+        assert.match(m[1], /^\.\/[a-z-]+\.mjs$/, `${f} hands on ${m[1]}`);
         todo.push(m[1].slice(2));
       }
       for (const m of text.matchAll(/\bimport\s*\(([^)]*)\)/g)) assert.equal(m[1], "'./meaning.mjs'", `${f}: import(${m[1]})`);
