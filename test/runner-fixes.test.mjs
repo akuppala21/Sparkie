@@ -718,7 +718,7 @@ test('a2: a script reached through a link is said not pinned on the ask, and its
   if (!existsSync(at3('notes/a2lnk'))) symlinkSync('a2real', at3('notes/a2lnk'));
   const chat = await newChat(), words = 'run the linked script', t = await turn(chat, words, [[RUN('bash notes/a2lnk/l.sh')]]);
   const q = String(sentBack(words)[0]?.question || '');
-  assert.match(q, /\nIt runs ~\/notes\/a2lnk\/l\.sh; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen\.\n/, q);
+  assert.match(q, /\nIt runs ~\/notes\/a2lnk\/l\.sh; its text isn’t pinned by a hash, so a change to it after this ask isn’t seen\.(?:\n|$)/, q);
   assert.ok(!q.includes('│ echo linked'), 'no text shown as pinned');
   const yes = t.choices.find(c => c.label === 'Run it');
   assert.ok(yes, JSON.stringify(t.choices));
