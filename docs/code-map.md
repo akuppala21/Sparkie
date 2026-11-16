@@ -3,7 +3,7 @@
 Written by `node tools/code-map.mjs` from the code; don’t edit it by hand (a test fails when it’s out of date).
 How the parts fit together is in `docs/architecture.md`; the rules every change must keep are in `docs/rules/`; actions, state files, timers, events and operations are in `docs/registry.md`. What to read first is in `AGENTS.md`.
 
-The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26962 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
+The service is 101 parts in `service/src/`, joined in name order into `service/server.mjs` (26965 lines in all). They share one scope, so a function in any part can be called from any other at run time; code that runs while the file loads can only use earlier parts. Each part starts with its header (docs/rules/R28.md). “Uses” lists the names a part takes from each other part (a name counts when it is a top-level name of exactly one other part); “Used by”, the parts that take a name from it.
 
 ## Every action, and where it lives
 
@@ -84,8 +84,8 @@ Generated: this file is service/src/*.mjs joined in name order (node tools/build
 
 Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command. `limit` (seconds) ends a script on the Spark itself too, so a stuck docker or du on a sick Spark doesn't pile up there after this side gave up. `fresh`: a new connection, never one shared with another ssh (the lock-out net's check that a new SSH connection still works, 21-net.mjs netProbe: a shared one would ride an old connection a firewall lets through).
 
-- **Area:** ground. **Rules:** R10. **Tests:** fleet.test.mjs, dark.test.mjs
-- **Lines:** 78
+- **Area:** ground. **Rules:** R10. **Tests:** fleet.test.mjs, dark.test.mjs, box.test.mjs
+- **Lines:** 81
 - **Owns:** none
 - **Timers:** none
 - **Wakes:** none

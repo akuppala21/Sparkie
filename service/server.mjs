@@ -149,7 +149,7 @@ class HttpError extends Error {
 }
 
 /* ───────── running commands on Sparks ───────── */
-// Area: ground        Rules: R10        Tests: fleet.test.mjs, dark.test.mjs
+// Area: ground        Rules: R10        Tests: fleet.test.mjs, dark.test.mjs, box.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Scripts go over stdin to `bash -s`; plain commands (used when stdin carries data) go as the ssh command.
@@ -180,21 +180,24 @@ function spawnOn(node, { script, command, limit, fresh = false }) {
 const unreachableUntil = new Map();
 const knownOffline = node => (unreachableUntil.get(node.id) || 0) > Date.now();
 // Two failed connections (or timed-out commands: a frozen Spark accepts SSH but never answers) in a row, so a dropped
-// handshake (a burst of SSH, a Tailscale blip) doesn't count.
-const reachMisses = new Map();
-function noteReach(node, code) {
+// handshake (a burst of SSH, a Tailscale blip) doesn't count. A failure of a command begun before the Spark last
+// answered says nothing new (it was begun while the Spark was away, and ended late), so it marks nothing: else a Spark
+// back on would read offline again for a minute (startedAt: when its command began; left out, it counts).
+const reachMisses = new Map(), reachOkAt = new Map();
+function noteReach(node, code, startedAt = Date.now()) {
   if (code === 255) {
+    if (startedAt < (reachOkAt.get(node.id) || 0)) return;
     const misses = (reachMisses.get(node.id) || 0) + 1;
     reachMisses.set(node.id, misses);
     if (misses >= 2) unreachableUntil.set(node.id, Date.now() + OFFLINE_TTL);
-  } else if (code === 0) { reachMisses.delete(node.id); unreachableUntil.delete(node.id); }
+  } else if (code === 0) { reachOkAt.set(node.id, Date.now()); reachMisses.delete(node.id); unreachableUntil.delete(node.id); }
 }
 
 function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = {}) {
   if (knownOffline(node)) return Promise.resolve({ code: 255, out: '', err: `${node.id} isn’t reachable (checked in the last minute).` });
   return new Promise(resolve => {
     // The Spark's own copy of the script ends a few seconds after this side gives up.
-    const child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
+    const began = Date.now(), child = spawnOn(node, { script, limit: timeout / 1000 + 5, fresh });
     let out = '', err = '', partial = '', timedOut = false;
     child.stdout.on('data', chunk => {
       out += chunk;
@@ -215,7 +218,7 @@ function run(node, script, { timeout = 60000, onLine, signal, fresh = false } = 
     child.on('close', code => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
-      noteReach(node, timedOut ? 255 : code);
+      noteReach(node, timedOut ? 255 : code, began);
       resolve({ code: code ?? -1, out, err: err.trim() });
     });
   });
@@ -2899,7 +2902,7 @@ function runWorker(node, payload, timeout = 30000) {
   const code = readFileSync(WORKER).toString('base64');
   const command = `${payload?.action === 'status' ? PATH_CHECK : ''}python3 -I -c ${q(`import base64;exec(compile(base64.b64decode('${code}'),'<spark-console-worker>','exec'))`)}`;
   return new Promise((resolve, reject) => {
-    const child = spawnOn(node, { command });
+    const began = Date.now(), child = spawnOn(node, { command });
     // (refused: the worker itself said no, as opposed to the Spark not answering; conflict: a name that's taken)
     let buf = '', result = null, error = null, timedOut = false, refused = false, conflict = false;
     const timer = setTimeout(() => { timedOut = true; error ||= 'The Spark didn’t answer in time.'; child.kill('SIGKILL'); }, timeout);
@@ -2922,7 +2925,7 @@ function runWorker(node, payload, timeout = 30000) {
     child.on('error', e => { error ||= e.message; });
     child.on('close', exit => {
       clearTimeout(timer);
-      noteReach(node, timedOut ? 255 : exit);
+      noteReach(node, timedOut ? 255 : exit, began);
       if (result && !error) resolve(result);
       else reject(Object.assign(new Error(error || (exit === 255 ? `${node.id} isn’t reachable.` : 'The Spark didn’t finish.')), { refused: refused && !timedOut, conflict }));
     });
