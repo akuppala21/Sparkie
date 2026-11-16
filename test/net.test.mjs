@@ -211,6 +211,12 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
 });
 
 // Last: it stops this file's console.
+test('a write_file to a way in is refused, never a net ask: the net runs only a plain command (step-train; before the restart below, which stops this fleet)', { timeout: 60000 * SLOW }, async () => {
+  const w = await api('/actions/write_file', { method: 'POST', body: { on: 'spark3', path: '~/.ssh/authorized_keys', text: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\n' } });
+  assert.equal(w.status, 403, w.text);
+  assert.match(w.json.error, /^Nothing ran: a change that can lock you out of Spark 3 runs only as a plain command inside the lock-out net, never as write_file\./);
+});
+
 test('a restart of Spark Console inside the window puts the change back at start, and says so in the chat it was asked in', { timeout: 300000 * SLOW }, async () => {
   keysReset();
   const chat = await newChat();
@@ -261,10 +267,4 @@ test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with 
   await refused(seam({ id: 'spark4' }, 'true', { ctx: pressed }), 409, /still open there \(record j_1\)/);
   // (past its gates the seam takes the Spark's claim: Spark 2 as any other, its caller having said yes)
   for (const id of ['spark2', 'spark3']) await assert.rejects(seam({ id }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), e => e.message === `claimed ${id}`);
-});
-
-test('a write_file to a way in is refused, never a net ask: the net runs only a plain command (step-train)', { timeout: 60000 * SLOW }, async () => {
-  const w = await api('/actions/write_file', { method: 'POST', body: { on: 'spark3', path: '~/.ssh/authorized_keys', text: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOther other@else\n' } });
-  assert.equal(w.status, 403, w.text);
-  assert.match(w.json.error, /^Nothing ran: a change that can lock you out of Spark 3 runs only as a plain command inside the lock-out net, never as write_file\./);
 });
