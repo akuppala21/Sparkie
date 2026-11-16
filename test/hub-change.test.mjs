@@ -120,7 +120,7 @@ test('always asked, one command a press, whatever the words; from the API, with 
   assert.equal(api0.json.error, 'Not run: every change on Spark 2 is asked with a button, one command a press. Ask for it in your chat with Sparkie. Nothing ran.');
   const chat = await newChat(), c = await inChat(chat, 'fix the notes on spark 2', 'echo hub > notes/hub.txt');
   assert.equal(c.value?.outcome, 'needs-ok', JSON.stringify(c.value));
-  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of your sign-in to Spark Console, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\. In its wall it can’t reach Docker \(so not the brain’s container\), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only\.\n/, c.value.question);
+  assert.match(c.value.question, /^Run this on Spark 2\?\n\$ echo hub > notes\/hub\.txt\nAsked because every change on Spark 2 is asked, one command a press: it runs Spark Console and the brain\.\nIt starts in ~\.\nIt runs inside the lock-out net, through your own service manager \(outside Spark Console’s own unit\), with at most 2 GB and 6 seconds\. If any of your sign-in to Spark Console, its agent door, its model address, its route on Tailscale, the brain stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told\. In its wall it can’t reach Docker \(so not the brain’s container\), your service manager or Spark Console’s own processes, and the brain’s model files and Spark Console’s own folders are read-only\.\n/, c.value.question);
   assert.ok(!existsSync(at2('notes/hub.txt')) && !existsSync(at2('notes/api.txt')), 'nothing ran');
   const yes = c.r.message.choices.find(x => x.label === 'Run it');
   assert.ok(yes, JSON.stringify(c.r.message.choices));
@@ -190,7 +190,7 @@ test('a script it runs, changed after the ask, voids the press and is asked agai
   assert.ok(ask, 'the dangerous ask');
   const shown = ask.danger.lines.join('\n');
   assert.match(shown, /on Spark 2/, shown);
-  assert.match(shown, /\nIt runs inside the lock-out net, through your own service manager/, shown);
+  assert.match(shown, /\nIt starts in ~\.\nIt runs inside the lock-out net, through your own service manager/, shown);
   assert.ok(existsSync(at2('notes/a.tmp')), 'nothing ran');
   await choose(d, ask.choices.find(x => x.label === 'No').id);
 });

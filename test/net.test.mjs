@@ -2,7 +2,8 @@
 // for this fleet (SPARK_CONSOLE_NET=1; off, a lock-out change waits for the net: ladder.test.mjs): a lock-out change is
 // the dangerous ask, with what goes back and why it can lock the owner out, and nothing runs before the press; the
 // press arms the Spark's own timer first (the command's time limit plus 600 s), runs the change and checks the ways in
-// from outside: all still work, so code keeps it; one stopped working, so it is put back at once; no answer, so the
+// from outside: all still work, so code keeps it; one stopped working, so it is put back at once (and, still not
+// working after the put-back, said plainly: live state the net holds no copy of, the restart the way back); no answer, so the
 // Spark's own timer puts it back, the Spark stays claimed, a second lock-out change there is refused before it is
 // asked, /stop leaves the timer, and /putback puts it back by the owner's word; what the net can't put back (a
 // Tailscale sign-out, a sign-in as another key) is not done; a restart of Spark Console inside the window puts it back
@@ -83,7 +84,7 @@ test('a lock-out change is the dangerous ask: what goes back and when, why it ca
   assert.ok(a.m, 'the dangerous ask');
   const shown = a.m.danger.lines.join('\n');
   assert.match(shown, /^CAN LOCK YOU OUT of Spark 3\n/);
-  assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest.'), shown);
+  assert.ok(shown.includes('It runs inside the lock-out net: unless Spark Console can still reach Spark 3 right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself 11 minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts Spark 3 off, restarting Spark 3 is the way back.'), shown);
   assert.match(shown, /\nWhy it can lock you out: .*authorized_keys/);
   assert.equal(a.m.danger.code, ADD);
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
@@ -118,7 +119,7 @@ test('pressed: the timer is armed first (its time limit plus 600 s), the change 
   assert.equal((await chatMessages(chat)).filter(m => !m.danger && /it is kept\.$/.test(m.content || '')).length, 1, 'once in the chat');
 });
 
-test('a way in that worked before stops working after it: put back at once, and said', { timeout: 180000 * SLOW }, async () => {
+test('a way in that worked before stops working after it: put back at once, and said; still not working after the put-back, it is said plainly: live state the net holds no copy of, and restarting the Spark is the way back', { timeout: 180000 * SLOW }, async () => {
   keysReset();
   const chat = await newChat();
   const a = await ask(chat, 'add my key on spark 3 again', `${ADD}; sleep 4`);
@@ -132,7 +133,9 @@ test('a way in that worked before stops working after it: put back at once, and 
     assert.equal(p.status, 200, p.text);
     const g = newest();
     assert.equal(g.state, 'put back', JSON.stringify(g));
-    assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) was put back at once: after it, its Tailscale connection stopped working \\(put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ: 1 went back, 0 did not\\)\\.$`));
+    // (Spark 3 stays off the tailnet after the put-back, as a link taken down or a firewall rule loaded would leave it:
+    // the helper's own words say "put back", and the owner is told the truth after them)
+    assert.match(p.json.message.content, new RegExp(`^A change that could lock you out of Spark 3 \\(record ${g.record}\\) was put back at once: after it, its Tailscale connection stopped working \\(put back at \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ: 1 went back, 0 did not\\)\\. But even after the put-back, its Tailscale connection still doesn’t work: the net puts back files and units, not live network or firewall state \\(what iptables, nft, ip or nmcli change\\), and that most likely still cuts Spark 3 off\\. Restarting Spark 3 is the way back: switch its plug off and on \\(Spark Console doesn’t switch the plug of a Spark that draws power but doesn’t answer\\)\\.$`));
     assert.equal(keysNow(), KEYS_LINE, 'put back');
     assert.ok(!timerWaits(g.id) && !existsSync(join(guardDir(g.id), 'pending')));
     assert.equal(readFileSync(join(guardDir(g.id), 'result'), 'utf8').split('\n')[1], "on the console's word");

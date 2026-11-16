@@ -80,8 +80,8 @@ function dangerMore(f) {
     if (f.install.brainReads) out.push(dangerPlain(f.install.brainReads, 300));
   }
   if (f.outsideWall) out.push(`Runs outside the wall: ${dangerPlain(f.outsideWall, 200)}.`);
-  // (on Spark 2: how it runs there and what is checked after it, 21-hub.mjs)
-  if (f.hub) out.push(dangerPlain(f.hub, 400));
+  // (on Spark 2: where it starts, how it runs there and what is checked after it, a line each, 21-hub.mjs)
+  for (const l of [].concat(f.hub || [])) out.push(dangerPlain(l, 400));
   return out;
 }
 

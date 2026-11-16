@@ -145,13 +145,15 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   for (const [k, v] of workAsks) if (Date.now() - v.at > WORK_ASK_MS) workAsks.delete(k);
   workAsks.set(workKey(node, command, ctx, dir), { sums: scripts.sums, at: Date.now() });
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
+  // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
+  const starts = `It starts in ${dir}.`;
   const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_WALL}`;
   if ((sorted.kinds || []).includes('delete')) {
     return dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
-      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: net } });
+      facts: { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') }, hub: [starts, net] } });
   }
   const reads = (ctx.reads || []).slice(-4).map(r => r.label), { sums = {} } = scripts;
-  const label = [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, net,
+  const label = [`Run this on Spark 2?`, `$ ${command}`, `Asked because ${why}.`, starts, net,
     'The net copies the ways in first, so it can put them back; anything else it writes isn’t copied, and undo can’t put that back.',
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []),
     ...Object.entries(sums).filter(([, h]) => h).map(([p, h]) => `It runs ${p} (SHA-256 ${h.slice(0, 12)}…); what that script reads later isn’t checked.`)].join('\n');
