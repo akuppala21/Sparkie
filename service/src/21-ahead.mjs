@@ -24,9 +24,12 @@ const AHEAD_MAX = 20;
 const aheadLists = new Map(), aheadDone = new Map();
 let aheadEpoch = 0;
 
-// The request a chat is on: its task's start, else the owner's last message of their own (a carry-on's is not one).
+// The request a chat is on: the time its task began with (kept on the task under a symbol when keepTask makes it: never
+// written to chats.json, so a task read back after a restart has none; its own start moves when it waits at a button
+// or carries on), else the owner's last message of their own (a carry-on's is not one).
+const AHEAD_SINCE = Symbol('the request a task began with');
 function aheadMark(conv) {
-  if (conv?.task && !conv.task.ended) return String(conv.task.at || '');
+  if (conv?.task && !conv.task.ended) return String(conv.task[AHEAD_SINCE] || '');
   const m = (conv?.messages || []).findLast(x => x.role === 'user' && !x.auto && !x.from);
   return m ? String(m.createdAt || '') : '';
 }
