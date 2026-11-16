@@ -36,7 +36,8 @@ function sortOpts(spec = SORT_NOOPTS, args = [], plainRe = null, first = null) {
   const next = (w, k, kind) => { const v = args[k] ?? val(w, ''); if (sortSplits(v) || (kind === '@' && v.unknown)) unknown ??= v.text || '$…'; return v; };
   for (let k = 0; k < args.length; k++) {
     const w = args[k], t = w.unknown ? w.lit ?? '' : w.text;
-    if (t === '--' && !w.unknown) { rest(k + 1); break; }
+    // (after --, a word is a name whatever its first sign)
+    if (t === '--' && !w.unknown) { for (const x of args.slice(k + 1)) x.literal = true; rest(k + 1); break; }
     if (!t.startsWith('-') || t === '-' || (plainRe && !w.unknown && plainRe.test(t))) {
       if (first) { rest(k); break; }
       if (w.unknown && (!t || w.split)) unknown ??= w.text || '$…';

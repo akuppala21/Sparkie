@@ -144,7 +144,8 @@ function keepEvalRecord(p, rec, setupId) {
   if (stored) saveBrainProfile(p, evals);
   audit({ via: 'page', actor: 'owner', action: 'brain-eval-kept', args: { reads: rec.reads, set: rec.set, build: rec.build, setup: setupId, passOnce: rec.score.passOnce, full: rec.score.full, keptWith: rec.keptWith }, ok: stored });
   return { stored, slot, kept: evals[slot]?.length || 0, setup: setupId,
-    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.` : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
+    says: stored ? `Kept with the profile of ${setupId}: ${evalLine(rec)}.${sealKey ? '' : ' It isn’t sealed (the eval seal’s key, eval-seal.json beside the secrets file, can’t be read or made), so it counts for nothing.'}`
+      : `${EVAL_KEEP} newer results are kept for this brain, this version of what it reads and this case set, so this older one wasn’t kept.` };
 }
 
 // What sparkie_setup shows for the brain in use (p: its profile, or null): the newest result on record for what this
