@@ -14399,9 +14399,10 @@ async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null
 // Timers: none        Wakes: none
 // On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and don't ask again for this task: …".
 // For the rest of that request (the turns that carry it on), a command of that kind then runs without a button: the
-// kind is the sorter's program (20-sort.mjs), its sub-command for a program that has them, the folder it works in and
-// the Spark, all built here by code from the sorter's answer, never from words the brain or a page gave. A command with
-// no kind (not one simple program, or working at the top of the home or outside it) gets "this same command" instead.
+// kind is a plain change's tool (the program the sorter resolved, 20-sort.mjs), its place (the folder its places are
+// under) and the Spark, all built here by code from the sorter's answer, never from words the brain or a page gave. A
+// command with no kind (not one simple program, or working at the top of the home or outside it) gets "this same
+// command" instead.
 // One list a chat, in memory, for the request it was given in: gone when that request ends (a No, the way in it came
 // by gone, the owner's next request), at /stop, at a new pairing, and at a restart. A press in the paired Telegram chat
 // may give it too. It stands in only for the request's own rules (2 and 3 of design A 2.5: the owner's words asked for
@@ -14410,10 +14411,9 @@ async function answerOwnerWord(res, conv, word, via, typed = null, viewer = null
 // never offered: an agent's change; Spark 2 or a Spark holding the brain; root; a key read or sent; a script (its hash
 // is for one press); what an earlier command of the task fetched or wrote; what came from what Sparkie read (R54's
 // "came from"); a dangerous ask's kinds; anything the sorter calls risky, lock-out, open or not done; a protected
-// folder; a change that runs outside the plain wall, or reaches another Spark or the GPU, after its yes.
+// folder; a change that runs with --home or --open after its yes; an install (the sorter's installs); the GPU; a reach
+// beyond the Spark itself (another Spark, the home network, the internet).
 const AHEAD_MAX = 20;
-// (the programs whose first plain word is a sub-command: pip install, git pull, systemctl restart)
-const AHEAD_SUBS = /^(?:git|pip[\d.]*|pipx|uv|npm|pnpm|yarn|bun|apt|apt-get|dnf|yum|conda|mamba|micromamba|cargo|go|docker|podman|systemctl|snap|gem|brew|make|huggingface-cli|hf)$/;
 // Each chat's go-ahead: {at (its request's time), epoch, entries}; the request whose go-ahead ended there (/stop, its
 // end), so a later press of that request's button gives none; a new pairing's count.
 const aheadLists = new Map(), aheadDone = new Map();
@@ -14425,19 +14425,14 @@ function aheadMark(conv) {
   const m = (conv?.messages || []).findLast(x => x.role === 'user' && !x.auto && !x.from);
   return m ? String(m.createdAt || '') : '';
 }
-// What a command is, for a kind: a simple change's program, its sub-command (null when one is wanted and can't be
-// read), and the folders it works in (each place's folder, a wide place itself; none placed, where it starts).
+// What a command is, for a kind, from the sorter's answer alone: a plain change's tool (its one program) and the
+// folders it works in (each place's folder, a wide place itself; none placed, where it starts).
 function aheadFacts(sorted, command, dir) {
   if (sorted?.class !== 'change' || !sorted.simple || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/.test(String(sorted.program || ''))) return null;
-  let sub = '';
-  if (AHEAD_SUBS.test(sorted.program)) {
-    const w = String(command).trim().split(/\s+/).slice(1).find(x => !x.startsWith('-'));
-    sub = w && /^[a-z][a-z0-9-]{0,30}$/.test(w) ? w : null;
-  }
   const places = [...(sorted.placed || []).map(p => String(p).replace(/\/[^/]*$/, '')), ...(sorted.wide || [])];
   const folders = places.length ? places : [String(dir)];
-  if (sub === null || folders.some(p => !/^~(?:\/[A-Za-z0-9._@+-]+)+$/.test(p) || /(?:^|\/)\.\.?(?:\/|$)/.test(p))) return null;
-  return { program: sorted.program, sub, folders: [...new Set(folders)] };
+  if (folders.some(p => !/^~(?:\/[A-Za-z0-9._@+-]+)+$/.test(p) || /(?:^|\/)\.\.?(?:\/|$)/.test(p))) return null;
+  return { program: sorted.program, folders: [...new Set(folders)] };
 }
 // The kind, or null: the deepest folder all of them are under, never the home itself.
 function aheadKind(sorted, command, dir) {
@@ -14445,23 +14440,24 @@ function aheadKind(sorted, command, dir) {
   if (!f) return null;
   const parts = f.folders.map(p => p.split('/')), common = [];
   for (let i = 0; i < parts[0].length && parts.every(x => x[i] === parts[0][i]); i++) common.push(parts[0][i]);
-  return common.length >= 2 ? { program: f.program, sub: f.sub, under: common.join('/') } : null;
+  return common.length >= 2 ? { program: f.program, under: common.join('/') } : null;
 }
 const aheadIn = (p, under) => p === under || p.startsWith(`${under}/`);
 // Whether a command falls in an entry: that same command where it started, or one of its kind with every folder under its folder.
 function aheadFits(e, sorted, command, dir) {
   if (e.command != null) return e.command === command && e.dir === dir;
   const f = aheadFacts(sorted, command, dir);
-  return Boolean(f && f.program === e.program && f.sub === e.sub && f.folders.every(p => aheadIn(p, e.under)));
+  return Boolean(f && f.program === e.program && f.folders.every(p => aheadIn(p, e.under)));
 }
 // The answer's words, built here: the kind, or "this same command".
-const aheadWords = (e, at) => (e.command != null ? 'this same command' : `“${e.program}${e.sub ? ` ${e.sub}` : ''}” in ${e.under} on ${at}`);
+const aheadWords = (e, at) => (e.command != null ? 'this same command' : `“${e.program}” in ${e.under} on ${at}`);
 // What an earlier command of the task wrote or fetched (its places, ctx.written): a place inside one, or a wide place
 // over one, is that.
 const aheadWritten = (sorted, written) => (Array.isArray(written) ? written : []).some(w => typeof w === 'string'
   && ((sorted?.placed || []).some(p => aheadIn(p, w.replace(/\/+$/, ''))) || (sorted?.wide || []).some(p => aheadIn(p, w.replace(/\/+$/, '')) || aheadIn(w, p))));
 // Why a command may never run on a go-ahead, or null. f: {agent, hub, brain, root, written, from (cameFrom's answer),
-// reached (protected folders), outside (runnerOutside), widen (runnerWiden)}.
+// reached (protected folders), outside (runnerOutside: --open or --home after the yes), widen (runnerWiden)}; the
+// sorter's own installs, gpu and reach too.
 function aheadWhyNot(sorted, command, f) {
   if (f.agent) return 'an agent asked for it';
   if (f.hub) return 'it is on Spark 2';
@@ -14476,7 +14472,10 @@ function aheadWhyNot(sorted, command, f) {
   if (sorted?.class !== 'change') return sorted?.class === 'lockout' ? 'it could lock you out' : sorted?.class === 'notdone' ? 'it is never done' : sorted?.open ? 'it needs what the run wall hides' : 'the sorter calls it risky';
   if (f.reached?.length) return `it reaches ${f.reached.join(', ')}`;
   if (f.outside?.length) return 'it runs outside the plain wall after a yes';
-  if (f.widen?.fleet || f.widen?.gpu) return `it reaches ${f.widen.fleet ? 'another Spark' : 'the GPU'} after a yes`;
+  if (sorted?.installs?.length) return 'it installs programs where the plain wall keeps them read-only';
+  if (sorted?.gpu || f.widen?.gpu) return 'it uses the GPU';
+  const reach = new Set([...(Array.isArray(sorted?.reach) ? sorted.reach : []), ...(f.widen?.fleet ? ['fleet'] : []), ...(f.widen?.home ? ['home'] : [])]);
+  if (reach.size) return `it reaches ${reach.has('fleet') ? 'another Spark of this fleet' : reach.has('home') ? 'your home network' : 'the internet'}`;
   return null;
 }
 // The facts for aheadWhyNot, from the request (ctx) and the Spark; the chat's earlier answers and what was read go to
@@ -14488,7 +14487,7 @@ function aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen)
   return aheadWhyNot(sorted, command, { agent: Boolean(ctx.agent || ctx.agentId || viewer?.agentKey || conv.agent), hub: node.host === 'local',
     brain: brainSparks().includes(node.id), root: Boolean(ctx.root), written: ctx.written,
     from: things.length ? cameFrom(things, dangerOwnerWords(conv), dangerReadsLoaded(ctx.reads), answers) : null,
-    reached: runnerProtected(sorted, dir), outside: runnerOutside(sorted, command, dir, topDirs), widen: runnerWiden(node, command, widen) });
+    reached: runnerProtected(sorted, dir), outside: runnerOutside(sorted, command, dir, topDirs), widen: runnerWiden(node, command, widen, sorted) });
 }
 // The owner's own chat this call is in (Sparkie's turn in it, the owner viewing), or null.
 function aheadChat(viewer, ctx) {

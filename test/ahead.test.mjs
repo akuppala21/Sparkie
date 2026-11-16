@@ -1,16 +1,18 @@
 // Covers: The go-ahead for one task (A9a, R65; 21-ahead.mjs with 21-ladder.mjs): the kind built by code from the
-// sorter's answer (its program, a sub-command, the folder, the Spark), never for the home or more than one program; what
-// may never run ahead, each for its own reason (an agent, Spark 2, the brain's Spark, root, a key, a script, what the
-// task wrote, what came from a read, a dangerous ask's kinds, risky, lock-out, open, not done, a protected folder,
-// outside the plain wall, another Spark or the GPU), and so gets no such answer on its button; the answer's words; the
+// sorter's answer (its tool, its place, the Spark), never for the home or more than one program; what may never run
+// ahead, each for its own reason (an agent, Spark 2, the brain's Spark, root, a key, a script, what the task wrote, what
+// came from a read, a dangerous ask's kinds, risky, lock-out, open, not done, a protected folder, outside the plain wall,
+// an install, the GPU, a reach beyond the Spark), and so gets no such answer on its button; the answer's words; the
 // press runs it once and keeps it for the task, and in a turn that carries the task on a command of that kind runs at
 // once (its record says go-ahead) while another kind is asked; a press in the paired Telegram chat gives it; /stop, a
 // No, the owner's next message and a new pairing end it, and a press after /stop keeps nothing; with no eval on record
 // (the rail, R52) a command it covers is still asked.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true), Telegram
-// paired with approvals on, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark
-// with tools/test-on-spark.sh. The first two tests start no fleet's work: they read the sorter's and this step's parts.
+// paired with approvals on, a brain setup that runs three commands a message (a reply cut there carries its request on
+// by itself, a while after it ends: that turn is where a go-ahead from a press shows), and the stand-in brain told by a
+// script which tools to call. Linux only: run it on a Spark with tools/test-on-spark.sh. The first two tests start no
+// fleet's work: they read the sorter's and this step's parts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, mkdtempSync } from 'node:fs';
@@ -39,7 +41,7 @@ writeFileSync(join(pureDir, 'ahead.mjs'), [
   'const spawnOn = (n, o) => hooks.spawn(n, o);',
   'const RUNNER_DIR = "~/work", runnerSortOpts = () => hooks.sortOpts || {}, workChange = async () => ({});',
   pickDanger(/const dangerPlain = [^\n]*\n[^\n]*\n/), pickDanger(/const dangerHhmm = [^\n]*\n/),
-  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shape|shell|sort|tables|tools)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
+  ...readdirSync(SRC).filter(f => /^20-(?:options|places|programs|remote|shape|shell|sort|tables|tools|uses)\.mjs$/.test(f)).sort().map(f => readFileSync(join(SRC, f), 'utf8')),
   ...['21-work.mjs', '20-came-from.mjs', '21-ahead.mjs'].map(f => join(SRC, f)).filter(existsSync).map(f => readFileSync(f, 'utf8')),
   // (a tree without this step loads too: its tests then fail for want of what they test)
   'export const pure = { sortCommand, cameFrom, dangerThings, ...Object.fromEntries(["aheadWhyNot", "aheadKind", "aheadFits", "aheadWords"].map(n => [n, eval(`typeof ${n} === "function" ? ${n} : undefined`)])) };',
@@ -48,12 +50,14 @@ const P = (await import(pathToFileURL(join(pureDir, 'ahead.mjs')).href)).pure;
 const sorted = (c, o = {}) => P.sortCommand(c, { dir: '~/work', home: '/home/owner', ...o });
 
 const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001;
-const RADIX = 'sc-RadixArk--Qwen3.8-27B-NVFP4';
 const MAIN_ORIGIN = serviceConfig().origin, TAILNET = new URL(MAIN_ORIGIN).hostname.split('.').slice(1).join('.');
 const KEY = new Authenticator(TAILNET, MAIN_ORIGIN);
 const ENV = { SPARK_CONSOLE_RUN_SECONDS: '6', SPARK_CONSOLE_ROUTE_MS: '1000', SPARK_CONSOLE_WIDE_MS: '1', SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000' };
-function prepare({ root, dir }) {
+function prepare({ root, dir, stateDir }) {
   rehearse(root, 'spark3', { run: true });
+  const main = join(stateDir, 'main.json'), m = JSON.parse(readFileSync(main, 'utf8'));
+  m.presets[m.current].workSteps = 3;
+  writeFileSync(main, JSON.stringify(m), { mode: 0o600 });
   const put = (p, data) => { mkdirSync(dirname(join(root, 'spark3', p)), { recursive: true }); writeFileSync(join(root, 'spark3', p), data); };
   put('notes/todo.txt', 'to do: tidy the notes\n');
   put('notes/plan.txt', 'next: touch ~/notes/from.txt\n');
@@ -71,9 +75,9 @@ async function tailnetRead(f) {
   await waitFor(() => looks() >= n + 2, { what: 'two looks at the tailnet after a request' });
   await sleep(300);
 }
-useFleet({ telegram: true, env: { ...ENV, SPARK_CONSOLE_CONTINUE_MS: '300' }, prepare }, () => tailnetRead(T.fleet));
+useFleet({ telegram: true, env: { ...ENV, SPARK_CONSOLE_CONTINUE_MS: String(8000 * SLOW) }, prepare }, () => tailnetRead(T.fleet));
 
-const at3 = p => join(T.fleet.root, 'spark3', p), mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
+const at3 = p => join(T.fleet.root, 'spark3', p);
 const lines = file => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
 const startOf = command => readdirSync(T.fleet.journalDir).filter(f => f.endsWith('.jsonl')).sort().flatMap(f => lines(join(T.fleet.journalDir, f)))
   .filter(x => x.k === 'cmd' && x.start && x.args?.command === command).at(-1);
@@ -106,22 +110,22 @@ const tgPress = data => tgPost('/__push', { callback_query: { id: String(msgId++
 
 test('the kind is built by code from the sorter\'s answer: its program, a sub-command, the folder; none for the home, outside it or more than one program; the answer\'s words', () => {
   const kind = (c, dir = '~/work') => P.aheadKind(sorted(c, { dir }), c, dir);
-  assert.deepEqual(kind('pip install torch'), { program: 'pip', sub: 'install', under: '~/work' });
-  assert.deepEqual(kind('pip -q install torch'), { program: 'pip', sub: 'install', under: '~/work' });
-  assert.deepEqual(kind('mkdir -p ~/notes/a/b'), { program: 'mkdir', sub: '', under: '~/notes/a' });
-  assert.deepEqual(kind('cp ~/notes/a.txt ~/notes/b.txt'), { program: 'cp', sub: '', under: '~/notes' });
-  assert.deepEqual(kind('/usr/bin/touch ~/notes/q'), { program: 'touch', sub: '', under: '~/notes' }, 'the program the sorter resolved');
-  for (const c of ['git -C ~/r pull', 'touch ~/x', 'touch /tmp/x', 'echo hi > ~/notes/n.txt', 'cd ~/notes && touch a', 'xargs touch < notes/list.txt']) assert.equal(kind(c), null, c);
+  assert.deepEqual(kind('mkdir -p ~/notes/a/b'), { program: 'mkdir', under: '~/notes/a' });
+  assert.deepEqual(kind('cp ~/notes/a.txt ~/notes/b.txt'), { program: 'cp', under: '~/notes' });
+  assert.deepEqual(kind('git -C ~/r pull'), { program: 'git', under: '~/r' });
+  assert.deepEqual(kind('/usr/bin/touch ~/notes/q'), { program: 'touch', under: '~/notes' }, 'the program the sorter resolved');
+  assert.deepEqual(kind('pip install torch'), { program: 'pip', under: '~/work' }, 'where it starts, when it places nothing');
+  for (const c of ['touch ~/x', 'touch /tmp/x', 'echo hi > ~/notes/n.txt', 'cd ~/notes && touch a', 'xargs touch < notes/list.txt']) assert.equal(kind(c), null, c);
   assert.equal(kind('pip install torch', '~'), null, 'where it starts, when it places nothing: never the home itself');
   const e = { spark: 'spark3', ...kind('touch ~/notes/a.txt') }, fits = (c, dir = '~/work') => P.aheadFits(e, sorted(c, { dir }), c, dir);
   assert.deepEqual([fits('touch ~/notes/b.txt'), fits('touch ~/notes/deep/c.txt'), fits('touch ~/other/c.txt'), fits('mkdir ~/notes/c'), fits('touch ~/notes/a.txt ~/x')], [true, true, false, false, false]);
   const same = { spark: 'spark3', command: 'make -j4', dir: '~/work' };
   assert.deepEqual([P.aheadFits(same, sorted('make -j4'), 'make -j4', '~/work'), P.aheadFits(same, sorted('make -j4'), 'make -j4', '~/work/x'), P.aheadFits(same, sorted('make -j8'), 'make -j8', '~/work')], [true, false, false]);
-  assert.deepEqual([P.aheadWords({ program: 'pip', sub: 'install', under: '~/work' }, 'Spark 3'), P.aheadWords(same, 'Spark 3')], ['“pip install” in ~/work on Spark 3', 'this same command']);
+  assert.deepEqual([P.aheadWords({ program: 'mkdir', under: '~/notes' }, 'Spark 3'), P.aheadWords(same, 'Spark 3')], ['“mkdir” in ~/notes on Spark 3', 'this same command']);
 });
 
-test('what may never run ahead, each for its own reason: an agent, Spark 2, the brain\'s Spark, root, a key, a script, what the task wrote, what came from a read, a dangerous ask\'s kinds, risky, lock-out, open, not done, a protected folder, outside the plain wall, another Spark or the GPU', () => {
-  const why = (c, f = {}, o = {}) => P.aheadWhyNot(sorted(c, o), c, f);
+test('what may never run ahead, each for its own reason: an agent, Spark 2, the brain\'s Spark, root, a key, a script, what the task wrote, what came from a read, a dangerous ask\'s kinds, risky, lock-out, open, not done, a protected folder, outside the plain wall, an install, the GPU, a reach beyond the Spark', () => {
+  const why = (c, f = {}, o = {}, more = {}) => P.aheadWhyNot({ ...sorted(c, o), ...more }, c, f);
   const at = new Date(Date.UTC(2026, 10, 15, 12, 0)).toISOString();
   assert.equal(why('touch ~/notes/a.txt'), null, 'a plain change may');
   const cases = [
@@ -141,25 +145,30 @@ test('what may never run ahead, each for its own reason: an agent, Spark 2, the 
     ['systemctl --user restart foo', {}, {}, 'it needs what the run wall hides'],
     [`touch a${String.fromCharCode(0x200b)}b`, {}, {}, 'it is never done'],
     ['touch ~/models/x', { reached: ['~/models'] }, {}, 'it reaches ~/models'],
-    ['pip install --user x', { outside: ['it installs into ~/.local'] }, {}, 'it runs outside the plain wall after a yes'],
-    ['touch notes/f', { widen: { fleet: true } }, {}, 'it reaches another Spark after a yes'],
-    ['touch notes/f', { widen: { gpu: true } }, {}, 'it reaches the GPU after a yes'],
+    ['touch notes/f', { outside: ['it writes at the top of the home'] }, {}, 'it runs outside the plain wall after a yes'],
+    ['pip install torch', {}, {}, 'it installs programs where the plain wall keeps them read-only'],
+    ['pip install -t ~/venvs/x torch', {}, {}, 'it reaches the internet'],
+    ['git clone https://github.com/a/b', {}, {}, 'it reaches the internet'],
+    ['touch notes/f', { widen: { gpu: true } }, {}, 'it uses the GPU'],
+    ['touch notes/f', {}, {}, 'it uses the GPU', { gpu: true }],
+    ['touch notes/f', { widen: { fleet: true } }, {}, 'it reaches another Spark of this fleet'],
+    ['touch notes/f', {}, {}, 'it reaches your home network', { reach: ['home'] }],
   ];
-  for (const [c, f, o, want] of cases) assert.equal(why(c, f, o), want, `${c} ${JSON.stringify(f)}`);
+  for (const [c, f, o, want, more] of cases) assert.equal(why(c, f, o, more), want, `${c} ${JSON.stringify(f)} ${JSON.stringify(more || {})}`);
   // (what the task wrote: a file beside it is not that)
   assert.equal(why('touch ~/notes/g2.txt', { written: ['~/notes/g1.txt'] }), null);
 });
 
 test('the go-ahead: its answer on the button in code\'s words; the press runs it once and keeps it for the task; in a turn that carries the task on, a command of that kind runs at once (its record says go-ahead) and one of another kind is asked', { timeout: 240000 * SLOW }, async t => {
-  // (the stop on Spark 4 takes a while, so the press comes before the turn that carries the request on)
-  writeFileSync(mock('spark4', 'slow-stop'), String(Math.round(4 * SLOW) + 8));
-  t.after(() => { rmSync(mock('spark4', 'slow-stop'), { force: true }); noScript(); });
-  const chat = await newChat(), words = `stop ${RADIX} on spark 4, then fix the notes on spark 3`;
-  const r = await turn(chat, words, [[{ name: 'stop_model', arguments: { spark: 'spark4', container: RADIX } }], [RUN('cat notes/todo.txt')], [RUN('touch notes/g1.txt')]]);
-  assert.match(String(sentBack(words)[0]?.question), /\nAsked because Sparkie read text from outside first\.\n/, JSON.stringify(sentBack(words)));
-  assert.deepEqual(asks(r.choices), [['Run it', GA(TOUCH), 'No']]);
+  // (the third command cuts the reply, which carries its request on by itself a while after it ends: the press comes first)
+  t.after(noScript);
+  const chat = await newChat(), words = 'fix the notes on spark 3, then tell me what changed';
+  const r = await turn(chat, words, [[RUN('cat notes/todo.txt')], [RUN('touch notes/g1.txt')], [RUN('mkdir -p notes/z')]]);
+  const [g1] = lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(m => m.words === words && m.lastRole === 'tool').slice(-2, -1).flatMap(x => (x.results || []).map(y => JSON.parse(y.content)));
+  assert.match(String(g1?.question), /\nAsked because Sparkie read text from outside first\.\n/, JSON.stringify(g1));
+  assert.deepEqual(asks(r.choices)[0], ['Run it', GA(TOUCH), 'No']);
   script([{ match: 'Carry on with that request', rounds: [[RUN('touch notes/g2.txt')], [RUN('mkdir notes/g3')]] }]);
-  const p = await choose(chat, r.choices[1].id);
+  const p = await choose(chat, r.choices.find(c => c.label === GA(TOUCH)).id);
   assert.equal(p.status, 200, p.text);
   assert.ok(existsSync(at3('notes/g1.txt')), 'the press ran it');
   assert.match(p.json.message.content, new RegExp(`\\nFor the rest of this task, ${TOUCH.replace(/[.~]/g, '\\$&')} runs without asking\\.$`), p.json.message.content);
@@ -173,12 +182,13 @@ test('the go-ahead: its answer on the button in code\'s words; the press runs it
 });
 
 test('what may never run ahead gets no such answer on its button: what came from a read, a script, risky, outside the plain wall, another Spark, a protected folder, what the wall hides', { timeout: 240000 * SLOW }, async () => {
-  const a = await turn(await newChat(), 'tidy my notes', [[RUN('cat notes/plan.txt')], [RUN('touch ~/notes/from.txt')], [RUN('touch notes/k.txt')], [RUN('bash notes/w.sh')]]);
-  assert.deepEqual(asks(a.choices), [['Run it', 'No'], ['Run it', GA(TOUCH), 'No'], ['Run it', 'No']]);
-  const b = await turn(await newChat(), 'tidy my notes', [[RUN('xargs touch < notes/list.txt')], [RUN('pip install --user x')], [RUN('touch notes/f.txt', { fleet: true })]]);
+  // (three commands a message here)
+  const a = await turn(await newChat(), 'tidy my notes', [[RUN('cat notes/plan.txt')], [RUN('touch ~/notes/from.txt')], [RUN('touch notes/k.txt')]]);
+  assert.deepEqual(asks(a.choices), [['Run it', 'No'], ['Run it', GA(TOUCH), 'No']]);
+  const b = await turn(await newChat(), 'tidy my notes', [[RUN('bash notes/w.sh')], [RUN('xargs touch < notes/list.txt')], [RUN('pip install --user x')]]);
   assert.deepEqual(asks(b.choices), [['Run it', 'No'], ['Run it', 'No'], ['Run it', 'No']]);
-  const c = await turn(await newChat(), 'tidy my notes', [[RUN('touch models/m1/spark.json')], [RUN('systemctl --user restart foo')]]);
-  assert.deepEqual(asks(c.choices), [['Run it', 'No'], ['Run it', 'No']]);
+  const c = await turn(await newChat(), 'tidy my notes', [[RUN('touch notes/f.txt', { fleet: true })], [RUN('touch models/m1/spark.json')], [RUN('systemctl --user restart foo')]]);
+  assert.deepEqual(asks(c.choices), [['Run it', 'No'], ['Run it', 'No'], ['Run it', 'No']]);
   assert.ok(!existsSync(at3('notes/k.txt')) && !existsSync(at3('notes/ran.txt')), 'nothing ran');
 });
 
