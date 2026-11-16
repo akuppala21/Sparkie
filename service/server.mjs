@@ -4223,7 +4223,7 @@ async function chatReply(req, res, viewer, conv, text, context) {
 }
 
 /* ───────── Sparkie’s rounds ───────── */
-// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs
+// Area: brain        Rules: R7, R26, R34, R36, R43, R46, R50        Tests: sparkie.test.mjs, sparkie-more.test.mjs, tools.test.mjs, words.test.mjs, brain.test.mjs, turn-budgets.test.mjs, rounds.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // The rounds of one reply, cut from sparkieTurn (14-chats.mjs), which calls them in order: how the brain is asked and
@@ -4270,7 +4270,11 @@ function turnBudgets({ tuned, limits = setupLimits(tuned), task = null }) {
   const done = taskStepsDone(task), left = taskStepsLeft(task);
   const WORK_STEPS = Math.min(limits.steps, left);
   return { ROUNDS: limits.rounds, CHANGES: limits.changes, WORK_STEPS, TOOL_OUTPUT: limits.output, TASK_DONE: done, taskBound: left <= limits.steps,
-    works: 0, ran: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task' };
+    works: 0, ran: 0, waitsYes: 0, notRun: 0, outChars: 0, unread: [], refusedRow: [], refused: [], spent: left ? null : 'task',
+    // (the operations its calls started, and a call that may change something still going past its 50 seconds: roundCalls)
+    ops: [], going: null,
+    // (the calls the brain made after its tools were put away, none of them run: roundDropped)
+    dropped: [] };
 }
 // After the turn (sparkieTurn, once its task is kept): the run calls of its task so far, on the task, so its next turn
 // has only what is left of the 120. A new request starts a new task, and with it a new count.
@@ -4286,12 +4290,13 @@ function budgetContext(setup) {
   const n = contextFlag(setup);
   return fits(n) ? n : CONTEXT_TOKENS;
 }
-// Whether a turn the steps or the output ended carries on by itself, in a fresh turn under the carry-on's own limits
-// (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are paused): only the owner's request that is a
-// task (a carry-on turn's, or one with a next step, multiStep). Never after three refusals: the brain was spinning.
+// Whether a turn the steps, the output or the rounds ended carries on by itself, in a fresh turn under the carry-on's
+// own limits (continueTask: the task's own hours, turns and steps, taskOver, 14-tasks.mjs; not while agents are
+// paused): only the owner's request that is a task (a carry-on turn's, or one with a next step, multiStep). Never after
+// three refusals: the brain was spinning.
 function budgetCarries({ spent, agent, task, text, now, conv }) {
   // (never past a dangerous ask it is parked at: 20-danger.mjs)
-  if (!['steps', 'output'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
+  if (!['steps', 'output', 'rounds'].includes(spent) || agent || !(task || multiStep(text)) || dangerParked(conv)) return false;
   const t = task || { continuations: 0, at: now };
   // (its commands: a turn the steps or the output ended has some of the task's 120 left, or it would have ended at 'task')
   return !taskOver(t) && !(agentSettings().halted && !agentSettings().autoPaused);
@@ -4311,19 +4316,21 @@ function workStep(turn) {
   if (++turn.works >= turn.WORK_STEPS) turn.spent ||= turn.taskBound ? 'task' : 'steps';
 }
 // After one call's result comes back (runOne): a refused call (an error, or a run that ran nothing) adds to the
-// refusals in a row and a call that worked ends them; the third makes the next round the last. Then what the brain is
-// sent of the result (budgetCut).
-function budgetsAfter(turn, { name, ok, nothing, jid }, out) {
+// refusals in a row and a call that worked ends them; the third makes the next round the last. A command counts as run
+// only when it ran there (or started, with minutes), and one asked first as waiting for the owner's yes (final read
+// S-15: an asked one was counted as run). Then what the brain is sent of the result (budgetCut).
+function budgetsAfter(turn, { name, ok, nothing, jid, waited = false, ran = false, asked = false }, out) {
   const why = ok ? nothing : out.replace(/^\[error\] /, '');
   if (why == null) turn.refusedRow.length = 0;
   // (three refusals end the carrying on even in the round whose command reached the steps: the brain was spinning; calls
-  // the steps left unrun are no refusals of their own)
-  else if (turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW
+  // the steps left unrun are no refusals of their own, nor is a call that met this turn's own change still going, C-4)
+  else if (!waited && turn.refusedRow.push({ name, why: String(why).replace(/\s+/g, ' ').slice(0, 300) }) >= REFUSED_IN_A_ROW
     && (!turn.spent || (turn.spent === 'steps' && !turn.refusedRow.some(x => /^Not run: one message may run /.test(x.why))))) {
     turn.spent = 'refused';
     turn.refused.push(...turn.refusedRow);
   }
-  if (WORK_TOOLS.has(name) && ok && nothing == null) turn.ran++;
+  if (WORK_TOOLS.has(name) && ok && ran) turn.ran++;
+  else if (WORK_TOOLS.has(name) && ok && asked) turn.waitsYes++;
   return budgetCut(turn, out, jid);
 }
 // The tool output one message may read: a result that would pass it, and every result after it, is not shown but named
@@ -4337,18 +4344,24 @@ function budgetCut(turn, out, jid) {
   return `[Spark Console] Not shown: this result (${out.length.toLocaleString('en-US')} characters) would pass the ${turn.TOOL_OUTPUT.toLocaleString('en-US')} characters of tool results one message may read. ${!jid ? 'It wasn’t kept: the record couldn’t be written.' : jOwnCall(turn.viewer, turn.ctx) ? `It is kept whole in record ${jid}: recall {"id":"${jid}"} reads it, in a later message.` : `It is kept whole in record ${jid}, which only the owner reads back.`} Answer now with what you have.`;
 }
 // A turn a budget ended says so after the brain's last words, in words built by code: how many commands ran, which
-// results weren't read and where they are kept, or which calls were refused and why; then that the task carries on in
-// a fresh turn (budgetCarries; keepTask keeps it), or that the owner can say "go on".
+// results weren't read and where they are kept, or which calls were refused and why, or that the rounds were all taken;
+// the calls made after the tools were put away, none run; then that the task carries on in a fresh turn
+// (budgetCarries; keepTask keeps it), or that the owner can say "go on".
 function budgetReport(turn) {
-  if (!turn.spent) return;
+  if (!turn.spent && !turn.dropped.length) return;
   turn.carry = budgetCarries(turn);
   const n = x => x.toLocaleString('en-US'), kept = turn.unread.filter(Boolean), lines = [];
   const more = turn.notRun ? `; ${turn.notRun} more ${turn.notRun === 1 ? 'was' : 'were'} asked for and not run` : '';
-  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran} ran`}${more}.`);
+  // (those asked first, each with its button or as its own message: they ran nothing yet)
+  const waits = turn.waitsYes ? `; ${turn.waitsYes} ${turn.waitsYes === 1 ? 'waits' : 'wait'} for your yes` : '';
+  if (turn.spent === 'steps') lines.push(`Stopped here: one message may run ${n(turn.WORK_STEPS)} commands, and ${turn.ran === turn.works ? `${turn.works} ran` : `${turn.works} were tried and ${turn.ran || 'none'} ran`}${waits}${more}.`);
   // (a task's last: no carrying on, and the owner's next message is a new request with its own 120)
-  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${more}.`);
+  if (turn.spent === 'task') lines.push(`Stopped here: one task may run ${n(TASK_STEPS)} commands, and this one has (${n(turn.works)} in this message)${waits}${more}.`);
   if (turn.unread.length) lines.push(`${turn.spent === 'output' ? 'Stopped here: o' : 'O'}ne message may read ${n(turn.TOOL_OUTPUT)} characters of tool results, so ${turn.unread.length === 1 ? '1 result wasn’t' : `${turn.unread.length} results weren’t`} read${kept.length ? ` (kept whole in Spark Console’s record: ${kept.join(', ')})` : ''}.`);
   if (turn.spent === 'refused') lines.push(`Stopped asking: ${REFUSED_IN_A_ROW} calls in a row were refused, so the tools were put away for this message.`, ...turn.refused.map(r => `- ${r.name}: ${r.why}`));
+  if (turn.spent === 'rounds') lines.push(`Stopped here: one message may take ${n(turn.ROUNDS)} rounds of tools, and this one has.`);
+  const late = turn.dropped.length;
+  if (late) lines.push(`${late === 1 ? '1 more call was' : `${late} more calls were`} asked for after the tools were put away, and not run (${[...new Set(turn.dropped)].join(', ')}).`);
   lines.push(turn.spent === 'refused' ? 'Say what to change, or “go on” to try again.' : turn.carry ? 'Carrying on with your request in a fresh turn.' : 'Say “go on” to carry on.');
   const a = turn.answer, text = `${!a.trim() || a.endsWith('\n\n') ? '' : a.endsWith('\n') ? '\n' : '\n\n'}${lines.join('\n')}`;
   turn.answer += text;
@@ -4425,42 +4438,75 @@ function modelStep(turn, sent) {
     up.end(JSON.stringify({ ...base, messages, ...(sent?.length ? { tools: sent, tool_choice: 'auto' } : {}) }));
   });
 }
+// What the brain is told in the last round, once its tools are put away (by the rounds a message may take, its token
+// budget or one of the loop's budgets): a call now is not run, so it answers with what the tools said. (Final read
+// C-5: past the rounds it was told nothing, and its system prompt still said it had tools.)
+const toolsAway = turn => `[Spark Console] Your tools are put away for this message${turn.spent === 'rounds' ? ` (one message may take ${turn.ROUNDS} rounds of tools)` : ''}. A tool you call now is not run: answer with what the tools said, and say what is left to do.`;
 // Up to ROUNDS rounds of looking things up (and at most CHANGES changes), then it has to answer.
 async function turnRounds(turn) {
-  const { emit, link, tools, ROUNDS } = turn;
+  const { emit, link, tools, ROUNDS, messages } = turn;
   for (let round = 0; ; round++) {
     if (link.gone) throw new Error(TURN_STOPPED);
-    // (the last round offers no tools: past the rounds a message may take, or past its brain's token budget, 13-ask.mjs,
-    // or at one of the loop's budgets, turnBudgets)
+    // (the last round offers no tools: past the rounds a message may take, a budget of its own, or past its brain's
+    // token budget, 13-ask.mjs, or at one of the loop's budgets, turnBudgets; and the brain is told so)
+    if (round >= ROUNDS) turn.spent ||= 'rounds';
     const last = round >= ROUNDS || overBudget(turn) || Boolean(turn.spent);
+    if (last && tools.length) messages[0].content = `${messages[0].content}\n\n${toolsAway(turn)}`;
     const r = await modelStep(turn, tools.length && !last ? roundTools(turn) : null);
     turn.finishReason = r.finish;
     turn.usage = r.usage || turn.usage;
     if (link.gone) throw new Error(TURN_STOPPED);
-    if (!r.calls.length || last) break;
+    if (!r.calls.length) break;
+    // (calls made all the same are not run, and each says so: never dropped unseen, C-5)
+    if (last) { await roundDropped(turn, round, r); break; }
     await roundCalls(turn, round, r);
     // What was written before the lookups stays; a clear break before the rest of the answer.
     if (turn.answer && !turn.answer.endsWith('\n')) { turn.answer += '\n\n'; emit({ type: 'delta', text: '\n\n' }); }
   }
   budgetReport(turn);
 }
-// One round’s tool calls (at most 4): on the record first; lookups together, then changes one by one; then whether the
+// Which calls of a round run together: the lookups (a read that changes nothing, or a call to no tool). Every other one
+// runs after them, one after another in the order asked, each once the one before it has ended: the changes, and run
+// and write_file, the reads that change (`changes: true`, 21-work.mjs, 21-write.mjs). (2026-11-11: "stop A, stop B"
+// in one round met "already changing" on that Spark; final read C-4, 2026-11-15: so did two commands for one Spark,
+// one refused and in no fixed order, and four in a round put the tools away.)
+const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
+const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
+// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
+// (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
+// read); run and write_file only once something ran there: a command that ran (one that failed too, its error output
+// is in its result), one started with minutes, write_file's ask (it shows the file's old lines), or a failure on the
+// far side (a 5xx can quote the command's own first line). Never a call refused, asked or answered "nothing ran"
+// before anything ran (final read of the net, 5: "Leave out sudo and set root" was followed by "this came from text
+// Sparkie read first", though nothing had run or been read).
+function readOutsideBy(c, a, { handed, ok, value, status }) {
+  if (!handed || a?.kind !== 'read' || (INSIDE_READS.has(c.name) && !(c.name === 'running_models' && /"detail"/.test(c.args || '')))) return false;
+  if (!WORK_TOOLS.has(c.name)) return true;
+  if (!ok) return !(status >= 400 && status < 500);
+  return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
+}
+// One round’s tool calls (at most 4): on the record first; lookups together, then the rest one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
 async function roundCalls(turn, round, r) {
-  const { ctx, messages, used, groups } = turn;
+  const { ctx, messages, used, groups, link } = turn;
   // (at most 4 calls a round, and only those are on the record, each with its result)
   const calls = r.calls.slice(0, 4);
   messages.push({ role: 'assistant', content: r.content || '', tool_calls: calls.map((c, i) => ({ id: c.id || `call_${round}_${i}`, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })) });
-  const steps = [];
-  // Lookups run together; changes run one after another, in the order asked (2026-11-11: "stop A, stop B" in one
-  // round met "already changing" on that Spark).
+  const steps = [], outside = [], at = { round, calls, steps, outside };
   const results = [];
-  await Promise.all(calls.map((c, i) => (!ACTIONS.get(c.name) || ACTIONS.get(c.name).kind === 'read' ? runOne(turn, { round, calls, steps }, c, i).then(x => { results[i] = x; }) : null)));
-  // From here on this turn has read text from outside (a log, an operation, a recipe, a web result): what Sparkie
-  // may keep in memory without a button gets stricter (20-memory.mjs memoryClear).
-  // (running_models {detail} carries a container's own command: text from outside, like workloads)
-  if (calls.some(c => ACTIONS.get(c.name)?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || ''))))) ctx.readOutside = true;
-  for (const [i, c] of calls.entries()) if (!results[i]) results[i] = await runOne(turn, { round, calls, steps }, c, i);
+  await Promise.all(calls.map((c, i) => (roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
+  // From here on this turn has read text from outside (a log, an operation, a recipe, a web result, a command's
+  // output: readOutsideBy): what Sparkie may keep in memory without a button gets stricter (20-memory.mjs
+  // memoryClear), and a change is asked (21-ladder.mjs).
+  if (outside.some(Boolean)) ctx.readOutside = true;
+  for (const [i, c] of calls.entries()) {
+    if (results[i]) continue;
+    // (one before it that is still going past its 50 seconds is waited for, a while, so two never run side by side)
+    for (const until = Date.now() + ROUND_WAIT_MS; turn.going && !link.gone && Date.now() < until;) await Promise.race([turn.going, sleep(1000)]);
+    results[i] = await runOne(turn, at, c, i);
+  }
+  // (what a command printed counts from the next round: the brain asked for this round’s calls before any came back)
+  if (outside.some(Boolean)) ctx.readOutside = true;
   used.push(...steps.filter(Boolean));
   // Hidden is not forbidden: a call to a tool this round didn't offer ran as any call does, and opens its group;
   // a web search opens reading.
@@ -4470,22 +4516,39 @@ async function roundCalls(turn, round, r) {
   }
   messages.push(...results);
 }
+// The calls of a last round, made after the tools were put away (at most 4, as a round's): none is run; each is on the
+// page and in the journal as not run, and the reply's last lines name them (budgetReport).
+async function roundDropped(turn, round, r) {
+  const calls = r.calls.slice(0, 4), steps = [];
+  for (const [i, c] of calls.entries()) await runOne(turn, { round, calls, steps, away: true }, c, i);
+  turn.used.push(...steps.filter(Boolean));
+  turn.dropped.push(...calls.map(c => (/^[a-z][a-z_]{0,39}$/.test(String(c.name)) ? c.name : 'a tool')));
+}
 // One tool call: the checks of this turn (a stop, the agent’s web searches, the changes a message may make), then
 // runAction with 50 seconds, the paste card set aside, the result masked, journalled (tool), cut and told.
-async function runOne(turn, { round, calls, steps }, c, i) {
+async function runOne(turn, { round, calls, steps, outside = [], away = false }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
-  let out, ok = true, outcome = null, plan = null;
+  let out, ok = true, outcome = null, plan = null, value = null, handed = false, status = null;
   let nothing = null;   // (why a call that answered ran nothing: a run where the helper can't run it; budgetsAfter)
+  let waited = false;   // (it met this turn's own change still going: no refusal of its own, budgetsAfter)
   try {
     // (the owner's /stop came while another call of this round ran: nothing more is handed to runAction)
     if (link.gone) throw new HttpError(409, TURN_STOPPED);
+    // (a call made after the tools were put away, roundDropped: never handed over, and no refusal of its own)
+    if (away) throw Object.assign(new HttpError(409, 'Not run: it was asked for after the tools were put away for this message.'), { waited: true });
     if (!a) throw new HttpError(404, `No tool called ${String(c.name).slice(0, 60)}.`);
+    // (the one before it is still going after the wait, roundCalls: one at a time, so this one isn't started)
+    if (turn.going && !roundTogether(a)) throw Object.assign(new HttpError(409, `Not run: the call before it in this message is still going, and calls that may change something run one at a time, in the order asked. Ask for it again once that one has ended (check recent_operations or fleet_events).`), { waited: true });
     if (agent && a.openWorld && overLimit(agentWorld, agent.id, 60000, 6)) throw new HttpError(429, 'At most 6 web searches a minute for this agent. Use find_recipes, or answer with what you have.');
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
     if (WORK_TOOLS.has(c.name)) workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
-    let value = await Promise.race([runAction(c.name, viewer, args, ctx), sleep(50000).then(() => { throw new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`); })]);
+    handed = true;
+    const going = runAction(c.name, viewer, args, ctx);
+    value = await Promise.race([going, sleep(50000).then(() => { throw Object.assign(new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`), { going }); })]);
+    // (an operation it started, whose Spark a later call of this turn may meet still changing)
+    if (typeof value?.operation === 'string') turn.ops.push(value.operation);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
     if (value?.paste?.block) {
       pastes.push(value.paste.block);
@@ -4499,16 +4562,22 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     if (value?.ran === false) nothing = maskSecrets(String(value.why || 'Nothing ran.'));
   } catch (e) {
     ok = false;
+    status = e.status ?? null;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
+    // (one that may change something, still going past its 50 seconds: the round's next calls wait for it)
+    if (e.going && !roundTogether(a)) { const g = turn.going = e.going.then(() => {}, () => {}).then(() => { if (turn.going === g) turn.going = null; }); }
+    // (refused because a Spark is still changing with an operation this turn started: met, not refused)
+    waited = Boolean(e.waited) || (e.status === 409 && /^(?:Something is already changing on|A long command runs on) /.test(e.message || '') && turn.ops.some(id => jobs.get(id)?.status === 'running'));
   }
   const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started, task: ctx?.task || null }, out);
   // What this request read from outside, by its record (A7c; the dangerous ask's "came from", 20-danger.mjs): a label
   // built by code, the tool and its Spark, never its source's words.
-  if (ok && jid && a?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')))) workRead(ctx, jid, a.title, c.args);
+  outside[i] = readOutsideBy(c, a, { handed, ok, value, status });
+  if (ok && jid && outside[i]) workRead(ctx, jid, a.title, c.args);
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
-  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid }, out);
+  out = budgetsAfter(turn, { name: c.name, ok, nothing, jid, waited, ran: value?.ran === true || outcome === 'started', asked: outcome === 'needs-ok' || outcome === 'question' }, out);
   // (run with minutes started an operation, as a change does: its result wakes the request's carry-on, 21-long.mjs)
   const step = { name: c.name, title: a?.title || c.name, ok, ms: Date.now() - started, change: Boolean(a && a.kind !== 'read') || (c.name === 'run' && outcome === 'started'), ...(outcome ? { outcome } : {}), ...(plan ? { plan } : {}) };
   Object.assign(step, shown);
@@ -15838,7 +15907,7 @@ action({
   },
 });
 /* ───────── the box filled from an exact tree, and read back as data (C8b; called by nothing yet) ───────── */
-// Area: features        Rules: R62, R52, R43        Tests: box-fill.test.mjs
+// Area: features        Rules: R62, R52, R43, R23        Tests: box-fill.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // Design C 2.5 needs a box that Spark Console's code, never the brain, fills with a tree of its own repository and
@@ -15864,7 +15933,7 @@ const FILL_LINKS_LEFT = 'test/mock/root/';
 // The console's own bare copy of the repository on Spark 2, and git there with nothing from the system's or the
 // user's git config (as pull.sh runs it).
 const FILL_GIT = 'env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git --git-dir="$HOME/.local/share/spark-console/repo.git" -c core.hooksPath=/dev/null -c core.attributesFile=/dev/null';
-const boxFills = new Map();   // the caller (boxKey) → { tree, box, spark, at }
+const boxFills = new Map();   // the caller (boxKey) → { tree, box, cid, spark, at }
 const boxFilling = new Set(); // the callers with a fill or a read back under way
 
 // A name as a refusal may show it: no control character, keys masked, at most 120 characters.
@@ -16011,11 +16080,13 @@ async function fillTreeList(tree) {
   }
   return { blobs, trees, links, bytes };
 }
-// Opening a box is a change, and so are a fill and a read back: Sparkie's and an agent's call meet the pause, Sparkie's
-// the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
+// Opening a box is a change, and so are a fill and a read back: an agent's call meets the put-back hold (R23),
+// Sparkie's and an agent's call the pause, Sparkie's the rail (R52), as the box's own open does. A refusal by the rail
+// carries rail: true (run's door makes it a button).
 async function fillGate(viewer, ctx) {
   whoMayLook(viewer, ctx);
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and filling or reading back a box is a change, so nothing was done.');
   if (by === 'sparkie') {
     const rail = await brainRail();
@@ -16082,7 +16153,7 @@ async function boxFill(viewer, ctx, tree) {
       if (last[0] === 'done') await fillStream(node, `docker exec ${q(b.name)} rm -rf -- ${FILL_FOLDER}`, { max: 4096, timeout: 30000 });
       throw new HttpError(502, `The tree couldn’t be put in the box on ${at}${r.code === 255 ? ` (${at} didn’t answer)` : ''} (${fillShow(said)}); what was unpacked was taken out again. Nothing else was changed.`);
     }
-    boxFills.set(key, { tree, box: b.name, spark: b.spark, at: new Date().toISOString() });
+    boxFills.set(key, { tree, box: b.name, cid: b.cid, spark: b.spark, at: new Date().toISOString() });
     rec.outcome = 'filled';
     return { filled: true, box: b.name, spark: b.spark, tree, folder: FILL_FOLDER, files: got.files.length, bytes: got.bytes, observedAt: new Date().toISOString() };
   } catch (e) { rec.err = e; throw e; } finally {
@@ -16090,10 +16161,11 @@ async function boxFill(viewer, ctx, tree) {
     fillRecord(ctx, `fill ${rec.args.tree}`, { unit: boxName(key), args: rec.args, ok: !rec.err, outcome: rec.outcome, err: rec.err }, t0);
   }
 }
-// The tree a caller's box was filled from, while that box is the one open: { tree, box, spark, at }, or null.
+// The tree a caller's box was filled from, while that box is the one open: { tree, box, cid, spark, at }, or null. A
+// box opened again in the same chat has the same name and often the same Spark: its container's id tells them apart.
 function boxFillOf(ctx) {
   const key = boxKey(ctx), f = boxFills.get(key), b = boxes.get(key);
-  return f && b && b.name === f.box && b.spark === f.spark && b.until > Date.now() ? { ...f } : null;
+  return f && b && b.name === f.box && b.cid === f.cid && b.spark === f.spark && b.until > Date.now() ? { ...f } : null;
 }
 // Reads the caller's filled box back: its folder streamed out as tar (`tar --create --format=ustar` in the box),
 // taken entry by entry by tarRead, as data. { box, spark, tree, folder, changes: [{ path, blob, mode }] sorted by path
@@ -16144,7 +16216,7 @@ async function boxFillDoor(input, viewer, ctx) {
   }
 }
 /* ───────── the box: a throw-away container on a compute Spark (A2; commands in it come with A4) ───────── */
-// Area: features        Rules: R62, R52, R1, R43        Tests: box.test.mjs
+// Area: features        Rules: R62, R52, R1, R43, R23        Tests: box.test.mjs, box-more.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // run {on: "box"} (21-work.mjs) opens the caller's box on first use: one container per chat (or per caller outside a
@@ -16155,8 +16227,8 @@ async function boxFillDoor(input, viewer, ctx) {
 // own folder, ~/.local/share/spark-console/work/<name>, at /work), and a time limit (its process is sleep <seconds>;
 // --rm removes it when that ends). A fixed check then runs inside it and must find every wall (BOX_WALLS); one that got
 // through, or one it can't tell, removes the box, and nothing opens. Opening one is a change: Sparkie's and an agent's
-// call meet the pause, and Sparkie's the rail (R52: unchecked, it is one button the owner presses); the owner's own call
-// meets neither. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
+// call meet the pause, an agent's the put-back hold (R23), and Sparkie's the rail (R52: unchecked, it is one button the
+// owner presses); the owner's own call meets none of them. It goes at /stop in its chat (20-words.mjs), at run {on: "box", command: "/stop"} from whoever opened
 // it, and at "/stop <its name>" from the owner's own call; the record is kept until its removal is seen. The watcher and
 // workloads skip a container this record knows by its name and label (19-watcher.mjs), and typed starts refuse its
 // names (21-apps.mjs). A command runs in the box by docker exec, in /work, for 30 seconds (boxRun; A4), and write_file
@@ -16166,9 +16238,9 @@ const BOX_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_SECONDS) |
 const BOX_MEMORY = '4g', BOX_PIDS = 256, BOX_CPUS = 4, BOX_FILE_BYTES = 2 ** 30, BOX_OPEN_MS = 45000, BOX_STOP_MS = 20000, BOX_OUT_MAX = 2 ** 20;
 // A command's seconds in the box (A4): 30, inside the turn; past them the box goes (the stand-in fleet may shorten it).
 const BOX_RUN_SECONDS = Number(ALL_LOCAL && process.env.SPARK_CONSOLE_BOX_RUN_SECONDS) || 30;
-// Its bounds on its Spark: the memory a box may take (its --memory) is free beyond the 8 GB kept (R2) before it opens and
-// before each command; the disk keeps the plain wall's floor (R63) before each command, and a box that took it under
-// goes; what a command left running is ended after it.
+// Its bounds on its Spark: the memory every box on record or opening there may take (its --memory, each) is free beyond
+// the 8 GB kept (R2) before one opens and before each command; the disk keeps the plain wall's floor (R63) before each
+// command, and a box that took it under goes; what a command left running is ended after it.
 const BOX_MEMORY_GB = 4, BOX_DISK_FLOOR = 50e9;
 const BOX_LABEL = 'spark-console.box', BOX_DIR = '.local/share/spark-console/work', BOX_PREFIX = 'spark-console-box-', BOX_NAME = /^spark-console-box-[0-9a-f]{12}$/;
 const BOX_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,199}(?::[A-Za-z0-9._-]{1,128})?@sha256:[0-9a-f]{64}$/;
@@ -16183,6 +16255,7 @@ const BOX_WALLS = {
 const BOX_WORDS = 'not root, no capabilities, no new privileges, nothing writable but its own folder, nothing of the Spark mounted but that folder, no socket, no key handed in, no network, no device beyond Docker’s own and no GPU';
 const boxes = new Map();     // the caller (boxKey) → { spark, name, until, by }
 const boxOpening = new Map(); // the caller → the open under way, which a second call waits for
+const boxClaims = new Map();  // the caller → the Spark its open is asking for room on or opening on (not yet on record)
 
 // The one docker run line (R62). "$n" (the box's name), "$w" (its folder) and "$img" are set by boxScript, from code.
 function workBoxCommand() {
@@ -16257,8 +16330,9 @@ function boxScript(name, image, id) {
     // (the folders of boxes that have ended, at their time or after a console restart, go before one opens; the
     // daemon answered just now, so "no such container" means it is gone)
     'for d in "$base"/spark-console-box-*; do [ -d "$d" ] && [ ! -L "$d" ] || continue; docker inspect --type container "${d##*/}" >/dev/null 2>&1 || rm -rf -- "$d"; done',
-    // (the pinned image is fetched once, apart from the call: a box opens with --pull never)
-    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 &); say pulling; }',
+    // (the pinned image is fetched once, apart from the call: a box opens with --pull never; the fetch doesn't hold the
+    // lock's descriptor, so the next call is told it is being fetched, not that another box is opening)
+    'docker image inspect "$img" >/dev/null 2>&1 || { (setsid docker pull "$img" </dev/null >/dev/null 2>&1 9>&- &); say pulling; }',
     'docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; mkdir -m 700 "$w" || say nofolder',
     `o=$(${workBoxCommand()} 2>&1) || { docker rm -f "$n" >/dev/null 2>&1; rm -rf -- "$w"; say failed "$(printf '%s' "$o" | tail -n 1 | head -c 300)"; }`,
     // (its id, kept: a command or a write later goes to this container, never another of its name)
@@ -16302,20 +16376,36 @@ const boxesOn = spark => [...new Set([...[...boxes.values()].filter(b => b.spark
 function notBoxName(name) {
   if (String(name).startsWith(BOX_PREFIX)) throw new HttpError(400, `Names beginning ${BOX_PREFIX} are the box’s (R62): choose another name. Nothing was started.`);
 }
-// The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the box's own
-// cap. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
-async function boxRoom(node) {
+// The 8 GB rule (R2), as the runner asks it: the memory free on a Spark beyond the 8 GB kept must hold the cap of every
+// box on record there or opening there, the caller's own included. An open claims its Spark (boxClaims) before it reads
+// the memory, and the count is taken after the read, with nothing awaited between it and the answer, so two opens at
+// once each count the other. Why not, in the runner's words; 'off' for a Spark that doesn't answer; or null.
+const boxCount = (spark, key) => new Set([...[...boxes].filter(([, b]) => b.spark === spark).map(([k]) => k), ...[...boxClaims].filter(([, s]) => s === spark).map(([k]) => k), key]).size;
+async function boxRoom(node, key) {
   const mem = await memNow(node), at = sparkName(node);
   if (!mem && ((await run(node, 'true', { timeout: 15000 })).code === 255 || knownOffline(node))) return 'off';
   if (!mem) return `Free memory on ${at} can’t be read right now, so nothing ran (it could freeze the Spark).`;
-  const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30);
-  return room >= BOX_MEMORY_GB ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB} GB free beyond the 8 GB kept for the system, and ${Math.max(0, room)} GB is. Nothing ran.`;
+  const room = Math.floor((mem.available - KEEP_FREE) / 2 ** 30), n = boxCount(node.id, key);
+  return room >= BOX_MEMORY_GB * n ? null : `${at} doesn’t have room for the box now: it needs ${BOX_MEMORY_GB * n} GB free beyond the 8 GB kept for the system${n > 1 ? ` (${BOX_MEMORY_GB} GB for each of the ${n} boxes there, this one included)` : ''}, and ${Math.max(0, room)} GB is. Nothing ran.`;
 }
 // One journal record for each open, reuse, ask, refusal and removal (R43).
 function boxRecord(ctx, fields, text = null) {
   journal('cmd', { chat: ctx.chat || null, via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box', class: 'change', gate: 'box', exit: null,
     ...fields, err: fields.err === undefined ? null : jErr(fields.err), sub: jSub(fields.args?.spark) }, text);
 }
+// A command (or a write) in the box is a change written down first, as the runner's is (21-runner.mjs): a start line
+// that carries the request's task, so a task's report counts it (after the owner's yes when it was pressed), then its
+// end line, by the same id, with what it printed. One that never started in the box (Docker not answering, the box
+// gone, the disk under its floor) ends ran: false, and counts as no change. A start line that can't be written refuses
+// the command (nothing ran).
+const BOX_NEVER = new Set(['nodocker', 'gone', 'disk', 'nodisk']);
+function boxStart(ctx, b, args) {
+  const rid = journal('cmd', { start: true, chat: ctx.chat || null, ...(ctx.task ? { task: ctx.task } : {}), via: ctx.via || null, actor: ctx.actor || null, act: 'run', where: 'box',
+    class: 'change', gate: ctx.button ? 'button' : 'box', unit: b.name, args: { spark: b.spark, ...args }, sub: jSub(b.spark) });
+  if (!rid) throw new HttpError(507, JOURNAL_REFUSED);
+  return rid;
+}
+const boxEnd1 = (ctx, rid, x, fields, text = null) => boxRecord(ctx, { id: rid, end: true, ...fields, ...(BOX_NEVER.has(x.kind) ? { ran: false } : {}) }, text);
 
 async function boxOpen(key, ctx, command) {
   const t0 = Date.now(), rid = journalId(), rec = { outcome: 'refused', spark: null, name: boxName(key), text: '' };
@@ -16338,8 +16428,10 @@ async function boxOpen(key, ctx, command) {
     let noRoom = null;
     for (const node of up) {
       if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: '?' })} holds the brain or is the hub, so no box opens there.`);
-      // (the 8 GB rule: a Spark without room for the box is passed over)
-      const short = await boxRoom(node);
+      // (the 8 GB rule: a Spark without room for the box is passed over; it is claimed first, and stays claimed while the
+      // box opens there, until the box is on record or the open ends)
+      boxClaims.set(key, node.id);
+      const short = await boxRoom(node, key);
       if (short === 'off') continue;
       if (short) { noRoom = short; rec.spark = node.id; continue; }
       const at = sparkName(node), id = randomBytes(12).toString('hex');
@@ -16374,6 +16466,7 @@ async function boxOpen(key, ctx, command) {
     if (noRoom) { rec.outcome = 'noroom'; throw new HttpError(409, noRoom); }
     throw new HttpError(503, `No compute Spark is on to hold a box: ${wordList(all.map(sparkName))} ${all.length > 1 ? 'are' : 'is'} off or not answering (a box never opens on Spark 2 or on the brain’s Spark, and it wakes nothing). Nothing ran.`);
   } catch (e) { rec.err = e; throw e; } finally {
+    boxClaims.delete(key);
     boxRecord(ctx, { id: rid, unit: rec.name, args: { spark: rec.spark, command: String(command).slice(0, 600) }, ok: !rec.err, outcome: rec.outcome,
       err: rec.err ?? null, ms: Date.now() - t0 }, rec.text ? `$ (the box's open and check)\n${rec.text}` : null);
   }
@@ -16390,11 +16483,13 @@ async function boxEnd(key, ctx, timeout = 30000) {
   return { at, spark: b.spark, name: b.name, until, removed: word === 'removed', why };
 }
 
-// Who may cause something in the box (R62): Sparkie's and an agent's call are refused while changes are paused, and
-// Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button the owner presses. The owner's own call,
-// a press included, meets neither.
+// Who may cause something in the box (R62): an agent's call (and Sparkie's in an agent's chat) is refused while the
+// state put back from a copy is held (R23), as runAction refuses an agent's change then; Sparkie's and an agent's call
+// are refused while changes are paused, and Sparkie's meets the rail (R52): unchecked, the answer is ask(), one button
+// the owner presses. The owner's own call, a press included, meets none of them.
 async function boxGate(viewer, ctx, key, command, ask) {
   const by = boxBy(ctx);
+  if ((ctx.agentId || by === 'agent') && putBackHeld()) throw new HttpError(403, PUTBACK_AGENTS);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and opening a box is a change, so no box opened. Nothing ran.');
   if (by === 'sparkie' && !(await brainRail()).checked) {
     boxRecord(ctx, { unit: boxName(key), args: { command: command.slice(0, 600) }, ok: true, outcome: 'asked' });
@@ -16478,11 +16573,11 @@ async function boxRun(input, viewer, ctx = {}) {
   }
   const b = await boxReady(key, ctx, command), at = sparkName(nodeById(b.spark) || { id: b.spark });
   if (b.pulling) return boxPulling(b, observedAt);
-  const room = b.opened ? null : await boxRoom(nodeById(b.spark)), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
+  const room = b.opened ? null : await boxRoom(nodeById(b.spark), key), why = room === 'off' ? `${at} isn’t answering, so the command didn’t run.` : room;
   if (why) { boxRecord(ctx, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: false, outcome: 'noroom', err: why }); throw new HttpError(room === 'off' ? 503 : 409, why); }
-  const rid = journalId(), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
+  const rid = boxStart(ctx, b, { command: command.slice(0, 600) }), x = await boxExec(key, b, command, BOX_RUN_SECONDS), text = lookClean(x.output || '');
   const done = ['ran', 'time', 'cutoff'].includes(x.kind);
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: command.slice(0, 600) }, ok: done, outcome: x.kind,
     exit: x.exit ?? null, ms: Date.now() - t0, bytes: Buffer.byteLength(x.output || '') }, `$ ${command}\n${text}`);
   if (!done) throw boxSaid(x, at, 'the command didn’t run');
   const shown = forBrain(text), until = new Date(b.until).toISOString();
@@ -16541,14 +16636,14 @@ async function boxWrite(input, viewer, ctx = {}) {
   } catch (e) { boxRecord(ctx, { unit: boxName(key), args: { command: `write_file ${shownPath}` }, ok: false, outcome: 'refused', err: e }); throw e; }
   b = await boxReady(key, ctx, `write_file ${shownPath}`);
   if (b.pulling) return boxPulling(b, observedAt);
-  const at = sparkName(nodeById(b.spark) || { id: b.spark }), rid = journalId(), room = b.opened ? null : await boxRoom(nodeById(b.spark));
+  const at = sparkName(nodeById(b.spark) || { id: b.spark }), room = b.opened ? null : await boxRoom(nodeById(b.spark), key);
   if (room === 'off') throw new HttpError(503, `${at} isn’t answering, so nothing was written.`);
   if (room) throw new HttpError(409, room.replace('Nothing ran.', 'Nothing was written.'));
   // (in the box: the path may not leave /work by a link on the way, and code's own program writes it, one move)
   const program = `p=${q(rel)}; r=$(realpath -m -- "$p"); case "$r" in "$PWD"/*) ;; *) echo 'write_file: that path leads out of the box’s folder, so nothing was written.' >&2; exit 3 ;; esac\nmkdir -p -- "$(dirname -- "$p")" || exit 1\n${writeProgram(rel, old.kind === 'file' ? old : { kind: 'none' })}`;
-  const x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
+  const rid = boxStart(ctx, b, { command: `write_file ${shownPath}: ${bytes.length} bytes`, tool: 'write_file', path: shownPath }), x = await boxExec(key, b, program, BOX_RUN_SECONDS, bytes);
   const wrote = x.kind === 'ran' && x.exit === 0;
-  boxRecord(ctx, { id: rid, unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
+  boxEnd1(ctx, rid, x, { unit: b.name, args: { spark: b.spark, command: `write_file ${shownPath}: ${bytes.length} bytes` }, ok: wrote, outcome: wrote ? 'wrote' : x.kind, exit: x.exit ?? null });
   if (!['ran', 'time', 'cutoff'].includes(x.kind)) throw boxSaid(x, at, 'nothing was written');
   if (!wrote) return { box: 'open', spark: b.spark, name: b.name, observedAt, notWritten: { path: shownPath, why: maskSecrets(lookClean(x.output || '').trim()).slice(0, 300) || `it ended with code ${x.exit ?? 'none'}` }, record: rid };
   return { box: b.opened ? 'opened' : 'open', spark: b.spark, name: b.name, observedAt, wrote: { path: shownPath, bytes: bytes.length, ...(Number.isInteger(from) ? { lines: [from, to] } : {}) }, ...(x.low ? { ended: boxLow(at, x.low) } : {}), record: rid };
@@ -21698,6 +21793,9 @@ const SELF_CHANGE_ON = false;
 const SELF_PUSHES = 6, SELF_GIT_MS = 120000, SELF_MAKE_MS = 180000, SELF_API_MS = 30000, SELF_CHANGES_MAX = 400;
 // (every list is matched without case: on the owner's Mac, Tools/ and tools/ are one folder)
 const SELF_REFUSED = /^\.github\//i;
+// (and what a test run writes for the build it tested, which git keeps neither of: the lock the installer takes as
+// "tested" and the map of which tests run; a proposal's tests are GitHub's run)
+const SELF_TEST_RUN = /^(?:service\/workflows\.lock\.json|test\/affected-map\.json)$/i;
 // What Sparkie may never change on its own word (design C 2.5): the paths that always run the whole suite
 // (tools/affected.mjs: ALWAYS and ALWAYS_PARTS; all of tools/, whose installed copy is what runs on a proposal), and the
 // three documents. selfchange.test.mjs checks this list against tools/affected.mjs.
@@ -21706,10 +21804,24 @@ const SELF_PROTECTED = [/^service\/(passkey|dig)\.mjs$/i, /^service\/worker\.py$
   /^AGENTS\.md$/i, /^docs\/architecture\.md$/i, /^docs\/contract\.md$/i,
   // (and the page, and the test helpers every test leans on)
   /^public\//i, /^test\/authenticator\.mjs$/i, /^test\/eval\.mjs$/i, /^test\/eval\/cases\.json$/i];
+// (selfchange.test.mjs holds every part whose Area is safety or ways in, or that raises an ask or calls a gate, on it)
 const SELF_PROTECTED_PARTS = ['01-setup', '02-ssh', '03-identity', '03-secrets', '07-jobs', '14-chats', '14-rounds', '16-actions', '16-reads',
   '17-changes', '18-workflows', '20-mcp', '22-passkey', '22-sessions', '24-handler', '25-backup-and-start',
   // (the parts that hold the gates: this one, the dangerous ask, the brain's rail, the install, the guard, the runner)
-  '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner'].map(p => `service/src/${p}.mjs`);
+  '21-selfchange', '20-danger', '21-brain-rail', '21-updates', '21-guard', '21-runner',
+  // (what decides whether a change on a Spark runs at once, is asked or isn't done: the ladder, the go-ahead, the sorter)
+  '21-ladder', '21-ahead', '20-sort', '20-shell', '20-shape', '20-options', '20-programs', '20-tools', '20-places', '20-remote', '20-tables', '20-uses',
+  // (what runs a command or writes a file on a Spark: run, write_file, a kept key in a change, root, a long command)
+  '21-work', '21-write', '21-run-keys', '21-root', '21-long',
+  // (the lock-out net, and a change on the hub)
+  '21-net', '21-hub',
+  // (the box and what fills it; the trial, the eval and the brain check, which this piece and the rail read)
+  '21-box', '21-box-fill', '21-brain-trial', '21-brain-eval', '21-brain-check',
+  // (the asks: where an ask's command came from, a yes from Telegram, and every part that raises one)
+  '20-came-from', '20-tg-approve', '20-tell', '20-lessons', '20-memory', '21-apps', '21-compare', '21-power', '21-selftest',
+  // (keys, the owner's words and the pause, the state put back, the doors, and the rest of the safety parts)
+  '20-keys', '20-words', '20-memory-said', '20-memory-tg', '22-putback', '23-http', '20-beat', '20-heal', '20-needs', '20-state-copy', '20-ways-in',
+].map(p => `service/src/${p}.mjs`);
 // (where a send unpacks the proposal for the generator: an empty folder of its own for each, 0700)
 const SELF_TMP = `${STATE_DIR}/tmp`;
 const SELF_ID = /^[0-9a-f]{8}$/, SELF_CHAT = /^sc_[0-9a-f]{16}$/, SELF_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/+@-]{1,400}$/;
@@ -22031,6 +22143,8 @@ async function selfSend(viewer, ctx, input) {
   if (bad.length) throw new HttpError(409, `The box read back entries that can’t be proposed (${bad.slice(0, 3).map(e => clean(e?.path, 80)).join(', ')}), so nothing was sent.`);
   const github = entries.filter(e => SELF_REFUSED.test(e.path)).map(e => e.path);
   if (github.length) throw new HttpError(409, `A proposal never changes .github/ (${github.slice(0, 5).join(', ')}): take that out of the box. Nothing was sent.`);
+  const ran = entries.filter(e => SELF_TEST_RUN.test(e.path)).map(e => e.path);
+  if (ran.length) throw new HttpError(409, `A proposal never holds what a test run writes for the build it tested (${ran.join(', ')}): git keeps neither file. Take that out of the box. Nothing was sent.`);
   const attrs = entries.filter(e => /(?:^|\/)\.gitattributes$/i.test(e.path)).map(e => e.path);
   if (attrs.length) throw new HttpError(409, `A proposal never holds a .gitattributes file (${attrs.slice(0, 5).join(', ')}): git archive and git diff would obey it. Take it out of the box. Nothing was sent.`);
   const spellings = selfSpellings((await selfGit(['ls-tree', '-r', '-z', '--name-only', baseTree], { raw: true })).toString('utf8').split('\0').filter(Boolean), entries);

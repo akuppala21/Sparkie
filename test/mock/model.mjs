@@ -189,8 +189,9 @@ async function mainReply(b, port, res, log = true) {
   if (habits.thinksAloud) for (const piece of ['<thi', 'nk>Let me look', ' at the snapshot.</th', 'ink>\n\n']) s.send({ role: 'assistant', content: piece });
   else s.send({ role: 'assistant', ...(habits.reasoningField ? { reasoning: 'Let me look at the snapshot.' } : { reasoning_content: 'Let me look at the snapshot.' }) });
   // The owner's words (or the results of the round before) call for tools: call them (offered or not, unless a call says
-  // "offered": true). A turn with no tools at all (a member's) calls none.
-  const calls = tools.length && ['user', 'tool'].includes(last.role) ? (roundsFor(words)[round] || []).filter(c => c.offered !== true || tools.some(t => t.function?.name === c.name)) : [];
+  // "offered": true). A request with no tools calls none, but a call with "untooled": true (a brain that calls after its
+  // tools were put away, test/rounds.test.mjs).
+  const calls = ['user', 'tool'].includes(last.role) ? (roundsFor(words)[round] || []).filter(c => (tools.length ? c.offered !== true || tools.some(t => t.function?.name === c.name) : c.untooled === true)) : [];
   if (calls.length) {
     for (const [i, c] of calls.entries()) {
       const args = JSON.stringify(c.arguments || {}), cut = Math.ceil(args.length / 2);

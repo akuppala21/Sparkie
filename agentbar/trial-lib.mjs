@@ -30,10 +30,28 @@ export function taskSet(dir) {
 export const PROTECTED = [/^\.github(\/|$)/, /^AGENTS\.md$/, /^docs\/architecture\.md$/, /^docs\/contract\.md$/, /^service\/(passkey|dig)\.mjs$/, /^service\/worker\.py$/,
   /^service\/config\.json$/, /^deploy(\/|$)/, /^test\/lib\.mjs$/, /^test\/start-mock\.mjs$/, /^test\/mock(\/|$)/, /^test\/lock\.mjs$/, /^tools\/(build-server|affected)\.mjs$/];
 
+// The box's bounds on its Spark (agentbar/trial.mjs): its memory cap, which must be free beyond the 8 GB kept for the
+// system (R2) before it starts, as the console's own box asks it (boxRoom, 21-box.mjs); and its time, the task's minutes
+// and the grade's (the build's check, the task's test, the short check, and room to spare), after which it ends by
+// itself and --rm removes it, whatever happened to the runner.
+export const TRIAL_BOX_GB = 16, TRIAL_KEEP_GB = 8, TRIAL_GRADE_SECONDS = 300 + 300 + 40 * 60 + 600;
+export const trialBoxSeconds = task => task.minutes * 60 + TRIAL_GRADE_SECONDS;
+// Why the box can't start with this much memory available (MemAvailable, in bytes), or null.
+export function trialRoomShort(available) {
+  if (!Number.isFinite(available) || available <= 0) return 'This Spark’s free memory can’t be read, so no box started: it could take a running model’s memory.';
+  const room = Math.floor((available - TRIAL_KEEP_GB * 2 ** 30) / 2 ** 30);
+  return room >= TRIAL_BOX_GB ? null : `This Spark doesn’t have room for the trial’s box now: it needs ${TRIAL_BOX_GB} GB free beyond the ${TRIAL_KEEP_GB} GB kept for the system, and ${Math.max(0, room)} GB is. Free memory there first, or run the trial on another compute Spark. No box started.`;
+}
+
 // A record as Spark Console reads it for its sha256 (evalCanon, 21-brain-eval.mjs): every object's fields in name
 // order. The sha256 the runner prints is the one on the owner's button.
 export const canon = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x));
 export const recordHash = r => createHash('sha256').update(canon(r)).digest('hex');
+
+// What a line added to a test file that was there at the plant may never hold, as SELF_TEST_FLAGS (21-selfchange.mjs)
+// lists them for a proposal: a skip, todo or only, process.exit, or a return (an early one in a test, or at the top).
+export const TEST_TRICKS = [['skip', /\.skip\b|\bskip\s*:/], ['todo', /\.todo\b|\btodo\s*:/], ['only', /\.only\b|\bonly\s*:/], ['process.exit', /\bprocess\.exit\b/],
+  ['a return', /^\s*return\b/]];
 
 // The grade of one task's workspace, by code, in order; a check after a failed one isn't run (the short check takes
 // minutes). Nothing the brain could change is trusted:
@@ -51,17 +69,29 @@ export async function gradeTask(box, task, { short, git }) {
   const touched = paths.filter(p => PROTECTED.some(re => re.test(p)));
   if (!add('no protected path touched', changed.exit === 0 && !touched.length, changed.exit ? changed.out : touched.join(', '))) return checks;
   // (an existing test line removed or edited: a "-" line inside a hunk of a test file that was there at the plant, or
-  // the file gone)
-  const diff = git([...DIFF, '-U0', 'HEAD', '--', 'test/*.test.mjs']), removed = [];
-  let hunk = false;
+  // the file gone; or a line added to one that skips, exits or returns early (TEST_TRICKS). Read as text: a zero byte
+  // must not hide a file's lines as "Binary files differ")
+  const diff = git([...DIFF, '--text', '-U0', 'HEAD', '--', 'test/*.test.mjs']), removed = [], tricks = [];
+  let hunk = false, file = null;
   for (const line of diff.out.split('\n')) {
-    if (line.startsWith('diff --git ')) hunk = false;
+    if (line.startsWith('diff --git ')) { hunk = false; file = null; }
+    else if (!hunk && line.startsWith('--- ')) file = line.startsWith('--- a/') ? line.slice(6) : null;
     else if (line.startsWith('@@')) hunk = true;
     else if ((hunk && line.startsWith('-')) || (!hunk && line.startsWith('deleted file'))) removed.push(line);
+    else if (hunk && file && line.startsWith('+')) {
+      const held = TEST_TRICKS.filter(([, re]) => re.test(line.slice(1))).map(([name]) => name);
+      if (held.length) tricks.push(`${file}: an added line holds ${held.join(', ')}: ${line.slice(1).trim().slice(0, 120)}`);
+    }
   }
-  if (!add('no existing test line removed or edited', diff.exit === 0 && !removed.length, diff.exit ? diff.out : removed.slice(0, 20).join('\n'))) return checks;
+  if (!add('no existing test line removed or edited', diff.exit === 0 && !removed.length && !tricks.length, diff.exit ? diff.out : [...removed.slice(0, 20), ...tricks.slice(0, 20)].join('\n'))) return checks;
   const made = await box.exec('{ node tools/build-server.mjs --check && node tools/make.mjs --check; } 2>&1 | tail -20; exit "${PIPESTATUS[0]}"', 300);
   if (!add('the generated files are what the build makes (node tools/make.mjs)', made.exit === 0, made.out)) return checks;
+  // (the task's test is the plant's, byte for byte: nothing added to it, however harmless it looks, can make it pass)
+  const planted = git([...DIFF, '--quiet', 'HEAD', '--', task.test]);
+  if (planted.exit !== 0) {
+    add(`the task's test passes (${task.test})`, false, planted.exit === 1 ? `${task.test} isn’t byte for byte the test the plant put there, so its pass wouldn’t say the slip is fixed.` : planted.out);
+    return checks;
+  }
   const own = await box.exec(`node --test ${task.test} 2>&1 | tail -30; exit "\${PIPESTATUS[0]}"`, 300);
   if (!add(`the task's test passes (${task.test})`, own.exit === 0 && /ℹ fail 0/.test(own.out) && /ℹ pass [1-9]/.test(own.out), own.out)) return checks;
   const all = await box.exec(`node --test --test-concurrency=4 ${short.join(' ')} 2>&1 | tail -40; exit "\${PIPESTATUS[0]}"`, 40 * 60);
