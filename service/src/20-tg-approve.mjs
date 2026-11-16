@@ -34,7 +34,7 @@ const tgAskable = c => Boolean(c?.ownerOnly && !(c.action && PAGE_ONLY.has(c.act
 // The ask's words, all built by code: the question, then each yes it doesn't already hold, whole.
 function tgAskText(q) {
   const question = String(q.question || '');
-  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action).map(c => String(c.label)).filter(l => !question.includes(l));
+  const yes = (q.choices || []).filter(c => c.choice && pendingChoices.get(c.choice)?.action && !pendingChoices.get(c.choice)?.always).map(c => String(c.label)).filter(l => !question.includes(l));
   return [question, ...yes].join('\n\n');
 }
 // question() calls this for an owner-only question with buttons. It sends one ask, or nothing: approvals off, a chat
@@ -44,7 +44,8 @@ function tgAsk(viewer, ctx, q, text = null) {
     const p = tgPaired(), owner = String(accessList().owner || '').toLowerCase();
     const conv = ctx?.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
     if (!p || !tgApproveOn() || !conv || conv.agent || ctx.agent || String(conv.login || '').toLowerCase() !== owner || viewer?.role !== 'owner') return false;
-    const shown = (q.choices || []).filter(c => c.choice);
+    // ("Always allow …" is the page's only, with the passkey: 21-ahead.mjs)
+    const shown = (q.choices || []).filter(c => c.choice && !pendingChoices.get(c.choice)?.always);
     if (!shown.length || !shown.every(c => tgAskable(pendingChoices.get(c.choice)))) return false;
     const words = text ?? tgAskText(q);
     // Nobody approves what they can't read.

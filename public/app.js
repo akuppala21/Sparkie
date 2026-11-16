@@ -3627,6 +3627,8 @@ async function putBackList() {
     l.passkeys.length ? h('ul', { class: 'putback-list' }, ...l.passkeys.map(k => row(k.name, `Added ${when(k.addedAt)} · last used ${when(k.lastUsedAt)}`, () => capi(`auth/passkeys/${encodeURIComponent(k.id)}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
     h('h3', {}, 'Agent keys'),
     l.agentKeys.length ? h('ul', { class: 'putback-list' }, ...l.agentKeys.map(k => row(k.name, `${k.canChange ? 'Can start and stop models' : 'Can only look'}${k.fromAnywhere ? ', from anywhere' : ', on your tailnet only'}`, () => capi(`agents/${k.id}`, 'DELETE')))) : h('p', { class: 'muted' }, 'None.'),
+    ...(l.allowed?.length ? [h('h3', {}, 'Always allowed'), h('ul', { class: 'putback-list' }, ...l.allowed.map(w => h('li', { class: 'putback-row' }, h('div', {}, w)))),
+      h('p', { class: 'muted' }, 'These run without asking again only after you keep them. Take one away with /allowed off in your chat.')] : []),
     h('p', { class: 'muted' }, `${l.agentsPaused ? 'Agents’ changes are paused. ' : ''}${l.lastUse} ${l.namesAreData}`));
   const ok = await dialog({
     title: 'Spark Console’s state was put back from a copy', description: 'Until you keep what came back, sign-in from the internet is refused and agents can’t change anything.',

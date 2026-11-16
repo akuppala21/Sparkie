@@ -65,4 +65,4 @@ Rule paragraph. Its file has the rest: why, where the code falls short today, wh
 - [R61](rules/R61.md): What `run` does with a change, and the runner that runs it (R55 is the sorter, R42 the root helper and its walls).
 - [R63](rules/R63.md): What bounds a plain change.
 - [R64](rules/R64.md): What a command run at once must look like (R55 is the sorter).
-- [R65](rules/R65.md): The go-ahead for one task (A9a).
+- [R65](rules/R65.md): The go-ahead for one task (A9a) and "Always allow" (A9b).

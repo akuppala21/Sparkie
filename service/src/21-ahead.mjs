@@ -1,5 +1,5 @@
-/* ───────── the go-ahead: yes to one command, or one kind, for the rest of a task (A9a) ───────── */
-// Area: features        Rules: R65        Tests: ahead.test.mjs
+/* ───────── the go-ahead: yes to one command, or one kind, for the rest of a task (A9a), or always (A9b) ───────── */
+// Area: features        Rules: R65        Tests: ahead.test.mjs, allowed.test.mjs
 // Owns: none
 // Timers: none        Wakes: none
 // On a change's button (21-ladder.mjs workAsk) the owner may answer "Run it, and don't ask again for this task: …".
@@ -18,7 +18,11 @@
 // "came from"); a dangerous ask's kinds; anything the sorter calls risky, lock-out, open or not done; a protected
 // folder; a change that runs with --home or --open after its yes; an install (the sorter's installs); the GPU; a reach
 // beyond the Spark itself (another Spark, the home network, the internet).
-const AHEAD_MAX = 20;
+// "Always allow" (A9b) is the same kind kept across tasks: one list in agent-settings.json (`allowed`, 50 at most), added
+// only by the owner's press of that answer on the page while a passkey is set up (the press needs it; Telegram never
+// shows that answer), taken away by /allowed off. In the owner's chats it stands in for the naming of the Spark and for
+// nothing read since; the words must still ask for a change. Held after a state put-back until "Keep these".
+const AHEAD_MAX = 20, ALLOWED_MAX = 50;
 // Each chat's go-ahead: {at (its request's time), epoch, entries}; the request whose go-ahead ended there (/stop, its
 // end), so a later press of that request's button gives none; a new pairing's count.
 const aheadLists = new Map(), aheadDone = new Map();
@@ -101,13 +105,15 @@ function aheadChat(viewer, ctx) {
   return conv && !conv.agent && String(conv.login || '').toLowerCase() === String(accessList().owner || '').toLowerCase() ? conv : null;
 }
 
-// workAsk's extra answer, or null: its label and what the press gives.
+// workAsk's extra answers, or null: the go-ahead's label and what its press gives; and, for a kind while a passkey is
+// set up, "Always allow …" (page only).
 function aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen) {
   try {
     const conv = aheadChat(viewer, ctx);
     if (!conv || aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen)) return null;
-    const kind = aheadKind(sorted, command, dir), entry = kind ? { spark: node.id, ...kind } : { spark: node.id, command, dir };
-    return { label: `Run it, and don’t ask again for this task: ${aheadWords(entry, sparkName(node))}`, ahead: { conv: conv.id, at: aheadMark(conv), epoch: aheadEpoch, entry } };
+    const kind = aheadKind(sorted, command, dir), entry = kind ? { spark: node.id, ...kind } : { spark: node.id, command, dir }, words = aheadWords(entry, sparkName(node));
+    return { label: `Run it, and don’t ask again for this task: ${words}`, ahead: { conv: conv.id, at: aheadMark(conv), epoch: aheadEpoch, entry },
+      ...(kind && passkeys().length ? { always: { label: `Always allow ${words} (on this page, with your passkey)`, entry: { spark: node.id, ...kind } } } : {}) };
   } catch (e) { console.error(`The go-ahead's answer: ${e.message}`); return null; }
 }
 // runChoice, after the press of that answer ran: the go-ahead is kept for the request it was asked in, while that
@@ -125,14 +131,49 @@ function aheadGive(conv, ahead, by = {}) {
   }
   return `For the rest of this task, ${words} runs without asking.`;
 }
-// workChange: the entry of this chat's go-ahead a command falls in, when it may run on one, or null.
+// workChange: whether a command may run on this chat's go-ahead (gate go-ahead) or a standing entry (always:<id>), or
+// null.
 function aheadCover(node, command, sorted, viewer, ctx, dir, topDirs, widen) {
-  const l = ctx?.conv ? aheadLists.get(ctx.conv) : null;
-  if (!l?.entries.length) return null;
+  const l = ctx?.conv ? aheadLists.get(ctx.conv) : null, kept = putBackHeld() ? [] : allowedList();
+  if (!l?.entries.length && !kept.length) return null;
   const conv = aheadChat(viewer, ctx);
-  if (!conv || aheadMark(conv) !== l.at || aheadDone.get(conv.id) === l.at) return null;
-  const e = l.entries.find(x => x.spark === node.id && aheadFits(x, sorted, command, dir));
-  return e && !aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen) ? e : null;
+  if (!conv) return null;
+  const task = l && aheadMark(conv) === l.at && aheadDone.get(conv.id) !== l.at && l.entries.some(x => x.spark === node.id && aheadFits(x, sorted, command, dir));
+  const always = task ? null : kept.find(x => x.spark === node.id && aheadFits(x, sorted, command, dir));
+  if ((!task && !always) || aheadNot(node, command, sorted, viewer, ctx, conv, dir, topDirs, widen)) return null;
+  return task ? { gate: 'go-ahead', always: false } : { gate: `always:${always.id}`, always: true };
+}
+
+// The standing list as kept (a hand edit or a copy put back may hold anything: only well-formed kinds count).
+const allowedList = () => (Array.isArray(agentSettings().allowed) ? agentSettings().allowed : []).filter(e => e && typeof e === 'object' && /^[0-9a-f]{8}$/.test(String(e.id))
+  && typeof e.spark === 'string' && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/.test(String(e.program)) && /^~(?:\/[A-Za-z0-9._@+-]+)+$/.test(String(e.under)) && !/(?:^|\/)\.\.?(?:\/|$)/.test(String(e.under))).slice(0, ALLOWED_MAX);
+const allowedWords = e => aheadWords(e, sparkName(nodeById(e.spark) || { id: e.spark }));
+// runChoice, after the press of "Always allow …" on the page ran: the kind is kept. The line for the press's notice.
+function aheadKeep(always, by = {}) {
+  const e = always?.entry;
+  if (!e || by.via !== 'page' || !passkeys().length) return null;
+  const list = allowedList(), words = allowedWords(e);
+  if (list.some(x => x.spark === e.spark && x.program === e.program && x.under === e.under)) return `${words[0].toUpperCase()}${words.slice(1)} was already always allowed.`;
+  if (list.length >= ALLOWED_MAX) return `Not kept: ${ALLOWED_MAX} kinds are always allowed already. /allowed lists them.`;
+  const id = randomBytes(4).toString('hex');
+  setAgentSettings({ allowed: [...list, { id, spark: e.spark, program: e.program, under: e.under, addedAt: new Date().toISOString() }] });
+  audit({ via: 'page', actor: by.actor || 'owner', action: 'always-allowed', args: { id, spark: e.spark, words: maskSecrets(words).slice(0, 200) }, ok: true });
+  return `From now on, ${words} runs without asking in your chats when your words ask for a change. /allowed lists it and takes it away.`;
+}
+// /allowed (20-words.mjs, on the page and in the paired chat): the list, numbered; /allowed off 2, /allowed off all.
+function allowedWord(word, via) {
+  const list = allowedList(), off = /^\/allowed off (all|\d{1,2})$/.exec(word)?.[1];
+  if (off) {
+    const gone = off === 'all' ? list : list[Number(off) - 1] ? [list[Number(off) - 1]] : [];
+    if (!gone.length) return list.length ? `There is no ${off} in the list (${list.length} kept). /allowed lists them.` : 'Nothing is always allowed.';
+    setAgentSettings({ allowed: list.filter(e => !gone.includes(e)) });
+    audit({ via, actor: via === 'telegram' ? 'owner on Telegram' : 'owner', action: 'always-removed', args: { ids: gone.map(e => e.id) }, ok: true });
+    return `Taken away: ${gone.map(allowedWords).join('; ')}. ${gone.length === 1 ? 'It is' : 'They are'} asked again.`;
+  }
+  if (!list.length) return 'Nothing is always allowed. A change’s button offers “Always allow …” on the page, with your passkey.';
+  return [`Always allowed in your chats (${list.length}):`, ...list.map((e, i) => `${i + 1}. ${allowedWords(e)}`),
+    ...(putBackHeld() ? ['Held: Spark Console’s state was put back from a copy, so these wait until you press “Keep these” on your tailnet.'] : []),
+    '/allowed off 2 takes one away; /allowed off all takes every one.'].join('\n');
 }
 // The go-ahead ends: this chat's (its request ended, /stop), or every chat's (a new pairing).
 function aheadEnd(conv) {
