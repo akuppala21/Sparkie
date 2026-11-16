@@ -231,13 +231,14 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
     const notCovered = { notCovered: sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : RUNNER_ONLY_COPIED };
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
-    // deletes): otherwise nothing runs, and the set goes.
+    // deletes), whoever asked and whatever was pressed: otherwise nothing runs, the set goes, and the ladder asks it as
+    // one that can't be put back, naming each file and why (asks, lost: 21-ladder.mjs; R61, R54).
     const lost = copied.notKept.filter(x => !x.way);
     if (sorted.deletes && lost.length) {
       await copiesOn(node, 'drop', { set }).catch(() => null);
       return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(),
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
-        notKept: lost.slice(0, 50).map(said) };
+        notKept: lost.slice(0, 50).map(said), asks: 'uncopied', lost: lost.slice(0, 50).map(x => ({ path: String(x.path), why: String(x.why) })) };
     }
     // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
     if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }

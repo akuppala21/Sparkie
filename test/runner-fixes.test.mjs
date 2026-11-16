@@ -190,3 +190,40 @@ test('protect-link: a model store that is a link stays read-only to a plain chan
     for (const d of aside) renameSync(`${d}.aside`, d);
   }
 });
+
+// S-1, the runner's side (the final sorter read): a change whose file couldn't be copied first (over 16 MB) ran with no
+// copy, or, where the sorter said it deletes, answered "nothing ran" with no way to say yes. Now it is the dangerous
+// ask, which names each file and why; nothing runs before the press. (The sorter marks which commands overwrite.)
+const sparse = (p, size) => { mkdirSync(dirname(at3(p)), { recursive: true }); writeFileSync(at3(p), ''); truncateSync(at3(p), size); };
+const dangerOf = async chat => (await chatMessages(chat)).findLast(m => m.danger);
+const pairOf = async (chat, ask) => (await api(`/chats/${chat}`)).json.messages.find(m => m.danger?.ask === ask.danger.ask)?.pair;
+const pressDanger = async (chat, ask) => api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: ask.choices.find(c => c.pair).id, pair: await pairOf(chat, ask) } });
+test('S-1: a delete whose file couldn\'t be copied first is not run at once: it is the dangerous ask, naming the file and why, at once or after a plain press; the API is told nothing ran', { timeout: 180000 * SLOW }, async () => {
+  sparse('notes/big/huge.bin', 16 * 2 ** 20 + 1);
+  writeFileSync(at3('notes/big/small.txt'), 'small\n');
+  const chat = await newChat(), t = await turn(chat, 'clean up the big notes on spark 3', [[RUN('rm -r notes/big')]]);
+  assert.deepEqual(t.choices, [], 'no plain button');
+  const ask = await dangerOf(chat);
+  assert.ok(ask, `the dangerous ask: ${JSON.stringify(sentBack('clean up the big notes on spark 3'))}`);
+  const shown = ask.danger.lines.join('\n');
+  assert.match(shown, /^DELETES FOR GOOD on Spark 3\n/, shown);
+  assert.ok(shown.includes('\nThis cannot be put back: it removes or overwrites a file that couldn’t be copied first.\n'), shown);
+  assert.ok(shown.includes('\nNot copied first, so gone for good: ~/notes/big/huge.bin (over 16 MB).'), shown);
+  assert.equal(ask.danger.code, 'rm -r notes/big');
+  assert.ok(existsSync(at3('notes/big/huge.bin')) && existsSync(at3('notes/big/small.txt')), 'nothing ran');
+  assert.equal(startOf('rm -r notes/big'), undefined, 'no start line');
+  await choose(chat, ask.choices.find(c => c.label === 'No').id);
+  // A plain button (the words don't name the Spark), pressed: the copy fails then, and the dangerous ask comes instead.
+  const c2 = await newChat(), t2 = await turn(c2, 'clean up the big notes', [[RUN('rm -r notes/big')]]);
+  const p = await choose(c2, t2.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  const ask2 = await dangerOf(c2);
+  assert.ok(ask2?.danger.lines.includes('Not copied first, so gone for good: ~/notes/big/huge.bin (over 16 MB).'), JSON.stringify(ask2?.danger));
+  assert.ok(existsSync(at3('notes/big/huge.bin')), 'nothing ran');
+  await choose(c2, ask2.choices.find(c => c.label === 'No').id);
+  // The owner's own API call, with no chat to ask in: nothing ran, and why (as before).
+  const a = await run('rm -r notes/big');
+  assert.equal(a.json?.ran, false, a.text);
+  assert.deepEqual(a.json.notKept, [{ path: '~/notes/big/huge.bin', why: 'over 16 MB' }]);
+  assert.ok(!('lost' in a.json) && !('asks' in a.json), a.text);
+});

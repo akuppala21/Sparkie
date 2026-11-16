@@ -18959,7 +18959,8 @@ function workLabel(node, command, sorted, why, ctx, scripts, dir = RUNNER_DIR, s
     ...(reads.length ? [`Sparkie read this before proposing it: ${reads.join('; ')}.`] : []), ...workScriptLines(scripts)].join('\n');
 }
 // more: what the runner found it can't do unasked (workAfter): bare, the protect folders whose link leads to no folder,
-// which the press then runs without.
+// which the press then runs without; gone, the files it removes or overwrites that couldn't be copied first ({path,
+// why}): the dangerous ask's delete, which names each.
 async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR, widen = {}, topDirs = [], spec = null, keys = [], more = {}) {
   // (what is shown is what runs: nothing hidden, nothing a mask would hide; write_file's own lines mark what they hide)
   if (!spec && maskSecrets(command) !== command) throw new HttpError(400, 'It holds something shaped like a key or password, so it can’t be shown whole on a button: give the key by its name. Nothing was asked or run.');
@@ -18970,15 +18971,15 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   const call = spec ? { action: 'write_file', args: spec.args }
     : { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}), ...(widen.fleet === true ? { fleet: true } : {}), ...(widen.gpu === true ? { gpu: true } : {}),
       ...(ctx.long ? { minutes: ctx.long.minutes } : {}), ...(keys.length ? { keys } : {}) } };
-  const dangerous = (sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k));
+  const dangerous = [...new Set([...(sorted.kinds || []).filter(k => ['delete', 'brain'].includes(k)), ...(more.gone?.length ? ['delete'] : [])])];
   // (and, when it may be, "Run it, and don't ask again for this task: …", 21-ahead.mjs: its button shares the call, so it
   // keeps the ask's record too)
   // (never for a write_file, nor for a command given a key: those are always asked)
   const offer = dangerous.length || spec || keys.length ? null : aheadOffer(node, command, sorted, viewer, ctx, dir, topDirs, widen);
   // (the dangerous ask says the same of its wall, what it reaches and its scripts; its yes binds the wall, R54)
   const out = dangerous.length ? dangerAsk(viewer, ctx, { kinds: dangerous, where: node.id, shown: spec ? spec.file : { command }, call,
-    facts: { ...(dangerous.includes('delete') ? { gone: { what: String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
-      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
+    facts: { ...(dangerous.includes('delete') ? { gone: { what: more.gone?.length ? `it removes or overwrites ${more.gone.length === 1 ? 'a file' : `${more.gone.length} files`} that couldn’t be copied first` : String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '') } } : {}),
+      ...(shown.outside ? { outsideWall: shown.outside } : {}), wall: shown.wall, lines: [...workGoneLines(more.gone), ...shown.lines, ...(spec ? [] : [...workScriptLines(scripts), workStartsIn(dir)])],
       ...(ctx.long ? { minutes: longHeld(ctx.long.minutes, 'asked').minutes } : {}) } })
     // (write_file's lines the button shows whole: Telegram's ask and the page's copy; the records keep them masked)
     : question(viewer, ctx, workLabel(node, command, sorted, why, ctx, scripts, dir, shown, spec) + runKeysLabel(node, command, keys, sorted),
@@ -19059,16 +19060,21 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
   return workAsk(node, command, sorted, viewer, ctx, why, dir, widen, topDirs, spec, keys);
 }
 // What the runner found it can't do unasked (runChange's asks, 21-runner.mjs), asked in the chat (R61): a protect
-// folder whose link leads to no folder there, which after the yes it runs without (bare). With no chat to ask in (the
+// folder whose link leads to no folder there, which after the yes it runs without (bare); files it removes or
+// overwrites that couldn't be copied first, the dangerous ask's delete naming each (gone). With no chat to ask in (the
 // API, or write_file's own call), the runner's own answer: nothing ran, and why.
 async function workAfter(r, node, command, sorted, viewer, ctx, dir, widen, topDirs, spec, keys) {
   if (!r?.asks) return r;
-  const { asks, protect, ...said } = r;
+  const { asks, protect, lost, ...said } = r;
   if (spec || (!ctx.conv && !ctx.onQuestion)) return said;
   const c = { ...ctx, button: false, ownerConfirmed: false };
   if (asks === 'protect') return workAsk(node, command, sorted, viewer, c, `${protect} on ${sparkName(node)} is a link that leads to no folder there, so a change can’t get it read-only; after your yes it runs without it`, dir, widen, topDirs, spec, keys, { bare: [protect] });
+  if (asks === 'uncopied' && Array.isArray(lost) && lost.length) return workAsk(node, command, sorted, viewer, c, 'what it removes or overwrites couldn’t be copied first', dir, widen, topDirs, spec, keys, { gone: lost });
   return said;
 }
+// The files the dangerous ask names that can't be put back, each with why it wasn't copied, a line each (the paths
+// masked by the ask, as all its lines are).
+const workGoneLines = gone => (Array.isArray(gone) && gone.length ? [...gone.slice(0, 6).map(x => `Not copied first, so gone for good: ${x.path} (${x.why}).`), ...(gone.length > 6 ? [`And ${gone.length - 6} more not copied first.`] : [])] : []);
 /* ───────── a long command: run with minutes, as an operation (A6) ───────── */
 // Area: features        Rules: R23, R13, R61        Tests: long.test.mjs
 // Owns: none
@@ -21213,13 +21219,14 @@ async function runChange(node, command, viewer, ctx = {}, { seconds = RUNNER_SEC
     const mine = copied.kept.filter(x => x.kind === 'file' && !x.way).length;
     const notCovered = { notCovered: sorted.scripts?.length || !(sorted.placed?.length || sorted.wide?.length) ? RUNNER_NOT_COVERED : RUNNER_ONLY_COPIED };
     // A command that removes or overwrites files runs only when every file it names was copied first (the sorter's
-    // deletes): otherwise nothing runs, and the set goes.
+    // deletes), whoever asked and whatever was pressed: otherwise nothing runs, the set goes, and the ladder asks it as
+    // one that can't be put back, naming each file and why (asks, lost: 21-ladder.mjs; R61, R54).
     const lost = copied.notKept.filter(x => !x.way);
     if (sorted.deletes && lost.length) {
       await copiesOn(node, 'drop', { set }).catch(() => null);
       return { spark: node.id, ran: false, change: true, where: at, root: false, observedAt: new Date().toISOString(),
         why: `It removes or overwrites files, and ${lost.length === 1 ? 'one of them' : `${lost.length} of them`} couldn’t be copied first (each says why), so nothing ran: what it removes couldn’t be put back.`,
-        notKept: lost.slice(0, 50).map(said) };
+        notKept: lost.slice(0, 50).map(said), asks: 'uncopied', lost: lost.slice(0, 50).map(x => ({ path: String(x.path), why: String(x.why) })) };
     }
     // (a long command cancelled before its unit: nothing runs, and its set goes, 21-long.mjs)
     if (ctx.long?.job?.cancelled) { await copiesOn(node, 'drop', { set }).catch(() => null); cancelCheck(ctx.long.job); }
