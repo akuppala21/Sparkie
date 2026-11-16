@@ -558,3 +558,122 @@ test('S-1: copying a file over 16 MB runs at once (the source is only read); wri
   await choose(chat, ask.choices.find(c => c.label === 'No').id);
   rmSync(at3('notes/bigsrc'), { recursive: true, force: true });
 });
+
+// ---- The tests' own read (final-truth-ta, 2026-11-15): guards a test did not hold. Each test below fails with its
+// guard knocked out (proved in a copy of the tree on a Spark, as the report says). ----
+
+// TA-2: the only pressed --open change in ladder.test asserts three absences, true of an empty list too. Here the press
+// is shown to run it: the file is written, and the unit asked of systemd is the open wall's.
+test('TA-2: a change outside the plain wall (--open), pressed, runs: its unit is asked of systemd without the plain wall\'s settings, and its file is written', { timeout: 120000 * SLOW }, async () => {
+  mkdirSync(at3('.myapp2'), { recursive: true });
+  const dot = 'echo c > .myapp2/c.txt', chat = await newChat(), t = await turn(chat, 'fix the app2 config on spark 3', [[RUN(dot)]]);
+  assert.match(sentBack('fix the app2 config on spark 3')[0]?.question || '', /\nRuns outside the plain wall: it writes ~\/\.myapp2\/c\.txt/);
+  const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
+  assert.equal(p.status, 200, p.text);
+  assert.notEqual(p.json.outcome, 'error', p.text);
+  assert.equal(text('.myapp2/c.txt'), 'c\n');
+  const props = propsOf(dot);
+  assert.ok(props.length > 0, 'a unit was asked of systemd');
+  assert.ok(props.includes('NoNewPrivileges=yes') && !props.includes('ReadOnlyPaths=/spark3') && !props.some(a => a.startsWith('IPAddressDeny=')) && !props.includes('PrivateDevices=yes'), JSON.stringify(props));
+  assert.equal(startOf(dot)?.wall, 'open');
+});
+
+// TA-3, and the lead on the press: a risky delete is the dangerous ask, and nothing runs before its press: no start
+// line (the file staying proves nothing: in the stand-in unit ~ is /spark3). Its yes pressed without its two digits
+// runs nothing either (runChoice hands every press of a dangerous ask's yes to dangerPress first); with them, it runs.
+test('TA-3: a risky delete is the dangerous ask; nothing runs before its press, nor on a press without its two digits; with them it runs', { timeout: 120000 * SLOW }, async () => {
+  writeFileSync(at3('notes/x.tmp3'), 'x\n');
+  const chat = await newChat(), cmd = 'rm notes/*.tmp3';
+  await turn(chat, 'clean up the tmp3 files on spark 3', [[RUN(cmd)]]);
+  const ask = await dangerOf(chat);
+  assert.match(ask?.danger.lines.join('\n') || '', /^DELETES FOR GOOD on Spark 3/, JSON.stringify(ask?.danger));
+  assert.equal(startOf(cmd), undefined, 'nothing ran: no start line');
+  const bare = await choose(chat, ask.choices.find(c => c.pair).id);
+  assert.notEqual(bare.status, 200, bare.text);
+  assert.equal(startOf(cmd), undefined, 'a press without its two digits ran nothing');
+  assert.ok(existsSync(at3('notes/x.tmp3')));
+  const p = await pressDanger(chat, ask);
+  assert.equal(p.status, 200, p.text);
+  assert.ok(startOf(cmd), 'with its two digits it ran');
+  assert.ok(!existsSync(at3('notes/x.tmp3')));
+});
+
+// The lead on the press: a plain button's press runs a command the sorter now calls a dangerous kind (the brain's names
+// changed after the ask) only as the dangerous ask, as Spark 2's press already does.
+test('the press: a dangerous kind runs only from the dangerous ask\'s own press (two digits), never from a plain button\'s', () => {
+  const src = part('21-ladder.mjs'), covers = new Function(`${/^const workPressCovers = .*$/m.exec(src)?.[0]}\nreturn workPressCovers;`)();
+  assert.equal(covers({ kinds: [] }, {}), true);
+  assert.equal(covers({ kinds: ['brain'] }, {}), false);
+  assert.equal(covers({ kinds: ['delete'] }, { danger: 'abc123' }), true);
+  assert.equal(covers({ kinds: ['lockout'] }, {}), true, 'the lock-out class is the net\'s, never the runner\'s');
+  const press = /if \(ctx\.button && ctx\.ownerConfirmed\) \{[\s\S]*?\n {2}\}/.exec(fnOf(src, 'workChange'))?.[0] || '';
+  assert.match(press, /if \(!workPressCovers\(sorted, ctx\)\) return again\(/, 'the press asks it before it runs anything');
+  assert.ok(press.indexOf('workPressCovers') < press.indexOf('runChange('), 'before the run');
+});
+
+// TA-4: what a pressed change wrote joins its task, and a later command of that request that runs it is asked: the
+// carry-on turn's run of the written script says so.
+test('TA-4: a script a pressed change wrote, run by the request\'s next turn, is asked as a file this request wrote', { timeout: 180000 * SLOW }, async () => {
+  const chat = await newChat(), words = 'write the w4 script on spark 3, then run it', CARRY = '^\\[Spark Console\\] The owner answered your question';
+  script([{ match: `^${words}$`, rounds: [[RUN("echo 'echo w4 ran > notes/w4.txt' > notes/w4.sh")]] }, { match: CARRY, rounds: [[RUN('bash notes/w4.sh')]] }]);
+  try {
+    const r = await say(chat, words);
+    const task = () => JSON.parse(readFileSync(join(T.fleet.stateDir, 'chats.json'), 'utf8')).conversations.find(c => c.id === chat)?.task;
+    assert.ok(task(), 'the request has a task (a next step)');
+    const yes = (r.message.choices || []).find(c => c.label === 'Run it');
+    assert.ok(yes, JSON.stringify(r.message));
+    const p = await choose(chat, yes.id);
+    assert.equal(p.status, 200, p.text);
+    assert.equal(text('notes/w4.sh'), 'echo w4 ran > notes/w4.txt\n');
+    const asked = await waitFor(() => lines(join(T.fleet.dir, 'model-requests.jsonl')).filter(m => new RegExp(CARRY).test(m.words || '') && m.lastRole === 'tool').flatMap(m => m.results || [])
+      .map(x => { try { return JSON.parse(x.content); } catch { return null; } }).find(v => /notes\/w4\.sh/.test(v?.question || '')), { timeout: 60000, what: 'the next turn\'s run of the script' });
+    assert.match(asked.question, /It runs a file this same command wrote/, asked.question);
+    assert.ok(!existsSync(at3('notes/w4.txt')), 'asked, not run');
+  } finally { noScript(); }
+});
+
+// TA-5: the runner refuses Spark 2, a brain Spark, root and a pause by itself, whatever its caller says; run's ladder
+// refuses them first, so only a test of the runner's own check holds its half.
+test('TA-5: runChange\'s own check calls runnerNever, and refuses anything but a plain change unless the owner pressed a risky one', () => {
+  const src = part('21-runner.mjs'), calls = [];
+  const refuses = new Function('runnerNever', 'HttpError', `${fnOf(src, 'runnerRefuses')}\nreturn runnerRefuses;`)((...a) => calls.push(a), class extends Error { constructor(s, m) { super(m); this.status = s; } });
+  refuses({ id: 'spark2' }, { class: 'change' }, { via: 'api' });
+  assert.equal(calls.length, 1, 'runnerNever was asked');
+  assert.throws(() => refuses({}, { class: 'risky' }, {}), e => e.status === 409);
+  refuses({}, { class: 'risky' }, {}, true);
+  assert.throws(() => refuses({}, { class: 'lockout' }, {}, true), e => e.status === 409);
+});
+
+// TA-6: the hold asks the root helper: a second change is still refused after the hold's first look at it.
+test('TA-6: a change whose end is unknown still holds its Spark after the hold has asked the root helper', { timeout: 120000 * SLOW }, async () => {
+  const drops = join(H3(), '.mock', 'sudo-drops');
+  writeFileSync(drops, '');
+  let first;
+  try { first = await run('echo held6 > notes/held6.txt && sleep 4 && touch notes/held6-done'); } finally { rmSync(drops, { force: true }); }
+  assert.equal(first.status, 503, first.text);
+  await sleep(2500);
+  const again = await run('touch notes/beside6.txt');
+  assert.equal(again.status, 409, again.text);
+  assert.ok(!existsSync(at3('notes/beside6.txt')));
+  await waitFor(() => existsSync(at3('notes/held6-done')), { every: 200, what: 'the change to end on the Spark' });
+  await waitFor(async () => (await run('touch notes/beside6.txt')).status === 200, { every: 500, timeout: 10000, what: 'the Spark to be let go once its unit is gone' });
+});
+
+// TA-8: the stand-in ends a unit's processes itself; what holds on a Spark is what the helper asks of systemd: the
+// time limit, 5 seconds to stop, no kill mode of its own, and a fresh process tree ended with the unit.
+test('TA-8: a change\'s unit is asked with its time limit, 5 seconds to stop, no kill mode of its own, and --kill-child', { timeout: 60000 * SLOW }, async () => {
+  const cmd = 'echo t8 > notes/t8.txt', r = await run(cmd);
+  assert.equal(r.status, 200, r.text);
+  const props = propsOf(cmd);
+  assert.ok(props.includes(`RuntimeMaxSec=${SECONDS}`) && props.includes('TimeoutStopSec=5'), JSON.stringify(props));
+  assert.ok(!props.some(a => /^KillMode=/.test(a)), JSON.stringify(props));
+  assert.ok(props.includes('--kill-child'), JSON.stringify(props));
+});
+
+// TA-9: what the console published is let through the check of what listens on every address: an app's port from
+// desired.json too, and no other Spark's.
+test('TA-9: the ports a change may find open: sshd\'s, the serve port, and the apps the console published on that Spark', () => {
+  const own = new Function('CONFIG', 'desired', `${fnOf(part('21-ladder.mjs'), 'workOwnPorts')}\nreturn workOwnPorts;`)({ servePort: 30000 },
+    () => ({ running: [{ spark: 'spark3', app: 'notebook', port: '7860:7860' }, { spark: 'spark4', app: 'other', port: '7861' }, { spark: 'spark3', model: 'm', port: '7862' }] }));
+  assert.deepEqual([...own({ id: 'spark3' })].sort(), [22, 7860, 30000]);
+});

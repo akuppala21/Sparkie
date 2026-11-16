@@ -19691,6 +19691,9 @@ async function workAsk(node, command, sorted, viewer, ctx, why, dir = RUNNER_DIR
   return out;
 }
 
+// Whether a press may run what the sorter says now: a delete it can't see, or the brain's names (the dangerous kinds),
+// only from the dangerous ask's own press, which carries its two digits (ctx.danger, runChoice, 14-chats.mjs).
+const workPressCovers = (sorted, ctx) => !(sorted?.kinds || []).some(k => ['delete', 'brain'].includes(k)) || Boolean(ctx?.danger);
 // An agent's change while Spark Console's state, put back from a copy, waits for the owner's look (22-putback.mjs):
 // refused in the words every other agent change gets (runAction, 16-actions.mjs), its own call or through Sparkie
 // (S-12). run is a lookup to runAction, so the ladder asks this itself; root does too (runCommand). A look is not a
@@ -19734,6 +19737,9 @@ async function workChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, 
     if (!was || was.spark !== node.id || was.command !== (spec?.key ?? command) || was.dir !== dir) return again('the ask that button answered isn’t known here any more');
     const wall = workWallLines(node, command, sorted, dir, widen, topDirs, spec).wall;
     if (wall !== was.wall) return again(`it would run ${WORK_WALLS[wall]} now, and you were asked for it ${WORK_WALLS[was.wall]}`);
+    // (a press that wasn't the dangerous ask's, of a command the sorter now calls a dangerous kind (the brain's names
+    // changed since its plain ask): asked again, as the dangerous ask, as Spark 2's press is, 21-hub.mjs)
+    if (!workPressCovers(sorted, ctx)) return again('it now deletes for good or names the brain, which only the dangerous ask, with its two digits, can run');
     // (the Spark's claim first, so nothing else of this console changes it between the scripts' read below and the run;
     // let go just before runChange, which takes it again in this same tick, with nothing awaited between, R72)
     const held = claimSparks([node.id], 'a command Sparkie is running there');
