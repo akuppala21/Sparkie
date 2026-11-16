@@ -278,6 +278,18 @@ test('the owner’s words ask for a lock-out change only in one sentence that na
   assert.equal(keysNow(), KEYS_LINE, 'nothing ran');
 });
 
+// The final read's ask-line-2: a true lock-out ask said "You did not ask for this.", and the message before still counted.
+test('a lock-out ask the owner’s words let through says “You asked for this.”; only the current message counts, so the next message, which asks for nothing, gets no ask', { timeout: 180000 * SLOW }, async () => {
+  const chat = await newChat();
+  const a = await ask(chat, 'allow port 8002 through the firewall on spark 3', 'ufw allow 8002');
+  assert.ok(a.m, `the dangerous ask (${JSON.stringify(sentBack('allow port 8002 through the firewall on spark 3'))})`);
+  try { assert.equal(a.m.danger.lines[1], 'You asked for this.', a.m.danger.lines.join('\n')); } finally { assert.equal((await press(chat, a.no.id)).status, 200); }
+  const words = 'thanks, how is the gpu doing', b = await ask(chat, words, 'ufw disable');
+  if (b.no && b.m?.danger?.code === 'ufw disable') await press(chat, b.no.id);
+  assert.ok(!b.m || b.m.danger.code !== 'ufw disable', 'no second ask');
+  assert.match(sentBack(words).at(-1)?.error || '', /^Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from Sparkie’s own proposal, not your words asking for this on Spark 3\./);
+});
+
 // The final read's findings net-no-copy and nonroot-lockout-noop: as the owner a lock-out change ran in the run wall,
 // which keeps ~/.ssh and the start files read-only (so it changed nothing), with no copy first and the model store
 // writable, after a dangerous press.
@@ -374,4 +386,28 @@ test('the net’s seam (netGuarded, A11 and A12 call it too): nothing runs with 
   for (const [id, node, root] of [['spark2', { id: 'spark2', host: 'local' }, false], ['spark3', { id: 'spark3' }, true]]) await assert.rejects(seam(node, 'true', { ctx: pressed, seconds: 600, dir: '~', root }), e => e.message === `claimed ${id}`);
   // (on a compute Spark only as root: as the owner a lock-out change can change nothing)
   await refused(seam({ id: 'spark3' }, 'true', { ctx: pressed, seconds: 600, dir: '~' }), 403, /^Nothing ran: on Spark 3 a change inside the lock-out net runs only as root\.$/);
+});
+
+// The owner's words for a lock-out change (netWhose, netAsks; R71), as code: built from the parts as the service has them,
+// with a stand-in chat. Only the newest message the owner typed counts: not the one before, not a carry-on turn's (its
+// newest message is marked auto), not "carry on".
+const wordsTest = () => {
+  const acts = readFileSync(join(REPO, 'service', 'src', '16-actions.mjs'), 'utf8'), net = readFileSync(join(REPO, 'service', 'src', '21-net.mjs'), 'utf8');
+  const grab = (src, name) => { const m = new RegExp(`^const ${name} = [\\s\\S]*?;\\n(?=\\S)`, 'm').exec(src); assert.ok(m, name); return m[0]; };
+  const fn = name => { const m = new RegExp(`^function ${name}\\([\\s\\S]*?\\n\\}$`, 'm').exec(net); assert.ok(m, name); return m[0]; };
+  const consts = net.match(/^const NET_[A-Z_]+ = /gm).map(x => x.slice(6, -3)).filter(n => !['NET_ON', 'NET_FILE', 'NET_AFTER_S', 'NET_PROBES', 'NET_LIVE', 'NET_OPEN'].includes(n) && !/^NET_(?:SLACK|KEPT|LATE)/.test(n));
+  const chats = { conversations: [] };
+  const code = ['normQuotes', 'GENERIC', 'BARE_SPARKS', 'sparkNames', 'tokensOf', 'INFO_START'].map(n => grab(acts, n)).join('')
+    + consts.map(n => grab(net, n)).join('') + ['netAsks', 'netWhose', 'netNowSaid'].map(fn).join('\n') + '\nreturn { netAsks, netWhose };';
+  return { chats, ...new Function('NODES', 'chatData', 'sparkName', code)([{ id: 'spark3' }, { id: 'spark4' }], () => chats, n => `Spark ${n.id.slice(5)}`) };
+};
+
+test('only the owner’s current message asks for a lock-out change: the message before, a carry-on turn’s and “carry on” never do', () => {
+  const { chats, netWhose } = wordsTest(), node = { id: 'spark3' };
+  const say = (...msgs) => { chats.conversations = [{ id: 'c1', messages: msgs.map(m => (typeof m === 'string' ? { role: 'user', content: m } : { role: 'user', ...m })) }]; return netWhose(node, { role: 'owner' }, { via: 'sparkie', conv: 'c1', reads: [] }); };
+  assert.equal(say('allow port 8002 through the firewall on spark 3'), null);
+  assert.match(say('allow port 8002 through the firewall on spark 3', 'thanks, how is the gpu doing'), /^Sparkie’s own proposal/);
+  assert.match(say('allow port 8002 through the firewall on spark 3', { content: 'allow port 8002 through the firewall on spark 3', auto: true }), /^Sparkie’s own proposal/, 'a carry-on turn');
+  assert.match(say('allow port 8002 through the firewall on spark 3', 'carry on'), /^Sparkie’s own proposal/);
+  assert.match(say('allow port 8002 through the firewall on spark 3', { content: 'allow port 8002 through the firewall on spark 3', from: 'helper-agent' }), /^Sparkie’s own proposal/, 'an agent’s message');
 });

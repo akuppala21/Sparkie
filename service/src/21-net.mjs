@@ -143,8 +143,9 @@ function netOutput(id, out) {
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
 // Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
-// page or a fix suggested it): null when the owner's own words (this message and the one before, R25) ask for it on that
-// Spark (netAsks) with nothing read from outside since, or for the owner's own call (the page, POST /actions);
+// page or a fix suggested it): null when the owner's current message asks for it on that Spark (netAsks) with nothing
+// read from outside since, or for the owner's own call (the page, POST /actions). Only the current message counts, never
+// the one before, and only in the turn it began: a carry-on turn's newest message is its own, marked auto (netNowSaid);
 // otherwise where it came from. netAsks: one sentence of theirs does all three. 1, it names that Spark. 2, it names what
 // is to change, in the lock-out class (NET_WHAT), in the words right after a change verb (NET_BREAK). 3, it asks for that
 // change as an instruction: the verb in its plain form (NET_ASK; not "port 22 is open", not inside "how to …" or
@@ -192,8 +193,15 @@ function netWhose(node, viewer, ctx) {
   if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
   if (ctx.via !== 'sparkie') return 'something other than your own words';
   if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
-  if (!netAsks(node, String(ctx.said || ctx.request || ''))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  if (!netAsks(node, netNowSaid(ctx))) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
   return null;
+}
+// The owner's message this turn began with, as the chat keeps it: '' for a carry-on turn (its newest message is marked
+// auto), an agent's, or a turn with no chat.
+function netNowSaid(ctx) {
+  const conv = ctx.conv ? chatData().conversations.find(c => c.id === ctx.conv) : null;
+  const m = conv ? conv.messages.filter(x => x.role === 'user').at(-1) : null;
+  return m && !m.auto && !m.from ? String(m.content || '') : '';
 }
 // The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs), and
 // how to ask for one.

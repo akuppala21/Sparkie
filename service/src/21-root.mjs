@@ -59,7 +59,8 @@ async function rootChange(input, viewer, ctx = {}) {
   const gone = also.includes('delete') ? String(sorted.why || '').replace(/\s*That cannot be put back\.?$/, '').replace(/\.$/, '') : null;
   return dangerAsk(viewer, ctx, { kinds: ['root', ...(lockout ? ['lockout'] : []), ...also], where: node.id, shown: { command },
     call: { action: 'run', args: { on: node.id, command, root: true, ...(dir !== RUNNER_DIR ? { dir } : {}) } },
-    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why } : {}),
+    // (line 2 of a lock-out ask follows the decision that let it through, netWhose: the owner's words asked for it)
+    facts: { net: netFact(at, seconds), ...(lockout ? { lockWhy: sorted.why, asked: true } : {}),
       ...(gone ? { gone: { what: gone } } : {}),
       lines: [rootLine(at), `It may run ${netTimeWords(seconds)}; at that limit it is ended, and the result says so.`,
         ...(/~|\$HOME|\$\{HOME\}/.test(command) ? ['As root, ~ is /root, not your own home.'] : []), workStartsIn(dir)] } });

@@ -464,7 +464,7 @@ and `do_putback` in the helper; `service/src/21-net.mjs`, `21-guard.mjs`; R60, R
 - A change that passes the check right after it and locks the owner out later: a unit disabled, a network file not
   applied until a restart. Live firewall rules are said, not put back.
 - "The owner's own words" is decided by `netWhose` and `netAsks` in `21-net.mjs` (R71). One sentence of the
-  owner's, in this message or the one before, must do three things. It names the Spark. Right after a change verb it
+  owner's current message (never the one before, nor a carry-on turn's) must do three things. It names the Spark. Right after a change verb it
   names a way in: SSH, a key, Tailscale, the firewall or a port, the network, a user, account, password, sudo or
   group, the shell's start files, signing in or access. And it is an instruction: no "don't"; not a question unless
   "can you", "could you", "would you", "will you" or "please" opens it; not "tell me …" or "how to …"; not "is
