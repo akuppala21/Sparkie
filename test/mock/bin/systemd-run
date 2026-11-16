@@ -115,6 +115,7 @@ if unit.startswith('sw-prove-'):
     elif part == 'after':
         say('V', 5, 'outside', 'works', 'stand-in')
         say('V', 12, 'outside', 'works', 'stand-in')
+        say('V', 23, 'outside', 'works', 'stand-in')
         for n, wall in ((5, 'look'), (12, 'look'), (12, 'run')):
             say('V', n, wall, 'through' if (n, wall, 'after') in through else 'blocked', 'stand-in')
         for n in (23, 24):

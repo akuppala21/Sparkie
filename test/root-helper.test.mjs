@@ -436,19 +436,58 @@ describe('what the run wall holds in the home', () => {
     refused(change(s, 'true'), '/home/owner/.local/share/systemd is a link, or under one, so the wall would hold only what it points at');
     refused(look(s, 'true'), '/home/owner/.local/share/spark-console is a link, or under one, so a look would see what it points at');
   });
-  test('a link a change left at a listed name that was not there is left alone in both walls, and check names it; changes still run', () => {
+  // (the last round's item 1: a hidden name that is a link is hidden where it leads, or both walls refuse, naming it. This
+  // test held the fault itself. Old: with .npmrc a link to the home, a look and a change ran, the link left alone, and
+  // check said "run ready". New: they are refused by name, and run again once that link is gone; .zshrc, a link to
+  // .profile, which is hidden already, never stopped them)
+  test('a link a change left at a listed name is never named in a setting, and check names it; one whose end is hidden already runs; one to the home is refused by name', () => {
     const s = proven();
     symlinkSync('.profile', join(s.R, 'home/owner/.zshrc'));            // a dotfiles tool does this
     symlinkSync(join(s.R, 'home/owner'), join(s.R, 'home/owner/.npmrc')); // a link to the home at a hidden name
+    const why = '/home/owner/.npmrc is a link out of the home folder, or to it, which a ';
+    refused(change(s, 'true'), `${why}change cannot hide: put the file itself there, or take the link away`);
+    refused(look(s, 'true'), `${why}look cannot hide: put the file itself there, or take the link away`);
+    let c = run(s, ['check', '--id', newId()]).stdout;
+    assert.match(c, / links not held, left alone: \.zshrc \.npmrc\n/, c);   // (.zshrc is on the hidden list now, before .npmrc: R63)
+    assert.match(c, / run refuses: \/home\/owner\/\.npmrc is a link out of the home folder, or to it, which a change cannot hide/, c);
+    rmSync(join(s.R, 'home/owner/.npmrc'));
     const r = change(s, 'true'), l = look(s, 'true');
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(l.status, 0, l.stdout + l.stderr);
-    for (const c of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
-      assert.ok(!c.some(a => a.includes('.zshrc') || a.includes('.npmrc')), c.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
+    for (const u of [unitCall(s, `sw-run-${r.id}`), unitCall(s, `sw-look-${l.id}`)]) {
+      assert.ok(!u.some(a => a.includes('.zshrc') || a.includes('.npmrc')), u.filter(a => a.includes('.zshrc') || a.includes('.npmrc')).join(' '));
     }
-    const c = run(s, ['check', '--id', newId()]).stdout;
-    assert.match(c, / links not held, left alone: \.zshrc \.npmrc\n/, c);   // (.zshrc is on the hidden list now, before .npmrc: R63)
+    c = run(s, ['check', '--id', newId()]).stdout;
     assert.match(c, / run ready\n/, c);
+  });
+
+  // The last round's item 1: ~/.netrc kept in a dotfiles folder was left alone, and a look read the key where it leads.
+  test('a hidden name that is a link is hidden where it leads (a dotfiles folder): neither wall reads the key by its real path, and both still run; a link to nothing, out of the home, or to a folder the walls hold is refused by name; one to a device is left', () => {
+    const s = proven();
+    s.put('home/owner/dotfiles/netrc', 'machine x password LINKEDSECRET');
+    s.put('home/owner/dotfiles/aws/credentials', 'AKIALINKEDSECRET');
+    symlinkSync('dotfiles/netrc', join(s.R, 'home/owner/.netrc'));
+    symlinkSync('dotfiles/aws', join(s.R, 'home/owner/.aws'));
+    symlinkSync('/dev/null', join(s.R, 'home/owner/.bash_history'));   // (a common way to keep no history: no key there)
+    const see = 'cat "$WALL_VIEW/home/owner/dotfiles/netrc" "$WALL_VIEW/home/owner/dotfiles/aws/credentials" "$WALL_VIEW/home/owner/.netrc" 2>&1; true';
+    for (const [wall, r] of [['look', look(s, see)], ['run', change(s, see)]]) {
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(!r.stdout.includes('LINKEDSECRET'), `${wall}: ${r.stdout}`);
+      const c = unitCall(s, `sw-${wall}-${r.id}`);
+      assert.ok(c.includes('InaccessiblePaths=/home/owner/dotfiles/netrc') && c.includes('TemporaryFileSystem=/home/owner/dotfiles/aws:ro'), `${wall}: ${c.filter(a => a.includes('dotfiles')).join(' ')}`);
+      assert.ok(!c.some(a => /\/home\/owner\/(\.netrc|\.aws|\.bash_history)|\/dev\/null/.test(a)), `${wall}: the links themselves, and /dev/null, are named in no setting`);
+    }
+    // (each target in the rehearsal its link is made in)
+    for (const [name, to, why] of [['.pgpass', () => 'dotfiles/missing', 'is a link to nothing that is there'], ['.my.cnf', R => join(R, 'etc/shadow'), 'is a link out of the home folder, or to it'],
+      ['.kube', R => join(R, 'home/owner/.config'), 'is a link to a folder that holds what the walls hold']]) {
+      const t = proven();
+      symlinkSync(to(t.R), join(t.R, 'home/owner', name));
+      const before = started(t).length;
+      refused(look(t, 'true'), `/home/owner/${name} ${why}, which a look cannot hide: put the file itself there, or take the link away`);
+      refused(change(t, 'true'), `/home/owner/${name} ${why}, which a change cannot hide`);
+      assert.equal(started(t).length, before, name);
+      assert.equal(change(t, 'true', { extra: ['--open'] }).status, 0, `${name}: --open (asked) hides nothing, so it is not stopped`);
+    }
   });
   test('a login shell that is not bash, sh or dash: run is refused by name, and a look still runs', () => {
     const s = proven();
@@ -667,13 +706,19 @@ describe('the proof of the walls', () => {
     'a write in ~/.ssh', 'a terminal of this Spark (/dev/pts)', "writing a control group of the owner's (/sys/fs/cgroup)"];
   const LOOK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 25, 26, 30];
   const RUN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30, 31];
+  // (the last round's item 3: the attempts no honest control exists for say so on their own line)
+  const ROOT_ONLY = 'only root can try it, outside the walls too', MUST = 'it must work inside the wall, so there is nothing to stop';
+  const NO_CONTROL = { 15: ROOT_ONLY, 16: ROOT_ONLY, 17: ROOT_ONLY, 18: "its way through sudo is attempt 8's control; the rest only root can try", 27: MUST, 28: MUST };
+  const said = n => `${NAMES[n]}${NO_CONTROL[n] ? ` (not controlled: ${NO_CONTROL[n]})` : ''}`;
 
   test('a pass: every attempt stopped in both walls, root refused, the mark written; the proof units ask for the same walls', () => {
     const s = spark();
     const p = prove(s);
     assert.equal(p.status, 0, p.stdout + p.stderr);
-    for (const n of LOOK) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${NAMES[n]}\n`), `look ${n}`);
-    for (const n of RUN) assert.ok(p.stdout.includes(`${p.id} proof run ${n} blocked: ${NAMES[n]}\n`), `run ${n}`);
+    // (old: every line "proof <wall> <n> blocked: <name>"; new: 15 to 18 and 27 add "(not controlled: <why>)")
+    for (const n of LOOK) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${said(n)}\n`), `look ${n}`);
+    for (const n of RUN) assert.ok(p.stdout.includes(`${p.id} proof run ${n} blocked: ${said(n)}\n`), `run ${n}`);
+    assert.ok(p.stdout.includes(`${p.id} proof home 28 blocked: ${said(28)}\n`), 'home 28');
     assert.match(p.stdout, new RegExp(`${p.id} proof look passed\n${p.id} proof run 1 `));
     assert.ok(p.stdout.includes(`${p.id} proof root 13 refused: root with no net\n`));
     assert.match(p.stdout, new RegExp(`${p.id} proof passed: the mark is written for this helper, systemd 255\\.4-1ubuntu8\\.4 and kernel 6\\.11\\.0-1016-nvidia\n$`));
@@ -689,7 +734,8 @@ describe('the proof of the walls', () => {
       [['systemctl', 'stop', `sw-guard-${g}nl.timer`], ['systemctl', 'stop', `sw-guard-${g}nr.timer`],
         ['systemctl', 'is-active', '--quiet', `sw-prove-target-${p.id}.service`], ['systemctl', 'stop', `sw-prove-target-${p.id}.service`]]);
     assert.ok(p.stdout.includes(`${p.id} proof outside 2 works: an open connection (the loopback, stand-in)\n`));
-    assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt was seen working outside the walls, or is not there\n`));
+    // (old: "...each attempt was seen working outside the walls, or is not there"; untrue for those with no control)
+    assert.ok(p.stdout.includes(`${p.id} proof controls work: each attempt with a control was seen working outside the walls; the rest say they are not controlled\n`));
     const py = which(s, 'python3'), proof = `/run/spark-console/${p.id}/proof.py`;
     const hidden = ['/home/owner/.local/share/spark-console'];
     const lookUnit = lookCall(s, p.id, 'x', 120, hidden);
@@ -702,7 +748,7 @@ describe('the proof of the walls', () => {
       `--description=Spark Console wall proof run ${p.id}`, ...runUnit.slice(3, runUnit.indexOf(which(s, 'bash'))), py, '-I', '-S', proof, 'run', ...RUN.map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-outside-${p.id}`), ['systemd-run', `--unit=sw-prove-outside-${p.id}`,
       `--description=Spark Console wall proof outside ${p.id}`, '--wait', '--pipe', '--collect', '--quiet', '--uid=1000', '--gid=1000',
-      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 22, 25, 26, 30, 31].map(String)]);
+      '-p', 'RuntimeMaxSec=120', '-p', 'TimeoutStopSec=5', '--', py, '-I', '-S', proof, 'outside', ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 19, 20, 21, 22, 23, 24, 25, 26, 29, 30, 31].map(String)]);
     assert.deepEqual(unitCall(s, `sw-prove-target-${p.id}`), ['systemd-run', `--unit=sw-prove-target-${p.id}`,
       `--description=Spark Console wall proof target ${p.id}`, '--collect', '--quiet', '--uid=1000', '--gid=1000',
       '-p', `WorkingDirectory=/home/owner/.local/share/spark-console/proof-${p.id}`, '-p', `Environment=SPARK_PROOF_MARK=${p.id}`,
@@ -750,7 +796,8 @@ describe('the proof of the walls', () => {
     refused(look(s, 'true'), 'the wall proof is none on this Spark: prove first');
   };
   // (19, 20, 25 and 26 too: the final read's TC-5 found the controls for them held by no test)
-  for (const n of [1, 4, 5, 6, 7, 8, 10, 19, 20, 25, 26]) {
+  // (and 21, 23, 24 and 29: the last round's item 3 gave them controls)
+  for (const n of [1, 4, 5, 6, 7, 8, 10, 19, 20, 21, 23, 24, 25, 26, 29]) {
     test(`attempt ${n} not seen working outside the walls (its own program, files, folders or line): no mark, even with every wall holding`, () => {
       const s = proven();
       s.put('standin/outside', `${n} not-there stand-in\n`);
@@ -800,6 +847,8 @@ describe('the proof of the walls', () => {
     assert.ok(p.stdout.includes(`${p.id} proof outside 3 not there: ${NAMES[3]} (no socket here)\n`), p.stdout);
     assert.ok(p.stdout.includes(`${p.id} proof outside 9 not there: ${NAMES[9]} (no user manager here)\n`));
     assert.ok(existsSync(join(s.R, 'var/lib/spark-console/proved')));
+    // (and a "blocked" for each says it is not controlled: the last round's item 3)
+    for (const n of [3, 9, 11]) assert.ok(p.stdout.includes(`${p.id} proof look ${n} blocked: ${NAMES[n]} (not controlled: not there outside the walls)\n`), `${n}: ${p.stdout}`);
   });
   for (const [name, knob, why] of [
     ['never started', 'no-pid', "the proof's own program outside the walls did not start"],
@@ -815,7 +864,8 @@ describe('the proof of the walls', () => {
   }
   test('the checks from outside afterwards did not see what the proof left there on purpose: no mark', () => {
     for (const [n, play] of [[5, 'V 12 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n'],
-      [12, 'V 5 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n']]) {
+      [12, 'V 5 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n'],
+      [23, 'V 5 outside works x\nV 12 outside works x\nV 5 look blocked x\nV 12 look blocked x\nV 12 run blocked x\n']]) {
       const s = proven();
       s.put('standin/play-after', play);
       const p = prove(s);
@@ -1056,13 +1106,14 @@ describe('the lock-out net (R60)', () => {
 
   // The final read's TC-4: the net's own "nothing ran" promises no test reached.
   test('arming that fails on the copy (over 64 MB) or on a timer systemd took but does not keep leaves nothing and runs nothing', () => {
-    for (const [why, set] of [['the copy of the ways in failed (more than 64 MB to copy', s => { s.put('etc/ssh/big'); truncateSync(join(s.R, 'etc/ssh/big'), 65 * 2 ** 20); }],
+    // (the whole sentence: the last round's item 2 took out the space the copy's own line break left before ")")
+    for (const [why, set] of [['the copy of the ways in failed (more than 64 MB to copy), so nothing ran', s => { s.put('etc/ssh/big'); truncateSync(join(s.R, 'etc/ssh/big'), 65 * 2 ** 20); }],
       ['its timer is not waiting, so nothing ran', s => s.put('standin/timer-lost')]]) {
       const s = netted();
       set(s);
       const r = net(s, 'touch "$SPARK_CONSOLE_REHEARSAL/it-ran"');
       refused(r, `the net could not be armed: ${why}`);
-      assert.match(r.stdout, /, so nothing ran\n$/);
+      assert.equal(r.stdout, `${r.id} refused: the net could not be armed: ${why}\n`);
       assert.ok(!existsSync(G(s, r.id)) && !existsSync(join(s.R, 'it-ran')) && !existsSync(join(s.R, 'run/spark-console', r.id)), why);
       for (const f of BOOT(s, r.id)) assert.ok(!lstatExists(f), f);
       assert.ok(!started(s).some(c => c.includes(`--unit=sw-run-${r.id}`)), why);
@@ -1677,6 +1728,8 @@ describe('the lock-out net (R60)', () => {
     assert.ok(Date.now() - t0 >= 40000, `two waits of 20 s between the three tries (${Date.now() - t0} ms)`);
     assert.equal(f.status, 1);
     assert.equal(readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n').length, 3);
+    // (each line whole, with no space left by the error's own line break: the last round's item 2)
+    for (const l of readFileSync(join(G(s, r.id), 'failures'), 'utf8').trim().split('\n')) assert.match(l, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ attempt [123]: \S(.*\S)?$/, l);
     assert.ok(existsSync(join(G(s, r.id), 'pending')) && !existsSync(join(G(s, r.id), 'result')));
   });
 
@@ -1699,7 +1752,11 @@ describe('the lock-out net (R60)', () => {
     const s = spark();
     const p = prove(s);
     assert.equal(p.status, 0, p.stdout + p.stderr);
-    for (const [n, what] of [[15, "stopping or changing the net's timer"], [16, "writing the net's copies or restore.sh"], [17, "taking away the net's pending mark"], [18, 'making keep count']]) {
+    // (the last round's item 3: no control exists for these, and each line says so. Old: "... blocked: <name>"; new:
+    // "... blocked: <name> (not controlled: <why>)")
+    const root = '(not controlled: only root can try it, outside the walls too)';
+    for (const [n, what] of [[15, `stopping or changing the net's timer ${root}`], [16, `writing the net's copies or restore.sh ${root}`], [17, `taking away the net's pending mark ${root}`],
+      [18, "making keep count (not controlled: its way through sudo is attempt 8's control; the rest only root can try)"]]) {
       for (const w of ['look', 'run']) assert.ok(p.stdout.includes(`${p.id} proof ${w} ${n} blocked: ${what}\n`), `${w} ${n}`);
     }
     const g = p.id.slice(0, 38);
@@ -2686,12 +2743,17 @@ describe("the proof's own attempts", () => {
     try {
       writeFileSync(join(P.held, 'target'), String(target.pid));
       writeFileSync(join(P.held, 'home-mode'), mode.toString(8));
+      // (the controls the last round added: each seen working outside, 23's checked again afterwards)
+      const outside = lines(P.py('outside', 21, 23, 24, 29));
+      for (const n of [21, 23, 24, 29]) assert.ok(outside.some(l => l.startsWith(`P ${n} outside works `)), `outside ${n}: ${outside.join('\n')}`);
+      assert.equal(statSync(P.home).mode & 0o777, mode, '24 outside is judged by its rights: the mode is not changed');
       const through = lines(P.py('run', 19, 21, 25, 26, 29));
       for (const n of [19, 21, 25, 26, 29]) for (const how of ['direct', 'child']) assert.ok(through.some(l => l.startsWith(`P ${n} ${how} through `)), `${n} ${how}: ${through.join('\n')}`);
       const left = lines(P.py('run', 23, 24));
       for (const n of [23, 24]) for (const how of ['direct', 'child']) assert.ok(left.includes(`P ${n} ${how} left -`), `${n} ${how}: ${left.join('\n')}`);
       const after = lines(P.py('after'));
       for (const n of [23, 24]) assert.ok(after.some(l => l.startsWith(`V ${n} run through `)), `after ${n}: ${after.join('\n')}`);
+      assert.ok(after.includes('V 23 outside works saw what was left in /dev/shm and IPC'), after.join('\n'));
       assert.equal(statSync(P.home).mode & 0o777, mode, "the check afterwards put the home's mode back");
       const may = lines(P.py('run', 27)).concat(lines(P.py('home', 28)));
       for (const n of [27, 28]) assert.ok(may.includes(`P ${n} direct blocked -`), `${n}: ${may.join('\n')}`);

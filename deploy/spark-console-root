@@ -91,7 +91,7 @@ WORDS='chats.json memory.json memory-past.json audit.jsonl saved-workflows.json'
 # The look refuses while one of these is a link in the owner's home: a look would then see what it points at. (Both
 # walls refuse, too, while a name on the hidden list that is there lies under a link: UNDER, below.)
 LOOK_REAL='.ssh .docker .local/share/spark-console .config/spark-console .local/state/spark-console'
-# --- the lock-out net (docs/rules/R60.md; design A 2.8; step A13a: dark, only tests call it) ---------------------------
+# --- the lock-out net (docs/rules/R60.md; design A 2.8; step A13a; the console's half calls it: R71) -------------------
 # run --net copies the ways in to /var/lib/spark-console/guard/<id>/, writes restore.sh beside them and arms a timer in
 # the Spark's own systemd before the command runs; what is not kept goes back when it fires.
 GUARD=/var/lib/spark-console/guard
@@ -364,11 +364,13 @@ proof_state() {
 }
 
 # --- the hidden list and the read-only list (only the owner's command can shorten them: they are this file's text) ---
-TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
+TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=() LINKS=() LINK_BAD=()
 # A path in the owner's home that is a link, or under one, is left alone in both walls: not held, and never followed
 # (a change could have made it, pointing anywhere). Only the must-be-there names are demanded real (held_problem), and a
 # hidden name that is there under a linked folder (UNDER) stops a look and a plain change: either would read it through
-# the link (~/.config kept in a dotfiles folder, say).
+# the link (~/.config kept in a dotfiles folder, say). A hidden name that is itself a link (~/.netrc kept in a dotfiles
+# folder) is hidden where it leads, resolved once here (LINKS); one that leads where no wall can hide it (LINK_BAD)
+# stops a look and a plain change in the same way.
 real_here() {   # $1 a path that is there: is it the real thing, judged from the owner's home (whose own place is root's)?
   local real home
   in_home "$1" || return 0
@@ -387,7 +389,8 @@ unreal() {   # $1 a listed path: 0 (and noted) when it is a link in the owner's 
 hide() {   # a folder gets an empty read-only one over it; anything else is made unreachable; a path not there is skipped
   local p=$1
   if unreal "$p"; then
-    if in_home "$p" && { [ -e "$R$p" ] || [ -L "$R$p" ]; } && ! real_here "${p%/*}"; then UNDER+=("$p"); fi
+    if in_home "$p" && { [ -e "$R$p" ] || [ -L "$R$p" ]; } && ! real_here "${p%/*}"; then UNDER+=("$p")
+    elif in_home "$p" && [ -L "$R$p" ]; then LINKS+=("$p"); fi
     return 0
   fi
   safe_path "$p" || refuse "a path on the hidden list cannot stand in a setting"
@@ -457,7 +460,7 @@ ro() {
   RO+=("$1")
 }
 lists() {
-  TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=()
+  TMPFS=() GONE=() BACK=() RO=() LINKED=() UNDER=() LINKS=() LINK_BAD=()
   local name pw uid gid gecos home shell p f kind
   while IFS=: read -r name pw uid gid gecos home shell || [ -n "$name" ]; do
     [[ $uid =~ ^[0-9]{1,10}$ ]] && (( 10#$uid >= 1000 && 10#$uid != 65534 )) || continue
@@ -498,6 +501,26 @@ lists() {
   [ "$OPEN" = 1 ] && ro "$OWNER_HOME/.ssh"
   ro "$HELPER"
   ro "$LINE"
+  link_targets
+}
+link_targets() {   # each hidden name in the owner's home that is itself a link: where it leads is hidden too, when that is a
+  # file or folder inside the home holding nothing the walls hold; else the link goes on LINK_BAD (a device, /dev/null
+  # say, holds no key and is left as it is)
+  local l t d home held
+  home=$(realpath -e -- "$R$OWNER_HOME" 2> /dev/null) || return 0
+  mapfile -t held < <(places)
+  for l in "${LINKS[@]}"; do
+    if ! t=$(realpath -e -- "$R$l" 2> /dev/null); then LINK_BAD+=("$l is a link to nothing that is there"); continue; fi
+    [ -f "$t" ] || [ -d "$t" ] || continue
+    case "$t/" in "$home"/?*) ;; *) LINK_BAD+=("$l is a link out of the home folder, or to it"); continue ;; esac
+    t=${t#"$R"}
+    under_any "$t" "${TMPFS[@]}" "${GONE[@]}" && continue   # (hidden already)
+    safe_path "$t" || { LINK_BAD+=("$l is a link to a path that cannot stand in a setting"); continue; }
+    for d in "${TMPFS[@]}" "${GONE[@]}" "${BACK[@]}" "${RO[@]}" "${held[@]}"; do
+      case "$d/" in "$t"/*) LINK_BAD+=("$l is a link to a folder that holds what the walls hold"); continue 2 ;; esac
+    done
+    if [ -d "$R$t" ]; then TMPFS+=("$t"); else GONE+=("$t"); fi
+  done
 }
 
 # --- what the run wall holds in the owner's home: there, the real thing, and no folder above it movable -------------
@@ -532,8 +555,10 @@ look_problem() {   # why a look cannot hide what it must in the owner's home, or
   done
   under_problem look
 }
-under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or nothing (the lists first)
-  [ ${#UNDER[@]} -eq 0 ] || printf '%s is under a link, so a %s would read it: make each folder above it a real one' "${UNDER[0]}" "$1"
+under_problem() {   # $1 look or change: why it cannot hide a listed name that is under a link, or one that is a link
+  # whose end it cannot hide, or nothing (the lists first)
+  if [ ${#UNDER[@]} -gt 0 ]; then printf '%s is under a link, so a %s would read it: make each folder above it a real one' "${UNDER[0]}" "$1"
+  elif [ ${#LINK_BAD[@]} -gt 0 ]; then printf '%s, which a %s cannot hide: put the file itself there, or take the link away' "${LINK_BAD[0]}" "$1"; fi
 }
 held_problem() {   # why the run wall cannot hold the owner's home as listed, or nothing (the lists must be made first)
   local n real shell=${OWNER_SHELL##*/}
@@ -1153,7 +1178,7 @@ net_arm() {
   [ ${#NAMED_UNITS[@]} -eq 0 ] || printf '%s\n' "${NAMED_UNITS[@]}" > "$G/units"
   printf '%s' "$(( $(date +%s) + 10#$SECS + NET_AFTER ))" > "$G/at"
   if ! "$PY" -I -S "$G/guard.py" copy > "$G/copy.out" 2>&1; then
-    n=$(head -c 200 -- "$G/copy.out" | tr -c '[:print:]' ' ')
+    n=$(head -c 200 -- "$G/copy.out" | tr -c '[:print:]' ' ' | sed 's/ *$//')   # (its last line break is no space)
     net_refuse "the net could not be armed: the copy of the ways in failed (${n:-no reason}), so nothing ran"
   fi
   : > "$G/pending"
@@ -1202,7 +1227,7 @@ net_after() {   # after the command: what differs, and when it goes back. It dis
     bad=$(sshd -t < /dev/null 2>&1) && bad='' || bad=${bad:-it says nothing}
   fi
   if [ -n "$bad" ] || [ "$state" != active ]; then
-    if [ -n "$bad" ]; then say "net: sshd -t refuses the changed /etc/ssh ($(printf '%s' "$bad" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-160)), so what differs goes back now"
+    if [ -n "$bad" ]; then say "net: sshd -t refuses the changed /etc/ssh ($(printf '%s' "$bad" | head -n 1 | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-160)), so what differs goes back now"
     else say "net: its timer is not waiting (${state:-gone}), so what differs goes back now"; fi
     "$BASH_BIN" "$G/restore.sh" asked > /dev/null 2>&1
     # (put back: its timer has nothing left to do)
@@ -1309,7 +1334,7 @@ else
 fi
 for n in 1 2 3; do
   python3 -I -S "$here/guard.py" restore "$why" 2> "$here/last-error" && exit 0
-  printf '%s attempt %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$n" "$(tail -n 1 -- "$here/last-error" | tr -c '[:print:]' ' ' | cut -c1-200)" >> "$here/failures"
+  printf '%s attempt %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$n" "$(tail -n 1 -- "$here/last-error" | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-200)" >> "$here/failures"
   [ "$n" = 3 ] || sleep 20
 done
 exit 1
@@ -1934,19 +1959,25 @@ LOOK_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 15 16 17 18 20 25 26 30'
 RUN_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 29 30 31'
 # (--home's wall: the plain wall with the top of the home writable: what it must still stop, and what it must allow)
 HOME_ATTEMPTS='3 10 14 19 25 27 28 29 30 31'
-OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20 22 25 26 30 31'
+OUTSIDE_ATTEMPTS='1 2 3 4 5 6 7 8 9 10 11 14 19 20 21 22 23 24 25 26 29 30 31'
 # Checked afterwards, from outside, by the proof's post (as the owner) and after (as root) units.
 AFTER_CHECKS='look:1 run:1 look:5 run:5 look:12 run:12 run:14 run:19 run:23 run:24 look:15 run:15 look:16 run:16 look:17 run:17 look:18 run:18'
 # The controls. A "blocked" inside a wall shows something only if the same attempt worked outside it. These attempts
 # use the proof's own program, files and folders, so each must work outside, or the proof fails: its own links and
 # targets (1), the environment, /proc and signals of its own program (4, 6, 7), its folders on the disks and the
 # read-only list (5), sudo with the helper's own line (8), its own key (10), its own folders' right to be renamed (14),
-# its own job folder's (19), the helper's stop, which only the owner's sudo line reaches (20), the owner's start files
-# (25), a name made at the top of the home and in a dot folder (26), the terminal its own program holds (30), and that
-# program's own control group, which systemd hands to the owner (31). 22 (its own address, the tailnet) may be absent.
+# its own job folder's (19), the helper's stop, which only the owner's sudo line reaches (20), no memory cap outside
+# (21), a file and a segment it leaves in /dev/shm and IPC, which the check afterwards must see (23), its right to
+# change the home's mode (24, by its rights: never done), the owner's start files (25), a name made at the top of the
+# home and in a dot folder (26), a write in ~/.ssh (29), the terminal its own program holds (30), and that program's own
+# control group, which systemd hands to the owner (31). 22 (its own address, the tailnet) may be absent.
 # Attempt 2 must reach its own program on the loopback. Only 3 (the sockets), 9 (a user manager) and 11 (devices) may be
-# absent, for the reason the proof states.
-MUST_WORK='1 4 5 6 7 8 10 14 19 20 25 26 30 31'
+# absent, for the reason the proof states; a "blocked" for one that was absent says "not controlled", as do those no
+# honest control exists for (NO_CONTROL).
+MUST_WORK='1 4 5 6 7 8 10 14 19 20 21 23 24 25 26 29 30 31'
+declare -A NO_CONTROL=([15]='only root can try it, outside the walls too' [16]='only root can try it, outside the walls too'
+  [17]='only root can try it, outside the walls too' [18]="its way through sudo is attempt 8's control; the rest only root can try"
+  [27]='it must work inside the wall, so there is nothing to stop' [28]='it must work inside the wall, so there is nothing to stop')
 plain_unit() {   # $1 owner or root, $2 its name, $3 seconds, then the proof's arguments: one unit with no wall
   local who=$1 name=$2 secs=$3 as=()
   shift 3
@@ -2091,13 +2122,13 @@ do_prove() {
   if [ -z "$control" ] && { [ "${GOT[outside:2]-}" != works ] || [[ ${DETAIL[outside:2]-} != *"the loopback"* ]]; }; then
     control="attempt 2 could not reach the proof's own program on the loopback outside the walls, so the run wall's loopback rule would be shown by nothing"
   fi
-  for n in 5 12; do
+  for n in 5 12 23; do
     if [ -z "$control" ] && [ "${GOT[after:outside:$n]-}" != works ]; then
       control="the check from outside afterwards for attempt $n (${NAMES[$n]}) did not see what the proof left there on purpose"
     fi
   done
   if [ -z "$control" ] && [ "$alive" != yes ]; then control="the proof's own program outside the walls stopped before the end"; fi
-  if [ -z "$control" ]; then say "proof controls work: each attempt was seen working outside the walls, or is not there"
+  if [ -z "$control" ]; then say "proof controls work: each attempt with a control was seen working outside the walls; the rest say they are not controlled"
   else say "proof controls failed: $control"; fi
   local list bad any key verdict how_said
   for wall in look run home; do
@@ -2129,6 +2160,8 @@ do_prove() {
         say "proof $wall $n $verdict: $line"
         [ -n "$bad" ] || bad=$n
         [ -n "$first" ] || first="attempt $n in the $wall wall $verdict (${NAMES[$n]})"
+      elif [ -n "${NO_CONTROL[$n]-}" ]; then say "proof $wall $n blocked: ${NAMES[$n]} (not controlled: ${NO_CONTROL[$n]})"
+      elif [ "${GOT[outside:$n]-}" = not-there ]; then say "proof $wall $n blocked: ${NAMES[$n]} (not controlled: not there outside the walls)"
       else say "proof $wall $n blocked: ${NAMES[$n]}"; fi
     done
     if [ -z "$any" ] && [ -z "$unitfail" ]; then
@@ -2146,7 +2179,7 @@ do_prove() {
   # shellcheck disable=SC2053
   if [ "$r13" = 125 ] && [[ $o13 == $want13 ]] && [[ $o13 != *$'\n'* ]]; then say "proof root 13 refused: ${NAMES[13]}"
   else
-    say "proof root 13 got through: ${NAMES[13]} (it answered: $(printf '%s' "$o13" | head -n 1 | tr -c '[:print:]' ' ' | cut -c1-120))"
+    say "proof root 13 got through: ${NAMES[13]} (it answered: $(printf '%s' "$o13" | head -n 1 | tr -c '[:print:]' ' ' | sed 's/ *$//' | cut -c1-120))"
     [ -n "$first" ] || first="attempt 13 got through (${NAMES[13]})"
   fi
   if ! root_on; then
@@ -2600,19 +2633,25 @@ def shm_key(how):
     return int(hashlib.sha256(f'{ID}-{how}'.encode()).hexdigest()[:7], 16)
 
 
-def a23(c):  # a file left in /dev/shm and a SysV segment left in IPC: both looked for from outside afterwards
+def a23(c):  # a file left in /dev/shm and a SysV segment left in IPC: both looked for from outside afterwards (outside,
+    left = []  # the same, which the check afterwards must see: the control)
+    tag = 'outside' if c.mode == 'outside' else f'run-{c.how}'
     try:
-        write(f'/dev/shm/.spark-console-proof-{ID}-run-{c.how}', b'left')
+        write(f'/dev/shm/.spark-console-proof-{ID}-{tag}', b'left')
+        left.append('/dev/shm')
     except OSError:
         pass
     try:
-        ctypes.CDLL(None, use_errno=True).shmget(shm_key(c.how), 4096, 0o1600)
+        if ctypes.CDLL(None, use_errno=True).shmget(shm_key('outside' if c.mode == 'outside' else c.how), 4096, 0o1600) >= 0:
+            left.append('IPC')
     except (OSError, AttributeError):
         pass
-    return []
+    return left if c.mode == 'outside' and len(left) == 2 else []
 
 
 def a24(c):  # the home's own mode: opened to all (sshd would then refuse the owner's key); looked at afterwards
+    if c.mode == 'outside':   # (by its rights only: the home is the owner's to change. Never done outside)
+        return ['may change its mode'] if os.stat(HOME).st_uid == UID else []
     try:
         os.chmod(HOME, 0o777)
     except OSError:
@@ -3001,6 +3040,23 @@ def after():
         except (OSError, AttributeError):
             pass
     out('V', 23, 'run', 'through' if left23 else 'blocked', what(left23))
+    seen23 = []   # (the control: what the attempt outside left must be seen, and goes)
+    q = f'/dev/shm/.spark-console-proof-{ID}-outside'
+    if os.path.lexists(q):
+        seen23.append('/dev/shm')
+        try:
+            os.unlink(q)
+        except OSError:
+            pass
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        sid = libc.shmget(shm_key('outside'), 0, 0)
+        if sid >= 0:
+            seen23.append('IPC')
+            libc.shmctl(sid, 0, None)
+    except (OSError, AttributeError):
+        pass
+    out('V', 23, 'outside', 'works' if len(seen23) == 2 else 'not-there', f'saw what was left in {" and ".join(seen23)}' if seen23 else 'saw nothing left outside')
     try:
         with open(os.path.join(HERE, 'home-mode')) as f:
             home_was = int(f.read().strip(), 8)

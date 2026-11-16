@@ -88,8 +88,8 @@ What only a real Spark proves (R63's Today has the lines to run there):
 
 - that systemd and the kernel grant each wall: the proof the one-time command runs, and the checks inside a plain change
   (no terminal, the owner's control groups read-only, no multicast);
-- attempts 15 to 18, 20 and 22 (they need root, sudo or a network), and a dead attempt among those the helper does not
-  demand work outside;
+- attempts 15 to 18, 20 and 22 (they need root, sudo or a network); a Spark's proof says "not controlled" for 15 to 18,
+  27 and 28, which nothing outside the walls can show working;
 - the owner of a file put back, and the home's owner (the tests are not root), and every line the helper runs only as
   root;
 - that a stopped change ends on a real systemd (the stand-in `systemctl` only marks a stop unless told otherwise).
