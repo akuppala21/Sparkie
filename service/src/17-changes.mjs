@@ -77,7 +77,9 @@ function question(viewer, ctx, text, choices, kind = 'question', { ownerOnly = f
     const id = randomBytes(5).toString('hex');
     // (a save button keeps the covered steps its label showed, 18-saved-yes.mjs savedShown)
     pendingChoices.set(id, { who: whoAsks(viewer, ctx), action: c.call?.action || null, args: c.call?.args || null, label: c.label, at: Date.now(), group, ownerOnly, validation,
-      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}) });
+      ...(c.call?.action === 'save_workflow' ? { covers: savedShown(c.call.args) } : {}), ...(danger ? { danger } : {}),
+      // (a go-ahead's answer keeps what its press gives, built by code: 21-ahead.mjs)
+      ...(c.ahead ? { ahead: c.ahead } : {}) });
     return { label: c.label, choice: id, ...(c.call ? { call: { action: c.call.action, args: { choice: id } } } : {}) };
   });
   const out = { outcome: kind === 'proposal' ? 'needs-ok' : 'question', question: text, choices: shown, group,

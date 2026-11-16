@@ -24,7 +24,8 @@
 // home: the owner's home there. written: what the task's earlier commands wrote (as placed lists it), counted as written here.
 // The result: class; why (the sorter's own words; a piece of the command in it is one quoted line, cut short); kinds
 // (design A 2.14's dangerous asks: root, lockout, delete, brain); form (run's exact form); simple (one program, no
-// chaining, redirection, wrapper or name set before it: only that may have an "always" kind); open (it needs what the
+// chaining, redirection, wrapper or name set before it: only that may have an "always" kind); program (a simple
+// command's program, as the sorter resolved it, else null); open (it needs what the
 // run wall hides); deletes (it removes or overwrites a named file: risky unless every one is copied first, A7b); scripts
 // (files it runs, to hash for the ask); answer ('set root' for sudo or su, 'owner command' for the root helper or its
 // line); lasting (a lock-out change the net can't put back); placed and wide (each place a program the sorter reads
@@ -195,6 +196,8 @@ function sortProgram(words, ctx, r, x) {
       name = base;
     }
     if (/^(?:mkfs|fsck)\.\w+$/.test(name)) name = name.split('.')[0];
+    // (the first program it resolves: a simple command's tool, for a go-ahead's kind, 21-ahead.mjs)
+    ctx.program ??= name;
     const h = SORT_HANDLERS[name] ?? (SORT_WRAP[name] && sortWrap), reads = SORT_READS[name], file = SORT_FILES[name], g = SORT_PROGS[name];
     if (!sortKnown(name)) unsure(`The sorter doesn't know the program ${sortQ(name)}.`);
     if (args.length === 1 && /^--(?:version|help)$/.test(args[0].text)) return;
@@ -333,6 +336,6 @@ function sortCommand(command, opts) {
   if (ctx.root) ctx.kinds.add('root');
   const kinds = r.class === 'look' ? [] : ['root', 'lockout', 'delete', 'brain'].filter(k => ctx.kinds.has(k)), plain = p => !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(p);
   const why = r.why.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').slice(0, 400), changes = [...ctx.changes].filter(([p]) => plain(p));
-  return { class: r.class, why, kinds, form, simple: r.simple, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
+  return { class: r.class, why, kinds, form, simple: r.simple, program: r.simple && typeof ctx.program === 'string' ? ctx.program : null, open: r.open, deletes: r.deletes, scripts: [...new Set(r.scripts)].filter(plain).map(s => s.slice(0, 400)), answer: r.answer, lasting: r.lasting,
     placed: changes.filter(([, w]) => !w).map(([p]) => p), wide: changes.filter(([, w]) => w).map(([p]) => p) };
 }
