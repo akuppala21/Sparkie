@@ -6,13 +6,14 @@
 // agent's ask and an agent's own call; who may approve, long and over 3,500 characters, forged lines and invisible
 // characters, a path its one line would change; the pair typed in the page's own chat box; what "came from" looks for
 // (a package's name blanked at its own place only, a host after "@", in one pass) and its bounds (64 things, 64 Mi
-// characters looked through); no action on main reaches it; a task parked at one is not carried on by the loop's
+// characters looked through); only the named raisers reach it; a task parked at one is not carried on by the loop's
 // budgets.
 //
-// The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). Nothing on main raises one, so these tests do: with
-// STATE_DIR/.test-danger.json present (stand-in fleet only), the next owner-only question becomes a dangerous ask with
-// the kinds, place, facts, bytes and reads the file names, and its yes runs that question's call. The question used is
-// a stop of a model that answers Sparkie's agents (routed there first), which asks the owner whoever asks.
+// The dangerous ask (design A 2.14; contract 8.18; 20-danger.mjs). These tests raise one through the stand-in hook;
+// the named raisers have their own tests. With STATE_DIR/.test-danger.json present (stand-in fleet only), the next
+// owner-only question becomes a dangerous ask with the kinds, place, facts, bytes and reads the file names, and its yes
+// runs that question's call. The question used is a stop of a model that answers Sparkie's agents (routed there first),
+// which asks the owner whoever asks.
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
@@ -24,13 +25,18 @@ import { Authenticator, passkeyHeader } from './authenticator.mjs';
 const MAIN_ORIGIN = serviceConfig().origin, TAILNET = new URL(MAIN_ORIGIN).hostname.split('.').slice(1).join('.');
 const KEY = new Authenticator(TAILNET, MAIN_ORIGIN);
 const TOKEN = '123456789:AAEtestTokenForSparkConsoleXYZ_abcdefghij', OWNER_TG = 5550001, STRANGER_TG = 5550002;
-const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', WORDS = `stop ${TESTORG} on spark 3`;
+// (the owner's words name the test model without its version: while an ask is open, a message holding its pair as a
+// number of its own is refused by design (dangerHolds), and this name holds 27; the stand-in brain is told what the
+// words mean, below every test's own rules)
+const TESTORG = 'sc-testorg--Qwen3.8-27B-abliterated-GGUF', WORDS = 'stop the testorg model on spark 3';
+const MEANS = [{ match: 'stop the testorg model on spark 3', rounds: [[{ name: 'stop_model', arguments: { spark: 'spark3', container: TESTORG } }]] }];
 const WAITS = 'That one waits for you in Spark Console.', CLOSED = 'That ask is no longer open. Ask again.';
 const pairing = () => ({ telegram: { token: TOKEN, bot: 'spark_test_bot', chatId: OWNER_TG, userId: OWNER_TG, name: 'Owner', pairedAt: '2026-11-10T00:00:00.000Z', approve: true } });
 function seed({ dir, stateDir }, files = {}) {
   mkdirSync(join(dir, 'secrets'), { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, 'secrets', 'secrets.json'), JSON.stringify(pairing()), { mode: 0o600 });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(stateDir, name), text, { mode: 0o600 });
+  writeFileSync(join(dir, 'model-script.json'), JSON.stringify(MEANS));
 }
 const FLEET = { telegram: true, knowledge: true, watchMs: 60000, env: { SPARK_CONSOLE_TELEGRAM_LIMITS: '1000,1000,1000', SPARK_CONSOLE_DANGER_LATE_MS: '0' } };
 let actKey;
@@ -71,8 +77,8 @@ function setState(spark, name, state, status) {
   writeFileSync(f, readFileSync(f, 'utf8').replace(new RegExp(`^${name.replace(/[.]/g, '\\.')}\\|[^|]*\\|[^|]*\\|`, 'm'), `${name}|${state}|${status}|`));
 }
 const stopsRun = () => auditLines().filter(l => l.action === 'stop_model' && l.ok && l.outcome === 'started');
-const script = rules => writeFileSync(join(fleet().dir, 'model-script.json'), JSON.stringify(rules));
-const noScript = () => rmSync(join(fleet().dir, 'model-script.json'), { force: true });
+const script = rules => writeFileSync(join(fleet().dir, 'model-script.json'), JSON.stringify([...rules, ...MEANS]));
+const noScript = () => script([]);
 const hook = spec => writeFileSync(join(fleet().stateDir, '.test-danger.json'), JSON.stringify(spec));
 const noHook = () => rmSync(join(fleet().stateDir, '.test-danger.json'), { force: true });
 const hhmm = t => new Date(t).toTimeString().slice(0, 5);
@@ -339,6 +345,20 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(!existsSync(asked) || !readFileSync(asked, 'utf8').includes(`the digits are ${a.pair}`), 'never sent to the model');
     digitsNowhere(a.pair);
     assert.deepEqual((await chatMessages(a.chat)).find(m => m.danger).choices.map(c => c.state), ['open', 'open']);
+  });
+
+  // By design (dangerHolds): the pair as a number of its own is refused anywhere in the owner's message, inside a model
+  // name too, so a test whose words hold a two-digit number would fail whenever the pair drawn is that number.
+  test('the pair inside a model name is refused as the pair; the same words with another number go through', { timeout: 120000 * SLOW }, async () => {
+    const a = await asking(), chat = await newChat(), name = n => `stop sc-nosuch--Qwen3.8-${n}B-GGUF on spark 3`;
+    const r = await api(`/chats/${chat}/messages`, { method: 'POST', body: { text: name(a.pair) } });
+    is(r, 400, name(a.pair));
+    assert.equal(r.json.error, 'Type the two digits in the ask’s own field.');
+    assert.ok(!(await chatMessages(chat)).some(m => m.content === name(a.pair)), 'not kept in the chat');
+    await say(chat, name(other(a.pair)));
+    assert.ok((await chatMessages(chat)).some(m => m.role === 'user' && m.content === name(other(a.pair))), 'the other number went on to Sparkie');
+    assert.deepEqual((await chatMessages(a.chat)).find(m => m.danger).choices.map(c => c.state), ['open', 'open']);
+    is(await press(a.chat, a.no.id), 200);
   });
 
   test('the third wrong pair closes it: its buttons go grey, and the right pair then runs nothing', { timeout: 120000 * SLOW }, async () => {
@@ -710,11 +730,16 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(!/innerHTML/.test(app), 'no HTML from text');
   });
 
-  test('no action on main reaches it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+  test('only the named raisers reach it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+    // the parts that may raise a dangerous ask, each a step that was read as one
+    const RAISERS = [
+      '20-danger.mjs',
+      '21-updates.mjs', // install_update (C5)
+    ];
     const src = join(REPO, 'service', 'src');
     for (const f of readdirSync(src).filter(x => x.endsWith('.mjs'))) {
       const text = readFileSync(join(src, f), 'utf8');
-      if (f !== '20-danger.mjs') assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
+      if (!RAISERS.includes(f)) assert.ok(!/\bdangerAsk\(/.test(text), `${f} raises a dangerous ask`);
     }
     assert.match(readFileSync(join(src, '20-danger.mjs'), 'utf8'), /function dangerForTest\(viewer, ctx, choices\) \{\n {2}if \(!ALL_LOCAL\) return null;/);
     const chat = await newChat(), r = await say(chat, WORDS);

@@ -168,7 +168,7 @@ async function fillTreeList(tree) {
 // the rail (R52), as the box's own open does. A refusal by the rail carries rail: true (run's door makes it a button).
 async function fillGate(viewer, ctx) {
   whoMayLook(viewer, ctx);
-  const by = ctx.via === 'sparkie' ? 'sparkie' : ctx.via === 'agent' || ctx.agentId || ctx.agent ? 'agent' : 'owner';
+  const by = boxBy(ctx);
   if (by !== 'owner' && agentSettings().halted) throw new HttpError(403, 'Agents’ changes are paused (your account menu → Agents and Telegram), and filling or reading back a box is a change, so nothing was done.');
   if (by === 'sparkie') {
     const rail = await brainRail();
@@ -178,7 +178,7 @@ async function fillGate(viewer, ctx) {
 // The box a caller holds, on a compute Spark that is still allowed one (never Spark 2 or the brain's: R1).
 function fillBoxNode(b) {
   const node = nodeById(b.spark);
-  if (!node || node.host === 'local' || brainSparks().includes(node.id)) throw new HttpError(403, `${sparkName(node || { id: b.spark })} holds the brain or is the hub, so its box isn’t used. Nothing was changed.`);
+  if (boxBarred(node)) throw new HttpError(403, `${sparkName(node || { id: b.spark })} holds the brain or is the hub, so its box isn’t used. Nothing was changed.`);
   return node;
 }
 function fillRecord(ctx, act, fields, t0) {

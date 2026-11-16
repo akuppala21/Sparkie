@@ -358,6 +358,7 @@ action({
     const { spark, container } = input, verb = input.do || 'keep', key = `${spark}/${container}`;
     if (verb !== 'keep' && ['image', 'port', 'volumes', 'env', 'memoryGB', 'gpu', 'command', 'once'].some(k => input[k] !== undefined)) throw new HttpError(400, 'With do restart or stop, give only spark and container.');
     notBrainsSpark([spark]);
+    notBoxName(container);   // (a box's names are its own: 21-box.mjs, R62)
     if (input.port !== undefined && input.port.split(':').map(Number).some(n => n < 1 || n > 65535)) throw new HttpError(400, 'A port is a number from 1 to 65535, like "3000:8080".');
     const node = sparkOf(viewer, spark), at = sparkName(node);
     mustUse(viewer);
