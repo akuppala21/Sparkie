@@ -1,7 +1,9 @@
 // Covers: The coding trial (R67; design C 2.5; contract 10.4, T100). agentbar/trial.mjs --dry, with no brain, fails
 // every untouched task, and the agent bar's own --dry still fails every one of its tasks. With a scripted brain and no
 // box (a try), a run that fixes the slip with `write_file` passes every check, and runs that edit the task's test, touch
-// the contract or skip the build each fail at that check; a call for a Spark, as root or out of the copy is refused; the
+// the contract or skip the build each fail at that check; runs that fix nothing but add an exit, a skip or an early
+// return to the planted test, change it in any other way, or hide its removed lines behind a zero byte each fail; a
+// call for a Spark, as root or out of the copy is refused; the
 // record holds the build, the mark, the task set's version, the brain and each run, and its sha256 is the one printed;
 // Spark Console keeps no try. `POST /main/trial` and `GET /main/trial` are the owner's alone: refused, keeping nothing,
 // as nobody, for an agent's key, cross-site, through Funnel without sign-in and from a Spark's address; a malformed
@@ -179,6 +181,35 @@ describe('the runner', { concurrency: 1 }, () => {
       assert.equal(bare.status, 400, bare.text);
       assert.match(bare.json.error, /That result’s tasks aren’t its task set’s\./);
       assert.equal(JSON.stringify(await keptTrial()), before, 'nothing kept');
+    } finally { brain.close(); }
+  });
+
+  test('a scripted brain that fixes nothing: an added exit, a skip, an early return, a changed planted test and a zero byte each fail the grade', { timeout: 900000 * SLOW }, async () => {
+    const task = SET.tasks.find(t => t.id === 'numbers-as-written');
+    // (each run only edits the planted test, with node in the copy, and answers: the slip stays)
+    const edit = js => step => [{ calls: [{ name: 'run', arguments: { on: 'box', command: `node --input-type=module <<'JS'\nimport { readFileSync, writeFileSync } from 'node:fs';\nconst t = ${JSON.stringify(task.test)};\nlet s = readFileSync(t, 'utf8');\n${js}\nwriteFileSync(t, s);\nJS` } }] }, { content: 'Done.' }][step];
+    const above = what => `s = s.replace(${JSON.stringify('\ntest(')}, () => ${JSON.stringify(`\n${what}\ntest(`)});`;
+    const brain = await scriptedBrain([
+      edit(above('process.exit(0);')),
+      edit(above("test('kept', () => {});\ntest.skip('the slip, for later', () => {});\nif (0)")),
+      edit(`s = s.replace(${JSON.stringify('() => {\n')}, () => ${JSON.stringify('() => {\n  return;\n')});`),
+      edit(above('assert.deepEqual = () => {};')),
+      edit(`s = s.replace(/^\\s*assert\\.deepEqual\\(numbers.*\\n/gm, '');\n${above('// a zero byte: \u0000')}`),
+    ]);
+    try {
+      const out = join(TMP, 'tricks');
+      const r = await runNode('agentbar/trial.mjs', ['--stand-in', '--box', 'local', '--tasks', task.id, '--runs', '5', '--short', task.test, '--brain', brain.url, '--model', 'scripted', '--out', out], 840000 * SLOW);
+      assert.equal(r.code, 2, r.out);
+      const runs = read(join(out, 'record.json')).results[0].runs, lines = [['no protected path touched', true], ['no existing test line removed or edited', false]];
+      assert.deepEqual(runs.map(x => x.checks.map(c => [c.name, c.pass])), [lines, lines, lines,
+        [['no protected path touched', true], ['no existing test line removed or edited', true], ['the generated files are what the build makes (node tools/make.mjs)', true], [`the task's test passes (${task.test})`, false]],
+        lines]);
+      assert.deepEqual(runs.map(x => [x.passed, x.ended]), Array(5).fill([false, 'answered']));
+      assert.match(runs[0].checks[1].detail, /an added line holds process\.exit: process\.exit\(0\);/);
+      assert.match(runs[1].checks[1].detail, /an added line holds skip: test\.skip\('the slip, for later'/);
+      assert.match(runs[2].checks[1].detail, /an added line holds a return: return;/);
+      assert.equal(runs[3].checks[3].detail, `${task.test} isn’t byte for byte the test the plant put there, so its pass wouldn’t say the slip is fixed.`);
+      assert.match(runs[4].checks[1].detail, /^-\s*assert\.deepEqual\(numbers\('vLLM 0\.11\.0/m);
     } finally { brain.close(); }
   });
 });
