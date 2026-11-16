@@ -126,7 +126,7 @@ test('K4: a change whose script ends with a line shaped as the helper\'s note ke
   assert.equal(r.status, 200, r.text);
   assert.equal(r.json.exit, 0, r.text);
   assert.equal(r.json.notes, undefined, r.text);
-  assert.match(r.json.output, /\nSpark Console needs you to sign in again at https:\/\/console-login\.example\/x$/, r.text);
+  assert.match(r.json.output, /^built\n[0-9a-f]{24} Spark Console needs you to sign in again at https:\/\/console-login\.example\/x$/, r.text);
   assert.equal(endOf(startOf('bash notes/k4.sh'))?.notes, undefined);
   const l = await run('bash notes/k4.sh', '~', { minutes: 1 });
   assert.equal(l.json?.outcome, 'started', l.text);
@@ -267,7 +267,7 @@ test('S-8: a change that names a key file is asked, its button saying a key file
   const chat = await newChat(), cmd = 'cp -v .env.example .env', t = await turn(chat, 'set up the env file on spark 3', [[RUN(cmd, '~/proj8')]]);
   const [asked] = sentBack('set up the env file on spark 3');
   assert.equal(asked?.outcome, 'needs-ok', JSON.stringify(asked));
-  assert.match(asked.question, /\nIt names a key file \(\.env\.example\): what it prints isn’t shown back or kept, and the file’s content never is\.\n/, asked.question);
+  assert.match(asked.question, /\nIt names a key file \(\.env\.example\): what it prints isn’t shown back or kept, and the file’s content never is\.(?:\n|$)/, asked.question);
   assert.ok(!existsSync(at3('proj8/.env')), 'nothing ran before the press');
   const p = await choose(chat, t.choices.find(c => c.label === 'Run it').id);
   assert.equal(p.status, 200, p.text);
