@@ -161,7 +161,7 @@ async function hubAsk(node, command, sorted, viewer, ctx, dir = RUNNER_DIR, why 
   const call = { action: 'run', args: { on: node.id, command, ...(dir !== RUNNER_DIR ? { dir } : {}) } };
   // (where the press runs it, built by code: the brain chooses dir, and on Spark 2 nothing is copied first)
   const starts = `It starts in ${dir}.`;
-  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_WALL}`;
+  const net = `It runs inside the lock-out net, through your own service manager (outside Spark Console’s own unit), with at most ${HUB_MEMORY} GB and ${RUNNER_SECONDS} seconds. If any of ${Object.values(HUB_WAYS.words).join(', ')} stops answering after it, it is put back at once, Sparkie’s and agents’ changes pause, and you are told. ${HUB_CHECKED} ${HUB_WALL}`;
   const reads = (ctx.reads || []).slice(-4).map(r => r.label);
   const out = (sorted.kinds || []).includes('delete')
     ? dangerAsk(viewer, ctx, { kinds: ['delete'], where: node.id, shown: { command }, call,
@@ -206,10 +206,13 @@ function hubRoute() {
   });
 }
 const hubJson = s => { try { return JSON.parse(s); } catch { return null; } };
+// What those checks are, said on the ask: Spark Console asking itself on Spark 2 (its own socket, the owner's login in a
+// header; Tailscale's own list of its route), not a visit through your browser or passkey.
+const HUB_CHECKED = 'These are Spark Console’s own checks, made on Spark 2 itself: they don’t prove your browser or passkey still reach it.';
 const HUB_WAYS = {
   // (a put-back puts files back; it doesn't start a container: the brain is started again by the owner's word)
   after: lost => (lost.includes('brain') ? 'The put-back puts back files only; it doesn’t start the brain again: /restart sparkie does.' : ''),
-  words: { signin: 'your sign-in to Spark Console', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
+  words: { signin: 'Spark Console answering you as the owner', door: 'its agent door', models: 'its model address', route: 'its route on Tailscale', brain: 'the brain' },
   probe: async () => {
     const [who, door, models, route, brain] = await Promise.all([hubSelf('/whoami'), hubSelf('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize' }), hubSelf('/v1/models'),
       hubRoute(), mainStatus().catch(() => null)]);

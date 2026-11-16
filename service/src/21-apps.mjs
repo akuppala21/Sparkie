@@ -258,10 +258,13 @@ function appDone(j, container, link, answers, port) {
     : `${container} is running. No port is known for it, so there’s no link.`);
 }
 // One that didn't come up is stopped again (and not brought back by itself); its container stays, so its log can be read.
+// (the stop is looked at, A-23: "stopped again" only when it was; else it may still be running, and that is what the
+// operation says, also as its cancel's answer and chat line, cleanUp)
 async function appPutBack(job, node, container) {
   consoleStopped.set(`${node.id}/${container}`, Date.now());
-  await run(node, `docker stop --time 20 ${q(container)} >/dev/null 2>&1; true`, { timeout: 90000 });
-  note(job, 'It didn’t come up, so it was stopped again. Its container is kept, so its log can be read.');
+  if ((await stopChecked(node, container)) === 'stopped') return note(job, 'It didn’t come up, so it was stopped again. Its container is kept, so its log can be read.');
+  job.cleanUp = `It didn’t come up, and it couldn’t be stopped: ${container} may still be running on ${sparkName(node)}. Stop it there, then look at its log.`;
+  note(job, job.cleanUp);
 }
 
 // Sparkie's target check for keep_running (R25): the owner's words name the Spark and every word of the container's

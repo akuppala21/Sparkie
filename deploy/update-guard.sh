@@ -10,8 +10,10 @@
 #   update-guard.sh disarm      the new build was confirmed through the real address: timer and copy gone
 #   update-guard.sh put-back pull|timer|hand [why]
 #       Stops the install if it still runs (the timer's put-back only), puts back what differs from the copy, starts
-#       the service again whatever happens, then disarms. pull.sh writes the update's result itself; the timer's and a
-#       put-back by hand write it here.
+#       the service again whatever happens, then disarms. Each folder goes back by a copy made beside it and checked
+#       first, then moved in: a copy back that fails (a full disk) changes nothing live, and the copy, its guard file and
+#       its timer stay, to be tried again. The copy goes only once everything it holds is back as it was (answering or
+#       not). pull.sh writes the update's result itself; the timer's and a put-back by hand write it here.
 #   update-guard.sh status      armed or not
 # It needs no sudo and never touches SSH, Tailscale, the firewall, users or any model. Run by hand when an update was
 # left half-done:  bash ~/.local/share/spark-console/update-guard/update-guard.sh put-back hand
@@ -25,18 +27,23 @@ NAME=spark-console-update-guard
 # it wasn't there).
 BY_HAND=(go-back.sh RECOVERY.txt REBUILD.txt pull.sh update-guard.sh watchdog.sh install-mark)
 WATCHDOG_UNITS=(spark-console-watchdog.service spark-console-watchdog.timer)
-# The timer's length (a test may shorten it, only with SPARK_CONSOLE_ALL_LOCAL=1).
-GUARD_S=1800
+# The timer's length, and how long a run waits for the lock (a test may shorten them, only with SPARK_CONSOLE_ALL_LOCAL=1).
+GUARD_S=1800 LOCK_S=120
 if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_GUARD_S:-}" =~ ^[0-9]+$ ]]; then GUARD_S=$SPARK_CONSOLE_UPDATE_GUARD_S; fi
+if [ "${SPARK_CONSOLE_ALL_LOCAL:-}" = 1 ] && [[ "${SPARK_CONSOLE_UPDATE_LOCK_S:-}" =~ ^[0-9]+$ ]]; then LOCK_S=$SPARK_CONSOLE_UPDATE_LOCK_S; fi
 
 say() { echo "  $*"; }
 # systemctl for the user's manager, with this script's lock and pull.sh's left behind (nothing it starts holds them).
 sc() { systemctl --user "$@" 8>&- 9>&-; }
-# One at a time: a put-back by the timer and one by pull.sh, or a put-back and a disarm, never run together.
+# One at a time: a put-back by the timer and one by pull.sh, a put-back and a disarm, or an arm, never run together, and
+# nothing runs without the lock. It fails (1) when another run still holds it after LOCK_S seconds, (2) with no flock.
 lock() {
-  mkdir -p "$SHARE"
-  if command -v flock >/dev/null 2>&1; then exec 8>"$SHARE/update-guard.lock"; flock -w 120 8 || true; fi
+  mkdir -p "$SHARE" || return 1
+  command -v flock >/dev/null 2>&1 || { say "flock isn't on this Spark, so the way back can't be sure it runs alone. Nothing was changed."; return 2; }
+  exec 8>"$SHARE/update-guard.lock" || return 1
+  flock -w "$LOCK_S" 8
 }
+held() { say "Another run of the way back still holds its lock ($SHARE/update-guard.lock), so nothing was changed$1. Try again once it has ended."; }
 field() { sed -n "s/^$1=//p" "$G/guard" 2>/dev/null | head -n 1; }
 timer_off() {
   sc disable --now "$NAME.timer" >/dev/null 2>&1
@@ -51,6 +58,22 @@ print(d.get("build") or "" if d.get("ok") is True else "")' 2>/dev/null || true
 }
 # copy_dir <from> <to>: an exact copy, if <from> is there.
 copy_dir() { [ ! -d "$1" ] || { mkdir -p "$2" && cp -a "$1/." "$2/"; }; }
+# stage <saved> <beside>: an exact copy of a saved folder made beside the live one, and checked. Nothing live changes.
+stage() { rm -rf "$2" && mkdir -p "$2" && cp -a "$1/." "$2/" && same "$1" "$2"; }
+# swap <beside> <live>: the live folder's contents become the staged ones, moved in (on one disk a move needs no room).
+# It stays the same folder, so Tailscale's routes keep pointing at it.
+swap() {
+  local e ok=0
+  { mkdir -p "$2" && find "$2" -mindepth 1 -delete; } || ok=1
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do { [ -e "$e" ] || [ -L "$e" ]; } || continue; mv "$e" "$2/" || ok=1; done
+  rmdir "$1" 2>/dev/null
+  return $ok
+}
+# put_file <saved> <live>: one file back by a copy beside it, checked, then renamed over the live one.
+put_file() {
+  local t="${2%/*}/.${2##*/}.putback"
+  { cp -p "$1" "$t" && same "$1" "$t" && mv -f "$t" "$2"; } || { rm -f "$t"; return 1; }
+}
 # same <saved> <live>: the live folder or file holds exactly what was saved (both missing counts as the same).
 same() {
   if [ -d "$1" ]; then diff -rq --no-dereference "$1" "$2" >/dev/null 2>&1
@@ -73,6 +96,9 @@ take_copy() {
 arm() {
   [ $# = 4 ] && [[ "$1" =~ ^[0-9a-f]{12}$ ]] && [[ "$2" =~ ^[0-9a-f]{12}$ ]] && [[ "$3" =~ ^[0-9a-f]{12}$ ]] && [[ "$4" =~ ^[0-9]+$ ]] \
     || { echo "Usage: $0 arm <tree> <new build> <old build> <process group>" >&2; return 2; }
+  local r=0
+  lock || r=$?
+  if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ''; return 1; fi
   if [ -e "$G" ] && ! whole; then rm -rf "$G"; fi
   [ ! -e "$G" ] || { say "An earlier update's way back is still armed ($G). Put it back first: bash $G/update-guard.sh put-back hand"; return 1; }
   local boot=''
@@ -110,54 +136,107 @@ EOF
 }
 
 disarm() {
-  lock
+  local r=0
+  lock || r=$?
+  if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ', and the way back is still armed'; return 1; fi
   [ -d "$G" ] || { say "The way back had already put the build from before back."; return 1; }
   timer_off
   drop
   return 0
 }
 
+# stop_install: an install still running is stopped (only pull.sh's own group, on this boot). For the timer's put-back.
+stop_install() {
+  local pgid boot
+  pgid=$(field pgid); boot=$(field boot)
+  [[ "$pgid" =~ ^[0-9]+$ ]] && [ "$boot" = "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" ] \
+    && kill -0 -- "-$pgid" 2>/dev/null && ps -o args= -p "$pgid" 2>/dev/null | grep -q 'pull\.sh' || return 1
+  say "Stopping the update that is still running ..."
+  kill -TERM -- "-$pgid" 2>/dev/null
+  for _ in $(seq 1 60); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 1; done
+  kill -KILL -- "-$pgid" 2>/dev/null
+  return 0
+}
+# result <why>: the update's result, for the timer's put-back and one by hand (pull.sh writes its own).
+result() {
+  [ "$by" != pull ] || return 0
+  python3 -I -c 'import datetime, json, os, sys, tempfile
+path, tree, build, why = sys.argv[1:5]
+d = {"tree": tree or None, "build": build or None, "result": "not kept", "why": why[:600],
+     "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".update-result.", suffix=".tmp")
+with os.fdopen(fd, "w") as f: json.dump(d, f)
+os.replace(tmp, path)' "$STATE/update-result.json" "$tree" "$build" "$1" 2>/dev/null
+}
+# kept <what>: the build from before couldn't be put back whole. The copy, its guard file and its timer stay (the timer
+# fires again after a restart of Spark 2), to be tried again once there is room.
+kept() {
+  say "The build from before the update couldn't be put back whole: $1. Its copy is kept, and the way back stays armed. Make room, then run: bash $G/update-guard.sh put-back hand"
+  result "$why; the build from before couldn't be put back whole: $1. Its copy is kept: bash $G/update-guard.sh put-back hand"
+}
+# back_whole: everything the copy holds is back as it was (the page, the service and its unit, the by-hand files, the
+# watchdog's units, the source). Only then does the copy go.
+back_whole() {
+  local f u
+  { [ ! -d "$G/ui" ] || same "$G/ui" "$HOME/spark-console"; } && { [ ! -d "$G/service" ] || same "$G/service" "$HOME/spark-console-service"; } \
+    && { [ ! -f "$G/units/spark-console-api.service" ] || same "$G/units/spark-console-api.service" "$UNITS/spark-console-api.service"; } || return 1
+  for f in "${BY_HAND[@]}"; do same "$G/share/$f" "$SHARE/$f" || return 1; done
+  for u in "${WATCHDOG_UNITS[@]}"; do [ ! -f "$G/units/$u" ] || same "$G/units/$u" "$UNITS/$u" || return 1; done
+  [ ! -d "$G/src" ] || same "$G/src" "$HOME/spark-console-src"
+}
+
 put_back() {
-  local by="${1:-hand}" why="${2:-}" tree build from pgid boot restart='' back='' now
-  lock
+  local by="${1:-hand}" why="${2:-}" tree build from restart='' back='' now r=0 f u
+  lock || r=$?
+  # (the timer's run: an install still running may hold things up; it is stopped first, then the lock asked for again)
+  if [ "$r" = 1 ] && [ "$by" = timer ] && whole && stop_install; then r=0; lock || r=$?; fi
+  if [ "$r" != 0 ]; then [ "$r" = 2 ] || held ''; return 1; fi
   [ -d "$G" ] || { say "Nothing to put back: no update's way back is armed."; return 0; }
   whole || { say "The copy in $G isn't whole (an earlier run was cut off), so nothing is put back from it. It is removed."; timer_off; rm -rf "$G"; return 1; }
-  tree=$(field tree); build=$(field build); from=$(field from); pgid=$(field pgid); boot=$(field boot)
+  tree=$(field tree); build=$(field build); from=$(field from)
   [ -n "$why" ] || why='nothing confirmed the new build through the real address in time'
-  # From the timer: an install still running is stopped first (only pull.sh's own group, on this boot).
-  if [ "$by" = timer ] && [[ "$pgid" =~ ^[0-9]+$ ]] && [ "$boot" = "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" ] \
-      && kill -0 -- "-$pgid" 2>/dev/null && ps -o args= -p "$pgid" 2>/dev/null | grep -q 'pull\.sh'; then
-    say "Stopping the update that is still running ..."
-    kill -TERM -- "-$pgid" 2>/dev/null
-    for _ in $(seq 1 60); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 1; done
-    kill -KILL -- "-$pgid" 2>/dev/null
-  fi
+  # From the timer: an install still running is stopped first.
+  [ "$by" != timer ] || stop_install || true
   same "$G/ui" "$HOME/spark-console" && same "$G/service" "$HOME/spark-console-service" \
     && same "$G/units/spark-console-api.service" "$UNITS/spark-console-api.service" || restart=1
   if [ -n "$restart" ]; then
+    # First the build from before is copied beside each live folder and checked: a copy that fails (a full disk, a
+    # disk error) changes nothing live, and the new build goes on running until the copy can be put back.
+    if ! { { [ ! -d "$G/ui" ] || stage "$G/ui" "$HOME/.spark-console.putback"; } \
+        && { [ ! -d "$G/service" ] || stage "$G/service" "$HOME/.spark-console-service.putback"; } \
+        && { [ ! -f "$G/units/spark-console-api.service" ] || { mkdir -p "$UNITS" && cp -p "$G/units/spark-console-api.service" "$UNITS/.spark-console-api.service.putback" \
+          && same "$G/units/spark-console-api.service" "$UNITS/.spark-console-api.service.putback"; }; }; }; then
+      rm -rf "$HOME/.spark-console.putback" "$HOME/.spark-console-service.putback"; rm -f "$UNITS/.spark-console-api.service.putback"
+      kept "it couldn't be copied back (is the disk full?), so nothing was changed and the new build still runs"
+      return 1
+    fi
     say "Putting the build from before the update back (its page, its service and its unit; people, chats and settings stay) ..."
     # However this ends, the service is started again.
     trap 'sc daemon-reload >/dev/null 2>&1; sc start spark-console-api >/dev/null 2>&1' EXIT
     sc stop spark-console-api >/dev/null 2>&1
-    for p in "ui:$HOME/spark-console" "service:$HOME/spark-console-service"; do
-      if [ -d "$G/${p%%:*}" ]; then mkdir -p "${p#*:}"; find "${p#*:}" -mindepth 1 -delete; cp -a "$G/${p%%:*}/." "${p#*:}/"; fi
-    done
-    [ ! -f "$G/units/spark-console-api.service" ] || { mkdir -p "$UNITS"; cp -p "$G/units/spark-console-api.service" "$UNITS/"; }
+    [ ! -d "$G/ui" ] || swap "$HOME/.spark-console.putback" "$HOME/spark-console"
+    [ ! -d "$G/service" ] || swap "$HOME/.spark-console-service.putback" "$HOME/spark-console-service"
+    [ ! -f "$UNITS/.spark-console-api.service.putback" ] || mv -f "$UNITS/.spark-console-api.service.putback" "$UNITS/spark-console-api.service"
     sc daemon-reload >/dev/null 2>&1
     sc restart spark-console-api >/dev/null 2>&1
   fi
-  # The by-hand files, the watchdog and the source, as they were (no restart for these). A file that wasn't there goes.
+  # The by-hand files, the watchdog and the source, as they were (no restart for these), each by a copy beside it. A
+  # file that wasn't there goes, only while the copy is whole: a copy that went away under this run removes nothing.
   for f in "${BY_HAND[@]}"; do
-    if [ -f "$G/share/$f" ]; then same "$G/share/$f" "$SHARE/$f" || { cp -p "$G/share/$f" "$SHARE/.$f.back" && mv -f "$SHARE/.$f.back" "$SHARE/$f"; }
-    else rm -f "$SHARE/$f"; fi
+    if [ -f "$G/share/$f" ]; then same "$G/share/$f" "$SHARE/$f" || put_file "$G/share/$f" "$SHARE/$f"
+    elif whole; then rm -f "$SHARE/$f"; fi
   done
   for u in "${WATCHDOG_UNITS[@]}"; do
-    if [ -f "$G/units/$u" ]; then same "$G/units/$u" "$UNITS/$u" || cp -p "$G/units/$u" "$UNITS/"; fi
+    if [ -f "$G/units/$u" ]; then same "$G/units/$u" "$UNITS/$u" || put_file "$G/units/$u" "$UNITS/$u"; fi
   done
   if [ -d "$G/src" ] && ! same "$G/src" "$HOME/spark-console-src"; then
-    rm -rf "$HOME/spark-console-src.back" && cp -a "$G/src" "$HOME/spark-console-src.back" \
-      && rm -rf "$HOME/spark-console-src" && mv "$HOME/spark-console-src.back" "$HOME/spark-console-src"
+    if stage "$G/src" "$HOME/spark-console-src.back"; then rm -rf "$HOME/spark-console-src" && mv "$HOME/spark-console-src.back" "$HOME/spark-console-src"
+    else rm -rf "$HOME/spark-console-src.back"; fi
   fi
+  whole || { say "The copy in $G went away while this ran (another run took it), so nothing more was changed."; return 1; }
+  # Not all back as the copy holds it: the copy stays armed, to be tried again.
+  back_whole || { kept "some of its files couldn't be copied back (is the disk full?)"; return 1; }
   # The newest install snapshot now holds what is installed: "Undo the last update" and go-back.sh pass over it.
   local snap
   snap=$(ls -d "$SHARE"/releases/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z 2>/dev/null | tail -n 1)
@@ -166,18 +245,9 @@ put_back() {
   # Answering again: the build from before, on the socket.
   for _ in $(seq 1 30); do now=$(socket_build); [ -z "$now" ] || break; sleep 1; done
   if [ -n "$now" ] && { [ "$now" = "$from" ] || [ -z "$restart" ]; }; then back=yes; fi
+  # (the files are back whole, so the copy holds nothing the live folders don't: it goes, answering or not)
   timer_off
-  if [ "$by" != pull ]; then
-    python3 -I -c 'import datetime, json, os, sys, tempfile
-path, tree, build, why = sys.argv[1:5]
-d = {"tree": tree or None, "build": build or None, "result": "not kept", "why": why[:600],
-     "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")}
-os.makedirs(os.path.dirname(path), exist_ok=True)
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".update-result.", suffix=".tmp")
-with os.fdopen(fd, "w") as f: json.dump(d, f)
-os.replace(tmp, path)' "$STATE/update-result.json" "$tree" "$build" \
-      "$why; $([ -n "$back" ] && echo "the build from before ($from) was put back and answers" || echo "the build from before was put back but doesn't answer")" 2>/dev/null
-  fi
+  result "$why; $([ -n "$back" ] && echo "the build from before ($from) was put back and answers" || echo "the build from before was put back but doesn't answer")"
   if [ -n "$back" ]; then say "The build from before the update ($from) is back and answers."
   else say "The build from before the update was put back, but it doesn't answer. See ~/.local/share/spark-console/RECOVERY.txt"; fi
   drop

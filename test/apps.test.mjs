@@ -596,6 +596,30 @@ describe('apps kept running', { concurrency: 1 }, () => {
     assert.equal(stateOf('spark3', 'open-webui'), 'running');
   });
 
+  // A-23: a new app whose check fails while Docker on its Spark answers nothing: its stop isn't confirmed, so it is
+  // never said to be stopped again; the operation says it may still be running (its log and its clean-up words).
+  test('a new app that didn’t come up while Docker there answered nothing isn’t said to be stopped again: it may still be running, and the operation says so', { timeout: 180000 * SLOW }, async () => {
+    const r = await keep({ spark: 'spark4', container: 'stuck-app', image: 'nginx:1.27', port: `${await free()}:80` });
+    assert.equal(r.json?.outcome, 'started', r.text);
+    const said = 'It didn’t come up, and it couldn’t be stopped: stuck-app may still be running on Spark 4. Stop it there, then look at its log.';
+    try {
+      // (it runs: from here every docker command on Spark 4 fails at once, as when Docker there doesn't answer)
+      await waitFor(async () => { if (stateOf('spark4', 'stuck-app') === 'running') return true; const o = (await api(`/jobs/${r.json.operation}`)).json; assert.equal(o.status, 'running', JSON.stringify(o)); return false; },
+        { timeout: 60000 * SLOW, what: 'stuck-app running', every: 100 });
+      writeFileSync(m('spark4', 'stall'), '0');
+      const w = await finished(r.json.operation);
+      assert.equal(w.status, 'failed', JSON.stringify(w));
+      const job = (await api(`/jobs/${r.json.operation}`)).json;
+      assert.ok(job.log.some(l => l.endsWith(said)), job.log.join('\n'));
+      assert.ok(!job.log.some(l => /so it was stopped again/.test(l)), job.log.join('\n'));
+      assert.equal(job.cleanUp, said);
+      assert.equal(stateOf('spark4', 'stuck-app'), 'running', 'Docker never answered the stop');
+    } finally {
+      rmSync(m('spark4', 'stall'), { force: true });
+      setState('spark4', 'stuck-app', 'exited', 'Exited (0) just now');
+    }
+  });
+
   test('stop while its Spark is off takes the app off the list, and it isn’t started when the Spark comes back', { timeout: 240000 * SLOW }, async () => {
     assert.ok(await listed('spark4', 'hand-db'));
     await offline(['spark4']);

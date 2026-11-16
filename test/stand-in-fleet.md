@@ -75,6 +75,8 @@ covers, is in `test/README.md`.
     every call as one JSON line in the rehearsal's `calls.log` and reads its settings from the rehearsal's `standin/`
     folder (each file's head lists them). They build no wall: a look or a change runs unwalled, the wall proof's units
     are played, not run, and the lock-out net's timer is armed but never fires (a test runs the put-back itself).
+    `standin/home` (`rehearse(…, { home: true })`, the eval's practice Spark only) makes `systemd-run` give a run, look
+    or root unit the made-up root's view of the home, so `~` is the Spark's folder; a real Spark needs none of it.
   - `plugs.mjs` — the plug controller (matterjs-server's WebSocket): `get_nodes`, and `device_command` on/off (a node
     marked `readOnly` refuses with Matter's status 126). `attach()` ties nodes to Sparks: their watts follow the offline
     file (about 58 W on, 2.5 W shut down, 0 off), off takes the Spark down, on boots it; `setStuck`, `setNoBoot`,

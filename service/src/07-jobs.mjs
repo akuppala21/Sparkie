@@ -112,11 +112,14 @@ ${hfEachFile('snapshots/$snap', ':', 16 * 2 ** 20)}
 [ -d "$dir/refs" ] || exit 0
 ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
   if (checked.code) throw new Error(`${name} wasn’t copied from ${from.id}: ${String(checked.err || checked.out || '').trim().split('\n').pop() || 'its files couldn’t be checked'}`);
-  return new Promise((resolve, reject) => {
+  // Both ends first: the receiving Spark only unpacks into its staging folder (A-21: a sender that ends badly after a
+  // whole archive, a file it couldn't read left out, must never leave a copy that looks whole). Anything but 0 is a
+  // failure: a process ended by a signal (a cancel kills both) closes with null.
+  let { failed, errText } = await new Promise(resolve => {
     const src = spawnOn(from, { command: store === 'hf'
       ? `cd ${HF_HUB} || exit 1; ${hfSnap(q(folder))}; [ -n "$snap" ] || exit 1; tar -chf - ${q(folder)}/snapshots/"$snap" $([ -d ${q(folder)}/refs ] && echo ${q(folder)}/refs)`
       : `tar -C ${base} -cf - ${q(folder)}` });
-    const dst = spawnOn(to, { command: `rm -rf ${staging}/${q(folder)} && mkdir -p ${staging} && tar -C ${staging} -xf - && rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }` });
+    const dst = spawnOn(to, { command: `rm -rf ${staging}/${q(folder)} && mkdir -p ${staging} && tar -C ${staging} -xf -` });
     let done = 0, errText = '', closed = 0, failed = false;
     const abort = () => { errText += '\n(cancelled)'; src.kill('SIGKILL'); dst.kill('SIGKILL'); };
     if (job.abort?.signal.aborted) abort(); else job.abort?.signal.addEventListener('abort', abort, { once: true });
@@ -126,17 +129,23 @@ ${hfEachFile('refs', ':', 16 * 2 ** 20)}`, { timeout: 120000 }) : { code: 0 };
     for (const p of [src, dst]) {
       p.stderr.on('data', d => { errText = (errText + d).slice(-4000); });
       p.on('close', code => {
-        if (code) failed = true;
-        if (++closed < 2) return;
-        if (failed) {
-          run(to, `rm -rf ${staging}/${q(folder)}`);
-          reject(new Error(/Permission denied/.test(errText)
-            ? `Copy failed: some files on ${from.id} can’t be read as your user (a container downloaded them as root). On ${from.id} run: sudo chown -R $USER ${store === 'hf' ? `~/.cache/huggingface/hub/${folder}` : `~/${CONFIG.modelsDir}/${folder}`}`
-            : `Copy failed: ${errText.trim() || 'connection closed'}`));
-        } else resolve();
+        if (code !== 0) failed = true;
+        if (++closed === 2) { job.abort?.signal.removeEventListener('abort', abort); resolve({ failed, errText }); }
       });
     }
   });
+  // Both ended 0: a second command moves it into place, and the copy counts only if that ended 0 too.
+  if (!failed) {
+    const moved = await run(to, `rm -rf ${base}/${q(folder)} && mv ${staging}/${q(folder)} ${base}/${q(folder)} && { rmdir ${staging} 2>/dev/null || true; }`, { timeout: 600000 });
+    if (moved.code === 0) return;
+    errText = `${errText}\n${moved.err || moved.out || `it couldn’t be moved into place on ${to.id}`}`;
+  }
+  // Otherwise what was copied goes, and whether it went is looked at: left there, it would hold up to a whole model.
+  const gone = await run(to, `rm -rf ${staging}/${q(folder)}`, { timeout: 600000 });
+  const left = gone.code ? `\nThe part-copied folder on ${to.id} couldn’t be removed: on ${to.id} run rm -rf ${store === 'hf' ? `~/.cache/huggingface/hub/.spark-console-incoming/${folder}` : `~/${CONFIG.modelsDir}/.incoming/${folder}`}` : '';
+  throw new Error(/Permission denied/.test(errText)
+    ? `Copy failed: some files on ${from.id} can’t be read as your user (a container downloaded them as root). On ${from.id} run: sudo chown -R $USER ${store === 'hf' ? `~/.cache/huggingface/hub/${folder}` : `~/${CONFIG.modelsDir}/${folder}`}${left}`
+    : `Copy failed: ${errText.trim() || 'connection closed'}${left}`);
 }
 
 // What a plan stops beyond what was shown and approved (`approved`: "spark/container" strings), so nothing that started
@@ -145,6 +154,8 @@ function unapprovedStops(steps, nodeId, keep, approved) {
   if (!approved) return [];
   return steps.filter(s => s.kind === 'stop' && !keep.includes(s.container) && !approved.includes(`${nodeId}/${s.container}`)).map(s => s.container);
 }
+// How long a one-Spark start waits for its model to answer (settable on the stand-in fleet, as the other waits are).
+const START_READY_MS = Number(process.env.SPARK_CONSOLE_READY_MS || 45 * 60000);
 const planMoved = (extra, where) => new Error(`${extra.join(', ')} started using ${where}’s GPU after the plan was shown, so nothing was stopped or started. Ask for it again to see the new plan.`);
 async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, approved = null, fix = {}) {
   const p = await plan(modelName, nodeId, viewer, null, null, how);
@@ -186,11 +197,12 @@ async function deploy(job, modelName, nodeId, viewer, keep = [], how = null, app
     const share = [...memoryShare(model, [measured ? { node: nodeId, steps: [], memory: { ...p.memory, ...measured } } : { ...p, node: nodeId }], keep), ...fixFlags(model, fix)];
     if (share.length && share[0] === ENGINES[engineOf(model)].memFlag) note(job, `Letting it use ${Math.round(Number(share[1]) * 100)}% of ${nodeId}’s memory (what’s free)`);
     const started = await run(node, dockerRunCommand(model, p.tsip, p.store, share), { timeout: 120000 });
+    // (one that timed out, or whose Spark stopped answering, may still have made the container: the put-back stops it too)
+    if (!started.code || started.code === 255 || /\(timed out\)$/.test(started.err)) (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     if (started.code) throw new Error(`Docker couldn’t start it: ${started.err || started.out}`);
-    (job.ranHere ||= []).push(`${nodeId}/${cname}`);
     consoleStopped.delete(`${nodeId}/${cname}`);
     step(job, 'Loading the model; this can take a few minutes');
-    const deadline = Date.now() + 45 * 60 * 1000;
+    const deadline = Date.now() + START_READY_MS;
     for (let i = 0; Date.now() < deadline; i++) {
       await sleep(5000);
       job.checkPause?.();
@@ -220,7 +232,8 @@ docker logs --tail 1 ${q(cname)} 2>&1 | tail -1`, { timeout: 20000 });
         throw new Error(`The model server stopped while loading.\n${causeLines(logs.out)}${logs.out.trim().slice(-2500)}`);
       }
     }
-    throw new Error('The model didn’t become ready within 45 minutes. It may still be loading; check its logs.');
+    // (the put-back that follows stops it, and says so if it couldn't: A-23)
+    throw new Error(`The model didn’t become ready within ${spanOf(START_READY_MS)}, so the start gave up on it. Its log (container_logs) may say why.`);
   } catch (e) {
     // It didn't start: the copy that was set aside gets its name back and starts again.
     await asideBack(job);

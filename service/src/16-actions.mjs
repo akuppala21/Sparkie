@@ -611,8 +611,8 @@ async function runAction(name, viewer, args, ctx = {}) {
   // From Telegram these wait for the owner in Spark Console (undo_update asks its own question, naming the build).
   if (ctx.channel && PAGE_ONLY.has(name) && name !== 'undo_update' && !ctx.ownerConfirmed && !tgOwnMemory(name, input, ctx)) {
     const label = pageOnlyLabel(name, input);
-    const out = question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
-      [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true });
+    const out = { ...question(viewer, ctx, `${label}? That one waits for you in Spark Console: press it there, with your passkey.`,
+      [{ label, call: { action: name, args: input } }, { label: 'No, leave it', call: null }], 'question', { ownerOnly: true }), askedBecause: 'page' };
     audit({ via: ctx.via || null, actor: ctx.actor || null, channel: ctx.channel, ...(ctx.from ? { from: ctx.from } : {}), ...(ctx.chat ? { chat: ctx.chat } : {}), request: requestLine(ctx.request), action: name, args, ok: true, outcome: 'question' });
     return out;
   }
@@ -630,12 +630,14 @@ async function runAction(name, viewer, args, ctx = {}) {
     // A workflow that's off isn't offered as a button either.
     if (wst?.state === 'untested') throw new HttpError(409, offMessage(wst));
     // (and a clear one runs at once only while Sparkie's brain is checked: the rail, 21-brain-rail.mjs, R52)
-    if (!check.clear || !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked) {
+    // (which gate asked goes on the question as askedBecause: the words, or the rail)
+    const because = !check.clear ? 'words' : !(await brainRail({ wait: RAIL_LOOK_WAIT_MS })).checked ? 'rail' : null;
+    if (because) {
       // Not clear: a question. For a workflow not yet validated, the yes is also its validation run (the owner's, or an
       // agent's that may change things, v3.1).
       const validating = wst?.state === 'needs-validation' && viewer.role === 'owner';
       const firm = await firmModel(name, input);
-      return propose(viewer, ctx, name, validating ? { ...firm, __validate: was.id } : firm);
+      return propose(viewer, ctx, name, validating ? { ...firm, __validate: was.id } : firm, because);
     }
     ctx = { ...ctx, auto: true };
   }

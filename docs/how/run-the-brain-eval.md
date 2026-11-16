@@ -7,7 +7,10 @@ stand-in console and stand-in Sparks; only the brain is real.
 ## Touch
 
 Run it on a compute Spark that is on (never Spark 2, the hub: contract 6.23), from a copy of the tree, in a container
-that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`sparkie_setup`'s `savedSetups`, `current`):
+that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`sparkie_setup`'s `savedSetups`, `current`).
+A Spark that looks the console's name up on the internet reaches it through Funnel, and every request gets 401 ("Sign
+in to see more"): give the container Spark 2's tailnet address for that name, `--add-host <console name>:<Spark 2's
+tailnet address>` (from `tailscale ip -4` there), as `eval-on-spark.sh` beside the repository does:
 1. The build about to go in, at its own cap: `node test/eval.mjs --brain-url https://<Spark 2>:8443/console/api
    --setup <id>`. The relay sends only the brain's requests to the one model address. The run reads which setup Spark 2
    serves and what it runs from its `GET /v1/models`, and refuses another `--setup` (R52).
@@ -17,20 +20,17 @@ that can reach the tailnet (`--network host`), as the setup Spark 2 runs (`spark
 4. Once the build is installed, on the tailnet as the owner, with the results file: `node test/eval.mjs --store
    <file>`. `sparkie_setup`'s `brainCheck.eval` then says it is on record. A full run that met the bar lets Sparkie
    change things without asking (R52), so once a passkey is set up it waits for your yes: the console answers 202 and
-   puts one button in the chat “The brain eval’s result”; press it on the page, with your passkey.
+   puts one button in the chat “The brain eval’s result”; press it on the page, with your passkey. A run with a run that
+   was no result twice (a chat failed, the practice console's rail wasn't checked) is `-broken`: no score, refused.
 
 Without the brain (to try the runner): `--stand-in --only <case> --runs 1 --out <file>`.
 
-The memory questions (design G 3.7): `--set memory` runs `test/eval/memory.json`, and the record names its file
-(`setFile`). Each memory addition is measured against the baseline with `--memory-off <names>` (of `names`, `past`,
-`time`, `digest`, `count`, `said`): each case's stand-in console gets `SPARK_CONSOLE_MEMORY_OFF`, a feature reads its
-name there, and the record says which were on (`memorySwitches`). A case may also have `before` (earlier chats), `seed`
-(memory lines, journal records, lessons, a long event log, with dates), `has` and `hasNot` (words in the brain's
-requests for the turn), `answerHas` and `answerHasNot` (words in the answer, graded apart), `kind` and `switch` (the
-addition it measures), `as: "agent"` (one of the owner's agents asks, over the agent door) and `standIn` (the stand-in
-brain's rules); `test/eval.mjs`'s header has their shapes. The run prints each case and each kind with its rounds and
-seconds. `--set memory-held-out` is the held-out set: run it beside, and never copy its words into a prompt, a tool
-text, a document or another case file, or tune memory by it.
+The memory questions (design G 3.7): `--set memory` runs `test/eval/memory.json` (`setFile`). `--memory-off <names>`
+(`names`, `past`, `time`, `digest`, `count`, `said`) measures each addition against the baseline: each case's console
+gets `SPARK_CONSOLE_MEMORY_OFF`, and the record says which were on (`memorySwitches`). A case's fields (`before`,
+`seed`, `has`, `hasNot`, `answerHas`, `answerHasNot`, `kind`, `switch`, `as`, `disk`, `looked`, `allows`, `standIn`)
+are in `test/eval.mjs`'s header. `--set memory-held-out` is the held-out set: run it beside, and never copy its words
+into a prompt, a tool text, a document or another case file, or tune memory by it.
 
 ## Also update
 

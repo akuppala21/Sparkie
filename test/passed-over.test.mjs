@@ -5,7 +5,8 @@
 // question whose yes tries it, the owner's own request runs it and says so, and other Sparks or a new image try it
 // again with no question. A failure whose cause is outside the setup (a sign-in) never passes it over. A lessons.json
 // that can't be read (garbage, or a folder) passes nothing over. A context cut to fit (out of memory) isn't locked in:
-// with more free memory than when it was cut, the full context goes first.
+// with more free memory than when it was cut, the full context goes first; one kept cut below 16,384 tokens (as an older
+// build cut to 8,192) goes first with its full context whatever is free (A-26).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, closeSync, openSync, truncateSync, copyFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ const VLLM = JSON.parse(readFileSync(join(REPO, 'service', 'config.json'), 'utf8
 // Models made for this file, so nothing else has run them: pass-b3 on Spark 3, with two runs that worked here on record
 // (the faster first); only-b3 on Spark 3 and 4, whose only setup is its own (its spark.json names its image); gemma-b3
 // on Spark 4, the same (the stand-in stops any gemma while it loads); ctx-b3 on Spark 3, with nothing on record.
-const PASS = 'pass-b3', ONLY = 'only-b3', GEMMA = 'gemma-b3', CTX = 'ctx-b3';
+const PASS = 'pass-b3', ONLY = 'only-b3', GEMMA = 'gemma-b3', CTX = 'ctx-b3', CTX8 = 'ctx8-b3';
 const FAST = ['--max-model-len', '65536'], SLOWER = ['--max-model-len', '16384'];
 const IMG_A = `vllm/vllm-openai@sha256:${'a1'.repeat(32)}`, IMG_B = `vllm/vllm-openai@sha256:${'b2'.repeat(32)}`;
 // The stand-in engine's log for gemma-b3: a Hugging Face refusal, a known failure with no fix (one attempt).
@@ -38,8 +39,13 @@ useFleet({ watchMs: 60000, prepare: ({ root, stateDir }) => {
   for (const sp of ['spark3', 'spark4']) addModel(root, sp, ONLY, { title: 'Only B3', engine: 'vllm', image: IMG_A, args: [], memoryGiB: 8 }, 'gpt-oss-20b');
   addModel(root, 'spark4', GEMMA, { title: 'Gemma B3', engine: 'vllm', image: IMG_A, args: [], memoryGiB: 8 }, 'gemma-3-12b-it');
   addModel(root, 'spark3', CTX, { title: 'Ctx B3', engine: 'vllm', args: [], memoryGiB: 8 }, 'gpt-oss-20b');
+  // (ctx8-b3 on Spark 3, with one run on record that worked once an older build cut its context to 8,192, then with
+  // more free memory than any Spark has: only the floor of 16,384 lifts it, A-26)
+  addModel(root, 'spark3', CTX8, { title: 'Ctx8 B3', engine: 'vllm', args: [], memoryGiB: 8 }, 'gpt-oss-20b');
+  const cut8 = ['--max-model-len', '8192'];
+  const kept8 = { ...worked(cut8, 50), key: JSON.stringify([CTX8, 'vllm', VLLM, 1, cut8, {}]), model: CTX8, title: CTX8, contextCut: { free: 10 ** 15, at: '2026-11-10T00:00:00Z' } };
   // (the faster one far faster than the stand-in measures, so it stays first after the other runs again)
-  writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [worked(FAST, 100000), worked(SLOWER, 40)] }), { mode: 0o600 });
+  writeFileSync(join(stateDir, 'verified.json'), JSON.stringify({ deployments: [worked(FAST, 100000), worked(SLOWER, 40), kept8] }), { mode: 0o600 });
 } }, async () => { keys.look = await createKey('po-look'); keys.act = await createActKey('po-act'); });
 
 const mock = (spark, file) => join(T.fleet.root, spark, '.mock', file);
@@ -253,6 +259,17 @@ test('a context cut to fit isn\'t locked in: with more free memory than when it 
     writeFileSync(mock('spark3', 'meminfo'), meminfo);
     rmSync(mock('spark3', 'oom-ctx'), { force: true });
   }
+});
+
+// A-26: a context is never cut below 16,384 tokens by itself, so a run kept at 8,192 (cut by an older build) never
+// comes back as it is: its full context goes first, whatever is free, and running out of memory cuts it again.
+test('a run kept with its context cut below 16,384 tokens (8,192, by an older build) never comes back by itself: its full context goes first', { timeout: 300000 * SLOW }, async () => {
+  const x = await start({ model: CTX8, spark: 'spark3' });
+  assert.equal((await finished(x.operation)).status, 'completed');
+  const log = (await jobOf(x.operation)).log;
+  assert.ok(log.some(l => /Trying its full context first: the run kept for it had its context cut below 16,384 tokens/.test(l)), log.join('\n'));
+  assert.ok(!/--max-model-len 8192/.test(lastArgs('spark3')), lastArgs('spark3'));
+  await stopped('spark3', `sc-${CTX8}`);
 });
 
 test('a lessons.json that can\'t be read passes nothing over: garbage, or a folder of that name', { timeout: 600000 * SLOW }, async () => {
