@@ -730,7 +730,7 @@ describe('the dangerous ask', { concurrency: 1 }, () => {
     assert.ok(!/innerHTML/.test(app), 'no HTML from text');
   });
 
-  test('only the named raisers reach it: only the stand-in hook calls dangerAsk, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
+  test('only the parts named as raisers call dangerAsk; the stand-in hook answers only on the stand-in fleet, and without it an owner-only question is asked as before', { timeout: 120000 * SLOW }, async () => {
     // the parts that may raise a dangerous ask, each a step that was read as one
     const RAISERS = [
       '20-danger.mjs',

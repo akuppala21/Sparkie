@@ -103,7 +103,7 @@ test('the owner\'s standing rules for Spark 2: each refused by code before anyth
   // The lock-out class there waits for the fresh visit that keeps it (a later build).
   const lock = await run(`printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHub other@hub' >> .ssh/authorized_keys`);
   assert.equal(lock.status, 403, lock.text);
-  assert.match(lock.json.error, /^Not done on Spark 2 yet: a change that can lock you out of Spark 2 is kept only by a fresh visit to Spark Console, which comes with a later build\./);
+  assert.match(lock.json.error, /^Not done on Spark 2: a change that can lock you out of Spark 2 is never made from Spark Console, which runs there: if it cut you off, nothing here could put it back\. Make it by hand on Spark 2, in your own terminal\./);
   // From the chat, with words that name Spark 2 and ask for the change: refused just the same, and no button.
   const chat = await newChat();
   const c = await inChat(chat, 'fix the brain on spark 2', 'docker restart sparkie-main');

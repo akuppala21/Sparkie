@@ -171,7 +171,7 @@ test('an agent\'s change is a button for the owner; not done, the lock-out class
   const chat = await newChat();
   const r = await turn(chat, 'fix the keys on spark 3', [[RUN('chmod 600 ~/.ssh/authorized_keys')]]);
   assert.equal(r.tools[0].ok, false);
-  assert.match(r.tools[0].tail, /^Nothing ran: a change that can lock you out of Spark 3 waits for the lock-out net \(a later build\)/);
+  assert.match(r.tools[0].tail, /^Nothing ran: the lock-out net is switched off in this console, and a change that can lock you out of Spark 3 runs only inside it\./);
   const [lock] = sentBack('fix the keys on spark 3');
   assert.match(lock.error, /\. It names “~\/\.ssh\/authorized_keys”, one of the ways in/, JSON.stringify(lock));
   const hub = await run('touch notes/x.txt', 'spark2');

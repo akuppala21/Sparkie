@@ -247,7 +247,7 @@ const netNotYours = (from, node = null) => new HttpError(403, `Nothing was asked
 // or the owner's one command where the helper isn't set up or root is off there.
 async function netChange(node, command, sorted, viewer, ctx) {
   const at = sparkName(node);
-  if (!NET_ON) throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
+  if (!NET_ON) throw new HttpError(403, `Nothing ran: the lock-out net is switched off in this console, and a change that can lock you out of ${at} runs only inside it. ${sorted.why}`);
   if (sorted.lasting) throw new HttpError(403, `Not done: ${String(sorted.lasting).replace(/\.$/, '')}. ${sorted.why} Nothing was asked or run.`);
   // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
   const from = netWhose(node, viewer, ctx);

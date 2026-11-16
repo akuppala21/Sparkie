@@ -417,7 +417,9 @@ D9 to D11.
   from it; tags resume when this build is pushed. `test/lock.test.mjs` now holds the job's key list equal to the
   lock's. The installer refuses a lock that doesn't match the code.
 - **The result.**
-  TESTS_LINE
+  The whole suite is run on the exact commit that is sent, in a container on a Spark, before that commit is pushed.
+  Its result (how many tests, the date, how long it took) is in the owner's message, because a commit cannot hold
+  the result of its own run. That message also says what the whole runs made during the final read's fixes showed.
   A test skips itself where a program it needs is missing; in the runs we have seen, the one skipped was the zsh
   case in `test/state.test.mjs`.
 - **Reviews.** Opus 5.5 built the steps and Fable 5.2 read them. The dangerous pieces were read more than once
@@ -450,7 +452,8 @@ time. After changing a part, run `node tools/make.mjs`.
 
 ## 8. Install and the checks after it
 
-INSTALL_LINE
+Spark 2 runs build `32cfab4f06fa`, installed on 2026-11-14, after round 1's reply was written. Nothing built since
+then is installed: not the phase that was a plan, and not the final read's fixes.
 
 The install runs from the owner's Mac, with a note of what changed:
 
