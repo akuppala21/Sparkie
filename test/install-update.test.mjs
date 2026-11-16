@@ -195,9 +195,13 @@ describe('install_update', { concurrency: 1 }, () => {
   test('when the installed build’s commit can’t be told (its lock’s commit isn’t in Spark 2’s copy and its tree isn’t on main), nothing is asked and it says so; with its tree on main, the ask names what differs', async () => {
     const lock = join(HOME, 'spark-console-service', 'workflows.lock.json'), was = readFileSync(lock, 'utf8');
     writeFileSync(lock, JSON.stringify({ build: 'd'.repeat(12), tree: 'd'.repeat(40), commit: 'd'.repeat(40), brainReads: READS_A }));
+    const chats = [];
+    let ended = false;
     try {
       script(ASK_INSTALL);
-      const chat = await newChat(), before = installLog();
+      const chat = await newChat();
+      chats.push(chat);
+      const before = installLog();
       const r = await say(chat, 'install the newest build');
       assert.ok(!(await chatMessages(chat)).some(m => m.danger), 'no ask');
       assert.match(r.text, /install_update said: .*whether it is newer than the build installed now can’t be told/, r.text);
@@ -205,11 +209,20 @@ describe('install_update', { concurrency: 1 }, () => {
       // (its lock's commit isn't in the copy, but its tree is on main: placed there, and what differs is named)
       writeFileSync(lock, JSON.stringify({ ...JSON.parse(was), commit: 'd'.repeat(40) }));
       const a = await asking();
+      chats.push(a.chat);
       assert.ok(a.ask, JSON.stringify(a.msgs.slice(-3)));
       assert.match(a.ask.content, /files differ from the build installed now: .*service\/server\.mjs/);
       assert.doesNotMatch(a.ask.content, /isn’t known/);
       assert.equal((await press(a.chat, a.no.id)).status, 200);
-    } finally { writeFileSync(lock, was); }
+      ended = true;
+    } finally {
+      writeFileSync(lock, was);
+      // (on a failure, an ask left open is closed, so it doesn't hold up the tests after this one)
+      for (const c of ended ? [] : chats) {
+        const no = (await chatMessages(c)).findLast(m => m.danger)?.choices?.find(x => x.label === 'No');
+        if (no) await press(c, no.id);
+      }
+    }
   });
 
   // (Later 4)
