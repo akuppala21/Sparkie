@@ -9,9 +9,9 @@
 //   GET   /repos/:owner/:repo/commits/:sha/check-runs
 // Every request is kept in `calls` (method, path, whether it carried the expected token, its body); a test sets
 // `checkRuns[sha]` and `reviews[n]` to what GitHub would say, and `failPosts` to the number of pull requests to refuse
-// (500) before one opens. For the install (C8d), `headOf(ref)` gives a branch's commit and `mainOf()` main's (a pull
+// (500) before one opens. For the merge (C8d), `headOf(ref)` gives a branch's commit and `mainOf()` main's (a pull
 // request's head.sha, GET /branches/main), and `merge(pr, sha)` merges in the bare repository; PUT …/pulls/:n/merge
-// merges only at the head it names.
+// merges only at the head it names. As on GitHub, a merge marks nothing tested: that comes from the run on main.
 //   GET   /repos/:owner/:repo/branches/main
 //   PUT   /repos/:owner/:repo/pulls/:n/merge   {sha, merge_method}
 import http from 'node:http';

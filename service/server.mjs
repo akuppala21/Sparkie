@@ -18810,7 +18810,10 @@ async function selfInstallFacts(viewer, ctx) {
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr?.number || pr.head?.sha !== open.head) throw new HttpError(409, `${open.branch}’s pull request isn’t open at the head Spark 2 sent (${open.head.slice(0, 12)}), so nothing was asked.`);
   const runs = ((await selfApi('GET', `/repos/${repo}/commits/${open.head}/check-runs`))?.check_runs || []).slice(0, 20);
-  if (!runs.length || runs.some(r => r.status !== 'completed' || r.conclusion !== 'success')) {
+  // (passed: every check finished, at least one with success, none failed, cancelled or timed out; a skipped job, such as
+  // the mark job on a pull request, or a neutral one, is no failure)
+  const ok = new Set(['success', 'skipped', 'neutral']);
+  if (!runs.some(r => r.conclusion === 'success') || runs.some(r => r.status !== 'completed' || !ok.has(r.conclusion))) {
     throw new HttpError(409, `GitHub’s run on ${open.branch} hasn’t passed (${runs.length ? runs.map(r => `${clean(r.name, 60)}: ${clean(r.conclusion || r.status, 20)}`).join(', ') : 'none yet'}), so nothing was asked. check_update says how it is doing.`);
   }
   const reviews = ((await selfApi('GET', `/repos/${repo}/pulls/${Number(pr.number)}/reviews`)) || []).filter(r => String(r.commit_id || '') === open.head).slice(-5)
@@ -18822,11 +18825,13 @@ async function selfInstallFacts(viewer, ctx) {
   const done = runs.map(r => Date.parse(r.completed_at || '')).filter(n => !Number.isNaN(n)).sort().at(-1);
   return { branch: open.branch, head: open.head, tree, title, pullRequest: pr.number, files: files.slice(0, 200), protected: files.filter(selfProtected),
     tests: [...new Set([...lines.map(l => l.file), ...lines.files.map(f => f.file)])], reviews,
-    run: `${runs.length} check${runs.length === 1 ? '' : 's'} passed`, testedAt: done ? new Date(done).toISOString() : null };
+    run: `${runs.filter(r => r.conclusion === 'success').length} check${runs.filter(r => r.conclusion === 'success').length === 1 ? '' : 's'} passed${runs.some(r => r.conclusion !== 'success') ? `, ${runs.filter(r => r.conclusion !== 'success').map(r => `${clean(r.name, 60)} ${clean(r.conclusion, 20)}`).join(', ')}` : ''}`,
+    testedAt: done ? new Date(done).toISOString() : null };
 }
 // C8d: the owner's yes. Exactly the tree on the button: the proposal and its pull request still at the head shown, and
-// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and the tree
-// is installed through install_update's own path (updInstallRun). main moved: nothing is merged or installed.
+// GitHub's main still the commit the proposal was made on; then the pull request is merged at that head, and that is
+// all: GitHub marks a tree tested only after its run on a push to main, so the install is the ordinary one,
+// install_update with its own ask, once that tree is marked. main moved: nothing is merged.
 async function selfInstall(viewer, ctx, input) {
   if (!ctx.button || !ctx.ownerConfirmed || !/^[0-9a-f]{40,64}$/.test(String(input.tree)) || !/^[0-9a-f]{40,64}$/.test(String(input.head))) {
     throw new HttpError(403, 'Only the owner’s yes to the proposal’s own ask installs it.');
@@ -18837,12 +18842,13 @@ async function selfInstall(viewer, ctx, input) {
   const pr = (await selfApi('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${open.branch}`)}`))?.[0] || null;
   if (!pr?.number || pr.head?.sha !== input.head) throw new HttpError(409, `${open.branch}’s pull request isn’t at the head you were shown any more, so nothing was merged or installed. Ask again.`);
   const main = (await selfApi('GET', `/repos/${repo}/branches/main`))?.commit?.sha;
-  if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged or installed. Drop it and propose it again on the new main.`);
+  if (main !== open.base) throw new HttpError(409, `main moved on GitHub since the proposal was made (it is ${clean(main, 12) || 'unknown'} now, not ${open.base.slice(0, 12)}), so nothing was merged. Drop it and propose it again on the new main.`);
   await selfApi('PUT', `/repos/${repo}/pulls/${Number(pr.number)}/merge`, { sha: input.head, merge_method: 'merge' });
   // (merged: the proposal is no longer open here)
   for (const r of [`refs/sparkie/${open.id}`, `refs/sparkie-base/${open.id}`, `refs/sparkie-chat/${open.id}`]) await selfGit(['update-ref', '-d', r]).catch(() => {});
   audit({ via: ctx.via || null, actor: ctx.actor || null, action: 'propose-merge', args: { id: open.id, head: input.head.slice(0, 12), pr: pr.number }, ok: true });
-  return updInstallRun(viewer, ctx, input.tree.slice(0, 12));
+  return { ok: true, outcome: 'merged', tree: input.tree.slice(0, 12), pullRequest: pr.number,
+    note: `Merged: pull request #${pr.number} (${open.branch}, tree ${input.tree.slice(0, 12)}) is on main. GitHub is testing main now; when that tree is marked as tested, install_update installs it (it asks you first, as any install does).` };
 }
 
 // check_update's answer for the open proposal: its pull request, the run on its head, the names of the failed tests and
@@ -19892,10 +19898,10 @@ async function updInstallAsk(viewer, ctx) {
     facts: { asked, install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
     call: { action: 'install_update', args: { tree: x.newest.tree } } });
 }
-// The owner's ask for Sparkie's open proposal (C8d, 21-selfchange.mjs): install exactly its tree, as a dangerous ask
+// The owner's ask for Sparkie's open proposal (C8d, 21-selfchange.mjs): merge exactly its tree, as a dangerous ask
 // like install_update's, with what code found about it; its yes is propose_update {do: "install"} with that tree and
-// head, which merges the pull request only at that head and while main is the noted commit, then installs through
-// updInstallRun.
+// head, which merges the pull request only at that head and while main is the noted commit. The install is then the
+// ordinary one (install_update, its own ask) once GitHub marks the tree.
 async function updProposalAsk(viewer, ctx) {
   const p = await selfInstallFacts(viewer, ctx);
   const hub = NODES.find(n => n.host === 'local')?.id || brainSparks()[0] || null;

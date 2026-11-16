@@ -475,7 +475,7 @@ describe('propose_update', { concurrency: 1 }, () => {
   });
 
   // (C8d: the owner's ask for the proposal, and the install of exactly its tree)
-  test('C8d: the ask for the proposal, by code (its files, the run, protected paths, tests, “nobody else reviewed this”); its yes merges at that head and installs exactly that tree; refused once main moved', LONG, async () => {
+  test('C8d: the ask for the proposal, by code (its files, the run, protected paths, tests, “nobody else reviewed this”; a skipped check no failure); its yes merges at that head and stops there (the install is install_update’s, once main’s run marks it); refused once main moved', LONG, async () => {
     const ghRev = r => spawnSync(REAL_GIT, ['-C', GH, 'rev-parse', '-q', '--verify', r], { encoding: 'utf8', env: GIT_ENV }).stdout.trim() || null;
     // (the mark job's tested/ tag: that commit plus a lock naming its tree and the build its three code files are)
     const markTested = c => {
@@ -488,7 +488,8 @@ describe('propose_update', { concurrency: 1 }, () => {
       run(['update-ref', `refs/tags/tested/${tree.slice(0, 12)}`, run(['commit-tree', run(['write-tree']), '-p', c, '-m', `Tested: tree ${tree.slice(0, 12)}`])]);
     };
     Object.assign(GHAPI.state, { headOf: ref => ghRev(`refs/heads/${ref}`), mainOf: () => ghRev('refs/heads/main'),
-      merge: (pr, sha) => { const main = ghRev('refs/heads/main'), c = git(GH, ['commit-tree', `${sha}^{tree}`, '-p', main, '-p', sha, '-m', `Merge ${pr.head.ref}`]); git(GH, ['update-ref', 'refs/heads/main', c, main]); markTested(c); return c; } });
+      // (as GitHub: a merge marks nothing tested; that comes from the run on main)
+      merge: (pr, sha) => { const main = ghRev('refs/heads/main'), c = git(GH, ['commit-tree', `${sha}^{tree}`, '-p', main, '-p', sha, '-m', `Merge ${pr.head.ref}`]); git(GH, ['update-ref', 'refs/heads/main', c, main]); return c; } });
     const installLog = () => (existsSync(join(HOME, 'install.log')) ? readFileSync(join(HOME, 'install.log'), 'utf8') : '');
     async function theAsk(chat) {
       await say(chat, 'install my code proposal');
@@ -508,19 +509,33 @@ describe('propose_update', { concurrency: 1 }, () => {
     const chat = await newChat(), p = await sent(chat, 'installed from the proposal');
     const early = await say(chat, 'install my code proposal');
     assert.match(early.text, new RegExp(`GitHub’s run on sparkie/${p.id} hasn’t passed \\(none yet\\)`));
-    GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
+    // (a job that failed: no ask; then as on a pull request: the run passed, the mark job skipped)
+    GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'failure', completed_at: new Date().toISOString(), output: { summary: '✖ a test' } }];
+    assert.match((await say(chat, 'install my code proposal')).text, /hasn’t passed \(quick: failure\)/);
+    GHAPI.state.checkRuns[p.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } },
+      { name: 'mark', status: 'completed', conclusion: 'skipped', completed_at: new Date().toISOString(), output: { summary: '' } }];
     const a = await theAsk(chat);
     assert.ok(a.ask, 'the ask');
     assert.match(a.ask.content, /^INSTALLS SPARK CONSOLE/);
     assert.match(a.ask.content, new RegExp(`The tree ${p.tree.slice(0, 12)} \\(pull request #\\d+\\), tested `));
-    assert.match(a.ask.content, new RegExp(`Sparkie’s proposal sparkie/${p.id}, “A calmer page” \\(its words\\)\\. GitHub’s run on it: 1 check passed\\. Protected paths: none\\. Test files it changes: none\\. Nobody else reviewed this\\.`));
+    assert.match(a.ask.content, new RegExp(`Sparkie’s proposal sparkie/${p.id}, “A calmer page” \\(its words\\)\\. GitHub’s run on it: 1 check passed, mark skipped\\. Protected paths: none\\. Test files it changes: none\\. Nobody else reviewed this\\.`));
     assert.match(a.ask.content, /service\/src\/21-web\.mjs/);
     const r = await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: a.yes.id, pair: a.pair } });
     assert.equal(r.status, 200, r.text);
-    assert.equal(r.json.outcome, 'started', r.text);
+    assert.equal(r.json.outcome, 'merged', r.text);
+    assert.match(r.json.message.content, new RegExp(`Merged: pull request #\\d+ \\(sparkie/${p.id}, tree ${p.tree.slice(0, 12)}\\) is on main\\. GitHub is testing main now; when that tree is marked as tested, install_update installs it`));
     assert.equal(git(GH, ['rev-parse', 'refs/heads/main^{tree}']), p.tree, 'merged at that head: main holds exactly that tree');
-    assert.ok(installLog().includes(`install ${p.tree.slice(0, 12)} ASSUME_YES=1`), installLog());
+    assert.equal(installLog(), '', 'nothing installed: the tree isn’t marked yet');
     assert.equal(refs(), '', 'the proposal is no longer open');
+    // (main's run marks it: then install_update offers exactly that tree, with its own ask)
+    markTested(ghRev('refs/heads/main'));
+    script([...SCRIPT, { match: '^install the newest tested build', calls: [{ name: 'install_update', arguments: {} }] }]);
+    await say(chat, 'install the newest tested build');
+    const ia = (await chatMessages(chat)).findLast(m => m.danger);
+    assert.match(ia?.content || '', new RegExp(`The tree ${p.tree.slice(0, 12)} \\(build [0-9a-f]{12}\\)`));
+    // (its No: one dangerous ask is open at a time)
+    assert.equal((await api(`/chats/${chat}/choose`, { method: 'POST', body: { choice: ia.choices.find(c => c.label === 'No').id } })).status, 200);
+    script(SCRIPT);
     // (a second proposal; GitHub's main moves before the yes: nothing merged or installed)
     const chat2 = await newChat(), q = await sent(chat2, 'a second proposal');
     GHAPI.state.checkRuns[q.head] = [{ name: 'quick', status: 'completed', conclusion: 'success', completed_at: new Date().toISOString(), output: { summary: '' } }];
@@ -529,7 +544,7 @@ describe('propose_update', { concurrency: 1 }, () => {
     git(GH, ['update-ref', 'refs/heads/main', moved, main]);
     const before = installLog(), r2 = await api(`/chats/${chat2}/choose`, { method: 'POST', body: { choice: b.yes.id, pair: b.pair } });
     assert.equal(r2.status, 200, r2.text);
-    assert.match(r2.json.message.content, /main moved on GitHub since the proposal was made .*so nothing was merged or installed\./);
+    assert.match(r2.json.message.content, /main moved on GitHub since the proposal was made .*so nothing was merged\./);
     assert.equal(GHAPI.state.pulls.find(x => x.head.ref === `sparkie/${q.id}`).state, 'open');
     assert.equal(installLog(), before);
     await pressed(chat2, 'drop your code proposal');

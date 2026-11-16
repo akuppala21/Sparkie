@@ -166,10 +166,10 @@ async function updInstallAsk(viewer, ctx) {
     facts: { asked, install: { tree: `${x.newest.tree} (build ${x.newest.build})`, testedAt: x.newest.testedAt, differs, brainReads: updBrainLine(x) } },
     call: { action: 'install_update', args: { tree: x.newest.tree } } });
 }
-// The owner's ask for Sparkie's open proposal (C8d, 21-selfchange.mjs): install exactly its tree, as a dangerous ask
+// The owner's ask for Sparkie's open proposal (C8d, 21-selfchange.mjs): merge exactly its tree, as a dangerous ask
 // like install_update's, with what code found about it; its yes is propose_update {do: "install"} with that tree and
-// head, which merges the pull request only at that head and while main is the noted commit, then installs through
-// updInstallRun.
+// head, which merges the pull request only at that head and while main is the noted commit. The install is then the
+// ordinary one (install_update, its own ask) once GitHub marks the tree.
 async function updProposalAsk(viewer, ctx) {
   const p = await selfInstallFacts(viewer, ctx);
   const hub = NODES.find(n => n.host === 'local')?.id || brainSparks()[0] || null;
