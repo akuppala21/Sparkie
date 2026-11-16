@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { T, useFleet, api, newChat, say, chatMessages, REPO, SLOW } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, REPO, SLOW } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
@@ -113,6 +113,13 @@ test('as root: a script is never run (its text isn’t on the button); the time 
   assert.equal(n.status, 200, n.text);
   assert.equal(n.json.ran, false, n.text);
   assert.match(n.json.ownerCommand || '', /root-for-sparkie\.sh 4'?$/, n.text);
+});
+
+test('a root command in the lock-out class from an agent is refused, never asked (contract 8.3): only the owner’s own words ask for one', { timeout: 60000 * SLOW }, async () => {
+  const k = await createActKey('root-agent');
+  const ag = await call(k.token, 'run', { on: 'spark3', command: "printf '%s\\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAgent agent@net' >> .ssh/authorized_keys", dir: '~', root: true });
+  assert.ok(ag.isError, ag.text);
+  assert.ok(ag.text.includes('Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from an agent.'), ag.text);
 });
 
 test('the lock-out class as root: ROOT on Spark 3 · CAN LOCK YOU OUT, and the helper is called with --lockout', { timeout: 120000 * SLOW }, async () => {

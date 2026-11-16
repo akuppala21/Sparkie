@@ -140,8 +140,30 @@ function netOutput(id, out) {
 // The dangerous ask's line for a change inside the net (line 3): what goes back, when, and what can't (root's too, 21-root.mjs,
 // with its own time limit).
 const netFact = (at, seconds = RUNNER_SECONDS) => `It runs inside the lock-out net: unless Spark Console can still reach ${at} right after it (a new connection, the root helper, Tailscale), it goes back at once, and by itself ${Math.ceil((seconds + NET_AFTER_S) / 60)} minutes after it starts at the latest. Files and units go back, not live network or firewall state (iptables, nft, ip, nmcli): if that cuts ${at} off, restarting ${at} is the way back.`;
+// Whose a lock-out change is (contract 8.3: only when the owner asks for it in their own words, never because an agent, a
+// page or a fix suggested it): null when the request is the owner's own message asking for a change on that Spark with
+// nothing read from outside since (hostClear's test for "at once", 21-ladder.mjs, with the verbs a lock-out change is
+// asked in: add, open, allow, …), or the owner's own call (the page, POST /actions); otherwise where it came from.
+const NET_ASK = /\b(?:fix|install|set\s+up|change|edit|update|add|remove|delete|open|close|allow|deny|block|unblock|enable|disable|grant|revoke|give|reset|rotate|turn\s+(?:on|off))\b/i;
+const NET_NOT = /\b(?:don[’']?t|do\s+not|never|no\s+need)\b/i;
+function netWhose(node, viewer, ctx) {
+  if (ctx.via === 'workflow') return 'a saved workflow’s step';
+  if (ctx.via === 'watcher') return 'a healing fix';
+  if (ctx.agent || ctx.agentId || viewer?.agentKey || ctx.via === 'agent') return 'an agent';
+  if (['api', 'page'].includes(ctx.via) && !ctx.button) return null;
+  if (ctx.via !== 'sparkie') return 'something other than your own words';
+  if (ctx.readOutside || (Array.isArray(ctx.reads) && ctx.reads.length)) return 'text Sparkie read first (a log, a page or a command’s output)';
+  const said = String(ctx.said || ctx.request || ''), i = ctx.intent || {}, has = (l, k) => Array.isArray(l) && l.includes(k);
+  const asks = (has(i.asked, 'work') && !has(i.negated, 'work') && !has(i.mixed, 'work')) || (NET_ASK.test(said) && !NET_NOT.test(said));
+  if (!asks || !tokensOf(said).has(node.id)) return `Sparkie’s own proposal, not your words asking for this on ${sparkName(node)}`;
+  return null;
+}
+// The refusal, in plain words, for a lock-out change that isn't the owner's own (netChange; rootChange, 21-root.mjs).
+const netNotYours = from => new HttpError(403, `Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from ${from}.`);
+
 // From the ladder (workChange), for every change the sorter calls lock-out: off, as before; else not done, refused while
-// a guard is open there, asked, or (the dangerous ask's press) run inside the net.
+// a guard is open there, refused when it isn't the owner's own (netWhose), asked, or (the dangerous ask's press) run
+// inside the net.
 async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   const at = sparkName(node);
   if (!NET_ON) throw new HttpError(403, `Nothing ran: a change that can lock you out of ${at} waits for the lock-out net (a later build), which puts it back unless you confirm it. ${sorted.why}`);
@@ -149,6 +171,9 @@ async function netChange(node, command, sorted, viewer, ctx, dir = RUNNER_DIR) {
   const open = netOpenOn(node.id);
   if (open) throw new HttpError(409, `A change that can lock you out of ${at} is still open there (record ${open.record || open.id}): it is kept or goes back first, at ${netHhmm(open.goesBackAt)} at the latest. Nothing was asked or run.`);
   if (ctx.button && ctx.ownerConfirmed && ctx.danger) return netRun(node, command, sorted, viewer, ctx, dir);
+  // (only the owner's own words ask for one, contract 8.3: otherwise refused, never asked)
+  const from = netWhose(node, viewer, ctx);
+  if (from) throw netNotYours(from);
   // (no root helper there, or none this build knows, or its walls not proven: the owner's one command, nothing asked)
   const first = await netHelperFirst(node);
   if (first.needs) return first.needs;

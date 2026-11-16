@@ -18,7 +18,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, readdirSync, statSync, symlinkSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { T, useFleet, api, newChat, say, chatMessages, waitFor, sleep, SLOW, REPO } from './lib.mjs';
+import { T, useFleet, api, call, createActKey, newChat, say, chatMessages, waitFor, sleep, SLOW, REPO } from './lib.mjs';
 import { rehearse } from './rehearsal.mjs';
 import { startMock } from './start-mock.mjs';
 
@@ -211,6 +211,35 @@ test('what the net can’t put back is not done, and nothing is asked: a Tailsca
 });
 
 // Last: it stops this file's console.
+test('a lock-out change runs only when the owner asks for it in their own words (contract 8.3): an agent’s, or one after Sparkie read text from outside, is refused, never asked; a saved workflow can’t hold one; the owner’s own words are asked', { timeout: 120000 * SLOW }, async () => {
+  const NOT = 'Nothing was asked or run: Sparkie changes SSH, Tailscale, the firewall or users only when you ask for it yourself; this came from';
+  // An agent's key.
+  const k = await createActKey('net-agent');
+  const ag = await call(k.token, 'run', { on: 'spark3', command: ADD, dir: '~' });
+  assert.ok(ag.isError, ag.text);
+  assert.ok(ag.text.includes(`${NOT} an agent.`), ag.text);
+  // Text read from outside first (a look's output), in the owner's own chat.
+  const c1 = await newChat(), words = 'add my key on spark 3 after a look';
+  script([{ match: `^${words}$`, rounds: [[RUN('ls ~')], [RUN(ADD)]] }]);
+  try { await say(c1, words); } finally { noScript(); }
+  assert.ok((sentBack(words).at(-1)?.error || '').startsWith(`${NOT} text Sparkie read first`), JSON.stringify(sentBack(words)));
+  assert.ok(!(await chatMessages(c1)).some(m => m.danger), 'nothing asked');
+  // Sparkie's own proposal, the owner's words asking for none.
+  const c2 = await newChat(), idle = 'how is spark 3 today';
+  script([{ match: `^${idle}$`, rounds: [[RUN(ADD)]] }]);
+  try { await say(c2, idle); } finally { noScript(); }
+  assert.ok((sentBack(idle).at(-1)?.error || '').startsWith(`${NOT} Sparkie’s own proposal, not your words asking for this on Spark 3`), JSON.stringify(sentBack(idle)));
+  // A saved workflow's step: run is never one.
+  const wf = await api('/actions/save_workflow', { method: 'POST', body: { title: 'add the key', steps: [{ action: 'run', args: { on: 'spark3', command: ADD } }] } });
+  assert.equal(wf.status, 400, wf.text);
+  assert.match(wf.json.error, /run can’t be a step in a saved workflow/);
+  // The owner's own words: asked, as before.
+  const c3 = await newChat(), a = await ask(c3, 'add my key on spark 3 myself', ADD);
+  assert.ok(a.m, 'the dangerous ask');
+  await press(c3, a.no.id);
+  assert.ok(!readFileSync(join(T.fleet.root, 'spark3', '.ssh', 'authorized_keys'), 'utf8').includes(ADDED), 'nothing ran');
+});
+
 test('with no root helper on a Spark, a lock-out change answers with the owner’s one command, and nothing is asked', { timeout: 60000 * SLOW }, async () => {
   const n = await api('/actions/run', { method: 'POST', body: { on: 'spark4', command: 'chmod 600 ~/.ssh/authorized_keys', dir: '~' } });
   assert.equal(n.status, 200, n.text);
