@@ -3,7 +3,9 @@
 // run together; every call that may change something (a change, run, write_file) runs after them, one after another in
 // the order asked, each once the one before it has ended: a write and the command that reads it, four changes for one
 // Spark, a change on one Spark and a look on another; one still going past its 50 seconds is waited for; a change
-// refused because an operation the same turn started still holds its Spark is no refusal of its own.
+// refused because an operation the same turn started still holds its Spark is no refusal of its own. A command marks
+// the turn as having read outside text only once something ran (a failed one too); one refused, answered "nothing
+// ran" or asked does not, so the change after it runs at once.
 //
 // The stand-in fleet, with the real root helper set up and proven for Spark 3 (test/rehearsal.mjs, run: true) and for
 // looks on Spark 4, and the stand-in brain told by a script which tools to call. Linux only: run it on a Spark with
@@ -132,5 +134,33 @@ test('a change refused because an operation the same turn started still holds it
   } finally {
     await waitFor(() => existsSync(at3('notes/l2')), { timeout: 90000, what: 'the long command to end' });
     await sleep(2000);
+  }
+});
+
+// Final read of the net, 5: "Leave out sudo and set root", then the same command with root set refused as "text
+// Sparkie read first", though nothing had run.
+test('a command refused, answered “nothing ran” or asked, before anything ran, is no outside text: the change after it runs at once', { timeout: 240000 * SLOW }, async () => {
+  for (const [words, first, name] of [
+    ['fix the s notes on spark 3', RUN('sudo ls'), 's'],
+    // (Spark 2's commands come with a later build: it answers that nothing ran)
+    ['fix the t notes on spark 3', { name: 'run', arguments: { on: 'spark2', command: 'ls' } }, 't'],
+    // (it uses the GPU: asked, with a button)
+    ['fix the g notes on spark 3', RUN('echo g > notes/g.txt', { gpu: true }), 'g'],
+  ]) {
+    const r = await turn(await newChat(), words, [[first], [RUN(`echo ${name} > notes/${name}2.txt`)]]);
+    assert.equal(r.tools.length, 2, `${words}: ${shown(r.tools)}`);
+    assert.deepEqual([r.tools[1].ok, r.tools[1].outcome], [true, 'change'], `${words}: ${shown(r.tools)}`);
+    assert.equal(text(`notes/${name}2.txt`), `${name}\n`);
+  }
+  assert.ok(!existsSync(at3('notes/g.txt')), 'the asked one did not run');
+});
+
+test('a command that ran and printed something is outside text, one that failed too: the change after it is asked', { timeout: 180000 * SLOW }, async () => {
+  for (const [words, look, name] of [['fix the v notes on spark 3', 'cat notes/present.txt', 'v'], ['fix the x notes on spark 3', 'cat notes/missing.txt', 'x']]) {
+    const r = await turn(await newChat(), words, [[RUN(look)], [RUN(`echo ${name} > notes/${name}.txt`)]]);
+    assert.deepEqual(r.tools.map(t => [t.ok, t.outcome || null]).slice(0, 1), [[true, 'look']], `${words}: ${shown(r.tools)}`);
+    assert.ok(['needs-ok', 'question'].includes(r.tools[1]?.outcome), `${words}: ${shown(r.tools)}`);
+    assert.match(String(r.back[0]?.question), /\nAsked because Sparkie read text from outside first\.\n/, JSON.stringify(r.back[0]));
+    assert.ok(!existsSync(at3(`notes/${name}.txt`)), 'asked, not run');
   }
 });

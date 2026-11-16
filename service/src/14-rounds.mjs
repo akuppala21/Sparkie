@@ -229,6 +229,19 @@ async function turnRounds(turn) {
 // one refused and in no fixed order, and four in a round put the tools away.)
 const roundTogether = a => !a || (a.kind === 'read' && !a.changes);
 const ROUND_WAIT_MS = 120000;      // limit: how long a call waits past its own 50 seconds for the one before it
+// Whether a call read text from outside that the brain's later calls may follow (R26): a lookup outside INSIDE_READS
+// (running_models {detail} carries a container's own command) once handed over, its error too (it can quote what it
+// read); run and write_file only once something ran there: a command that ran (one that failed too, its error output
+// is in its result), one started with minutes, write_file's ask (it shows the file's old lines), or a failure on the
+// far side (a 5xx can quote the command's own first line). Never a call refused, asked or answered "nothing ran"
+// before anything ran (final read of the net, 5: "Leave out sudo and set root" was followed by "this came from text
+// Sparkie read first", though nothing had run or been read).
+function readOutsideBy(c, a, { handed, ok, value, status }) {
+  if (!handed || a?.kind !== 'read' || (INSIDE_READS.has(c.name) && !(c.name === 'running_models' && /"detail"/.test(c.args || '')))) return false;
+  if (!WORK_TOOLS.has(c.name)) return true;
+  if (!ok) return !(status >= 400 && status < 500);
+  return c.name === 'write_file' ? value?.ran !== false : value?.ran === true || value?.outcome === 'started';
+}
 // One round’s tool calls (at most 4): on the record first; lookups together, then the rest one by one; then whether the
 // turn has read outside text, the steps for the reply, and the groups that calls to tools not offered open.
 async function roundCalls(turn, round, r) {
@@ -236,14 +249,13 @@ async function roundCalls(turn, round, r) {
   // (at most 4 calls a round, and only those are on the record, each with its result)
   const calls = r.calls.slice(0, 4);
   messages.push({ role: 'assistant', content: r.content || '', tool_calls: calls.map((c, i) => ({ id: c.id || `call_${round}_${i}`, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })) });
-  const steps = [], at = { round, calls, steps };
+  const steps = [], outside = [], at = { round, calls, steps, outside };
   const results = [];
   await Promise.all(calls.map((c, i) => (roundTogether(ACTIONS.get(c.name)) ? runOne(turn, at, c, i).then(x => { results[i] = x; }) : null)));
-  // From here on this turn has read text from outside (a log, an operation, a recipe, a web result): what Sparkie
-  // may keep in memory without a button gets stricter (20-memory.mjs memoryClear).
-  // (running_models {detail} carries a container’s own command: text from outside, like workloads)
-  const outside = c => ACTIONS.get(c.name)?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')));
-  if (calls.some(c => roundTogether(ACTIONS.get(c.name)) && outside(c))) ctx.readOutside = true;
+  // From here on this turn has read text from outside (a log, an operation, a recipe, a web result, a command's
+  // output: readOutsideBy): what Sparkie may keep in memory without a button gets stricter (20-memory.mjs
+  // memoryClear), and a change is asked (21-ladder.mjs).
+  if (outside.some(Boolean)) ctx.readOutside = true;
   for (const [i, c] of calls.entries()) {
     if (results[i]) continue;
     // (one before it that is still going past its 50 seconds is waited for, a while, so two never run side by side)
@@ -251,7 +263,7 @@ async function roundCalls(turn, round, r) {
     results[i] = await runOne(turn, at, c, i);
   }
   // (what a command printed counts from the next round: the brain asked for this round’s calls before any came back)
-  if (calls.some(outside)) ctx.readOutside = true;
+  if (outside.some(Boolean)) ctx.readOutside = true;
   used.push(...steps.filter(Boolean));
   // Hidden is not forbidden: a call to a tool this round didn't offer ran as any call does, and opens its group;
   // a web search opens reading.
@@ -263,10 +275,10 @@ async function roundCalls(turn, round, r) {
 }
 // One tool call: the checks of this turn (a stop, the agent’s web searches, the changes a message may make), then
 // runAction with 50 seconds, the paste card set aside, the result masked, journalled (tool), cut and told.
-async function runOne(turn, { round, calls, steps }, c, i) {
+async function runOne(turn, { round, calls, steps, outside = [] }, c, i) {
   const { viewer, conv, emit, agent, link, turnId, target, ctx, CHANGES, pastes } = turn;
   const a = ACTIONS.get(c.name) || null, started = Date.now();
-  let out, ok = true, outcome = null, plan = null;
+  let out, ok = true, outcome = null, plan = null, value = null, handed = false, status = null;
   let nothing = null;   // (why a call that answered ran nothing: a run where the helper can't run it; budgetsAfter)
   let waited = false;   // (it met this turn's own change still going: no refusal of its own, budgetsAfter)
   try {
@@ -279,8 +291,9 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     if (a.kind !== 'read' && ++turn.changes > CHANGES) throw new HttpError(429, `At most ${CHANGES} changes per message. Say what’s done and what’s left.`);
     if (WORK_TOOLS.has(c.name)) workStep(turn);
     const args = c.args ? JSON.parse(c.args) : {};
+    handed = true;
     const going = runAction(c.name, viewer, args, ctx);
-    let value = await Promise.race([going, sleep(50000).then(() => { throw Object.assign(new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`), { going }); })]);
+    value = await Promise.race([going, sleep(50000).then(() => { throw Object.assign(new HttpError(504, `${c.name} took over 50 seconds and may still be going. Don’t ask for it again: check recent_operations or fleet_events.`), { going }); })]);
     // (an operation it started, whose Spark a later call of this turn may meet still changing)
     if (typeof value?.operation === 'string') turn.ops.push(value.operation);
     // A paste card goes under the answer exactly as built; the model only hears that it's there.
@@ -296,6 +309,7 @@ async function runOne(turn, { round, calls, steps }, c, i) {
     if (value?.ran === false) nothing = maskSecrets(String(value.why || 'Nothing ran.'));
   } catch (e) {
     ok = false;
+    status = e.status ?? null;
     out = `[error] ${maskSecrets(e.message || String(e))}`;
     // (one that may change something, still going past its 50 seconds: the round's next calls wait for it)
     if (e.going && !roundTogether(a)) { const g = turn.going = e.going.then(() => {}, () => {}).then(() => { if (turn.going === g) turn.going = null; }); }
@@ -305,7 +319,8 @@ async function runOne(turn, { round, calls, steps }, c, i) {
   const jid = journalTool({ turn: turnId, chat: conv.id, brain: target.model, call: c, ok, outcome, ms: Date.now() - started, task: ctx?.task || null }, out);
   // What this request read from outside, by its record (A7c; the dangerous ask's "came from", 20-danger.mjs): a label
   // built by code, the tool and its Spark, never its source's words.
-  if (ok && jid && a?.kind === 'read' && (!INSIDE_READS.has(c.name) || (c.name === 'running_models' && /"detail"/.test(c.args || '')))) workRead(ctx, jid, a.title, c.args);
+  outside[i] = readOutsideBy(c, a, { handed, ok, value, status });
+  if (ok && jid && outside[i]) workRead(ctx, jid, a.title, c.args);
   const shown = commandShown(c, ok, out);
   // (a long result: its digest, its lines that matter numbered, 20-digest.mjs; the 12,000 cut with the switch digest off)
   if (out.length > DIGEST_AT) out = memoryOffFor('digest') ? `${out.slice(0, 12000)} …(cut)` : digestOut(out, jid, jOwnCall(viewer, ctx));
